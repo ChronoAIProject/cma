@@ -45,7 +45,7 @@ const WEBHOOK_SECRET: &str = "fixture-private-webhook-secret";
 const REPLY_TOKEN: &str = "fixture-private-original-reply-token";
 const SERVICE_TOKEN: &str = "fixture-record-service-token";
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct Retained {
     owner: String,
     blob: String,
@@ -84,6 +84,7 @@ impl Fixture {
         let base = format!("http://{}", listener.local_addr().unwrap());
         let peer = Arc::new(Peer::default());
         let app = Router::new()
+            .route("/api/v1/users/me", get(store_diagnostics::creator))
             .route("/api/v1/gateway/connection-records", get(list))
             .route(
                 "/api/v1/gateway/connection-records/{id}",

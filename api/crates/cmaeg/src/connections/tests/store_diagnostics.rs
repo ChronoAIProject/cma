@@ -1,6 +1,9 @@
 use super::*;
 use std::io::Write;
-use tracing::{instrument::WithSubscriber, Instrument};
+use tracing::instrument::WithSubscriber;
+
+#[path = "router_diagnostics.rs"]
+mod router;
 
 const UPSTREAM_PRIVATE: &str = "fixture-private-upstream-body";
 
@@ -31,6 +34,16 @@ pub(super) async fn telegram(State(peer): State<Arc<Peer>>) -> Response {
     StatusCode::BAD_GATEWAY.into_response()
 }
 
+pub(super) async fn creator(headers: HeaderMap) -> Response {
+    let (subject, kind) = match headers.get("authorization").and_then(|v| v.to_str().ok()) {
+        Some("Bearer fixture-person-bearer") => ("fixture-owner-private", "person"),
+        Some("Bearer fixture-organization-bearer") => ("fixture-owner-private", "org"),
+        Some("Bearer fixture-foreign-bearer") => ("fixture-other-owner", "person"),
+        _ => return StatusCode::UNAUTHORIZED.into_response(),
+    };
+    Json(json!({"subject":subject,"user_type":kind})).into_response()
+}
+
 #[derive(Clone, Default)]
 struct Logs(Arc<Mutex<Vec<u8>>>);
 impl Write for Logs {
@@ -52,7 +65,7 @@ impl Logs {
             .without_time()
             .with_ansi(false)
             .with_env_filter(
-                "off,cmaeg::connections::store=warn,cmaeg::records=warn,connection_read_test=info",
+                "off,cmaeg::connections::store=warn,cmaeg::records=warn,cmaeg::telemetry::http=info",
             )
             .with_writer(move || writer.clone())
             .finish()
@@ -93,11 +106,14 @@ async fn list_response(fixture: &Fixture, creator: Creator) -> (StatusCode, Valu
     let logs = Logs::default();
     let response = async {
         crate::http::connections::list(
-            State(service), creator, Query(serde_json::from_value(json!({})).unwrap()),
+            State(service),
+            creator,
+            Query(serde_json::from_value(json!({})).unwrap()),
         )
-        .instrument(tracing::info_span!(target: "connection_read_test", "request", trace_id = "fixture-read-trace"))
         .await
-    }.with_subscriber(logs.subscriber()).await;
+    }
+    .with_subscriber(logs.subscriber())
+    .await;
     let status = response.status();
     let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
         .await
@@ -144,7 +160,6 @@ fn assert_event(
         fields["http_status"] = status.into();
     }
     assert_eq!(events[0]["fields"], fields);
-    assert_eq!(events[0]["span"]["trace_id"], "fixture-read-trace");
 }
 
 async fn ready(fixture: &Fixture) -> Connection {
@@ -354,10 +369,13 @@ async fn mongo_driver_failure_uses_actual_backend_without_legacy_fallback() {
     assert_failure(&fixture, result, "page", "mongo", "mongo_read", None);
     let logs = Logs::default();
     let result = async {
-        fixture.store().load(&uuid::Uuid::new_v4().to_string())
-            .instrument(tracing::info_span!(target: "connection_read_test", "request", trace_id = "fixture-read-trace"))
+        fixture
+            .store()
+            .load(&uuid::Uuid::new_v4().to_string())
             .await
-    }.with_subscriber(logs.subscriber()).await;
+    }
+    .with_subscriber(logs.subscriber())
+    .await;
     assert!(matches!(result, Err(Error::Unavailable)));
     assert_event(&fixture, logs, "get", "mongo", "mongo_read", None);
     assert_eq!(fixture.peer.auth_calls.load(Ordering::SeqCst), 0);
