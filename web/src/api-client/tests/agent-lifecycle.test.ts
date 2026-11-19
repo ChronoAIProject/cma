@@ -92,3 +92,17 @@ it('retains the selected Workspace and exact inline intent when replaying Agent 
     expect(JSON.parse(String(call.init.body))).toEqual(request);
   }
 });
+
+it('preserves typed template fields and compiled text exactly on replay', async () => {
+  const test = transport();
+  test.answer({ id: 'template-operation', status: 'provisioning' }, 202);
+  const body: AgentLifecycleCreateRequest = {
+    name: 'Task',
+    template: { id: 'research', version: 1, fields: { topic: '  Synthetic topic  ' } },
+    initial_message:
+      'Research Synthetic topic and summarize the key findings, with links to sources.',
+  };
+  for (let attempt = 0; attempt < 2; attempt += 1)
+    await test.client.agents.createLifecycle(body, { idempotencyKey: 'template-key' });
+  expect(test.calls.map((call) => JSON.parse(String(call.init.body)))).toEqual([body, body]);
+});

@@ -82,6 +82,8 @@ export class InterruptionJournal {
     private readonly storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>,
     private readonly key: string,
     private readonly current: () => void,
+    private readonly onRetained?: (text: string, key: string) => void,
+    private readonly onAccepted?: (key: string) => void,
   ) {}
 
   read(): InterruptionRecord | null {
@@ -106,6 +108,7 @@ export class InterruptionJournal {
       return previous;
     }
     this.save(intent);
+    this.onRetained?.(intent.body.text, intent.key);
     return this.read()!;
   }
 
@@ -117,6 +120,7 @@ export class InterruptionJournal {
     )
       throw new Error('The interruption receipt changed its retained identity.');
     this.save({ ...intent, receipt });
+    this.onAccepted?.(key);
   }
 
   refused(key: string): void {

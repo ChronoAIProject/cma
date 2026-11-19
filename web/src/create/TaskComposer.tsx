@@ -8,6 +8,8 @@ export function TaskComposer({
   validation,
   errorId,
   disabled,
+  template = false,
+  invalid = false,
   onChange,
   children,
 }: {
@@ -16,6 +18,8 @@ export function TaskComposer({
   readonly validation?: string;
   readonly errorId: string;
   readonly disabled: boolean;
+  readonly template?: boolean;
+  readonly invalid?: boolean;
   readonly onChange: (text: string) => void;
   readonly children: ReactNode;
 }) {
@@ -26,7 +30,8 @@ export function TaskComposer({
       <div className="task-home__panel">
         <textarea
           className="task-home__input"
-          aria-label="Your task"
+          aria-label={template ? 'Task preview' : 'Your task'}
+          readOnly={template}
           aria-keyshortcuts={modifier === '⌘' ? 'Meta+Enter' : 'Control+Enter'}
           placeholder="What would you like your Agent to do?"
           ref={input}
@@ -34,17 +39,6 @@ export function TaskComposer({
           aria-invalid={validation !== undefined}
           aria-describedby={validation ? errorId : undefined}
           onChange={(event) => onChange(event.target.value)}
-          onKeyDown={(event) => {
-            if (
-              event.key !== 'Enter' ||
-              (!event.metaKey && !event.ctrlKey) ||
-              event.nativeEvent.isComposing ||
-              event.nativeEvent.keyCode === 229
-            )
-              return;
-            event.preventDefault();
-            if (!disabled && text.trim()) event.currentTarget.form?.requestSubmit();
-          }}
         />
         <div className="task-home__footer">
           <span className="task-home__shortcut">{modifier} ↵ to run</span>
@@ -54,7 +48,7 @@ export function TaskComposer({
             placement="task-home__send"
             aria-label="Start task"
             icon={<IconArrowUpOutline16 />}
-            disabled={disabled || !text.trim()}
+            disabled={disabled || invalid || !text.trim()}
           />
         </div>
       </div>

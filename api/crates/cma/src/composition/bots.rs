@@ -223,6 +223,7 @@ impl BotInlineProfileResolver for InlineBotProfileResolver {
 
 fn image_error(error: AgentLifecycleProvisioningError) -> BotError {
     match error {
+        AgentLifecycleProvisioningError::Template(error) => BotError::Invalid(error.to_string()),
         AgentLifecycleProvisioningError::Forbidden
         | AgentLifecycleProvisioningError::ImageAccessDenied => BotError::Forbidden,
         AgentLifecycleProvisioningError::SignInRequired => {

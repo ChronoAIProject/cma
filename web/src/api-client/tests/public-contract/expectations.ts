@@ -3,6 +3,10 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['task-template-missing-field', 'task_template_field_required'],
+  ['task-template-unknown-id', 'task_template_id_unknown'],
+  ['task-template-unknown-version', 'task_template_version_unsupported'],
+  ['task-template-unknown-field', 'task_template_field_unknown'],
   ['spend-observe-unknown-field', 'invalid_request'],
   ['spend-observe-unsupported-source', 'invalid_request'],
   ['spend-observe-adjustment-source', 'invalid_request'],
