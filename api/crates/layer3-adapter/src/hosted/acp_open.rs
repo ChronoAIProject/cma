@@ -345,11 +345,19 @@ impl Bridge {
             permission_state,
             agent_correlation_digest: format!("{:x}", Sha256::digest(expected_agent.as_bytes())),
             subscription,
-            sink: Arc::new(Mutex::new(sink, ingress.as_ref())?),
-            pending: Arc::new(Mutex::new(
-                ingress::identity::PendingCalls::new(ingress.as_ref())?,
+            sink: Shared::new(
+                Mutex::new(sink, ingress.as_ref())?,
                 ingress.as_ref(),
-            )?),
+                "shared bridge sink",
+            )?,
+            pending: Shared::new(
+                Mutex::new(
+                    ingress::identity::PendingCalls::new(ingress.as_ref())?,
+                    ingress.as_ref(),
+                )?,
+                ingress.as_ref(),
+                "shared pending calls",
+            )?,
             request_namespace: uuid::Uuid::new_v4().to_string(),
             next_id: AtomicI64::new(1),
             recovery: Mutex::new(
@@ -371,8 +379,16 @@ impl Bridge {
                 })
                 .transpose()?,
             blocked: Mutex::new(HashMap::new(), ingress.as_ref())?,
-            answered: Arc::new(Mutex::new(HashMap::new(), ingress.as_ref())?),
-            owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
+            answered: Shared::new(
+                Mutex::new(HashMap::new(), ingress.as_ref())?,
+                ingress.as_ref(),
+                "shared permission answers",
+            )?,
+            owned_prompt_waiters: Shared::new(
+                AtomicUsize::new(0),
+                ingress.as_ref(),
+                "shared prompt waiters",
+            )?,
             orphaned_prompt_response: AtomicBool::new(false),
             retired: AtomicBool::new(false),
             instructions_support: AtomicU8::new(0),

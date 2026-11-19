@@ -335,6 +335,12 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
     .unwrap()
     .unwrap();
     assert_eq!(opened.channel.conversation_id(), "conversation");
+    assert!(opened.bridge.sink.requested_bytes() > 0);
+    assert!(opened.bridge.pending.requested_bytes() > 0);
+    assert!(opened.bridge.answered.requested_bytes() > 0);
+    let retained_waiter = opened.bridge.owned_prompt_waiters.clone();
+    let waiter_bytes = retained_waiter.requested_bytes();
+    assert!(waiter_bytes > 0);
     let readiness = opened
         .channel
         .input()
@@ -394,12 +400,15 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
     let _ = server.await;
     drop(received);
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
-        while fixture.root.available_bytes() != baseline - retained_identity {
+        while fixture.root.available_bytes() != baseline - retained_identity - waiter_bytes {
             tokio::task::yield_now().await;
         }
     })
     .await
     .unwrap();
+    assert_eq!(retained_waiter.load(std::sync::atomic::Ordering::SeqCst), 0);
+    drop(retained_waiter);
+    assert_eq!(fixture.root.available_bytes(), baseline - retained_identity);
     assert_eq!(&**identity, "conversation");
     drop(identity);
     assert_eq!(fixture.root.available_bytes(), baseline);

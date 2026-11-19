@@ -201,7 +201,12 @@ async fn cancelled_permission_write_keeps_first_answer_and_socket_storage_until_
     let (sink, _) = super::admitted(Box::new(StalledSocket(None)), fixture.policy.clone()).split();
     let original = std::mem::replace(
         &mut fixture.bridge.sink,
-        std::sync::Arc::new(super::super::Mutex::new(sink, Some(&fixture.policy)).unwrap()),
+        super::super::Shared::new(
+            super::super::Mutex::new(sink, Some(&fixture.policy)).unwrap(),
+            Some(&fixture.policy),
+            "stalled fixture sink",
+        )
+        .unwrap(),
     );
     let control = fixture.policy.budget(IngressClass::Control);
     let before = control.available_bytes();

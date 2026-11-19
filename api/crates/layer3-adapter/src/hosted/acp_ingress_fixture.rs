@@ -1,4 +1,4 @@
-use super::super::Mutex;
+use super::super::{Mutex, Shared};
 use super::*;
 use crate::hosted::{retained_json::JsonPools, update_relay::UpdateRelay};
 use crate::ingress_budget::{AllocationPlan, IngressBudget, IngressClass, IngressOwnershipPolicy};
@@ -80,14 +80,22 @@ pub(in crate::hosted) fn fixture() -> Fixture {
         ),
         agent_correlation_digest: "fixture".into(),
         subscription: None,
-        sink: Arc::new(Mutex::new(sink, Some(&policy)).unwrap()),
-        pending: Arc::new(
+        sink: Shared::new(
+            Mutex::new(sink, Some(&policy)).unwrap(),
+            Some(&policy),
+            "shared fixture sink",
+        )
+        .unwrap(),
+        pending: Shared::new(
             Mutex::new(
                 super::identity::PendingCalls::new(Some(&policy)).unwrap(),
                 Some(&policy),
             )
             .unwrap(),
-        ),
+            Some(&policy),
+            "shared fixture calls",
+        )
+        .unwrap(),
         request_namespace: "fixture".into(),
         next_id: AtomicI64::new(1),
         recovery: Mutex::new(
@@ -112,8 +120,18 @@ pub(in crate::hosted) fn fixture() -> Fixture {
             .unwrap(),
         ),
         blocked: Mutex::new(HashMap::new(), Some(&policy)).unwrap(),
-        answered: Arc::new(Mutex::new(HashMap::new(), Some(&policy)).unwrap()),
-        owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
+        answered: Shared::new(
+            Mutex::new(HashMap::new(), Some(&policy)).unwrap(),
+            Some(&policy),
+            "shared fixture answers",
+        )
+        .unwrap(),
+        owned_prompt_waiters: Shared::new(
+            AtomicUsize::new(0),
+            Some(&policy),
+            "shared fixture waiters",
+        )
+        .unwrap(),
         orphaned_prompt_response: AtomicBool::new(false),
         retired: AtomicBool::new(false),
         instructions_support: AtomicU8::new(0),

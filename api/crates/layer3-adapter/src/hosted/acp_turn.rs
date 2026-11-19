@@ -1,5 +1,4 @@
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
 use super::acp::{Bridge, Outcome};
 use super::acp_inbound::{blocked_from_locator, outcome_for};
@@ -237,8 +236,8 @@ impl Bridge {
         let terminal_identity = self.ingress.is_none().then(|| prompt_id.clone()).flatten();
         match self.begin_prompt(params, prompt_id).await {
             Ok(waiting) => {
-                let answered_permissions = Arc::clone(&self.answered);
-                let owned_prompt_waiters = Arc::clone(&self.owned_prompt_waiters);
+                let answered_permissions = self.answered.clone();
+                let owned_prompt_waiters = self.owned_prompt_waiters.clone();
                 let updates = updates.clone();
                 tokio::spawn(async move {
                     // A turn can outlive any API request. The bridge owns the

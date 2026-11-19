@@ -44,7 +44,11 @@ impl<T> ConversationSocket for T where
 }
 pub(super) type Socket = Box<dyn ConversationSocket>;
 type Sink = SplitSink<ingress::BridgeSocket, Message>;
-type Pending = Arc<Mutex<ingress::identity::PendingCalls>>;
+type Pending = Shared<Mutex<ingress::identity::PendingCalls>>;
+
+#[path = "acp_shared.rs"]
+mod shared;
+use shared::Shared;
 
 #[path = "acp_mutex.rs"]
 mod mutex;
@@ -115,7 +119,7 @@ pub(super) struct Bridge {
     shared_runtime_output: bool,
     pub(super) agent_correlation_digest: String,
     pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
-    sink: Arc<Mutex<Sink>>,
+    sink: Shared<Mutex<Sink>>,
     pub(super) pending: Pending,
     request_namespace: String,
     next_id: AtomicI64,
@@ -123,8 +127,8 @@ pub(super) struct Bridge {
     conversation: Mutex<ConversationState>,
     output: Option<Mutex<output::ReliableOutput>>,
     pub(super) blocked: Mutex<HashMap<String, Blocked>>,
-    pub(super) answered: Arc<Mutex<HashMap<String, serde_json::Value>>>,
-    pub(super) owned_prompt_waiters: Arc<AtomicUsize>,
+    pub(super) answered: Shared<Mutex<HashMap<String, serde_json::Value>>>,
+    pub(super) owned_prompt_waiters: Shared<AtomicUsize>,
     pub(super) orphaned_prompt_response: AtomicBool,
     retired: AtomicBool,
     pub(super) instructions_support: AtomicU8,
