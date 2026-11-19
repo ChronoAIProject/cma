@@ -456,6 +456,10 @@ mod allocation_tests;
 mod tests;
 
 #[cfg(test)]
+#[path = "acp_ingress_fixture.rs"]
+mod fixture;
+
+#[cfg(test)]
 #[path = "acp_ingress_permission_tests.rs"]
 mod permission_tests;
 
