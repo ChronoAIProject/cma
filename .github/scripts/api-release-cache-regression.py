@@ -8,6 +8,7 @@ from normal builds. No image is published and no credentials are passed in.
 import argparse
 import base64
 import datetime
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -73,6 +74,26 @@ def current_logs(raw, started):
     return "".join(lines)
 
 
+def transfer_cache(source, root, prefix, platform):
+    """Use the bounded production archive format with isolated fixture mounts."""
+    spec = importlib.util.spec_from_file_location(
+        "release_cache_bridge", source / ".github/scripts/api-cargo-cache.py")
+    bridge = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(bridge)
+    architecture = platform.split("/")[-1]
+    bridge.MOUNTS = {"registry": prefix + "-registry", "target": prefix + "-target-" + architecture}
+    bundle = root / "bundle"
+    command = ["docker", "buildx", "build", "--platform", platform,
+               "--build-arg", "CMA_CACHE_TRANSFER=" + uuid.uuid4().hex, "--file", "-"]
+    run(command + ["--output", "type=local,dest=" + str(bundle), str(root)],
+        input=bridge.dockerfile("extract"))
+    bridge.seal(bundle, prefix)
+    bridge.validate_bundle(bundle, prefix)
+    bridge.MOUNTS["target"] = prefix + "-restored-target-" + architecture
+    run(command + ["--output", "type=cacheonly", str(bundle)],
+        input=bridge.dockerfile("inject"))
+
+
 def exercise(source, binary, platform):
     recipe = (source / f"api/crates/{binary}/Dockerfile").read_text()
     cache_prefix = "release-regression-" + uuid.uuid4().hex
@@ -85,23 +106,30 @@ def exercise(source, binary, platform):
     with tempfile.TemporaryDirectory(prefix="cma-release-regression-") as directory:
         root = Path(directory)
         fixture(root, binary)
+        (root / "api/rust-toolchain.toml").write_text((source / "api/rust-toolchain.toml").read_text())
         (root / "Dockerfile").write_text(recipe)
         run(["docker", "run", "--rm", "--platform", platform, "--mount",
              f"type=bind,source={root / 'api'},target=/build", "--workdir", "/build",
              toolchain, "cargo", "generate-lockfile"])
         results = []
-        for version in ("first", "second"):
-            if version == "second":
+        for version in ("first", "second", "restored"):
+            if version != "first":
                 path = root / "api/library/src/lib.rs"
-                path.write_text(path.read_text().replace('"first"', '"second"'))
-                (root / "api/library/value.txt").write_text("generated-second\n")
+                previous = "first" if version == "second" else "second"
+                path.write_text(path.read_text().replace(f'"{previous}"', f'"{version}"'))
+                (root / "api/library/value.txt").write_text(f"generated-{version}\n")
                 # Changed, newer source can still predate restored build outputs.
                 for path in (path, root / "api/library/value.txt"):
                     os.utime(path, (2, 2))
+            if version == "restored":
+                transfer_cache(source, root, cache_prefix, platform)
+                (root / "Dockerfile").write_text(recipe.replace(
+                    "id=" + cache_prefix + "-target-", "id=" + cache_prefix + "-restored-target-"))
             output = root / (version + "-output")
             started = time.time()
             built = run(["docker", "buildx", "build", "--platform", platform,
                          "--progress=rawjson", "--target", "cache-regression-output",
+                         "--build-arg", "CHRONO_BUILD=" + cache_prefix,
                          "--build-arg", "CHRONO_BUILD_SHA=build-" + version,
                          "--output", "type=local,dest=" + str(output), str(root)])
             elapsed = time.time() - started
@@ -111,7 +139,7 @@ def exercise(source, binary, platform):
             expected = f"{version}:generated-{version}:build-{version}"
             if actual != expected:
                 raise AssertionError(f"{binary}: stale cached behavior: {actual!r}; expected {expected!r}")
-            if version == "second" and "Compiling memchr " in current_logs(built.stderr, started):
+            if version != "first" and "Compiling memchr " in current_logs(built.stderr, started):
                 raise AssertionError("external dependency was unnecessarily rebuilt")
             results.append({"case": version, "seconds": round(elapsed, 3), "behavior": actual})
         return {"component": binary, "platform": platform, "passed": True, "builds": results}
