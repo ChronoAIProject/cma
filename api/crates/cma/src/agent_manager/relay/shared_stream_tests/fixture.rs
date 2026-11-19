@@ -1,6 +1,6 @@
 use super::*;
 
-struct ReadOnly;
+pub(super) struct ReadOnly;
 #[async_trait::async_trait]
 impl OrganizationAuthority for ReadOnly {
     async fn organization_context(
@@ -44,7 +44,9 @@ pub(super) struct Replica {
     pub(super) store: Arc<MongoSandboxStore>,
     pub(super) coordinator: Arc<OwnershipCoordinator>,
     pub(super) updates: Arc<DurableAgentUpdateRecorder>,
-    address: String,
+    pub(super) address: String,
+    pub(super) faults:
+        Option<Arc<crate::store::agent_ownership::mongo_renewal_faults::RoutedStore>>,
     server: JoinHandle<()>,
     renewal: JoinHandle<()>,
 }
@@ -57,6 +59,14 @@ impl Drop for Replica {
 }
 impl Replica {
     pub(super) async fn open(name: &str, owner: &SubjectId) -> Self {
+        Self::open_with_fault(name, owner, None).await
+    }
+
+    pub(super) async fn open_with_fault(
+        name: &str,
+        owner: &SubjectId,
+        target: Option<AgentId>,
+    ) -> Self {
         // Construct a new Client, not a clone sharing another replica's pool.
         let client = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
             .await
@@ -72,8 +82,23 @@ impl Replica {
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = format!("http://{}", listener.local_addr().unwrap());
+        let faults = if let Some(target) = target {
+            Some(
+                crate::store::agent_ownership::mongo_renewal_faults::RoutedStore::new(
+                    store.agent_ownership.clone().unwrap(),
+                    target,
+                )
+                .await,
+            )
+        } else {
+            None
+        };
+        let ownership: Arc<dyn layer2_core::agent_ownership::OwnershipStore> = match &faults {
+            Some(faults) => faults.clone(),
+            None => store.agent_ownership.clone().unwrap(),
+        };
         let coordinator = OwnershipCoordinator::register(
-            store.agent_ownership.clone().unwrap(),
+            ownership,
             Member {
                 instance_id: instance,
                 protocol: PROTOCOL_VERSION,
@@ -99,21 +124,27 @@ impl Replica {
             Arc::new(ReadOnly),
         ));
         let context = context(owner.clone());
-        let public = router(
-            AgentV2State::new(
-                AgentReadService::new(store.clone(), Arc::new(ReadOnly))
-                    .with_resource_access(access.clone()),
-                AgentCommandService::new(store.clone(), access, Arc::new(ReadOnly)),
-            )
-            .with_updates(updates.clone())
-            // A delivered head hint must wake well before this fallback.
-            .with_event_wake(true, Duration::from_secs(20)),
-        )
-        .layer(Extension(layer1_public::AuthenticatedSubject(
-            owner.clone(),
-        )))
-        .layer(Extension(context.caller.authorization.clone()))
-        .layer(Extension(context));
+        let reads = AgentReadService::new(store.clone(), Arc::new(ReadOnly))
+            .with_resource_access(access.clone());
+        let commands = AgentCommandService::new(store.clone(), access, Arc::new(ReadOnly));
+        let mut public = router(
+            AgentV2State::new(reads.clone(), commands)
+                .with_updates(updates.clone())
+                // A delivered head hint must wake well before this fallback.
+                .with_event_wake(true, Duration::from_secs(20)),
+        );
+        if faults.is_some() {
+            public = public.merge(super::containment::controls_router(store.clone(), reads));
+        }
+        let public = public
+            .layer(Extension(layer1_public::AuthenticatedSubject(
+                owner.clone(),
+            )))
+            .layer(Extension(context.caller.authorization.clone()))
+            .layer(Extension(context))
+            .layer(Extension(layer1_public::DelegatedCredential::new(
+                "stream-fixture".into(),
+            )));
         // Public SSE reads its local store and follows the shared owner through
         // the private relay. It is not forwarded to a public owner endpoint.
         let app = public.merge(relay.routes(Router::new()));
@@ -121,7 +152,11 @@ impl Replica {
             axum::serve(listener, app).await.unwrap();
         });
         let renew = coordinator.clone();
+        let manual_renewal = faults.is_some();
         let renewal = tokio::spawn(async move {
+            if manual_renewal {
+                std::future::pending::<()>().await;
+            }
             let mut ticks = tokio::time::interval(Duration::from_millis(HEARTBEAT_INTERVAL_MS));
             loop {
                 ticks.tick().await;
@@ -139,6 +174,7 @@ impl Replica {
             coordinator,
             updates,
             address,
+            faults,
             server,
             renewal,
         }
@@ -193,7 +229,7 @@ impl Replica {
     }
 }
 
-fn context(subject: SubjectId) -> CallerContext {
+pub(super) fn context(subject: SubjectId) -> CallerContext {
     CallerContext {
         credential_source: CredentialSource::Retained,
         caller: Caller::new(
@@ -211,10 +247,18 @@ fn context(subject: SubjectId) -> CallerContext {
 }
 
 pub(super) async fn seed(store: &MongoSandboxStore, db: &mongodb::Database) -> Agent {
+    seed_named(store, db, "shared-stream").await
+}
+
+pub(super) async fn seed_named(
+    store: &MongoSandboxStore,
+    db: &mongodb::Database,
+    name: &str,
+) -> Agent {
     use layer2_core::profiles::{
         WorkspaceLocation, WorkspaceProfileContent, WorkspaceProfileSnapshot,
     };
-    let (sandbox, mut agent) = retained_fixture(store, "shared-stream").await;
+    let (sandbox, mut agent) = retained_fixture(store, name).await;
     // Maintenance's minimal fixture starts with ConversationOpened. Public
     // replay requires the complete retained history, including creation.
     use mongodb::bson::{doc, Document};
