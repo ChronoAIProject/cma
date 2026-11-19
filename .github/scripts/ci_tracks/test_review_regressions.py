@@ -76,7 +76,7 @@ class SourceInputRegressions(unittest.TestCase):
                 snapshots = [(old, Workspace(metadata(old), old), self.manifest), (self.root, self.workspace, self.manifest)]
                 self.assertEqual(changed_images(['.github/scripts/deployables.json'], snapshots), [name])
 
-    def test_r5_runtime_matrices_select_repo_only_without_labels(self):
+    def test_r5_runtime_matrices_select_repo_only_but_require_a_label(self):
         from selection import analyze
         for workflow, expression in [
             ('.github/workflows/redeploy-staging.yml', '${{ fromJSON(needs.resolve.outputs.matrix) }}'),
@@ -87,7 +87,10 @@ class SourceInputRegressions(unittest.TestCase):
             result = analyze([workflow], [snapshot, snapshot])
             self.assertEqual(result['test_tracks'], {'repo': True, 'am': False, 'eg': False, 'web': False})
             self.assertEqual(result['deployables'], [])
-            self.assertEqual(selected_upgrade({'pull_request': {'labels': []}}, result['deployables']), 'not-required')
+            with self.assertRaises(ValueError):
+                selected_upgrade({'pull_request': {'labels': []}}, result['deployables'])
+            self.assertEqual(selected_upgrade({'pull_request': {'labels': [{'name': 'version-upgrade:patch'}]}}, result['deployables']), 'patch')
+            self.assertEqual(result['deployables'], [])
 
 
 
@@ -99,21 +102,23 @@ class LiveLabelRegressions(unittest.TestCase):
                      'head': {'ref': 'feature', 'sha': 'b' * 40, 'repo': {'full_name': self.repository}}}
         self.event = {'number': 7, 'repository': {'full_name': self.repository}, 'pull_request': copy.deepcopy(self.pull)}
 
-    def evaluate(self, labels):
+    def evaluate(self, labels, images):
         current = copy.deepcopy(self.pull)
         current['labels'] = [{'name': label} for label in labels]
         run = subprocess.CompletedProcess([], 0, json.dumps(current), '')
         with patch('version_label.subprocess.run', return_value=run):
             fetched = current_pull(self.event, self.repository)
-        return selected_upgrade({'pull_request': fetched}, ['cma-web'])
+        return selected_upgrade({'pull_request': fetched}, images)
 
     def test_r3_historical_label_is_never_authority(self):
-        self.event['pull_request']['labels'] = [{'name': 'version-upgrade:patch'}]
-        for labels in [[], ['version-upgrade:patch', 'version-upgrade:major']]:
-            with self.assertRaises(ValueError):
-                self.evaluate(labels)
-        self.event['pull_request']['labels'] = []
-        self.assertEqual(self.evaluate(['version-upgrade:minor']), 'minor')
+        for images in [[], ['cma-web']]:
+            self.event['pull_request']['labels'] = [{'name': 'version-upgrade:patch'}]
+            for labels in [[], ['version-upgrade:patch', 'version-upgrade:major'],
+                           ['version-upgrade:patch', 'version-upgrade:other']]:
+                with self.subTest(images=images, labels=labels), self.assertRaises(ValueError):
+                    self.evaluate(labels, images)
+            self.event['pull_request']['labels'] = []
+            self.assertEqual(self.evaluate(['version-upgrade:minor'], images), 'minor')
 
     def test_r3_stale_identity_or_api_error_fails(self):
         for side, key in [('head', 'sha'), ('head', 'ref'), ('base', 'sha'), ('base', 'ref')]:

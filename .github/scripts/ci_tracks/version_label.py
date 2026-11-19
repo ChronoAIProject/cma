@@ -1,4 +1,4 @@
-"""A version label is required only for changed deployable image inputs."""
+"""Every develop PR requires one version label, regardless of image selection."""
 
 import json
 import os
@@ -25,10 +25,9 @@ def selected_upgrade(event, images):
     labels = event['pull_request']['labels']
     if not isinstance(labels, list) or any(not isinstance(item, dict) or not isinstance(item.get('name'), str) for item in labels):
         raise ValueError('malformed PR labels')
-    selected = [item['name'] for item in labels if item['name'] in LABELS]
-    if not images:
-        return 'ignored' if selected else 'not-required'
-    if len(selected) != 1:
+    # Match allocation: unknown labels in this namespace cannot hide beside a valid one.
+    selected = [item['name'] for item in labels if item['name'].startswith('version-upgrade:')]
+    if len(selected) != 1 or selected[0] not in LABELS:
         raise ValueError('exactly one version-upgrade:major, version-upgrade:minor or version-upgrade:patch label is required')
     return selected[0].split(':')[1]
 
@@ -69,8 +68,6 @@ def main():
     except (KeyError, OSError, TypeError, ValueError, subprocess.SubprocessError) as error:
         print(f'::error::Version label check failed: {error}')
         return 1
-    if upgrade == 'ignored':
-        print('::notice::No deployable image inputs changed; version labels are ignored.')
     print(f'Version policy: {upgrade}')
     return 0
 
