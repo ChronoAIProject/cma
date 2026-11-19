@@ -62,6 +62,7 @@ jobs:
         id: build-cache
         env:
           CD_COMPONENT: ${{ inputs.component }}
+          CD_TASKS: ${{ inputs.tasks }}
         run: python3 -B .github/scripts/staging_cd_build_cache.py
       - name: Restore compatible Cargo mounts
         if: inputs.component == 'am' || inputs.component == 'eg'
@@ -71,7 +72,9 @@ jobs:
         with:
           path: ${{ steps.build-cache.outputs.directory }}
           key: ${{ steps.build-cache.outputs.key }}
-          restore-keys: ${{ steps.build-cache.outputs.prefix }}
+          restore-keys: |
+            ${{ steps.build-cache.outputs.prefix }}
+            ${{ steps.build-cache.outputs.family }}
       - name: Restore authenticated layer detector evidence
         timeout-minutes: 1
         env:
@@ -111,7 +114,7 @@ jobs:
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: ${{ steps.build-cache.outputs.directory }}
-          key: ${{ steps.build-cache.outputs.key }}
+          key: ${{ steps.publication.outputs.build-cache-key }}
       - name: Retain only public publication receipts
         id: receipts
         if: always()
