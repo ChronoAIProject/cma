@@ -2,6 +2,9 @@ use super::lifecycle_test_support::sandbox;
 use super::SandboxStatus;
 use crate::sandbox_usage::*;
 
+#[path = "sandbox_usage_terminal_tests.rs"]
+mod terminal;
+
 fn at(seconds: u64) -> String {
     crate::rfc3339_at(
         std::time::UNIX_EPOCH
