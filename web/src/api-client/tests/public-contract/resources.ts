@@ -268,6 +268,7 @@ export const resourceDispatch: Record<string, Dispatch> = {
   'GET /api/v1/conformance': ({ client }) => client.readConformance(),
   'GET /openapi.json': ({ client }) => client.readOpenApi(),
   'GET /api/v1/defaults': ({ client }) => client.readDefaults(),
+  'GET /api/v1/sandboxes/capacity': ({ client }) => client.sandboxes.capacity(),
   'GET /api/v1/sandboxes': ({ client, options, query }) =>
     client.sandboxes.listAccessible({
       ...(options as AccessibleSandboxListOptions),
