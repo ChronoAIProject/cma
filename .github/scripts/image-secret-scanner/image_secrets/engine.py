@@ -20,6 +20,10 @@ class Stage:
         self.locations = {}
         root.mkdir()
 
+    @property
+    def timeout(self):
+        return self.backend.timeout
+
     def add(self, data, location, original_path=None):
         self.budget.reserve(len(data))
         destination = self.root / f"entry-{len(self.locations):08d}.txt"
@@ -27,7 +31,7 @@ class Stage:
         self.locations[destination] = location
         self.findings.inspect(destination, location, original_path)
 
-    def file(self, stream, size, location, original_path=None, depth=0):
+    def file(self, stream, size, location, original_path=None, depth=0, *, regular=True):
         if depth and size > MAX_NESTED_MEMBER_BYTES:
             raise ScanError("nested-member-size-limit")
         self.budget.reserve(size)

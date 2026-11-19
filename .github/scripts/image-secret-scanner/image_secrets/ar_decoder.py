@@ -59,7 +59,7 @@ def decode_ar(stage, physical, location, depth, member_limit, child_location):
         expired.set()
         stop(process)
 
-    timer = threading.Timer(stage.backend.timeout, timeout)
+    timer = threading.Timer(stage.timeout, timeout)
     timer.start()
     try:
         ordinal = 0

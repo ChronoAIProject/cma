@@ -229,6 +229,8 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
 
 
 def resolve_package_scan(archive, output, component, evidence, bundle):
+    root = Path(__file__).resolve().parents[2]
+    require(load_content_policy(root) is not None, "Package report validator has no pinned review")
     sys.path.insert(0, str(SCANNER.parent))
     from image_content_policy import validate_detection
     from image_secrets import package_receipt

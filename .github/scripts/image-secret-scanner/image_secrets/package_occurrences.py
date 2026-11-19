@@ -13,6 +13,7 @@ from .package_evidence import NESTED_LOCATOR, PLATFORM, matches, normalized, req
 from .tar_trailer import verify_trailer
 
 IDENTITY_BUDGET = 20 * 1024**3
+DECODER_TIMEOUT = 120
 
 
 def platform(image):
@@ -37,6 +38,8 @@ def stream_digest(stream, size):
 
 
 class Members:
+    timeout = DECODER_TIMEOUT
+
     def __init__(self, workspace, budget, requested):
         self.workspace = workspace
         self.budget = budget
@@ -50,12 +53,15 @@ class Members:
         # A payload finding cannot be proved from path or link metadata.
         return None
 
-    def file(self, stream, size, location, _original_path, depth):
+    def file(self, stream, size, location, _original_path, depth, *, regular=True):
         self.budget.reserve(size)
         require(size <= MAX_NESTED_MEMBER_BYTES)
         locator = location["member"]
         has_child = any(name.startswith(locator + "/") for name in self.requested)
-        if locator not in self.requested and not has_child:
+        if not regular or (locator not in self.requested and not has_child):
+            # ar streams members over one pipe; each extent must be consumed
+            # even when the requested proof belongs to a later member.
+            stream_digest(stream, size)
             return
         with tempfile.TemporaryDirectory(dir=self.workspace) as child:
             stored = Path(child) / "member"

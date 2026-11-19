@@ -1,5 +1,6 @@
 """Validate full compressed ZIP streams independently of declared output sizes."""
 
+import stat
 import tempfile
 import zlib
 from contextlib import contextmanager
@@ -47,10 +48,12 @@ def verified_member(path, member, end, remaining):
     # Private, synthetic, automatically closed scratch: no archive path is
     # opened, no link is followed, and unverified output cannot yield CLEAN.
     with path.open("rb") as source, tempfile.TemporaryFile(dir=path.parent) as output:
-        compressed = payload_extent(source, member, end)
+        compressed, type_proof = payload_extent(source, member, end)
         try:
             decode(source, output, member, compressed, limit)
         except zlib.error as error:
             raise ScanError("nested-zip-deflate-invalid") from error
         output.seek(0)
-        yield output
+        regular = (type_proof and member.create_system == 3
+                   and stat.S_IFMT(member.external_attr >> 16) == stat.S_IFREG)
+        yield output, regular

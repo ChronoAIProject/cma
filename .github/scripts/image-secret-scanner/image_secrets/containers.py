@@ -113,13 +113,15 @@ def decode_nested(stage, physical, location, depth, kind):
                     raise ScanError("encrypted-nested-archive")
                 stage.add(json.dumps({"path": name}).encode(), child)
                 remaining = stage.budget.max_bytes - stage.budget.bytes
-                with verified_member(physical, member, ends[member.header_offset], remaining) as stream:
+                with verified_member(physical, member, ends[member.header_offset], remaining) as (stream, regular):
                     if member.is_dir():
                         if member.file_size:
                             raise ScanError("nested-zip-directory-payload")
                         stage.inspect_path(child, name)
                     else:
-                        stage.file(stream, member.file_size, child, name, depth + 1)
+                        # Scan link or special-member payloads, but preserve their
+                        # on-archive type for readers deriving an ownership proof.
+                        stage.file(stream, member.file_size, child, name, depth + 1, regular=regular)
     elif kind == "tar":
         with physical.open("rb") as source, tarfile.open(fileobj=BoundedReader(source), mode="r:") as archive:
             for index, member in enumerate(archive):
@@ -146,7 +148,7 @@ def decode_nested(stage, physical, location, depth, kind):
             stage.budget.entry()
             remaining = min(MAX_NESTED_MEMBER_BYTES, stage.budget.max_bytes - stage.budget.bytes)
             if kind == "zstd":
-                decode_zstd(physical, unpacked, remaining, stage.backend.timeout)
+                decode_zstd(physical, unpacked, remaining, stage.timeout)
             elif kind == "xz":
                 decode_xz(physical, unpacked, remaining)
             else:

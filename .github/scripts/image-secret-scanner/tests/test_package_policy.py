@@ -1,11 +1,15 @@
 """Exercise the reviewed package evidence path on synthetic, fully scanned images."""
 
 import copy
+import gzip
+import io
 import json
+import stat
 import subprocess
 import sys
 import tarfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -15,6 +19,7 @@ from image_secrets.package_evidence import PackageEvidence
 from image_secrets.package_occurrences import prove_package_member
 from image_secrets.package_receipt import build, decisions
 from tests.fixtures import docker_archive, tar_bytes
+from tests.test_runtime_archives import ar_bytes
 from tests.test_scanner import ScannerTests
 
 SOURCE = "usr/lib/example/parser.js"
@@ -158,6 +163,23 @@ class PackageTests(unittest.TestCase):
                    if row["rule"] == "content.openpgp-private-key"}
         self.assertEqual(matches, {1, 2})
 
+    def test_openpgp_markers_preserve_public_and_secret_key_decisions(self):
+        key_body = bytes([4, 0, 0, 0, 0, 1, 0, 0])
+        marker = bytes([0xCA, 3]) + b"PGP"
+        public = bytes([0xC6, len(key_body)]) + key_body
+        secret = bytes([0xC5, len(key_body)]) + key_body
+        subkey = bytes([0xC7, len(key_body)]) + key_body
+        non_critical = bytes([0xE8, 1, 0])
+        archive = self.root / "marker-keyrings.tar"
+        entries = [("keys/a", marker + marker + public), ("keys/b", marker + secret),
+                   ("keys/c", public + marker + subkey), ("keys/d", marker),
+                   ("keys/e", non_critical + public), ("keys/f", non_critical + marker + secret)]
+        docker_archive(archive, [tar_bytes(entries)])
+        report = self.detector_scan(archive)
+        matches = {row["entry"] for row in report["blocking_findings"]
+                   if row["rule"] == "content.openpgp-private-key"}
+        self.assertEqual(matches, {1, 2, 5})
+
     def test_publication_gate_recomputes_package_section_and_retains_full_findings(self):
         scripts = Path(__file__).resolve().parents[2]
         archive = self.root / "publish.tar"
@@ -192,14 +214,34 @@ class PackageTests(unittest.TestCase):
             with self.assertRaises(gate.ScanRefusal):
                 gate.verified_staging_scan(archive, self.root / "no-approved-evidence", component="runtime")
 
-    def test_member_proof_cli_checks_authenticated_artifact_before_writing(self):
-        archive = self.root / "vendor-package"
-        payload = tar_bytes([(SOURCE, PUBLIC_SOURCE)])
+            from image_scanner_policy import load_content_policy
+
+            altered = self.root / "policy-copy" / ".github" / "scripts"
+            protected = json.loads((scripts / "image-content-manifest.json").read_bytes())["files"]
+            for name in ["image-content-manifest.json", *protected]:
+                destination = altered / name
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                destination.write_bytes((scripts / name).read_bytes())
+            self.assertIsNotNone(load_content_policy(altered.parents[1]))
+            validator = altered / "image_content_policy.py"
+            validator.write_bytes(validator.read_bytes() + b"\n# altered fixture\n")
+            with patch.object(gate, "load_package_evidence", return_value=evidence), \
+                    patch.object(gate, "load_content_policy", side_effect=lambda _: load_content_policy(altered.parents[1])), \
+                    self.assertRaisesRegex(gate.ScanRefusal, "Package evidence refused"):
+                gate.verified_staging_scan(archive, self.root / "altered-validator", component="runtime")
+
+    def proof_command(self, name, payload, locator):
+        archive = self.root / name
         archive.write_bytes(payload)
-        output = self.root / "private-proof.json"
+        output = self.root / (name + ".proof.json")
         cmd = [sys.executable, "-B", str(Path(__file__).resolve().parents[1] / "prove_package_member.py"),
-               "--artifact", str(archive), "--locator", "0", "--output", str(output),
+               "--artifact", str(archive), "--locator", locator, "--output", str(output),
                "--authenticated-sha256"]
+        return cmd, output
+
+    def test_member_proof_cli_checks_authenticated_artifact_before_writing(self):
+        payload = tar_bytes([(SOURCE, PUBLIC_SOURCE)])
+        cmd, output = self.proof_command("vendor-package", payload, "0")
         wrong = subprocess.run([*cmd, "f" * 64], capture_output=True, check=False, timeout=30)
         self.assertEqual(wrong.returncode, 2)
         self.assertFalse(output.exists())
@@ -210,3 +252,53 @@ class PackageTests(unittest.TestCase):
         self.assertEqual(proof["artifact_sha256"], digest_bytes(payload))
         self.assertEqual(proof["member"], {"locator": "0", "path": [SOURCE],
                                           "type": "regular", "sha256": digest_bytes(PUBLIC_SOURCE)})
+
+    def test_member_proof_cli_reads_debian_and_arch_payloads(self):
+        inner = tar_bytes([(SOURCE, PUBLIC_SOURCE)])
+        control = gzip.compress(tar_bytes([("control", b"Package: test-only\n")]))
+        debian = ar_bytes([("debian-binary/", b"2.0\n"), ("control.tar.gz/", control),
+                           ("data.tar.gz/", gzip.compress(inner))])
+        arch = subprocess.run(["zstd", "-q", "-c"], input=inner, capture_output=True,
+                              check=True, timeout=30).stdout
+        for name, payload, locator, path in (
+            ("test.deb", debian, "2/0/0", ["data.tar.gz", "decoded", SOURCE]),
+            ("test.pkg.tar.zst", arch, "0/0", ["decoded", SOURCE]),
+        ):
+            with self.subTest(name=name):
+                cmd, output = self.proof_command(name, payload, locator)
+                result = subprocess.run([*cmd, digest_bytes(payload)], capture_output=True, check=False, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                proof = json.loads(output.read_bytes())
+                self.assertEqual(proof["artifact_sha256"], digest_bytes(payload))
+                self.assertEqual(proof["member"], {"locator": locator, "path": path, "type": "regular",
+                                                   "sha256": digest_bytes(PUBLIC_SOURCE)})
+
+    def test_zip_nonregular_payload_scans_but_cannot_supply_member_proof(self):
+        cases = [(stat.S_IFREG, b"", 0), (stat.S_IFLNK, b"", 2),
+                 (stat.S_IFREG, bytes.fromhex("6e750000"), 2)]
+        for index, (mode, extra, expected) in enumerate(cases):
+            with self.subTest(mode=mode, extra=extra):
+                buffer = io.BytesIO()
+                entry = zipfile.ZipInfo("source.js")
+                entry.create_system = 3
+                entry.external_attr = (mode | 0o644) << 16
+                entry.extra = extra
+                with zipfile.ZipFile(buffer, "w") as wrapped:
+                    wrapped.writestr(entry, PUBLIC_SOURCE)
+                nested = buffer.getvalue()
+                cmd, output = self.proof_command(f"test-{index}.zip", nested, "0")
+                result = subprocess.run([*cmd, digest_bytes(nested)], capture_output=True, check=False, timeout=30)
+                self.assertEqual(result.returncode, expected)
+                self.assertEqual(output.exists(), expected == 0)
+
+                outer = "usr/lib/example/code.zip"
+                layer = tar_bytes([(outer, nested)])
+                member = {"locator": "0", "path": ["source.js"], "sha256": digest_bytes(PUBLIC_SOURCE)}
+                archive = self.root / f"image-{index}.tar"
+                docker_archive(archive, [layer])
+                raw = self.detector_scan(archive)
+                result, final = self.classify(archive, raw, self.policy(self.manifest(
+                    layer, layer, file=outer, member=member
+                )))
+                self.assertEqual(len(result["entries"]), int(expected == 0))
+                self.assertEqual(len(final["blocking_findings"]), int(expected != 0))

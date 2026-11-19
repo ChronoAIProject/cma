@@ -8,7 +8,6 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import tests.test_scanner as scanner_tests
@@ -41,13 +40,13 @@ def zip_bytes(payload):
 class RecordingStage:
     def __init__(self, max_bytes=1024 * 1024, max_entries=100, timeout=5):
         self.budget = Budget(max_bytes, max_entries)
-        self.backend = SimpleNamespace(timeout=timeout)
+        self.timeout = timeout
         self.members = []
 
     def add(self, data, _location):
         self.budget.reserve(len(data))
 
-    def file(self, stream, size, location, _path, _depth):
+    def file(self, stream, size, location, _path, _depth, *, regular=True):
         self.budget.reserve(size)
         data = bytearray()
         while block := stream.read(65536):

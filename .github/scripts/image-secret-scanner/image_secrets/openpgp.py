@@ -7,6 +7,9 @@ SECRET_TAGS = frozenset({5, 7})
 PUBLIC_TAGS = frozenset({6, 14})
 KEY_TAGS = PUBLIC_TAGS | SECRET_TAGS
 KEY_VERSIONS = frozenset({2, 3, 4, 5, 6})
+MARKER_TAG = 10
+MARKER = b"PGP"
+NON_CRITICAL_TAG_MIN = 40
 MAX_PACKETS = 100_000
 
 
@@ -35,28 +38,32 @@ def packet(stream):
 
 
 def secret_key_stream(path):
-    # Key rings begin with a key packet. Distinguish them from unrelated
-    # binaries before walking the other packets in the same stream.
     end = path.stat().st_size
     with path.open("rb") as stream:
-        tag, size = packet(stream)
-        if tag not in KEY_TAGS:
-            return False
-        start = stream.tell()
-        if length(stream, 1) not in KEY_VERSIONS:
-            return False
-        if tag in SECRET_TAGS:
-            return True
+        recognized = False
         for _ in range(MAX_PACKETS):
-            if size is None or size < 1 or start + size > end:
-                return True  # Recognizable key stream with ambiguous framing.
-            if start + size == end:
+            if stream.tell() == end:
                 return False
-            stream.seek(start + size)
             tag, size = packet(stream)
-            if tag in SECRET_TAGS:
-                return True
-            if tag is None:
-                return True
             start = stream.tell()
+            if tag == MARKER_TAG:
+                # RFC 9580 permits markers before and between key packets.
+                if size != len(MARKER) or stream.read(size) != MARKER:
+                    return recognized
+                continue
+            if (not recognized and tag is not None and tag >= NON_CRITICAL_TAG_MIN
+                    and size is not None and start + size <= end):
+                # RFC 9580 also permits unknown non-critical packets before
+                # the key. Their bounded bodies do not establish a key type.
+                stream.seek(start + size)
+                continue
+            if not recognized:
+                if tag not in KEY_TAGS or length(stream, 1) not in KEY_VERSIONS:
+                    return False
+                recognized = True
+                if size == 0:
+                    return True
+            if tag in SECRET_TAGS or tag is None or size is None or start + size > end:
+                return True
+            stream.seek(start + size)
     raise ScanError("openpgp-packet-budget-exceeded")

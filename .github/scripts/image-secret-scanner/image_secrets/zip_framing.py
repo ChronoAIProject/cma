@@ -5,6 +5,9 @@ import struct
 from .common import ScanError
 
 MAX_PREFIX_BYTES = 65536
+# These fields describe size, timestamps or Unix IDs. Other extension fields
+# could change the path or type an installer assigns to the decoded bytes.
+REGULAR_PROOF_EXTRA_TYPES = frozenset({0x0001, 0x5455, 0x7875})
 
 
 def require(condition):
@@ -33,14 +36,19 @@ def leading_prefix(path, end):
     return prefix
 
 
-def local_sizes(extra, size, compressed):
-    zip64 = size == 0xffffffff or compressed == 0xffffffff
-    found = False
+def extra_fields(extra):
     while extra:
         require(len(extra) >= 4)
         kind, length = struct.unpack("<HH", extra[:4])
         require(4 + length <= len(extra))
         data, extra = extra[4:4 + length], extra[4 + length:]
+        yield kind, data
+
+
+def local_sizes(extra, size, compressed):
+    zip64 = size == 0xffffffff or compressed == 0xffffffff
+    found = False
+    for kind, data in extra_fields(extra):
         if kind == 1:
             require(not found)
             found = True
@@ -91,4 +99,6 @@ def payload_extent(stream, member, end):
         require((crc, compressed, size) == (member.CRC, member.compress_size, member.file_size))
         require(stop == end)
     stream.seek(start)
-    return member.compress_size
+    local_proof = all(kind in REGULAR_PROOF_EXTRA_TYPES for kind, _ in extra_fields(extra))
+    central_proof = all(kind in REGULAR_PROOF_EXTRA_TYPES for kind, _ in extra_fields(member.extra))
+    return member.compress_size, local_proof and central_proof
