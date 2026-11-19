@@ -204,6 +204,54 @@ it('revalidates an expired snapshot before fresh submission', async () => {
   expect(create).not.toHaveBeenCalled();
 });
 
+it.each(['ctrlKey', 'metaKey', 'submit'])(
+  'revalidates capacity for a template submitted through %s and preserves its fields',
+  async (submission) => {
+    let snapshot: SandboxCapacity = free;
+    const create = vi.fn(async () => ({ id: 'accepted-template' }));
+    render(
+      <TaskHome
+        client={client({
+          readSandboxCapacity: async () => snapshot,
+          readTaskTemplateSupport: async () => true,
+          createAgentLifecycle: create,
+        })}
+        viewerId="owner"
+        canCreateSandbox
+        onCreated={() => {}}
+      />,
+    );
+    await screen.findByText('9/10 Sandbox environments used');
+    fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
+    const topic = screen.getByLabelText('Topic');
+    fireEvent.change(topic, { target: { value: 'Retained research topic' } });
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+    snapshot = full;
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 11_000);
+    if (submission === 'submit') fireEvent.submit(topic.closest('form')!);
+    else fireEvent.keyDown(topic, { key: 'Enter', [submission]: true });
+    expect(await screen.findByText('10/10 Sandbox environments used')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    expect(topic).toHaveValue('Retained research topic');
+    expect(create).not.toHaveBeenCalled();
+    expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toBeNull();
+    snapshot = free;
+    fireEvent.focus(window);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled());
+    expect(create).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
+    await waitFor(() => expect(create).toHaveBeenCalledOnce());
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        template: { id: 'research', version: 1, fields: { topic: 'Retained research topic' } },
+        initial_message:
+          'Research Retained research topic and summarize the key findings, with links to sources.',
+      }),
+      expect.anything(),
+    );
+  },
+);
+
 it('converges after committed retirement within fifteen seconds without any submission', async () => {
   vi.useFakeTimers({ shouldAdvanceTime: true });
   let snapshot: SandboxCapacity = full;

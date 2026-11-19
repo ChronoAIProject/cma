@@ -52,7 +52,11 @@ async fn stream_projects_safe_history_and_revocation_preserves_independent_owner
     let personal = reads.event_stream_snapshot(&owner).await.unwrap();
     assert_eq!(personal.history.len(), original.len());
     for (visible, stored) in personal.history.iter().zip(&original) {
-        assert_eq!(visible.kind.as_ref(), Some(&stored.kind));
+        let mut expected = stored.kind.clone();
+        if let AgentLogKind::TurnFailed { failure, .. } = &mut expected {
+            *failure = crate::sandbox::public_agent_turn_failure(failure);
+        }
+        assert_eq!(visible.kind.as_ref(), Some(&expected));
     }
     assert_eq!(store.get_agent(&agent.id).await.unwrap().unwrap(), agent);
     assert_eq!(store.agent_log(&agent.id, 0, 200).await.unwrap(), original);

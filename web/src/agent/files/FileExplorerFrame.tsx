@@ -2,6 +2,7 @@ import { useEffect, useRef, type ReactNode } from 'react';
 import { Button } from '../../ui/Button';
 import { IconCloseOutline16 } from '../../ui/icons';
 import { Modal } from '../../ui/Modal';
+import { FilePath } from './FilePaths';
 
 export function FileExplorerFrame({
   panel,
@@ -77,7 +78,7 @@ export function FileLocation({
 }) {
   return (
     <footer className="agent-files__location">
-      <code title={`/home/${directory}`}>/home/{directory}</code>
+      <FilePath label="Current directory" path={directory} />
       {directory && canDelete ? (
         <Button size="sm" variant="danger" disabled={busy} onClick={onDelete}>
           Delete folder

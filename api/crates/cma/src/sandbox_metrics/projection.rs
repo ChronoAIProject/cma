@@ -43,6 +43,7 @@ impl Accumulator {
     }
     pub fn row(&self, item: &Inventory, live: Option<&LiveReading>, report: &Report) -> Row {
         let state = &item.state;
+        let allocation = state.current_allocation();
         let measurements = [Metric::Cpu, Metric::Memory, Metric::Disk].map(|metric| {
             let mut a = self.metrics[metric.index()].clone();
             let expected = if metric == Metric::Disk {
@@ -65,7 +66,7 @@ impl Accumulator {
                     a.latest_capacity = current.latest_capacity;
                 }
             }
-            Measurement::project(&a, metric, report.as_of, state.allocation.running, unknown)
+            Measurement::project(&a, metric, report.as_of, allocation.running, unknown)
         });
         let [cpu, memory, disk] = measurements;
         Row {
@@ -91,9 +92,9 @@ impl Accumulator {
                 .as_ref()
                 .and_then(|s| layer2_core::seconds_from_rfc3339(&s.last_activity_at)),
             allocation: Capacity {
-                cpu_cores: state.allocation.cpu_millis as f64 / 1000.,
-                memory_bytes: state.allocation.memory_mib as f64 * 1_048_576.,
-                disk_bytes: state.allocation.disk_gib as f64 * 1_073_741_824.,
+                cpu_cores: allocation.cpu_millis as f64 / 1000.,
+                memory_bytes: allocation.memory_mib as f64 * 1_048_576.,
+                disk_bytes: allocation.disk_gib as f64 * 1_073_741_824.,
             },
             allocated_period: self.allocation.clone(),
             measured: Measured { cpu, memory, disk },

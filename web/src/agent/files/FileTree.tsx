@@ -1,3 +1,4 @@
+import { absoluteFilePath } from './filePath';
 import { FileChangeStats } from './FileChangeStats';
 import { useId } from 'react';
 import type { FileChange } from '../fileChanges';
@@ -45,10 +46,14 @@ export function FileTree({
     }
   }
   const rows = (path: string, level: number) => (
-    <ul className="agent-files__tree" aria-label={level === 0 ? 'Home files' : undefined}>
+    <ul
+      className="agent-files__tree"
+      aria-label={level === 0 ? `Files in ${absoluteFilePath(rootPath)}` : undefined}
+    >
       {(directories.get(path) ?? [])
         .filter((file) => hidden || !file.hidden)
         .map((file) => {
+          const absolute = absoluteFilePath(file.path);
           const change = file.kind === 'file' ? changes?.get(file.path) : undefined;
           const descriptionId = `${metadataId}-${encodeURIComponent(file.path)}`;
           const folder = file.kind === 'directory';
@@ -60,7 +65,7 @@ export function FileTree({
                 className="agent-files__row"
                 aria-expanded={folder ? open : undefined}
                 aria-current={selected === file.path ? 'true' : undefined}
-                title={`/home/${file.path}`}
+                title={absolute}
                 aria-label={file.name}
                 aria-describedby={
                   change || changedFolders.has(file.path)
@@ -68,7 +73,7 @@ export function FileTree({
                     : descriptionId
                 }
                 onClick={() => (folder ? onDirectory(file.path) : onFile(file))}
-                disabled={disabled || file.kind === 'symlink'}
+                disabled={disabled || file.kind === 'symlink' || absolute === undefined}
               >
                 {folder ? (
                   open ? (
@@ -93,7 +98,7 @@ export function FileTree({
                 <span className="agent-files__file-label">
                   <span>{file.name}</span>
                   <span id={descriptionId} className="agent-files__file-path">
-                    /home/{file.path}
+                    {absolute ?? 'Unavailable path'}
                   </span>
                 </span>
                 {folder && changedFolders.has(file.path) ? (

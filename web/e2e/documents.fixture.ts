@@ -35,6 +35,7 @@ export class LocalDocuments {
   shares: { subject: string; permission: string }[] = [];
   links: { id: string; permission: string; created_at: string }[] = [];
   exists = true;
+  saveFailures = 0;
   async route(page: Page, baseURL: string) {
     await this.boundary.route(page, baseURL);
     await page.route('**/api/v1/documents**', async (route) => {
@@ -110,6 +111,10 @@ export class LocalDocuments {
       }
       if (url.pathname === `/api/v1/documents/${documentId}`) {
         if (method === 'PATCH') {
+          if (this.saveFailures > 0) {
+            this.saveFailures--;
+            return reply({ detail: 'Save could not be confirmed' }, 503);
+          }
           if (body.expected_revision !== this.document.revision)
             return reply({ detail: 'Revision conflict' }, 409);
           this.document.revision++;

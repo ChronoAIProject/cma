@@ -311,6 +311,7 @@ async fn purge_in_transaction(
     let sandbox = read_sandbox(&aggregate).map_err(|_| PurgeError::Conflict)?;
     if sandbox.retirement_archive_pending()
         || sandbox.status != SandboxStatus::Retired
+        || sandbox.runtime.is_some()
         || !sandbox.credential.revoke_debt.is_empty()
     {
         return Err(PurgeError::Conflict);

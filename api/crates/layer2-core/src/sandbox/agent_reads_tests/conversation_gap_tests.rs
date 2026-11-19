@@ -193,7 +193,7 @@ async fn declared_gap_preserves_history_and_marks_only_affected_completion_incom
     assert_eq!(failure.class, "conversation_output_gap");
     assert!(failure
         .detail
-        .starts_with("37 runtime output frames were lost."));
+        .starts_with("Some conversation output could not be retained."));
     let events = reads
         .log(&caller("owner", true), &current.id, 0, 100)
         .await
@@ -247,7 +247,7 @@ async fn gap_does_not_invent_a_terminal_or_replace_an_actual_failure_or_cancella
                 turn.outcome,
                 AgentTurnOutcome::Failed {
                     at: NOW.into(),
-                    failure: failure.clone()
+                    failure: crate::sandbox::public_agent_turn_failure(&failure)
                 }
             ),
             _ => assert_eq!(

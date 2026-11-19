@@ -65,22 +65,9 @@ impl AgentWorker {
             }
             let result =
                 outcome.map_err(|error| attempt.ownership(Origin::AuthorityScope, error))?;
-            if result.is_ok()
-                && self
-                    .dependencies
-                    .store
-                    .get_agent(id)
-                    .await
-                    .map_err(|error| attempt.store(Origin::PostWorkRead, error))?
-                    .is_none_or(|agent| {
-                        !agent.status.is_live() && agent.work.step == AgentWorkStep::None
-                    })
-            {
-                self.dependencies.registry.detach_owner(&authority.token);
-                coordinator
-                    .handoff(&authority, authority.revoke_transports())
-                    .await
-                    .map_err(|error| attempt.ownership(Origin::Handoff, error))?;
+            if result.is_ok() {
+                self.finish_ownership_attempt(id, coordinator, &authority, attempt)
+                    .await?;
             }
             return result;
         }
@@ -154,6 +141,11 @@ impl AgentWorker {
         now: SystemTime,
         attempt: &LifecycleAttempt,
     ) -> Result<bool, LifecycleTaskFailure> {
+        // A queue may predate the latest receiver failure. Deferral confers no
+        // claim and leaves the durable intent for the next periodic discovery.
+        if self.defer_ownership_retry(id).await {
+            return Ok(false);
+        }
         let started = tokio::time::Instant::now();
         let progressed = Box::pin(self.run_one_observed(id, now, attempt)).await?;
         if !progressed {
