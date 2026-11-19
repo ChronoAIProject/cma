@@ -41,7 +41,8 @@ pub(super) fn app_return_target(value: &str) -> Result<String, ()> {
         return Err(());
     }
     match segments.as_slice() {
-        ["agent-manager" | "event-gateway" | "image-manager"] => {}
+        ["agent-manager" | "event-gateway" | "image-manager" | "docs" | "usage"] => {}
+        ["docs", "event-gateway"] => {}
         ["t", public_id] if opaque_path_segment(public_id) => {}
         ["t", public_id, placement_id]
             if opaque_path_segment(public_id) && opaque_path_segment(placement_id) => {}
@@ -74,6 +75,37 @@ pub(super) fn opaque_path_segment(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shared_browser_return_target_contract() {
+        #[derive(serde::Deserialize)]
+        struct Case {
+            target: String,
+            explicit: Option<String>,
+            backend: bool,
+        }
+        let cases: Vec<Case> = serde_json::from_str(include_str!(
+            "../../../../layer1-public/tests/fixtures/browser-auth-return-targets.json"
+        ))
+        .unwrap();
+        for case in cases {
+            assert_eq!(
+                app_return_target(&case.target).is_ok(),
+                case.backend,
+                "raw target: {}",
+                case.target
+            );
+            if let Some(emitted) = case.explicit {
+                assert_eq!(
+                    app_return_target(&emitted),
+                    Ok(emitted.clone()),
+                    "browser destination from {}",
+                    case.target
+                );
+            }
+        }
+    }
+
     #[test]
     fn preserves_only_bounded_ui_query_state_without_changing_path_authority() {
         for target in [
