@@ -200,6 +200,25 @@ class CacheTests(unittest.TestCase):
             transfer.assert_not_called()
             self.assertIn("::warning::API Cargo cache inject unavailable (ValueError)", output.getvalue())
 
+    def test_graph_fallback_excludes_unpackaged_and_unverified_registry_contents(self):
+        # Either file might exist in the previous graph's registry archive.
+        # The partial importer never supplies that archive to the builder.
+        self.bundle()
+        registry = self.root / "registry.tar.gz"
+        with tarfile.open(registry, "w:gz") as tar:
+            for path in ("src/test-index/demo-1.0.0/lib.rs", "cache/test-index/demo-1.0.0.crate"):
+                info = tarfile.TarInfo(path)
+                value = b"not the current lockfile content"
+                info.size = len(value)
+                tar.addfile(info, io.BytesIO(value))
+        recipe = cache.dockerfile("inject-target")
+        self.assertIn("COPY target.tar.gz /restore/", recipe)
+        self.assertNotIn("registry", recipe)
+        with patch("subprocess.run") as run:
+            cache.transfer("inject-target", self.root, namespace="synthetic")
+        self.assertIn("BUILDKIT_CACHE_MOUNT_NS=synthetic", run.call_args.args[0])
+        self.assertEqual(run.call_args.kwargs["input"], recipe)
+
     def test_bridge_mount_ids_match_the_real_api_dockerfile(self):
         definition = (cache.ROOT / "api/crates/cma/Dockerfile").read_text()
         self.assertIn(f'id={cache.MOUNTS["registry"]},target=/usr/local/cargo/registry,sharing=locked', definition)

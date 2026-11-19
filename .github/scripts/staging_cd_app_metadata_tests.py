@@ -7,6 +7,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import yaml
+
 import staging_cd_app_metadata as metadata
 import staging_cd_checkout as checkout
 from staging_cd_common import Refusal
@@ -38,6 +40,55 @@ class AppMetadataTests(unittest.TestCase):
         self.assertEqual(masks[0], "fixture")
         self.assertIn("private fixture subject continued", masks[-1])
         self.assertIn("private body", masks[-1])
+
+    def test_deploy_workflow_preserves_diagnostics_and_masks_sensitive_values(self):
+        workflow = Path(__file__).resolve().parents[1] / "workflows/staging-deploy.yml"
+        steps = yaml.safe_load(workflow.read_text())["jobs"]["deploy"]["steps"]
+        prepare = next(step for step in steps if step.get("id") == "private")
+        checkout_index = next(i for i, step in enumerate(steps) if step.get("with", {}).get("repository"))
+        self.assertLess(steps.index(prepare), checkout_index)
+        self.assertEqual(prepare["run"], "python3 -B .github/scripts/staging_cd_checkout.py prepare-app")
+        self.assertEqual(prepare["env"]["CD_INFRA_TOKEN"], "${{ steps.infra-token.outputs.token }}")
+
+        repo_patch = patch.object(metadata, "REPOSITORY", "Example/xy")
+        repo_patch.start()
+        self.addCleanup(repo_patch.stop)
+        public_revision, private_tree = "a" * 40, "b" * 40
+        installation, commit = self.responses()
+        installation["repositories"][0].update(
+            id=12345678, name="xy", owner={"login": "ab"}, visibility="private",
+            permissions={"pull": True}, language="Go", description="x", status="disabled",
+        )
+        commit.update(tree={"sha": private_tree}, verification={"verified": True, "reason": "valid"},
+                      author={"name": "Li", "email": "who@example.invalid"})
+        read = Mock(side_effect=[installation, commit])
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as directory:
+            env = {"GITHUB_WORKSPACE": directory, "GITHUB_RUN_ID": "123", "GITHUB_RUN_ATTEMPT": "1",
+                   "CD_INFRA_TOKEN": "z", "CD_INFRA_REF": public_revision}
+            def resolve(token, revision, masker):
+                return metadata.resolve_app_commit(token, revision, masker, lambda _: read)
+            with contextlib.redirect_stdout(output):
+                self.assertEqual(run_private(lambda mask: checkout.prepare_app(env, mask, resolve), None), 0)
+
+        lines = output.getvalue().splitlines()
+        self.assertEqual(lines[-1], "PASS")
+        self.assertTrue(all(line.startswith("::add-mask::") for line in lines[:-1]))
+        masks = {line[len("::add-mask::"):] for line in lines[:-1]}
+        required = {"z", metadata.REPOSITORY, "xy", "ab", "Li", "12345678", "who@example.invalid",
+                    private_tree, "private body", "private fixture subject continued"}
+        self.assertTrue(required <= masks)
+        self.assertTrue(masks.isdisjoint({"id", "sha", "verified", "private", "pull", "valid", "disabled", "Go", "x", public_revision}))
+        for diagnostic in ("Staging deployment is unverified", "sha256:", "identity", "precondition=private-image-version"):
+            self.assertFalse(any(mask in diagnostic for mask in masks))
+
+    def test_confidential_values_take_precedence_over_length_and_public_vocabulary(self):
+        fields = {"name": "id", "owner": {"login": "private"}, "node_id": "q", "api_key": "k",
+                  "client_secret": "s", "access_token": "t", "credentials": [{"value": "j"}],
+                  "verification": {"signature": "v"},
+                  "topics": ["short", "synthetic-private-topic"], "user_view_type": "public", "private": True}
+        self.assertEqual(set(metadata.metadata_values(fields)),
+                         {"id", "private", "q", "k", "s", "t", "j", "v", "synthetic-private-topic"})
 
     def test_extra_repository_public_repo_or_wrong_repo_never_resolves_head(self):
         cases = [
