@@ -148,17 +148,19 @@ def measure(builder, reserved, directory):
                      **builder.report}
 
 
-def seal_seed(tool, bundle, builder, reserved, source):
+def seal_seed(tool, bundle, builder, reserved, source, receipt):
     key = source_identity(source, reserved["component"], reserved["source"])
-    # Exercise the exact v4 qualified format for the disposable transport even
-    # before the protected writer is available. No Actions cache is written.
+    # Exercise the protected format using a disposable archive. This benchmark
+    # has read-only GitHub permissions and never writes an Actions cache.
     key = CargoKey(key.family.replace("cma-cd-cargo-v3-", "cma-cd-cargo-v4-", 1), key.graph, key.source)
     started = time.monotonic()
     tool.transfer("extract", bundle, builder.name, namespace=builder.namespace)
+    receipt.update(export_seconds=round(time.monotonic() - started, 3),
+                   compressed_bytes=sum(item.stat().st_size for item in bundle.glob("*.tar.gz")),
+                   expanded_limit_exceeded=(bundle / "oversize").exists())
     tool.seal(bundle, key.prefix, family=key.family, source=key.source, graph=key.graph)
-    info = {"export_seconds": round(time.monotonic() - started, 3),
-            "bytes": sum(item.stat().st_size for item in bundle.iterdir())}
-    return key, info
+    receipt["bytes"] = sum(item.stat().st_size for item in bundle.iterdir())
+    return key
 
 
 def verify_image(archive, component, revision, version, *, library=False):
@@ -208,7 +210,8 @@ def main():
             with Builder(work / "layers", True) as builder:
                 archive, result["cold"] = measure(builder, cold_request, work / "cold")
                 archive.unlink()
-                key, result["seed"] = seal_seed(tool, work / "seed", builder, cold_request, work / "cold/source")
+                result["seed"] = {}
+                key = seal_seed(tool, work / "seed", builder, cold_request, work / "cold/source", result["seed"])
             warm = edited_revision(seed, args.component, work / "index")
             warm_request = reservation(args.component, warm, [cold_request])
             measure_warm(tool, key, work, args.component, warm_request, "warm", result)
