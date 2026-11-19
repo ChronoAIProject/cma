@@ -16,7 +16,7 @@ class SupersededVersions(Refusal):
         self.components = frozenset(components)
 
 
-def eligible_receipts(receipts, check, policy, *, obsolete=()):
+def eligible_receipts(receipts, check, policy, *, obsolete=(), transition=None):
     """Only positive proof of supersession can narrow a previously admitted set."""
     stale = set(obsolete)
     try:
@@ -27,8 +27,8 @@ def eligible_receipts(receipts, check, policy, *, obsolete=()):
     if stale & GROUP and (receipts.keys() - stale) & GROUP:
         # A transition among the original members requires all three, even if
         # the member defining the transition has just been superseded.
-        contract = policy()
-        if any(contract.transition(receipts[key]["source"]) for key in GROUP & receipts.keys()):
+        contract = policy() if transition is None else None
+        if transition or any(contract.transition(receipts[key]["source"]) for key in GROUP & receipts.keys()):
             stale.update(GROUP & receipts.keys())
     selected = {key: receipt for key, receipt in receipts.items() if key not in stale}
     require(bool(selected), SUPERSEDED)

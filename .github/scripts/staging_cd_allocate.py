@@ -4,6 +4,8 @@ import os
 from pathlib import Path
 
 from staging_cd_admission import event_identity
+from staging_cd_compatibility import GROUP
+from staging_cd_transition import complete_group
 from staging_cd_allocate_progress import allocation_progress
 from staging_cd_allocation_io import AllocationGitHub as GitHub, AllocationIO, parallel_read
 from staging_cd_allocation_snapshot import AllocationConflict, AllocationSnapshot as Reservations, SnapshotAPI
@@ -118,12 +120,19 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
     changes = sorted(queue["changes"], key=lambda change: history.position(change["source"]))
     newest = {name: change["source"] for change in changes for name in change["deployables"]}
     owners, busy = {}, set()
+    group_sources = [newest[DEPLOYABLES[key]] for key in GROUP if DEPLOYABLES[key] in newest]
+    group_tip = max(group_sources, key=history.position, default=None) if queue.get("contract_transition") else None
     for item in pending:
         if item["component"] not in DEPLOYABLES or DEPLOYABLES[item["component"]] not in newest:
             continue
         # Only duplicate work for the very same source needs an owner lookup.
         # Strictly older owners lose authority when the successor transaction lands.
         if item["source"] != newest[DEPLOYABLES[item["component"]]]:
+            continue
+        if group_tip and item["component"] in GROUP and item["source"] != group_tip:
+            # A sibling source moves only with an actual group publication.
+            # Defer it to the atomic group plan without waiting for its writer.
+            busy.add(item["component"])
             continue
         owner = (item["run_id"], item["run_attempt"])
         if owner == (run_id, attempt):
@@ -211,7 +220,10 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
             jobs.append({"component": component, "mode": "publish", "reservation": value})
     # Intermediate reservations preserve each merged label's version increment,
     # but only the newest source is built. Failed attempts remain burned.
-    grouped = [{"component": key, "tasks": canonical([job for job in jobs if job["component"] == key])}
+    transition = queue.get("contract_transition")
+    complete = complete_group(transition, jobs, changes, api, reservations, finals, pending, run_id, attempt)
+    grouped = [{"component": key, **({"contract_transition": transition} if complete and key in GROUP else {}),
+                "tasks": canonical([job for job in jobs if job["component"] == key])}
                for key in DEPLOYABLES if any(job["component"] == key for job in jobs)]
     mark("all", "planned")
     return {"include": grouped}

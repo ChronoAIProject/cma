@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from staging_cd_admission import event_identity
+from staging_cd_applied import configured_group
 from staging_cd_checkout import checkout_path
 from staging_cd_clock import elapsed, remaining, TOTAL_SECONDS, TERMINATION_GRACE_SECONDS
 from staging_cd_common import Refusal, matches, require
@@ -16,7 +17,7 @@ from staging_cd_receipts import canonical
 from staging_cd_runtime import run_private
 from staging_cd_set import document, private_document, release_set, validate_set
 from staging_cd_tools import environment as tool_environment
-from staging_cd_compatibility import ContractPolicy
+from staging_cd_compatibility import ContractPolicy, GROUP
 from staging_cd_history import DevelopHistory
 from staging_cd_watermark import eligible_receipts, record_withheld, require_current_versions
 from staging_cd_deploy_result import read as read_component_result, retain as retain_component_result
@@ -25,10 +26,12 @@ IDENTITY_KEYS = ("GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_NAME",
                  "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")
 PROCESS_KEYS = ("PATH", "LANG", "LC_ALL", "RUNNER_TEMP")
 DISABLED = 100
+UNVERIFIED_COHORT = 51
 PENDING_RUNTIME_CHECK = "PASS_PENDING_LEAD_RUNTIME_IMAGE_CHECK"
 RUNTIME_NOTICE = "NOT-YET: runtime_image_id requires independent lead verification before final acceptance"
 RESULTS = {0: PENDING_RUNTIME_CHECK,
            DISABLED: "SKIP: deploy disabled in cma-infra",
+           UNVERIFIED_COHORT: "NOT-YET: contract digests are configured; the serving cohort is unverified",
            10: "FAIL: release failed; eligible owned changes recovered and verified",
            20: "FAIL: deployment unverified; immediate operator intervention required",
            30: "FAIL: deployment not admitted; no mutation attempted",
@@ -115,22 +118,40 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     # App tokens, registry credentials, keys and Actions command files stay out.
     receipts = {key: value["receipts"][key] for key in selected}
     result = None
+    unverified_cohort = False
     with tempfile.TemporaryDirectory(prefix="cma-release-set-", dir=env["RUNNER_TEMP"]) as directory:
         path = Path(directory) / "release-set.json"
         try:
             if automatic:
                 # A successor can arrive during tool or controller setup. Keep
                 # the remaining eligible peers inside this same mutation lock.
-                current = eligible_receipts(receipts, require_current_versions,
-                                            lambda: ContractPolicy(DevelopHistory.from_head(env["GITHUB_SHA"])))
+                transition = value.get("contract_transition")
+                def current_subset(candidates):
+                    return eligible_receipts(candidates, require_current_versions,
+                                             lambda: ContractPolicy(DevelopHistory.from_head(env["GITHUB_SHA"])),
+                                             transition=transition)
+                configured = set()
+                current = current_subset(receipts)
+                if transition and GROUP & current.keys():
+                    require(GROUP <= current.keys(), "Deployment policy split the contract group")
+                    configured = configured_group(script, directory, current, started, child_env)
+                    # An allocation may have landed during the live observation.
+                    current = current_subset(current)
                 record_withheld(env, receipts, current)
-                receipts = current
+                # Matching defaults alone cannot prove which template the ready
+                # pods serve. When any member must change, submit all three:
+                # the controller composes one PATCH and omits unchanged defaults.
+                unverified_cohort = configured == GROUP and GROUP <= current.keys()
+                receipts = {key: receipt for key, receipt in current.items()
+                            if not unverified_cohort or key not in GROUP}
+                if not receipts:
+                    return UNVERIFIED_COHORT
             request = private_document(release_set(receipts))
             with path.open("x", encoding="utf-8") as stream:
                 os.chmod(path, 0o600)
                 stream.write(canonical(request))
             remaining(started)
-        except Refusal as error:
+        except (OSError, ValueError, subprocess.SubprocessError) as error:
             raise NotAdmitted("Deployment admission changed before controller launch") from error
         try:
             code = runner(script, path, mode, started, child_env)
@@ -146,6 +167,8 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
             emit(result, request, code, env)
         except (OSError, ValueError, KeyError, TypeError):
             return 20
+    if code == 0 and unverified_cohort:
+        return UNVERIFIED_COHORT
     return code if code in (0, 10, 20, 30, 40, 50) else 20
 
 
@@ -168,6 +191,8 @@ def main():
     result = run_private(operation, None)
     if skipped:
         print(RESULTS[DISABLED])
+    if outcome == UNVERIFIED_COHORT:
+        print(RESULTS[UNVERIFIED_COHORT])
     if outcome == 20:
         print("::error::Staging deployment is unverified. Immediate operator intervention required.")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -199,7 +224,7 @@ def main():
         for component in sorted(GROUP):
             if value.get("components", {}).get(component, {}).get("state") == "withheld":
                 print("FAIL component=" + component + " reason=deployed-compatibility-unqualified")
-    return 0 if result == 0 else outcome if outcome in (10, 20, 30, 40, 50) else 40
+    return 0 if result == 0 else outcome if outcome in (10, 20, 30, 40, 50, UNVERIFIED_COHORT) else 40
 
 
 if __name__ == "__main__":
