@@ -242,13 +242,21 @@ it('does not call a pending repository check unsupported when submitting a retai
     }),
   );
   let resolve!: (value: boolean) => void;
+  let resolveCapacity!: (value: typeof AVAILABLE_CAPACITY) => void;
   const { create } = draw({
+    readSandboxCapacity: () =>
+      new Promise<typeof AVAILABLE_CAPACITY>((done) => {
+        resolveCapacity = done;
+      }),
     readTaskRepositorySupport: () =>
       new Promise<boolean>((done) => {
         resolve = done;
       }),
   });
   await ready();
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeDisabled();
+  await act(async () => resolveCapacity(AVAILABLE_CAPACITY));
+  expect(screen.getByRole('button', { name: 'Start task' })).toBeEnabled();
   fireEvent.click(screen.getByRole('button', { name: 'Start task' }));
   expect(screen.getByRole('alert')).toHaveTextContent(
     'Checking repository support. Wait for the check to finish before starting.',
