@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from staging_cd_admission import event_identity
+from staging_cd_allocate_progress import allocation_progress
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHub, GitHubNotFound
 from staging_cd_receipts import canonical
@@ -80,10 +81,14 @@ def run_active(api, reservation):
     return run["status"] != "completed"
 
 
-def allocate_queue(queue, api, reservations, run_id, attempt):
+def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _component, _phase: None):
     require(isinstance(queue, dict) and matches(r"[0-9a-f]{40}", queue.get("head"))
             and isinstance(queue.get("changes"), list), "Release queue is invalid")
-    finals, pending = api.tags(), reservations.list()
+    mark("all", "final-inventory")
+    finals = api.tags()
+    mark("all", "pending-inventory")
+    pending = reservations.list()
+    mark("all", "history")
     history = api.history()
     jobs, seen = [], set()
     # A durable newer reservation/final makes an older source obsolete without
@@ -108,6 +113,7 @@ def allocate_queue(queue, api, reservations, run_id, attempt):
         if owner == (run_id, attempt):
             continue
         if owner not in active_owners:
+            mark(item["component"], "owner-read")
             active_owners[owner] = run_active(api, item)
         if active_owners[owner]:
             # A newer source cannot silently disappear behind a live old run.
@@ -150,12 +156,21 @@ def allocate_queue(queue, api, reservations, run_id, attempt):
                 # A retry must not burn this obsolete source again.
                 continue
             if pr is None:
+                mark(component, "merged-pr")
                 pr = merged_pr(source, api.request)
                 level = published[0]["identity"]["bump"] if published else label_level(pr)
             def next_value(current, reserved):
                 return next_reservation(component, source, tree, pr["number"], level, run_id, attempt,
                                         current, reserved)
-            value = reserve(next_value, reservations.insert, lambda: (api.tags(), reservations.list()))
+            def refresh():
+                mark(component, "final-inventory")
+                current = api.tags()
+                mark(component, "pending-inventory")
+                return current, reservations.list()
+            def insert(value):
+                mark(component, "reserve")
+                return reservations.insert(value)
+            value = reserve(next_value, insert, refresh)
             pending.append(value)
             if source == newest[name]:
                 jobs.append({"component": component, "mode": "publish", "reservation": value})
@@ -163,6 +178,7 @@ def allocate_queue(queue, api, reservations, run_id, attempt):
     # but only the newest source is built. Failed attempts remain burned.
     grouped = [{"component": key, "tasks": canonical([job for job in jobs if job["component"] == key])}
                for key in DEPLOYABLES if any(job["component"] == key for job in jobs)]
+    mark("all", "complete")
     return {"include": grouped}
 
 
@@ -174,11 +190,12 @@ def main():
         api = GitHub(env.get("GH_TOKEN"))
         reservations = Reservations(api, env.get("GH_TOKEN"), Path.cwd())
         matrix = allocate_queue(json.loads(env["CD_QUEUE"]), api, reservations,
-                                int(env["GITHUB_RUN_ID"]), int(env["GITHUB_RUN_ATTEMPT"]))
+                                int(env["GITHUB_RUN_ID"]), int(env["GITHUB_RUN_ATTEMPT"]), mark=mark)
         output(env, "matrix", canonical(matrix))
         output(env, "changed", "true" if matrix["include"] else "false")
         return True
-    return run_allocation(operation)
+    with allocation_progress() as mark:
+        return run_allocation(operation)
 
 
 if __name__ == "__main__":
