@@ -7,6 +7,8 @@
 // excluded from busy. Reserve references explain the separately required room.
 // Unclassified native demand is ordinary. Only a complete, evidenced breakdown
 // of effective Continuity/Control demand may consume configured process reserve.
+// Retained providers use direct transport without the native permit/pool path;
+// preserve their workload inventory but block capacity mapping for that topology.
 // The synthetic test fixture is the executable input example. Keep candidate
 // observations outside the public repository.
 import { readFileSync } from 'node:fs';
@@ -73,11 +75,11 @@ function configuration(config, path) {
 function pool(value, config, path) {
   fields(value, ['role', 'limit', 'reserve', 'requiredReserve', 'slots', 'cachedConnections',
     'busy', 'waiting', 'ordinaryBusy', 'otherConsumers'], path);
-  if (!['native', 'retained_provider'].includes(value.role)) fail(`${path}: unknown pool role`);
+  if (value.role !== 'native') fail(`${path}: unknown native pool role`);
   for (const name of ['limit', 'reserve', 'requiredReserve', 'slots', 'cachedConnections', 'busy', 'waiting', 'ordinaryBusy', 'otherConsumers']) {
     number(value[name], `${path}.${name}`, name === 'limit' ? 1 : 0);
   }
-  if (value.role === 'native' && (value.limit !== 16 || value.reserve !== config.nativeSessionReserve)) fail(`${path}: native pool differs from exact config`);
+  if (value.limit !== 16 || value.reserve !== config.nativeSessionReserve) fail(`${path}: native pool differs from exact config`);
   if (value.reserve >= value.limit || value.reserve < value.requiredReserve) fail(`${path}: reserve unavailable`);
   if (value.busy + value.cachedConnections > value.slots || value.ordinaryBusy > value.busy) fail(`${path}: inconsistent session occupancy`);
   within(value.slots, 0, value.limit, path);
@@ -117,6 +119,15 @@ function ordinaryDemand(row, native, kind, path) {
   return { streams: ordinary.runtimeLinks + ordinary.desktopStreams + ordinary.otherStreams,
     requests: ordinary.nativeBusy + ordinary.nativeWaiting + ordinary.otherRequests };
 }
+const retainedCounts = ['activeAgents', 'runtimeLinks', 'publicObservers', 'desktopStreams', 'otherStreams', 'requests'];
+function retainedInventory(value, enabled, path) {
+  fields(value, ['transport', ...retainedCounts], path);
+  for (const name of retainedCounts) number(value[name], `${path}.${name}`);
+  if (!enabled && retainedCounts.some((name) => value[name] !== 0)) fail(`${path}: unconfigured retained consumer`);
+  text(value.transport, `${path}.transport`);
+  if (value.transport !== (enabled ? 'direct_provider' : 'none')) fail(`${path}: retained transport inventory differs from config`);
+  if (value.runtimeLinks < value.activeAgents) fail(`${path}: retained active work lacks links`);
+}
 function placement(row, instance, kind, path) {
   fields(row, ['instance', 'evidence', 'activeAgents', 'runtimeLinks', 'publicObservers',
     'desktopStreams', 'otherStreams', 'otherRequests', 'streamPermits', 'requestPermits',
@@ -126,6 +137,7 @@ function placement(row, instance, kind, path) {
     'otherStreams', 'otherRequests', 'streamPermits', 'requestPermits', 'queuedRequests', 'queueMaxWaitMs'];
   for (const name of counts) number(row[name], `${path}.${name}`);
   const config = instance.config;
+  retainedInventory(row.retained, config.retainedProvider, `${path}.retained`);
   fields(row.requiredReserve, ['streams', 'requests', 'publicStreams', 'reference'], `${path}.requiredReserve`);
   for (const name of ['streams', 'requests', 'publicStreams']) number(row.requiredReserve[name], `${path}.requiredReserve.${name}`);
   text(row.requiredReserve.reference, `${path}.requiredReserve.reference`);
@@ -138,27 +150,13 @@ function placement(row, instance, kind, path) {
   within(row.requestPermits, row.requiredReserve.requests, config.requestLimit, `${path}.requests`);
   within(row.queuedRequests, 0, config.requestQueueLimit, `${path}.queue`);
   within(row.queueMaxWaitMs, 0, config.requestQueueMaxWaitMs, `${path}.queueWait`);
-  const pools = array(row.pools, `${path}.pools`, 1, 2);
-  unique(pools.map((p) => object(p, `${path}.pool`).role), `${path}.pools`);
-  for (const item of pools) pool(item, config, `${path}.pool.${item.role}`);
-  const native = pools.find((p) => p.role === 'native');
-  if (!native) blocked(`${path}: native pool observations missing`);
+  const [native] = array(row.pools, `${path}.pools`, 1, 1);
+  pool(native, config, `${path}.pool.native`);
   if (row.requestPermits !== native.busy + native.waiting + row.otherRequests) fail(`${path}: process request mapping mismatch`);
   const ordinary = ordinaryDemand(row, native, kind, path);
   within(ordinary.streams, config.streamReserve, config.streamLimit, `${path}.ordinary streams`);
   within(ordinary.requests, config.requestReserve, config.requestLimit, `${path}.ordinary requests`);
-  const retainedPool = pools.find((p) => p.role === 'retained_provider');
-  if (Boolean(retainedPool) !== config.retainedProvider) fail(`${path}: retained pool inventory differs from config`);
-  fields(row.retained, ['activeAgents', 'runtimeLinks', 'publicObservers', 'desktopStreams',
-    'otherStreams', 'streamLimit', 'streamReserve', 'requests', 'requestLimit', 'requestReserve'], `${path}.retained`);
-  for (const name of ['activeAgents', 'runtimeLinks', 'publicObservers', 'desktopStreams',
-    'otherStreams', 'streamLimit', 'streamReserve', 'requests', 'requestLimit', 'requestReserve']) number(row.retained[name], `${path}.retained.${name}`);
   const retained = row.retained;
-  if (!config.retainedProvider && Object.values(retained).some((n) => n !== 0)) fail(`${path}: unconfigured retained consumer`);
-  if (retained.runtimeLinks < retained.activeAgents) fail(`${path}: retained active work lacks links`);
-  within(retained.runtimeLinks + retained.desktopStreams + retained.otherStreams, retained.streamReserve, retained.streamLimit, `${path}.retainedStreams`);
-  within(retained.requests, retained.requestReserve, retained.requestLimit, `${path}.retainedRequests`);
-  if (retainedPool && retained.requests < retainedPool.busy + retainedPool.waiting) fail(`${path}: retained request mapping mismatch`);
   within(row.publicObservers + retained.publicObservers, row.requiredReserve.publicStreams, config.publicStreamLimit, `${path}.public`);
   control(row.control, `${path}.control`);
   return { active: row.activeAgents + retained.activeAgents, public: row.publicObservers + retained.publicObservers,
@@ -194,6 +192,7 @@ export function validateCapacity(input) {
     for (const loss of [null, ...ids]) if (!scenarios.some((s) => s.lostInstance === loss)) blocked('scenarios: baseline or one-instance loss missing');
     const maxima = { streams: 0, requests: 0, nativeBusy: 0, nativeWaiting: 0 };
     const poolMaxima = {};
+    const retainedMaxima = Object.fromEntries(retainedCounts.map((name) => [name, 0]));
     for (const scenario of scenarios) {
       fields(scenario, ['lostInstance', 'placement'], 'scenario');
       const survivors = ids.filter((id) => id !== scenario.lostInstance);
@@ -205,6 +204,7 @@ export function validateCapacity(input) {
         const values = placement(row, instances.find((i) => i.id === row.instance), input.kind, 'placement');
         active += values.active; publicCount += values.public;
         if (scenario.lostInstance !== null) {
+          for (const name of retainedCounts) retainedMaxima[name] = Math.max(retainedMaxima[name], row.retained[name]);
           for (const key of Object.keys(maxima)) maxima[key] = Math.max(maxima[key], values[key]);
           for (const pool of row.pools) {
             const peak = poolMaxima[pool.role] ??= { slots: 0, busy: 0, waiting: 0, otherConsumers: 0, requiredReserve: 0 };
@@ -213,6 +213,11 @@ export function validateCapacity(input) {
         }
       }
       if (active !== input.targets.activeAgents || publicCount !== input.targets.publicObservers) fail('placement: target workload not fully placed');
+    }
+    if (instances.some((instance) => instance.config.retainedProvider)) {
+      return { status: 'BLOCKED', scope: 'offline_mapping_contract', qualification: 'NOT_ASSESSED',
+        reason: 'retained direct-provider limits and enforcement are not represented by the native capacity contract',
+        retainedInventory: { transport: 'direct_provider', maximumSurvivingInstance: retainedMaxima } };
     }
     return { status: 'PASS', scope: 'offline_mapping_contract', qualification: 'NOT_ASSESSED',
       kind: input.kind, maximumSurvivingInstance: maxima, maximumSurvivingPool: poolMaxima };

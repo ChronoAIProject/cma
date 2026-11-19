@@ -10,9 +10,8 @@ import { validateCapacity } from './runtime-capacity-contract.mjs';
 const config = () => ({ streamLimit: 256, requestLimit: 32, streamReserve: 16,
   requestReserve: 8, nativeSessionReserve: 2, requestQueueLimit: 4, requestQueueMaxWaitMs: 1000,
   publicStreamLimit: 512, sharedRuntimeOutput: false, transport: 'kubernetes_exec', retainedProvider: false });
-const emptyRetained = () => ({ activeAgents: 0, runtimeLinks: 0, publicObservers: 0,
-  desktopStreams: 0, otherStreams: 0, streamLimit: 0, streamReserve: 0,
-  requests: 0, requestLimit: 0, requestReserve: 0 });
+const emptyRetained = () => ({ transport: 'none', activeAgents: 0, runtimeLinks: 0,
+  publicObservers: 0, desktopStreams: 0, otherStreams: 0, requests: 0 });
 function row(instance, active, observers) {
   return { instance, evidence: { source: 'synthetic', reference: 'local-fixture' },
     activeAgents: active, runtimeLinks: active, publicObservers: observers,
@@ -57,6 +56,16 @@ function privilegedFixture() {
     value.privileged = { boundary: 'shared_native_process', evidence: { source: 'synthetic', reference: 'effective-class-fixture' },
       runtimeLinks: value.runtimeLinks, desktopStreams: 130, otherStreams: 0,
       nativeBusy: 9, nativeWaiting: 2, otherRequests: 1 };
+  });
+  return input;
+}
+function retainedFixture() {
+  const input = fixture();
+  input.instances.forEach((instance) => { instance.config.retainedProvider = true; });
+  eachRow(input, (value) => {
+    value.activeAgents -= 5; value.runtimeLinks -= 5; value.streamPermits -= 5; value.publicObservers -= 5;
+    value.retained = { transport: 'direct_provider', activeAgents: 5, runtimeLinks: 5,
+      publicObservers: 5, desktopStreams: 1, otherStreams: 2, requests: 2 };
   });
   return input;
 }
@@ -124,7 +133,7 @@ test('retained and other consumers cannot disappear from inventory', () => {
   fails((input) => { input.scenarios[1].placement[0].otherStreams += 1; }, /mapping/);
   fails((input) => { input.scenarios[1].placement[0].otherRequests += 1; }, /mapping/);
 });
-test('retained provider uses its own pool and capacity observations', () => {
+test('legacy retained mapping cannot claim native pool or permit enforcement', () => {
   const input = fixture();
   input.instances.forEach((instance) => { instance.config.retainedProvider = true; });
   eachRow(input, (value) => {
@@ -134,11 +143,8 @@ test('retained provider uses its own pool and capacity observations', () => {
     value.pools.push({ role: 'retained_provider', limit: 8, reserve: 2, requiredReserve: 2,
       slots: 3, cachedConnections: 2, busy: 1, waiting: 1, ordinaryBusy: 1, otherConsumers: 0 });
   });
-  assert.equal(validateCapacity(input).status, 'PASS');
-  assert.deepEqual(validateCapacity(input).maximumSurvivingPool.retained_provider,
-    { slots: 3, busy: 1, waiting: 1, otherConsumers: 0, requiredReserve: 2 });
-  input.scenarios[2].placement[0].retained.requests = 7;
   assert.equal(validateCapacity(input).status, 'FAIL');
+  assert.equal(validateCapacity(input).qualification, 'NOT_ASSESSED');
 });
 test('configured request reserve rejects ten ordinary requests with only one usable permit', () => {
   fails((input) => { input.instances.forEach((instance) => { instance.config.requestReserve = 31; }); }, /ordinary requests/);
@@ -211,6 +217,35 @@ test('privileged use still preserves physical and required headroom', () => {
     assert.equal(validateCapacity(input).status, 'FAIL');
     assert.match(validateCapacity(input).reason, new RegExp(`placement.${dimension}: demand plus reserve exceeds limit`));
   }
+});
+test('retained direct transport stays blocked with its full workload inventory', () => {
+  for (const input of [retainedFixture(), candidate(retainedFixture())]) {
+    const result = validateCapacity(input);
+    assert.equal(result.status, 'BLOCKED', JSON.stringify(result));
+    assert.equal(result.qualification, 'NOT_ASSESSED');
+    assert.match(result.reason, /direct-provider limits and enforcement/);
+    assert.deepEqual(result.retainedInventory, { transport: 'direct_provider', maximumSurvivingInstance: {
+      activeAgents: 5, runtimeLinks: 5, publicObservers: 5, desktopStreams: 1, otherStreams: 2, requests: 2 } });
+  }
+});
+test('omitting retained consumers cannot produce a native-only pass', () => {
+  const input = retainedFixture();
+  delete input.scenarios[1].placement[0].retained;
+  assert.equal(validateCapacity(input).status, 'BLOCKED');
+  assert.match(validateCapacity(input).reason, /retained: observation missing/);
+  const dropped = retainedFixture();
+  eachRow(dropped, (value) => { value.retained.activeAgents = 0; });
+  assert.equal(validateCapacity(dropped).status, 'FAIL');
+  assert.match(validateCapacity(dropped).reason, /target workload not fully placed/);
+  const disabled = retainedFixture();
+  disabled.instances.forEach((instance) => { instance.config.retainedProvider = false; });
+  assert.equal(validateCapacity(disabled).status, 'FAIL');
+});
+test('zero retained demand does not establish direct transport enforcement', () => {
+  const input = fixture();
+  input.instances.forEach((instance) => { instance.config.retainedProvider = true; });
+  eachRow(input, (value) => { value.retained.transport = 'direct_provider'; });
+  assert.equal(validateCapacity(input).status, 'BLOCKED');
 });
 test('a replica sum cannot conceal an overloaded surviving instance', () => {
   fails((input) => { input.instances[1].config.streamLimit = 128; }, /exceeds limit/);
@@ -288,6 +323,13 @@ test('CLI reads only the supplied file and returns bounded failures', () => {
     let result = spawnSync(process.execPath, [command, path], { encoding: 'utf8' });
     assert.equal(result.status, 0, result.stderr);
     assert.equal(JSON.parse(result.stdout).qualification, 'NOT_ASSESSED');
+    for (const [input, expected] of [[retainedFixture(), 'BLOCKED'], [fixture(), 'FAIL']]) {
+      if (expected === 'FAIL') input.instances.forEach((instance) => { instance.config.requestReserve = 31; });
+      writeFileSync(path, JSON.stringify(input));
+      result = spawnSync(process.execPath, [command, path], { encoding: 'utf8' });
+      assert.equal(result.status, 1, result.stderr);
+      assert.equal(JSON.parse(result.stdout).status, expected);
+    }
     writeFileSync(path, '{private-invalid-json');
     result = spawnSync(process.execPath, [command, path], { encoding: 'utf8' });
     assert.equal(result.status, 1);
