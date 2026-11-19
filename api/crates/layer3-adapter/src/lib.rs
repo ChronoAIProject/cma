@@ -88,6 +88,24 @@ pub trait DesktopConnection: Send {
     async fn recv(&mut self) -> Result<Option<DesktopFrame>>;
     async fn send(&mut self, frame: DesktopFrame) -> Result<()>;
 
+    /// The producer reserves before allocating the frame or growing its codec.
+    /// Legacy transports cannot obtain this guarantee by wrapping `recv`.
+    /// Cancellation leaves partial input and its reservations on the connection.
+    async fn recv_admitted(
+        &mut self,
+    ) -> Result<Option<ingress_budget::AdmittedFrame<DesktopFrame>>> {
+        Err(AdapterError::Unsupported("admitted desktop receive".into()))
+    }
+
+    /// Queued writes keep the envelope until their storage is released, even if
+    /// send/flush fails or is cancelled. Admit copies and codec growth first.
+    async fn send_admitted(
+        &mut self,
+        _frame: ingress_budget::AdmittedFrame<DesktopFrame>,
+    ) -> Result<()> {
+        Err(AdapterError::Unsupported("admitted desktop send".into()))
+    }
+
     /// An independent control port keeps lease renewal out of the frame loop.
     fn ownership_control(&self) -> Option<std::sync::Arc<dyn DesktopOwnershipControl>> {
         None

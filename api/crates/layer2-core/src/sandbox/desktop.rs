@@ -16,6 +16,7 @@ use crate::{rfc3339_at, AgentId, Caller, Capability, SandboxId};
 pub use layer3_adapter::DesktopFrame;
 
 mod authorization;
+mod ingress;
 mod owned;
 mod timing;
 pub use authorization::DesktopAuthorization;

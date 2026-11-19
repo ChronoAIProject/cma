@@ -1,5 +1,6 @@
 //! Fenced desktop streams renew through an independent receiver control port.
 use super::*;
+use crate::sandbox::ingress_ownership::AdmittedFrame;
 use crate::sandbox::store::{DesktopSessionRequest, SandboxSessionStore, SandboxStoreError};
 use layer3_adapter::{DesktopOwnership, DesktopOwnershipChallenge, DesktopOwnershipControl};
 use tokio::{sync::watch, task::JoinHandle, time::Instant};
@@ -102,6 +103,35 @@ impl ConnectionState {
         match reads.session_store() {
             Ok(store) => release(&store, &authority).await,
             Err(_) => tracing::warn!("desktop session store unavailable during close"),
+        }
+    }
+
+    pub(super) async fn send_admitted(
+        &mut self,
+        connection: &mut DesktopConnectionHandle,
+        frame: AdmittedFrame<DesktopFrame>,
+    ) -> Result<(), DesktopError> {
+        self.while_authorized(connection.send_admitted(frame))
+            .await?
+            .map_err(DesktopError::adapter)
+    }
+
+    pub(super) async fn recv_admitted(
+        &mut self,
+        connection: &mut DesktopConnectionHandle,
+    ) -> Result<Option<AdmittedFrame<DesktopFrame>>, DesktopError> {
+        loop {
+            let deadline = self.deadline()?;
+            tokio::select! {
+                biased;
+                _ = tokio::time::sleep_until(deadline) => return Err(DesktopError::Unavailable),
+                changed = self.validity.changed() => {
+                    changed.map_err(|_| DesktopError::Unavailable)?;
+                },
+                result = connection.recv_admitted() => {
+                    return result.map_err(DesktopError::adapter);
+                }
+            }
         }
     }
 }
@@ -348,3 +378,7 @@ async fn release(store: &Arc<dyn SandboxSessionStore>, authority: &DesktopOwners
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "ingress_tests.rs"]
+mod ingress_tests;
