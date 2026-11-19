@@ -312,7 +312,7 @@ impl Bridge {
             if let Some(prompt) = &recovered_prompt {
                 state.begin_prompt(prompt.as_str());
             }
-            Some(Mutex::new(state))
+            Some(Mutex::new(state, ingress.as_ref())?)
         } else {
             None
         };
@@ -345,17 +345,18 @@ impl Bridge {
             permission_state,
             agent_correlation_digest: format!("{:x}", Sha256::digest(expected_agent.as_bytes())),
             subscription,
-            sink: Arc::new(Mutex::new(sink)),
-            pending: Arc::new(Mutex::new(ingress::identity::PendingCalls::new(
-                ingress.as_ref(),
-            )?)),
-            request_namespace: uuid::Uuid::new_v4().to_string(),
-            next_id: AtomicI64::new(1),
-            recovery: Mutex::new(recovery::PromptRecovery::new(
-                recovered_prompt,
+            sink: Arc::new(Mutex::new(sink, ingress.as_ref())?),
+            pending: Arc::new(Mutex::new(
+                ingress::identity::PendingCalls::new(ingress.as_ref())?,
                 ingress.as_ref(),
             )?),
-            conversation: Mutex::new(ConversationState::default()),
+            request_namespace: uuid::Uuid::new_v4().to_string(),
+            next_id: AtomicI64::new(1),
+            recovery: Mutex::new(
+                recovery::PromptRecovery::new(recovered_prompt, ingress.as_ref())?,
+                ingress.as_ref(),
+            )?,
+            conversation: Mutex::new(ConversationState::default(), ingress.as_ref())?,
             output: output_stream
                 .map(|stream| {
                     output::ReliableOutput::new(
@@ -366,17 +367,17 @@ impl Bridge {
                         aggregate,
                         ingress.as_ref(),
                     )
-                    .map(Mutex::new)
+                    .and_then(|value| Mutex::new(value, ingress.as_ref()).map_err(Into::into))
                 })
                 .transpose()?,
-            blocked: Mutex::new(HashMap::new()),
-            answered: Arc::new(Mutex::new(HashMap::new())),
+            blocked: Mutex::new(HashMap::new(), ingress.as_ref())?,
+            answered: Arc::new(Mutex::new(HashMap::new(), ingress.as_ref())?),
             owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
             orphaned_prompt_response: AtomicBool::new(false),
             retired: AtomicBool::new(false),
             instructions_support: AtomicU8::new(0),
             context_refresh: settings.context_refresh.clone(),
-            context_goal: Mutex::new(None),
+            context_goal: Mutex::new(None, ingress.as_ref())?,
             retained_history_deadline: progress::ProgressSender::new(None, ingress.as_ref())?,
             recovering_context: AtomicU64::new(settings.recovered_context_sequence.unwrap_or(0)),
             _identity_storage: identity_storage,

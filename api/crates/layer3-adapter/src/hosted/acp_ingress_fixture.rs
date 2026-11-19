@@ -1,3 +1,4 @@
+use super::super::Mutex;
 use super::*;
 use crate::hosted::{retained_json::JsonPools, update_relay::UpdateRelay};
 use crate::ingress_budget::{AllocationPlan, IngressBudget, IngressClass, IngressOwnershipPolicy};
@@ -7,7 +8,6 @@ use std::sync::{
     atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize},
     Arc, Mutex as StdMutex,
 };
-use tokio::sync::Mutex;
 
 type Writes = Arc<StdMutex<Vec<SharedOwned<Message>>>>;
 
@@ -71,38 +71,54 @@ pub(super) fn fixture() -> Fixture {
         bounded_raw_output: true,
         output_json_budget: true,
         shared_runtime_output: true,
-        permission_state: Some(Mutex::new(
-            crate::hosted::permission_state::PermissionState::new(Some(data.clone())).unwrap(),
-        )),
-        agent_correlation_digest: "fixture".into(),
-        subscription: None,
-        sink: Arc::new(Mutex::new(sink)),
-        pending: Arc::new(Mutex::new(
-            super::identity::PendingCalls::new(Some(&policy)).unwrap(),
-        )),
-        request_namespace: "fixture".into(),
-        next_id: AtomicI64::new(1),
-        recovery: Mutex::new(PromptRecovery::new(None, Some(&policy)).unwrap()),
-        conversation: Mutex::new(ConversationState::default()),
-        output: Some(Mutex::new(
-            ReliableOutput::new(
-                stream,
-                AckSender::Admitted(sender),
-                true,
-                Some(pools),
-                Some(data),
+        permission_state: Some(
+            Mutex::new(
+                crate::hosted::permission_state::PermissionState::new(Some(data.clone())).unwrap(),
                 Some(&policy),
             )
             .unwrap(),
-        )),
-        blocked: Mutex::new(HashMap::new()),
-        answered: Arc::new(Mutex::new(HashMap::new())),
+        ),
+        agent_correlation_digest: "fixture".into(),
+        subscription: None,
+        sink: Arc::new(Mutex::new(sink, Some(&policy)).unwrap()),
+        pending: Arc::new(
+            Mutex::new(
+                super::identity::PendingCalls::new(Some(&policy)).unwrap(),
+                Some(&policy),
+            )
+            .unwrap(),
+        ),
+        request_namespace: "fixture".into(),
+        next_id: AtomicI64::new(1),
+        recovery: Mutex::new(
+            PromptRecovery::new(None, Some(&policy)).unwrap(),
+            Some(&policy),
+        )
+        .unwrap(),
+        conversation: Mutex::new(ConversationState::default(), Some(&policy)).unwrap(),
+        output: Some(
+            Mutex::new(
+                ReliableOutput::new(
+                    stream,
+                    AckSender::Admitted(sender),
+                    true,
+                    Some(pools),
+                    Some(data),
+                    Some(&policy),
+                )
+                .unwrap(),
+                Some(&policy),
+            )
+            .unwrap(),
+        ),
+        blocked: Mutex::new(HashMap::new(), Some(&policy)).unwrap(),
+        answered: Arc::new(Mutex::new(HashMap::new(), Some(&policy)).unwrap()),
         owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
         orphaned_prompt_response: AtomicBool::new(false),
         retired: AtomicBool::new(false),
         instructions_support: AtomicU8::new(0),
         context_refresh: None,
-        context_goal: Mutex::new(None),
+        context_goal: Mutex::new(None, Some(&policy)).unwrap(),
         recovering_context: AtomicU64::new(0),
         retained_history_deadline: super::super::progress::ProgressSender::new(None, Some(&policy))
             .unwrap(),

@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{stream::SplitSink, SinkExt as _, StreamExt as _};
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::update_relay::UpdateRelay;
@@ -45,6 +45,10 @@ impl<T> ConversationSocket for T where
 pub(super) type Socket = Box<dyn ConversationSocket>;
 type Sink = SplitSink<ingress::BridgeSocket, Message>;
 type Pending = Arc<Mutex<ingress::identity::PendingCalls>>;
+
+#[path = "acp_mutex.rs"]
+mod mutex;
+use mutex::BridgeMutex as Mutex;
 
 #[path = "acp_declaration.rs"]
 mod declaration;
