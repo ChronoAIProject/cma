@@ -109,3 +109,155 @@ async fn header_can_be_delivered_in_small_codec_reads_without_repeated_admission
     assert_eq!(output, [0x82, 126, 0, 1, b'x']);
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
 }
+
+struct GeneratedFragments {
+    lengths: &'static [usize],
+    frame: usize,
+    offset: usize,
+    text: bool,
+}
+
+impl io::Read for GeneratedFragments {
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        if output.is_empty() || self.frame == 2 * self.lengths.len() - 1 {
+            return Ok(0);
+        }
+        let ping = self.frame % 2 == 1;
+        let fragment = self.frame / 2;
+        let length = if ping { 1 } else { self.lengths[fragment] };
+        let mut header = [0u8; 14];
+        header[0] = if ping {
+            0x89
+        } else if fragment == 0 {
+            if self.text {
+                0x01
+            } else {
+                0x02
+            }
+        } else if fragment == self.lengths.len() - 1 {
+            0x80
+        } else {
+            0x00
+        };
+        header[1] = if ping { 0x81 } else { 0xff };
+        let header_len = if ping {
+            6
+        } else {
+            header[2..10].copy_from_slice(&(length as u64).to_be_bytes());
+            14
+        };
+        // Every fixture mask is zero; generate bytes without input heap storage.
+        let count = if self.offset < header_len {
+            let count = output.len().min(header_len - self.offset);
+            output[..count].copy_from_slice(&header[self.offset..self.offset + count]);
+            count
+        } else {
+            let count = output.len().min(header_len + length - self.offset);
+            output[..count].fill(b'a');
+            count
+        };
+        self.offset += count;
+        if self.offset == header_len + length {
+            self.frame += 1;
+            self.offset = 0;
+        }
+        Ok(count)
+    }
+}
+
+impl io::Write for GeneratedFragments {
+    fn write(&mut self, _: &[u8]) -> io::Result<usize> {
+        Err(io::ErrorKind::WouldBlock.into())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Err(io::ErrorKind::WouldBlock.into())
+    }
+}
+
+#[test]
+fn fragmented_messages_overlap_read_backing_collector_growth_and_blocked_control() {
+    use crate::allocation_probe::AllocationProbe;
+    use tokio_tungstenite::tungstenite as ws024;
+    use tokio_tungstenite_029::tungstenite as ws029;
+
+    // Uneven fragments force geometric collector growth beyond the final len.
+    const LENGTHS: &[usize] = &[1_048_577, 1_048_577, 2_097_151, 4_194_303];
+    let total: usize = LENGTHS.iter().sum();
+    assert_eq!(total, 8 * 1024 * 1024);
+    for version in [24, 29] {
+        for text in [false, true] {
+            let mut probe = AllocationProbe::new();
+            let input = GeneratedFragments {
+                lengths: LENGTHS,
+                frame: 0,
+                offset: 0,
+                text,
+            };
+            let (retained, payload_after_socket_drop) = if version == 24 {
+                let mut socket = probe.track(|| {
+                    ws024::WebSocket::from_raw_socket(
+                        input,
+                        ws024::protocol::Role::Server,
+                        Some(ws024::protocol::WebSocketConfig {
+                            write_buffer_size: 0,
+                            max_write_buffer_size: 8,
+                            max_message_size: Some(total),
+                            max_frame_size: Some(total),
+                            ..Default::default()
+                        }),
+                    )
+                });
+                for _ in 1..LENGTHS.len() {
+                    let ping = probe.track(|| socket.read().unwrap());
+                    assert!(matches!(ping, ws024::Message::Ping(_)));
+                    drop(ping);
+                }
+                let message = probe.track(|| socket.read().unwrap());
+                assert_eq!(message.len(), total);
+                assert_eq!(message.is_text(), text);
+                let retained = probe.live();
+                drop(socket);
+                let payload = probe.live();
+                drop(message);
+                (retained, payload)
+            } else {
+                let mut socket = probe.track(|| {
+                    ws029::WebSocket::from_raw_socket(
+                        input,
+                        ws029::protocol::Role::Server,
+                        Some(
+                            ws029::protocol::WebSocketConfig::default()
+                                .read_buffer_size(4096)
+                                .write_buffer_size(0)
+                                .max_write_buffer_size(8)
+                                .max_message_size(Some(total))
+                                .max_frame_size(Some(total)),
+                        ),
+                    )
+                });
+                for _ in 1..LENGTHS.len() {
+                    let ping = probe.track(|| socket.read().unwrap());
+                    assert!(matches!(ping, ws029::Message::Ping(_)));
+                    drop(ping);
+                }
+                let message = probe.track(|| socket.read().unwrap());
+                assert_eq!(message.len(), total);
+                assert_eq!(message.is_text(), text);
+                let retained = probe.live();
+                drop(socket);
+                let payload = probe.live();
+                drop(message);
+                (retained, payload)
+            };
+            assert!(probe.peak() > 2 * total);
+            assert!(retained > payload_after_socket_drop);
+            assert!(payload_after_socket_drop >= total);
+            assert_eq!(probe.live(), 0);
+            eprintln!(
+                "fragment_codec={version} text={text} peak={} retained={retained} payload_after_socket_drop={payload_after_socket_drop}",
+                probe.peak()
+            );
+        }
+    }
+}
