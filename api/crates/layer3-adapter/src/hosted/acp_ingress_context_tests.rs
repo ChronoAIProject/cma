@@ -28,7 +28,12 @@ async fn refresh_keeps_request_fields_and_same_identity_confirmation() {
                 json!({"sessionId":"conversation",
                 "cwd":"/home/cma/work","mcpServers":tools})
             );
-            assert!(fixture.bridge.retained_history_deadline.borrow().is_some());
+            assert!(fixture
+                .bridge
+                .retained_history_deadline
+                .observe()
+                .latest()
+                .is_some());
             reply(
                 &fixture,
                 &request,
@@ -77,7 +82,12 @@ async fn refresh_keeps_request_fields_and_same_identity_confirmation() {
             assert!(matches!(result, Err(crate::AdapterError::Unavailable(_))));
         }
         assert_eq!(files.writes.load(Ordering::SeqCst), 1);
-        assert!(fixture.bridge.retained_history_deadline.borrow().is_none());
+        assert!(fixture
+            .bridge
+            .retained_history_deadline
+            .observe()
+            .latest()
+            .is_none());
         assert!(fixture.writes.lock().unwrap().is_empty());
         assert!(fixture
             .bridge

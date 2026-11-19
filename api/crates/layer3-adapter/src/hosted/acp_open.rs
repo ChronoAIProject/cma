@@ -314,15 +314,19 @@ impl Bridge {
                 ingress.as_ref(),
             )?),
             conversation: Mutex::new(ConversationState::default()),
-            output: output_stream.map(|stream| {
-                Mutex::new(output::ReliableOutput::new(
-                    stream,
-                    acknowledgements,
-                    settings.bounded_raw_output,
-                    json_pools,
-                    aggregate,
-                ))
-            }),
+            output: output_stream
+                .map(|stream| {
+                    output::ReliableOutput::new(
+                        stream,
+                        acknowledgements,
+                        settings.bounded_raw_output,
+                        json_pools,
+                        aggregate,
+                        ingress.as_ref(),
+                    )
+                    .map(Mutex::new)
+                })
+                .transpose()?,
             blocked: Mutex::new(HashMap::new()),
             answered: Arc::new(Mutex::new(HashMap::new())),
             owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
@@ -331,7 +335,7 @@ impl Bridge {
             instructions_support: AtomicU8::new(0),
             context_refresh: settings.context_refresh.clone(),
             context_goal: Mutex::new(None),
-            retained_history_deadline: tokio::sync::watch::channel(None).0,
+            retained_history_deadline: progress::ProgressSender::new(None, ingress.as_ref())?,
             recovering_context: AtomicU64::new(settings.recovered_context_sequence.unwrap_or(0)),
             _identity_storage: identity_storage,
         });

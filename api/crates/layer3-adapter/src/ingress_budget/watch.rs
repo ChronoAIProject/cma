@@ -88,6 +88,10 @@ impl<T: Copy> AdmittedWatchSender<T> {
         self.sender.send_replace(value)
     }
 
+    pub fn send_if_modified(&self, update: impl FnOnce(&mut T) -> bool) -> bool {
+        self.sender.send_if_modified(update)
+    }
+
     pub fn is_closed(&self) -> bool {
         self.sender.is_closed()
     }

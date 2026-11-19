@@ -426,13 +426,19 @@ pub(super) fn legacy_instruction_resume_failed(
 
 #[async_trait::async_trait]
 impl crate::ConversationSettingsSupport for Bridge {
+    async fn delivery_observation(&self) -> crate::ingress_budget::DeliveryObservation {
+        crate::ingress_budget::DeliveryObservation {
+            progress: self.output_observation().await,
+            history: Some(self.retained_history_deadline.observe()),
+        }
+    }
     async fn managed_context_may_be_ready(&self) -> bool {
         self.context_readiness_session().await.is_some()
     }
     async fn retained_history_deadline(
         &self,
     ) -> Option<tokio::sync::watch::Receiver<Option<tokio::time::Instant>>> {
-        Some(self.retained_history_deadline.subscribe())
+        self.retained_history_deadline.legacy_receiver()
     }
     async fn managed_context_progress(&self) -> Option<tokio::sync::watch::Receiver<u64>> {
         self.output_progress().await

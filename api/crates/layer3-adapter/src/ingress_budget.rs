@@ -7,12 +7,14 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 const PROCESS_BYTES: usize = 128 * 1024 * 1024;
 
 pub mod failure;
+pub mod observation;
 pub mod ownership;
 pub mod scope;
 pub mod sizing;
 pub mod watch;
 
 pub use failure::{AdmissionRefusal, AdmittedError};
+pub use observation::DeliveryObservation;
 pub use ownership::{AdmittedFrame, AdmittedSocket, ReservationBundle, SharedOwned};
 pub use scope::{IngressWorkScope, OwnedWork};
 pub use sizing::{AllocationPlan, ClassBounds, IngressClass};

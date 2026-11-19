@@ -86,13 +86,17 @@ pub(super) fn fixture() -> Fixture {
         next_id: AtomicI64::new(1),
         recovery: Mutex::new(PromptRecovery::new(None, Some(&policy)).unwrap()),
         conversation: Mutex::new(ConversationState::default()),
-        output: Some(Mutex::new(ReliableOutput::new(
-            stream,
-            AckSender::Admitted(sender),
-            true,
-            Some(pools),
-            Some(data),
-        ))),
+        output: Some(Mutex::new(
+            ReliableOutput::new(
+                stream,
+                AckSender::Admitted(sender),
+                true,
+                Some(pools),
+                Some(data),
+                Some(&policy),
+            )
+            .unwrap(),
+        )),
         blocked: Mutex::new(HashMap::new()),
         answered: Arc::new(Mutex::new(HashMap::new())),
         owned_prompt_waiters: Arc::new(AtomicUsize::new(0)),
@@ -102,7 +106,8 @@ pub(super) fn fixture() -> Fixture {
         context_refresh: None,
         context_goal: Mutex::new(None),
         recovering_context: AtomicU64::new(0),
-        retained_history_deadline: tokio::sync::watch::channel(None).0,
+        retained_history_deadline: super::super::progress::ProgressSender::new(None, Some(&policy))
+            .unwrap(),
         _identity_storage: identity_storage,
     };
     Fixture {

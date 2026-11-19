@@ -469,3 +469,7 @@ mod recovery_tests;
 #[cfg(test)]
 #[path = "acp_ingress_context_tests.rs"]
 mod context_tests;
+
+#[cfg(test)]
+#[path = "acp_ingress_watch_tests.rs"]
+mod watch_tests;

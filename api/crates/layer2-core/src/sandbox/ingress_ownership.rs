@@ -3,6 +3,7 @@
 
 pub use layer3_adapter::ingress_budget::{
     failure::{AdmissionRefusal, AdmittedError},
+    observation::DeliveryObservation,
     ownership::{
         AdmittedFrame, AdmittedSocket, ReservationBundle, RuntimeOutputDelivery, SharedOwned,
     },
