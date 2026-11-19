@@ -1,20 +1,20 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.4",
-  "at": "2026-11-19T18:29:44+08:00",
-  "review_state": "Integrated archive and credential URL scanner candidate for independent review",
+  "at": "2026-11-19T18:59:09+08:00",
+  "review_state": "Integrated runtime archive, credential URL and trust-store candidate for independent review",
   "files": [
     {
       "path": "CHANGELOG.md",
-      "sha256": "47e503a47d3f9d3e2d437325f5d9a3889f954d34f82f9414d12f28e1d150cc6a",
-      "bytes": 3179,
-      "lines": 11,
+      "sha256": "ae9016bccb87d6066da9ba1f39f0116587053a86f42bd2d7380ca3bae298077d",
+      "bytes": 3417,
+      "lines": 12,
       "mode": "0o644"
     },
     {
       "path": "README.md",
-      "sha256": "839521e1f6f0395b5ca7973bd84da42cd67a70c9ebff302cd305d3ffc40ec2c5",
-      "bytes": 22972,
+      "sha256": "a066d2abd4c9d07f1947758f51f99a476755e8af8b28055f80b849ba58e906e3",
+      "bytes": 23618,
       "lines": 148,
       "mode": "0o644"
     },
@@ -139,23 +139,30 @@
     },
     {
       "path": "image_secrets/engine.py",
-      "sha256": "8a013133d466fe1f6bfe3698e0054ea18d53e93ba252ad8369305165460f1066",
-      "bytes": 7242,
-      "lines": 159,
+      "sha256": "d22b5105bdf7f0a9937c23c4de1ddee4b49b74d2d321b285f17491f00b2819e8",
+      "bytes": 7930,
+      "lines": 172,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/gate.py",
-      "sha256": "d98eaf2f6ecba56a944958c5a773214ce1772b3f8f74938ed58f5623f1642d2a",
-      "bytes": 4485,
-      "lines": 107,
+      "sha256": "76a74fb6aaac5a8d3f2a2c3be5b069d78667e048029e23a1df22ef1cf543b9c0",
+      "bytes": 4882,
+      "lines": 111,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/key_material.py",
+      "sha256": "66cf3d60723bf6c161122ae611709f3539f760b55b336213772ed7f8eb595f07",
+      "bytes": 5204,
+      "lines": 137,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/policy.py",
-      "sha256": "a898b523fc6a3b9fee5d6d7682a729ab48829d5b8c7ece460cafd5ae94ad6ccf",
-      "bytes": 5529,
-      "lines": 132,
+      "sha256": "e203d0eb4b6922de9feab06007022dc1d017ceeb1e50ade159c3b2ba765b1b4e",
+      "bytes": 5868,
+      "lines": 138,
       "mode": "0o644"
     },
     {
@@ -163,6 +170,13 @@
       "sha256": "2095284bb7c9dad9e0810138997767ca371d4199a6d36f7b5691ec378fc9d817",
       "bytes": 753,
       "lines": 22,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/trust_store.py",
+      "sha256": "7aeb2d19fb21a017eac7ace914b1e59c364d9d2dcd0ccbf4d1fc97f7025e04fe",
+      "bytes": 5389,
+      "lines": 138,
       "mode": "0o644"
     },
     {
@@ -209,9 +223,9 @@
     },
     {
       "path": "scan_image_secrets.py",
-      "sha256": "b1247e770839d1c7a79be000ae865341f6c2d87adeb3dd7d96dd0b3e61fba56a",
-      "bytes": 10892,
-      "lines": 244,
+      "sha256": "7dbc9c43958471a6a25cb4b4afb9892997b017632ca492c83de19b6f5f4dee56",
+      "bytes": 11385,
+      "lines": 250,
       "mode": "0o644"
     },
     {
@@ -279,9 +293,9 @@
     },
     {
       "path": "tests/test_credential_url.py",
-      "sha256": "17db4722397a9226c1c62bb330e879479915572c8c23530eb77f728dd2386d99",
-      "bytes": 3925,
-      "lines": 65,
+      "sha256": "0d9d6615a053ac63d6e7b39859127017de5a4b36867b0db0da34e45a0d527667",
+      "bytes": 4676,
+      "lines": 77,
       "mode": "0o644"
     },
     {
@@ -338,6 +352,13 @@
       "sha256": "013459b67b29a0c3aa98047dc162de39da031885da31674422ef9ee92a357098",
       "bytes": 2349,
       "lines": 50,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_trust_store.py",
+      "sha256": "2887db6d248d370f5a9ae082a4ba476c08480c1e575a964704a6d88ef47c5218",
+      "bytes": 11928,
+      "lines": 189,
       "mode": "0o644"
     },
     {

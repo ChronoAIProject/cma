@@ -32,6 +32,18 @@ class CredentialUrlTests(unittest.TestCase):
             "split-marker": b"\x00" * (boundary - 7) + url,
             "long-userinfo": b"\x00" * (boundary - 10000) + b"git+ssh://qa:" + b"x" * 10010 + b"@[::1]/",
         }
+        # The original zero-prefixed controls also look like empty tar archives.
+        # Exercise their raw bytes and the strict tar refusal independently.
+        for name in ("split-marker", "long-userinfo"):
+            data = positives[name]
+            self.assertTrue(credential_url.search(data))
+            ambiguous = self.root / "ambiguous.tar"
+            oci_archive(ambiguous, [tar_bytes([(name, data)])])
+            refused, _ = self.scan(ambiguous, 2, ["--blocking-rules=credential"])
+            self.assertFalse(refused["complete"])
+            self.assertEqual(refused["error"], "tar-nonzero-trailer")
+            # Keep the boundary offset identical in an unambiguous binary member.
+            positives[name] = b"X" + data[1:]
         negatives = {
             "separate-strings": b"DebugLabelhttp://127.0.0.1:9000" + b"\x00" * 35 + b"DebugField@\xff",
             "web-backslash-path": rb"https://qa:p\x@example.invalid",

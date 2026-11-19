@@ -8,6 +8,7 @@ from pathlib import PurePosixPath
 from . import credential_url as CREDENTIAL_URL
 from .allowlist import Allowlist as Allowlist
 from .common import digest_bytes, digest_file
+from .key_material import OPENSSH, START, binary_key_in_file
 
 PRIVATE = re.compile(rb"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----")
 SERVICE_ACCOUNT = re.compile(rb'"type"\s*:\s*"service_account"')
@@ -95,9 +96,14 @@ class Findings:
                 self.add(rule, location, checksum, file_digest=checksum)
         tail = b""
         url_checked = False
+        binary_checked = False
         with path.open("rb") as stream:
             for block in iter(lambda: stream.read(1024 * 1024), b""):
                 data = tail + block
+                if not binary_checked and (OPENSSH in data or START.search(data)):
+                    binary_checked = True
+                    if binary_key_in_file(path):
+                        self.add("content.binary-private-key", location)
                 if PRIVATE.search(data):
                     self.add("content.private-key-header", location)
                 if SERVICE_ACCOUNT.search(data):

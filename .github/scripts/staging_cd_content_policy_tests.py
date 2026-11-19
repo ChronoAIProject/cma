@@ -74,9 +74,12 @@ class ContentPolicyTests(unittest.TestCase):
         self.catalog_path = self.root / "catalog.json"
         self.catalog_path.write_text(json.dumps(self.catalog))
 
-    def scanner(self, *_args):
+    def scanner(self, *args):
         self.output.mkdir()
-        (self.output / "REPORT.json").write_text(json.dumps(self.report))
+        report = copy.deepcopy(self.report)
+        if "--staging-runtime-component" in args:
+            report["policy"]["staging_runtime_component"] = args[args.index("--staging-runtime-component") + 1]
+        (self.output / "REPORT.json").write_text(json.dumps(report))
         raise gate.ScanRefusal("Synthetic findings", "scanner_findings")
 
     def test_complete_scan_resolves_exact_content_and_keeps_all_findings(self):
