@@ -7,6 +7,9 @@ import { Console } from './Console';
 import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE, agentClient } from './test/agent';
 import { WIRE_AGENT } from './test/rest';
 import './test/connectedAccounts';
+import { agentDraftKey, readAgentDraft } from './agent/draftStorage';
+import { AuthContextProvider, useAuth } from './auth/context';
+import type { AuthProvider, AuthState } from './auth/types';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -84,6 +87,7 @@ it.each(['unavailable', 'network', 'timeout'])(
     await act(() => vi.advanceTimersByTimeAsync(failure === 'timeout' ? 45_000 : 30_000));
     expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
     expect(composer).toHaveValue(draft);
+    expect(readAgentDraft('owner', 'agt_1').content).toBe(draft);
     expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
     fireEvent.click(screen.getByRole('button', { name: 'More Agent actions' }));
@@ -152,6 +156,7 @@ it.each([401, 403, 404, 'identity'] as const)(
     expect(screen.getByRole('heading', { name: 'Agent unavailable' })).toBeInTheDocument();
     expect(screen.queryByText('The repository is ready.')).not.toBeInTheDocument();
     expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+    expect(sessionStorage.getItem(agentDraftKey('owner', 'agt_1'))).toBeNull();
     test.readAccessible.mockImplementation(() => new Promise(() => {}));
     act(() => window.dispatchEvent(new Event('focus')));
     expect(screen.queryByText('The repository is ready.')).not.toBeInTheDocument();
@@ -190,7 +195,7 @@ it.each(['viewer', 'agent', 'client'])(
 );
 
 it.each(['viewer', 'agent', 'client'])(
-  'does not transfer a retained draft into another %s scope',
+  'isolates owner/Agent drafts while allowing a verified replacement client: %s',
   async (scope) => {
     vi.useFakeTimers();
     const test = fixture();
@@ -207,13 +212,103 @@ it.each(['viewer', 'agent', 'client'])(
       ),
     );
     await act(() => vi.advanceTimersByTimeAsync(0));
-    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
+    expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(
+      scope === 'client' ? 'Private original draft' : '',
+    );
     rerender(test.show());
     await act(() => vi.advanceTimersByTimeAsync(0));
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(
-      scope === 'agent' ? 'Private original draft' : '',
+      scope !== 'viewer' ? 'Private original draft' : '',
     );
     expect(test.runAgent).not.toHaveBeenCalled();
     unmount();
   },
 );
+
+it('restores the exact draft after all Console state and its client are recreated', async () => {
+  vi.useFakeTimers();
+  const test = fixture();
+  const first = render(test.show());
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  const text = '  Entire Console reload\n草稿 🧪  ';
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), { target: { value: text } });
+  first.unmount();
+  const second = render(test.show('owner', 'agt_1', { ...test.client }));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue(text);
+  expect(test.runAgent).not.toHaveBeenCalled();
+  second.unmount();
+});
+
+it('waits for verified identity, retains data through identity 503, and clears it on logout/account change', async () => {
+  vi.useFakeTimers();
+  const test = fixture();
+  const signedIn = (id = 'owner'): AuthState => ({
+    status: 'authenticated',
+    user: {
+      id,
+      handle: id,
+      visitor: false,
+      capabilities: ['use_own_sandboxes'],
+    },
+  });
+  const current = vi.fn<AuthProvider['current']>().mockResolvedValue(signedIn());
+  const provider: AuthProvider = { current, signIn: async () => {}, signOut: async () => {} };
+  function App() {
+    const { state, signOut } = useAuth();
+    return state.status === 'authenticated' ? (
+      <>
+        {test.show(state.user.id)}
+        <button onClick={() => void signOut()}>Fixture sign out</button>
+      </>
+    ) : (
+      <p>Identity pending</p>
+    );
+  }
+  const show = () => (
+    <AuthContextProvider provider={provider}>
+      <App />
+    </AuthContextProvider>
+  );
+  const first = render(show());
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+    target: { value: 'Private owner draft' },
+  });
+  first.unmount();
+  let verify!: (value: AuthState) => void;
+  current.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        verify = resolve;
+      }),
+  );
+  const second = render(show());
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.queryByDisplayValue('Private owner draft')).not.toBeInTheDocument();
+  expect(readAgentDraft('owner', 'agt_1').content).toBe('Private owner draft');
+  await act(async () => verify(signedIn()));
+  expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Private owner draft');
+  current.mockResolvedValue({
+    status: 'error',
+    reason: 'identity_unavailable',
+    message: 'Identity unavailable',
+  });
+  await act(async () => window.dispatchEvent(new Event('focus')));
+  expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  expect(readAgentDraft('owner', 'agt_1').content).toBe('Private owner draft');
+  fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
+  expect(test.runAgent).not.toHaveBeenCalled();
+  current.mockResolvedValue(signedIn('other-owner'));
+  await act(async () => window.dispatchEvent(new Event('focus')));
+  await act(() => vi.advanceTimersByTimeAsync(0));
+  expect(screen.queryByDisplayValue('Private owner draft')).not.toBeInTheDocument();
+  expect(sessionStorage.getItem(agentDraftKey('owner', 'agt_1'))).toBeNull();
+  fireEvent.change(screen.getByRole('textbox', { name: 'Message' }), {
+    target: { value: 'Other owner draft' },
+  });
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Fixture sign out' })));
+  expect(screen.queryByRole('textbox', { name: 'Message' })).not.toBeInTheDocument();
+  expect(sessionStorage.getItem(agentDraftKey('other-owner', 'agt_1'))).toBeNull();
+  second.unmount();
+});

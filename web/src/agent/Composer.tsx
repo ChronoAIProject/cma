@@ -7,6 +7,7 @@ import type { SandboxInputAvailability } from './sandboxInput';
 import type { TriggerQuickMessage } from '@cma/client';
 import { QuickMessages } from './QuickMessages';
 import type { AgentDraft } from './draft';
+import { ComposerDraftNotice } from './ComposerDraftNotice';
 import {
   attachmentMessage,
   transferredFiles,
@@ -115,7 +116,7 @@ export function Composer({
   const sending = useRef(false);
   const composing = useRef(false);
   const noticeId = useId();
-  const inputBlocked = !inputAvailability.allowed;
+  const inputBlocked = !inputAvailability.allowed || draft?.recoveryBlocked === true;
   const preparing = status === 'starting' && queueWhileStarting;
   const notice = inputAvailability.notice ?? pausedNotice;
   const hasNotice = notice !== undefined || inputAvailability.savingStartedAt !== undefined;
@@ -162,6 +163,7 @@ export function Composer({
     previousInterruption.current = acceptedInterruptionMessage;
     // A receipt from an earlier visit cannot own text newly typed on this visit.
     if (submitted.current === undefined && editVersion.current !== 0) return;
+    if (draft?.beginSubmission) return;
     for (const accepted of changed) {
       if (
         submitted.current !== undefined &&
@@ -181,6 +183,7 @@ export function Composer({
     content,
     setContent,
     attachments,
+    draft,
   ]);
 
   useEffect(() => {
@@ -216,11 +219,17 @@ export function Composer({
     const submittedAttachments = attachments.items;
     const version = editVersion.current;
     const pending = { attachments: submittedAttachments };
-    submitted.current = { message, version, clearsDraft: quickMessage === undefined };
+    const submission = quickMessage === undefined ? draft?.beginSubmission?.(message) : undefined;
+    submitted.current = {
+      message,
+      version,
+      clearsDraft: quickMessage === undefined,
+    };
     sending.current = true;
     setSubmitting(true);
     if (quickMessage === undefined) setHandoff(pending);
     const finish = () => {
+      submission?.settled();
       setHandoff((current) => (current === pending ? undefined : current));
       sending.current = false;
       setSubmitting(false);
@@ -229,8 +238,11 @@ export function Composer({
       const sendingRequest = onSend(message, () => {
         if (quickMessage === undefined) {
           if (editVersion.current === version) {
-            setContent((current) => (current === originalContent ? '' : current));
-            attachments.accept(submittedAttachments);
+            if (submission) submission.accepted();
+            else {
+              setContent((current) => (current === originalContent ? '' : current));
+              attachments.accept(submittedAttachments);
+            }
           }
           setHandoff((current) => (current === pending ? undefined : current));
         }
@@ -289,6 +301,7 @@ export function Composer({
         onSend={submit}
       />
       {commands.panel}
+      <ComposerDraftNotice draft={draft} />
       <Presence>
         {commandError ? (
           <p className="agent-composer__notice" role="alert">
