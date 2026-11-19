@@ -1,0 +1,33 @@
+name: "Hosted cache retention"
+on:
+  schedule:
+    - cron: "23 * * * *"
+  workflow_dispatch:
+permissions: {}
+concurrency:
+  group: "develop-hosted-cache-retention"
+  cancel-in-progress: false
+jobs:
+  sweep:
+    if: "github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 20
+    permissions:
+      actions: write
+    steps:
+      - name: "Read the public workflow revision"
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          git init --quiet
+          git -c credential.helper= fetch --quiet --no-tags --depth=1 https://github.com/ChronoAIProject/cma.git "$GITHUB_SHA"
+          git checkout --quiet --detach "$GITHUB_SHA"
+      - name: "Retire superseded caches and measure remaining bytes"
+        env:
+          GH_TOKEN: "${{ github.token }}"
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == schedule ]]; then
+            python3 -B .github/scripts/actions_cache_sweep.py --apply
+          else
+            python3 -B .github/scripts/actions_cache_sweep.py
+          fi
