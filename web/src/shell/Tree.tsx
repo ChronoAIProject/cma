@@ -271,7 +271,8 @@ export function Tree({
                               sandbox,
                               permissions,
                               refreshError !== undefined,
-                              sandboxBusy,
+                              lifecycleBusy,
+                              busySandboxIds?.has(sandbox.id) === true,
                             )}
                             onNavigate={onNavigate}
                             onToggle={childrenAvailable ? () => toggle(sandboxNode) : undefined}

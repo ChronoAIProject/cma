@@ -1,4 +1,5 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
+import { useMetricFilterDraft } from './useMetricFilterDraft';
 import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { Picker } from '../../ui/Picker';
@@ -29,11 +30,7 @@ export function MetricFilters({
   readonly onApply: (value: Selection) => void;
   readonly agentPicker?: (draft: Selection, update: (value: Selection) => void) => ReactNode;
 }) {
-  const [stored, setStored] = useState({ selection, draft: selection });
-  const [error, setError] = useState('');
-  if (stored.selection !== selection) setStored({ selection, draft: selection });
-  const draft = stored.selection === selection ? stored.draft : selection;
-  const update = (value: Selection) => setStored({ selection, draft: value });
+  const { draft, error, changed, update, setError } = useMetricFilterDraft(selection);
   return (
     <form
       className="usage-metric-filters"
@@ -165,6 +162,11 @@ export function MetricFilters({
           Apply filters
         </Button>
       </div>
+      {changed && (
+        <p className="usage-filter-notice" role="status">
+          Changes apply when you select Apply filters.
+        </p>
+      )}
       {error && <p role="alert">{error}</p>}
     </form>
   );

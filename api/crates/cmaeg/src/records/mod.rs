@@ -7,7 +7,7 @@ mod kind;
 pub mod mongo;
 mod retention;
 
-pub(crate) use client::{AdmissionRootWrite, AuthorityGuard};
+pub(crate) use client::{AdmissionRootWrite, AuthorityGuard, ReadFailure};
 pub use client::{RecordClient, RecordError, RecordHead, RecordValue};
 pub use import_gate::{
     ImportGate, GITHUB_IMPORT_DISABLED, GITHUB_IMPORT_KEYS_REQUIRED, GITHUB_IMPORT_UNREADABLE,

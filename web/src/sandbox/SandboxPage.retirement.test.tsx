@@ -3,7 +3,7 @@ import { expect, it, vi } from 'vitest';
 import type { SandboxDetail } from '../api/types';
 import type { TreePermissions } from '../shell/Tree';
 import { agentClient } from '../test/agent';
-import { sandboxFixture } from '../test/hierarchy';
+import { parkedRuntimeUpdateFixture, sandboxFixture } from '../test/hierarchy';
 import { SandboxPage } from './SandboxPage';
 import { sandboxHeaderMenu } from './sandboxHeaderActions';
 
@@ -39,6 +39,27 @@ const reviving: SandboxDetail = {
   },
 };
 const settled = { busy: false, stale: false, needsConnections: false };
+
+it('dispatches Delete for a parked runtime update while its lifecycle request remains busy', async () => {
+  const onAction = vi.fn();
+  render(
+    <SandboxPage
+      client={agentClient({ readSandbox: async () => parkedRuntimeUpdateFixture() })}
+      sandboxId="sbx_1"
+      revision={0}
+      permissions={permissions}
+      busy={false}
+      lifecycleBusy
+      onAction={onAction}
+      onNavigate={vi.fn()}
+    />,
+  );
+  fireEvent.click(await screen.findByRole('button', { name: 'More actions' }));
+  const remove = screen.getByRole('menuitem', { name: /^Delete Sandbox/ });
+  expect(remove).not.toHaveAttribute('aria-disabled', 'true');
+  fireEvent.click(remove);
+  expect(onAction).toHaveBeenCalledExactlyOnceWith({ kind: 'delete_sandbox', sandboxId: 'sbx_1' });
+});
 
 it.each(['in_progress', 'recoverable_pending'] as const)(
   'dispatches owner Delete during %s reopen while keeping creation disabled',
