@@ -10,11 +10,13 @@ from pathlib import Path
 from . import (
     arch_trust,
     debian_control,
+    derived_payload,
     digest_frames,
     distribution_config,
     library_vectors,
     nested_certificates,
     reviewed_literals,
+    wheel_record,
 )
 from .archive import ImageArchive
 from .common import (
@@ -166,7 +168,7 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payloads, d
                 expected, _ = reviewed_payload
                 if "debian_control" in expected:
                     return read_control_candidate(stream, member, path, expected)
-                if ({"distribution_config", "digest_frames", "reviewed_literals"}.intersection(expected)
+                if ({"distribution_config", "digest_frames", "reviewed_literals", "derived_payload"}.intersection(expected)
                         or "executable" in expected.get("self_test", {})):
                     return read_payload_candidate(stream, member, path, workspace, *reviewed_payload)
             vectors = reviewed_payload if member.size <= library_vectors.MAX_LIBRARY_BYTES else None
@@ -196,11 +198,20 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payloads, d
             require(copy_stream(stream, physical, member.size) == member.size)
             certificate_locator = None
             checksum = digest_file(physical)
+            proofs = {locator: expected for locator, (expected, _) in reviewed_payloads.items()
+                      if locator is not None and path == expected["path"] and checksum == expected["file_sha256"]}
+            container = identify(physical) if proofs else None
+            record_sha256 = (wheel_record.verify(physical, budget) if container == "zip" and any(
+                "derived_payload" in value for value in proofs.values()) else None)
             literal_proofs = {}
-            for locator, (expected, _) in reviewed_payloads.items():
-                if path != expected["path"] or checksum != expected["file_sha256"]:
-                    continue
-                if "nested_certificate" in expected and identify(physical) == "zip":
+            derived = set()
+            for locator, expected in proofs.items():
+                origin = expected.get("derived_payload")
+                if origin is not None:
+                    if record_sha256 != origin["record_sha256"]:
+                        continue
+                    derived.add(locator)
+                if "nested_certificate" in expected and container == "zip":
                     certificate_locator = locator
                 if "reviewed_literals" in expected:
                     literal_proofs[locator] = expected["reviewed_literals"]
@@ -212,6 +223,8 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payloads, d
                 verified["nested_literals"] = {
                     locator: {rule: claim for rule, claim in checks.items() if rule not in stage.literal_metadata[locator]}
                     for locator, checks in stage.checked_literals.items()}
+            if derived:
+                verified["nested_derived"] = derived
             return (path, checksum, stage.matched), verified, set()
 
 
@@ -240,17 +253,23 @@ def read_payload_candidate(stream, member, path, workspace, expected, reviews):
                 verified.update(digest_frames.verify(payload, metadata, expected["digest_frames"]))
             if "reviewed_literals" in expected:
                 verified["reviewed_literals"] = reviewed_literals.verify(payload, metadata, expected["reviewed_literals"])
+            origin = expected.get("derived_payload")
+            if origin is not None and origin["kind"] == "mime-index":
+                verified["derived_payload"] = True
             vector = expected.get("self_test")
             eligible = vector is not None and (member.mode & 0o111 if "executable" in vector
                                                else member.size <= library_vectors.MAX_LIBRARY_BYTES)
             distribution = expected.get("distribution_config")
-            if eligible or distribution is not None and member.mode & 0o111:
+            compiled = origin is not None and origin["kind"] == "compiled-executable"
+            if eligible or member.mode & 0o111 and (distribution is not None or compiled):
                 with payload.open("rb") as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
                     if eligible:
                         verified.update(library_vectors.verify(data, metadata, vector, {rule for rule, _, _ in reviews}))
                     if (distribution is not None and member.mode & 0o111 and library_vectors.elf_subject(data, executable=True)
                             and distribution_config.verify(data, distribution)):
                         verified[DISTRIBUTION_ADVISORY] = True
+                    if compiled and derived_payload.verify_compiled(data, origin):
+                        verified["derived_payload"] = True
         return (path, checksum, {}), verified, set()
 
 
@@ -316,7 +335,7 @@ def requested_occurrences(report, component, evidence):
             record = evidence.entries[component_id, platform_id, layer, diff_id, entry, locator]
             row, _ = record
             if any(key in row for key in ("self_test", "digest_frames", "nested_certificate",
-                                          "distribution_config", "debian_control", "reviewed_literals")):
+                                          "distribution_config", "debian_control", "reviewed_literals", "derived_payload")):
                 reviewed_payloads[platform_id, layer, diff_id][entry][locator] = record
             for key in ("self_test", "distribution_config"):
                 if key in row:

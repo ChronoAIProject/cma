@@ -94,6 +94,7 @@ class PackageEvidence:
         from . import (
             arch_trust_evidence,
             debian_control,
+            derived_payload,
             digest_frames,
             distribution_config,
             library_vectors,
@@ -122,12 +123,14 @@ class PackageEvidence:
         entries = {}
         for row in raw["entries"]:
             require(isinstance(row, dict))
-            shape = row.keys() - {"reviewed_literals"}
+            shape = row.keys() - {"derived_payload", "reviewed_literals"}
             require(shape in (ENTRY_FIELDS, ENTRY_FIELDS | {"self_test"}, ENTRY_FIELDS | {"digest_frames"},
                               ENTRY_FIELDS | {"nested_certificate"}, ENTRY_FIELDS | {"distribution_config"},
                               ENTRY_FIELDS | {"debian_control"}, ENTRY_FIELDS | {"distribution_config", "self_test"}))
             literals = reviewed_literals.validate(row) if "reviewed_literals" in row else {}
             require(not literals or not {"nested_certificate", "debian_control"}.intersection(row))
+            derived = "derived_payload" in row
+            require(not derived or not {"self_test", "distribution_config", "digest_frames", "debian_control"}.intersection(row))
             require(row["component"] in SCOPES and matches(PLATFORM, row["platform"])
                     and matches(LAYER_ID, row["diff_id"]) and ordinal(row["layer"])
                     and ordinal(row["entry"]) and valid_digest(row["file_sha256"])
@@ -137,13 +140,14 @@ class PackageEvidence:
             package_member = row["package_member"]
             fields(package_member, {"locator", "path", "type", "sha256"})
             require(matches(NESTED_LOCATOR, package_member["locator"])
-                    and package_member["type"] == "regular" and package_member["sha256"] == row["file_sha256"]
+                    and package_member["type"] == "regular" and valid_digest(package_member["sha256"])
+                    and (derived or package_member["sha256"] == row["file_sha256"])
                     and isinstance(package_member["path"], list)
                     and len(package_member["path"]) == package_member["locator"].count("/") + 1)
             for part in package_member["path"]:
                 normalized(part)
             package = packages[row["package_sha256"]]
-            if package["authority_type"] != "pinned-upstream" and "debian_control" not in row:
+            if package["authority_type"] != "pinned-upstream" and "debian_control" not in row and not derived:
                 require(package_member["path"][-1] == path)
             member = row["member"]
             locator = None
@@ -156,6 +160,8 @@ class PackageEvidence:
                     normalized(part)
             key = (row["component"], row["platform"], row["layer"], row["diff_id"], row["entry"], locator)
             require(key not in entries)
+            if derived:
+                derived_payload.validate(row, package)
             if "nested_certificate" in row:
                 entries[key] = (row, validate_nested_certificate(row, package))
                 continue

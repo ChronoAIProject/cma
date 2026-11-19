@@ -127,6 +127,16 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
         package_rows = {row["finding_id"]: row for row in package_section["entries"]}
         for evidence in package_rows.values():
             classification = evidence["classification"]
+            origin = evidence.get("derived_payload")
+            if origin is not None:
+                require(origin["archive_sha256"] == archive_digest
+                        and all(origin[key] == evidence[key] for key in ("image_config", "image_manifest"))
+                        and evidence["finding_id"] in origin["findings"]
+                        and origin["output_sha256"] == evidence["outer_file_sha256"]
+                        and origin["input_sha256"] == evidence["package_member"]["sha256"]
+                        and evidence["package_member"]["type"] == "regular")
+                if origin["kind"] == "compiled-executable":
+                    require(origin["span"]["sha256"] == evidence["candidate_sha256"])
             if classification in PACKAGE_ADVISORY_RULES:
                 require(package_advisory_allowed(classification, evidence["rule"], expected_runtime, evidence["member"]))
                 if classification == SELF_TEST_ADVISORY:
@@ -150,11 +160,12 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                             and package_receipt.path_digest(control["installed_path"]) == evidence["outer_path_digest"])
                 elif classification in reviewed_literals.CLASSES:
                     literal = evidence["reviewed_literal"]
+                    source_sha256 = origin["input_sha256"] if origin is not None else evidence["outer_file_sha256"]
                     require(literal["archive_sha256"] == archive_digest and bool(literal["spans"])
                             and all(literal[key] == evidence[key] for key in
                                     ("image_config", "image_manifest", "finding_id", "rule"))
                             and evidence["package_member"]["type"] == "regular"
-                            and evidence["package_member"]["sha256"] == evidence["outer_file_sha256"])
+                            and evidence["package_member"]["sha256"] == source_sha256)
                 elif classification == DISTRIBUTION_ADVISORY:
                     distribution = evidence["distribution_config"]
                     require(distribution["archive_sha256"] == archive_digest

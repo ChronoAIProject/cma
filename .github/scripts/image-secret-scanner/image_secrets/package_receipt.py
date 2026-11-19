@@ -121,6 +121,14 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
     explanation = review["explanation"]
     classification = "public-material"
     extra = {}
+    origin = expected.get("derived_payload")
+    if origin is not None:
+        physically_verified = (verified.get("derived_payload") if member_id is None
+                               else member_id in verified.get("nested_derived", ()))
+        if (not physically_verified or not matches_image(origin, report, config, image)
+                or finding["finding_id"] not in origin["findings"]):
+            return None
+        extra["derived_payload"] = origin
     if explanation == DEBIAN_CONTROL_ADVISORY:
         control = verified.get(DEBIAN_CONTROL_ADVISORY)
         if (control is None or not matches_image(control, report, config, image)
