@@ -6,7 +6,7 @@ import tarfile
 from functools import partial
 from pathlib import PurePosixPath
 
-from . import nested_certificates
+from . import arch_trust, nested_certificates
 from .binary_view import TEXT_BYTES, prepare
 from .common import MAX_NESTED_MEMBER_BYTES, ScanError, archive_path, copy_stream
 from .containers import inspect_nested
@@ -101,8 +101,10 @@ def scan_archive(archive, backend, findings, workspace, budget, progress, *, tru
     kind, images = archive.images()
     inventory = {"archive_format": kind, "images": [], "layers": [], "entries": 0}
     nested_certificates_seen = None
+    arch_trust_seen = None
     if trust_component == nested_certificates.COMPONENT:
         nested_certificates_seen = inventory["nested_certificates"] = []
+        arch_trust_seen = inventory["arch_trust"] = {"files": [], "aliases": []}
     stage = Stage(workspace / "metadata", backend, findings, budget)
     for path, raw in archive.metadata:
         stage.add(raw, {"scope": "archive", "image": -1, "layer": -1, "entry": -1, "path": path})
@@ -129,6 +131,7 @@ def scan_archive(archive, backend, findings, workspace, budget, progress, *, tru
             stage.add(value.encode("utf-8"), dict(location, path="config" + pointer))
         stage.finish()
         trust = TrustStore() if trust_component in ("runtime", "runtime-omarchy") else None
+        arch_alias = None
         for layer_index, (name, diff_id) in enumerate(zip(image["layers"], image["diff_ids"])):
             layer_path = archive.layer(name, diff_id)
             stage = Stage(workspace / "layer", backend, findings, budget, nested_certificates_seen)
@@ -176,6 +179,11 @@ def scan_archive(archive, backend, findings, workspace, budget, progress, *, tru
                         raise ScanError("unsupported-layer-entry-type")
                     if trust is not None:
                         trust.observe(entry, location, physical, partial(stage.certificate, location=location))
+                    if arch_trust_seen is not None and layer_index == arch_trust.LAYER:
+                        if physical is not None and path in arch_trust.FILES:
+                            arch_trust.observe_file(physical, location, stage, arch_trust_seen["files"])
+                        elif path == arch_trust.ALIAS and entry.issym() and entry.linkname == arch_trust.LINK:
+                            arch_alias = {"image": image_index, "layer": layer_index, "entry": entry_index}
                 verify_trailer(layer, budget.max_bytes)
             stage.finish(diff_id)
             layer_path.unlink()
@@ -184,4 +192,6 @@ def scan_archive(archive, backend, findings, workspace, budget, progress, *, tru
             progress(image_index, layer_index, summary["files"])
         if trust is not None:
             trust.classify(findings.items, image_index)
+            if arch_alias is not None and trust.direct_alias(arch_trust.ALIAS, arch_trust.TLS, arch_trust.LAYER):
+                arch_trust_seen["aliases"].append(arch_alias)
     return inventory

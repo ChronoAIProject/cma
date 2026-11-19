@@ -4,10 +4,11 @@ import json
 import tempfile
 from pathlib import Path
 
-from . import nested_certificates
+from . import arch_trust, nested_certificates
 from .common import digest_bytes, digest_file
 from .gate import (
     ADVISORY_RULES,
+    ARCH_CERTIFICATE_ADVISORY,
     CERTIFICATE_ADVISORY,
     CERTIFICATE_RULE,
     DIGEST_FRAME_ADVISORY,
@@ -20,6 +21,28 @@ from .package_occurrences import collect
 
 def path_digest(path):
     return "path-sha256:" + digest_bytes(path.encode("utf-8", "surrogatepass"))
+
+
+def receipt_context(finding, occurrence, observed_sha256):
+    platform, config, image, diff_id, (outer_path, outer_sha256, _) = occurrence
+    return {
+        "finding_id": finding["finding_id"],
+        "rule": finding["rule"],
+        "platform": platform,
+        "image_manifest": image,
+        "image_config": config,
+        "image": finding["image"],
+        "layer": finding["layer"],
+        "layer_digest": diff_id,
+        "entry": finding["entry"],
+        "member": finding.get("member"),
+        "path_digest": finding["path"],
+        "file_sha256": observed_sha256,
+        "outer_path_digest": path_digest(outer_path),
+        "outer_file_sha256": outer_sha256,
+        "candidate_sha256": finding.get("candidate_sha256"),
+        "line": finding.get("line"),
+    }
 
 
 def checked_vectors(finding, expected, verified, database_checks):
@@ -105,23 +128,8 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         classification = explanation
         extra["nested_certificate"] = certificate
     result = {
-        "finding_id": finding["finding_id"],
-        "rule": finding["rule"],
+        **receipt_context(finding, occurrence, observed_sha256),
         "classification": classification,
-        "platform": platform,
-        "image_manifest": image,
-        "image_config": config,
-        "image": finding["image"],
-        "layer": finding["layer"],
-        "layer_digest": diff_id,
-        "entry": finding["entry"],
-        "member": member_id,
-        "path_digest": finding["path"],
-        "file_sha256": observed_sha256,
-        "outer_path_digest": path_digest(outer_path),
-        "outer_file_sha256": outer_sha256,
-        "candidate_sha256": finding.get("candidate_sha256"),
-        "line": finding.get("line"),
         "package": evidence.packages[expected["package_sha256"]],
         "package_member": {
             "locator": expected["package_member"]["locator"],
@@ -134,6 +142,57 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         **extra,
     }
     return result
+
+
+def arch_trust_decisions(report, evidence, observations, verified):
+    packet = evidence.arch_trust
+    raw = {row["finding_id"]: row for row in report["findings"]}
+    seen = report["inventory"].get("arch_trust", {})
+    coordinate_keys = ("image", "layer", "entry")
+    unresolved = {tuple(row[key] for key in coordinate_keys) for row in raw.values()
+                  if row["scope"] == "layer" and row["rule"] not in ADVISORY_RULES
+                  and (row["rule"] != CERTIFICATE_RULE or "member" in row)}
+    rows = []
+    target = None
+    pending = list(packet["files"].values())
+    if packet["alias"] is not None:
+        pending.append(packet["alias"])
+    for expected in pending:
+        finding = raw.get(expected["finding_id"])
+        if (finding is None or finding["scope"] != "layer" or finding["rule"] != CERTIFICATE_RULE
+                or "member" in finding or finding["layer"] != arch_trust.LAYER
+                or finding["entry"] != expected["entry"] or finding["path"] != path_digest(expected["path"])):
+            continue
+        coordinate = tuple(finding[key] for key in coordinate_keys)
+        occurrence = observations.get(coordinate)
+        checked = verified.get(coordinate, {}).get(ARCH_CERTIFICATE_ADVISORY)
+        if coordinate in unresolved or occurrence is None or checked is None:
+            continue
+        platform, _, _, diff_id, (path, file_sha256, _) = occurrence
+        if (platform != arch_trust.PLATFORM or diff_id != packet["base"]["layer_diff_id"]
+                or path != expected["path"] or file_sha256 != finding.get("file_sha256")
+                or file_sha256 != finding.get("candidate_sha256")):
+            continue
+        position = dict(zip(coordinate_keys, coordinate))
+        proof = {"public_path": path, "base": packet["base"], **checked}
+        row = {**receipt_context(finding, occurrence, file_sha256), "classification": ARCH_CERTIFICATE_ADVISORY,
+               "arch_trust": proof, "proof_sha256": expected["proof_sha256"]}
+        if path == arch_trust.ALIAS:
+            if (target is None or target["image"] != row["image"] or position not in seen.get("aliases", ())
+                    or checked["link_target"] != expected["link_target"]):
+                continue
+            proof["target_finding_id"] = target["finding_id"]
+        else:
+            if (dict(position, **checked) not in seen.get("files", ()) or file_sha256 != expected["file_sha256"]
+                    or checked["der_sha256s"] != expected["der_sha256s"]):
+                continue
+            native = expected["native"]
+            if native is not None:
+                proof["native"] = dict(native, package=evidence.packages[native["package_sha256"]])
+            if path == arch_trust.TLS:
+                target = row
+        rows.append(row)
+    return rows
 
 
 def build(archive, output, report, component, evidence):
@@ -155,6 +214,8 @@ def build(archive, output, report, component, evidence):
                                  vector_checks.get(coordinate, {}))
             if result is not None:
                 rows.append(result)
+    if component == arch_trust.COMPONENT and evidence.arch_trust is not None:
+        rows.extend(arch_trust_decisions(report, evidence, observations, vector_checks))
     require(report["archive_sha256"] == digest_file(archive))
     return {
         "schema": "cma-staging-package-decisions-v1",

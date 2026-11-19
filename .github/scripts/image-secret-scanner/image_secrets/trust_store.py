@@ -6,6 +6,7 @@ import hashlib
 import re
 from pathlib import PurePosixPath
 
+from .common import digest_bytes
 from .key_material import decode, frame, has_binary_key
 
 ROOTS = ("etc/ssl/certs", "usr/share/ca-certificates", "usr/local/share/ca-certificates",
@@ -70,6 +71,19 @@ def certificate_digest(path, inspect_der, *, pem_bundle_limit=None):
     return hashlib.sha256(data).hexdigest() if valid else None
 
 
+def certificate_inventory(physical, inspect_der, count, *, comments=False):
+    hashes = []
+
+    def observe(der):
+        inspect_der(der)
+        hashes.append(digest_bytes(der))
+
+    member_digest = certificate_digest(physical, observe, pem_bundle_limit=count if comments else None)
+    if member_digest and len(hashes) == len(set(hashes)) == count:
+        return {"member_sha256": member_digest, "der_sha256s": sorted(hashes)}
+    return None
+
+
 def link_target(path, value):
     if not value or "\\" in value or "\x00" in value or value.rsplit("/", 1)[-1] in ("", ".", ".."):
         return None
@@ -124,8 +138,7 @@ class TrustStore:
         seen = set()
         while path and path not in seen and len(seen) < 40:
             seen.add(path)
-            if path in self.ambiguous or any(str(p) in self.ambiguous or str(p) in self.nodes
-                                             for p in PurePosixPath(path).parents):
+            if self.unresolved(path):
                 return None
             node = self.nodes.get(path)
             if not node or node[0] > layer:
@@ -134,6 +147,18 @@ class TrustStore:
                 return node[1]
             path = node[2]
         return None
+
+    def unresolved(self, path):
+        return path in self.ambiguous or any(
+            str(parent) in self.ambiguous or str(parent) in self.nodes
+            for parent in PurePosixPath(path).parents
+        )
+
+    def direct_alias(self, path, target, layer):
+        if self.unresolved(path) or self.unresolved(target) or self.nodes.get(path) != (layer, None, target):
+            return False
+        node = self.nodes.get(target)
+        return node is not None and node[0] == layer and node[2] is None
 
     def classify(self, findings, image):
         # A credential anywhere in a target or its decoded views also disqualifies

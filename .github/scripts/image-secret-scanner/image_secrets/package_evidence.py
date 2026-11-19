@@ -87,16 +87,18 @@ class PackageEvidence:
     scanner_manifest_sha256: str
     packages: dict
     entries: dict
+    arch_trust: dict = None
 
     @classmethod
     def load(cls, data, *, manifest_sha256, review_sha256, scanner_manifest_sha256):
-        from . import digest_frames, library_vectors
+        from . import arch_trust_evidence, digest_frames, library_vectors
 
         require(len(data) <= MAX_EVIDENCE_BYTES and valid_digest(manifest_sha256)
                 and valid_digest(review_sha256) and valid_digest(scanner_manifest_sha256)
                 and digest_bytes(data) == manifest_sha256)
         raw = json_bytes(data)
-        fields(raw, {"schema", "scanner_manifest_sha256", "packages", "entries"})
+        expected_fields = {"schema", "scanner_manifest_sha256", "packages", "entries"}
+        require(isinstance(raw, dict) and raw.keys() in (expected_fields, expected_fields | {"arch_trust"}))
         require(raw["schema"] == "cma-staging-package-evidence-v1"
                 and raw["scanner_manifest_sha256"] == scanner_manifest_sha256
                 and isinstance(raw["packages"], list) and isinstance(raw["entries"], list))
@@ -170,4 +172,5 @@ class PackageEvidence:
                 match = verified.get((DIGEST_FRAME_RULE, None, None))
                 require(match is not None and match["explanation"] == DIGEST_FRAME_ADVISORY)
             entries[key] = (dict(row, path=path), verified)
-        return cls(manifest_sha256, review_sha256, scanner_manifest_sha256, packages, entries)
+        arch = arch_trust_evidence.load(raw["arch_trust"], packages) if "arch_trust" in raw else None
+        return cls(manifest_sha256, review_sha256, scanner_manifest_sha256, packages, entries, arch)

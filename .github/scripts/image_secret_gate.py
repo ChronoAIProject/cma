@@ -58,6 +58,36 @@ def require(condition, message="Image secret scan receipt is incomplete, unbound
         raise ScanRefusal(message)
 
 
+def validate_arch_certificate(evidence, package_rows):
+    from image_secrets import arch_trust
+    from image_secrets.gate import ARCH_CERTIFICATE_ADVISORY, valid_digest
+
+    proof = evidence["arch_trust"]
+    path, base = proof["public_path"], proof["base"]
+    require(evidence["platform"] == arch_trust.PLATFORM and evidence["layer"] == arch_trust.LAYER
+            and valid_digest(evidence["proof_sha256"])
+            and evidence["layer_digest"] == base["layer_diff_id"]
+            and all(re.fullmatch(r"sha256:[a-f0-9]{64}", digest) for digest in base.values()))
+    if path == arch_trust.ALIAS:
+        target = package_rows.get(proof["target_finding_id"])
+        require(proof["link_target"] == arch_trust.LINK and evidence["file_sha256"] is None
+                and target is not None and target["classification"] == ARCH_CERTIFICATE_ADVISORY
+                and target["arch_trust"]["public_path"] == arch_trust.TLS and target["arch_trust"]["base"] == base
+                and all(target[key] == evidence[key] for key in ("image", "image_config", "image_manifest", "layer")))
+        return
+    hashes = proof["der_sha256s"]
+    require(path in arch_trust.FILES and proof["member_sha256"] == evidence["file_sha256"]
+            and len(hashes) == arch_trust.FILES[path] and all(valid_digest(value) for value in hashes)
+            and hashes == sorted(set(hashes)))
+    native = proof.get("native")
+    require((path == arch_trust.GNUPG) == (native is not None))
+    if native is not None:
+        require(native["package"]["authority_type"] == "arch-signature"
+                and native["package"]["artifact_sha256"] == native["package_sha256"]
+                and native["member"]["type"] == "regular" and native["member"]["path"][-1] == path
+                and native["member"]["sha256"] == proof["member_sha256"] and valid_digest(native["mtree_sha256"]))
+
+
 def validate_receipt(report, archive_digest, mode, packet, *, component=None, package_section=None):
     policy = report["policy"]
     expected_runtime = component if mode == "credential" and component in RUNTIME_COMPONENTS else None
@@ -79,7 +109,7 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
     else:
         from image_secrets import nested_certificates, package_receipt
         from image_secrets.gate import (
-            CERTIFICATE_ADVISORY, DIGEST_FRAME_ADVISORY, PACKAGE_ADVISORY_RULES,
+            ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY, DIGEST_FRAME_ADVISORY, PACKAGE_ADVISORY_RULES,
             SELF_TEST_ADVISORY, package_advisory_allowed, valid_digest,
         )
 
@@ -109,6 +139,8 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                             and valid_digest(cert["pypi_attestation_sha256"])
                             and len(hashes) == nested_certificates.COUNT
                             and all(valid_digest(value) for value in hashes) and hashes == sorted(set(hashes)))
+                elif classification == ARCH_CERTIFICATE_ADVISORY:
+                    validate_arch_certificate(evidence, package_rows)
                 proved_public_ids.add(evidence["finding_id"])
     if packet is None:
         require("classifications_sha256" not in policy and "classification_review_sha256" not in policy)

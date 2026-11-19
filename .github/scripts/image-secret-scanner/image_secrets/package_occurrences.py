@@ -7,13 +7,14 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-from . import digest_frames, library_vectors, nested_certificates
+from . import arch_trust, digest_frames, library_vectors, nested_certificates
 from .archive import ImageArchive
 from .common import MAX_NESTED_MEMBER_BYTES, Budget, archive_path, copy_stream, digest_bytes, digest_file
 from .containers import identify, inspect_nested
-from .gate import CERTIFICATE_ADVISORY
+from .gate import ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY
 from .package_evidence import NESTED_LOCATOR, PLATFORM, matches, normalized, require
 from .tar_trailer import verify_trailer
+from .trust_store import MAX_CERT_FILE
 
 IDENTITY_BUDGET = 20 * 1024**3
 DECODER_TIMEOUT = 120
@@ -171,7 +172,30 @@ def read_digest_candidate(stream, member, path, workspace, expected):
         return (path, checksum, {}), verified, set()
 
 
-def layer_occurrences(archive, name, diff_id, requested, workspace, budget, reviewed_payloads, databases):
+def read_arch_trust_entry(layer, entry, expected, workspace, budget):
+    path = archive_path(entry.name, posix_tar=True)
+    if path != expected["path"] or entry.issparse():
+        return None
+    if path == arch_trust.ALIAS:
+        if entry.issym() and entry.linkname == expected["link_target"]:
+            return (path, None, {}), {ARCH_CERTIFICATE_ADVISORY: {"link_target": entry.linkname}}, set()
+        return None
+    if not entry.isfile() or not 0 < entry.size <= MAX_CERT_FILE:
+        return None
+    budget.reserve(entry.size)
+    with tempfile.TemporaryDirectory(dir=workspace) as scratch:
+        physical = Path(scratch) / "certificate"
+        with layer.extractfile(entry) as source:
+            require(copy_stream(source, physical, entry.size) == entry.size)
+        if digest_file(physical) != expected["file_sha256"]:
+            return None
+        checked = arch_trust.inspect_file(physical, path, lambda _der: None)
+        if checked is not None:
+            return ((path, checked["member_sha256"], {}), {ARCH_CERTIFICATE_ADVISORY: checked}, set())
+    return None
+
+
+def layer_occurrences(archive, name, diff_id, requested, workspace, budget, reviewed_payloads, databases, arch_entries):
     physical = archive.layer(name, diff_id)
     result = {}
     try:
@@ -179,8 +203,11 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget, revi
             for index, member in enumerate(layer):
                 budget.entry()
                 if index in requested:
-                    found = read_entry(layer, member, requested[index], workspace, budget, reviewed_payloads.get(index),
-                                       databases.get(index, ()))
+                    if index in arch_entries:
+                        found = read_arch_trust_entry(layer, member, arch_entries[index], workspace, budget)
+                    else:
+                        found = read_entry(layer, member, requested[index], workspace, budget,
+                                           reviewed_payloads.get(index), databases.get(index, ()))
                     if found is not None:
                         result[index] = found
             verify_trailer(layer, budget.max_bytes)
@@ -193,6 +220,7 @@ def requested_occurrences(report, component, evidence):
     by_layer = defaultdict(dict)
     reviewed_payloads = defaultdict(dict)
     databases = defaultdict(lambda: defaultdict(list))
+    arch_entries = defaultdict(dict)
     for component_id, platform_id, layer, diff_id, entry, locator in evidence.entries:
         if component_id == component:
             selected = by_layer[platform_id, layer, diff_id]
@@ -206,16 +234,27 @@ def requested_occurrences(report, component, evidence):
                 db_layer = (platform_id, db["layer"], db["diff_id"])
                 by_layer[db_layer].setdefault(db["entry"], set()).add(None)
                 databases[db_layer][db["entry"]].append(record[0])
+    if component == arch_trust.COMPONENT and evidence.arch_trust is not None:
+        packet = evidence.arch_trust
+        arch_layer = (arch_trust.PLATFORM, arch_trust.LAYER, packet["base"]["layer_diff_id"])
+        arch_rows = list(packet["files"].values())
+        if packet["alias"] is not None:
+            arch_rows.append(packet["alias"])
+        for row in arch_rows:
+            entry = row["entry"]
+            require(entry not in by_layer[arch_layer])
+            by_layer[arch_layer][entry] = {None}
+            arch_entries[arch_layer][entry] = row
     coordinates = {}
     for row in report["inventory"]["layers"]:
         coordinate = (row["image"], row["index"])
         require(coordinate not in coordinates)
         coordinates[coordinate] = row["diff_id"]
-    return by_layer, coordinates, reviewed_payloads, databases
+    return by_layer, coordinates, reviewed_payloads, databases, arch_entries
 
 
 def collect(path, workspace, report, component, evidence, *, vector_checks=None, database_checks=None):
-    wanted, coordinates, reviewed_payloads, databases = requested_occurrences(report, component, evidence)
+    wanted, coordinates, reviewed_payloads, databases, arch_entries = requested_occurrences(report, component, evidence)
     budget = Budget(IDENTITY_BUDGET, 1_000_000)
     found = {}
     with ImageArchive(path, workspace, budget) as archive:
@@ -237,7 +276,8 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
                 request = wanted.get(layer)
                 if request:
                     entries = layer_occurrences(archive, name, diff_id, request, workspace, budget,
-                                                reviewed_payloads.get(layer, {}), databases.get(layer, {}))
+                                                reviewed_payloads.get(layer, {}), databases.get(layer, {}),
+                                                arch_entries.get(layer, {}))
                     for index, (occurrence, verified, verified_databases) in entries.items():
                         coordinate = (i, j, index)
                         found[coordinate] = (platform_id, config, manifest, diff_id, occurrence)

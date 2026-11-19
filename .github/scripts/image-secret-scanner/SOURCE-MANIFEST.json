@@ -1,8 +1,8 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.4",
-  "at": "2026-11-20T03:25:44+08:00",
-  "review_state": "Staging package evidence and exact nested ensurepip certificate candidate",
+  "at": "2026-11-20T03:48:24+08:00",
+  "review_state": "Candidate for exact Arch trust-store decisions",
   "files": [
     {
       "path": "CHANGELOG.md",
@@ -13,9 +13,9 @@
     },
     {
       "path": "README.md",
-      "sha256": "fe0a85a3cf25ab0f2db56e23210429683dcda13dd2f7746b9c8930a48dffd9c1",
-      "bytes": 25700,
-      "lines": 160,
+      "sha256": "de536615ec1a85733a7e919284e3177de30ae67f6f09f79ae12710fe8064b21c",
+      "bytes": 26059,
+      "lines": 162,
       "mode": "0o644"
     },
     {
@@ -79,6 +79,20 @@
       "sha256": "2f4ce3f79f51af7391b84d7233a6ca2c8d208a73623870794c56bd3d5a40fb0b",
       "bytes": 2765,
       "lines": 72,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/arch_trust.py",
+      "sha256": "3649c090d90f4c570f1b6f8ff2fc416ce075942d6651f758cc99b1e14321b9a5",
+      "bytes": 953,
+      "lines": 25,
+      "mode": "0o644"
+    },
+    {
+      "path": "image_secrets/arch_trust_evidence.py",
+      "sha256": "ad6e687621ff960493cdd0e118ea0dddbc4a75d698c47ad90947dbb4d427ba78",
+      "bytes": 2833,
+      "lines": 53,
       "mode": "0o644"
     },
     {
@@ -146,16 +160,16 @@
     },
     {
       "path": "image_secrets/engine.py",
-      "sha256": "e6f2e06a0890b879f8c5092ef417a7875f8554650d8c405b0fb72b88f164837a",
-      "bytes": 8847,
-      "lines": 187,
+      "sha256": "687829d2f938eb756fa10db8db69850ad1f67adbc3876f8c0cef8fa1379682da",
+      "bytes": 9659,
+      "lines": 197,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/gate.py",
-      "sha256": "ee559e275a12c3edf78de3c89993b6990f922964406398a87117c494d331cb7f",
-      "bytes": 6747,
-      "lines": 142,
+      "sha256": "7702ec35042ebc7df0f08780a2dce371c5b1aa05251336573e26ef573c01f88e",
+      "bytes": 6989,
+      "lines": 146,
       "mode": "0o644"
     },
     {
@@ -174,9 +188,9 @@
     },
     {
       "path": "image_secrets/nested_certificates.py",
-      "sha256": "c40bf820921097990f0632b0dec23b38c7576ba87dfacaa3c1fcc7bc4b52d2cd",
-      "bytes": 739,
-      "lines": 23,
+      "sha256": "0871ea0272e58d96cba04651963062927c5a4566c68e7e3f64627033f75b19ee",
+      "bytes": 452,
+      "lines": 13,
       "mode": "0o644"
     },
     {
@@ -188,23 +202,23 @@
     },
     {
       "path": "image_secrets/package_evidence.py",
-      "sha256": "63d8f188006f1cabaf214888b5cbf68310f571e399de424fa43f55ae3205b588",
-      "bytes": 9062,
-      "lines": 173,
+      "sha256": "a2d22f8399038b0c364481863a35e9ffae17ef13202f0254689d96fb58e2d6ed",
+      "bytes": 9333,
+      "lines": 176,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/package_occurrences.py",
-      "sha256": "504a6677d6a050db9dcc67da3859fe11927e4759c594f2e9739c09250bb48c25",
-      "bytes": 12475,
-      "lines": 249,
+      "sha256": "3d2eaca20d9dffc141951a7265cc52bbc6a377d5e9542f6b8e74aaf4cd1f21fc",
+      "bytes": 14557,
+      "lines": 289,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/package_receipt.py",
-      "sha256": "703fef18770ec81d0f27defd03571fd0bab083a7fbd984339cc44abeaa44b6a6",
-      "bytes": 7808,
-      "lines": 180,
+      "sha256": "57787813a9d9f4aa780e3e630eb1bdd840ff9dd0af6286e619cc2e9e5e11b902",
+      "bytes": 11085,
+      "lines": 241,
       "mode": "0o644"
     },
     {
@@ -223,9 +237,9 @@
     },
     {
       "path": "image_secrets/trust_store.py",
-      "sha256": "846c09e9093346fadf413e03d349baf844dc0c2b573944e29bde0628215f6a82",
-      "bytes": 6137,
-      "lines": 150,
+      "sha256": "c342b29e7bbb11d3cbd7c9633c713e3e1b77c8f8275d06224945a49a93a54459",
+      "bytes": 6990,
+      "lines": 175,
       "mode": "0o644"
     },
     {
@@ -317,6 +331,13 @@
       "sha256": "814b6475ef3a58ca02f6a68808f93ed626ea22956619cafff8a860019d3f2b5c",
       "bytes": 2212,
       "lines": 49,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_arch_trust.py",
+      "sha256": "93482a5c6bfe8666d5536bd1402bb807a7a918549fccdf208391e23f0b94dda6",
+      "bytes": 8537,
+      "lines": 139,
       "mode": "0o644"
     },
     {
