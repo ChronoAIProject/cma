@@ -55,6 +55,7 @@ export interface AgentStreamOptions extends ReadOptions {
 export interface AgentLifecycleCreateInput {
   readonly name: string;
   readonly initial_message?: string;
+  readonly template?: import('../api-client/agents/task-template').TaskTemplate;
   readonly desktop?: boolean;
   readonly machine_included?: boolean;
   readonly workspace_id?: string;
@@ -137,6 +138,7 @@ export interface AgentLifecycleOperationView {
   readonly phase: string;
   readonly agent_id?: string;
   readonly error?: string;
+  readonly failure?: import('@cma/client').AgentLifecycleFailure;
   readonly events: readonly AgentLifecycleOperationEvent[];
   readonly connection?: { readonly services: readonly string[]; readonly target: ConnectionTarget };
 }
@@ -151,18 +153,21 @@ export class AgentLifecycleCreateError extends Error {
   readonly status: number;
   readonly code?: string;
   readonly connection?: AgentLifecycleConnectionRequired;
+  readonly failure?: import('@cma/client').AgentLifecycleFailure;
 
   constructor(
     message: string,
     status: number,
     code?: string,
     connection?: AgentLifecycleConnectionRequired,
+    failure?: import('@cma/client').AgentLifecycleFailure,
   ) {
     super(message);
     this.name = 'AgentLifecycleCreateError';
     this.status = status;
     this.code = code;
     this.connection = connection;
+    this.failure = failure;
   }
 }
 
@@ -227,6 +232,7 @@ export interface CmaWebClient {
   /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
   readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly taskExperience?: import('@cma/client').TaskExperienceClient;
+  readonly readTaskTemplateSupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
   readonly createAgentLifecycle?: (
     input: AgentLifecycleCreateInput,
@@ -267,6 +273,9 @@ export interface CmaWebClient {
     options: CommandOptions,
   ) => Promise<void>;
   readonly botViews?: BotClient;
+  readonly readSandboxCapacity?: (
+    options?: ReadOptions,
+  ) => Promise<import('@cma/client').SandboxCapacity>;
   listSandboxes(
     options?: PageOptions & { readonly excludeRetired?: boolean },
   ): Promise<ResourcePage<SandboxSummary>>;

@@ -4,6 +4,7 @@ use layer2_core::sandbox::store::AgentRetryObservation;
 use std::time::{Duration, SystemTime};
 
 mod admission_tests;
+mod cleanup_discovery_tests;
 mod helpers;
 mod ownership_retry_compatibility_tests;
 mod ownership_retry_discovery_tests;

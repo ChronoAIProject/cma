@@ -8,7 +8,6 @@ use layer2_core::{
 };
 use mongodb::{
     bson::{doc, DateTime, Document},
-    options::UpdateOptions,
     Client, Collection, IndexModel,
 };
 use serde::{Deserialize, Serialize};
@@ -127,6 +126,56 @@ impl MongoUserDirectoryStore {
             .map_err(|error| StoreError::Unavailable(format!("directory index: {error}")))?;
         Ok(store)
     }
+
+    async fn observe_at(
+        &self,
+        identity: &PublicIdentity,
+        at: &str,
+        observed_at: DateTime,
+    ) -> Result<(), StoreError> {
+        let filter = doc! {
+            "_id": identity.subject.as_str(),
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+        };
+        let fields = doc! {
+            "display_name": identity.display_name.as_deref(),
+            "avatar_url": identity.avatar_url.as_deref(),
+            "last_seen_at": at,
+            "observed_at": observed_at,
+        };
+        let update = vec![doc! { "$replaceWith": { "$cond": [
+            { "$or": [
+                { "$eq": [{ "$type": "$observed_at" }, "missing"] },
+                { "$lt": ["$observed_at", observed_at] },
+            ] },
+            { "$mergeObjects": ["$$ROOT", { "$literal": fields }, {
+                "first_seen_at": { "$ifNull": ["$first_seen_at", { "$literal": at }] },
+            }] },
+            "$$ROOT",
+        ] } }];
+        let result = self
+            .users
+            .update_one(filter.clone(), update.clone())
+            .upsert(true)
+            .await;
+        match result {
+            Ok(_) => Ok(()),
+            Err(error) if super::sandbox_mongo::is_duplicate_key(&error) => {
+                // A concurrent insert may win; retry once without admitting a new row.
+                let retried = self
+                    .users
+                    .update_one(filter, update)
+                    .await
+                    .map_err(observe_error)?;
+                if retried.matched_count == 1 {
+                    Ok(())
+                } else {
+                    Err(observe_error(error))
+                }
+            }
+            Err(error) => Err(observe_error(error)),
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -142,29 +191,7 @@ impl UserDirectoryStore for MongoUserDirectoryStore {
     async fn observe(&self, identity: &PublicIdentity) -> Result<(), StoreError> {
         let at = layer2_core::now_rfc3339();
         let observed_at = DateTime::now();
-        self.users
-            .update_one(
-                doc! {
-                    "_id": identity.subject.as_str(),
-                    "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                },
-                doc! {
-                    "$set": {
-                        "display_name": identity.display_name.as_deref(),
-                        "avatar_url": identity.avatar_url.as_deref(),
-                        "last_seen_at": &at,
-                        "observed_at": observed_at,
-                    },
-                    "$setOnInsert": {
-                        "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                        "first_seen_at": &at,
-                    },
-                },
-            )
-            .with_options(UpdateOptions::builder().upsert(true).build())
-            .await
-            .map_err(|error| StoreError::Unavailable(format!("observe directory user: {error}")))?;
-        Ok(())
+        self.observe_at(identity, &at, observed_at).await
     }
 
     async fn user(&self, subject: &SubjectId) -> Result<Option<RegisteredUser>, StoreError> {
@@ -250,6 +277,10 @@ impl UserDirectoryStore for MongoUserDirectoryStore {
     }
 }
 
+fn observe_error(error: mongodb::error::Error) -> StoreError {
+    StoreError::Unavailable(format!("observe directory user: {error}"))
+}
+
 fn regex_literal(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for character in value.chars() {
@@ -306,3 +337,6 @@ mod tests {
         assert_eq!(regex_literal("a.*[b]"), "a\\.\\*\\[b\\]");
     }
 }
+
+#[cfg(test)]
+mod mongo_tests;

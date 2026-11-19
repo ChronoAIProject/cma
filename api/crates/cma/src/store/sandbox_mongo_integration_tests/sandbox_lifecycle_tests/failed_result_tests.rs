@@ -1,3 +1,4 @@
+mod terminal_event_tests;
 use super::*;
 use axum::{
     body::{to_bytes, Body},
@@ -51,9 +52,26 @@ async fn call(
     owner: &str,
     expected: StatusCode,
 ) -> Value {
+    call_path(
+        app,
+        &format!("/api/v1/sandboxes/{id}"),
+        method,
+        owner,
+        expected,
+    )
+    .await
+}
+
+async fn call_path(
+    app: &Router,
+    path: &str,
+    method: Method,
+    owner: &str,
+    expected: StatusCode,
+) -> Value {
     let mut request = Request::builder()
         .method(method)
-        .uri(format!("/api/v1/sandboxes/{id}"))
+        .uri(path)
         .header("Idempotency-Key", uuid::Uuid::new_v4().to_string())
         .body(Body::empty())
         .unwrap();
@@ -100,10 +118,7 @@ pub(in crate::store::sandbox_mongo_integration_tests) async fn fail(
             agents: vec![],
             agent_scope: SandboxLifecycleAgentScope::Touched,
             appended_at: at.into(),
-            events: vec![SandboxEventKind::WorkStepFailed {
-                step: SandboxWorkStep::RunLifecycleOperation,
-                failure,
-            }],
+            events: vec![SandboxEventKind::Failed { failure }],
         })
         .await
         .unwrap();
@@ -176,6 +191,7 @@ async fn failed_lifecycle_history_survives_fresh_readers_and_owner_retirement() 
             assert_eq!(retained, failed);
             let app = router(replica);
             let body = call(&app, &failed.id, Method::GET, "owner", StatusCode::OK).await;
+            terminal_event_tests::assert_public_terminal(&app, &failed).await;
             let result = &body["lifecycle"]["result"];
             assert_eq!(result["state"], "failed");
             assert_eq!(result["code"], "lifecycle_failed");

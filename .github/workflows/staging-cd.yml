@@ -4,12 +4,6 @@ on:
   push:
     branches: [develop]
 
-# Keep component builds parallel inside the run while excluding cache maintenance.
-concurrency:
-  group: cma-develop-cache-readers
-  queue: max
-  cancel-in-progress: false
-
 permissions:
   contents: read
 
@@ -52,7 +46,7 @@ jobs:
           "$RUNNER_TEMP/selector-venv/bin/python" -m pip install -r .github/scripts/ci_tracks/requirements.txt
       - name: Bind selection cache to trusted develop and exact policy
         id: selection-cache
-        run: python3 -B .github/scripts/staging_cd_selection_cache.py
+        run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_selection_cache.py'
       - name: Restore previous trusted develop comparisons
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
@@ -108,6 +102,28 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_PUBLICATION_MATRIX: ${{ steps.allocate.outputs.matrix }}
         run: python3 -B .github/scripts/staging_cd_routes.py
+  cargo_budget:
+    needs: allocate
+    if: >-
+      needs.allocate.outputs.changed == 'true' &&
+      (fromJSON(needs.allocate.outputs.publications)['am'] != '' ||
+       fromJSON(needs.allocate.outputs.publications)['eg'] != '')
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Reserve optional Cargo upload headroom
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CARGO_PUBLICATIONS: ${{ needs.allocate.outputs.publications }}
+        run: python3 -B .github/scripts/actions_cargo_admission.py reserve
   infrastructure:
     needs: allocate
     if: needs.allocate.outputs.changed == 'true'
@@ -174,7 +190,6 @@ jobs:
       packages: write
     with:
       component: am
-      eg_cache_writer: ${{ fromJSON(needs.allocate.outputs.publications)['eg'] != '' }}
       tasks: ${{ fromJSON(needs.allocate.outputs.publications)['am'] }}
   release_eg:
     name: Release eg

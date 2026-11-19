@@ -132,6 +132,29 @@ async fn runtime_update_worker_retains_paused_intent_and_allows_exact_failed_ret
     let mut failed = failed.expect("terminal failure must park precise update phase");
     let previous = failed.clone();
     assert_eq!(failed.status, SandboxStatus::Rotating);
+    assert_eq!(failed.work.step, SandboxWorkStep::None);
+    assert!(failed.failure.is_none());
+    let events = f
+        .harness
+        .store
+        .sandbox_events(&failed.id, 0, 200)
+        .await
+        .unwrap();
+    assert_eq!(
+        events.last().unwrap().kind,
+        SandboxEventKind::WorkStepFailed {
+            step: SandboxWorkStep::RunLifecycleOperation,
+            failure: failed
+                .runtime_update_request()
+                .unwrap()
+                .failure
+                .clone()
+                .unwrap(),
+        }
+    );
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event.kind, SandboxEventKind::Failed { .. })));
     assert_eq!(failed.lifecycle.home, active.lifecycle.home);
     f.backend.reject_credential.store(false, Ordering::SeqCst);
     failed

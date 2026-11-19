@@ -351,3 +351,102 @@ it('limits concurrent uploads to two and drains the queue after completion', asy
   await act(async () => finish[0]!());
   await waitFor(() => expect(upload).toHaveBeenCalledTimes(3));
 });
+
+it.each(['ready', 'uploading'] as const)(
+  'restores a %s attachment after the draft hook is destroyed without automatically uploading or sending',
+  async (status) => {
+    const client = agentClient();
+    const upload = vi.fn<UploadAttachment>();
+    const send = vi.fn();
+    const file = new File(['abc'], 'recover.txt', { type: 'text/plain' });
+    const id = `att_${'a'.repeat(64)}`;
+    const metadata = { ...receipt(file), id, path: `/home/attachments/agt_1/${id}/recover.txt` };
+    const hook = renderHook(() => useAgentDraft(client, 'owner', 'agt_1'));
+    act(() => {
+      hook.result.current.setContent('  Explain this file\n');
+      hook.result.current.setAttachments([
+        { key: 'file-a', file, status, ...(status === 'ready' ? { uploaded: metadata } : {}) },
+      ]);
+    });
+    hook.unmount();
+    function Surface() {
+      const draft = useAgentDraft(client, 'owner', 'agt_1');
+      return (
+        <Composer
+          draft={draft}
+          status="ready"
+          running={false}
+          busy={false}
+          inputAvailability={{ allowed: true }}
+          uploadAttachment={upload}
+          onSend={send}
+          onStop={vi.fn()}
+        />
+      );
+    }
+    render(<Surface />);
+    expect(screen.getByRole('textbox')).toHaveValue('  Explain this file\n');
+    expect(screen.getByText('recover.txt')).toBeInTheDocument();
+    expect(upload).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    if (status === 'uploading') {
+      expect(screen.getByText(/Reselect this file/)).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+      fireEvent.submit(screen.getByRole('form', { name: 'Message Agent' }));
+      expect(send).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Remove recover.txt' }));
+      expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+      expect(send).toHaveBeenCalledWith(
+        expect.stringContaining(metadata.path),
+        expect.any(Function),
+      );
+      expect(upload).not.toHaveBeenCalled();
+    }
+  },
+);
+
+it('does not mark a completed upload interrupted while its ready update is waiting to render', async () => {
+  type Items = readonly import('./attachments').DraftAttachment[];
+  const file = new File(['abc'], 'notes.txt');
+  let items: Items = [{ key: 'delayed-file', status: 'queued', file }];
+  const updates: import('react').SetStateAction<Items>[] = [];
+  const setItems = (update: import('react').SetStateAction<Items>) => {
+    updates.push(update);
+  };
+  let finish!: (value: UploadedAttachment) => void;
+  const upload = vi.fn<UploadAttachment>(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const hook = renderHook(
+    ({ files }: { files: Items }) =>
+      useComposerAttachments(
+        {
+          content: '',
+          setContent: vi.fn(),
+          attachments: files,
+          setAttachments: setItems,
+        },
+        upload,
+        true,
+      ),
+    { initialProps: { files: items } },
+  );
+  await act(async () => {});
+  const apply = () => {
+    for (const update of updates.splice(0))
+      items = typeof update === 'function' ? update(items) : update;
+    hook.rerender({ files: items });
+  };
+  act(apply);
+  await act(async () => finish(receipt(file)));
+  // Another render can commit the uploading state before the completion update.
+  hook.rerender({ files: [...items] });
+  act(apply);
+  expect(hook.result.current.items[0]?.status).toBe('ready');
+  expect(upload).toHaveBeenCalledOnce();
+});
