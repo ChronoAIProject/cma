@@ -12,6 +12,7 @@ use url::Url;
 pub(super) fn validate_request(
     request: &AgentLifecycleCreateRequest,
 ) -> Result<(), AgentLifecycleProvisioningError> {
+    request.validate_template()?;
     if request.name.trim() != request.name
         || request.name.is_empty()
         || request.name.len() > 80

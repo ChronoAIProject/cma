@@ -441,10 +441,8 @@ it('opens ordinary contextual creation as editable task templates without admitt
   expect(screen.getByLabelText('Your task')).toHaveValue('');
   expect(screen.getByText('Creating in Workspace workspace-owned')).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'Research a topic' }));
-  expect(screen.getByLabelText('Your task')).toHaveValue(
-    'Research [topic] and summarize the key findings, with links to sources.',
-  );
-  await waitFor(() => expect(screen.getByLabelText('Your task')).toHaveFocus());
+  expect(screen.getByLabelText('Topic')).toHaveValue('');
+  await waitFor(() => expect(screen.getByLabelText('Topic')).toHaveFocus());
   await waitFor(() =>
     expect(screen.queryByText('Checking task creation…')).not.toBeInTheDocument(),
   );
