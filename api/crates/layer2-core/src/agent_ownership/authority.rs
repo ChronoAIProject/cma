@@ -27,6 +27,13 @@ pub fn execution_authority() -> Option<Arc<Authority>> {
 #[path = "authority_retry_evidence_tests.rs"]
 mod retry_evidence_tests;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ReceiverCancellation {
+    CancelledWhileLive,
+    AlreadySafelyCancelled,
+    NotLive,
+}
+
 /// Monotonic local cancellation complements the durable and receiving-runtime
 /// fences. A revoked/expired authority can never be revived by a late renewal.
 pub struct Authority {
@@ -139,17 +146,22 @@ impl Authority {
         Some(self.retry_evidence.get_or_init(Default::default).clone())
     }
 
-    pub(super) fn cancel_receiver(&self) {
+    pub(super) fn cancel_receiver(&self) -> ReceiverCancellation {
         // Publish the cause before revoking so concurrent maintenance can
         // distinguish receiver cancellation from genuine ownership loss.
+        let mut outcome = ReceiverCancellation::NotLive;
         self.deadline.send_modify(|deadline| {
             // A receiver callback arriving after generic revocation/expiry
             // must not relabel genuine ownership loss as receiver cancellation.
-            if deadline.is_some_and(|until| Instant::now() < until) {
+            if self.receiver_cancelled() {
+                outcome = ReceiverCancellation::AlreadySafelyCancelled;
+            } else if deadline.is_some_and(|until| Instant::now() < until) {
                 self.receiver_cancelled.store(true, Ordering::Release);
+                outcome = ReceiverCancellation::CancelledWhileLive;
             }
             *deadline = None;
         });
+        outcome
     }
 
     pub fn revoke(&self) {
