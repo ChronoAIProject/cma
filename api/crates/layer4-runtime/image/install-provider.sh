@@ -14,6 +14,10 @@ if [ "${RUNTIME_DESKTOP}" = "1" ]; then inputs=/tmp/cma-image-inputs/desktop-pro
 mkdir /tmp/provider-install
 cp "$inputs/package.json" "$inputs/package-lock.json" /tmp/provider-install/
 npm ci --prefix /tmp/provider-install --install-strategy=shallow --ignore-scripts --no-audit --no-fund
+# The bridge imports Zod's published modules. Its upstream source tests carry
+# example credentials and must stay outside the payload copied into the image.
+zod_source=/tmp/provider-install/node_modules/@agentclientprotocol/codex-acp/node_modules/zod/src/v4
+rm -rf "$zod_source/classic/tests" "$zod_source/mini/tests"
 cp -a /tmp/provider-install/node_modules/@openai /usr/local/lib/node_modules/
 cp -a /tmp/provider-install/node_modules/@agentclientprotocol /usr/local/lib/node_modules/
 ln -s ../lib/node_modules/@openai/codex/bin/codex.js /usr/local/bin/codex

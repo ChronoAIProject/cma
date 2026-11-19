@@ -54,6 +54,21 @@ def final_entries():
 
 
 class RuntimeHygieneTests(unittest.TestCase):
+    def test_vendor_examples_are_excluded_without_removing_modules_or_licenses(self):
+        root = "usr/local/lib/node_modules/"
+        npm = root + "npm/node_modules/"
+        zod = root + "@agentclientprotocol/codex-acp/node_modules/zod/src/v4/"
+        for package in ("@npmcli/arborist", "ip-address"):
+            with self.subTest(package=package):
+                with self.assertRaisesRegex(POLICY.HygieneRefusal, "vendor_examples_layer"):
+                    POLICY.layer_entry(None, 1, npm + package + "/README.md", "file", 1)
+                self.assertFalse(POLICY.layer_entry(None, 1, npm + package + "/LICENSE", "file", 1))
+        for variant in ("classic", "mini"):
+            with self.subTest(variant=variant):
+                with self.assertRaisesRegex(POLICY.HygieneRefusal, "vendor_examples_layer"):
+                    POLICY.layer_entry(None, 1, zod + variant + "/tests/example.ts", "file", 1)
+                self.assertFalse(POLICY.layer_entry(None, 1, zod + variant + "/index.ts", "file", 1))
+
     def test_private_ipc_identity_is_exact_and_must_be_uninitialized_in_every_layer(self):
         path, target = "etc/machine-id", POLICY.IPC_ID_TARGET
         state = {path: {"kind": "symlink", "target": target},
