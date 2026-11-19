@@ -355,9 +355,14 @@ struct AdmittedIo {
 }
 
 fn refused(_: crate::AdapterError) -> Error {
-    Error::Io(std::io::Error::other(
-        "admitted conversation transport refused progress",
-    ))
+    refused_transport("producer_refusal")
+}
+
+fn refused_transport(reason: &'static str) -> Error {
+    tracing::debug!(reason, "admitted conversation transport refused progress");
+    // A custom io::Error boxes its diagnostic before any operation scope exists.
+    // Keep the same IO kind and emit only a static reason at this boundary.
+    Error::Io(std::io::ErrorKind::Other.into())
 }
 
 impl Stream for AdmittedIo {
@@ -369,9 +374,9 @@ impl Stream for AdmittedIo {
             Poll::Ready(Some(Ok(frame))) if frame.belongs_to(&self.policy) => {
                 Poll::Ready(Some(Ok(IncomingFrame::Admitted(frame))))
             }
-            Poll::Ready(Some(Ok(_))) => Poll::Ready(Some(Err(refused(
-                crate::AdapterError::Rejected(text("frame belongs to another ingress root")),
-            )))),
+            Poll::Ready(Some(Ok(_))) => {
+                Poll::Ready(Some(Err(refused_transport("foreign_frame_root"))))
+            }
             Poll::Ready(Some(Err(error))) => Poll::Ready(Some(Err(refused(error)))),
         }
     }
@@ -383,15 +388,10 @@ impl Sink<Message> for AdmittedIo {
         Pin::new(&mut self.socket).poll_ready(cx).map_err(refused)
     }
     fn start_send(mut self: Pin<&mut Self>, message: Message) -> Result<(), Error> {
-        let scope = IngressWorkScope::current().ok_or_else(|| {
-            Error::Io(std::io::Error::other(
-                "conversation write has no admitted storage",
-            ))
-        })?;
+        let scope =
+            IngressWorkScope::current().ok_or_else(|| refused_transport("missing_write_scope"))?;
         if !scope.belongs_to(&self.policy) {
-            return Err(refused(crate::AdapterError::Rejected(text(
-                "write belongs to another ingress root",
-            ))));
+            return Err(refused_transport("foreign_write_root"));
         }
         Pin::new(&mut self.socket)
             .start_send(scope.initialize(|| message))

@@ -158,3 +158,159 @@ async fn missing_session_diagnostic_refuses_text_before_allocation_under_pressur
     drop(error);
     assert_eq!(root.available_bytes(), root.capacity_bytes());
 }
+
+#[tokio::test]
+async fn reader_diagnostic_scope_refuses_before_unowned_error_construction() {
+    use super::super::{ingress::IncomingFrame, reader, Message, LANE_RETAINED_OUTPUT};
+    use crate::allocation_probe::AllocationProbe;
+    use futures_util::FutureExt;
+    let fixture = fixture();
+    let root = fixture.root.clone();
+    let (updates, captured) = UpdateRelay::capture_admitted(&fixture.policy).unwrap();
+    let make_frame = || {
+        IncomingFrame::Admitted(
+            fixture
+                .policy
+                .admit(
+                    IngressClass::Data,
+                    AllocationPlan::checked(
+                        "reader error frame",
+                        &[sizing::shared_owner_bytes::<Message>(), 2],
+                    )
+                    .unwrap(),
+                )
+                .unwrap()
+                .initialize(|| Message::Binary(vec![LANE_RETAINED_OUTPUT, 0])),
+        )
+    };
+    assert!(!reader::dispatch(&fixture.bridge, Ok(make_frame()), &updates).await);
+    let frame = make_frame();
+    let available = fixture
+        .policy
+        .budget(IngressClass::Control)
+        .available_bytes();
+    let pressure = fixture
+        .policy
+        .admit(
+            IngressClass::Control,
+            AllocationPlan::checked("reader diagnostic pressure", &[available]).unwrap(),
+        )
+        .unwrap()
+        .initialize(|| vec![0u8; available - 1024]);
+    let mut probe = AllocationProbe::new();
+    assert!(
+        !probe.track(|| reader::dispatch(&fixture.bridge, Ok(frame), &updates)
+            .now_or_never()
+            .unwrap())
+    );
+    assert_eq!(
+        probe.allocated(),
+        0,
+        "reader allocated an error after diagnostic refusal"
+    );
+    assert!(fixture.writes.lock().unwrap().is_empty());
+    assert!(captured.take().unwrap().is_none());
+    drop((pressure, updates, captured, fixture));
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+#[tokio::test]
+async fn independent_ack_diagnostics_keep_control_progress_and_refuse_before_send() {
+    use super::super::{ingress::Ack, reader};
+    use crate::allocation_probe::AllocationProbe;
+    use crate::{ConversationSettingsSupport, RuntimeOutputSource};
+    use futures_util::FutureExt;
+    let fixture = fixture();
+    fixture.activate().await;
+    let root = fixture.root.clone();
+    let source = fixture
+        .policy
+        .admit(
+            IngressClass::Control,
+            AllocationPlan::checked(
+                "ACK diagnostic source",
+                &[
+                    sizing::shared_owner_bytes::<RuntimeOutputSource>(),
+                    36 + 12 + 64,
+                ],
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .initialize(|| RuntimeOutputSource {
+            stream_id: fixture.stream.to_string(),
+            cursor: 7,
+            native_conversation_id: "conversation".into(),
+            payload_sha256: "0".repeat(64),
+        });
+    let observation = fixture.bridge.delivery_observation().await;
+    let progress = observation.admitted_progress().unwrap();
+    let state = fixture.bridge.output_ack_state().await.unwrap();
+    let available = fixture.policy.budget(IngressClass::Data).available_bytes();
+    let data = fixture
+        .policy
+        .admit(
+            IngressClass::Data,
+            AllocationPlan::checked("ACK diagnostic data pressure", &[available]).unwrap(),
+        )
+        .unwrap()
+        .initialize(|| vec![0u8; available - 1024]);
+    assert!(
+        reader::acknowledge(&fixture.bridge, Ack::Admitted(source.clone()), Some(&state)).await
+    );
+    assert_eq!(progress.latest(), 7);
+    assert_eq!(fixture.writes.lock().unwrap().len(), 1);
+    let available = fixture
+        .policy
+        .budget(IngressClass::Control)
+        .available_bytes();
+    let control = fixture
+        .policy
+        .admit(
+            IngressClass::Control,
+            AllocationPlan::checked("ACK diagnostic control pressure", &[available]).unwrap(),
+        )
+        .unwrap()
+        .initialize(|| vec![0u8; available - 1024]);
+    let mut probe = AllocationProbe::new();
+    assert!(!probe.track(|| reader::acknowledge(
+        &fixture.bridge,
+        Ack::Admitted(source.clone()),
+        Some(&state)
+    )
+    .now_or_never()
+    .unwrap()));
+    assert_eq!(probe.allocated(), 0);
+    assert_eq!(progress.latest(), 7);
+    assert_eq!(fixture.writes.lock().unwrap().len(), 1);
+    drop((data, control, source, state, observation, progress, fixture));
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+#[tokio::test]
+async fn admitted_socket_refusal_needs_no_unowned_error_box() {
+    use super::super::Message;
+    use crate::allocation_probe::AllocationProbe;
+    use futures_util::{FutureExt, SinkExt};
+    let fixture = fixture();
+    let mut sink = fixture.bridge.sink.lock().await;
+    let mut probe = AllocationProbe::new();
+    let failures: [_; 128] = std::array::from_fn(|_| {
+        probe.track(|| {
+            sink.send(Message::Binary(Vec::new()))
+                .now_or_never()
+                .unwrap()
+                .unwrap_err()
+        })
+    });
+    assert_eq!(
+        probe.allocated(),
+        0,
+        "missing write scope must refuse without error allocation"
+    );
+    assert!(failures.iter().all(|failure| matches!(failure,
+        tokio_tungstenite::tungstenite::Error::Io(error) if error.kind() == std::io::ErrorKind::Other)));
+    assert!(fixture.writes.lock().unwrap().is_empty());
+    drop(failures);
+    assert_eq!(probe.live(), 0);
+}

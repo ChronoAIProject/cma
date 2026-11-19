@@ -30,9 +30,10 @@ pub(super) fn spawn(
             let mut acknowledgements = acknowledged.take().unwrap();
             ack_tasks.spawn(async move {
                 while let Some(ack) = acknowledgements.recv().await {
-                    reader.acknowledge_output(ack, state.as_ref()).await?;
+                    if !acknowledge(&reader, ack, state.as_ref()).await {
+                        return;
+                    }
                 }
-                Ok::<_, crate::AdapterError>(())
             });
         }
         loop {
@@ -46,7 +47,7 @@ pub(super) fn spawn(
                     None => break,
                 },
                 Some(ack) = legacy_ack(&mut acknowledged) => {
-                    if reader.acknowledge_output(ack, ack_state.as_ref()).await.is_err() {
+                    if !acknowledge(&reader, ack, ack_state.as_ref()).await {
                         break;
                     }
                     continue;
@@ -72,7 +73,51 @@ pub(super) fn spawn(
     })
 }
 
-async fn dispatch(
+pub(super) async fn dispatch(
+    reader: &Bridge,
+    frame: Result<IncomingFrame, Error>,
+    updates: &UpdateRelay,
+) -> bool {
+    with_diagnostics(reader, dispatch_inner(reader, frame, updates)).await
+}
+
+pub(super) async fn acknowledge(
+    reader: &Bridge,
+    ack: Ack,
+    state: Option<&super::output::OutputAckState>,
+) -> bool {
+    with_diagnostics(reader, async {
+        reader.acknowledge_output(ack, state).await.is_ok()
+    })
+    .await
+}
+
+async fn with_diagnostics(
+    reader: &Bridge,
+    operation: impl std::future::Future<Output = bool>,
+) -> bool {
+    use crate::ingress_budget::{sizing, AllocationPlan, IngressClass, IngressWorkScope};
+    let Some(policy) = &reader.ingress else {
+        return operation.await;
+    };
+    // Reader and ACK tasks do not inherit the opening caller's task locals.
+    // Keep refusal/close diagnostics independent of exhausted data capacity.
+    let plan = AllocationPlan::checked(
+        "reader diagnostic scope",
+        &[sizing::shared_owner_bytes::<()>()],
+    )
+    .expect("fixed diagnostic scope layout");
+    let Ok(storage) = policy.admit(IngressClass::Control, plan) else {
+        return false;
+    };
+    IngressWorkScope::new(storage)
+        .initialize_owned(|| async { Ok(operation.await) })
+        .resolve_admitted_result(policy, IngressClass::Control)
+        .await
+        .is_ok_and(|completed| *completed)
+}
+
+async fn dispatch_inner(
     reader: &Bridge,
     frame: Result<IncomingFrame, Error>,
     updates: &UpdateRelay,
