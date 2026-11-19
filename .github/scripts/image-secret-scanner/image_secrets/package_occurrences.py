@@ -12,7 +12,7 @@ from .common import Budget, MAX_NESTED_MEMBER_BYTES, archive_path, copy_stream, 
 from .containers import inspect_nested
 from .package_evidence import NESTED_LOCATOR, PLATFORM, matches, normalized, require
 from .tar_trailer import verify_trailer
-from . import library_vectors
+from . import digest_frames, library_vectors
 
 IDENTITY_BUDGET = 20 * 1024**3
 DECODER_TIMEOUT = 120
@@ -94,7 +94,7 @@ def prove_package_member(artifact, artifact_sha256, locator, workspace):
                 "type": "regular", "sha256": sha256}
 
 
-def read_entry(layer, member, requested, workspace, budget, vector, databases):
+def read_entry(layer, member, requested, workspace, budget, reviewed_payload, databases):
     if not member.isfile() or member.issparse():
         return None
     path = archive_path(member.name, posix_tar=True)
@@ -102,16 +102,18 @@ def read_entry(layer, member, requested, workspace, budget, vector, databases):
     with layer.extractfile(member) as stream:
         if not nested:
             budget.reserve(member.size)
-            vector = vector if member.size <= library_vectors.MAX_LIBRARY_BYTES else None
+            if reviewed_payload is not None and "digest_frames" in reviewed_payload[0]:
+                return read_digest_candidate(stream, member, path, workspace, reviewed_payload[0])
+            vectors = reviewed_payload if member.size <= library_vectors.MAX_LIBRARY_BYTES else None
             databases = databases if member.size <= library_vectors.MAX_DATABASE_BYTES else ()
-            if vector is None and not databases:
+            if vectors is None and not databases:
                 return (path, stream_digest(stream, member.size), {}), {}, set()
             data = stream.read(member.size + 1)
             require(len(data) == member.size)
             checksum = digest_bytes(data)
             verified = {}
-            if vector is not None:
-                expected, reviews = vector
+            if vectors is not None:
+                expected, reviews = vectors
                 if path == expected["path"] and checksum == expected["file_sha256"]:
                     metadata = json.dumps({"path": path, "link": member.linkname, "pax": member.pax_headers},
                                           ensure_ascii=False).encode()
@@ -134,7 +136,22 @@ def read_entry(layer, member, requested, workspace, budget, vector, databases):
             return (path, digest_file(physical), stage.matched), {}, set()
 
 
-def layer_occurrences(archive, name, diff_id, requested, workspace, budget, vectors, databases):
+def read_digest_candidate(stream, member, path, workspace, expected):
+    if member.size > digest_frames.MAX_BYTES or path != expected["path"]:
+        return (path, stream_digest(stream, member.size), {}), {}, set()
+    with tempfile.TemporaryDirectory(prefix="digest-candidate-", dir=workspace) as scratch:
+        payload = Path(scratch) / "binary"
+        require(copy_stream(stream, payload, member.size) == member.size)
+        checksum = digest_file(payload)
+        verified = {}
+        if checksum == expected["file_sha256"]:
+            metadata = json.dumps({"path": path, "link": member.linkname, "pax": member.pax_headers},
+                                  ensure_ascii=False).encode()
+            verified = digest_frames.verify(payload, metadata, expected["digest_frames"])
+        return (path, checksum, {}), verified, set()
+
+
+def layer_occurrences(archive, name, diff_id, requested, workspace, budget, reviewed_payloads, databases):
     physical = archive.layer(name, diff_id)
     result = {}
     try:
@@ -142,7 +159,7 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget, vect
             for index, member in enumerate(layer):
                 budget.entry()
                 if index in requested:
-                    found = read_entry(layer, member, requested[index], workspace, budget, vectors.get(index),
+                    found = read_entry(layer, member, requested[index], workspace, budget, reviewed_payloads.get(index),
                                        databases.get(index, ()))
                     if found is not None:
                         result[index] = found
@@ -154,15 +171,16 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget, vect
 
 def requested_occurrences(report, component, evidence):
     by_layer = defaultdict(dict)
-    vectors = defaultdict(dict)
+    reviewed_payloads = defaultdict(dict)
     databases = defaultdict(lambda: defaultdict(list))
     for component_id, platform_id, layer, diff_id, entry, locator in evidence.entries:
         if component_id == component:
             selected = by_layer[platform_id, layer, diff_id]
             selected.setdefault(entry, set()).add(locator)
             record = evidence.entries[component_id, platform_id, layer, diff_id, entry, locator]
+            if record is not None and ("self_test" in record[0] or "digest_frames" in record[0]):
+                reviewed_payloads[platform_id, layer, diff_id][entry] = record
             if record is not None and "self_test" in record[0]:
-                vectors[platform_id, layer, diff_id][entry] = record
                 db = record[0]["self_test"]["database"]
                 db_layer = (platform_id, db["layer"], db["diff_id"])
                 by_layer[db_layer].setdefault(db["entry"], set()).add(None)
@@ -172,11 +190,11 @@ def requested_occurrences(report, component, evidence):
         coordinate = (row["image"], row["index"])
         require(coordinate not in coordinates)
         coordinates[coordinate] = row["diff_id"]
-    return by_layer, coordinates, vectors, databases
+    return by_layer, coordinates, reviewed_payloads, databases
 
 
 def collect(path, workspace, report, component, evidence, *, vector_checks=None, database_checks=None):
-    wanted, coordinates, vectors, databases = requested_occurrences(report, component, evidence)
+    wanted, coordinates, reviewed_payloads, databases = requested_occurrences(report, component, evidence)
     budget = Budget(IDENTITY_BUDGET, 1_000_000)
     found = {}
     with ImageArchive(path, workspace, budget) as archive:
@@ -198,7 +216,7 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
                 request = wanted.get(layer)
                 if request:
                     entries = layer_occurrences(archive, name, diff_id, request, workspace, budget,
-                                                vectors.get(layer, {}), databases.get(layer, {}))
+                                                reviewed_payloads.get(layer, {}), databases.get(layer, {}))
                     for index, (occurrence, verified, verified_databases) in entries.items():
                         coordinate = (i, j, index)
                         found[coordinate] = (platform_id, config, manifest, diff_id, occurrence)

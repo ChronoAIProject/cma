@@ -5,7 +5,7 @@ import tempfile
 from pathlib import Path
 
 from .common import digest_bytes, digest_file
-from .gate import SELF_TEST_ADVISORY, SELF_TEST_RULES
+from .gate import DIGEST_FRAME_ADVISORY, SELF_TEST_ADVISORY, SELF_TEST_RULES
 from .package_evidence import PUBLIC_RULES, SCOPES, require
 from .package_occurrences import collect
 
@@ -46,21 +46,32 @@ def exact_match(finding, component, evidence, occurrence, database_checks, verif
         if candidate_member != ("!".join([outer_path, *member["path"]]), member["sha256"]):
             return None
         path, observed_sha256 = candidate_member
-    vector_rule = finding["rule"] in SELF_TEST_RULES
-    raw_checksum = finding.get("file_sha256")
-    if finding["path"] != path_digest(path) or (raw_checksum != observed_sha256
-            and not (vector_rule and raw_checksum is None and finding["rule"] != "gitleaks.private-key")):
-        return None
     review = reviews.get((finding["rule"], finding.get("candidate_sha256"), finding.get("line")))
     if review is None:
         return None
-    vector_proof = checked_vectors(finding, expected, verified, database_checks) if vector_rule else None
-    if vector_rule and vector_proof is None:
+    explanation = review["explanation"]
+    raw_checksum = finding.get("file_sha256")
+    aggregate = explanation in (SELF_TEST_ADVISORY, DIGEST_FRAME_ADVISORY) and finding["rule"] != "gitleaks.private-key"
+    if finding["path"] != path_digest(path) or (raw_checksum != observed_sha256 and not (aggregate and raw_checksum is None)):
         return None
+    classification = "public-material"
+    extra = {}
+    if explanation == SELF_TEST_ADVISORY:
+        vector_proof = checked_vectors(finding, expected, verified, database_checks)
+        if vector_proof is None:
+            return None
+        classification = explanation
+        extra["library_self_test"] = vector_proof
+    elif explanation == DIGEST_FRAME_ADVISORY:
+        frame_proof = verified.get(DIGEST_FRAME_ADVISORY)
+        if frame_proof is None:
+            return None
+        classification = explanation
+        extra["public_digest_frames"] = frame_proof
     result = {
         "finding_id": finding["finding_id"],
         "rule": finding["rule"],
-        "classification": SELF_TEST_ADVISORY if vector_rule else "public-material",
+        "classification": classification,
         "platform": platform,
         "image_manifest": image,
         "image_config": config,
@@ -82,11 +93,10 @@ def exact_match(finding, component, evidence, occurrence, database_checks, verif
             "type": expected["package_member"]["type"],
             "sha256": expected["package_member"]["sha256"],
         },
-        "explanation": review["explanation"],
+        "explanation": explanation,
         "proof_sha256": review["proof_sha256"],
+        **extra,
     }
-    if vector_proof is not None:
-        result["library_self_test"] = vector_proof
     return result
 
 

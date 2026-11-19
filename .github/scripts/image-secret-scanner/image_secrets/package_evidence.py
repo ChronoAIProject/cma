@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 
 from .common import ScanError, archive_path, digest_bytes, json_bytes
-from .gate import SELF_TEST_RULES, valid_digest
+from .gate import DIGEST_FRAME_ADVISORY, DIGEST_FRAME_RULE, SELF_TEST_ADVISORY, SELF_TEST_RULES, valid_digest
 
 SCOPES = frozenset({"runtime", "runtime-omarchy"})
 AUTHORITY_TYPES = frozenset({"debian-index", "arch-signature", "apk-index", "pinned-upstream"})
@@ -59,7 +59,7 @@ class PackageEvidence:
 
     @classmethod
     def load(cls, data, *, manifest_sha256, review_sha256, scanner_manifest_sha256):
-        from . import library_vectors
+        from . import digest_frames, library_vectors
 
         require(len(data) <= MAX_EVIDENCE_BYTES and valid_digest(manifest_sha256)
                 and valid_digest(review_sha256) and valid_digest(scanner_manifest_sha256)
@@ -81,7 +81,8 @@ class PackageEvidence:
 
         entries = {}
         for row in raw["entries"]:
-            require(isinstance(row, dict) and row.keys() in (ENTRY_FIELDS, ENTRY_FIELDS | {"self_test"}))
+            require(isinstance(row, dict) and row.keys() in (ENTRY_FIELDS, ENTRY_FIELDS | {"self_test"},
+                                                           ENTRY_FIELDS | {"digest_frames"}))
             require(row["component"] in SCOPES and matches(PLATFORM, row["platform"])
                     and matches(LAYER_ID, row["diff_id"]) and ordinal(row["layer"])
                     and ordinal(row["entry"]) and valid_digest(row["file_sha256"])
@@ -111,6 +112,9 @@ class PackageEvidence:
             require(key not in entries)
             self_test = (library_vectors.validate(row, packages[row["package_sha256"]])
                          if "self_test" in row else None)
+            public_frames = "digest_frames" in row
+            if public_frames:
+                digest_frames.validate(row)
             verified = {}
             for match in row["matches"]:
                 fields(match, MATCH_FIELDS)
@@ -118,11 +122,17 @@ class PackageEvidence:
                         and (match["line"] is None or ordinal(match["line"]) and match["line"] > 0))
                 if match["rule"] in PUBLIC_RULES:
                     require(valid_digest(match["candidate_sha256"]) and match["explanation"] in EXPLANATIONS)
+                elif public_frames:
+                    digest_frames.acceptable_match(match)
                 else:
                     library_vectors.acceptable_match(match, self_test)
                 identity = (match["rule"], match["candidate_sha256"], match["line"])
                 require(identity not in verified)
                 verified[identity] = match
-            require(self_test is None or any(rule in SELF_TEST_RULES for rule, _, _ in verified))
+            require(self_test is None or any(m["explanation"] == SELF_TEST_ADVISORY and rule in SELF_TEST_RULES
+                                             for (rule, _, _), m in verified.items()))
+            if public_frames:
+                match = verified.get((DIGEST_FRAME_RULE, None, None))
+                require(match is not None and match["explanation"] == DIGEST_FRAME_ADVISORY)
             entries[key] = (dict(row, path=path), verified)
         return cls(manifest_sha256, review_sha256, scanner_manifest_sha256, packages, entries)

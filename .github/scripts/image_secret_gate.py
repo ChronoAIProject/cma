@@ -73,12 +73,12 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
             and report.get("archive_sha256") == archive_digest)
     decisions = {}
     package_rows = {}
-    vector_ids = set()
+    proved_public_ids = set()
     if package_section is None:
         require("package_evidence" not in report and "package_evidence_sha256" not in policy)
     else:
         from image_secrets import package_receipt
-        from image_secrets.gate import SELF_TEST_ADVISORY, SELF_TEST_RULES
+        from image_secrets.gate import DIGEST_FRAME_ADVISORY, PACKAGE_ADVISORY_RULES, SELF_TEST_ADVISORY
 
         require(packet is None and expected_runtime is not None
                 and report.get("package_evidence") == package_section
@@ -90,10 +90,14 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
         decisions = package_receipt.decisions(package_section)
         package_rows = {row["finding_id"]: row for row in package_section["entries"]}
         for evidence in package_rows.values():
-            if evidence["classification"] == SELF_TEST_ADVISORY:
-                require(evidence["rule"] in SELF_TEST_RULES and evidence["member"] is None
-                        and bool(evidence["library_self_test"]["vectors"]))
-                vector_ids.add(evidence["finding_id"])
+            classification = evidence["classification"]
+            if classification in PACKAGE_ADVISORY_RULES:
+                require(evidence["rule"] in PACKAGE_ADVISORY_RULES[classification] and evidence["member"] is None)
+                if classification == SELF_TEST_ADVISORY:
+                    require(bool(evidence["library_self_test"]["vectors"]))
+                elif classification == DIGEST_FRAME_ADVISORY:
+                    require(bool(evidence["public_digest_frames"]["frames"]))
+                proved_public_ids.add(evidence["finding_id"])
     if packet is None:
         require("classifications_sha256" not in policy and "classification_review_sha256" not in policy)
     else:
@@ -112,8 +116,8 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
         observed.add(identity)
         classification = decisions.get(identity)
         if classification is not None:
-            vector = identity in vector_ids
-            require(vector or (classification in PUBLIC_CLASSES and finding["rule"] not in {
+            proved_public = identity in proved_public_ids
+            require(proved_public or (classification in PUBLIC_CLASSES and finding["rule"] not in {
                 "content.private-key-header", "content.binary-private-key", "content.openpgp-private-key",
                 "gitleaks.private-key", "path.ssh-key"}))
             if identity in package_rows:
@@ -122,12 +126,12 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                         and all(evidence[key] == finding.get(key) for key in (
                             "rule", "layer", "entry", "member", "image", "candidate_sha256", "line"))
                         and (evidence["file_sha256"] == finding.get("file_sha256")
-                             or (vector and finding["rule"] != "gitleaks.private-key"
+                             or (proved_public and finding["rule"] != "gitleaks.private-key"
                                  and "file_sha256" not in finding)))
                 raw = {key: value for key, value in finding.items() if key != "finding_id"}
                 require(hashlib.sha256(json.dumps(raw, sort_keys=True, separators=(",", ":")).encode())
                         .hexdigest() == identity)
-            (advisory if vector else reviewed).append(dict(finding, classification=classification))
+            (advisory if proved_public else reviewed).append(dict(finding, classification=classification))
         else:
             require(mode == "credential")
             if finding["rule"] == "path.key-or-certificate":

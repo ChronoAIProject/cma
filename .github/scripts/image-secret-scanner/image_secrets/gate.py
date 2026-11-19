@@ -10,6 +10,12 @@ PRIVATE_KEY_RULES = frozenset({"content.private-key-header", "content.binary-pri
                               "content.openpgp-private-key", "gitleaks.private-key", "path.ssh-key"})
 SELF_TEST_RULES = frozenset({"content.private-key-header", "content.binary-private-key", "gitleaks.private-key"})
 SELF_TEST_ADVISORY = "published-library-self-test-vector"
+DIGEST_FRAME_RULE = "content.binary-private-key"
+DIGEST_FRAME_ADVISORY = "published-digest-encoding"
+PACKAGE_ADVISORY_RULES = {
+    SELF_TEST_ADVISORY: SELF_TEST_RULES,
+    DIGEST_FRAME_ADVISORY: frozenset({DIGEST_FRAME_RULE}),
+}
 
 
 def valid_digest(value):
@@ -87,8 +93,8 @@ def assess(result, mode, classifications=None, *, verified_package_decisions=Non
     blocking, advisory, reviewed = [], [], []
     for finding in result["findings"]:
         classification = decisions.get(finding["finding_id"])
-        if (classification == SELF_TEST_ADVISORY and verified_package_decisions is not None
-                and finding["rule"] in SELF_TEST_RULES and finding.get("scope") == "layer"
+        if (verified_package_decisions is not None and finding["rule"] in PACKAGE_ADVISORY_RULES.get(classification, ())
+                and finding.get("scope") == "layer"
                 and "member" not in finding
                 and result["policy"].get("staging_runtime_component") in ("runtime", "runtime-omarchy")):
             advisory.append(dict(finding, classification=classification))

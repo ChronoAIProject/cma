@@ -1,8 +1,8 @@
 {
   "schema": "scan-image-secrets-source-v1",
   "version": "1.0.4",
-  "at": "2026-11-20T02:29:14+08:00",
-  "review_state": "Staging package ownership and published library self-test evidence candidate for review",
+  "at": "2026-11-20T02:45:28+08:00",
+  "review_state": "Staging package evidence and exact public digest-encoding candidate",
   "files": [
     {
       "path": "CHANGELOG.md",
@@ -13,9 +13,9 @@
     },
     {
       "path": "README.md",
-      "sha256": "95e276e8e0a1074cb4cba9a1fac3f6fb0bdd29e93685fef754bf8a22c1d24375",
-      "bytes": 24937,
-      "lines": 156,
+      "sha256": "7dc1ffb7cbdd5e7dd66baafdc40e05d06950c3ba8a14f7249600cb5686c29909",
+      "bytes": 25236,
+      "lines": 158,
       "mode": "0o644"
     },
     {
@@ -138,6 +138,13 @@
       "mode": "0o644"
     },
     {
+      "path": "image_secrets/digest_frames.py",
+      "sha256": "d4f552745b7ad4c1e2b1c0b9dfd04fbb4385f92baea3a33ae8adf786049fce8b",
+      "bytes": 3775,
+      "lines": 87,
+      "mode": "0o644"
+    },
+    {
       "path": "image_secrets/engine.py",
       "sha256": "1ebf61eb0377dfa2dc94d86a49f1708f37fc6705d1bc51cb86df74e725c44cd9",
       "bytes": 8021,
@@ -146,9 +153,9 @@
     },
     {
       "path": "image_secrets/gate.py",
-      "sha256": "34962398aabe481c321114fe484b51fdf99eb5a790341789a4a91827943ef1aa",
-      "bytes": 5912,
-      "lines": 123,
+      "sha256": "26f22b0cb9a6cec60fbad630f728eba47193032f5edfbfaa7544d1844586303c",
+      "bytes": 6132,
+      "lines": 129,
       "mode": "0o644"
     },
     {
@@ -174,23 +181,23 @@
     },
     {
       "path": "image_secrets/package_evidence.py",
-      "sha256": "e248e1c68b7304a4df1d9f4af04c6c1375e5f5f7e8af83e7acfb9932c1d1aef8",
-      "bytes": 6627,
-      "lines": 128,
+      "sha256": "c283fc9b9ea6b1c9e23ca8ab20f893a270b898854817e7270c01d53ba9925363",
+      "bytes": 7310,
+      "lines": 138,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/package_occurrences.py",
-      "sha256": "0e9b10358b9d3b4fef58af3533e21714f336071304a1f70d5847cc784f6ffb43",
-      "bytes": 9930,
-      "lines": 210,
+      "sha256": "0dd71ffd8571f591b1c27a8ed9f06540f9579ab5c02ee3fca367b353905842a7",
+      "bytes": 11170,
+      "lines": 228,
       "mode": "0o644"
     },
     {
       "path": "image_secrets/package_receipt.py",
-      "sha256": "367c884cd0bba92be1960ed10e8388ceddec6918a15d6eaf6c9822c856d413d0",
-      "bytes": 5843,
-      "lines": 134,
+      "sha256": "9d56f58b6d4933c0556022f8d60beeae1062d46001940268292c9ee88edc2177",
+      "bytes": 6199,
+      "lines": 144,
       "mode": "0o644"
     },
     {
@@ -344,6 +351,13 @@
       "path": "tests/test_decoder_boundaries.py",
       "sha256": "df7d3a70909c2b07da6025ded22b3229190b2c1c377af55ed6402856a29f395e",
       "bytes": 6628,
+      "lines": 132,
+      "mode": "0o644"
+    },
+    {
+      "path": "tests/test_digest_frames.py",
+      "sha256": "45f75be60da4ccd7601e6c5cdc5097c5029d618a340280ca806549b52a6b65a3",
+      "bytes": 7317,
       "lines": 132,
       "mode": "0o644"
     },
