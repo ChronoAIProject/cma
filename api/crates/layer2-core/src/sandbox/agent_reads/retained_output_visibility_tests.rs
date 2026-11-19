@@ -1,5 +1,7 @@
 use super::*;
-use crate::sandbox::{AgentRetainedOutputAvailability, AgentTranscriptTurn, TypedFailure};
+use crate::sandbox::{
+    AgentRetainedOutputAvailability, AgentTranscriptTurn, AgentTurnOutcome, TypedFailure,
+};
 
 #[test]
 fn private_prefix_discovery_precedes_redaction_without_changing_failure_bytes() {
@@ -24,8 +26,8 @@ fn private_prefix_discovery_precedes_redaction_without_changing_failure_bytes() 
             assert_eq!(visible.retained_output, expected);
             let Some(AgentLogKind::TurnFailed { turn_sequence, failure }) = visible.kind else { panic!("visible failure") };
             assert_eq!(turn_sequence, 7);
-            assert_eq!(failure.class, class);
-            assert_eq!(failure.detail, if personal { &original.detail } else { "This Agent turn failed." });
+            assert_eq!(failure, public_agent_turn_failure(&original));
+            assert_ne!(failure.detail, original.detail);
         }
         let mut transcript = AgentTranscript {
             agent_id: crate::ids::AgentId("agent".into()),
@@ -46,7 +48,7 @@ fn private_prefix_discovery_precedes_redaction_without_changing_failure_bytes() 
         let turn = &transcript.turns[0];
         assert_eq!(turn.retained_output, expected);
         assert!(turn.origin_key.is_none() && turn.metadata.is_empty());
-        assert!(matches!(&turn.outcome, AgentTurnOutcome::Failed { failure, .. } if failure.detail == "This Agent turn failed." && failure.class == class));
+        assert!(matches!(&turn.outcome, AgentTurnOutcome::Failed { failure, .. } if *failure == public_agent_turn_failure(&original)));
     }
     assert!(AgentRetainedOutputAvailability::from_outcome(&AgentTurnOutcome::Active).is_none());
     assert!(

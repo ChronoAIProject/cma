@@ -6,6 +6,38 @@ import { channelDraft, channelRequest, defaultProfile, object } from './model';
 import { routingRequest } from './RoutingFields';
 const reply = (v: unknown) => new Response(JSON.stringify(v));
 afterEach(() => vi.unstubAllGlobals());
+it.each([undefined, '', 'Connection_Retained.Exact-123'])(
+  'keeps the saved connection %s read-only and exact in unrelated saves',
+  async (connection) => {
+    const channel = fixture();
+    if (connection !== undefined) channel.definition.connection_ref = connection;
+    const done = vi.fn();
+    const fetcher = vi.fn().mockResolvedValue(reply({ ...channel, version: 8 }));
+    vi.stubGlobal('fetch', fetcher);
+    render(<ChannelEditor channel={channel} onDone={done} denied={vi.fn()} />);
+    const reference = screen.getByRole('textbox', { name: 'Connection reference' });
+    expect(reference).toHaveAttribute('readonly');
+    expect(reference).toHaveValue(connection || 'No shared connection');
+    const user = userEvent.setup();
+    await user.type(reference, 'replacement');
+    await user.keyboard('{Control>}a{/Control}{Backspace}');
+    expect(reference).toHaveValue(connection || 'No shared connection');
+    fireEvent.change(screen.getByLabelText('Channel name'), { target: { value: 'Renamed' } });
+    expect(fetcher).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: 'Save channel' }));
+    await waitFor(() => expect(done).toHaveBeenCalledOnce());
+    expect(fetcher).toHaveBeenCalledOnce();
+    const [path, request] = fetcher.mock.calls[0]!;
+    expect(path).toBe('/api/event-gateway/v1/channels/channel_fixture');
+    expect(request.method).toBe('PUT');
+    const body = JSON.parse(request.body);
+    expect(body).toMatchObject({ name: 'Renamed', expected_version: 7 });
+    if (connection === undefined) expect(body).not.toHaveProperty('connection_ref');
+    else expect(body.connection_ref).toBe(connection);
+    expect(body).not.toHaveProperty('credentials');
+    expect(body.sources).toEqual(channelRequest(channelDraft(channel), {}, channel).sources);
+  },
+);
 function fixture(): Channel {
   return {
     channel_id: 'channel_fixture',

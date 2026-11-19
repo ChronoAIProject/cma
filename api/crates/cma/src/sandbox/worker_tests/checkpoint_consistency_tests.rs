@@ -257,8 +257,8 @@ async fn failed_conversation_capture_releases_the_prior_checkpoint_writer_hold()
         .await
         .unwrap();
     assert!(
-        matches!(&events.last().unwrap().kind, SandboxEventKind::WorkStepFailed {
-        failure: event_failure, ..
+        matches!(&events.last().unwrap().kind, SandboxEventKind::Failed {
+        failure: event_failure
     } if event_failure == failure)
     );
 }

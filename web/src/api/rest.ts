@@ -1,5 +1,11 @@
 import { createUsageClient } from '../usage/client';
-import { ApiError, ProtocolError, type Cma } from '@cma/client';
+import {
+  ApiError,
+  ProtocolError,
+  agentLifecycleFailure,
+  type AgentLifecycleFailure,
+  type Cma,
+} from '@cma/client';
 import { AgentLifecycleCreateError } from './client';
 import type {
   AgentLifecycleConnectionRequired,
@@ -141,18 +147,23 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         let detail = `Agent Manager could not create this Agent (${String(response.status)}).`;
         let code: string | undefined;
         let connection: AgentLifecycleConnectionRequired | undefined;
+        let failure: AgentLifecycleFailure | undefined;
         try {
           const value = (await response.json()) as {
             detail?: unknown;
             code?: unknown;
             services?: unknown;
             connection_target?: unknown;
+            limit?: unknown;
+            live?: unknown;
           };
           if (typeof value.detail === 'string') detail = value.detail;
           if (typeof value.code === 'string') {
             code = value.code;
             if (value.detail === undefined) detail = value.code;
           }
+          if (response.status === 429 && code === 'sandbox_limit_reached')
+            failure = agentLifecycleFailure(value);
           if (
             code === 'connection_required' &&
             Array.isArray(value.services) &&
@@ -168,7 +179,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         } catch {
           /* Keep the status-based message. */
         }
-        throw new AgentLifecycleCreateError(detail, response.status, code, connection);
+        throw new AgentLifecycleCreateError(detail, response.status, code, connection, failure);
       }
       const value = (await response.json()) as { id?: unknown; status?: unknown };
       if (typeof value.id !== 'string' || value.id.length === 0)
@@ -211,10 +222,12 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         (value.status === 'succeeded' && (typeof value.agent_id !== 'string' || !value.agent_id))
       )
         throw new ProtocolError('Agent Manager returned an invalid lifecycle operation.');
+      if (value.failure !== undefined) agentLifecycleFailure(value.failure);
       return value;
     },
     uploadAgentAttachment: (id, file, options) => sdk.agentAttachments.upload(id, file, options),
     botViews: sdk,
+    readSandboxCapacity: (options) => sdk.sandboxes.capacity(options),
     listSandboxes: async (options) => {
       const page = await sdk.sandboxes.list(options);
       return { items: page.items.map(sandboxSummary), next: page.next };

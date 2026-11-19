@@ -31,6 +31,7 @@ mod agent_worktree_recovery;
 mod agent_worktree_recovery_tests;
 mod binding_reset;
 mod bindings;
+mod capacity;
 mod channel_usage;
 mod command_audit;
 mod command_revival;
@@ -82,6 +83,13 @@ mod workspace_lifecycle;
 
 #[async_trait]
 impl SandboxStore for InMemorySandboxStore {
+    async fn owner_capacity(
+        &self,
+        owner: &SubjectId,
+    ) -> Result<crate::sandbox::SandboxCapacitySnapshot, SandboxStoreError> {
+        capacity::read(self, owner)
+    }
+
     async fn failed_lifecycle_admission(
         &self,
         sandbox: &Sandbox,
