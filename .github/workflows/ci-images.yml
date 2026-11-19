@@ -9,6 +9,10 @@ permissions:
   contents: "read"
 jobs:
   images:
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'cma-develop-cache-readers' || format('ci-image-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.component) }}
+      queue: max
+      cancel-in-progress: false
     name: "Image (${{ matrix.component }})"
     runs-on: "ubuntu-24.04"
     timeout-minutes: 60
