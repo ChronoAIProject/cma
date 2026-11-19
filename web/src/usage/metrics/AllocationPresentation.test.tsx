@@ -35,6 +35,24 @@ const page: UsageMetricPage = {
   ],
 };
 
+it.each([
+  [0, 0, '0 Sandboxes'],
+  [1, 1, '1 Sandbox'],
+  [1, '1', '1 Sandbox'],
+  [2, 2, '2 Sandboxes'],
+  [1, 51, '51 Sandboxes'],
+  [1, '9007199254740993', '9,007,199,254,740,993 Sandboxes'],
+] as const)('labels %s page rows using the total count %s', (shown, total, label) => {
+  render(
+    <AllocationChart
+      {...chartProps}
+      admin
+      page={{ ...page, items: page.items.slice(0, shown), total_count: total }}
+    />,
+  );
+  expect(screen.getByText(`${shown} of ${label} on this page.`)).toBeVisible();
+});
+
 it('compares page allocation with distinct units, explicit scope and keyboard-accessible data', async () => {
   const actor = userEvent.setup();
   render(<AllocationChart {...chartProps} page={page} admin />);

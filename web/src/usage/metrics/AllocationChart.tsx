@@ -9,6 +9,7 @@ import { AllocationLabel } from './AllocationLabel';
 import { Picker } from '../../ui/Picker';
 import { Table, TableCell } from '../../ui/Table';
 import { displayQuantity, type Metric } from './model';
+import { sandboxCount } from './sandboxCount';
 
 const resources = {
   cpu: { label: 'CPU', unit: 'core-hours', field: 'cpu_core_hours' },
@@ -64,8 +65,7 @@ export function AllocationChart({
         <div>
           <h3>Allocation by {group === 'owner' && admin ? 'owner' : 'Sandbox'}</h3>
           <p id={id} hidden={byOwner || !page}>
-            {page?.items.length ?? 0} of {displayQuantity(page?.total_count)} Sandboxes on this
-            page.
+            {page?.items.length ?? 0} of {sandboxCount(page?.total_count)} on this page.
             {rows.length > 8 ? ' Largest 8 shown; all page values are in the data table.' : ''}
           </p>
         </div>
