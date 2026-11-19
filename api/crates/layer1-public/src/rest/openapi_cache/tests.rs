@@ -20,11 +20,13 @@ async fn bytes(response: Response) -> Bytes {
 }
 
 fn fresh_bytes(index: usize) -> Vec<u8> {
-    if index == 0 {
-        serde_json::to_vec(&openapi::document()).unwrap()
+    let mut document = if index == 0 {
+        serde_json::to_value(openapi::document()).unwrap()
     } else {
-        serde_json::to_vec(&openapi::agent_manager_document()).unwrap()
-    }
+        openapi::agent_manager_document()
+    };
+    document.sort_all_objects();
+    serde_json::to_vec(&document).unwrap()
 }
 
 #[tokio::test]
@@ -32,7 +34,13 @@ async fn cached_routes_preserve_bytes_and_independent_builds_are_deterministic()
     let router = crate::rest::router();
     for (index, path) in PATHS.into_iter().enumerate() {
         let expected = fresh_bytes(index);
-        assert_eq!(expected, fresh_bytes(index), "builder is deterministic");
+        for _ in 0..16 {
+            assert_eq!(
+                expected,
+                fresh_bytes(index),
+                "wire document is deterministic"
+            );
+        }
         let first = router.clone().oneshot(request(path)).await.unwrap();
         assert_eq!(first.status(), StatusCode::OK);
         assert_eq!(first.headers()[header::CONTENT_TYPE], "application/json");
@@ -51,6 +59,48 @@ async fn cached_routes_preserve_bytes_and_independent_builds_are_deterministic()
     }
     assert_eq!(DOCUMENT_BUILDS.load(Ordering::SeqCst), 1);
     assert_eq!(AGENT_MANAGER_BUILDS.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn extension_iteration_order_does_not_change_cached_bytes_or_etag() {
+    use serde::ser::SerializeMap;
+
+    struct Extensions(bool);
+    impl Serialize for Extensions {
+        fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+            let mut map = serializer.serialize_map(Some(2))?;
+            let keys = if self.0 {
+                ["x-b", "x-a"]
+            } else {
+                ["x-a", "x-b"]
+            };
+            for key in keys {
+                map.serialize_entry(key, &[3, 1, 2])?;
+            }
+            map.end()
+        }
+    }
+
+    #[derive(Serialize)]
+    struct Document {
+        nested: Extensions,
+    }
+    let first = CachedDocument::new(&Document {
+        nested: Extensions(false),
+    });
+    let second = CachedDocument::new(&Document {
+        nested: Extensions(true),
+    });
+    assert_eq!(first.bytes, second.bytes);
+    assert_eq!(first.etag, second.etag);
+    assert_eq!(
+        first.bytes.as_ref(),
+        br#"{"nested":{"x-a":[3,1,2],"x-b":[3,1,2]}}"#
+    );
+    assert_eq!(
+        first.etag,
+        format!("\"{:x}\"", Sha256::digest(&first.bytes))
+    );
 }
 
 #[tokio::test]
