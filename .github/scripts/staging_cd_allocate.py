@@ -5,13 +5,15 @@ from pathlib import Path
 
 from staging_cd_admission import event_identity
 from staging_cd_allocate_progress import allocation_progress
+from staging_cd_allocation_io import AllocationGitHub as GitHub, AllocationIO, parallel_read
+from staging_cd_allocation_snapshot import AllocationSnapshot as Reservations, SnapshotAPI
 from staging_cd_common import Refusal, matches, require
-from staging_cd_github import GitHub, GitHubNotFound
+from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical
-from staging_cd_reservations import Reservations, next_reservation, reserve
+from staging_cd_reservations import next_reservation
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
-from staging_cd_versions import DEPLOYABLES, label_level, merged_pr
+from staging_cd_versions import DEPLOYABLES, label_level, merged_pr, version_tuple
 
 REFUSAL_CODES = {
     "Active component release must be drained before supersession": "COMPONENT_OWNER_ACTIVE",
@@ -32,6 +34,13 @@ REFUSAL_CODES = {
     "Version reservation collision limit exceeded": "RESERVATION_COLLISION_LIMIT",
     "Reservation push failed without a collision": "RESERVATION_PUSH_FAILED",
     "Reservation push was not verified": "RESERVATION_VERIFY_FAILED",
+    "Allocation deadline exceeded": "DEADLINE_EXCEEDED",
+    "Allocation read failed": "READ_FAILED",
+    "Allocation write settlement is uncertain": "WRITE_UNCERTAIN",
+    "Allocation reservation collision": "RESERVATION_COLLISION",
+    "Allocation tag inventory is incomplete": "INVENTORY_INCOMPLETE",
+    "Allocation reservation readback differs": "RESERVATION_VERIFY_FAILED",
+    "Allocation reservation readback is unavailable": "RESERVATION_NOT_VISIBLE",
 }
 
 
@@ -105,27 +114,43 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
         history.position(source)
     changes = sorted(queue["changes"], key=lambda change: history.position(change["source"]))
     newest = {name: change["source"] for change in changes for name in change["deployables"]}
-    active_owners, busy = {}, set()
+    owners, busy = {}, set()
     for item in pending:
         if item["component"] not in DEPLOYABLES or DEPLOYABLES[item["component"]] not in newest:
             continue
         owner = (item["run_id"], item["run_attempt"])
         if owner == (run_id, attempt):
             continue
-        if owner not in active_owners:
-            mark(item["component"], "owner-read")
-            active_owners[owner] = run_active(api, item)
-        if active_owners[owner]:
-            # A newer source cannot silently disappear behind a live old run.
-            # Refuse for an explicit drain/retry instead of reporting a no-op.
-            require(item["source"] == newest[DEPLOYABLES[item["component"]]],
-                    "Active component release must be drained before supersession")
-            busy.add(item["component"])
+        candidates = [value for value in pending if value["component"] == item["component"]]
+        candidates += [tag["receipt"]["identity"] for tag in finals
+                       if tag["receipt"]["identity"]["component"] == item["component"]]
+        # Use the same durable fence as publication. Queue intent alone cannot
+        # revoke a writer between its last check and registry copy.
+        if item["source"] not in history.positions or any(
+                (value["source"] in history.positions
+                 and history.position(value["source"]) > history.position(item["source"]))
+                or version_tuple(value["version"]) > version_tuple(item["version"]) for value in candidates):
+            continue
+        owners.setdefault(owner, []).append(item)
+
+    def owner_active(items):
+        item = items[0]
+        mark(item["component"], "owner-read")
+        return run_active(api, item)
+
+    for items, active in zip(owners.values(), parallel_read(owner_active, owners.values())):
+        if active:
+            for item in items:
+                # A newer source cannot silently disappear behind a live old run.
+                # Refuse for an explicit drain/retry instead of reporting a no-op.
+                require(item["source"] == newest[DEPLOYABLES[item["component"]]],
+                        "Active component release must be drained before supersession")
+                busy.add(item["component"])
+    actions, needed_prs = [], {}
     for change in changes:
         source, tree, deployables = (change[key] for key in ("source", "tree", "deployables"))
         if not deployables:
             continue
-        pr, level = None, None
         published = [tag["receipt"] for tag in finals if tag["target"] == source]
         for component, name in DEPLOYABLES.items():
             # Do not revoke a writer between its currency check and registry
@@ -155,30 +180,29 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, mark=lambda _co
                 # SUPERSEDED-BURNED: keep the original immutable reservation.
                 # A retry must not burn this obsolete source again.
                 continue
-            if pr is None:
-                mark(component, "merged-pr")
-                pr = merged_pr(source, api.request)
-                level = published[0]["identity"]["bump"] if published else label_level(pr)
-            def next_value(current, reserved):
-                return next_reservation(component, source, tree, pr["number"], level, run_id, attempt,
-                                        current, reserved)
-            def refresh():
-                mark(component, "final-inventory")
-                current = api.tags()
-                mark(component, "pending-inventory")
-                return current, reservations.list()
-            def insert(value):
-                mark(component, "reserve")
-                return reservations.insert(value)
-            value = reserve(next_value, insert, refresh)
-            pending.append(value)
-            if source == newest[name]:
-                jobs.append({"component": component, "mode": "publish", "reservation": value})
+            needed_prs.setdefault(source, (component, published))
+            actions.append((component, source, tree))
+
+    def read_pr(source):
+        component, published = needed_prs[source]
+        mark(component, "merged-pr")
+        pr = merged_pr(source, api.request)
+        return pr["number"], published[0]["identity"]["bump"] if published else label_level(pr)
+
+    provenance = dict(zip(needed_prs, parallel_read(read_pr, needed_prs)))
+    for component, source, tree in actions:
+        pr, level = provenance[source]
+        value = next_reservation(component, source, tree, pr, level, run_id, attempt, finals, pending)
+        mark(component, "reserve")
+        require(reservations.insert(value), "Allocation reservation collision")
+        pending.append(value)
+        if source == newest[DEPLOYABLES[component]]:
+            jobs.append({"component": component, "mode": "publish", "reservation": value})
     # Intermediate reservations preserve each merged label's version increment,
     # but only the newest source is built. Failed attempts remain burned.
     grouped = [{"component": key, "tasks": canonical([job for job in jobs if job["component"] == key])}
                for key in DEPLOYABLES if any(job["component"] == key for job in jobs)]
-    mark("all", "complete")
+    mark("all", "planned")
     return {"include": grouped}
 
 
@@ -187,10 +211,15 @@ def main():
     def operation(_masker):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Version allocation only accepts develop pushes")
-        api = GitHub(env.get("GH_TOKEN"))
-        reservations = Reservations(api, env.get("GH_TOKEN"), Path.cwd())
-        matrix = allocate_queue(json.loads(env["CD_QUEUE"]), api, reservations,
+        io = AllocationIO()
+        api = GitHub(env.get("GH_TOKEN"), io)
+        reservations = Reservations(api, env.get("GH_TOKEN"), Path.cwd(), io, mark=mark)
+        reservations.load()
+        matrix = allocate_queue(json.loads(env["CD_QUEUE"]), SnapshotAPI(api, reservations), reservations,
                                 int(env["GITHUB_RUN_ID"]), int(env["GITHUB_RUN_ATTEMPT"]), mark=mark)
+        reservations.commit()
+        io.remaining()
+        mark("all", "complete")
         output(env, "matrix", canonical(matrix))
         output(env, "changed", "true" if matrix["include"] else "false")
         return True
