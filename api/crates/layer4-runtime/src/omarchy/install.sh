@@ -80,8 +80,7 @@ suffix = '\nPATH="$cma_profile_path"\nexport PATH\nunset cma_profile_path\n'
 p.write_text(prefix + original + suffix)
 PY
 rm -f /tmp/omarchy.tar.gz /tmp/omarchy-keyring.pkg.tar.zst
-rm -rf /var/cache/pacman/pkg/*
 
-# Signing checks run above; build-local private keys and timestamps never ship.
+# Finish cleanup before this signed package-install layer is committed.
 gpgconf --homedir /etc/pacman.d/gnupg --kill gpg-agent
 python /tmp/normalize-omarchy.py
