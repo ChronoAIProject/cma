@@ -11,7 +11,8 @@ fn allocation_namespace_grants_are_optional_but_exact_and_confined() {
         .get_array("privileges")
         .unwrap()
         .clone();
-    assert_eq!(full.len(), legacy.len() + 1);
+    // Allocation buckets and read-observer custody are independent opt-ins.
+    assert_eq!(full.len(), legacy.len() + 2);
     validate(&status(full.clone()), "cma").unwrap();
     validate(&status(legacy.clone()), "cma").unwrap();
     cma_service_auth::mongodb_authority::verify_shared_schema(

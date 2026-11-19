@@ -4,6 +4,8 @@
 module OmarchyCIContract
   EXPORT_IF = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
   CACHE_MISS = "steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true'"
+  DEVELOP_PUSH = "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
+  CACHE_WRITE = "#{DEVELOP_PUSH} && (#{CACHE_MISS})"
   CACHE_PATH = "${{ runner.temp }}/omarchy-layer-cache"
   CACHE_KEY = "omarchy-layer-archive-v1-${{ steps.cache.outputs.scope }}"
 
@@ -30,14 +32,15 @@ module OmarchyCIContract
         sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
         df -h /
       SH
-      { "uses" => "actions/setup-node@v6", "with" => { "node-version" => 26 } },
+      { "uses" => "actions/setup-node@v6", "with" => { "node-version" => 26, "package-manager-cache" => false } },
       { "name" => "Omarchy desktop fixture regressions", "run" => <<~'SH' },
         python3 -B .github/scripts/omarchy-cache-key-tests.py
         python3 .github/scripts/omarchy-close-browser-tests.py
         python3 .github/scripts/omarchy-browser-input-tests.py
         node --test .github/scripts/omarchy-browser-page.test.cjs
       SH
-      { "uses" => "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f" },
+      { "uses" => "docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f",
+        "with" => { "cache-binary" => "${{ #{DEVELOP_PUSH} }}" } },
       { "name" => "Set immutable Omarchy image version", "id" => "identity",
         "run" => 'echo "version=git-${GITHUB_SHA:0:12}" >> "$GITHUB_OUTPUT"' },
       { "name" => "Identify pinned Omarchy dependency cache", "id" => "cache",
@@ -51,7 +54,7 @@ module OmarchyCIContract
         "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
         "with" => { "context" => ".", "file" => "api/crates/layer4-runtime/Dockerfile", "target" => "omarchy",
           "platforms" => "linux/amd64", "push" => false, "load" => true, "tags" => "cma-runtime-omarchy:ci",
-          "cache-to" => "${{ (#{CACHE_MISS}) && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}",
+          "cache-to" => "${{ #{CACHE_WRITE} && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}",
           "build-args" => <<~'ARGS', "cache-from" => <<~'CACHE' } },
             OMARCHY_CMA_BASE=runtime
             RUNTIME_DESKTOP=1
@@ -80,8 +83,11 @@ module OmarchyCIContract
       SH
       { "name" => "Verify Omarchy production temporary directory", "env" => { "CMA_OMARCHY_TEST_IMAGE_TMP" => "1" },
         "run" => 'node .github/scripts/omarchy-runtime-evidence.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/image-tmp"' },
+      { "name" => "Restore Trivy databases", "if" => "github.event_name != 'push' || github.ref != 'refs/heads/develop'",
+        "uses" => "actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830",
+        "with" => { "path" => "${{ github.workspace }}/.cache/trivy", "key" => "cache-trivy-readonly", "restore-keys" => "cache-trivy-" } },
       { "name" => "Scan tested Omarchy image", "uses" => "aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25",
-        "with" => { "image-ref" => "cma-runtime-omarchy:ci", "format" => "json",
+        "with" => { "cache" => "${{ #{DEVELOP_PUSH} }}", "image-ref" => "cma-runtime-omarchy:ci", "format" => "json",
           "output" => "${{ runner.temp }}/omarchy-evidence/vulnerabilities.json", "severity" => "HIGH,CRITICAL",
           "exit-code" => "1", "ignore-unfixed" => true } },
       { "name" => "Retain Omarchy image evidence", "if" => "always() && steps.build.outcome == 'success'",
@@ -95,7 +101,7 @@ module OmarchyCIContract
           "name" => "ci-native-image-runtime-omarchy-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}",
           "path" => "${{ runner.temp }}/ci-native-image/", "if-no-files-found" => "error",
           "compression-level" => 0, "retention-days" => 1 } },
-      { "name" => "Save qualified Omarchy layer cache", "if" => "#{EXPORT_IF} && (#{CACHE_MISS})",
+      { "name" => "Save qualified Omarchy layer cache", "if" => "success() && #{CACHE_WRITE}",
         "uses" => "actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830", "timeout-minutes" => 5,
         "continue-on-error" => true, "with" => { "path" => CACHE_PATH, "key" => CACHE_KEY } },
     ]

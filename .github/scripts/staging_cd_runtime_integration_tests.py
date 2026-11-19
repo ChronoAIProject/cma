@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from staging_cd_common import Refusal
 from staging_cd_invoke import deploy, NotAdmitted
@@ -74,7 +74,9 @@ class RuntimeIntegrationTests(unittest.TestCase):
                         fixture_result(path)
                         return 0
                     runner = Mock(side_effect=run)
-                    self.assertEqual(deploy(env, Mock(), lambda _: script, runner), 0)
+                    with patch("staging_cd_invoke.require_current_versions") as guard:
+                        self.assertEqual(deploy(env, Mock(), lambda _: script, runner), 0)
+                        guard.assert_called_once()
                     runner.assert_called_once()
                     self.assertTrue(all(not path.exists() for path in paths))
 

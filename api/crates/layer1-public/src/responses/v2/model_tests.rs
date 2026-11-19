@@ -74,6 +74,7 @@ fn settings_edit() -> AgentLogKind {
 
 fn snapshot(kinds: Vec<AgentLogKind>) -> AgentEventStreamSnapshot {
     AgentEventStreamSnapshot {
+        source_generation: None,
         id: AgentId("agt_models".into()),
         created_at: AT.into(),
         model: Some("today-model".into()),

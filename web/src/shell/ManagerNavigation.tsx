@@ -9,6 +9,7 @@ import { NavigationScopePicker, type NavigationScopeChoices } from '../resources
 import { ScopedNavigation } from '../resources/ScopedNavigation';
 import { Button } from '../ui/Button';
 import { sameAgent } from '../agent/status';
+import type { ActivityStatus } from '../agent/activityStatus';
 import { Tree, type TreeAction, type TreePermissions } from './Tree';
 import type { NavigationState } from './navigation';
 import { NavigationFilters, type NavigationView } from './NavigationFilters';
@@ -24,6 +25,7 @@ export function ManagerNavigation({
   viewerId,
   navigation,
   currentAgent,
+  currentActivity,
   permissions,
   pending,
   busySandboxIds,
@@ -41,6 +43,7 @@ export function ManagerNavigation({
   readonly viewerId: string;
   readonly navigation: NavigationState & { refresh: () => void };
   readonly currentAgent?: AgentDetail;
+  readonly currentActivity?: ActivityStatus;
   readonly permissions: TreePermissions;
   readonly pending: boolean;
   readonly busySandboxIds: ReadonlySet<string>;
@@ -109,6 +112,11 @@ export function ManagerNavigation({
               </Button>
             ) : null}
             <Tree
+              currentTask={
+                currentAgent && currentActivity
+                  ? { agent: currentAgent, status: currentActivity }
+                  : undefined
+              }
               active={panelView === view}
               resourceClient={client}
               viewerId={viewerId}

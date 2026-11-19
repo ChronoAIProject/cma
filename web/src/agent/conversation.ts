@@ -9,7 +9,7 @@ import { descriptionSource, durableRuntimeMetadata, mergeRuntimeMetadata } from 
 import { sessionCommands } from './slashCommands';
 import { number, object, text, upsert } from './conversationValues';
 import { liveReasoning } from './liveReasoning';
-import { startTurn, finishTurn } from './turnTiming';
+import { startTurn, finishTurn, endTurn } from './turnTiming';
 import { failedTurn, hasRecordedGap, recover } from './recovery';
 import { failureMessage } from './failureMessage';
 import type { ApprovalRequest, ConversationState } from './model';
@@ -200,7 +200,7 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
         undefined,
       );
       return {
-        ...finishTurn(next, runId, event.appendedAt),
+        ...endTurn(next, runId, event.appendedAt),
         liveGapRuns:
           runId === undefined ? next.liveGapRuns : clearLiveGapRun(next.liveGapRuns, runId),
         turnOutcomes: {
@@ -215,14 +215,11 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
             ? { ...message, finalAnswer: true }
             : message,
         ),
-        activeRunId: undefined,
-        activeRunStartedAt: undefined,
-        reasoning: [],
       };
     }
     case 'turn_interrupted':
       return {
-        ...finishTurn(
+        ...endTurn(
           next,
           number(kind.turn_sequence)?.toString() ?? next.activeRunId,
           event.appendedAt,
@@ -236,9 +233,6 @@ function foldDurableEvent(state: ConversationState, event: AgentEvent): Conversa
           next.liveGapRuns,
           number(kind.turn_sequence)?.toString() ?? next.activeRunId ?? '',
         ),
-        activeRunId: undefined,
-        activeRunStartedAt: undefined,
-        reasoning: [],
       };
     case 'turn_failed':
       return failedTurn(next, event);

@@ -11,6 +11,7 @@ impl AgentReadService {
         response_logs: Option<Arc<dyn super::super::store::AgentResponseLogStore>>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            observation: self.observation.clone(),
             store: self.store.clone(),
             sessions: self.sessions.clone(),
             resources: self.resources.clone(),
@@ -41,6 +42,7 @@ impl AgentReadService {
                         .agent
                         .ok_or_else(|| corrupt("authorized response has no Agent"))?;
                     Ok(AgentEventStreamSnapshot {
+                        source_generation: None,
                         model: agent.selected_model(),
                         id: agent.id,
                         created_at: agent.created_at,
@@ -65,13 +67,56 @@ impl AgentReadService {
                     .lineage
                     .agent
                     .ok_or_else(|| corrupt("authorized response has no Agent"))?;
-                let window = reader
-                    .agent_response_log_window(&agent, turn_sequence)
-                    .await
-                    .map_err(log_store_error)?;
+                let flight = match &self.observation {
+                    Some(service) => service
+                        .output_flight(&agent, turn_sequence)
+                        .await
+                        .map_err(log_store_error)?,
+                    None => None,
+                };
+                if let Some(window) = flight
+                    .as_ref()
+                    .and_then(|flight| flight.get::<AgentResponseLogWindow>(b"window"))
+                {
+                    let mut snapshot = project_window(
+                        &agent,
+                        turn_sequence,
+                        (*window).clone(),
+                        authorization.resource().2,
+                    )?;
+                    snapshot.source_generation = flight.as_ref().map(|flight| flight.identity());
+                    return Ok(Some(snapshot));
+                }
+                let previous = flight.as_ref().and_then(|flight| flight.previous_window());
+                let suffix = match previous.as_ref() {
+                    Some(previous) if previous.through < agent.conversation.last_seq => reader
+                        .agent_response_log_suffix(&agent, previous)
+                        .await
+                        .map_err(log_store_error)?,
+                    _ => None,
+                };
+                let window = match suffix {
+                    Some(window) => Some(window),
+                    None => reader
+                        .agent_response_log_window(&agent, turn_sequence)
+                        .await
+                        .map_err(log_store_error)?,
+                };
                 window
                     .map(|window| {
-                        project_window(&agent, turn_sequence, window, authorization.resource().2)
+                        let mut snapshot = project_window(
+                            &agent,
+                            turn_sequence,
+                            window.clone(),
+                            authorization.resource().2,
+                        )?;
+                        snapshot.source_generation =
+                            flight.as_ref().map(|flight| flight.identity());
+                        if let Some(flight) = &flight {
+                            flight.remember_window(window.clone());
+                            flight.insert(b"window", window);
+                        }
+                        Ok(snapshot)
                     })
                     .transpose()
             })
@@ -130,6 +175,7 @@ fn project_window(
         None => {}
     }
     Ok(AgentEventStreamSnapshot {
+        source_generation: None,
         id: agent.id.clone(),
         created_at: agent.created_at.clone(),
         model: agent.selected_model(),

@@ -1,0 +1,165 @@
+"""Select immutable Actions cache IDs that can be retired on develop."""
+from __future__ import annotations
+
+import re
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import datetime
+from pathlib import Path
+from runpy import run_path
+
+from staging_cd_build_cache import identity
+
+DEVELOP = "refs/heads/develop"
+BUDGET = 8 * 1024 ** 3
+PULL = re.compile(r"refs/pull/([1-9][0-9]*)/merge")
+HEX = r"[a-f0-9]{64}"
+INDEX = re.compile(r"(index-cma-(?:am|eg|web|runtime|runtime-omarchy)-1-[0-9a-f]{8})#([0-9]+)")
+CARGO = re.compile(rf"cma-cd-cargo-v(?:2-(am|eg)-({HEX})|3-(am|eg)-({HEX})-{HEX})-[0-9]+-[0-9]+")
+OMARCHY = re.compile(rf"omarchy-layer-archive-v1-runtime-omarchy-deps-{HEX}")
+# Default-branch CodeQL builds these databases. Its automatic overlay reader
+# is the PR analysis; neither release nor develop CI restores this namespace.
+CODEQL_BASE = re.compile(r"(codeql-overlay-base-database-1-[a-f0-9]+-[a-z+_-]+-[0-9]+\.[0-9]+\.[0-9]+)-[a-f0-9]{40}-[0-9]+-[0-9]+")
+AUXILIARY = (
+    re.compile(rf"(cma-develop-selection-v2-{HEX})-[a-f0-9]{{40}}-[0-9]+-[0-9]+"),
+    CODEQL_BASE,
+    re.compile(r"(cache-trivy)-[0-9]{4}-[0-9]{2}-[0-9]{2}"),
+)
+
+
+@dataclass(frozen=True)
+class Entry:
+    id: int
+    key: str
+    ref: str
+    version: str
+    size: int
+    created: datetime
+    accessed: datetime
+
+    @classmethod
+    def parse(cls, row):
+        def timestamp(field):
+            value = datetime.fromisoformat(row[field].replace("Z", "+00:00"))
+            if value.utcoffset() is None:
+                raise ValueError("cache timestamp missing offset")
+            return value
+
+        if (type(row["id"]) is not int or row["id"] <= 0
+                or type(row["size_in_bytes"]) is not int or row["size_in_bytes"] < 0
+                or any(not isinstance(row[k], str) or not row[k] for k in ("key", "ref", "version"))):
+            raise ValueError("invalid cache inventory entry")
+        return cls(row["id"], row["key"], row["ref"], row["version"], row["size_in_bytes"],
+                   timestamp("created_at"), timestamp("last_accessed_at"))
+
+
+@dataclass(frozen=True)
+class Policies:
+    cargo: dict
+    omarchy: str
+
+    @classmethod
+    def from_source(cls, root):
+        cargo = {}
+        for component in ("am", "eg"):
+            key = identity(root, component)
+            # Across the writer migration v2 has one exact prefix, v3 a graph fallback.
+            cargo[component] = (f"cma-cd-cargo-v2-{component}-{key}-"
+                                if isinstance(key, str) else key.family)
+        helper = run_path(str(Path(__file__).with_name("omarchy-cache-key.py")))
+        return cls(cargo, "omarchy-layer-archive-v1-" + helper["scope"](helper["manifest"](root)))
+
+
+@dataclass(frozen=True)
+class Removal:
+    entry: Entry
+    reason: str
+    successor: Entry | None = None
+
+
+def generations(entries, policy):
+    """Only retire entries with a compatible, visible replacement on develop."""
+    groups = defaultdict(list)
+    active = {(service, e.version) for e in entries if e.ref == DEVELOP and e.size
+              for service, family in policy.cargo.items() if e.key.startswith(family) and CARGO.fullmatch(e.key)}
+    for item in entries:
+        if item.ref != DEVELOP:
+            continue
+        index = INDEX.fullmatch(item.key)
+        cargo = CARGO.fullmatch(item.key)
+        if index:
+            group, rank = index[1], (int(index[2]),)
+        elif cargo:
+            service = cargo[1] or cargo[3]
+            group = f"cargo-{service}"
+            rank = (item.key.startswith(policy.cargo[service]),)
+            if (service, item.version) not in active:
+                # Even before today's first save, duplicates within a previous
+                # compiler family have a known-compatible fallback.
+                group = f"previous-{service}-{cargo[2] or cargo[4]}-v{2 if cargo[1] else 3}"
+                rank = ()
+        elif OMARCHY.fullmatch(item.key):
+            group, rank = "omarchy", (item.key == policy.omarchy,)
+        else:
+            match = next((m for pattern in AUXILIARY if (m := pattern.fullmatch(item.key))), None)
+            if not match:
+                # REST lists shared blobs without their index membership. Every blob
+                # could be reachable from a retained index, including other scopes.
+                continue
+            group, rank = match[1], ()
+        groups[(group, item.version)].append(((*rank, item.created, item.id), item))
+
+    for (group, _), candidates in groups.items():
+        ordered = sorted(candidates, key=lambda pair: pair[0], reverse=True)
+        rank, keep = ordered[0]
+        if (group.startswith("cargo-") or group == "omarchy") and not rank[0]:
+            # The latest reserved-source build may still need the previous family.
+            # A missing/failed current upload supplies no evidence of replacement.
+            continue
+        if keep.size == 0:
+            continue
+        for _, old in ordered[1:]:
+            if (group.startswith(("index-", "cargo-"))
+                    and (old.created, old.id) > (keep.created, keep.id)):
+                # A backfill/rerun or an index-counter reset can complete out of
+                # order. The newest upload still needs an observable successor.
+                continue
+            yield Removal(old, "superseded", keep)
+
+
+def plan(entries, policy):
+    proposed = [Removal(item, "pull-request") for item in entries if PULL.fullmatch(item.ref)]
+    proposed.extend(generations(entries, policy))
+    return sorted(proposed, key=lambda action: (-action.entry.size, action.entry.id))
+
+
+@dataclass(frozen=True)
+class Readers:
+    develop: bool
+    pulls: frozenset
+    unknown_pull: bool
+
+    def holds(self, ref):
+        return (self.develop if ref == DEVELOP else self.unknown_pull or ref in self.pulls)
+
+    @classmethod
+    def from_runs(cls, runs, own_id):
+        develop = unknown = False
+        pulls = set()
+        for run in runs:
+            if run["id"] == own_id or run["status"] == "completed":
+                continue
+            # Protected builds share the maintenance lock. PRs use best-effort
+            # restores and can only read PR-local entries from their own merge ref.
+            if run["event"].startswith("pull_request"):
+                related = run["pull_requests"]
+                if not isinstance(related, list):
+                    raise ValueError("invalid run PR associations")
+                unknown |= not related
+                for pr in related:
+                    if type(pr["number"]) is not int or pr["number"] <= 0:
+                        raise ValueError("invalid run PR number")
+                    pulls.add(f"refs/pull/{pr['number']}/merge")
+            elif run.get("head_branch") == "develop" or not run.get("head_branch"):
+                develop = True
+        return cls(develop, frozenset(pulls), unknown)

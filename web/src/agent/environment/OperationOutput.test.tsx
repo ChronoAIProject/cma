@@ -11,7 +11,7 @@ const command: ToolCall = {
   status: 'failed',
   output: { text: 'raw-output\nnext line', truncated: true },
 };
-it('keeps complete command scrollback visible and excludes non-terminal tools', () => {
+it('keeps complete operation history visible and excludes non-execute tools', () => {
   render(
     <OperationOutput
       active
@@ -19,18 +19,19 @@ it('keeps complete command scrollback visible and excludes non-terminal tools', 
       toolCalls={[{ id: 'read', kind: 'read', title: 'Read a file', status: 'completed' }, command]}
     />,
   );
-  expect(screen.getByText('bash')).toBeVisible();
+  expect(screen.getByText('Operations')).toBeVisible();
+  expect(screen.queryByText('bash')).not.toBeInTheDocument();
   expect(screen.getByText('/home/cma/project')).toBeVisible();
   expect(screen.queryByText('Read a file')).not.toBeInTheDocument();
-  expect(screen.getByLabelText('Recorded command')).toHaveTextContent('$ printf "raw-command"');
+  expect(screen.getByLabelText('Operation name')).toHaveTextContent('printf "raw-command"');
   expect(screen.getByLabelText('Recorded output')).toBeVisible();
   expect(screen.getByLabelText('Recorded output').textContent).toBe('raw-output\nnext line');
   expect(screen.getByText('Output truncated')).toBeVisible();
-  expect(screen.getByText('— agent paused —')).toBeVisible();
+  expect(screen.queryByText(/agent paused/i)).not.toBeInTheDocument();
   expect(screen.queryByRole('slider')).not.toBeInTheDocument();
   expect(screen.queryByRole('button')).not.toBeInTheDocument();
 });
-it('retains more than 50 commands and switches the live cursor to the paused line', () => {
+it('retains more than 50 operations without inventing a live cursor or paused task', () => {
   const tools = Array.from({ length: 60 }, (_, index) => ({
     ...command,
     id: `command-${index}`,
@@ -38,11 +39,11 @@ it('retains more than 50 commands and switches the live cursor to the paused lin
   }));
   const { rerender } = render(<OperationOutput active activeRunId="1" toolCalls={tools} />);
   expect(screen.getAllByRole('article')).toHaveLength(60);
-  expect(screen.getByText('● Live')).toBeVisible();
-  expect(screen.getByLabelText('Terminal cursor')).toBeVisible();
+  expect(screen.queryByLabelText('Terminal cursor')).not.toBeInTheDocument();
+  expect(screen.getAllByText('Failed')).toHaveLength(60);
   rerender(<OperationOutput active toolCalls={tools} />);
   expect(screen.getAllByRole('article')).toHaveLength(60);
-  expect(screen.getByText('— agent paused —')).toBeVisible();
+  expect(screen.getAllByText('Failed')).toHaveLength(60);
 });
 it('jumps with a 16px inset and ends its highlight after 1.8s even as output arrives', async () => {
   vi.useFakeTimers();
@@ -77,3 +78,33 @@ it('jumps with a 16px inset and ends its highlight after 1.8s even as output arr
   expect(block).not.toHaveAttribute('data-highlighted');
   expect(port.scrollTop).toBe(234);
 });
+
+it.each([
+  ['completed', undefined, 'Completed'],
+  ['failed', undefined, 'Failed'],
+  ['cancelled', undefined, 'Cancelled'],
+  ['in_progress', undefined, 'Outcome not reported (last status: in_progress)'],
+  ['in_progress', 'other-turn', 'Outcome not reported (last status: in_progress)'],
+  ['in_progress', 'tool-turn', 'In progress'],
+] as const)(
+  'reports execute-kind MCP status %s with active turn %s truthfully',
+  (status, activeRunId, label) => {
+    const tool: ToolCall = {
+      id: 'mcp-call',
+      runId: 'tool-turn',
+      kind: 'execute',
+      title: 'mcp.read_resource',
+      detail: '{"resource":"<synthetic>"}',
+      status,
+    };
+    const { container } = render(
+      <OperationOutput active toolCalls={[tool]} activeRunId={activeRunId} />,
+    );
+    expect(screen.getByRole('article')).toHaveTextContent('mcp.read_resource');
+    expect(screen.getByText(label)).toBeVisible();
+    expect(screen.getByText('No output was recorded for this operation.')).toBeVisible();
+    expect(screen.getByLabelText('Recorded details')).toHaveTextContent(tool.detail!);
+    expect(container.textContent).not.toMatch(/bash|\$ |paused|● Live/);
+    expect(container.querySelector('input, textarea, [contenteditable], synthetic')).toBeNull();
+  },
+);

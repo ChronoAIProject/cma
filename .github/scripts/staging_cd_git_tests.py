@@ -36,7 +36,7 @@ class GitPublicationTests(unittest.TestCase):
         self.tree = self.git("mktree", data="")
         self.source = self.git("commit-tree", self.tree, data="Synthetic release\n")
         self.git("push", str(self.remote), self.source + ":refs/heads/develop")
-        self.api = GitHub("fixture")
+        self.api = GitHub("fixture", self.runner)
         self.api.request = self.request
         self.api.history = lambda: DevelopHistory.load(self.request, root=self.work, runner=self.runner)
         self.publisher = Reservations(self.api, "fixture", self.work, self.runner)
@@ -391,10 +391,6 @@ class GitPublicationTests(unittest.TestCase):
             self.assertEqual(finalize(tasks, [receipt], self.publisher, registry), receipt)
             return receipt
 
-        with self.assertRaisesRegex(Refusal, "drained before supersession"):
-            allocate_queue(queue, self.api, self.publisher, 10, 1)
-        self.assertEqual(self.publisher.list(), [pending])
-        active = False
         later = publish(10, "sha256:" + "d" * 64)
         self.assertEqual(later["source"], newer)
         self.assertEqual(later["identity"]["version"], "0.11.1")

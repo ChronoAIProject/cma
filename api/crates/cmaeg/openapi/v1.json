@@ -10974,6 +10974,7 @@
     },
     "/channels/{channel_id}/activity": {
       "get": {
+        "description": "Bounded recent activity. Actor id is always redacted and display_name is a fixed role label (Participant, Bot, System, or Actor not reported); kind is preserved. This presentation copy is not canonical input for routing or replay. Event identity, cursor, timestamps and consumer/delivery state are preserved.",
         "operationId": "getChannelActivity",
         "parameters": [
           {
@@ -11030,7 +11031,7 @@
     },
     "/channels/{channel_id}/activity/stream": {
       "get": {
-        "description": "SSE activity/reset events contain complete ActivityPage snapshots, including on every connection. Apply each snapshot atomically. id is an opaque cursor; reconnect with Last-Event-ID or cursor. reset means the cursor predates retained activity. This is recent bounded activity, not a complete audit log.",
+        "description": "SSE activity/reset events contain complete ActivityPage snapshots, including on every connection. Actor id is always redacted and display_name is a fixed role label (Participant, Bot, System, or Actor not reported); kind is preserved. This presentation copy is not canonical input for routing or replay. Apply each snapshot atomically. id is an opaque cursor; reconnect with Last-Event-ID or cursor. reset means the cursor predates retained activity. This is recent bounded activity, not a complete audit log.",
         "operationId": "streamChannelActivity",
         "parameters": [
           {

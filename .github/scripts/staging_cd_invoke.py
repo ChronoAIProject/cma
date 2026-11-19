@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from staging_cd_admission import event_identity
+from staging_cd_applied import configured_group
 from staging_cd_checkout import checkout_path
 from staging_cd_clock import elapsed, remaining, TOTAL_SECONDS, TERMINATION_GRACE_SECONDS
 from staging_cd_common import Refusal, matches, require
@@ -15,19 +16,28 @@ from staging_cd_policy import selected as deploy_selection
 from staging_cd_process import ProcessTimeout, run as run_process
 from staging_cd_receipts import canonical
 from staging_cd_runtime import run_private
-from staging_cd_refusal import read as read_refusal, REASONS as PRIVATE_REASONS
+from staging_cd_refusal import (
+    REASONS as PRIVATE_REASONS, VERIFICATION_REASONS, read as read_refusal, read_verification,
+)
 from staging_cd_set import document, private_document, release_set, validate_set
 from staging_cd_tools import environment as tool_environment
+from staging_cd_compatibility import ContractPolicy, GROUP
+from staging_cd_history import DevelopHistory
+from staging_cd_watermark import eligible_receipts, record_withheld, require_current_versions
 from staging_cd_deploy_result import read as read_component_result, retain as retain_component_result
 
 IDENTITY_KEYS = ("GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_NAME",
                  "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")
 PROCESS_KEYS = ("PATH", "LANG", "LC_ALL", "RUNNER_TEMP")
 DISABLED = 100
+UNVERIFIED_COHORT = 51
+CONTRACT_READ_FAILED = 52
 PENDING_RUNTIME_CHECK = "PASS_PENDING_LEAD_RUNTIME_IMAGE_CHECK"
 RUNTIME_NOTICE = "NOT-YET: runtime_image_id requires independent lead verification before final acceptance"
 RESULTS = {0: PENDING_RUNTIME_CHECK,
            DISABLED: "SKIP: deploy disabled in cma-infra",
+           UNVERIFIED_COHORT: "NOT-YET: contract digests are configured; the serving cohort is unverified",
+           CONTRACT_READ_FAILED: "FAIL: AM and runtimes withheld because configured digests could not be verified",
            10: "FAIL: release failed; eligible owned changes recovered and verified",
            20: "FAIL: deployment unverified; immediate operator intervention required",
            30: "FAIL: deployment not admitted; no mutation attempted",
@@ -35,7 +45,7 @@ RESULTS = {0: PENDING_RUNTIME_CHECK,
            50: "FAIL: qualified components passed controller checks; incompatible peers were withheld"}
 
 
-PRECONDITIONS = {"mode", "checkout", "policy", "credentials-format", "budget"}
+PRECONDITIONS = {"mode", "checkout", "policy", "credentials-format", "budget", "authority"}
 
 
 class NotAdmitted(Refusal):
@@ -100,9 +110,45 @@ def execute(script, release_file, mode, started, env, *, timeout=None):
     return code if code in (0, 10, 20, 30, 40, 50) else 20
 
 
+def controller_receipts(receipts, transition, script, directory, started, env, child_env):
+    def current_subset(candidates):
+        return eligible_receipts(candidates, require_current_versions,
+                                 lambda: ContractPolicy(DevelopHistory.from_head(env["GITHUB_SHA"])),
+                                 transition=transition)
+
+    current = current_subset(receipts)
+    record_withheld(env, receipts, current)
+    if not transition or not GROUP & current.keys():
+        return current, 0
+    require(GROUP <= current.keys(), "Deployment policy split the contract group")
+
+    try:
+        configured = configured_group(script, directory, current, started, child_env)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        # This observation covers only AM and its runtime defaults. A sibling
+        # can still proceed if its own authority is readable after the probe.
+        if env.get("GITHUB_STEP_SUMMARY"):
+            with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                summary.write("Withheld after contract configuration read failure: " + ", ".join(sorted(GROUP)) + "\n")
+        independent = {key: receipt for key, receipt in current.items() if key not in GROUP}
+        if independent:
+            qualified = current_subset(independent)
+            record_withheld(env, independent, qualified)
+            return qualified, CONTRACT_READ_FAILED
+        return {}, CONTRACT_READ_FAILED
+
+    qualified = current_subset(current)
+    record_withheld(env, current, qualified)
+    if configured == GROUP and GROUP <= qualified.keys():
+        # Matching defaults do not establish which template is serving.
+        return {key: receipt for key, receipt in qualified.items() if key not in GROUP}, UNVERIFIED_COHORT
+    # A partial match needs the complete current group in one controller request.
+    return qualified, 0
+
+
 def deploy(env, masker, script_reader=private_script, runner=execute,
            tool_reader=tool_environment, policy_reader=deploy_selection, on_disabled=lambda: None,
-           on_private_refusal=None):
+           on_private_refusal=None, on_unverified=None):
     event_identity(env)
     value = validate_set(document(env.get("CD_RELEASE_SET")))
     mode, started = env.get("CD_DEPLOY_MODE"), env.get("CD_STARTED_AT")
@@ -116,7 +162,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     for credential in credentials.values():
         masker(credential)
     with precondition("budget"):
-        remaining(started)
+        remaining(started, mode=mode)
     with precondition("checkout"):
         script = script_reader(env)
     with precondition("policy"):
@@ -132,29 +178,52 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     child_env = {key: env[key] for key in (*IDENTITY_KEYS, *PROCESS_KEYS) if key in env}
     child_env.update(tool_reader(env))
     child_env.update(credentials)
-    if on_private_refusal is not None:
+    if on_private_refusal is not None or on_unverified is not None:
         child_env["CD_REPORT_REFUSAL"] = "1"
     # A set has independent source SHAs; the file is the sole source authority.
     # App tokens, registry credentials, keys and Actions command files stay out.
-    selected_set = release_set({key: value["receipts"][key] for key in selected})
-    request = private_document(selected_set)
+    receipts = {key: value["receipts"][key] for key in selected}
     result = None
     private_reason = None
+    group_outcome = 0
+    verification = None
     with tempfile.TemporaryDirectory(prefix="cma-release-set-", dir=env["RUNNER_TEMP"]) as directory:
         path = Path(directory) / "release-set.json"
-        with path.open("x", encoding="utf-8") as stream:
-            os.chmod(path, 0o600)
-            stream.write(canonical(request))
+        with precondition("authority"):
+            if automatic:
+                receipts, group_outcome = controller_receipts(
+                    receipts, value.get("contract_transition"), script, directory, started, env, child_env)
+                if not receipts:
+                    return group_outcome
+            request = private_document(release_set(receipts))
+            with path.open("x", encoding="utf-8") as stream:
+                os.chmod(path, 0o600)
+                stream.write(canonical(request))
         with precondition("budget"):
-            remaining(started)
+            remaining(started, mode=mode)
         try:
             code = runner(script, path, mode, started, child_env)
-            result = read_component_result(path.with_name("component-result.json"), request, code)
+            if code == 20 and on_unverified is not None:
+                verification = read_verification(path.with_name("verification-code"), request)
+            if code != 30 and elapsed(started) > TOTAL_SECONDS:
+                # execute() also maps a late successful child to 20. Its code-0
+                # result cannot certify success and is not a malformed result.
+                if on_unverified is not None:
+                    on_unverified(*(verification or ("phase-budget", "unreported")))
+                return 20
+            try:
+                result = read_component_result(path.with_name("component-result.json"), request, code)
+            except (OSError, ValueError, TypeError, KeyError):
+                if on_unverified is not None:
+                    on_unverified("result", "unreported")
+                return 20
             if code == 30 and on_private_refusal is not None:
                 private_reason = read_refusal(path.with_name("refusal-code"), request)
         except Exception:  # noqa: BLE001 - a launched controller may have mutated.
             code = 20
     if elapsed(started) > TOTAL_SECONDS and code != 30:
+        if on_unverified is not None:
+            on_unverified(*(verification or ("phase-budget", "unreported")))
         return 20
     if result is not None:
         try:
@@ -162,15 +231,23 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
             from staging_cd_deploy_result import emit
             emit(result, request, code, env)
         except (OSError, ValueError, KeyError, TypeError):
+            if on_unverified is not None:
+                on_unverified("result", "unreported")
             return 20
+    if verification is not None:
+        on_unverified(*verification)
     if private_reason is not None:
         on_private_refusal(private_reason)
-    return code if code in (0, 10, 20, 30, 40, 50) else 20
+    if code == 0:
+        return group_outcome
+    return code if code in (10, 20, 30, 40, 50) else 20
 
 
 def main():
     outcome, skipped = 40, False
     reason = None
+    verification = "unreported"
+    recovery = "unreported"
     try:
         entry_elapsed = elapsed(os.environ.get("CD_STARTED_AT"))
     except (ValueError, TypeError, OverflowError):
@@ -183,10 +260,16 @@ def main():
         if token in PRIVATE_REASONS:
             reason = "private-" + token
 
+    def unverified(first, second):
+        nonlocal verification, recovery
+        if first in VERIFICATION_REASONS and second in VERIFICATION_REASONS:
+            verification, recovery = first, second
+
     def operation(masker):
         nonlocal outcome, reason
         try:
-            outcome = deploy(os.environ, masker, on_disabled=disabled, on_private_refusal=private_refusal)
+            outcome = deploy(os.environ, masker, on_disabled=disabled,
+                             on_private_refusal=private_refusal, on_unverified=unverified)
         except NotAdmitted as refusal:
             outcome = refusal.code
             if refusal.reason in PRECONDITIONS:
@@ -194,7 +277,9 @@ def main():
         return outcome in (0, DISABLED)
     result = run_private(operation, None)
     diagnostic = None
-    if reason is not None:
+    if outcome == 20:
+        diagnostic = f"FAIL verification={verification} recovery={recovery}"
+    elif reason is not None:
         diagnostic = "FAIL precondition=" + reason
     elif outcome == 30:
         diagnostic = "FAIL precondition=private-unreported"
@@ -202,6 +287,8 @@ def main():
         print(diagnostic)
     if skipped:
         print(RESULTS[DISABLED])
+    if outcome in (UNVERIFIED_COHORT, CONTRACT_READ_FAILED):
+        print(RESULTS[outcome])
     if outcome == 20:
         print("::error::Staging deployment is unverified. Immediate operator intervention required.")
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
@@ -235,7 +322,9 @@ def main():
         for component in sorted(GROUP):
             if value.get("components", {}).get(component, {}).get("state") == "withheld":
                 print("FAIL component=" + component + " reason=deployed-compatibility-unqualified")
-    return 0 if result == 0 else outcome if outcome in (10, 20, 30, 40, 50) else 40
+    if result == 0:
+        return 0
+    return outcome if outcome in (10, 20, 30, 40, 50, UNVERIFIED_COHORT, CONTRACT_READ_FAILED) else 40
 
 
 if __name__ == "__main__":

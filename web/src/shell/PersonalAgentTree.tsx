@@ -5,7 +5,9 @@ import type { TreeProps } from './Tree';
 import { TreeRow } from './TreeRow';
 import { agentActions } from './treeActions';
 import { keyboardNavigation, agentSignal } from './treePresentation';
-import { taskWords, taskStatus } from './taskStatus';
+import { observedTaskStatus } from './taskStatus';
+import { taskPresentation } from './taskPresentation';
+import { IconDataOutline16 } from '../ui/icons';
 import { sandboxChildrenAvailable, sandboxChildStatus } from '../sandbox/lifecycle';
 import { taskTitle } from './taskTitle';
 import type { AgentSummary, SandboxDetail } from '../api/types';
@@ -21,7 +23,11 @@ function updated(agent: Pick<AgentSummary, 'updatedAt'>): number {
 }
 
 /** Flat navigation keeps each Agent's parent only for status and action eligibility. */
-function agentCards(items: TreeProps['items'], statusFilter: string): readonly AgentCard[] {
+function agentCards(
+  items: TreeProps['items'],
+  statusFilter: string,
+  currentTask?: TreeProps['currentTask'],
+): readonly AgentCard[] {
   return items
     .flatMap(({ sandbox, workspaces }) =>
       workspaces
@@ -30,7 +36,8 @@ function agentCards(items: TreeProps['items'], statusFilter: string): readonly A
         .filter(
           (agent) =>
             agent.status !== 'deleted' &&
-            (statusFilter === 'all' || taskStatus(agent, sandbox) === statusFilter),
+            (statusFilter === 'all' ||
+              observedTaskStatus(agent, sandbox, currentTask) === statusFilter),
         )
         .map((agent) => ({ sandbox, agent })),
     )
@@ -39,6 +46,7 @@ function agentCards(items: TreeProps['items'], statusFilter: string): readonly A
 
 /** Agent view uses the same authorized hierarchy and parent lifecycle barriers. */
 export function PersonalAgentTree({
+  currentTask,
   active,
   items,
   statusFilter,
@@ -52,6 +60,7 @@ export function PersonalAgentTree({
   onAction,
 }: Pick<
   TreeProps,
+  | 'currentTask'
   | 'items'
   | 'active'
   | 'statusFilter'
@@ -64,7 +73,19 @@ export function PersonalAgentTree({
   | 'onAgentIntent'
   | 'onAction'
 >) {
-  const cards = useMemo(() => agentCards(items, statusFilter ?? 'all'), [items, statusFilter]);
+  const cards = useMemo(
+    () =>
+      agentCards(items, statusFilter ?? 'all', currentTask).flatMap((card) => {
+        const presentation = taskPresentation(
+          card.agent,
+          card.sandbox,
+          refreshError === undefined ? 'fresh' : 'stale',
+          currentTask,
+        );
+        return presentation ? [{ ...card, presentation }] : [];
+      }),
+    [items, statusFilter, refreshError, currentTask],
+  );
   const listPrefetchAgent =
     active && route.kind !== 'agent' && refreshError === undefined ? cards[0]?.agent.id : undefined;
   useEffect(() => {
@@ -74,7 +95,7 @@ export function PersonalAgentTree({
   }, [listPrefetchAgent, onAgentIntent]);
   const now = useTaskClock(
     cards
-      .filter(({ agent, sandbox }) => taskStatus(agent, sandbox) === 'working')
+      .filter(({ presentation }) => presentation.showRunningTime)
       .flatMap(({ agent }) => (agent.taskStartedAt ? [agent.taskStartedAt] : [])),
   );
   return (
@@ -86,19 +107,22 @@ export function PersonalAgentTree({
     >
       {TASK_GROUPS.map((heading) => {
         const rows = cards.filter(
-          ({ sandbox, agent }) =>
-            taskGroup(taskStatus(agent, sandbox), agent.updatedAt, now) === heading,
+          ({ presentation, agent }) =>
+            (presentation.group ?? taskGroup(presentation.status, agent.updatedAt, now)) ===
+            heading,
         );
         if (!rows.length) return null;
         return (
           <div role="group" aria-label={heading} key={heading}>
             <h3 className="task-group__heading">{heading}</h3>
-            {rows.map(({ sandbox, agent }) => {
-              const status = taskStatus(agent, sandbox);
+            {rows.map(({ sandbox, agent, presentation }) => {
+              const { status, label, parentNotice, showRunningTime } = presentation;
+              const environmentNotice =
+                parentNotice !== undefined || presentation.group === 'Status unavailable';
               const displayedTime =
-                status === 'not_started'
+                environmentNotice || status === 'not_started'
                   ? ''
-                  : status === 'working'
+                  : showRunningTime
                     ? runningTaskTime(agent.taskStartedAt, now)
                     : taskTime(agent.updatedAt, now);
               return (
@@ -107,26 +131,36 @@ export function PersonalAgentTree({
                   nodeId={`agent:${agent.id}`}
                   level={1}
                   label={taskTitle(agent)}
-                  accessibleLabel={`${taskTitle(agent)}, ${taskWords[status]}${displayedTime ? `, ${displayedTime}` : ''}${refreshError ? ', status may be stale' : ''}`}
-                  layout="line"
-                  icon={agentSignal(
-                    sandboxChildStatus(sandbox, agent.status),
-                    agent.id,
-                    24,
-                    sandbox.color ?? taskColor(agent.id),
-                  )}
+                  accessibleLabel={`${taskTitle(agent)}, ${label}${parentNotice && parentNotice !== label ? `, ${parentNotice}` : ''}${displayedTime ? `, ${displayedTime}` : ''}`}
+                  layout={environmentNotice ? 'stacked' : 'line'}
+                  icon={
+                    environmentNotice ? (
+                      <IconDataOutline16 />
+                    ) : (
+                      agentSignal(
+                        sandboxChildStatus(sandbox, agent.status),
+                        agent.id,
+                        24,
+                        sandbox.color ?? taskColor(agent.id),
+                      )
+                    )
+                  }
                   route={{ kind: 'agent', agentId: agent.id }}
                   selected={route.kind === 'agent' && route.agentId === agent.id}
                   dimmed={sandbox.status === 'paused'}
                   meta={
                     <>
-                      <span className="sr-only">
-                        {taskWords[status]}
-                        {refreshError ? ', status may be stale' : ''}
-                      </span>
-                      {status === 'not_started' ? (
+                      {environmentNotice ? (
+                        <span className="task-environment-notice">
+                          {label}
+                          {parentNotice && parentNotice !== label ? ` · ${parentNotice}` : ''}
+                        </span>
+                      ) : (
+                        <span className="sr-only">{label}</span>
+                      )}
+                      {environmentNotice ? null : status === 'not_started' ? (
                         <span className="task-ready">Ready</span>
-                      ) : status === 'working' ? (
+                      ) : showRunningTime ? (
                         <span className="task-running">
                           <span aria-hidden="true" className="task-running__dot" />
                           {runningTaskTime(agent.taskStartedAt, now)}
@@ -136,22 +170,35 @@ export function PersonalAgentTree({
                       )}
                     </>
                   }
-                  actions={agentActions(
-                    agent.status,
-                    permissions,
-                    !lifecycleBusy &&
-                      !busySandboxIds?.has(sandbox.id) &&
-                      !refreshError &&
-                      sandboxChildrenAvailable(sandbox),
-                  )}
+                  actions={[
+                    ...agentActions(
+                      agent.status,
+                      permissions,
+                      !lifecycleBusy &&
+                        !busySandboxIds?.has(sandbox.id) &&
+                        !refreshError &&
+                        sandboxChildrenAvailable(sandbox),
+                    ),
+                    ...(environmentNotice
+                      ? [
+                          {
+                            id: 'view_environment',
+                            label: 'View environment',
+                            icon: <IconDataOutline16 />,
+                          },
+                        ]
+                      : []),
+                  ]}
                   onNavigate={onNavigate}
                   onIntentStart={() => onAgentIntent?.(agent.id, true)}
                   onIntentEnd={() => onAgentIntent?.(agent.id, false)}
                   onAction={(kind) =>
-                    onAction({
-                      kind: kind as 'stop_agent' | 'delete_agent' | 'export_history',
-                      agentId: agent.id,
-                    })
+                    kind === 'view_environment'
+                      ? onNavigate({ kind: 'sandbox', sandboxId: sandbox.id })
+                      : onAction({
+                          kind: kind as 'stop_agent' | 'delete_agent' | 'export_history',
+                          agentId: agent.id,
+                        })
                   }
                 />
               );

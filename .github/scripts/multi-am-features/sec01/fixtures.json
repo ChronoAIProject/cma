@@ -1,0 +1,23 @@
+{
+  "schema": "sec01-fixture-contract-v1",
+  "scope": "LOCAL_DISPOSABLE_TWO_AM",
+  "issue": 2213,
+  "evidence_kind": "The fixture must declare OFFLINE_SYNTHETIC or RUNTIME_OBSERVATIONS. Every event, cell and packet retains this declaration. Missing or unknown declarations block setup; the runtime declaration is not authorization or independent proof of execution.",
+  "required_parent_services": {
+    "prepareCell": "Receives {cell, run_id, source, image, runtimeSource, runtimeImage, signal}. Creates two independent tenant-owned synthetic canaries and binds exact AM/runtime source/image, runtime incarnation, both AM process/pod/container/origin identities, owner-side target existence, tenant subject/org fingerprints, lifecycle receipts and a cleanup function.",
+    "runtimeProbe": "Receives {cell, spec, binding, context, signal}. Runs probe.py through an authorized unprivileged tenant-runtime product execution path for the selected AM ingress. For TCP, pass spec.required_family as probe.family and retain requested_family, every observed family and portable failure_class from the primitive. It must not use kubectl exec, host paths, or a fixture boolean. Returns a correlated sec01-observation-v1 with policy decision and c275-serving-v1 evidence.",
+    "functionalProbe": "Runs the real allowlisted dependency operation for the selected AM ingress and returns status, operation, response digest, private-byte/field counters and serving evidence. HTTP negatives redirect_destination, proxy_direct and metadata_id must measure destination_connected: false for the forbidden downstream destination, bound to that probe and serving receipt. Missing measurements block; true fails. A TCP connection is not a functional positive.",
+    "credentialProbe": "Runs the real broker/attachment/service-access path for the selected AM ingress with synthetic credential fingerprints, issuer and receiver ledgers, redirect authorization/cookie counters, revocation receipt and ordered attempt sequence.",
+    "record": "Private recorder supplied to runSec01. It receives sanitized observations and final results; failure prevents PASS. No raw response bodies, paths, cookies or credentials may be retained.",
+    "cleanup": "Disposes only this campaign's synthetic tenants, canaries, runtime and credentials; cleanup failure must remain in the result and prevents PASS."
+  },
+  "runtime_probe_rules": [
+    "No Secret access, raw token, customer content, pod exec, manual repair or production write.",
+    "A successful prohibited TCP connection or file operation is FAIL, including when a later HTTP response is 401/403.",
+    "Missing owner-side canary existence, unavailable IPv6, timeout, 429/5xx and unattributed policy refusal are BLOCKED.",
+    "Each failed file operation must retain the primitive's file-specific failure_class and positive integer errno. Only permission_denied qualifies with independent evidence; not_found additionally requires a correlated policy receipt with basis isolated_namespace proving isolation caused the target's absence from this tenant's namespace. Timeout, unavailable storage and all other errors remain BLOCKED.",
+    "Cold is a genuinely new runtime; warm is an actual sanitized pool reuse; resumed pauses persisted state, changes authorization, then restores normally.",
+    "Both AMs must have distinct process/pod identities and serving receipts for every accepted cell."
+  ],
+  "probe_script": "./probe.py"
+}
