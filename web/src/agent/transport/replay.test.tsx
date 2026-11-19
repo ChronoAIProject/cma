@@ -242,7 +242,7 @@ it('still reports server-confirmed lag and durable history gaps while idle', asy
   expect(result.current.state).toMatchObject({
     conversation: {
       recovery: [
-        expect.objectContaining({ id: 'live-gap:0', title: 'Refreshing live updates…' }),
+        expect.objectContaining({ id: 'live-gap:0', title: 'Live updates interrupted' }),
         expect.objectContaining({
           id: 'history-gap:1',
           detail: 'Some conversation updates were lost before they could be recorded.',
@@ -267,7 +267,7 @@ it('does not silently discard unfinished text when an idle reconnect follows can
     conversation: {
       activeRunId: undefined,
       messages: [expect.objectContaining({ content: 'Uncommitted cancelled text' })],
-      recovery: [expect.objectContaining({ title: 'Refreshing live updates…' })],
+      recovery: [expect.objectContaining({ title: 'Incomplete live output' })],
     },
   });
   unmount();
