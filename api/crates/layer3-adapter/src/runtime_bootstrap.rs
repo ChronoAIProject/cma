@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{AdapterError, Result};
 
-pub const RUNTIME_BOOTSTRAP_VERSION: u16 = 1;
+pub use crate::runtime_versions::RUNTIME_BOOTSTRAP_VERSION;
 pub const RUNTIME_BOOTSTRAP_LABEL: &str = "dev.chrono.cma.runtime-bootstrap";
 pub const RUNTIME_HOME_LAYOUT_LABEL: &str = "dev.chrono.cma.home-layout";
 pub const MAX_RUNTIME_BOOTSTRAP_BYTES: usize = 64 * 1024;
@@ -18,7 +18,7 @@ pub fn admit_pool_image(image: &crate::RuntimeImage) -> Result<()> {
         .labels
         .get(RUNTIME_BOOTSTRAP_LABEL)
         .map(String::as_str)
-        != Some("1")
+        != Some(crate::runtime_versions::RUNTIME_BOOTSTRAP_VERSION_LABEL)
     {
         return Err(AdapterError::Rejected(
             "image does not support runtime pool assignment".into(),

@@ -95,8 +95,8 @@ jobs:
             CHRONO_BUILD_SHA=${{ github.sha }}
             RUNTIME_DESKTOP=0
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
-          cache-from: "type=gha,scope=${{ matrix.component }}"
-          cache-to: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,mode=max,scope={0}', matrix.component) || '' }}"
+          cache-from: "type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}"
+          cache-to: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && format('type=gha,version=2,mode=max,scope={0}', matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component) || '' }}"
       -
         name: "Load native image for scanning"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
@@ -112,7 +112,7 @@ jobs:
             CHRONO_BUILD_SHA=${{ github.sha }}
             RUNTIME_DESKTOP=0
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
-          cache-from: "type=gha,scope=${{ matrix.component }}"
+          cache-from: "type=gha,version=2,scope=${{ matrix.component == 'api' && 'cma-am' || matrix.component == 'cmaeg' && 'cma-eg' || matrix.component == 'web' && 'cma-web' || matrix.component }}"
       -
         name: "Extract API Cargo cache before pruning"
         if: "github.event_name == 'push' && github.ref == 'refs/heads/develop' && matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success' && steps.api-cargo-cache-restore.outputs.cache-hit != 'true'"

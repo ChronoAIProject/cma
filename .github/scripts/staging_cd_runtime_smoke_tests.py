@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from staging_cd_common import Refusal
+from staging_cd_contract_tests import fixture_source
 from staging_cd_canary_process import CanaryProcessFailure
 from staging_cd_publish import main, publish
 from staging_cd_publish_tests import PublicationTests
@@ -170,7 +171,8 @@ class RuntimeSmokeTests(unittest.TestCase):
                             archive=scanned, source=identity["source"])
             with patch("staging_cd_publish.inspect", return_value=digest):
                 receipt = publish(archive, fixture_identity(component="runtime"), Path(directory), registry,
-                                  "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=run, smoke=smoke)
+                                  "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=run, smoke=smoke,
+                                  source=fixture_source(Path(directory) / "source"))
             self.assertEqual(receipt["runtime_smoke"]["archive"], receipt["archive"])
             self.assertEqual(release_set({"runtime": receipt})["receipts"]["runtime"], receipt)
 

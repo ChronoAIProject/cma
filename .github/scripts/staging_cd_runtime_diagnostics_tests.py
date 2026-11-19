@@ -9,6 +9,7 @@ from unittest.mock import Mock, patch
 from image_secret_gate import checksum, ScanRefusal
 from staging_cd_build import command
 from staging_cd_common import Refusal
+from staging_cd_contract_tests import fixture_source
 from staging_cd_publication_diagnostics import ImageCommandRefusal, run_publication
 from staging_cd_publish import publish
 import staging_cd_publish_tests as publication_fixtures
@@ -40,7 +41,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                 def operation(_masker, diagnostics):
                     receipt = publish(archive, identity, root, registry, "fixture", "actor",
                                       reservation_check=lambda: True, scanner=scanner, runner=runner, smoke=qualify,
-                                      source=root / "source", diagnostics=diagnostics)
+                                      source=fixture_source(root / "source"), diagnostics=diagnostics)
                     receipts.append(receipt)
                     self.assertEqual(diagnostics.stage, "receipt")
                     return True
@@ -83,7 +84,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                     def operation(_masker, diagnostics):
                         return publish(archive, fixture_identity(component=component), root, registry,
                                        "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=runner,
-                                       smoke=smoke, diagnostics=diagnostics)
+                                       smoke=smoke, source=fixture_source(root / "source"), diagnostics=diagnostics)
                     with patch("staging_cd_publish.inspect", return_value=digest):
                         self.assertEqual(self.observe(operation),
                                          (1, f"FAIL\nFAIL publication stage={stage} reason={reason}\n"))
@@ -109,7 +110,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                 def operation(_masker, diagnostics):
                     return publish(archive, fixture_identity(component=component), root, registry,
                                    "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=runner,
-                                   smoke=smoke, diagnostics=diagnostics)
+                                   smoke=smoke, source=fixture_source(root / "source"), diagnostics=diagnostics)
                 with patch("staging_cd_publish.inspect", return_value=digest):
                     self.assertEqual(self.observe(operation),
                                      (1, "FAIL\nFAIL publication stage=registry_copy reason=registry_denied\n"))
