@@ -66,19 +66,16 @@ def private_der(data, at):
         if not (oid and oid[0] == 6 and oid[2] > oid[1] and cipher and cipher[0] == 4
                 and cipher[1] < cipher[2] == end):
             return False
-        # AlgorithmIdentifier permits at most one parameter, and the OID must be
-        # a sequence of complete, minimally encoded base-128 subidentifiers.
+        # Only recognize the two exact parameter encodings of a fixed-size hash.
+        # Unknown algorithms can use any ASN.1 parameter tag, including high-tag
+        # numbers. They stay blocking without interpreting those parameters.
         if oid[2] - oid[1] > 128:
-            return True  # Unmodeled algorithm, retain the blocker without an unbounded allocation.
-        ident = data[oid[1]:oid[2]]
-        if ident[-1] & 0x80 or ident[0] == 0x80 or any(
-                current == 0x80 and not previous & 0x80 for previous, current in zip(ident, ident[1:])):
-            return False
-        params = frame(data, oid[2], child[2]) if oid[2] < child[2] else None
-        if oid[2] != child[2] and (not params or params[2] != child[2]):
-            return False
-        no_parameters = params is None or (params[0] == 5 and params[1] == params[2])
-        return not (no_parameters and HASH_SIZES.get(ident) == cipher[2] - cipher[1])
+            return True
+        size = HASH_SIZES.get(data[oid[1]:oid[2]])
+        parameter_length = child[2] - oid[2]
+        hash_parameters = (parameter_length == 0
+                           or (parameter_length == 2 and data[oid[2]:child[2]] == b"\x05\x00"))
+        return not (hash_parameters and size == cipher[2] - cipher[1])
     fields = []
     pos = child[2]
     while pos < end and len(fields) < 12:

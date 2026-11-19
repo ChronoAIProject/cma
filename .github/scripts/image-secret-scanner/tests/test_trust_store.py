@@ -137,6 +137,11 @@ class TrustStoreTests(unittest.TestCase):
         self.assertFalse(has_binary_key(bytes.fromhex("302f300b06096086480165030402010420") + digest))
         unknown = body.replace(bytes.fromhex("6503040201"), bytes.fromhex("650304027f"))
         self.assertTrue(has_binary_key(unknown))
+        # Context-specific tag 32 uses high-tag-number form. An unknown cipher
+        # is allowed to define that parameter even though a DigestInfo cannot.
+        high_tag = bytes.fromhex("3033300f060960864801650304027f9f2001000420") + digest
+        self.assertTrue(has_binary_key(high_tag))
+        self.assertTrue(has_binary_key(high_tag.replace(bytes.fromhex("04027f"), bytes.fromhex("040201"))))
         _, _, _, key, encrypted = self.material()
         for material in (key, encrypted):
             self.assertTrue(has_binary_key(body + material))
