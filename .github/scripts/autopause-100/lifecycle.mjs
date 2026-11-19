@@ -27,11 +27,12 @@ export async function awaitCreatedIdle(read, waits, {timeout = 120000, interval 
     assert(!['failed', 'deleted', 'waiting_for_connection'].includes(value.status), 'created_agent_failed');
     return ['ready', 'working'].includes(value.status) && value.sandbox?.status === 'active';
   }, {timeout, interval, code: 'created_agent_ready_timeout'});
-  const remaining = deadline - now();
+  const idleStarted = now();
+  const remaining = deadline - idleStarted;
   assert(remaining > 0 && remaining <= timeout, 'created_agent_idle_deadline');
   const ready = await awaitInitialIdle(read, {timeout: remaining, interval});
   const finished = now();
-  assert(Number.isFinite(finished) && finished >= started && finished <= deadline,
+  assert(Number.isFinite(finished) && finished >= idleStarted && finished <= deadline,
     'created_agent_idle_deadline');
   assert(ready?.status === 'ready' && ready.sandbox?.status === 'active', 'created_agent_not_idle');
   assert(!ready.first_message || (['setup', 'task'].includes(ready.first_message.purpose)

@@ -114,7 +114,7 @@ test('missing wait dependencies and invalid budgets refuse without a read', asyn
 
 test('exhausted or nonmonotonic clocks and late idle results cannot qualify', async () => {
   const ready = {status: 'ready', sandbox: {status: 'active'}};
-  for (const clocks of [[0, 100], [0, -1], [0, 10, 101], [0, 10, -1], [NaN]]) {
+  for (const clocks of [[0, 100], [0, -1], [0, 10, 101], [0, 10, -1], [0, 10, 9], [NaN]]) {
     let index = 0;
     const waits = {poll: async () => ready, awaitInitialIdle: async () => ready,
       now: () => clocks[index++]};
