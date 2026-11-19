@@ -118,77 +118,12 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
                 "provided credential is absent from custody".into(),
             ));
         }
-        let token = self.owner_token(sandbox).await?;
-        let minted = self
-            .issuer
-            .mint(
-                sandbox.id.as_str(),
-                &sandbox.owner,
-                token.expose(),
-                &sandbox.credential.effective_reaches(),
-            )
-            .await
-            .map_err(classify_issuer)?;
-        let material = CredentialMaterial {
-            source: Default::default(),
-            sandbox_id: sandbox.id.clone(),
-            owner: sandbox.owner.clone(),
-            authority: SandboxCredentialAuthority {
-                generation,
-                provider_key_id: minted.id,
-                provider_state_version: minted.state_version,
-                issued_at: rfc3339_at(now),
-                expires_at: rfc3339_at(minted.expires_at),
-                grant_fingerprint: minted.grant_fingerprint,
-            },
-            value: minted.value,
-        };
-        match self.custody.insert(material.clone()).await {
-            Ok(()) => Ok(material),
-            Err(CredentialCustodyError::Duplicate) => {
-                let winner = self
-                    .material(&sandbox.id, generation)
-                    .await?
-                    .ok_or_else(|| {
-                        CredentialError::Unavailable(
-                            "credential generation raced but no durable value remained".into(),
-                        )
-                    })?;
-                let winner = owned_material(winner, sandbox)?;
-                if winner.authority.provider_key_id != material.authority.provider_key_id {
-                    let revocation = CredentialRevocation {
-                        sandbox_id: sandbox.id.clone(),
-                        owner: sandbox.owner.clone(),
-                        provider_key_id: material.authority.provider_key_id.clone(),
-                    };
-                    if let Err(error) = self.custody.queue_revocation(revocation).await {
-                        let _ = self
-                            .issuer
-                            .revoke(&material.authority.provider_key_id, token.expose())
-                            .await;
-                        return Err(custody_error(error));
-                    }
-                    self.issuer
-                        .revoke(&material.authority.provider_key_id, token.expose())
-                        .await
-                        .map_err(classify_issuer)?;
-                    self.custody
-                        .delete_revocation(&sandbox.id, &material.authority.provider_key_id)
-                        .await
-                        .map_err(custody_error)?;
-                }
-                Ok(winner)
-            }
-            Err(error) => {
-                // A provider key that never reached durable custody must not be
-                // left live merely because the custody dependency failed.
-                let _ = self
-                    .issuer
-                    .revoke(&material.authority.provider_key_id, token.expose())
-                    .await;
-                Err(custody_error(error))
-            }
-        }
+        tracing::warn!(sandbox_id = %sandbox.id, generation,
+            reason = "protected_work_authority_required",
+            "Managed credential issuance refused");
+        Err(CredentialError::Unavailable(
+            "managed credential issuance requires protected work authority".into(),
+        ))
     }
 
     async fn material(
