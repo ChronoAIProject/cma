@@ -22,7 +22,7 @@ for (const theme of ['light', 'dark']) {
       const field = page.getByRole('textbox', { name: 'Message', exact: true });
       const queue = page.getByRole('button', { name: 'Queue message', exact: true });
       const stop = page.getByRole('button', { name: 'Stop response', exact: true });
-      await expect(queue).toBeVisible();
+      await expect(queue).toHaveCount(0);
       await expect(stop).toBeEnabled();
       await field.fill('Continue with this after the active response');
       await page.evaluate(
@@ -31,31 +31,26 @@ for (const theme of ['light', 'dark']) {
       );
       for (const width of [1440, 390, 320]) {
         await page.setViewportSize({ width, height: 900 });
-        for (const button of [queue, stop]) {
-          await expect
-            .poll(() =>
-              button.evaluate((element) => {
-                const box = element.getBoundingClientRect();
-                return (
-                  box.left >= 0 &&
-                  box.right <= innerWidth &&
-                  box.top >= 0 &&
-                  box.bottom <= innerHeight
-                );
-              }),
-            )
-            .toBe(true);
-        }
+        await field.fill('');
+        await expect(stop).toBeEnabled();
+        const stopBox = await stop.boundingBox();
+        await field.fill('Continue with this after the active response');
+        await expect(queue).toBeEnabled();
+        expect(await queue.boundingBox()).toEqual(stopBox);
+        await expect(stop).toHaveCount(0);
         await expect
-          .poll(async () => {
-            const [queueBox, stopBox] = await Promise.all([
-              queue.boundingBox(),
-              stop.boundingBox(),
-            ]);
-            if (queueBox === null || stopBox === null) return Number.POSITIVE_INFINITY;
-            return Math.abs(queueBox.y + queueBox.height / 2 - (stopBox.y + stopBox.height / 2));
-          })
-          .toBeLessThan(1);
+          .poll(() =>
+            queue.evaluate((element) => {
+              const box = element.getBoundingClientRect();
+              return (
+                box.left >= 0 &&
+                box.right <= innerWidth &&
+                box.top >= 0 &&
+                box.bottom <= innerHeight
+              );
+            }),
+          )
+          .toBe(true);
         await page.screenshot({
           path: info.outputPath(`queued-composer-${theme}-${width}.png`),
           animations: 'disabled',
@@ -65,7 +60,7 @@ for (const theme of ['light', 'dark']) {
       await field.press('Enter');
       await expect(field).toHaveValue('');
       await expect(
-        page.getByRole('button', { name: 'Cancel queued message', exact: true }),
+        page.getByRole('button', { name: 'Remove queued message 1', exact: true }),
       ).toBeEnabled();
       expect(fixture.writes).toHaveLength(1);
       expect(fixture.writes[0]!.path).toBe('/api/v2/agents/agt_contract/responses');
@@ -73,7 +68,7 @@ for (const theme of ['light', 'dark']) {
         input: 'Continue with this after the active response',
         stream: true,
       });
-      await expect(page.getByRole('button', { name: /^Thinking/ })).toBeVisible();
+      await expect(page.getByRole('status').filter({ hasText: /^Thinking$/ })).toBeVisible();
       await expect(stop).toBeEnabled();
       fixture.append({
         type: 'tool_started',
@@ -82,18 +77,16 @@ for (const theme of ['light', 'dark']) {
         kind: 'execute',
         status: 'running',
       });
-      await expect(page.getByRole('button', { name: /^Thinking/ })).toContainText(
-        'Continue original work',
-      );
+      await page.getByRole('button', { name: 'View activity', exact: true }).click();
+      await expect(page.locator('.thinking__activity')).toContainText('Continue original work');
       await field.fill('Keep this next draft');
-      await page.getByRole('button', { name: 'Cancel queued message', exact: true }).click();
+      await page.getByRole('button', { name: 'Remove queued message 1', exact: true }).click();
       await expect(
-        page
-          .getByRole('status')
-          .filter({ hasText: 'Your queued message was cancelled before it started.' }),
-      ).toBeVisible();
+        page.getByRole('button', { name: 'Remove queued message 1', exact: true }),
+      ).toHaveCount(0);
       await expect(field).toHaveValue('Keep this next draft');
-      await expect(stop).toBeEnabled();
+      await expect(queue).toBeEnabled();
+      await expect(stop).toHaveCount(0);
       expect(fixture.writes.filter((write) => write.path.endsWith('/controls'))).toEqual([]);
       expect(fixture.boundary.writes).toEqual([]);
       expect(fixture.boundary.unexpected).toEqual([]);
@@ -139,7 +132,7 @@ for (const theme of ['light', 'dark']) {
         const control = await send.boundingBox();
         const seat = await page.locator('.agent-composer__form').boundingBox();
         expect(initial?.height).toBe(40);
-        expect(control?.height).toBe(width > 480 ? 28 : 44);
+        expect(control?.height).toBe(width > 480 ? 32 : 44);
         const padding = await field.evaluate((element) => {
           const style = getComputedStyle(element);
           return [style.paddingTop, style.paddingBottom];

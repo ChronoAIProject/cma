@@ -1,8 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 import { binding, LocalAgentV2 } from './agent-v2.fixture';
+import { traceOpeningReads, openingReads } from './agent-v2-reads.fixture';
 
 const message = (page: Page) => page.getByRole('textbox', { name: 'Message', exact: true });
-const thinking = (page: Page) => page.getByRole('button', { name: /^Thinking/ });
+const thinking = (page: Page) => page.getByRole('status').filter({ hasText: /^Thinking$/ });
 const recover = (page: Page) => page.getByRole('button', { name: 'Recover pending request' });
 function clean(fixture: LocalAgentV2) {
   expect(fixture.boundary.writes).toEqual([]);
@@ -46,11 +47,10 @@ for (const theme of ['light', 'dark']) {
         status: 'running',
       });
       fixture.live('reasoning_summary_delta', 'Inspecting dependencies');
-      const toggle = thinking(page);
+      const toggle = page.getByRole('button', { name: 'View activity', exact: true });
+      await expect(thinking(page)).toBeVisible();
       await expect(toggle).toBeVisible();
-      expect(
-        Number((await page.locator('.thinking__elapsed').innerText()).match(/\d+/)?.[0]),
-      ).toBeGreaterThanOrEqual(120);
+      await expect(page.locator('.thinking__elapsed')).toHaveText(/^2m \d+s$/);
       await toggle.focus();
       await page.keyboard.press('Enter');
       await expect(toggle).toBeFocused();
@@ -87,10 +87,12 @@ for (const theme of ['light', 'dark']) {
             .getBoundingClientRect();
           const composer = document.querySelector('.agent-composer')!.getBoundingClientRect();
           return (
-            dock.top >= history.bottom - 1 &&
-            dock.bottom <= composer.top + 1 &&
-            dock.top >= 0 &&
-            dock.bottom < innerHeight &&
+            document
+              .querySelector('.message-stream')!
+              .contains(document.querySelector('.thinking')) &&
+            dock.top >= history.top - 1 &&
+            dock.bottom <= history.bottom + 1 &&
+            history.bottom <= composer.top + 1 &&
             dock.left >= 0 &&
             dock.right <= innerWidth &&
             document.documentElement.scrollWidth <= innerWidth + 1
@@ -98,11 +100,24 @@ for (const theme of ['light', 'dark']) {
         });
       for (const width of [1440, 390, 320]) {
         await page.setViewportSize({ width, height: 900 });
+        await toggle.scrollIntoViewIfNeeded();
         await expect.poll(fits).toBe(true);
         await page.locator('.agent-surface__conversation').evaluate((element) => {
           element.scrollTop = 0;
           element.dispatchEvent(new Event('scroll'));
         });
+        await expect
+          .poll(() =>
+            page.locator('.thinking').evaluate((element) => {
+              const history = element.closest('.agent-surface__conversation');
+              return (
+                !!history &&
+                element.getBoundingClientRect().top >= history.getBoundingClientRect().bottom
+              );
+            }),
+          )
+          .toBe(true);
+        await toggle.scrollIntoViewIfNeeded();
         await expect.poll(fits).toBe(true);
         await page.screenshot({
           path: info.outputPath(`agent-v2-${theme}-${width}.png`),
@@ -114,21 +129,17 @@ for (const theme of ['light', 'dark']) {
       await page.setViewportSize({ width: 1440, height: 900 });
       fixture.append({ type: 'tool_updated', call_id: 'fast', status: 'completed', title: null });
       await expect(page.locator('.thinking__activity')).toHaveCount(1);
-      await expect(page.locator('.agent-event--tool strong')).toHaveText(['Read package']);
+      await page.locator('.tool-calls__toggle[aria-expanded="false"]').click();
+      await expect(page.locator('.tool-call__literal')).toHaveText(['Read package']);
       fixture.append({ type: 'tool_updated', call_id: 'slow', status: 'failed', title: null });
       await expect(page.locator('.thinking__activity')).toHaveCount(0);
-      await expect(page.locator('.agent-event--tool strong')).toHaveText([
-        'Read package',
-        'Run tests',
-      ]);
+      await expect(page.locator('.tool-call__literal')).toHaveText(['Read package', 'Run tests']);
       fixture.append({ type: 'message', role: 'assistant', content: text });
       await page.reload();
       await expect(toggle).toBeVisible();
       await expect(page.locator('.thinking__reasoning')).toHaveCount(0);
-      await expect(page.locator('.agent-event--tool strong')).toHaveText([
-        'Read package',
-        'Run tests',
-      ]);
+      await page.locator('.tool-calls__toggle[aria-expanded="false"]').click();
+      await expect(page.locator('.tool-call__literal')).toHaveText(['Read package', 'Run tests']);
       await expect.poll(() => fixture.streams.size).toBe(1);
       fixture.append({ type: 'turn_completed', turn_sequence: 1 });
       await expect(toggle).toHaveCount(0);
@@ -195,9 +206,10 @@ test('LOCAL: targeted control recovery retains its target and delivery leaves th
     fixture.controlConflict = false;
     await recover(page).click();
     await expect(recover(page)).toHaveCount(0);
+    await expect.poll(() => fixture.reads).toContain('/api/v2/commands/cmd_control');
     await expect(
       page.getByRole('status').filter({ hasText: 'Your response action was delivered.' }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     await expect(thinking(page)).toBeVisible();
     expect(fixture.writes).toHaveLength(3);
     expect(fixture.writes[2]).toEqual(fixture.writes[0]);
@@ -264,7 +276,6 @@ test('LOCAL: newest transcript and sending stay available during history loading
   const usageGate = new Promise<void>((resolve) => (releaseUsage = resolve));
   const returnGate = new Promise<void>((resolve) => (releaseReturnTranscript = resolve));
   let usageReads = 0;
-  let transcriptReads = 0;
   let returning = false;
   const transcript = {
     agent_id: 'agt_contract',
@@ -284,9 +295,10 @@ test('LOCAL: newest transcript and sending stay available during history loading
     ],
   };
   try {
+    await traceOpeningReads(page);
+    await page.clock.install();
     await fixture.route(page, baseURL!);
     await page.route('**/api/v1/agents/agt_contract/transcript', async (route) => {
-      transcriptReads += 1;
       if (returning) await returnGate;
       await route.fulfill({ json: transcript });
     });
@@ -336,18 +348,40 @@ test('LOCAL: newest transcript and sending stay available during history loading
       path: info.outputPath('nonblocking-history.png'),
       animations: 'disabled',
     });
-    const loadedSnapshots = fixture.snapshots;
-    const loadedTranscripts = transcriptReads;
+    const completedReads = (await openingReads(page)).length;
+    await page.clock.pauseAt(new Date(Date.now() + 1000));
     returning = true;
     await page.getByRole('link', { name: 'CMA home', exact: true }).click();
-    await expect(page).toHaveURL(new URL('/', baseURL!).href);
+    await expect(page).toHaveURL(new URL('/agent-manager', baseURL!).href);
     await page.goBack();
     await expect(page).toHaveURL(/\/agents\/agt_contract$/);
-    // A return transcript request would remain held. The current cached tail
-    // must already be visible without rereading the old rich event pages.
+    // One authorized opening batch may prepare a transcript and first page.
+    // Cached rendering must not wait for it or restart paginated replay.
     await expect(page.getByText(nextReply, { exact: true })).toBeVisible();
-    expect(fixture.snapshots).toBe(loadedSnapshots);
-    expect(transcriptReads).toBe(loadedTranscripts);
+    await expect.poll(async () => (await openingReads(page)).slice(completedReads).length).toBe(2);
+    const returnReads = () => openingReads(page).then((reads) => reads.slice(completedReads));
+    expect(await returnReads()).toEqual(
+      expect.arrayContaining([
+        { kind: 'transcript', page: 'first', phases: ['started'] },
+        { kind: 'snapshot', page: 'first', phases: expect.arrayContaining(['started']) },
+      ]),
+    );
+    await page.clock.fastForward(5001);
+    await expect
+      .poll(async () =>
+        (await returnReads())
+          .find((read) => read.kind === 'transcript')
+          ?.phases.includes('aborted'),
+      )
+      .toBe(true);
+    const trace = await returnReads();
+    expect(trace).toHaveLength(2);
+    expect(trace.filter((read) => read.page === 'next')).toHaveLength(0);
+    expect(trace.find((read) => read.kind === 'transcript')?.phases).not.toContain('consumed');
+    await info.attach('cached-return-read-lifecycle', {
+      body: JSON.stringify(trace),
+      contentType: 'application/json',
+    });
     await expect(page.locator('.message--user').filter({ hasText: nextInput })).toHaveCount(1);
     await expect(message(page)).toHaveValue('Keep this unsent follow-up.');
     await expect(page.locator('.active-thinking')).toHaveCount(0);
