@@ -33,13 +33,27 @@ impl View<'_> {
     }
 
     fn reserve<T>(
+        &self,
         policy: &IngressOwnershipPolicy,
         payload_bytes: usize,
     ) -> Result<ReservationBundle> {
+        let class = match self {
+            Self::Text(_) | Self::Binary(_) => IngressClass::Data,
+            Self::Ping(bytes) | Self::Pong(bytes) if bytes.len() <= 125 => IngressClass::Control,
+            Self::Close(None) => IngressClass::Control,
+            Self::Close(Some((_, reason))) if reason.len() <= 123 => IngressClass::Control,
+            _ => {
+                tracing::debug!(
+                    phase = "transport_message_copy",
+                    "invalid control payload length"
+                );
+                return Err(AdapterError::Rejected(String::new()));
+            }
+        };
         // Every destination gets fresh storage; source Bytes/Vec backing is
         // never relabelled as though the copy reused its allocation.
         policy.reserve(
-            IngressClass::Data,
+            class,
             AllocationPlan::new(
                 "transport_message_copy",
                 &[payload_bytes, shared_owner_bytes::<T>()],
@@ -55,7 +69,7 @@ impl View<'_> {
         } else {
             self.payload_bytes()
         };
-        let storage = Self::reserve::<DesktopFrame>(policy, bytes)?;
+        let storage = self.reserve::<DesktopFrame>(policy, bytes)?;
         Ok(storage.initialize(|| match self {
             Self::Binary(bytes) => DesktopFrame::Binary(bytes.to_vec()),
             Self::Text(text) => DesktopFrame::Text(text.to_owned()),
@@ -69,7 +83,7 @@ impl View<'_> {
         self,
         policy: &IngressOwnershipPolicy,
     ) -> Result<AdmittedFrame<ws024::Message>> {
-        let storage = Self::reserve::<ws024::Message>(policy, self.payload_bytes())?;
+        let storage = self.reserve::<ws024::Message>(policy, self.payload_bytes())?;
         Ok(storage.initialize(|| match self {
             Self::Binary(bytes) => ws024::Message::Binary(bytes.to_vec()),
             Self::Text(text) => ws024::Message::Text(text.to_owned()),

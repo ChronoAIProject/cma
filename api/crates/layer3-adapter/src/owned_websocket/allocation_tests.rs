@@ -309,3 +309,96 @@ fn raw_frames_are_refused_without_discarding_their_metadata() {
     assert_eq!(probe.peak(), 0);
     assert_eq!(root.available_bytes(), root.capacity_bytes());
 }
+
+#[test]
+fn control_copies_progress_without_borrowing_saturated_data_capacity() {
+    let (root, policy) = policy();
+    let data = policy.budget(IngressClass::Data);
+    let full = policy
+        .reserve(
+            IngressClass::Data,
+            AllocationPlan::new("fixture_saturation", &[data.available_bytes()]).unwrap(),
+        )
+        .unwrap();
+    let control = policy.budget(IngressClass::Control);
+    let before = control.available_bytes();
+    let a = ws024::Message::Ping(vec![0; 125]);
+    let b = ws029::Message::Pong(vec![0; 125].into());
+    let close = ws029::Message::Close(Some(ws029::protocol::CloseFrame {
+        code: ws029::protocol::frame::coding::CloseCode::Normal,
+        reason: "x".repeat(123).into(),
+    }));
+    let legacy_close = ws024::Message::Close(Some(ws024::protocol::CloseFrame {
+        code: ws024::protocol::frame::coding::CloseCode::Normal,
+        reason: "x".repeat(123).into(),
+    }));
+    let held = [
+        copy_conversation_024(&policy, &a).unwrap(),
+        copy_conversation_029(&policy, &b).unwrap(),
+        copy_conversation_024(&policy, &legacy_close).unwrap(),
+        copy_conversation_029(&policy, &close).unwrap(),
+    ];
+    let desktop = [
+        copy_desktop_024(&policy, &a).unwrap(),
+        copy_desktop_029(&policy, &b).unwrap(),
+        copy_desktop_024(&policy, &legacy_close).unwrap(),
+        copy_desktop_029(&policy, &close).unwrap(),
+    ];
+    let charged: usize = held.iter().map(SharedOwned::requested_bytes).sum::<usize>()
+        + desktop
+            .iter()
+            .map(SharedOwned::requested_bytes)
+            .sum::<usize>();
+    assert_eq!(before - control.available_bytes(), charged);
+    assert_eq!(data.available_bytes(), 0);
+    assert!(matches!(
+        copy_desktop_029(&policy, &ws029::Message::binary(vec![1])),
+        Err(AdapterError::AtCapacity(_))
+    ));
+    drop(held);
+    drop(desktop);
+    assert_eq!(control.available_bytes(), before);
+    drop(full);
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+#[test]
+fn oversized_controls_cannot_consume_the_progress_allowance() {
+    let (root, policy) = policy();
+    for input in [
+        ws024::Message::Ping(vec![0; 126]),
+        ws024::Message::Pong(vec![0; 126]),
+        ws024::Message::Close(Some(ws024::protocol::CloseFrame {
+            code: ws024::protocol::frame::coding::CloseCode::Normal,
+            reason: "x".repeat(124).into(),
+        })),
+    ] {
+        let converted = match &input {
+            ws024::Message::Ping(value) => ws029::Message::Ping(value.clone().into()),
+            ws024::Message::Pong(value) => ws029::Message::Pong(value.clone().into()),
+            ws024::Message::Close(_) => ws029::Message::Close(Some(ws029::protocol::CloseFrame {
+                code: ws029::protocol::frame::coding::CloseCode::Normal,
+                reason: "x".repeat(124).into(),
+            })),
+            _ => unreachable!(),
+        };
+        let before = root.available_bytes();
+        assert!(matches!(
+            copy_desktop_024(&policy, &input),
+            Err(AdapterError::Rejected(_))
+        ));
+        assert!(matches!(
+            copy_desktop_029(&policy, &converted),
+            Err(AdapterError::Rejected(_))
+        ));
+        assert!(matches!(
+            copy_conversation_024(&policy, &input),
+            Err(AdapterError::Rejected(_))
+        ));
+        assert!(matches!(
+            copy_conversation_029(&policy, &converted),
+            Err(AdapterError::Rejected(_))
+        ));
+        assert_eq!(root.available_bytes(), before);
+    }
+}
