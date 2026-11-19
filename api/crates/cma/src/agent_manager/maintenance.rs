@@ -6,12 +6,8 @@ impl AgentManager {
         &self,
         authority: &Arc<Authority>,
     ) -> Result<bool, OwnershipError> {
-        match self
-            .coordinator
-            .handoff(authority, authority.revoke_transports())
-            .await
-        {
-            Ok(()) => Ok(true),
+        match self.coordinator.handoff_background(authority).await {
+            Ok(completed) => Ok(completed),
             Err(error) if authority.receiver_cancelled() => {
                 tracing::warn!(stage = "cancelled_receiver_cleanup", epoch = authority.token.epoch, error = %error, "Receiver cleanup pending; healthy ownership continues");
                 match self.coordinator.forget_cancelled(authority).await {

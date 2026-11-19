@@ -6,8 +6,10 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const PROCESS_BYTES: usize = 128 * 1024 * 1024;
 
+pub(crate) mod diagnostic;
 pub mod failure;
 pub mod observation;
+pub mod operation;
 pub mod ownership;
 pub mod scope;
 pub mod sizing;
@@ -19,6 +21,7 @@ pub use crate::conversation_channel::admitted::{
 };
 pub use failure::{AdmissionRefusal, AdmittedError};
 pub use observation::DeliveryObservation;
+pub use operation::AdmittedOperation;
 pub use ownership::{AdmittedFrame, AdmittedSocket, ReservationBundle, SharedOwned};
 pub use scope::{IngressWorkScope, OwnedWork};
 pub use sizing::{AllocationPlan, ClassBounds, IngressClass};

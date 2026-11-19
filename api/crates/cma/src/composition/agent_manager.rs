@@ -12,6 +12,7 @@ pub(super) async fn register(
                 live_agents.clone(),
                 settings.relay_address.clone(),
                 settings.max_owned_agents,
+                config.features.ownership_cleanup_pacing,
             )
             .await?,
         )),

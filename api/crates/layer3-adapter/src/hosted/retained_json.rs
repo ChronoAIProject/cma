@@ -1,5 +1,6 @@
 //! Admit one parsed JSON tree and retain its reservation through RPC consumers.
 
+use crate::ingress_budget::diagnostic::text;
 use std::{
     borrow::Borrow,
     fmt,
@@ -152,7 +153,7 @@ fn acquire(
 }
 
 fn capacity() -> AdapterError {
-    AdapterError::AtCapacity("retained JSON storage capacity exhausted".into())
+    AdapterError::AtCapacity(text("retained JSON storage capacity exhausted"))
 }
 
 #[derive(Clone)]
@@ -188,7 +189,7 @@ impl JsonFrame {
         let storage = super::acp::ingress::identity::json_storage(policy, params)?;
         let build = || {
             serde_json::to_value(params).map_err(|_| {
-                AdapterError::Rejected("runtime parameters could not be prepared".into())
+                AdapterError::Rejected(text("runtime parameters could not be prepared"))
             })
         };
         match storage {

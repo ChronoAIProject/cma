@@ -485,7 +485,8 @@ async fn admitted_open_refuses_each_missing_prerequisite_before_polling_socket()
         )
         .await
         .unwrap();
-        assert!(matches!(result, Err(crate::AdapterError::Rejected(_))));
+        assert!(matches!(result, Err(error)
+            if matches!(error.as_adapter(), Some(crate::AdapterError::Rejected(_)))));
         assert!(fixture.writes.lock().unwrap().is_empty());
         assert_eq!(fixture.root.available_bytes(), before);
     }

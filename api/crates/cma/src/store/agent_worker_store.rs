@@ -252,10 +252,11 @@ impl AgentWorkerStore for MongoSandboxStore {
         }
     }
 
-    async fn due_agent_work(
+    async fn due_agent_work_with_cleanup_holds(
         &self,
         now: &str,
         limit: u16,
+        holds: &std::collections::BTreeSet<AgentId>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
@@ -275,7 +276,7 @@ impl AgentWorkerStore for MongoSandboxStore {
             let ids = if self.ownership_retry_hints_active() {
                 tokio::time::timeout(
                     std::time::Duration::from_secs(2),
-                    self.due_owned_agent_work(now, limit),
+                    self.due_owned_agent_work(now, limit, holds),
                 )
                 .await
                 .map_err(|_| {
@@ -284,7 +285,7 @@ impl AgentWorkerStore for MongoSandboxStore {
                     )
                 })??
             } else {
-                self.due_owned_agent_work(now, limit).await?
+                self.due_owned_agent_work(now, limit, holds).await?
             };
             self.empty_discovery
                 .observed(super::empty_discovery::Kind::Agents, ids.is_empty());
@@ -294,7 +295,7 @@ impl AgentWorkerStore for MongoSandboxStore {
         let mut cursor = self
             .agents
             .aggregate(super::agent_failure_pacing::discovery::pipeline(
-                self, now, limit,
+                self, now, limit, holds,
             ))
             .await
             .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;

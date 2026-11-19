@@ -1,4 +1,5 @@
 //! Existing supervisor file operations bound to one Agent's retained home.
+use crate::ingress_budget::diagnostic::text;
 use std::sync::Arc;
 
 mod transport;
@@ -57,9 +58,9 @@ impl HostedContextRefresh {
             .strip_prefix("/home/")
             .filter(|p| crate::valid_agent_file_path(p))
             .ok_or_else(|| {
-                AdapterError::Unsupported(
-                    "Agent instructions require a retained complete home".into(),
-                )
+                AdapterError::Unsupported(text(
+                    "Agent instructions require a retained complete home",
+                ))
             })?;
         identity.validate()?;
         Ok(Self(Arc::new(Binding {
@@ -124,9 +125,9 @@ impl HostedContextRefresh {
         };
         status.validate_for(&self.0.identity)?;
         if !status.agent_filesystem || !status.credential_ready || status.restore_pending {
-            return Err(AdapterError::Unsupported(
-                "runtime is not ready for managed context refresh".into(),
-            ));
+            return Err(AdapterError::Unsupported(text(
+                "runtime is not ready for managed context refresh",
+            )));
         }
         Ok(status)
     }
@@ -158,9 +159,9 @@ impl HostedContextRefresh {
             return Err(AdapterError::unexpected_reply("retained instructions read"));
         };
         if file.path != self.0.path || file.content()? != expected.as_bytes() {
-            return Err(AdapterError::OperationIdentityConflict(
-                "retained instructions do not match the pending settings operation".into(),
-            ));
+            return Err(AdapterError::OperationIdentityConflict(text(
+                "retained instructions do not match the pending settings operation",
+            )));
         }
         Ok(())
     }
@@ -189,15 +190,15 @@ impl HostedContextRefresh {
         previous: &[String],
     ) -> crate::Result<()> {
         if guidance.is_empty() || guidance.len() > 16 * 1024 || guidance.contains('\0') {
-            return Err(AdapterError::Unsupported(
-                "managed guidance is invalid".into(),
-            ));
+            return Err(AdapterError::Unsupported(text(
+                "managed guidance is invalid",
+            )));
         }
         let status = self.status().await?;
         if sequence == 0 || self.receipt(&status, session, sequence) != readiness_receipt {
-            return Err(AdapterError::OperationIdentityConflict(
-                "managed context readiness belongs to another runtime identity".into(),
-            ));
+            return Err(AdapterError::OperationIdentityConflict(text(
+                "managed context readiness belongs to another runtime identity",
+            )));
         }
         // This is control-plane maintenance, not shared filesystem access. The
         // binding fixes the owning runtime and exact Agent-home path before any
@@ -220,7 +221,7 @@ impl HostedContextRefresh {
             return Err(AdapterError::unexpected_reply("managed instructions path"));
         }
         let original = String::from_utf8(file.content()?)
-            .map_err(|_| AdapterError::Rejected("Agent instructions are not UTF-8".into()))?;
+            .map_err(|_| AdapterError::Rejected(text("Agent instructions are not UTF-8")))?;
         let Some(updated) = replace_managed_prefix(&original, guidance, previous)? else {
             return Ok(());
         };
@@ -246,9 +247,9 @@ impl HostedContextRefresh {
             || receipt.sha256 != sha
             || receipt.size_bytes != updated.len() as u64
         {
-            return Err(AdapterError::Rejected(
-                "runtime did not confirm managed instructions".into(),
-            ));
+            return Err(AdapterError::Rejected(text(
+                "runtime did not confirm managed instructions",
+            )));
         }
         Ok(())
     }
@@ -264,9 +265,9 @@ fn replace_managed_prefix(
             .iter()
             .any(|prefix| prefix.is_empty() || prefix.len() > 16 * 1024 || prefix.contains('\0'))
     {
-        return Err(AdapterError::Unsupported(
-            "managed guidance history is invalid".into(),
-        ));
+        return Err(AdapterError::Unsupported(text(
+            "managed guidance history is invalid",
+        )));
     }
     let owner = previous
         .iter()
@@ -290,9 +291,9 @@ fn replace_managed_prefix(
         format!("{guidance}\n\n{owner}")
     };
     if updated.len() > 32 * 1024 {
-        return Err(AdapterError::Unsupported(
-            "Agent instructions have no capacity for managed guidance".into(),
-        ));
+        return Err(AdapterError::Unsupported(text(
+            "Agent instructions have no capacity for managed guidance",
+        )));
     }
     Ok((updated != original).then_some(updated))
 }

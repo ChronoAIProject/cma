@@ -16,9 +16,10 @@ pub enum AdmissionRefusal {
 impl From<AdmissionRefusal> for AdapterError {
     fn from(refusal: AdmissionRefusal) -> Self {
         match refusal {
-            AdmissionRefusal::AtCapacity { .. } => {
-                Self::AtCapacity("ingress allocation capacity exhausted".into())
-            }
+            AdmissionRefusal::AtCapacity { .. } => super::diagnostic::make(
+                Self::AtCapacity,
+                format_args!("ingress allocation capacity exhausted"),
+            ),
             AdmissionRefusal::InvalidPlan { .. } => super::sizing::invalid(),
         }
     }

@@ -308,6 +308,17 @@ pub trait AgentWorkerStore: Send + Sync {
         &self,
         now: &str,
         limit: u16,
+    ) -> Result<Vec<AgentId>, SandboxStoreError> {
+        self.due_agent_work_with_cleanup_holds(now, limit, &Default::default())
+            .await
+    }
+
+    /// Apply local receiver holds to the current work step before counting the result limit.
+    async fn due_agent_work_with_cleanup_holds(
+        &self,
+        now: &str,
+        limit: u16,
+        holds: &std::collections::BTreeSet<AgentId>,
     ) -> Result<Vec<AgentId>, SandboxStoreError>;
 
     async fn claim_agent_work(

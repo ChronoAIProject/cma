@@ -1,3 +1,4 @@
+use crate::ingress_budget::diagnostic::text;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
@@ -149,9 +150,9 @@ impl Bridge {
         };
         let answer = match (&self.subscription, frame.get("params")) {
             (Some(binding), Some(params)) if params.is_object() => binding.credential(params).await,
-            _ => Err(crate::AdapterError::Rejected(
-                "subscription authority is not bound".into(),
-            )),
+            _ => Err(crate::AdapterError::Rejected(text(
+                "subscription authority is not bound",
+            ))),
         };
         let frame = match answer {
             Ok(result) => serde_json::json!({"jsonrpc":"2.0", "id":id, "result":result}),
@@ -191,7 +192,7 @@ impl Bridge {
         }
         if self.ingress.is_some() {
             match typed.ok_or_else(|| {
-                crate::AdapterError::Rejected("typed update has no admitted owner".into())
+                crate::AdapterError::Rejected(text("typed update has no admitted owner"))
             })? {
                 Ok(update) => {
                     self.route_update(session, ConversationUpdate::RetainedEffect(update), updates)
@@ -366,19 +367,19 @@ pub(super) fn blocked_from_locator(
     session: &str,
 ) -> crate::Result<Blocked> {
     if permission_id(locator) != id {
-        return Err(crate::AdapterError::Rejected(
-            "permission locator does not belong to this request".into(),
-        ));
+        return Err(crate::AdapterError::Rejected(text(
+            "permission locator does not belong to this request",
+        )));
     }
     let stored: HostedPermissionLocator = serde_json::from_str(locator.as_str())
-        .map_err(|_| crate::AdapterError::Rejected("permission locator is not readable".into()))?;
+        .map_err(|_| crate::AdapterError::Rejected(text("permission locator is not readable")))?;
     if stored.version != PERMISSION_LOCATOR_VERSION
         || stored.session != session
         || !valid_call(&stored.call)
     {
-        return Err(crate::AdapterError::Rejected(
-            "permission locator belongs to another conversation or version".into(),
-        ));
+        return Err(crate::AdapterError::Rejected(text(
+            "permission locator belongs to another conversation or version",
+        )));
     }
     Ok(Blocked {
         call: stored.call,

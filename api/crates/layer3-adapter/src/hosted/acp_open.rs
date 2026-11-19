@@ -1,5 +1,9 @@
 //! Open one attachment under its explicit transport flow-control policy.
 use super::*;
+use crate::ingress_budget::diagnostic::make;
+use crate::ingress_budget::{
+    sizing, AdmittedError, AllocationPlan, IngressClass, IngressWorkScope, OwnedWork,
+};
 use sha2::{Digest as _, Sha256};
 
 impl Bridge {
@@ -85,7 +89,7 @@ impl Bridge {
         recovered_prompt: Option<PromptIdentity>,
         updates_tx: mpsc::Sender<ConversationUpdate>,
     ) -> crate::Result<OpenedBridge> {
-        Self::open_inner(
+        Self::open_inner::<channel::Legacy>(
             ingress::legacy(stream),
             expected_agent,
             cwd,
@@ -116,30 +120,43 @@ impl Bridge {
         resume_conversation: Option<String>,
         recovered_prompt: Option<PromptIdentity>,
         updates_tx: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<OpenedBridge> {
-        if !(settings.retained_json
-            && settings.bounded_raw_output
-            && settings.bounded_permission_state
-            && settings.shared_runtime_output
-            && settings.output_json_budget)
-        {
-            return Err(AdapterError::Rejected(
-                "ingress ownership requires all decoder and delivery bounds".into(),
-            ));
-        }
-        Self::open_inner(
-            ingress::admitted(stream, policy.clone()),
-            expected_agent,
-            cwd,
-            (settings, subscription, true, Some(policy)),
-            resume_conversation,
-            recovered_prompt,
-            updates_tx,
-        )
-        .await
+    ) -> Result<
+        OwnedWork<OpenedBridge<crate::ingress_budget::AdmittedConversationChannel>>,
+        AdmittedError,
+    > {
+        let scope = IngressWorkScope::new(policy.admit(
+            IngressClass::Data,
+            AllocationPlan::checked("admitted open scope", &[sizing::shared_owner_bytes::<()>()])?,
+        )?);
+        scope
+            .initialize_owned(|| async {
+                if !(settings.retained_json
+                    && settings.bounded_raw_output
+                    && settings.bounded_permission_state
+                    && settings.shared_runtime_output
+                    && settings.output_json_budget)
+                {
+                    return Err(make(
+                        AdapterError::Rejected,
+                        format_args!("ingress ownership requires all decoder and delivery bounds"),
+                    ));
+                }
+                Self::open_inner::<channel::Admitted>(
+                    ingress::admitted(stream, policy.clone()),
+                    expected_agent,
+                    cwd,
+                    (settings, subscription, true, Some(policy.clone())),
+                    resume_conversation,
+                    recovered_prompt,
+                    updates_tx,
+                )
+                .await
+            })
+            .resolve_admitted_result(&policy, IngressClass::Data)
+            .await
     }
 
-    async fn open_inner(
+    async fn open_inner<M: channel::Mode>(
         stream: ingress::BridgeSocket,
         expected_agent: &str,
         cwd: String,
@@ -152,14 +169,17 @@ impl Bridge {
         resume_conversation: Option<String>,
         recovered_prompt: Option<PromptIdentity>,
         updates_tx: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<OpenedBridge> {
+    ) -> crate::Result<OpenedBridge<M::Channel>> {
         if settings.coordinated_ingress
             && !(settings.retained_json
                 && settings.bounded_raw_output
                 && settings.bounded_permission_state)
         {
-            return Err(AdapterError::Rejected(
-                "ingress coordination requires JSON, raw-output and permission bounds".into(),
+            return Err(make(
+                AdapterError::Rejected,
+                format_args!(
+                    "ingress coordination requires JSON, raw-output and permission bounds"
+                ),
             ));
         }
         let aggregate = ingress
@@ -173,13 +193,15 @@ impl Bridge {
         if settings.recovered_context_sequence.is_some()
             && (resume_conversation.is_none() || recovered_prompt.is_some())
         {
-            return Err(AdapterError::Rejected(
-                "context recovery requires one quiet retained conversation".into(),
+            return Err(make(
+                AdapterError::Rejected,
+                format_args!("context recovery requires one quiet retained conversation"),
             ));
         }
         if recovered_prompt.is_some() && resume_conversation.is_none() {
-            return Err(AdapterError::Rejected(
-                "prompt recovery requires a held conversation".into(),
+            return Err(make(
+                AdapterError::Rejected,
+                format_args!("prompt recovery requires a held conversation"),
             ));
         }
         // Quiet recovery already has an exact durable identity. Its receipts
@@ -206,9 +228,24 @@ impl Bridge {
         let (sink, mut source) = stream.split();
         let declaration = tokio::time::timeout(DECLARATION_DEADLINE, source.next())
             .await
-            .map_err(|_| AdapterError::Unavailable("runtime sent no Ready declaration".into()))?
-            .ok_or_else(|| AdapterError::Unavailable("runtime closed before Ready".into()))?
-            .map_err(|error| AdapterError::Unavailable(format!("Ready read failed: {error}")))?;
+            .map_err(|_| {
+                make(
+                    AdapterError::Unavailable,
+                    format_args!("runtime sent no Ready declaration"),
+                )
+            })?
+            .ok_or_else(|| {
+                make(
+                    AdapterError::Unavailable,
+                    format_args!("runtime closed before Ready"),
+                )
+            })?
+            .map_err(|error| {
+                make(
+                    AdapterError::Unavailable,
+                    format_args!("Ready read failed: {error}"),
+                )
+            })?;
         let output_json_budget = settings.output_json_budget;
         let json_pools = settings
             .retained_json
@@ -220,8 +257,9 @@ impl Bridge {
         let ready_copy = match (&declaration, &ingress) {
             (ingress::IncomingFrame::Admitted(frame), Some(policy)) => {
                 let Message::Text(text) = &**frame else {
-                    return Err(AdapterError::Rejected(
-                        "runtime sent a non-text Ready declaration".into(),
+                    return Err(make(
+                        AdapterError::Rejected,
+                        format_args!("runtime sent a non-text Ready declaration"),
                     ));
                 };
                 // validate_ready pre-admits parser scratch and the typed Ready
@@ -245,24 +283,28 @@ impl Bridge {
         )?;
         drop(ready_copy);
         if json_pools.is_some() && output_stream.is_none() {
-            return Err(AdapterError::Rejected(
-                "JSON retention bounds require retained runtime output".into(),
+            return Err(make(
+                AdapterError::Rejected,
+                format_args!("JSON retention bounds require retained runtime output"),
             ));
         }
         if bounded && output_stream.is_none() {
-            return Err(AdapterError::Unavailable(
-                "bounded output requires retained runtime acknowledgements".into(),
+            return Err(make(
+                AdapterError::Unavailable,
+                format_args!("bounded output requires retained runtime acknowledgements"),
             ));
         }
         if settings.bounded_raw_output && output_stream.is_none() {
-            return Err(AdapterError::Rejected(
-                "raw output bounds require retained runtime output".into(),
+            return Err(make(
+                AdapterError::Rejected,
+                format_args!("raw output bounds require retained runtime output"),
             ));
         }
         let permission_state = if settings.bounded_permission_state {
             if output_stream.is_none() {
-                return Err(AdapterError::Rejected(
-                    "permission bounds require retained runtime output".into(),
+                return Err(make(
+                    AdapterError::Rejected,
+                    format_args!("permission bounds require retained runtime output"),
                 ));
             }
             let mut state =
@@ -347,14 +389,7 @@ impl Bridge {
             bridge.activate_session(session.clone(), &updates).await?;
             bridge.activate_output(session, &updates).await?;
         }
-        let writer = Arc::clone(&bridge);
-        let writer_updates = updates.clone();
-        let input = ConversationInputSender::spawn(INPUT_BUFFER, move |input| {
-            let writer = Arc::clone(&writer);
-            let updates = writer_updates.clone();
-            async move { writer.drive(input, &updates).await }
-        })
-        .with_settings_support(bridge.clone());
+        let input = M::input(&bridge, &updates).await?;
 
         let reader_task = reader::spawn(Arc::clone(&bridge), source, updates.clone(), acknowledged);
         let mut opening_tasks = OpeningTasks {
@@ -368,19 +403,33 @@ impl Bridge {
             .handshake(resume_conversation, cwd, settings, &updates)
             .await?;
         if reader_task.is_finished() {
-            return Err(AdapterError::Unavailable(
-                "conversation link ended while opening".into(),
+            return Err(make(
+                AdapterError::Unavailable,
+                format_args!("conversation link ended while opening"),
             ));
         }
+        let public_identity = ingress
+            .as_ref()
+            .map(|policy| {
+                policy.reserve(
+                    IngressClass::Data,
+                    AllocationPlan::new(
+                        "published conversation identity",
+                        &[
+                            super::super::acp_session_identity::MAX_BYTES,
+                            sizing::shared_owner_bytes::<String>(),
+                        ],
+                    )?,
+                )
+            })
+            .transpose()?;
         let conversation_id = bridge.session().await?;
         bridge.release_recovered_prompt(&updates).await;
         bridge.activate_output(&conversation_id, &updates).await?;
+        let channel = M::finish(input, conversation_id, public_identity)?;
         opening_tasks.armed = false;
         Ok(OpenedBridge {
-            channel: ConversationChannel {
-                input,
-                conversation_id: Some(conversation_id),
-            },
+            channel,
             bridge,
             reader: reader_task,
             relay,

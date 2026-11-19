@@ -1,6 +1,7 @@
 //! Borrowed sizing for the pinned schema's owned containers and decode scratch.
 
 use crate::hosted::runtime_decode;
+use crate::ingress_budget::diagnostic::text;
 use crate::ingress_budget::{
     sizing::shared_owner_bytes, AllocationPlan, IngressClass, IngressOwnershipPolicy,
     IngressWorkScope, OwnedWork, ReservationBundle,
@@ -227,7 +228,7 @@ fn mul(a: usize, b: usize) -> crate::Result<usize> {
     a.checked_mul(b).ok_or_else(invalid)
 }
 fn invalid() -> crate::AdapterError {
-    crate::AdapterError::Rejected("typed ingress layout exceeds supported bounds".into())
+    crate::AdapterError::Rejected(text("typed ingress layout exceeds supported bounds"))
 }
 
 // Run the same Serialize implementation as to_value without creating its tree.

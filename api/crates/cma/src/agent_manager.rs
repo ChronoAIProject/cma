@@ -38,8 +38,9 @@ impl AgentManager {
         registry: Arc<LiveAgentRegistry>,
         address: String,
         capacity: u32,
+        cleanup_pacing: bool,
     ) -> Result<Arc<Self>, String> {
-        let coordinator = OwnershipCoordinator::register(
+        let coordinator = OwnershipCoordinator::register_with_cleanup_pacing(
             store
                 .agent_ownership
                 .clone()
@@ -56,6 +57,7 @@ impl AgentManager {
                 owned_agents: 0,
                 max_owned_agents: capacity,
             },
+            cleanup_pacing,
         )
         .await
         .map_err(|_| "Agent Manager membership registration failed")?;

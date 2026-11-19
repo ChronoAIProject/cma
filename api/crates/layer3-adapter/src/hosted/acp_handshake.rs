@@ -3,7 +3,12 @@ use super::acp::{
 };
 use super::update_relay::UpdateRelay;
 use super::HostedAgentOpenSettings;
+use crate::ingress_budget::diagnostic::text;
 use crate::AdapterError;
+
+#[path = "acp_handshake_errors.rs"]
+mod errors;
+use errors::{protected_setup_failure, unconfirmed_setup, validate_settings};
 
 enum Greeting {
     Fresh(super::retained_json::JsonFrame),
@@ -132,10 +137,9 @@ impl Bridge {
                         .is_some_and(|id| binding.retained_for(id) || completed) => {}
                 Greeting::Existing => return Err(unconfirmed_setup()),
                 _ => {
-                    return Err(AdapterError::Unsupported(
-                        "runtime cannot establish the required channel reply tool connection"
-                            .into(),
-                    ))
+                    return Err(AdapterError::Unsupported(text(
+                        "runtime cannot establish the required channel reply tool connection",
+                    )))
                 }
             }
         }
@@ -157,9 +161,9 @@ impl Bridge {
                             .is_some_and(|id| binding.retained_for(id) || completed) => {}
                 Greeting::Existing => return Err(unconfirmed_setup()),
                 _ => {
-                    return Err(AdapterError::Unsupported(
-                        "runtime cannot establish the required provider tools".into(),
-                    ))
+                    return Err(AdapterError::Unsupported(text(
+                        "runtime cannot establish the required provider tools",
+                    )))
                 }
             }
         }
@@ -179,9 +183,9 @@ impl Bridge {
                     }) => {}
                 Greeting::Existing => return Err(unconfirmed_setup()),
                 _ => {
-                    return Err(AdapterError::Unsupported(
-                        "runtime cannot establish the required service access request tool".into(),
-                    ))
+                    return Err(AdapterError::Unsupported(text(
+                        "runtime cannot establish the required service access request tool",
+                    )))
                 }
             }
         }
@@ -261,9 +265,9 @@ impl Bridge {
                         || settings.channel_tool.is_some()
                         || settings.provider_tool.is_some()
                     {
-                        return Err(AdapterError::Rejected(
-                            "prepared conversation has incompatible owner work".into(),
-                        ));
+                        return Err(AdapterError::Rejected(text(
+                            "prepared conversation has incompatible owner work",
+                        )));
                     }
                     // The pinned provider keeps a live thread's old MCP config
                     // on load alone. Unsubscribe the idle prepared thread first,
@@ -317,9 +321,9 @@ impl Bridge {
                 conversation
             }
             (Greeting::Existing, None) => {
-                return Err(AdapterError::Rejected(
-                    "an initialized bridge requires the held conversation identifier".into(),
-                ));
+                return Err(AdapterError::Rejected(text(
+                    "an initialized bridge requires the held conversation identifier",
+                )));
             }
         };
         timing.completed("protocol_session");
@@ -336,7 +340,7 @@ impl Bridge {
             )
             .await
             .map_err(|error| {
-                error.context(&format!(
+                error.context_formatted(format_args!(
                     "conversation could not be held to permission mode {mode}"
                 ))
             })?;
@@ -390,9 +394,9 @@ impl Bridge {
             .filter_map(|method| method.get("id").and_then(serde_json::Value::as_str))
             .find(|id| id.contains("device"))
             .ok_or_else(|| {
-                AdapterError::Unsupported(
-                    "runtime offers no remotely completable owner sign-in".into(),
-                )
+                AdapterError::Unsupported(text(
+                    "runtime offers no remotely completable owner sign-in",
+                ))
             })?;
         let _method_storage = self
             .ingress
@@ -420,65 +424,4 @@ impl Bridge {
         .map_err(|error| error.context("owner sign-in did not complete"))?;
         Ok(())
     }
-}
-
-/// MCP setup carries a limited CMA bearer. Runtimes may echo that descriptor in
-/// error JSON; preserve only the category before worker logs retain the failure.
-fn protected_setup_failure(error: AdapterError, phase: &'static str) -> AdapterError {
-    let detail = format!("channel tool session setup did not complete (phase: {phase})");
-    match error {
-        AdapterError::InputAuthorityUnavailable(_) => {
-            AdapterError::InputAuthorityUnavailable(detail)
-        }
-        AdapterError::PromptNotWritten(_) => AdapterError::PromptNotWritten(detail),
-        AdapterError::Unavailable(_) | AdapterError::RuntimeStartupHold(_) => {
-            AdapterError::Unavailable(detail)
-        }
-        guarded @ AdapterError::NativeClaimNotReady(_) => guarded,
-        AdapterError::Rejected(_) | AdapterError::SkillUpgradeRefused(_) => {
-            AdapterError::Rejected(detail)
-        }
-        AdapterError::OperationIdentityConflict(_) => {
-            AdapterError::OperationIdentityConflict(detail)
-        }
-        AdapterError::RuntimeLedgerHold(_) => AdapterError::RuntimeLedgerHold(detail),
-        capacity @ AdapterError::RuntimeCapacity(_) => capacity,
-        AdapterError::AtCapacity(_) => AdapterError::AtCapacity(detail),
-        AdapterError::Unsupported(_) => AdapterError::Unsupported(detail),
-        AdapterError::RuntimeContractMismatch(_) => AdapterError::Rejected(detail),
-    }
-}
-
-fn unconfirmed_setup() -> AdapterError {
-    // An earlier initialize/open can have succeeded after its reply was lost.
-    // Missing confirmation is not evidence that this runtime lacks an ability.
-    // Without a known identity and a supported exact completion proof there is
-    // no safe automatic recovery. Never create a substitute session or loop
-    // indefinitely while the undispatched creation input remains queued.
-    AdapterError::Rejected("existing conversation tool setup cannot be confirmed".into())
-}
-
-fn validate_settings(cwd: &str, settings: &HostedAgentOpenSettings) -> crate::Result<()> {
-    let valid_mode = settings.permission_mode.as_deref().is_none_or(|mode| {
-        !mode.is_empty()
-            && mode.len() <= 128
-            && mode.trim() == mode
-            && !mode.chars().any(char::is_control)
-    });
-    if cwd.is_empty()
-        || cwd.len() > 4_096
-        || !cwd.starts_with('/')
-        || cwd.chars().any(char::is_control)
-        || !valid_mode
-        || settings
-            .recovered_context_sequence
-            .is_some_and(|sequence| sequence == 0)
-        || settings.recovered_context_sequence.is_some()
-            && (settings.context_refresh.is_none() || settings.recovered_prompt.is_some())
-    {
-        return Err(AdapterError::Rejected(
-            "ACP working directory or permission mode is invalid".into(),
-        ));
-    }
-    Ok(())
 }

@@ -1,3 +1,4 @@
+use crate::ingress_budget::diagnostic::text;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
@@ -57,6 +58,9 @@ mod progress;
 
 #[path = "acp_open.rs"]
 mod open;
+
+#[path = "acp_open_channel.rs"]
+mod channel;
 
 #[path = "acp_calls.rs"]
 mod calls;
@@ -124,8 +128,8 @@ pub(super) struct Bridge {
     _identity_storage: Option<crate::ingress_budget::ReservationBundle>,
 }
 
-pub(super) struct OpenedBridge {
-    pub(super) channel: ConversationChannel,
+pub(super) struct OpenedBridge<C = ConversationChannel> {
+    pub(super) channel: C,
     pub(super) bridge: Arc<Bridge>,
     pub(super) reader: tokio::task::JoinHandle<()>,
     pub(super) relay: tokio::task::JoinHandle<()>,
@@ -163,7 +167,7 @@ impl Bridge {
             .active
             .as_deref()
             .map(|active| active == session)
-            .ok_or_else(|| AdapterError::Unavailable("runtime holds no conversation".into()))
+            .ok_or_else(|| AdapterError::Unavailable(text("runtime holds no conversation")))
     }
 
     pub(super) async fn session(&self) -> crate::Result<String> {
@@ -172,7 +176,7 @@ impl Bridge {
             .await
             .active
             .clone()
-            .ok_or_else(|| AdapterError::Unavailable("runtime holds no conversation".into()))
+            .ok_or_else(|| AdapterError::Unavailable(text("runtime holds no conversation")))
     }
 
     pub(super) async fn activate_session(
@@ -200,9 +204,9 @@ impl Bridge {
             .as_ref()
             .is_some_and(|active| active != &session)
         {
-            return Err(AdapterError::Rejected(
-                "bridge changed the active conversation identifier".into(),
-            ));
+            return Err(AdapterError::Rejected(text(
+                "bridge changed the active conversation identifier",
+            )));
         }
         state.active = Some(session.clone());
         state.active_storage = storage;
@@ -238,9 +242,9 @@ impl Bridge {
             // Admitted startup frames stay in ReliableOutput until identity
             // acceptance. Never copy them into the legacy unowned queue.
             None if self.ingress.is_some() => {
-                return Err(AdapterError::Rejected(
-                    "admitted update preceded conversation identity acceptance".into(),
-                ));
+                return Err(AdapterError::Rejected(text(
+                    "admitted update preceded conversation identity acceptance",
+                )));
             }
             None if state.startup.len() < STARTUP_UPDATE_LIMIT => {
                 state.startup.push((session.to_string(), update));

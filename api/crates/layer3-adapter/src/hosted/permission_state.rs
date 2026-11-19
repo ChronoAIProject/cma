@@ -1,5 +1,6 @@
 //! Compact permission retention. Reservations cover requested storage, not RSS.
 
+use crate::ingress_budget::diagnostic::text;
 use std::sync::{
     atomic::{AtomicU8, Ordering},
     Arc, OnceLock,
@@ -245,11 +246,13 @@ fn reserve(
 }
 
 fn capacity() -> AdapterError {
-    AdapterError::Unavailable("runtime permission retention capacity exhausted".into())
+    AdapterError::Unavailable(text("runtime permission retention capacity exhausted"))
 }
 
 fn invalid() -> AdapterError {
-    AdapterError::Rejected("runtime permission retention shape exceeds its bounds".into())
+    AdapterError::Rejected(text(
+        "runtime permission retention shape exceeds its bounds",
+    ))
 }
 
 #[cfg(test)]

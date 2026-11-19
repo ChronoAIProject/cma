@@ -1,4 +1,5 @@
 //! Refresh tools on an idle retained thread using pinned, existing ACP methods.
+use crate::ingress_budget::diagnostic::text;
 use std::sync::atomic::Ordering;
 
 use super::acp::{Bridge, CALL_DEADLINE};
@@ -103,18 +104,18 @@ impl Bridge {
                 .as_ref()
                 .is_some_and(|goal| !goal.is_safe_for(session))
         {
-            return Err(AdapterError::OperationIdentityConflict(
-                "conversation must settle before managed context refresh".into(),
-            ));
+            return Err(AdapterError::OperationIdentityConflict(text(
+                "conversation must settle before managed context refresh",
+            )));
         }
         let binding = self.context_refresh.as_ref().ok_or_else(|| {
-            AdapterError::Unsupported("runtime has no retained context writer".into())
+            AdapterError::Unsupported(text("runtime has no retained context writer"))
         })?;
         let cwd = working_directory.unwrap_or_else(|| binding.cwd());
         if !cwd.starts_with('/') || cwd.len() > 4096 || cwd.contains('\0') || model.is_empty() {
-            return Err(AdapterError::Unsupported(
-                "retained context identity is invalid".into(),
-            ));
+            return Err(AdapterError::Unsupported(text(
+                "retained context identity is invalid",
+            )));
         }
         let transport = binding
             .prepare_transport(session, operation_sequence, service_origin)
@@ -144,9 +145,9 @@ impl Bridge {
                     .as_ref()
                     .is_some_and(|goal| !goal.is_safe_for(session))
             {
-                return Err(AdapterError::OperationIdentityConflict(
-                    "conversation became busy before managed context reload".into(),
-                ));
+                return Err(AdapterError::OperationIdentityConflict(text(
+                    "conversation became busy before managed context reload",
+                )));
             }
             self.call_prepared(
                 "session/close",
@@ -168,16 +169,16 @@ impl Bridge {
                 .and_then(serde_json::Value::as_str)
                 .is_some_and(|id| id != session)
             {
-                return Err(AdapterError::Rejected(
-                    "managed refresh loaded another conversation".into(),
-                ));
+                return Err(AdapterError::Rejected(text(
+                    "managed refresh loaded another conversation",
+                )));
             }
             self.configure_settings(session, model, effort, permission, None)
                 .await?;
             if !self.matches_active_session(session).await? {
-                return Err(AdapterError::Rejected(
-                    "managed refresh changed conversation identity".into(),
-                ));
+                return Err(AdapterError::Rejected(text(
+                    "managed refresh changed conversation identity",
+                )));
             }
             if let Some(transport) = &transport {
                 binding
@@ -189,7 +190,7 @@ impl Bridge {
         .await;
         refreshed.map_err(|_error: AdapterError| {
             // Native MCP failures can echo descriptors carrying credentials.
-            AdapterError::Unavailable("managed context refresh is not confirmed".into())
+            AdapterError::Unavailable(text("managed context refresh is not confirmed"))
         })
     }
 }
