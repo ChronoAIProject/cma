@@ -5,6 +5,8 @@
 // describes concurrent demand, not sums of unrelated metric peaks. Pool roles
 // are unique within a process; otherConsumers is additional background demand
 // excluded from busy. Reserve references explain the separately required room.
+// Unclassified native demand is ordinary. Only a complete, evidenced breakdown
+// of effective Continuity/Control demand may consume configured process reserve.
 // The synthetic test fixture is the executable input example. Keep candidate
 // observations outside the public repository.
 import { readFileSync } from 'node:fs';
@@ -96,10 +98,29 @@ function control(value, path) {
   text(value.reference, `${path}.reference`);
   if (value.successes !== value.samples || value.p99Ms > 1000) fail(`${path}: same-lane controls failed or exceeded one-second p99`);
 }
+function ordinaryDemand(row, native, kind, path) {
+  const totals = { runtimeLinks: row.runtimeLinks, desktopStreams: row.desktopStreams,
+    otherStreams: row.otherStreams, nativeBusy: native.busy,
+    nativeWaiting: native.waiting, otherRequests: row.otherRequests };
+  const ordinary = { ...totals };
+  if (row.privileged !== undefined) {
+    const privileged = row.privileged;
+    fields(privileged, ['boundary', 'evidence', ...Object.keys(totals)], `${path}.privileged`);
+    if (privileged.boundary !== 'shared_native_process') fail(`${path}: privileged demand has a different accounting boundary`);
+    evidence(privileged.evidence, kind, `${path}.privileged.evidence`);
+    for (const [name, total] of Object.entries(totals)) {
+      number(privileged[name], `${path}.privileged.${name}`, 0, total);
+      ordinary[name] -= privileged[name];
+    }
+    if (ordinary.nativeBusy !== native.ordinaryBusy) fail(`${path}: privileged classification contradicts native ordinaryBusy`);
+  }
+  return { streams: ordinary.runtimeLinks + ordinary.desktopStreams + ordinary.otherStreams,
+    requests: ordinary.nativeBusy + ordinary.nativeWaiting + ordinary.otherRequests };
+}
 function placement(row, instance, kind, path) {
   fields(row, ['instance', 'evidence', 'activeAgents', 'runtimeLinks', 'publicObservers',
     'desktopStreams', 'otherStreams', 'otherRequests', 'streamPermits', 'requestPermits',
-    'queuedRequests', 'queueMaxWaitMs', 'requiredReserve', 'pools', 'retained', 'control'], path);
+    'queuedRequests', 'queueMaxWaitMs', 'requiredReserve', 'pools', 'retained', 'control', 'privileged'], path);
   evidence(row.evidence, kind, `${path}.evidence`);
   const counts = ['activeAgents', 'runtimeLinks', 'publicObservers', 'desktopStreams',
     'otherStreams', 'otherRequests', 'streamPermits', 'requestPermits', 'queuedRequests', 'queueMaxWaitMs'];
@@ -123,6 +144,9 @@ function placement(row, instance, kind, path) {
   const native = pools.find((p) => p.role === 'native');
   if (!native) blocked(`${path}: native pool observations missing`);
   if (row.requestPermits !== native.busy + native.waiting + row.otherRequests) fail(`${path}: process request mapping mismatch`);
+  const ordinary = ordinaryDemand(row, native, kind, path);
+  within(ordinary.streams, config.streamReserve, config.streamLimit, `${path}.ordinary streams`);
+  within(ordinary.requests, config.requestReserve, config.requestLimit, `${path}.ordinary requests`);
   const retainedPool = pools.find((p) => p.role === 'retained_provider');
   if (Boolean(retainedPool) !== config.retainedProvider) fail(`${path}: retained pool inventory differs from config`);
   fields(row.retained, ['activeAgents', 'runtimeLinks', 'publicObservers', 'desktopStreams',

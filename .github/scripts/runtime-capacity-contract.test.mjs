@@ -38,6 +38,28 @@ function fixture() {
     ] };
 }
 const eachRow = (input, action) => input.scenarios.forEach((scenario) => scenario.placement.forEach(action));
+function candidate(input) {
+  input.kind = 'candidate';
+  Object.assign(input.binding, { sourceRevision: 'a'.repeat(40), agentManagerImage: `sha256:${'b'.repeat(64)}`, runtimeImage: `sha256:${'c'.repeat(64)}` });
+  eachRow(input, (value) => {
+    value.evidence.source = 'measured';
+    if (value.privileged) value.privileged.evidence.source = 'measured';
+  });
+  return input;
+}
+function privilegedFixture() {
+  const input = fixture();
+  input.instances.forEach((instance) => { Object.assign(instance.config, { requestReserve: 31, streamLimit: 512, streamReserve: 384 }); });
+  eachRow(input, (value) => {
+    value.desktopStreams = 130;
+    value.streamPermits = value.runtimeLinks + value.desktopStreams + value.otherStreams;
+    value.pools[0].ordinaryBusy = 1;
+    value.privileged = { boundary: 'shared_native_process', evidence: { source: 'synthetic', reference: 'effective-class-fixture' },
+      runtimeLinks: value.runtimeLinks, desktopStreams: 130, otherStreams: 0,
+      nativeBusy: 9, nativeWaiting: 2, otherRequests: 1 };
+  });
+  return input;
+}
 const changed = (edit) => { const input = fixture(); edit(input); return validateCapacity(input); };
 const fails = (edit, pattern) => {
   const result = changed(edit);
@@ -117,6 +139,78 @@ test('retained provider uses its own pool and capacity observations', () => {
     { slots: 3, busy: 1, waiting: 1, otherConsumers: 0, requiredReserve: 2 });
   input.scenarios[2].placement[0].retained.requests = 7;
   assert.equal(validateCapacity(input).status, 'FAIL');
+});
+test('configured request reserve rejects ten ordinary requests with only one usable permit', () => {
+  fails((input) => { input.instances.forEach((instance) => { instance.config.requestReserve = 31; }); }, /ordinary requests/);
+  const input = candidate(fixture());
+  input.instances.forEach((instance) => { instance.config.requestReserve = 31; });
+  assert.equal(validateCapacity(input).status, 'FAIL');
+});
+test('configured reserve, even above required reserve, protects ordinary streams', () => {
+  fails((input) => { input.instances.forEach((instance) => { instance.config.streamReserve = 128; }); }, /ordinary streams/);
+});
+test('ordinary desktop demand cannot borrow configured stream reserve', () => {
+  fails((input) => {
+    input.instances.forEach((instance) => { Object.assign(instance.config, { streamLimit: 512, streamReserve: 384 }); });
+    eachRow(input, (value) => {
+      value.desktopStreams = 130;
+      value.streamPermits = value.runtimeLinks + value.desktopStreams + value.otherStreams;
+    });
+  }, /ordinary streams/);
+});
+test('evidenced privileged demand may use configured reserve within physical headroom', () => {
+  for (const input of [privilegedFixture(), candidate(privilegedFixture())]) {
+    const result = validateCapacity(input);
+    assert.equal(result.status, 'PASS', JSON.stringify(result));
+    assert.equal(result.qualification, 'NOT_ASSESSED');
+  }
+});
+test('privileged evidence cannot hide known ordinary busy requests or desktop demand', () => {
+  let input = privilegedFixture();
+  input.scenarios[1].placement[0].pools[0].ordinaryBusy = 10;
+  assert.match(validateCapacity(input).reason, /contradicts native ordinaryBusy/);
+  input = privilegedFixture();
+  input.scenarios[1].placement[0].privileged.desktopStreams = 0;
+  assert.match(validateCapacity(input).reason, /ordinary streams/);
+});
+test('unclassified requests and streams are conservatively ordinary', () => {
+  const input = privilegedFixture();
+  eachRow(input, (value) => { delete value.privileged; });
+  assert.equal(validateCapacity(input).status, 'FAIL');
+});
+test('privileged demand requires complete bounded counts and matching evidence', () => {
+  for (const name of ['evidence', 'runtimeLinks', 'desktopStreams', 'otherStreams', 'nativeBusy', 'nativeWaiting', 'otherRequests']) {
+    const input = privilegedFixture();
+    delete input.scenarios[1].placement[0].privileged[name];
+    assert.equal(validateCapacity(input).status, 'BLOCKED', name);
+  }
+  for (const change of [
+    (value) => { value.boundary = 'retained_provider'; },
+    (value) => { value.evidence.source = 'unknown'; },
+    (value) => { value.nativeBusy = 11; },
+    (value) => { value.desktopStreams = -1; },
+  ]) {
+    const input = privilegedFixture();
+    change(input.scenarios[1].placement[0].privileged);
+    assert.equal(validateCapacity(input).status, 'FAIL');
+  }
+  const input = privilegedFixture();
+  input.scenarios[1].placement[0].privileged.evidence.reference = '';
+  assert.equal(validateCapacity(input).status, 'BLOCKED');
+});
+test('privileged use still preserves physical and required headroom', () => {
+  for (const dimension of ['requests', 'streams']) {
+    const input = privilegedFixture();
+    const value = input.scenarios[1].placement[0];
+    if (dimension === 'requests') {
+      value.otherRequests = 20; value.privileged.otherRequests = 20; value.requestPermits = 32;
+    } else {
+      value.otherStreams = 400; value.privileged.otherStreams = 400;
+      value.streamPermits = value.runtimeLinks + value.desktopStreams + value.otherStreams;
+    }
+    assert.equal(validateCapacity(input).status, 'FAIL');
+    assert.match(validateCapacity(input).reason, new RegExp(`placement.${dimension}: demand plus reserve exceeds limit`));
+  }
 });
 test('a replica sum cannot conceal an overloaded surviving instance', () => {
   fails((input) => { input.instances[1].config.streamLimit = 128; }, /exceeds limit/);
