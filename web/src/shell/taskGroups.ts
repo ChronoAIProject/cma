@@ -1,12 +1,21 @@
 import { elapsedTime } from '../agent/workspaceTime';
 import type { TaskStatus } from './taskStatus';
-export const TASK_GROUPS = ['Active', 'Today', 'Yesterday', 'Earlier'] as const;
+export const TASK_GROUPS = [
+  'Needs attention',
+  'Active',
+  'Updating environment',
+  'Status unavailable',
+  'Today',
+  'Yesterday',
+  'Earlier',
+] as const;
 export function taskGroup(
   status: TaskStatus,
   updatedAt: string,
   now: Date,
 ): (typeof TASK_GROUPS)[number] {
   if (
+    status === 'loading' ||
     status === 'working' ||
     status === 'not_started' ||
     status === 'starting' ||

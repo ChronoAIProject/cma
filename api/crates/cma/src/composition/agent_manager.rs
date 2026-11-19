@@ -53,3 +53,14 @@ pub(super) fn relay(
     updates.install_live_source(relay.live_source());
     Ok(Some(relay))
 }
+
+pub(super) fn internal_router(
+    relay: &Option<Arc<crate::agent_manager::relay::Relay>>,
+    manager: &Option<Arc<crate::agent_manager::AgentManager>>,
+    router: Router,
+) -> Router {
+    match (relay, manager) {
+        (Some(relay), Some(manager)) => relay.internal_router(router, manager.clone()),
+        _ => router,
+    }
+}

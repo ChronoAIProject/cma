@@ -10,6 +10,9 @@ pub(crate) struct TestAuthority {
     pub fail_renewal: AtomicBool,
     pub events: Arc<Mutex<Vec<&'static str>>>,
     pub confirmed_bindings: Mutex<Vec<String>>,
+    pub failure: std::sync::OnceLock<OwnershipFailure>,
+    pub failure_before_revocation: AtomicBool,
+    pub receivers: Mutex<Vec<Arc<dyn ReceiverRevocation>>>,
     revoked: tokio::sync::watch::Sender<bool>,
 }
 
@@ -26,6 +29,9 @@ impl TestAuthority {
             fail_renewal: AtomicBool::new(false),
             events: Arc::default(),
             confirmed_bindings: Mutex::default(),
+            failure: Default::default(),
+            failure_before_revocation: AtomicBool::new(false),
+            receivers: Mutex::default(),
             revoked: tokio::sync::watch::channel(false).0,
         })
     }
@@ -33,7 +39,8 @@ impl TestAuthority {
 
 #[async_trait::async_trait]
 impl TransportAuthority for TestAuthority {
-    fn register_receiver(&self, _receiver: Arc<dyn ReceiverRevocation>) -> crate::Result<()> {
+    fn register_receiver(&self, receiver: Arc<dyn ReceiverRevocation>) -> crate::Result<()> {
+        self.receivers.lock().unwrap().push(receiver);
         Ok(())
     }
     fn receiver_confirmed(&self, identity: &str) {
@@ -66,6 +73,13 @@ impl TransportAuthority for TestAuthority {
     }
     async fn revoked(&self) {
         let _ = self.revoked.subscribe().wait_for(|revoked| *revoked).await;
+    }
+    async fn record_failure(&self, failure: OwnershipFailure) {
+        self.failure.get_or_init(|| {
+            self.failure_before_revocation
+                .store(self.is_current(), Ordering::SeqCst);
+            failure
+        });
     }
     fn revoke(&self) {
         self.revoked.send_replace(true);

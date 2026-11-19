@@ -7,7 +7,7 @@ use axum::{
 use layer1_public::agent_v2::{router, AgentV2State};
 use tower::ServiceExt;
 
-struct Authority;
+pub(super) struct Authority;
 #[async_trait::async_trait]
 impl OrganizationAuthority for Authority {
     async fn organization_context(
@@ -59,7 +59,21 @@ impl Fixture {
     pub async fn new(rows: u64) -> Self {
         Self::with_owner_kind(rows, false).await
     }
+    pub async fn semantic(rows: u64) -> Self {
+        Self::with_history(rows, false, true, false).await
+    }
     pub async fn with_owner_kind(rows: u64, organization_owned: bool) -> Self {
+        Self::with_history(rows, organization_owned, false, false).await
+    }
+    pub async fn semantic_messages(rows: u64) -> Self {
+        Self::with_history(rows, false, true, true).await
+    }
+    async fn with_history(
+        rows: u64,
+        organization_owned: bool,
+        semantic: bool,
+        messages: bool,
+    ) -> Self {
         let meter = Arc::new(meter::Meter::default());
         let client = meter.client().await;
         let name = format!("cma_history_page_{}", uuid::Uuid::new_v4().simple());
@@ -75,7 +89,7 @@ impl Fixture {
             (1, 3, AgentCommand::message("Fixture request")),
             (
                 2,
-                4,
+                if semantic { 5 } else { 4 },
                 AgentCommand::Steer {
                     input: AgentInput::text("Fixture steering"),
                 },
@@ -138,13 +152,21 @@ impl Fixture {
                         commands[0].receipt.envelope.command_id
                     )),
                 },
-                4 => AgentLogKind::OperationDeliveryChanged {
-                    operation_sequence: 4,
-                    operation: AgentOperationKind::Steer,
-                    state: AgentOperationDelivery::DispatchFenced,
+                4 if semantic => AgentLogKind::OwnerMessage {
+                    content: "Fixture request".into(),
                 },
-                5 => AgentLogKind::OwnerMessage {
+                seq if seq == if semantic { 5 } else { 4 } => {
+                    AgentLogKind::OperationDeliveryChanged {
+                        operation_sequence: seq,
+                        operation: AgentOperationKind::Steer,
+                        state: AgentOperationDelivery::DispatchFenced,
+                    }
+                }
+                seq if seq == if semantic { 6 } else { 5 } => AgentLogKind::OwnerMessage {
                     content: "Fixture steering".into(),
+                },
+                _ if messages => AgentLogKind::AgentMessage {
+                    content: "retained output".into(),
                 },
                 _ => AgentLogKind::ModeChanged {
                     mode: "code".into(),
@@ -182,6 +204,19 @@ impl Fixture {
             meter,
         }
     }
+    pub fn reads(&self, access_session: bool) -> Arc<AgentReadService> {
+        let store = Arc::new(
+            self.store
+                .clone()
+                .with_access_snapshot_session(access_session),
+        );
+        let access = Arc::new(ResourceAccessService::new(
+            store.clone(),
+            Arc::new(Authority),
+        ));
+        AgentReadService::new(store, Arc::new(Resources)).with_resource_access(access)
+    }
+
     pub fn app(&self, access_session: bool, single_fence_pages: bool) -> Router {
         self.app_with_authority(access_session, single_fence_pages, Arc::new(Authority))
     }

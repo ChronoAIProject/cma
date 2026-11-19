@@ -1,7 +1,24 @@
 import type { AgentResourceState } from './controllerTypes';
-import type { AgentDetail, AgentStatus } from '../api/types';
+import { useMemo } from 'react';
+import type { AgentDetail, AgentStatus, AgentSummary } from '../api/types';
+import { observedActivity } from './activityStatus';
+import { currentAgentStatus } from './status';
 import { mergeRuntimeMetadata } from './runtimeMetadata';
 import type { AgentV2Session } from './transport/client';
+
+export function usePresentedAgent(state: AgentResourceState, summary?: AgentSummary) {
+  return useMemo(
+    () =>
+      presentAgent(
+        state,
+        state.status === 'ready'
+          ? currentAgentStatus(state.detail, state.conversation, summary)
+          : undefined,
+        summary,
+      ),
+    [state, summary],
+  );
+}
 
 export function presentRetainedInputs(v2?: AgentV2Session, legacy?: AgentV2Session) {
   const retained = v2?.pending();
@@ -49,13 +66,19 @@ function boundedTitle(value: string | undefined, limit = 64): string | undefined
 }
 
 /** Runtime notifications update visible metadata without a hierarchy refresh. */
-export function presentAgent(state: AgentResourceState, status?: AgentStatus): AgentResourceState {
+export function presentAgent(
+  state: AgentResourceState,
+  status?: AgentStatus,
+  summary?: AgentSummary,
+): AgentResourceState {
   if (state.status !== 'ready') return state;
+  const activityStatus = observedActivity(state, summary);
   const ownerTitle = state.conversation.ownerTitle ?? state.detail.ownerTitle;
   const title = state.conversation.title ?? state.detail.title;
   const saved = state.detail.runtimeMetadata;
   const runtimeMetadata = mergeRuntimeMetadata(saved, state.conversation.runtimeMetadata);
   if (
+    activityStatus === state.activityStatus &&
     (status === undefined || status === state.detail.status) &&
     runtimeMetadata === saved &&
     ownerTitle === state.detail.ownerTitle &&
@@ -64,6 +87,7 @@ export function presentAgent(state: AgentResourceState, status?: AgentStatus): A
     return state;
   return {
     ...state,
+    activityStatus,
     detail: {
       ...state.detail,
       status: status ?? state.detail.status,

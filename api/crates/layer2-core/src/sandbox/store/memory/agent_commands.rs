@@ -214,6 +214,17 @@ pub(super) fn reserve(
             return Err(CommandLedgerError::IdempotencyConflict);
         }
     }
+    if request.envelope.continuation.is_none() {
+        if let (Some(proof), Some(event)) =
+            (&request.binding, request.envelope.command.external_event())
+        {
+            if let Some(resets) = state.binding_resets.get(&proof.binding.binding_id) {
+                resets
+                    .require_input(proof, event)
+                    .map_err(|_| CommandLedgerError::Conflict)?;
+            }
+        }
+    }
     let agent = state
         .agents
         .get(&request.envelope.agent_id)

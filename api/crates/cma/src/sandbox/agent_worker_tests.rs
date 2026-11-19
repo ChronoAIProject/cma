@@ -45,8 +45,6 @@ use super::live_agents::{
     LiveAgentRegistryError, LiveAgentTarget,
 };
 
-const DEPLOYMENT_ID: &str = "lifecycle-test";
-
 pub(crate) mod context_overlap_fixture;
 mod fixture_store;
 use fixture_store::FixtureStore;
@@ -296,7 +294,25 @@ impl<S: FixtureStore> Harness<S> {
     }
 
     async fn run(&self, id: &AgentId, now: SystemTime) {
-        assert!(self.worker.run_one(id, now).await.unwrap());
+        let started = tokio::time::Instant::now();
+        let mut at = now;
+        for attempt in 1..=250 {
+            if self.worker.run_one(id, at).await.unwrap() {
+                return;
+            }
+            if attempt == 250 {
+                let agent = self.stored(id).await;
+                panic!(
+                    "agent {id:?} did no work: step={:?} ready_at={:?} lease={:?} now={now:?} elapsed={:?} attempts={attempt}",
+                    agent.work.step,
+                    agent.work.ready_at,
+                    agent.work.lease,
+                    started.elapsed()
+                );
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            at = now + started.elapsed();
+        }
     }
 
     async fn drive_ready(&self, id: &AgentId) -> Agent {
@@ -480,4 +496,4 @@ mod fixture_models;
 mod registry_cases;
 mod skill_resolution_cases;
 mod startup_cases;
-use fixture_models::{agent_profile, sandbox, sandbox_spec, workspace};
+use fixture_models::{agent_profile, sandbox, sandbox_spec, workspace, DEPLOYMENT_ID};

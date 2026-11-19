@@ -113,7 +113,7 @@ pub(super) async fn prepare<S: FixtureStore>(h: &Harness<S>, step: AgentWorkStep
             "request_rejected",
             "synthetic rejection",
         );
-        h.run(&agent.id, at).await;
+        assert!(h.worker.run_one(&agent.id, at).await.unwrap());
         let failed = h.stored(&agent.id).await;
         assert_eq!(failed.status, AgentStatus::Failed);
         h.store

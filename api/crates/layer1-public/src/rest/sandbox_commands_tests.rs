@@ -63,6 +63,7 @@ impl AgentCommandAdmissionAuthority for Custody {
     ) -> Result<AgentAuthorizationRevision, CommandAuthorizationError> {
         self.0.lock().unwrap().clone()?;
         Ok(AgentAuthorizationRevision {
+            replay_principal: None,
             authority_id: "private-sign-in-reference".into(),
             policy_revision: 1,
             grant_revision: None,

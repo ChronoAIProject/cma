@@ -46,6 +46,26 @@ impl Store {
         key: &str,
         payload: &Payload,
     ) -> Result<Root, ExecutionError> {
+        self.admit_inner(plan, target, key, payload, true).await
+    }
+    #[cfg(test)]
+    pub async fn admit_legacy(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        key: &str,
+        payload: &Payload,
+    ) -> Result<Root, ExecutionError> {
+        self.admit_inner(plan, target, key, payload, false).await
+    }
+    async fn admit_inner(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        key: &str,
+        payload: &Payload,
+        select_lane: bool,
+    ) -> Result<Root, ExecutionError> {
         let operation = operation(target, payload, key)?;
         let id = work_id(&operation);
         let content_hash = storage::hash(&storage::bytes(&payload.message)?);
@@ -70,6 +90,21 @@ impl Store {
             version: 1,
         };
         root.validate(plan, target)?;
+        if select_lane {
+            match self
+                .0
+                .partitions
+                .as_ref()
+                .ok_or(ExecutionError::Unsupported)?
+                .reserve_delayed(plan, target, &root.id, &root.content_hash)
+                .await?
+            {
+                crate::replicas::DelayedReservation::Ready => {}
+                crate::replicas::DelayedReservation::Conflict => {
+                    return Err(ExecutionError::IdempotencyConflict)
+                }
+            }
+        }
         for (index, data) in bytes.chunks(CHUNK_BYTES).enumerate() {
             let chunk = Chunk {
                 kind: format!("{KIND}_chunk"),
@@ -88,17 +123,47 @@ impl Store {
                 )
                 .await?;
         }
-        let write = self
-            .0
-            .write_effect_root(&root.id, &root.identity.owner, root.retained_until, &root)
-            .await;
+        let write = if select_lane {
+            self.0
+                .admit_delayed_root(plan, target, &root.id, &root)
+                .await
+        } else {
+            self.0
+                .write_effect_root(&root.id, &root.identity.owner, root.retained_until, &root)
+                .await
+                .map(|_| ())
+        };
         // A lost create acknowledgement grants custody only after the exact root
         // and immutable payload are visible; it never grants send authority.
-        let committed = self.read(&root.id, plan, target).await?;
+        let committed = if matches!(
+            &write,
+            Err(ExecutionError::Busy | ExecutionError::Unavailable | ExecutionError::Uncertain)
+        ) {
+            self.read_admitted(&root.id, plan, target).await?
+        } else {
+            self.read(&root.id, plan, target).await?
+        };
         match committed {
             Some(committed) => same(committed, &operation, &content_hash),
-            None => Err(write.err().unwrap_or(ExecutionError::Uncertain)),
+            // Busy means admitted without a receipt. Root publication contention
+            // alone is no proof of admission; keep it a transient 503 instead.
+            None => Err(match write {
+                Ok(()) | Err(ExecutionError::Busy) => ExecutionError::Uncertain,
+                Err(error) => error,
+            }),
         }
+    }
+    async fn read_admitted(
+        &self,
+        id: &str,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+    ) -> Result<Option<Root>, ExecutionError> {
+        crate::readback::bounded(
+            || self.read(id, plan, target),
+            || ExecutionError::Unavailable,
+        )
+        .await
     }
     pub async fn payload(&self, root: &Root) -> Result<Payload, ExecutionError> {
         let mut bytes = Vec::with_capacity(root.bytes);

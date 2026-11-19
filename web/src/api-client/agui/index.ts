@@ -175,6 +175,7 @@ async function* completeProjections(
 ): AsyncGenerator<readonly AgentConversationEvent[]> {
   let pending: AgentConversationEvent[] = [];
   let bytes = 0;
+  let units = 0;
   for await (const event of stream) {
     if (
       event['cma:live'] === true ||
@@ -184,13 +185,26 @@ async function* completeProjections(
       continue;
     }
     bytes += new TextEncoder().encode(JSON.stringify(event)).byteLength;
-    if (pending.length >= 32 || bytes > 4 * 1024 * 1024)
+    const previous = pending.at(-1);
+    const continuedText =
+      previous?.type === 'TEXT_MESSAGE_CONTENT' &&
+      event.type === 'TEXT_MESSAGE_CONTENT' &&
+      typeof event.messageId === 'string' &&
+      event.messageId === previous.messageId &&
+      event.runId === previous.runId &&
+      typeof event.delta === 'string' &&
+      event.cursor === undefined;
+    if (!continuedText) units += 1;
+    // One committed text record may span many bounded CONTENT frames. Keep
+    // every frame for ordered callbacks; unrelated events still cost a unit.
+    if (units > 32 || pending.length >= 512 || bytes > 4 * 1024 * 1024)
       throw new ProtocolError('AG-UI durable projection exceeds its boundary');
     pending.push(event);
     if (event.cursor !== undefined) {
       yield pending;
       pending = [];
       bytes = 0;
+      units = 0;
     }
   }
   if (pending.length > 0)

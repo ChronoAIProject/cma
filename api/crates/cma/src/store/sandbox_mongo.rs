@@ -68,6 +68,9 @@ use collections::SANDBOX_COLLECTIONS;
 /// share a client session and therefore a real Mongo transaction.
 #[derive(Clone)]
 pub struct MongoSandboxStore {
+    pub(super) ownership_retry_hints_enabled: bool,
+    #[cfg(test)]
+    pub(super) ownership_retry_hint_now: Option<mongodb::bson::DateTime>,
     pub(super) empty_discovery: super::empty_discovery::Policy,
     pub(super) agent_connection_observations:
         Option<std::sync::Arc<super::agent_connection_observations::Observations>>,
@@ -92,6 +95,7 @@ pub struct MongoSandboxStore {
     pub(super) bounded_transcript_reads: bool,
     pub(super) bounded_usage_reads: bool,
     pub(super) access_snapshot_session: bool,
+    pub(super) resource_list_batch_reads: bool,
     pub(super) sandbox_agent_projection: bool,
     pub(super) sandbox_snapshot_reads: bool,
     pub(super) sandbox_batched_reads: bool,
@@ -181,10 +185,26 @@ impl MongoSandboxStore {
         Self::open_with_storage(client, name, super::checkpoint_storage::test_storage(name)).await
     }
 
+    #[cfg(test)]
     pub(super) async fn open_with_storage(
         client: &Client,
         name: &str,
         objects: std::sync::Arc<dyn super::CheckpointBlobStore>,
+    ) -> Result<Self, StoreError> {
+        Self::open_with_schema(
+            client,
+            name,
+            objects,
+            &mut super::schema::StartupObserver::new(Default::default()),
+        )
+        .await
+    }
+
+    pub(super) async fn open_with_schema(
+        client: &Client,
+        name: &str,
+        objects: std::sync::Arc<dyn super::CheckpointBlobStore>,
+        observer: &mut super::schema::StartupObserver,
     ) -> Result<Self, StoreError> {
         let database = client.database(name);
         require_transaction_topology(&database).await?;
@@ -214,12 +234,13 @@ impl MongoSandboxStore {
             bounded_transcript_reads: false,
             bounded_usage_reads: false,
             access_snapshot_session: false,
+            resource_list_batch_reads: false,
             sandbox_agent_projection: false,
             sandbox_snapshot_reads: false,
             sandbox_batched_reads: false,
             bounded_response_reads: false,
             writer_policy: Default::default(),
-            bindings: super::bindings::BindingCollections::open(&database).await?,
+            bindings: super::bindings::BindingCollections::open(&database, observer).await?,
             client: client.clone(),
             checkpoint_objects,
             sandboxes: majority_collection(&database, SANDBOXES),
@@ -234,6 +255,9 @@ impl MongoSandboxStore {
             agent_writes: Default::default(),
             agent_control_write_coordination: false,
             agent_ownership: None,
+            ownership_retry_hints_enabled: false,
+            #[cfg(test)]
+            ownership_retry_hint_now: None,
             agent_manager_instance: None,
             platform: Default::default(),
             agent_access_tools: majority_collection(

@@ -36,6 +36,7 @@ mod routing;
 mod routing_tests;
 pub use routing::{BindingEventRouter, BindingRouteError};
 mod sender_context;
+mod shared_projection;
 mod stream;
 mod stream_pages;
 #[cfg(test)]
@@ -180,3 +181,6 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
     struct Api;
     Api::openapi()
 }
+
+#[cfg(test)]
+mod reset_tests;

@@ -9,6 +9,14 @@ use crate::{SandboxId, SubjectId};
 
 #[async_trait]
 pub trait SandboxStore: Send + Sync {
+    /// Read compatible history for this exact failed aggregate; never backfill it.
+    async fn failed_lifecycle_admission(
+        &self,
+        _sandbox: &Sandbox,
+    ) -> Result<Option<crate::sandbox::SandboxLifecycleAdmission>, SandboxStoreError> {
+        Ok(None)
+    }
+
     /// Original atomic retirement admission, independent of worker retries.
     async fn retirement_admitted_at(
         &self,

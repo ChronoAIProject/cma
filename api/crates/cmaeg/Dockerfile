@@ -2,7 +2,7 @@
 # Optional local-preview callers supply their qualified base through this argument.
 # The public default contains no private registry identity.
 ARG CMAEG_LOCAL_PREVIEW_BASE=alpine:3.22
-FROM --platform=$BUILDPLATFORM golang:1.26.10-alpine3.23@sha256:a07f231c19b03e6106cf442f02a5bcf262147e744d15b7b5e4b6d81d420c70a0 AS secret-scanner-build
+FROM --platform=$BUILDPLATFORM golang:1.26.11-alpine3.23@sha256:23f198931d4bd83b4f5a613bd75656257ae8bf832dcbc2db80e1050b5219ca2a AS secret-scanner-build
 ARG TARGETOS
 ARG TARGETARCH
 ENV GOTOOLCHAIN=local GOENV=off GOTELEMETRY=off \
@@ -16,7 +16,7 @@ case "${TARGETOS}/${TARGETARCH}" in
   linux/amd64|linux/arm64) ;;
   *) echo 'unsupported secret-scanner platform' >&2; exit 1 ;;
 esac
-test "$(go env GOVERSION)" = 'go1.26.10'
+test "$(go env GOVERSION)" = 'go1.26.11'
 export GOOS="${TARGETOS}" GOARCH="${TARGETARCH}"
 apk add --no-cache ca-certificates curl
 curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
@@ -40,7 +40,7 @@ printf '%s\n' \
   'source=https://github.com/gitleaks/gitleaks' \
   'revision=83d9cd684c87d95d656c1458ef04895a7f1cbd8e' \
   'archive.sha256=6b2638a733b85619dc80bdf28e84e4fed7e526a761ab5c148fbf67695aea2115' \
-  'builder=golang:1.26.10-alpine3.23@sha256:a07f231c19b03e6106cf442f02a5bcf262147e744d15b7b5e4b6d81d420c70a0' \
+  'builder=golang:1.26.11-alpine3.23@sha256:23f198931d4bd83b4f5a613bd75656257ae8bf832dcbc2db80e1050b5219ca2a' \
   > /usr/local/share/gitleaks/source.txt
 PREPARE_SCANNER
 
@@ -85,6 +85,23 @@ RUN set -eu; \
     echo "${want}  /usr/local/bin/codex-native" | sha256sum -c -; \
     test "$(/usr/local/bin/codex-native --version)" = "codex-cli ${CODEX_VERSION}"
 
+# Compile dependency objects in an exportable layer. Cache mounts alone are
+# not part of BuildKit's layer export on a fresh runner.
+FROM rust:1.96.1-alpine AS chef
+RUN apk add --no-cache musl-dev
+WORKDIR /build
+COPY api/rust-toolchain.toml ./
+RUN cargo install --locked --version 0.1.78 cargo-chef
+
+FROM chef AS planner
+COPY api/ ./
+RUN cargo chef prepare --recipe-path /recipe.json
+
+FROM chef AS dependencies
+COPY --from=planner /recipe.json /recipe.json
+RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,sharing=locked \
+    cargo chef cook --release --locked --bin cmaeg --recipe-path /recipe.json
+
 FROM rust:1.96.1-alpine AS build
 RUN apk add --no-cache musl-dev
 WORKDIR /build
@@ -92,13 +109,49 @@ COPY api/ ./
 ARG TARGETARCH
 ARG CHRONO_BUILD=development
 ARG CHRONO_BUILD_SHA=development
+# Archived source can predate restored Cargo fingerprints. Rebuild workspace
+# artifacts, retaining Rust's incremental state for its source checks.
 RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cma-api-target-${TARGETARCH},target=/build/target,sharing=locked \
-    CHRONO_BUILD="${CHRONO_BUILD}" \
+    --mount=type=bind,from=dependencies,source=/build/target,target=/dependency-target \
+    cp -a /dependency-target/. /build/target/ \
+    && if test -d target/release/incremental; then rm -rf target/release-incremental; mv target/release/incremental target/release-incremental; fi \
+    && cargo clean --release --workspace --locked \
+    && if test -d target/release-incremental; then mkdir -p target/release; rm -rf target/release/incremental; mv target/release-incremental target/release/incremental; fi \
+    && CARGO_INCREMENTAL=1 CHRONO_BUILD="${CHRONO_BUILD}" \
     CHRONO_BUILD_SHA="${CHRONO_BUILD_SHA}" \
     cargo build --release --locked --bin cmaeg \
+      --config profile.release.package.cmaeg.codegen-units=256 \
     && mkdir /out \
     && cp /build/target/release/cmaeg /out/cmaeg
+# Transfer incremental state only; dependency objects come from the chef layer.
+# After Cargo exits, retain the newest completed compiler session per crate.
+# Rust may leave the preceding session alongside it, doubling archive size.
+RUN --mount=type=cache,id=cma-api-target-${TARGETARCH},target=/build/target,sharing=locked <<'CACHE_TRIM'
+set -eu
+if test -d target/release/incremental; then
+    rm -rf target/release-incremental
+    mv target/release/incremental target/release-incremental
+fi
+rm -rf target/release
+if test -d target/release-incremental; then
+    mkdir -p target/release
+    mv target/release-incremental target/release/incremental
+fi
+for crate in target/release/incremental/*; do
+    test -d "$crate" || continue
+    newest=
+    for state in "$crate"/s-*; do
+        case "$state" in *-working) continue ;; esac
+        test -f "$state/work-products.bin" || continue
+        if test -z "$newest" || test "$state/work-products.bin" -nt "$newest/work-products.bin"; then newest=$state; fi
+    done
+    test -n "$newest" || continue
+    for state in "$crate"/s-*; do
+        if test -d "$state" && test "$state" != "$newest"; then rm -rf "$state"; fi
+    done
+done
+CACHE_TRIM
 # Qualify the actual linked allocator. Static musl ELF metadata alone does not
 # exclude a cross-linker's replacement malloc retaining freed small blocks.
 RUN --network=none /out/cmaeg --allocator-self-test
@@ -215,7 +268,8 @@ COPY --from=local-binary --chmod=0755 /cmaeg /usr/local/bin/cmaeg
 FROM alpine:3.22 AS runtime
 ARG CHRONO_BUILD=development
 ARG CHRONO_BUILD_SHA=development
-LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
+LABEL org.opencontainers.image.title="CMA Event Gateway" \
+      org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
       org.opencontainers.image.revision="${CHRONO_BUILD_SHA}" \
       org.opencontainers.image.version="${CHRONO_BUILD}"
 # Pull security fixes published after the base image was cut. ca-certificates is

@@ -9,7 +9,6 @@ import {
 } from '../sandbox/lifecycle';
 import type { AppRoute } from '../routing/routes';
 import { toneDot } from '../ui/Badge';
-import { Button } from '../ui/Button';
 import {
   IconBranchOutline16,
   IconChevronDownOutline14,
@@ -26,6 +25,8 @@ import './Tree.css';
 import { statusLabel } from '../vocabulary/status';
 import { activityLabel, agentSignal, stateMeta, keyboardNavigation } from './treePresentation';
 import { PersonalAgentTree } from './PersonalAgentTree';
+import { DeletionProgressList } from './DeletionProgressList';
+import type { CurrentTask } from './taskStatus';
 export { activityLabel } from './treePresentation';
 import type { ResourceViewsClient } from '../resources/client';
 import { useChannelFacts } from '../resources/useChannelFacts';
@@ -56,6 +57,7 @@ export type TreeAction =
   | { readonly kind: 'export_history'; readonly agentId: string };
 
 export interface TreeProps {
+  readonly currentTask?: CurrentTask;
   readonly active?: boolean;
   readonly resourceClient?: ResourceViewsClient;
   readonly viewerId: string;
@@ -92,6 +94,7 @@ function restored(viewerId: string): Set<string> {
 }
 
 export function Tree({
+  currentTask,
   active = true,
   resourceClient,
   viewerId,
@@ -154,25 +157,12 @@ export function Tree({
 
   return (
     <div className="resource-tree">
-      {deletingItems.length === 0 ? null : (
-        <details className="resource-tree__notice">
-          <summary>Deletion progress ({deletingItems.length})</summary>
-          {deletingItems.map(({ sandbox }) => (
-            <Button
-              key={sandbox.id}
-              size="sm"
-              aria-label={`Deletion status for ${sandbox.name}`}
-              onClick={() =>
-                onViewDeletion
-                  ? onViewDeletion(sandbox.id)
-                  : onNavigate({ kind: 'sandbox', sandboxId: sandbox.id })
-              }
-            >
-              {sandbox.name}
-            </Button>
-          ))}
-        </details>
-      )}
+      <DeletionProgressList
+        sandboxes={deletingItems.map(({ sandbox }) => sandbox)}
+        onViewStatus={(id) =>
+          onViewDeletion ? onViewDeletion(id) : onNavigate({ kind: 'sandbox', sandboxId: id })
+        }
+      />
       <Presence>
         {refreshError === undefined ? null : (
           <p className="resource-tree__notice" role="alert">
@@ -182,6 +172,7 @@ export function Tree({
       </Presence>
       {view === 'agent' ? (
         <PersonalAgentTree
+          currentTask={currentTask}
           active={active}
           items={visibleItems}
           statusFilter={statusFilter}

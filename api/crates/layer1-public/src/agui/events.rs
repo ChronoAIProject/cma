@@ -34,6 +34,14 @@ impl AguiEvent {
 }
 
 pub(super) fn project(entry: &AgentLogEntry, turn: u64) -> Vec<AguiEvent> {
+    project_with_chunks(entry, turn, false)
+}
+
+pub(super) fn project_bounded(entry: &AgentLogEntry, turn: u64) -> Vec<AguiEvent> {
+    project_with_chunks(entry, turn, true)
+}
+
+fn project_with_chunks(entry: &AgentLogEntry, turn: u64, bounded: bool) -> Vec<AguiEvent> {
     let make = |kind, body| AguiEvent {
         kind,
         thread_id: entry.agent_id.to_string(),
@@ -60,14 +68,34 @@ pub(super) fn project(entry: &AgentLogEntry, turn: u64) -> Vec<AguiEvent> {
                 "assistant"
             };
             let id = format!("msg_{}", entry.seq);
-            vec![
-                make("TEXT_MESSAGE_START", json!({"messageId": id, "role": role})),
-                make(
+            let mut frames = vec![make(
+                "TEXT_MESSAGE_START",
+                json!({"messageId": id, "role": role}),
+            )];
+            let mut remaining = content.as_str();
+            loop {
+                // Even six-byte JSON escaping stays below the client frame
+                // ceiling. Split only on UTF-8 boundaries and acknowledge the
+                // original durable event once, on its final END frame.
+                let mut end = if bounded {
+                    remaining.len().min(8 * 1024)
+                } else {
+                    remaining.len()
+                };
+                while !remaining.is_char_boundary(end) {
+                    end -= 1;
+                }
+                frames.push(make(
                     "TEXT_MESSAGE_CONTENT",
-                    json!({"messageId": id, "delta": content}),
-                ),
-                make("TEXT_MESSAGE_END", json!({"messageId": id})),
-            ]
+                    json!({"messageId": id, "delta": &remaining[..end]}),
+                ));
+                remaining = &remaining[end..];
+                if remaining.is_empty() {
+                    break;
+                }
+            }
+            frames.push(make("TEXT_MESSAGE_END", json!({"messageId": id})));
+            frames
         }
         AgentLogKind::TurnCompleted { .. } => vec![make(
             "RUN_FINISHED",

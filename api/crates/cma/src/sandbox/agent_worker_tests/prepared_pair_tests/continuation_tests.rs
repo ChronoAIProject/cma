@@ -242,9 +242,11 @@ async fn prepared_continuation_retains_open_debt_when_fresh_command_authority_fa
     assert_eq!(pending.work.receipts.len(), 2);
     assert_eq!(pending.work.cleanup_debt.len(), 1);
     assert!(pending.conversation.conversation_id.is_none());
-    harness
-        .run(&agent.id, harness.now + Duration::from_secs(2))
-        .await;
+    assert!(harness
+        .worker
+        .run_one(&agent.id, harness.now + Duration::from_secs(2))
+        .await
+        .unwrap());
     assert_eq!(adapter.inspections.load(Ordering::SeqCst), 2);
     let current = harness.stored(&agent.id).await;
     assert_eq!(current.work.step, AgentWorkStep::PublishReady);

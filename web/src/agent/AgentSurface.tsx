@@ -238,6 +238,7 @@ export function AgentSurface({
           onFilesOpenChange={accessUncertain ? undefined : onFilesOpenChange}
           title={title}
           status={status}
+          activityStatus={state.activityStatus}
           headingRef={headingRef}
           viewerId={viewerId}
           branch={readOnly ? undefined : detail.worktree.branch}

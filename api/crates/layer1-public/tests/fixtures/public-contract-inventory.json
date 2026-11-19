@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 294,
+  "openapi_operations": 297,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -4038,6 +4038,37 @@
         "authentication_required",
         "response_not_found",
         "invalid_retained_output_cursor"
+      ]
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/reset.rs# Explicit owner reset retains predecessor history and authenticates both target and idempotency scope.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "invalid_binding",
+        "partition_reset_key_conflict"
+      ]
+    },
+    "GET /api/v1/admin/spend": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/spend.rs# Existing operator spend handlers preserve capability, availability, validation and write-gate precedence.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "platform_spend_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/spend/observations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/spend.rs# Existing operator spend handlers preserve capability, availability, validation and write-gate precedence.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_request",
+        "model_budget_writes_unavailable",
+        "platform_spend_unavailable"
       ]
     }
   },

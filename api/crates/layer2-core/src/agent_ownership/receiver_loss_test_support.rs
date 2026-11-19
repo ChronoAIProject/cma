@@ -36,6 +36,10 @@ impl ReceiverRevocation for Receiver {
 pub(super) struct Store {
     pub(super) inner: Arc<MemoryOwnershipStore>,
     pub(super) pause_next: AtomicBool,
+    pub(super) pause_failure: AtomicBool,
+    pub(super) failure_entered: Notify,
+    pub(super) failure_resume: Notify,
+    pub(super) failure_writes: AtomicUsize,
     pub(super) renew_before_pause: bool,
     pub(super) entered: Notify,
     pub(super) resume: Notify,
@@ -46,6 +50,10 @@ pub(super) struct Store {
 
 #[async_trait::async_trait]
 impl OwnershipStore for Store {
+    fn receiver_diagnostics_enabled(&self) -> bool {
+        self.inner.receiver_diagnostics_enabled()
+    }
+
     async fn register(&self, member: Member) -> Result<Membership, OwnershipError> {
         self.inner.register(member).await
     }
@@ -101,6 +109,18 @@ impl OwnershipStore for Store {
     async fn release(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
         self.inner.release(token).await
     }
+    async fn record_receiver_failure(
+        &self,
+        token: &OwnershipToken,
+        failure: OwnershipFailure,
+    ) -> Result<(), OwnershipError> {
+        self.failure_writes.fetch_add(1, Ordering::SeqCst);
+        if self.pause_failure.swap(false, Ordering::SeqCst) {
+            self.failure_entered.notify_one();
+            self.failure_resume.notified().await;
+        }
+        self.inner.record_receiver_failure(token, failure).await
+    }
     async fn check(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
         self.inner.check(token).await
     }
@@ -139,6 +159,10 @@ impl Fixture {
         let store = Arc::new(Store {
             inner: inner.clone(),
             pause_next: AtomicBool::new(false),
+            pause_failure: AtomicBool::new(false),
+            failure_entered: Notify::new(),
+            failure_resume: Notify::new(),
+            failure_writes: AtomicUsize::new(0),
             renew_before_pause,
             entered: Notify::new(),
             resume: Notify::new(),

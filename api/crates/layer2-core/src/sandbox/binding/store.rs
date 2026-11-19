@@ -7,6 +7,30 @@ use crate::sandbox::store::SandboxStoreError;
 /// additionally fences the exact parent revision in the same transaction.
 #[async_trait::async_trait]
 pub trait BindingStore: Send + Sync {
+    async fn conversation_reset_state(
+        &self,
+        binding: &str,
+    ) -> Result<super::ConversationResetState, SandboxStoreError> {
+        let binding = self
+            .binding(binding)
+            .await?
+            .ok_or(SandboxStoreError::NotFound)?;
+        if binding.reset_format.is_some() {
+            return Err(SandboxStoreError::Unavailable(
+                "conversation reset reader unavailable".into(),
+            ));
+        }
+        Ok(Default::default())
+    }
+    async fn reset_binding_conversation(
+        &self,
+        _request: super::ConversationResetRequest,
+        _enabled: bool,
+    ) -> Result<super::ConversationResetReceipt, super::BindingError> {
+        Err(super::BindingError::ResetRefused(
+            "partition_reset_unsupported",
+        ))
+    }
     /// Current and retained former binding keys cannot acquire ambient authority.
     async fn contains_key_hash(&self, hash: &str) -> Result<bool, SandboxStoreError>;
     /// Fresh classification for an external security decision. Implementations
@@ -78,6 +102,7 @@ pub fn validate_binding_write(
             if next.revision == 1
                 && next.generation == 1
                 && next.generation_guard.is_none()
+                && next.reset_format.is_none()
                 && next.previous.is_none()
                 && (matches!(
                     (&next.state, next.work),
@@ -102,6 +127,7 @@ pub fn validate_binding_write(
                 || current.existing_agent != next.existing_agent
                 || current.created_at != next.created_at
                 || current.generation_guard != next.generation_guard
+                || current.reset_format != next.reset_format
                 || crate::seconds_from_rfc3339(&next.updated_at)
                     < crate::seconds_from_rfc3339(&current.updated_at)
                 || (current.state == BindingState::Retired && next.state != BindingState::Retired)
@@ -246,10 +272,11 @@ pub fn binding_is_recovery_candidate(binding: &ProviderBinding) -> bool {
 }
 
 pub fn conversation_storage_key(value: &BindingConversation) -> String {
-    format!(
-        "{}:{:020}:{}",
-        value.binding_id, value.generation, value.conversation_id
-    )
+    conversation_storage_key_for(&value.binding_id, value.generation, &value.conversation_id)
+}
+
+pub fn conversation_storage_key_for(binding: &str, generation: u64, conversation: &str) -> String {
+    format!("{binding}:{generation:020}:{conversation}")
 }
 
 pub fn conversation_has_work(value: &BindingConversation) -> bool {

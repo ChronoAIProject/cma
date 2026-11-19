@@ -99,6 +99,7 @@ impl CommandReservation {
 
 fn authority(id: &str, generation: u64) -> AgentAuthorizationRevision {
     AgentAuthorizationRevision {
+        replay_principal: None,
         authority_id: format!("binding:{id}"),
         policy_revision: 1,
         grant_revision: Some(generation),

@@ -2,25 +2,31 @@
 import os
 
 from staging_cd_admission import event_identity, maintainer_dispatch
-from staging_cd_common import matches, require
+from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHub
 from staging_cd_receipts import canonical, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_runtime import run_private
+from staging_cd_targets import RUNTIME_TARGETS, TARGETS
 from staging_cd_versions import DEPLOYABLES, version_tuple
+from staging_cd_watermark import record_withheld
+
+
+class ObsoleteSource(Refusal):
+    """Verified first-parent evidence identifies a newer published source."""
 
 
 def components(value):
     require(isinstance(value, str), "Redeployment components must be comma-separated")
     selected = value.split(",")
-    require(1 <= len(selected) <= 3 and len(set(selected)) == len(selected)
-            and all(item in ("am", "eg", "web") for item in selected),
+    require(1 <= len(selected) <= len(TARGETS) and len(set(selected)) == len(selected)
+            and all(item in TARGETS for item in selected),
             "Redeployment components are invalid or repeated")
     return sorted(selected)
 
 
 def resolve(component, version, tags, registry, history):
-    require(component in ("am", "eg", "web"), "Redeployment component is not allowed")
+    require(component in TARGETS, "Redeployment component is not allowed")
     prefix = DEPLOYABLES[component] + "/v"
     candidates = [tag for tag in tags if tag["name"].startswith(prefix)]
     require(bool(candidates), "No published component version exists")
@@ -38,6 +44,10 @@ def resolve(component, version, tags, registry, history):
         selected = [tag for tag in candidates if tag["name"] == prefix + version]
         require(len(selected) == 1, "Requested published version is absent or ambiguous")
         tag = selected[0]
+    if component in RUNTIME_TARGETS:
+        newest = max(candidates, key=lambda item: history.position(item["target"]))
+        if tag["target"] != newest["target"]:
+            raise ObsoleteSource("Superseded runtime source cannot be promoted")
     receipt = tag["receipt"]
     require(registry.exists(receipt["repository"], receipt["digest"]) is True,
             "Published digest is not publicly available")
@@ -52,10 +62,10 @@ def verify(receipt, tags, registry, history, *, automatic):
     component = receipt["identity"]["component"]
     expected = resolve(component, receipt["identity"]["version"], tags, registry, history)
     require(expected == receipt, "Deployment receipt no longer matches the immutable version")
-    if automatic:
+    if automatic or component in RUNTIME_TARGETS:
         latest = resolve(component, "latest", tags, registry, history)
-        require(latest["source"] == receipt["source"],
-                "Obsolete automatic deployment cannot replace a newer published source")
+        if latest["source"] != receipt["source"]:
+            raise ObsoleteSource("Obsolete automatic deployment cannot replace a newer published source")
     return receipt
 
 
@@ -68,8 +78,16 @@ def output(env, name, value):
 
 def main():
     # Import here so the set adapter can reuse the single-receipt verifier.
-    from staging_cd_clock import dispatch_started, elapsed, remaining, run_created, timestamp
-    from staging_cd_set import automatic_set, dispatch_set, document, verify_set
+    from staging_cd_admission_report import write_admission
+    from staging_cd_clock import (
+        dispatch_started,
+        elapsed,
+        remaining,
+        run_created,
+        timestamp,
+    )
+    from staging_cd_component_admission import automatic_admission
+    from staging_cd_set import dispatch_set, document, verify_set
     env = os.environ
     def operation(_masker):
         api, registry = GitHub(env.get("GH_TOKEN")), Registry()
@@ -77,33 +95,43 @@ def main():
         command = env.get("CD_RESOLVE_MODE")
         if command == "dispatch":
             inputs = maintainer_dispatch(env, api.request)
-            started = dispatch_started(env, api.request)
+            started = dispatch_started(env, api.request, inputs.get("mode", "release"))
             mode, value = dispatch_set(inputs, api, registry)
-            remaining(started)
+            remaining(started, mode=mode)
         elif command == "automatic":
             require(env["GITHUB_EVENT_NAME"] == "push", "Automatic set requires a develop push")
-            value = automatic_set(document(env["CD_PUBLICATION_MATRIX"]), api, registry)
+            matrix = document(env["CD_PUBLICATION_MATRIX"])
+            value, failures = automatic_admission(matrix, api, registry)
+            if "CD_PROMOTION_LANE" in env:
+                from staging_cd_routes import check_lane
+                check_lane(env["CD_PROMOTION_LANE"], matrix, value, failures)
+            output(env, "admitted", canonical(sorted(value["receipts"]) if value else []))
+            output(env, "failures", canonical(failures))
             output(env, "changed", "true" if value else "false")
+            started = timestamp() if value else None
+            selected = set(failures) | (set(value["receipts"]) if value else set())
+            write_admission(env, selected, value, failures, started)
             if value is None:
                 return True
             publication_started = run_created(env, api.request)
-            mode, started = "release", timestamp()
+            mode = "release"
             if env.get("GITHUB_STEP_SUMMARY"):
                 with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
                     stream.write(f"Publication-and-preparation seconds: {elapsed(publication_started):.2f}\n")
         elif command == "verify":
             started, mode = env.get("CD_STARTED_AT"), env.get("CD_DEPLOY_MODE")
-            remaining(started)
+            remaining(started, mode=mode)
             inputs = maintainer_dispatch(env, api.request) if env["GITHUB_EVENT_NAME"] == "workflow_dispatch" else None
             if inputs is not None:
                 # A retry retains the run-created timestamp, never run_started_at.
-                require(started == dispatch_started(env, api.request), "Dispatch admission time changed")
+                require(started == dispatch_started(env, api.request, mode), "Dispatch admission time changed")
                 require(mode == inputs.get("mode", "release"), "Dispatch mode changed")
             else:
                 require(mode == "release", "Automatic bootstrap is forbidden")
-            value = verify_set(document(env["CD_RELEASE_SET"]), api, registry,
-                               automatic=inputs is None, inputs=inputs)
-            remaining(started)
+            admitted = document(env["CD_RELEASE_SET"])
+            value = verify_set(admitted, api, registry, automatic=inputs is None, inputs=inputs)
+            record_withheld(env, admitted["receipts"], value["receipts"])
+            remaining(started, mode=mode)
         else:
             return False
         output(env, "release_set", canonical(value))

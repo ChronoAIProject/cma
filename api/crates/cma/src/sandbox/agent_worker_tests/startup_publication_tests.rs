@@ -312,9 +312,11 @@ async fn completed_step_with_first_prompt(
     );
     let native_id = completed.conversation.conversation_id.clone();
     for _ in 0..5 - prior_steps {
-        harness
-            .run(&agent.id, harness.now + Duration::from_secs(2))
-            .await;
+        assert!(harness
+            .worker
+            .run_one(&agent.id, harness.now + Duration::from_secs(2))
+            .await
+            .unwrap());
     }
     let dispatched = harness.stored(&agent.id).await;
     let first = dispatched.conversation.first_message.as_ref().unwrap();

@@ -63,7 +63,7 @@ describe('ToolCallRow', () => {
     expect(screen.getByText('Output truncated')).toBeVisible();
   });
 
-  it('jumps to Terminal without expanding or collapsing the command', () => {
+  it('jumps to Operations without expanding or collapsing the command', () => {
     const open = vi.fn();
     const computer = new AgentComputerObservation({ client: {}, subject: 'owner' }, open);
     render(
@@ -73,12 +73,12 @@ describe('ToolCallRow', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Ran 1 command' }));
     const command = screen.getByRole('button', { name: /Call a/ });
-    fireEvent.click(screen.getByRole('button', { name: 'View in Terminal' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View in Operations' }));
     expect(command).toHaveAttribute('aria-expanded', 'false');
     expect(computer.terminalSnapshot()?.id).toBe('a');
     expect(open).toHaveBeenCalledOnce();
     fireEvent.click(command);
-    fireEvent.click(screen.getByRole('button', { name: 'View in Terminal' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View in Operations' }));
     expect(command).toHaveAttribute('aria-expanded', 'true');
   });
 });

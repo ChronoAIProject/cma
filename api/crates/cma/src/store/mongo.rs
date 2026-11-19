@@ -15,6 +15,8 @@ use super::{
 pub(crate) struct MongoConnectionPolicy {
     pub authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     pub agent_manager_replicas: bool,
+    pub startup_schema: crate::config::StartupSchemaMode,
+    pub shared_observation: bool,
 }
 
 /// Aggregate-neutral stores opened atomically at process startup.
@@ -136,6 +138,8 @@ impl MongoStores {
             MongoConnectionPolicy {
                 authority,
                 agent_manager_replicas: false,
+                startup_schema: Default::default(),
+                shared_observation: false,
             },
         )
         .await
@@ -159,18 +163,25 @@ impl MongoStores {
             policy.agent_manager_replicas,
         )
         .await?;
-        Self::open(
+        if policy.shared_observation {
+            super::isolation::verify_observation(&client.database(database)).await?;
+        }
+        Self::open_configured(
             client,
             database,
             deployment,
             auth_encryption_key,
             activity_retention,
-            Arc::new(super::checkpoint_storage::RetiredCheckpointStorage),
-            runtime,
+            StoreStartup {
+                checkpoint_storage: Arc::new(super::checkpoint_storage::RetiredCheckpointStorage),
+                runtime,
+                schema: super::schema::StartupObserver::new(policy.startup_schema),
+            },
         )
         .await
     }
 
+    #[cfg(test)]
     pub(super) async fn open(
         client: Client,
         database: &str,
@@ -180,12 +191,39 @@ impl MongoStores {
         checkpoint_storage: Arc<dyn super::CheckpointBlobStore>,
         runtime: (&str, Option<&layer3_adapter::HomeVolumePolicy>),
     ) -> Result<Self, StoreError> {
+        Self::open_configured(
+            client,
+            database,
+            deployment,
+            auth_encryption_key,
+            activity_retention,
+            StoreStartup {
+                checkpoint_storage,
+                runtime,
+                schema: super::schema::StartupObserver::new(Default::default()),
+            },
+        )
+        .await
+    }
+
+    async fn open_configured(
+        client: Client,
+        database: &str,
+        deployment: &str,
+        auth_encryption_key: &AuthEncryptionKey,
+        activity_retention: Duration,
+        mut startup: StoreStartup<'_>,
+    ) -> Result<Self, StoreError> {
         // Legacy Profile warm records are retained only for cleanup and already
         // claimed runtime recovery. New admissions use the regular Sandbox lifecycle.
-        let sandbox_model =
-            MongoSandboxStore::open_with_storage(&client, database, checkpoint_storage)
-                .await?
-                .with_managed_runtime_version(runtime.0.into());
+        let sandbox_model = MongoSandboxStore::open_with_schema(
+            &client,
+            database,
+            startup.checkpoint_storage,
+            &mut startup.schema,
+        )
+        .await?
+        .with_managed_runtime_version(startup.runtime.0.into());
         let sandbox_model = Arc::new(sandbox_model);
         let sandbox_profiles = Arc::new(MongoProfileStore::open(&client, database).await?);
         let sandbox_credentials = Arc::new(
@@ -203,8 +241,15 @@ impl MongoStores {
             super::MongoSubscriptionStore::open(&client, database, deployment, auth_encryption_key)
                 .await?,
         );
-        let activity =
-            Arc::new(MongoActivityStore::open(&client, database, activity_retention).await?);
+        let activity = Arc::new(
+            MongoActivityStore::open_with_schema(
+                &client,
+                database,
+                activity_retention,
+                &mut startup.schema,
+            )
+            .await?,
+        );
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
         let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
         let admission_control =
@@ -330,3 +375,9 @@ async fn connection_options(uri: &str) -> Result<ClientOptions, StoreError> {
 #[cfg(test)]
 #[path = "mongo_options_tests.rs"]
 mod options_tests;
+
+struct StoreStartup<'a> {
+    checkpoint_storage: Arc<dyn super::CheckpointBlobStore>,
+    runtime: (&'a str, Option<&'a layer3_adapter::HomeVolumePolicy>),
+    schema: super::schema::StartupObserver,
+}

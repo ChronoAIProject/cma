@@ -65,6 +65,7 @@ returns 409, including changing an omitted default into an explicit reference.
 | `PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | optional empty object | - | 200/201 BindingConversationView; 400/401/403/404/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 200 BindingConversationInspectionView; 400/401/403/404/409/503 ProblemDocument |
 | `DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}` | - | - | 204 empty; 400/401/403/404/409/503 ProblemDocument |
+| `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets` | ResetConversationRequest; Idempotency-Key | - | 200 ConversationResetView; 400/401/403/404/409/503 ProblemDocument |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}` | - | - | 200 EventContext; 401/403/404/503 Responses error |
 | `POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment` | raw binary; upload query | Content-Type, Content-Length | 201 AgentAttachment; 400/403/409/413/429/503 media error |
 | `GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment` | - | - | 200 AgentAttachment; 403/404/503 media error |
@@ -104,6 +105,8 @@ returns 409, including changing an omitted default into an explicit reference.
 | `PUT /api/v1/admin/admission/ceilings` | ReplaceCeilingsRequest | - | 200 CeilingsStateView |
 | `POST /api/v1/admin/admission/resume` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `GET /api/v1/admin/settings` | - | - | 200 SettingsView |
+| `GET /api/v1/admin/spend` | ConfigurePlatform; no write gate | - | 200 SpendView; 401 not_authenticated; 403 forbidden (not-an-operator); 503 platform_spend_unavailable. An absent service precedes the capability check. |
+| `POST /api/v1/admin/spend/observations` | ConfigurePlatform; CHRONO_MODEL_BUDGET_WRITES_ENABLED and CHRONO_PLATFORM_SPEND_WRITES_ENABLED; ObservationRequest | - | 200 SpendView; 401 not_authenticated; 403 forbidden (not-an-operator); 422 invalid_request; 503 model_budget_writes_unavailable or platform_spend_unavailable. Identical observations at the same instant are idempotent; conflicting units return 422. |
 | `PUT /api/v1/admin/settings` | ReplaceRequest | - | 200 SettingsView |
 | `PATCH /api/v1/admin/settings` | PatchRequest | - | 200 SettingsView |
 | `POST /api/v1/admin/settings/reset` | ResetRequest | - | 200 SettingsView |

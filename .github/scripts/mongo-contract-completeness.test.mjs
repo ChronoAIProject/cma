@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
 
@@ -30,7 +31,7 @@ try:
     check(metadata, exceptions)
 except (ValueError, KeyError, TypeError) as error:
     raise SystemExit(str(error))
-`, new URL('mongo-contract-completeness.py', import.meta.url).pathname], {
+`, fileURLToPath(new URL('mongo-contract-completeness.py', import.meta.url))], {
     input: JSON.stringify([metadata, exclusions]), encoding: 'utf8',
     env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'},
   });
@@ -96,7 +97,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 142);
+  assert.equal(new Set(requiredPrefixes).size, 143);
   assert.ok(requiredPrefixes.includes('sandbox::agent_worker_tests::cleanup_contention_tests::'));
   assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
   assert.ok(requiredPrefixes.includes('agent_manager::relay::tests::mongo::'));

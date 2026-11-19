@@ -91,6 +91,7 @@ fn project(kinds: &[AgentLogKind], turn: u64, active: bool) -> (ResponseObject, 
     )
     .unwrap();
     let snapshot = AgentEventStreamSnapshot {
+        source_generation: None,
         id: agent.id.clone(),
         created_at: AT.into(),
         model: agent.profile.content.model.clone(),

@@ -11,7 +11,13 @@ pub(super) fn binding_document(value: &ProviderBinding) -> Result<Document, Sand
 }
 
 pub(super) fn read_binding(doc: Document) -> Result<ProviderBinding, SandboxStoreError> {
-    let value: ProviderBinding = read_record(&doc).map_err(SandboxStoreError::Corrupt)?;
+    let value = binding_record(&doc)?;
+    reset::read_state_for(&value, &doc)?;
+    Ok(value)
+}
+
+pub(super) fn binding_record(doc: &Document) -> Result<ProviderBinding, SandboxStoreError> {
+    let value: ProviderBinding = read_record(doc).map_err(SandboxStoreError::Corrupt)?;
     value.validate().map_err(SandboxStoreError::Corrupt)?;
     if doc.get_str("_id").ok() != Some(value.binding_id.as_str())
         || doc.get_i64("revision").ok() != Some(integer(value.revision)?)

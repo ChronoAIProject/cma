@@ -4,6 +4,8 @@ import { Thinking } from './Thinking';
 import { isPendingTool } from './toolStatus';
 import { Presence } from '../ui/Presence';
 import { useThinkingPlacement } from './thinkingPlacement';
+import { useMemo } from 'react';
+import { thinkingProgressKey } from './ThinkingProgress';
 
 /** Ephemeral turn status follows the reply in the conversation, never in stored history. */
 export function ActiveThinking({
@@ -16,6 +18,7 @@ export function ActiveThinking({
 }) {
   const runId = conversation.activeRunId;
   const placement = useThinkingPlacement(conversation);
+  const progressKey = useMemo(() => thinkingProgressKey(conversation), [conversation]);
   const activities = conversation.toolCalls.filter(
     (item) => item.runId === runId && isPendingTool(item),
   );
@@ -41,6 +44,7 @@ export function ActiveThinking({
           <div className="active-thinking__content">
             <Thinking
               key={runId}
+              progressKey={progressKey}
               startedAt={conversation.activeRunStartedAt}
               text={conversation.reasoning
                 .filter((item) => item.runId === runId)

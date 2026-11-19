@@ -11,6 +11,9 @@ pub struct ConversationInspection {
     pub binding_id: String,
     pub generation: u64,
     pub conversation_id: String,
+    #[serde(default)]
+    #[schema(required = false)]
+    pub incarnation: u64,
     pub agent_id: String,
     pub state: String,
     pub agent_status: Option<String>,
@@ -80,5 +83,38 @@ impl ProviderClient {
             ));
         }
         Ok(result)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn inspection_accepts_legacy_zero_and_positive_incarnations() {
+        let mut body = serde_json::json!({"binding_id":"binding","generation":1,
+            "conversation_id":"transport","agent_id":"agent","state":"ready","agent_status":"ready"});
+        assert_eq!(
+            serde_json::from_value::<ConversationInspection>(body.clone())
+                .unwrap()
+                .incarnation,
+            0
+        );
+        for incarnation in [0, 1, u64::MAX] {
+            body["incarnation"] = incarnation.into();
+            assert_eq!(
+                serde_json::from_value::<ConversationInspection>(body.clone())
+                    .unwrap()
+                    .incarnation,
+                incarnation
+            );
+        }
+        for invalid in [
+            serde_json::json!(-1),
+            serde_json::json!("1"),
+            serde_json::Value::Null,
+        ] {
+            body["incarnation"] = invalid;
+            assert!(serde_json::from_value::<ConversationInspection>(body.clone()).is_err());
+        }
     }
 }

@@ -1,5 +1,6 @@
 import type { ConversationState } from './model';
 import { isPendingTool } from './toolStatus';
+import { settleLiveRecovery } from './liveRecovery';
 
 const groups = ['messages', 'toolCalls', 'reasoning', 'approvals', 'plans', 'recovery'] as const;
 
@@ -248,7 +249,7 @@ export function mergeTranscriptSnapshot(
   const useSnapshotState =
     snapshot.cursor > previousCursor || (trustEqualState && snapshot.cursor === previousCursor);
   const activeRunId = useSnapshotState ? snapshot.activeRunId : current.activeRunId;
-  return {
+  return settleLiveRecovery({
     ...result,
     title: useSnapshotState ? (snapshot.title ?? current.title) : (current.title ?? snapshot.title),
     ownerTitle: useSnapshotState
@@ -288,5 +289,5 @@ export function mergeTranscriptSnapshot(
       (block) => activeRunId !== undefined && block.runId === activeRunId,
     ),
     cursor: Math.max(current.cursor, snapshot.cursor),
-  };
+  });
 }

@@ -288,3 +288,170 @@ async fn binding_commands(owner_kind: &str) {
         .unwrap()
         .is_some());
 }
+
+#[tokio::test]
+async fn binding_revival_with_one_agent_view_share() {
+    binding_revival_with_shares(false).await;
+}
+
+#[tokio::test]
+async fn binding_revival_with_agent_and_sandbox_view_shares() {
+    binding_revival_with_shares(true).await;
+}
+
+async fn binding_revival_with_shares(include_sandbox: bool) {
+    let f = fixture();
+    let binding = f.ready().await;
+    let conversation = ready_conversation(&f, &binding).await;
+    let bindings = BindingAccessService::new(f.store.clone());
+    let access =
+        ResourceAccessService::new(f.store.clone(), Arc::new(LocalAuthority(bindings.clone())))
+            .with_bindings(bindings.clone());
+    let target = ResourceTarget::Agent {
+        agent_id: conversation.agent_id.clone(),
+    };
+    let parent_target = ResourceTarget::Sandbox {
+        sandbox_id: binding.sandbox_id.clone(),
+    };
+    let mut selectors = vec![ResourceSelector::Agent {
+        agent_id: conversation.agent_id,
+    }];
+    if include_sandbox {
+        selectors.push(ResourceSelector::Sandbox {
+            sandbox_id: binding.sandbox_id.clone(),
+        });
+    }
+    for (index, selector) in selectors.into_iter().enumerate() {
+        let snapshot = f.store.resource_access_snapshot(&target).await.unwrap();
+        f.store
+            .mutate_share(ShareMutation {
+                selector,
+                owner: snapshot.scope(&target).unwrap().owner,
+                actor: ResourceActor::Human {
+                    subject: binding.owner.clone(),
+                },
+                key_sha256: command_key_digest(&format!("share-{index}")).unwrap(),
+                change: ShareChange::Create {
+                    target_org_id: SubjectId::new("viewers"),
+                    mode: ShareMode::View,
+                },
+                expected_share_revision: None,
+                policy_fence: snapshot.fence(),
+                proposed_id: format!("share-{index}"),
+                at: crate::now_rfc3339(),
+            })
+            .await
+            .unwrap();
+    }
+    let request = request(&f, &bindings, &access, "shared-revival").await;
+    let CommandReservationResult::Created(command) =
+        f.store.reserve_command(request).await.unwrap()
+    else {
+        panic!("expected a new command")
+    };
+    let principal = bindings
+        .authenticate(&f.key.sha256())
+        .await
+        .unwrap()
+        .unwrap();
+    let context = context(&principal);
+    let before = f.store.resource_access_snapshot(&target).await.unwrap();
+    before.scope(&target).unwrap();
+    assert_eq!(before.shares.len(), if include_sandbox { 2 } else { 1 });
+    let execution = access
+        .authorize_command_execution(&context, "", &command.receipt.envelope)
+        .await
+        .unwrap();
+    assert_eq!(execution.current_snapshot().await.unwrap(), before);
+    let revival = access
+        .authorize_command_revival(&context, "", &command)
+        .await
+        .expect("valid Agent shares must not corrupt the binding parent proof");
+    assert_eq!(revival.current_snapshot().await.unwrap(), before);
+    let audits = revival.authorization_audits().unwrap();
+    assert_eq!(audits.len(), 2);
+    for (audit, target, capability) in [
+        (&audits[0], &target, ResourceCapability::Interact),
+        (
+            &audits[1],
+            &parent_target,
+            ResourceCapability::ManageSandbox,
+        ),
+    ] {
+        audit.validate().unwrap();
+        assert_eq!(&audit.target, target);
+        assert_eq!(audit.capability, capability);
+        assert_eq!(audit.policy_revision, before.fence().policy_revision);
+        assert_eq!(
+            audit.observations[0].basis,
+            ResourceAuthorizationBasis::ExternalBinding {
+                binding_id: binding.binding_id.clone(),
+                generation: binding.generation,
+            }
+        );
+    }
+    for sandbox_id in [
+        binding.sandbox_id.clone(),
+        SandboxId("foreign-sandbox".into()),
+    ] {
+        assert!(access
+            .authorize(
+                &context,
+                None,
+                &ResourceTarget::Sandbox { sandbox_id },
+                ResourceCapability::ManageSandbox,
+                AccessPurpose::Read,
+            )
+            .await
+            .is_err());
+    }
+    for selector in [
+        ResourceSelector::Sandbox {
+            sandbox_id: SandboxId("foreign-sandbox".into()),
+        },
+        ResourceSelector::Agent {
+            agent_id: crate::AgentId("foreign-agent".into()),
+        },
+    ] {
+        let mut foreign = before.clone();
+        foreign.shares[0].selector = selector;
+        assert_eq!(
+            revival.validate_snapshot(&foreign),
+            Err(ResourceAccessStoreError::Corrupt.into())
+        );
+    }
+    let mut malformed = before.clone();
+    malformed.shares[0].revision = 0;
+    assert_eq!(
+        revival.validate_snapshot(&malformed),
+        Err(ResourceAccessStoreError::Corrupt.into())
+    );
+    let mut changed_policy = before.clone();
+    changed_policy.policy.as_mut().unwrap().revision += 1;
+    assert_eq!(
+        revival.validate_snapshot(&changed_policy),
+        Err(ResourceAccessStoreError::Conflict.into())
+    );
+    let mut changed_parent = before.clone();
+    changed_parent.lineage.sandbox.id = SandboxId("foreign-sandbox".into());
+    assert!(revival.validate_snapshot(&changed_parent).is_err());
+    let mut changed_command = command.as_ref().clone();
+    changed_command.queue_deadline = changed_command.receipt.admitted_at.clone();
+    assert!(revival.require_command(&changed_command).is_err());
+    assert!(access
+        .authorize_command_revival(&context, "", &changed_command)
+        .await
+        .is_err());
+    assert_eq!(
+        f.store.resource_access_snapshot(&target).await.unwrap(),
+        before
+    );
+    assert_eq!(
+        f.store
+            .get_command(&command.receipt.envelope.command_id)
+            .await
+            .unwrap()
+            .as_ref(),
+        Some(command.as_ref())
+    );
+}

@@ -60,6 +60,7 @@ fn ready() -> (AgentAccessRecord, Agent, Sandbox) {
             command_key_hash: "b".repeat(64),
             services: vec![ServiceId::new("github")],
             authorization: AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "personal:owner".into(),
                 policy_revision: 1,
                 grant_revision: None,

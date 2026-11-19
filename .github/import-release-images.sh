@@ -173,7 +173,7 @@ trap cleanup EXIT HUP INT TERM
 
 # Validate every archive and its authoritative root before looking at or
 # changing the destination. The copy phase consumes only these checked files.
-for component in api web runtime cmaeg image-manager; do
+for component in api web runtime cmaeg runtime-omarchy; do
   image_name=$(python3 "$script_dir/scripts/deployables.py" "$component") \
     || die "unknown deployable component"
   base="cma-${component}-${version}-${revision}"
@@ -245,7 +245,7 @@ done
 
 # Complete the six-tag preflight before the first copy. An existing equal tag
 # is an idempotent success; any mismatch aborts the entire import unchanged.
-for component in api web runtime cmaeg image-manager; do
+for component in api web runtime cmaeg runtime-omarchy; do
   image_name=$(python3 "$script_dir/scripts/deployables.py" "$component") \
     || die "unknown deployable component"
   destination_repository="${destination_prefix}/${image_name}"
@@ -287,7 +287,7 @@ for component in api web runtime cmaeg image-manager; do
   done
 done
 
-for component in api web runtime cmaeg image-manager; do
+for component in api web runtime cmaeg runtime-omarchy; do
   image_name=$(python3 "$script_dir/scripts/deployables.py" "$component") \
     || die "unknown deployable component"
   base="cma-${component}-${version}-${revision}"

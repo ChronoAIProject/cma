@@ -241,6 +241,34 @@ impl AgentReadService {
                 let Some(store) = &self.response_logs else {
                     return Ok(None);
                 };
+                let flight = match &self.observation {
+                    Some(service) => service
+                        .output_flight(&agent, turn)
+                        .await
+                        .map_err(log_store_error)?,
+                    None => None,
+                };
+                if let Some(flight) = &flight {
+                    let Some(reader) = super::super::output_memo::MemoReader::open(
+                        store.as_ref(),
+                        &agent,
+                        turn,
+                        flight,
+                    )
+                    .await?
+                    else {
+                        return Ok(None);
+                    };
+                    validation::metadata(reader.metadata(), &agent, turn)?;
+                    let commit = reader.commit();
+                    let mut observation = AgentOutputObservation {
+                        reader: Box::new(reader),
+                        personal: authorization.resource().2,
+                    };
+                    let result = operation(&mut observation).await?;
+                    commit(flight);
+                    return Ok(Some(result));
+                }
                 let Some(reader) = store
                     .agent_output_reader(&agent, turn)
                     .await

@@ -72,15 +72,11 @@ pub fn project(state: &SandboxUsage, events: &[UsageEvent], range: Range) -> Pro
     }
     .intersect(range);
     if tail.seconds() > 0 && tail.from >= end && revision.is_none_or(|r| r == state.revision) {
+        let allocation = state.current_allocation();
         out.unknown_seconds += tail.from.saturating_sub(end);
         expect(&mut expectations, end, tail.from, None);
-        expect(
-            &mut expectations,
-            tail.from,
-            tail.to,
-            Some(&state.allocation),
-        );
-        accrue(&mut out, &state.allocation, tail.seconds());
+        expect(&mut expectations, tail.from, tail.to, Some(&allocation));
+        accrue(&mut out, &allocation, tail.seconds());
         out.projected_tail_seconds = tail.seconds();
         end = tail.to;
     }

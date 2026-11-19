@@ -3244,6 +3244,11 @@
             "minimum": 0,
             "type": "integer"
           },
+          "incarnation": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
           "state": {
             "type": "string"
           }
@@ -3266,6 +3271,62 @@
           "custom"
         ],
         "type": "string"
+      },
+      "ConversationReset": {
+        "properties": {
+          "binding_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "conversation_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "generation": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "incarnation": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "previous_agent_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "previous_conversation_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "reserved"
+            ],
+            "type": "string"
+          },
+          "successor_agent_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "binding_id",
+          "generation",
+          "conversation_id",
+          "incarnation",
+          "previous_agent_id",
+          "previous_conversation_id",
+          "successor_agent_id",
+          "state"
+        ],
+        "type": "object"
       },
       "CreateAppRequest": {
         "additionalProperties": false,
@@ -6101,6 +6162,61 @@
           "per_event"
         ],
         "type": "string"
+      },
+      "PartitionResetRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "consumer_id": {
+            "description": "Omitted or null selects the default consumer. Explicit \"default\" has a distinct replay fingerprint.",
+            "pattern": "^(default|csm_[0-9a-f]{12})$",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "expected_agent_id": {
+            "description": "Expected deleted Agent identifier containing 1..=128 UTF-8 bytes.",
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "expected_version": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "partition_key": {
+            "description": "Partition key containing 1..=8192 UTF-8 bytes.",
+            "maxLength": 8192,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "partition_key",
+          "expected_version",
+          "expected_agent_id"
+        ],
+        "type": "object"
+      },
+      "PartitionResetResponse": {
+        "properties": {
+          "consumer_id": {
+            "type": "string"
+          },
+          "reset": {
+            "$ref": "#/components/schemas/ConversationReset"
+          },
+          "transport_conversation_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "consumer_id",
+          "transport_conversation_id",
+          "reset"
+        ],
+        "type": "object"
       },
       "PartitionRule": {
         "additionalProperties": false,
@@ -10858,6 +10974,7 @@
     },
     "/channels/{channel_id}/activity": {
       "get": {
+        "description": "Bounded recent activity. Actor id is always redacted and display_name is a fixed role label (Participant, Bot, System, or Actor not reported); kind is preserved. This presentation copy is not canonical input for routing or replay. Event identity, cursor, timestamps and consumer/delivery state are preserved.",
         "operationId": "getChannelActivity",
         "parameters": [
           {
@@ -10914,7 +11031,7 @@
     },
     "/channels/{channel_id}/activity/stream": {
       "get": {
-        "description": "SSE activity/reset events contain complete ActivityPage snapshots, including on every connection. Apply each snapshot atomically. id is an opaque cursor; reconnect with Last-Event-ID or cursor. reset means the cursor predates retained activity. This is recent bounded activity, not a complete audit log.",
+        "description": "SSE activity/reset events contain complete ActivityPage snapshots, including on every connection. Actor id is always redacted and display_name is a fixed role label (Participant, Bot, System, or Actor not reported); kind is preserved. This presentation copy is not canonical input for routing or replay. Apply each snapshot atomically. id is an opaque cursor; reconnect with Last-Event-ID or cursor. reset means the cursor predates retained activity. This is recent bounded activity, not a complete audit log.",
         "operationId": "streamChannelActivity",
         "parameters": [
           {
@@ -11621,6 +11738,154 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/PartitionInspection"
+                }
+              }
+            },
+            "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/partition/resets": {
+      "post": {
+        "operationId": "resetChannelPartition",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          {
+            "description": "Exactly one header with 1..=128 visible ASCII bytes. Reuse the key and complete request after an uncertain outcome.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "pattern": "^[!-~]+$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PartitionResetRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PartitionResetResponse"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "401": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "403": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "404": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "502": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          },
+          "503": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
                 }
               }
             },

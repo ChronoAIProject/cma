@@ -93,6 +93,12 @@ pub(super) async fn serve_runtime(
                     .await;
                 continue;
             }
+            fault
+                if fault >= 1000
+                    && ownership_failures::respond(&mut stream, &request, &state, fault).await =>
+            {
+                return;
+            }
             _ => {}
         }
         match mode {
@@ -277,3 +283,6 @@ fn persistent_response(request: &str) -> String {
     };
     serde_json::to_string(&response).unwrap()
 }
+
+#[path = "provider_ownership_native_tests.rs"]
+mod ownership_failures;

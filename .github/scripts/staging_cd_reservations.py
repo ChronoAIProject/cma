@@ -3,18 +3,22 @@ import base64
 import json
 import os
 import subprocess
+import time
+
+from deployables import known_components
 
 from staging_cd_common import Refusal, matches, require
-from staging_cd_receipts import annotation, canonical, validate_receipt
+from staging_cd_receipts import canonical, final_tag_oid, final_tag_text, validate_receipt
 from staging_cd_versions import BASE_VERSION, DEPLOYABLES, LEVELS, bump, version_tuple
 
+KNOWN_DEPLOYABLES = known_components()
 FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump", "run_id", "run_attempt"}
 
 
 def validate_reservation(value):
     require(isinstance(value, dict) and set(value) == FIELDS and value["schema"] == "cma-version-reservation-v1",
             "Version reservation is malformed")
-    require(value["component"] in DEPLOYABLES and value["bump"] in LEVELS.values()
+    require(value["component"] in KNOWN_DEPLOYABLES and value["bump"] in LEVELS.values()
             and bump(value["previous"], value["bump"]) == value["version"], "Reservation version is invalid")
     require(all(matches(r"[0-9a-f]{40}", value[key]) for key in ("source", "tree"))
             and all(type(value[key]) is int and value[key] > 0 for key in ("pr", "run_id", "run_attempt")),
@@ -24,7 +28,13 @@ def validate_reservation(value):
 
 def pending_name(value):
     validate_reservation(value)
-    return DEPLOYABLES[value["component"]] + "/pending/v" + value["version"]
+    return KNOWN_DEPLOYABLES[value["component"]] + "/pending/v" + value["version"]
+
+
+def outcome_ref(component, version):
+    require(component in DEPLOYABLES, "Unknown reservation component")
+    version_tuple(version)
+    return f"refs/tags/cma-allocation-outcome/{component}/v{version}"
 
 
 def next_reservation(component, source, tree, pr, level, run_id, attempt, finals, pending):
@@ -55,8 +65,9 @@ def reserve(allocate, insert, refresh, *, attempts=5):
 
 
 class Reservations:
-    def __init__(self, api, token, root, runner=subprocess.run):
+    def __init__(self, api, token, root, runner=subprocess.run, *, mark=lambda _stage: None, sleep=time.sleep):
         self.api, self.root, self.runner = api, root, runner
+        self.mark, self.sleep = mark, sleep
         require(isinstance(token, str) and token and not any(c.isspace() for c in token),
                 "Version reservation credential is invalid")
         header = "AUTHORIZATION: basic " + base64.b64encode(("x-access-token:" + token).encode()).decode()
@@ -94,6 +105,7 @@ class Reservations:
 
     def insert(self, value):
         validate_reservation(value)
+        require(value["component"] in DEPLOYABLES, "Retired images cannot reserve versions")
         # An annotated reservation records the owning run, so a later planner
         # can distinguish an active build from a burned failed run. The push
         # itself is ordinary insert-only git push, never force/lease/update.
@@ -120,50 +132,98 @@ class Reservations:
         require(value in self.list(value["component"]), "Reservation push was not verified")
         return True
 
-    def remove_after_publication(self, receipt):
+    def require_current(self, value):
+        """Supersession is derived from immutable tags; burned refs stay intact."""
+        validate_reservation(value)
+        component = value["component"]
+        pending, finals = self.list(component), self.api.tags(component)
+        require(value in pending, "Publication reservation is missing")
+        history = self.api.history()
+        position = history.position(value["source"])
+        candidates = pending + [tag["receipt"]["identity"] for tag in finals]
+        require(all((item["source"] not in history.positions or history.position(item["source"]) <= position)
+                    and version_tuple(item["version"]) <= version_tuple(value["version"])
+                    for item in candidates), "Publication reservation is superseded and burned")
+        return True
+
+    def remove_after_publication(self, receipt, expected_oid):
+        self.mark("cleanup_verify")
         component = receipt["identity"]["component"]
+        require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
         finals = [tag for tag in self.api.tags(component) if tag["name"] == receipt["tag"]]
-        require(len(finals) == 1 and finals[0]["receipt"] == receipt,
+        require(len(finals) == 1 and finals[0]["receipt"] == receipt and finals[0]["oid"] == expected_oid,
                 "Pending deletion requires the verified matching final receipt")
+        self.api.require_current_versions({component: receipt})
         matches = [item for item in self.list(component) if item["version"] == receipt["identity"]["version"]]
         if not matches:
             return
         require(len(matches) == 1 and all(matches[0][key] == receipt["identity"][key]
                                          for key in ("source", "run_id", "run_attempt", "version", "pr")),
                 "Pending version belongs to another source")
+        self.mark("cleanup_delete")
         self.command("push", "https://github.com/ChronoAIProject/cma.git",
                      ":refs/tags/" + pending_name(matches[0]))
+        self.mark("cleanup_read")
         remaining = [item for item in self.list(component) if item["version"] == receipt["identity"]["version"]]
         require(not remaining, "Published reservation cleanup failed")
 
-    def finalize(self, receipt, verify_digest):
+    def finalize(self, receipt, verify_digest, *, recovery_oid=None):
+        self.mark("receipt")
         validate_receipt(receipt)
         component = receipt["identity"]["component"]
+        require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
+        self.mark("registry_verify")
         require(verify_digest(receipt["repository"], receipt["digest"]) is True,
                 "Final version requires the verified published digest")
+        self.mark("final_read")
         existing = [tag for tag in self.api.tags(component) if tag["target"] == receipt["source"]]
+        if recovery_oid is not None:
+            # A prior attempt may only settle the exact final observed at
+            # batch preflight. Disappearance must never fall through to a push.
+            require(len(existing) == 1 and existing[0].get("oid") == recovery_oid,
+                    "Prior-attempt final tag object differs")
         if existing:
-            require(len(existing) == 1 and existing[0]["receipt"] == receipt,
+            expected_oid = final_tag_oid(receipt)
+            require(len(existing) == 1 and existing[0]["receipt"] == receipt
+                    and existing[0].get("oid") == expected_oid,
                     "This merge already has a different immutable release")
-            self.remove_after_publication(receipt)
+            self.remove_after_publication(receipt, expected_oid)
             return False
         expected = {key: receipt["identity"][key] for key in FIELDS - {"schema"}}
         expected["schema"] = "cma-version-reservation-v1"
-        require(expected in self.list(component), "Final version lacks its allocation owner's reservation")
-        text = (f"object {receipt['source']}\ntype commit\ntag {receipt['tag']}\n"
-                "tagger github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 0 +0000\n\n"
-                + annotation(receipt))
-        created = self.command("mktag", data=text)
+        self.mark("reservation_read")
+        self.require_current(expected)
+        self.mark("tag_create")
+        created = self.command("mktag", data=final_tag_text(receipt))
         require(created.returncode == 0 and matches(r"[0-9a-f]{40}", created.stdout.strip()),
                 "Final annotation could not be created")
-        result = self.command("push", "--porcelain", "https://github.com/ChronoAIProject/cma.git",
-                              created.stdout.strip() + ":refs/tags/" + receipt["tag"])
+        expected_oid = created.stdout.strip()
+        self.mark("tag_push")
+        # A successor and a finalizer compete for the same insert-only outcome.
+        # Even takeover during the push cannot produce an obsolete final tag.
+        result = self.command("push", "--atomic", "--porcelain", "https://github.com/ChronoAIProject/cma.git",
+                              expected_oid + ":" + outcome_ref(component, expected["version"]),
+                              expected_oid + ":refs/tags/" + receipt["tag"])
         # A lost response is not absence: settle the remote final before retry.
-        verified = [tag for tag in self.api.tags(component) if tag["target"] == receipt["source"]]
-        require(len(verified) == 1 and verified[0]["receipt"] == receipt,
-                "Final tag creation could not be verified")
+        self.mark("final_verify")
+        self.verify_final(receipt, expected_oid)
         require(result.returncode != 0 or any(line.startswith("*\t") and "[new tag]" in line
                                              for line in result.stdout.splitlines()),
                 "Final publication unexpectedly reported an up-to-date ref")
-        self.remove_after_publication(receipt)
+        self.remove_after_publication(receipt, expected_oid)
         return True
+
+    def verify_final(self, receipt, expected_oid):
+        # An insert may precede its inventory readback. Retry only empty reads;
+        # never repeat the write, suppress an API error or wait out a conflict.
+        for attempt in range(3):
+            verified = [tag for tag in self.api.tags(receipt["identity"]["component"])
+                        if tag["target"] == receipt["source"] or tag["name"] == receipt["tag"]]
+            if verified:
+                require(len(verified) == 1 and verified[0]["receipt"] == receipt
+                        and verified[0]["oid"] == expected_oid,
+                        "Final tag conflicts with the published receipt")
+                return
+            if attempt < 2:
+                self.sleep(1)
+        require(False, "Final tag creation could not be verified")

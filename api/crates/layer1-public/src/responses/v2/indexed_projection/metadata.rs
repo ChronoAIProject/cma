@@ -24,6 +24,7 @@ pub(in crate::responses) async fn project_metadata(
         history = source.points(&sequences).await?;
     }
     let snapshot = AgentEventStreamSnapshot {
+        source_generation: None,
         id: metadata.agent_id,
         created_at: metadata.created_at,
         initial_model: metadata.initial_model,
