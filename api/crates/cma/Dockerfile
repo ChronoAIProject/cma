@@ -89,9 +89,12 @@ COPY api/ ./
 ARG TARGETARCH
 ARG CHRONO_BUILD=development
 ARG CHRONO_BUILD_SHA=development
+# Archived source can predate restored compiler outputs. Keep external
+# dependencies cached, but always rebuild workspace code from this source.
 RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cma-api-target-${TARGETARCH},target=/build/target,sharing=locked \
-    CHRONO_BUILD="${CHRONO_BUILD}" \
+    cargo clean --release --workspace --locked \
+    && CHRONO_BUILD="${CHRONO_BUILD}" \
     CHRONO_BUILD_SHA="${CHRONO_BUILD_SHA}" \
     cargo build --release --locked --bin cma \
     && mkdir /out \
