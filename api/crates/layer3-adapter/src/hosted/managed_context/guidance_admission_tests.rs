@@ -28,7 +28,7 @@ fn admitted_guidance_preserves_owner_bytes_and_exact_replay() {
             "New managed\n\nOwner exact text  \n"
         );
         assert_eq!(source.writes.load(SeqCst), 1);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -108,12 +108,9 @@ fn admitted_guidance_preserves_cas_lost_ack_and_validation_failures() {
         }
         let clone = error.clone();
         drop((binding, source, error));
-        assert_eq!(
-            root.capacity_bytes() - root.available_bytes(),
-            clone.requested_bytes()
-        );
+        assert_eq!(root.reserved_work_bytes(), clone.requested_bytes());
         drop(clone);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -148,7 +145,7 @@ fn admitted_guidance_refuses_invalid_receipts_history_and_unsupported_sources() 
         ));
         assert_eq!(source.writes.load(SeqCst), 0);
         drop(error);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
     let (legacy, files) = super::super::writer_tests::binding(0);
     let error = legacy
@@ -169,7 +166,7 @@ fn admitted_guidance_refuses_invalid_receipts_history_and_unsupported_sources() 
         .unwrap_err();
     assert!(error.refusal().is_some());
     assert_eq!(source.reads.load(SeqCst), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -192,5 +189,5 @@ fn pending_guidance_write_retains_data_and_releases_transformation_on_cancellati
     );
     assert!(root.available_bytes() < root.capacity_bytes());
     drop(operation);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

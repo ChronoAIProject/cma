@@ -44,7 +44,7 @@ fn installed_transport_can_cross_policy_modes_without_losing_its_authority() {
             .now_or_never()
             .unwrap()
             .unwrap();
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
         assert_eq!(source.preparations.load(SeqCst), 1);
         assert_eq!(source.confirmations.load(SeqCst), 1);
     }
@@ -113,7 +113,7 @@ fn binding_snapshot_admits_nested_strings_and_refuses_before_copying() {
     ] {
         let mut probe = AllocationProbe::new();
         let snapshot = probe.track(|| raw.clone_admitted(&policy).unwrap());
-        let charged = root.capacity_bytes() - root.available_bytes();
+        let charged = root.reserved_work_bytes();
         assert!(probe.peak() > 4096);
         assert!(
             probe.peak() <= charged,
@@ -129,7 +129,7 @@ fn binding_snapshot_admits_nested_strings_and_refuses_before_copying() {
         }
         let clone = snapshot.clone_admitted(&policy).unwrap();
         drop(snapshot);
-        assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+        assert_eq!(root.reserved_work_bytes(), charged);
         drop(clone);
         assert_eq!(probe.live(), 0);
         drop(probe);
@@ -148,6 +148,6 @@ fn binding_snapshot_admits_nested_strings_and_refuses_before_copying() {
         assert!(error.refusal().is_some());
         assert_eq!(probe.allocated(), 0);
         drop(pressure);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }

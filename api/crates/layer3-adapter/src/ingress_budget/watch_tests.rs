@@ -20,7 +20,7 @@ async fn watches_preserve_versions_and_storage_after_sender_teardown() {
     let (sender, mut receiver) =
         AdmittedWatchSender::channel(&policy, IngressClass::Data, 0u64).unwrap();
     let charged = sender.requested_bytes();
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+    assert_eq!(root.reserved_work_bytes(), charged);
     assert!(!receiver.has_changed().unwrap());
     assert_eq!(sender.latest(), 0);
     let other_sender = sender.clone();
@@ -38,10 +38,10 @@ async fn watches_preserve_versions_and_storage_after_sender_teardown() {
     assert_eq!(subscribed.take_latest(), 4);
     assert!(subscribed.changed().await.is_err());
     drop((receiver, other_receiver));
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+    assert_eq!(root.reserved_work_bytes(), charged);
     assert_eq!(subscribed.latest(), 4);
     drop(subscribed);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -80,7 +80,7 @@ async fn blocked_and_completed_tasks_retain_watch_storage_until_actual_drop() {
     assert!(receiver.take_latest().is_some());
     assert!(receiver.changed().await.is_err());
     drop(receiver);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     let (sender, mut receiver) =
         AdmittedWatchSender::channel(&policy, IngressClass::Data, 0u64).unwrap();
     let (started, ready) = tokio::sync::oneshot::channel();
@@ -95,7 +95,7 @@ async fn blocked_and_completed_tasks_retain_watch_storage_until_actual_drop() {
     sender.closed().await;
     assert!(root.available_bytes() < root.capacity_bytes());
     drop(sender);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -138,7 +138,7 @@ fn measure<T: Copy + std::fmt::Debug + PartialEq>(initial: T, next: T) {
     let (sender, receiver) = probe.track(|| watch::channel(initial));
     drop((sender, storage));
     assert!(probe.live() > 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     eprintln!(
         "raw_watch_after_sender_drop requested_live={}",
         probe.live()
@@ -170,10 +170,7 @@ fn measure<T: Copy + std::fmt::Debug + PartialEq>(initial: T, next: T) {
         "published watches must not lazily allocate locks"
     );
     assert_eq!(probe.live(), retained);
-    assert_eq!(
-        root.capacity_bytes() - root.available_bytes(),
-        plan.requested_bytes()
-    );
+    assert_eq!(root.reserved_work_bytes(), plan.requested_bytes());
     eprintln!(
         "admitted_watch requested_peak={} retained={} admitted={}",
         probe.peak(),
@@ -183,7 +180,7 @@ fn measure<T: Copy + std::fmt::Debug + PartialEq>(initial: T, next: T) {
     probe.track(|| drop(remaining));
     assert_eq!(probe.allocated(), before);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     drop(probe);
     let available = policy.budget(IngressClass::Data).available_bytes();
     let blocker = policy
@@ -198,5 +195,5 @@ fn measure<T: Copy + std::fmt::Debug + PartialEq>(initial: T, next: T) {
     assert!(matches!(result, Err(AdmissionRefusal::AtCapacity { .. })));
     assert_eq!(probe.allocated(), 0);
     drop((result, blocker));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

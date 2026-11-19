@@ -93,7 +93,7 @@ fn protected_error_formatting_preserves_redaction_and_category_under_pressure() 
             }
             drop((error, scope));
             assert_eq!(probe.live(), 0);
-            assert_eq!(root.available_bytes(), root.capacity_bytes());
+            root.assert_idle();
         }
     }
 }

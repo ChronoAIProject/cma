@@ -55,6 +55,7 @@ pub struct ClassBounds {
     total: usize,
     control: usize,
     transformation: usize,
+    metadata: usize,
     maximum_attachments: Option<NonZeroUsize>,
 }
 
@@ -66,7 +67,11 @@ impl ClassBounds {
     ) -> Result<Self> {
         let control = concurrent_control.requested_bytes();
         let transformation = largest_transformation.requested_bytes();
-        let floors = control.checked_add(transformation).ok_or_else(invalid)?;
+        let metadata = super::classes::storage_bytes().map_err(AdapterError::from)?;
+        let floors = control
+            .checked_add(transformation)
+            .and_then(|bytes| bytes.checked_add(metadata))
+            .ok_or_else(invalid)?;
         if control == 0 || transformation == 0 || floors >= total || total > u32::MAX as usize {
             return Err(invalid());
         }
@@ -74,6 +79,7 @@ impl ClassBounds {
             total,
             control,
             transformation,
+            metadata,
             maximum_attachments: None,
         })
     }
@@ -85,13 +91,17 @@ impl ClassBounds {
         self.total
     }
     pub fn data_bytes(self) -> usize {
-        self.total - self.control - self.transformation
+        self.total - self.control - self.transformation - self.metadata
     }
     pub fn control_bytes(self) -> usize {
         self.control
     }
     pub fn transformation_bytes(self) -> usize {
         self.transformation
+    }
+
+    pub fn metadata_bytes(self) -> usize {
+        self.metadata
     }
 
     pub fn maximum_attachments(self) -> Option<usize> {

@@ -97,7 +97,7 @@ fn missing_source_returns_owned_negative_observations() {
     drop((sender, receiver));
     assert!(root.available_bytes() < root.capacity_bytes());
     drop((support, ready, receipt, transport));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -133,7 +133,7 @@ fn unsupported_and_pressured_sources_refuse_without_future_or_result_allocation(
     assert_eq!(probe.allocated(), 0);
     assert_eq!(source.invoked.load(Ordering::Relaxed), 0);
     drop((probe, pressure, sender, receiver, source));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -151,7 +151,7 @@ fn receipt_keeps_sequence_and_storage_after_channel_and_source_drop() {
     assert!(receipt.belongs_to(&policy));
     assert!(root.available_bytes() < root.capacity_bytes());
     drop(receipt);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -174,10 +174,7 @@ fn foreign_source_and_foreign_operation_refuse_before_source_polling() {
         }
         assert_eq!(source.invoked.load(Ordering::Relaxed), 0);
         drop((receiver, source));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
-        assert_eq!(
-            foreign_root.available_bytes(),
-            foreign_root.capacity_bytes()
-        );
+        root.assert_idle();
+        foreign_root.assert_idle();
     }
 }

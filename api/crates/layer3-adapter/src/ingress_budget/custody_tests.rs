@@ -37,7 +37,7 @@ fn isolated_shared_metadata_deallocation_contract() {
         !pause.admission_blocked_while_dropping(&policy, IngressClass::Data, move || drop(owner)),
         "the old inside-Arc permit must expose its early release"
     );
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     assert_eq!(probe.live(), 0);
 
     let (owner, pause) = probe.pause_deallocation(bytes, || {
@@ -50,7 +50,7 @@ fn isolated_shared_metadata_deallocation_contract() {
         pause.admission_blocked_while_dropping(&policy, IngressClass::Data, move || drop(owner)),
         "shared metadata permits returned before physical deallocation"
     );
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     assert_eq!(probe.live(), 0);
 
     // All strong owners use the same extraction protocol, including racing drops.
@@ -75,7 +75,7 @@ fn isolated_shared_metadata_deallocation_contract() {
                 other.join().unwrap();
             })
         );
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
         assert_eq!(probe.live(), 0);
     }
 
@@ -90,6 +90,6 @@ fn isolated_shared_metadata_deallocation_contract() {
     assert!(
         pause.admission_blocked_while_dropping(&policy, IngressClass::Data, move || drop(output))
     );
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     assert_eq!(probe.live(), 0);
 }

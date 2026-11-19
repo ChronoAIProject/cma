@@ -351,7 +351,7 @@ async fn actual_bridge_uses_admitted_credentials_and_retains_the_final_socket_fr
     drop((fixture, updates, capture, reply, source));
     assert!(root.available_bytes() < root.capacity_bytes());
     drop(sent);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]

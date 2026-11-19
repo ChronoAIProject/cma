@@ -39,13 +39,13 @@ fn cancelled_send_keeps_frame_owned_until_later_flush_and_final_source_drop() {
     assert!(frame.belongs_to(&policy));
     assert_eq!(&*frame, &Message::Binary(vec![19; 4096]));
     drop((sink, stream, sent));
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), charge);
+    assert_eq!(root.reserved_work_bytes(), charge);
     let last = frame.clone();
     drop(frame);
     assert!(probe.live() >= 4096);
     drop(last);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn legacy_split_control_keeps_a_live_unowned_frame_after_cancelled_send() {
         .is_none());
     drop(scope);
     assert_eq!(probe.live(), 4096);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     drop((sink, stream));
     assert_eq!(probe.live(), 0);
 }
@@ -99,7 +99,7 @@ fn split_admission_refuses_before_allocation_and_legacy_keeps_its_existing_behav
         Some(Message::Binary(vec![41; 32]))
     );
     drop((sink, stream, pressure));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -124,14 +124,11 @@ fn missing_or_foreign_write_scope_cannot_fill_the_admitted_split_slot() {
         .unwrap();
     assert!(result.is_err());
     drop((result, scope));
-    assert_eq!(
-        foreign_root.available_bytes(),
-        foreign_root.capacity_bytes()
-    );
+    foreign_root.assert_idle();
     assert_eq!(root.available_bytes(), baseline);
     assert!(sent.lock().unwrap().is_empty());
     drop((sink, stream));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -156,11 +153,11 @@ fn isolated_split_backing_remains_charged_until_both_halves_are_freed() {
         let socket = super::super::admitted(Box::new(Gate::new()), policy.clone());
         let mut probe = AllocationProbe::new();
         let ((sink, stream), pause) = probe.pause_deallocation(bytes, || socket.split().unwrap());
-        let charged = root.capacity_bytes() - root.available_bytes();
+        let charged = root.reserved_work_bytes();
         assert!(charged >= bytes);
         if sink_last {
             drop(stream);
-            assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+            assert_eq!(root.reserved_work_bytes(), charged);
             assert!(pause.admission_blocked_while_dropping(
                 &policy,
                 IngressClass::Data,
@@ -168,7 +165,7 @@ fn isolated_split_backing_remains_charged_until_both_halves_are_freed() {
             ));
         } else {
             drop(sink);
-            assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+            assert_eq!(root.reserved_work_bytes(), charged);
             assert!(pause.admission_blocked_while_dropping(
                 &policy,
                 IngressClass::Data,
@@ -176,7 +173,7 @@ fn isolated_split_backing_remains_charged_until_both_halves_are_freed() {
             ));
         }
         assert_eq!(probe.live(), 0);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -193,7 +190,7 @@ fn contended_split_waker_allocation_fits_the_pre_admitted_layout() {
     let socket = super::super::admitted(Box::new(socket), policy.clone());
     let mut probe = AllocationProbe::new();
     let (mut sink, mut stream) = probe.track(|| socket.split().unwrap());
-    let charged = root.capacity_bytes() - root.available_bytes();
+    let charged = root.reserved_work_bytes();
     let child = std::thread::spawn(move || {
         assert!(stream.next().now_or_never().is_none());
         stream
@@ -214,5 +211,5 @@ fn contended_split_waker_allocation_fits_the_pre_admitted_layout() {
     sink.flush().now_or_never().unwrap().unwrap();
     drop((sink, stream));
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

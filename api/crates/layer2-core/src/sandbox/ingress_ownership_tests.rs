@@ -26,7 +26,7 @@ async fn recording_session_retains_assembly_capacity_and_pending_identities() {
         .await;
     session.replace(assembly).unwrap();
     drop(scope);
-    assert_eq!(root.available_bytes(), 4096);
+    assert_eq!(root.available_bytes(), 4096 - root.metadata_bytes());
     assert_eq!(session.assembly().content.len(), 2048);
     assert_eq!(
         session.assembly().message_id.as_deref(),
@@ -36,7 +36,7 @@ async fn recording_session_retains_assembly_capacity_and_pending_identities() {
     assert!(session.replace(invalid).is_err());
     assert_eq!(session.assembly().content.len(), 2048);
     drop(session);
-    assert_eq!(root.available_bytes(), 8192);
+    assert_eq!(root.available_bytes(), 8192 - root.metadata_bytes());
 }
 
 #[tokio::test]
@@ -88,5 +88,8 @@ async fn legacy_assembly_mutation_is_unavailable_to_enabled_or_installed_owners(
     assert!(legacy.legacy_assembly_mut().is_none());
     assert!(enabled.legacy_assembly_mut().is_none());
     drop((legacy, enabled, scope));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }

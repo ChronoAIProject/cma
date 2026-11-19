@@ -28,7 +28,7 @@ fn isolated_source_decode_keeps_the_tree_after_raw_output_and_scratch_drop() {
     let mut probe = AllocationProbe::new();
     let tree = probe.track(|| JsonFrame::decode_admitted(&raw, &policy).unwrap());
     assert_eq!(tree["text"].as_str().unwrap().len(), 4096);
-    let retained = root.capacity_bytes() - root.available_bytes();
+    let retained = root.reserved_work_bytes();
     assert!(probe.live() >= 4096);
     assert!(probe.live() <= retained);
     assert!(probe.peak() <= retained + 3 * raw.len() + FIXED_ALLOWANCE);
@@ -43,7 +43,7 @@ fn isolated_source_decode_keeps_the_tree_after_raw_output_and_scratch_drop() {
     );
     drop(clone);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     drop(probe);
 
     let raw = serde_json::to_vec(&serde_json::json!({"text": "x".repeat(4096)})).unwrap();
@@ -65,5 +65,5 @@ fn isolated_source_decode_keeps_the_tree_after_raw_output_and_scratch_drop() {
     ));
     assert_eq!(probe.allocated(), 0);
     drop((probe, pressure));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

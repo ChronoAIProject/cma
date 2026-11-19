@@ -43,12 +43,9 @@ async fn rpc_timeout_error_keeps_custody_after_bridge_and_operation_drop() {
     assert_eq!(fixture.writes.lock().unwrap().len(), 1);
     let cloned = error.clone();
     drop((fixture, scope, error));
-    assert_eq!(
-        root.capacity_bytes() - root.available_bytes(),
-        cloned.requested_bytes()
-    );
+    assert_eq!(root.reserved_work_bytes(), cloned.requested_bytes());
     drop(cloned);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -89,12 +86,9 @@ async fn admitted_writer_returns_owned_bridge_failure_without_runtime_effects() 
     };
     let clone = error.clone();
     drop(error);
-    assert_eq!(
-        root.capacity_bytes() - root.available_bytes(),
-        clone.requested_bytes()
-    );
+    assert_eq!(root.reserved_work_bytes(), clone.requested_bytes());
     drop(clone);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -151,12 +145,9 @@ async fn missing_session_diagnostic_refuses_text_before_allocation_under_pressur
         matches!(error.as_adapter(), Some(AdapterError::Unavailable(detail)) if detail.is_empty())
     );
     drop((scope, fixture));
-    assert_eq!(
-        root.capacity_bytes() - root.available_bytes(),
-        error.requested_bytes()
-    );
+    assert_eq!(root.reserved_work_bytes(), error.requested_bytes());
     drop(error);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -211,7 +202,7 @@ async fn reader_diagnostic_scope_refuses_before_unowned_error_construction() {
     assert!(fixture.writes.lock().unwrap().is_empty());
     assert!(captured.take().unwrap().is_none());
     drop((pressure, updates, captured, fixture));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -284,7 +275,7 @@ async fn independent_ack_diagnostics_keep_control_progress_and_refuse_before_sen
     assert_eq!(progress.latest(), 7);
     assert_eq!(fixture.writes.lock().unwrap().len(), 1);
     drop((data, control, source, state, observation, progress, fixture));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]

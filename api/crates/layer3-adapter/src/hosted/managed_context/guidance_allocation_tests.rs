@@ -98,7 +98,7 @@ fn guidance_transformation_admits_maximum_overlap_and_refuses_before_decoding() 
     );
     drop((legacy, pressure, status));
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -145,5 +145,5 @@ fn guidance_retention_refusal_frees_replacement_before_any_write() {
         policy.bounds().transformation_bytes()
     );
     drop((pressure, status));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

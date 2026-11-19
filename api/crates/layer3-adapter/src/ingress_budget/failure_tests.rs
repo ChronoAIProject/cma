@@ -82,7 +82,7 @@ fn isolated_admission_refusals_allocate_nothing_when_retained_or_cloned() {
             .all(|error| error.as_adapter().is_none() && error.requested_bytes() == 0));
         assert_eq!(root.available_bytes(), baseline);
         drop((clones, errors, probe, held));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
     let mut storage = policy.admit(IngressClass::Data, plan(1024)).unwrap();
     let mut probe = AllocationProbe::new();
@@ -99,7 +99,7 @@ fn isolated_admission_refusals_allocate_nothing_when_retained_or_cloned() {
     assert_eq!(probe.allocated(), 0);
     assert_eq!(storage.requested_bytes(), 1024);
     drop((probe, storage));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -120,18 +120,18 @@ fn runtime_error_is_borrowed_and_charged_until_the_final_result_owner_drops() {
     assert!(error.refusal().is_none());
     assert!(std::error::Error::source(&error).is_some());
     drop(error);
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), requested);
+    assert_eq!(root.reserved_work_bytes(), requested);
     assert!(
         matches!(remaining.as_adapter(), Some(AdapterError::OperationIdentityConflict(message)) if message.len() == 65_536)
     );
     drop(remaining);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
 fn root_refusal_rolls_back_the_class_and_legacy_errors_keep_their_classification() {
     let (root, policy) = policy();
-    let held = root.try_reserve(root.capacity_bytes()).unwrap();
+    let held = root.try_reserve(root.available_bytes()).unwrap();
     assert!(matches!(
         policy.admit(IngressClass::Control, plan(1)),
         Err(AdmissionRefusal::AtCapacity { .. })
@@ -150,5 +150,5 @@ fn root_refusal_rolls_back_the_class_and_legacy_errors_keep_their_classification
         AdapterError::Rejected("ingress allocation plan exceeds its supported bounds".into())
     );
     drop(control);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

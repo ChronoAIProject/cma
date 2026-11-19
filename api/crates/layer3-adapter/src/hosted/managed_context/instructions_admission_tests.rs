@@ -227,7 +227,7 @@ fn instruction_confirmation_preserves_validation_and_owned_failures() {
         drop((binding, source));
         assert!(root.available_bytes() < root.capacity_bytes());
         drop(result);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -243,7 +243,7 @@ fn instruction_source_refuses_legacy_and_foreign_producers_before_poll() {
         .unwrap_err();
     assert!(matches!(error, AdmittedError::Unsupported(_)));
     assert_eq!(files.status_reads.load(SeqCst), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     let (foreign_root, foreign) = self::policy();
     let (binding, source) = binding(0, "instructions", Some(foreign));
     let error = binding
@@ -257,11 +257,8 @@ fn instruction_source_refuses_legacy_and_foreign_producers_before_poll() {
         Some(AdmissionRefusal::InvalidPlan { .. })
     ));
     assert_eq!(source.reads.load(SeqCst), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
-    assert_eq!(
-        foreign_root.available_bytes(),
-        foreign_root.capacity_bytes()
-    );
+    root.assert_idle();
+    foreign_root.assert_idle();
 }
 
 #[test]
@@ -276,7 +273,7 @@ fn instruction_cancellation_and_pressure_release_every_owner() {
     assert!(pending.as_mut().now_or_never().is_none());
     assert_eq!(source.reads.load(SeqCst), 1);
     drop(pending);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     let pressure = policy
         .admit(
             IngressClass::Data,
@@ -300,7 +297,7 @@ fn instruction_cancellation_and_pressure_release_every_owner() {
     assert_eq!(probe.allocated(), 0);
     assert_eq!(source.reads.load(SeqCst), 1);
     drop((probe, pressure));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -320,10 +317,10 @@ fn instruction_source_error_stays_charged_through_last_clone() {
     let clone = probe.track(|| error.clone());
     drop((binding, source, error));
     assert!(probe.live() >= 2048);
-    assert!(probe.live() <= root.capacity_bytes() - root.available_bytes());
+    assert!(probe.live() <= root.reserved_work_bytes());
     drop(clone);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -342,7 +339,7 @@ fn instruction_decode_admits_peak_overlap_and_refuses_before_decoding() {
             .unwrap()
             .unwrap()
     });
-    let charged = root.capacity_bytes() - root.available_bytes();
+    let charged = root.reserved_work_bytes();
     assert!(probe.peak() >= MAX_INSTRUCTIONS);
     assert!(
         probe.peak() <= charged,
@@ -356,7 +353,7 @@ fn instruction_decode_admits_peak_overlap_and_refuses_before_decoding() {
     );
     drop(result);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     drop(probe);
     let pressure = policy
         .admit(
@@ -395,7 +392,7 @@ fn instruction_decode_admits_peak_overlap_and_refuses_before_decoding() {
     eprintln!("legacy_instruction_decode peak={} charged=0", probe.peak());
     drop((baseline, pressure));
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -413,7 +410,7 @@ fn instruction_wire_error_accounts_formatting_overlap_and_retained_clones() {
             .unwrap()
             .unwrap_err()
     });
-    let charged = root.capacity_bytes() - root.available_bytes();
+    let charged = root.reserved_work_bytes();
     assert!(probe.peak() >= detail.len() * 2);
     assert!(
         probe.peak() <= charged,
@@ -437,5 +434,5 @@ fn instruction_wire_error_accounts_formatting_overlap_and_retained_clones() {
     );
     drop(clone);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

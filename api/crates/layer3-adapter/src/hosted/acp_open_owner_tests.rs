@@ -56,11 +56,8 @@ fn outer_bridge_refuses_without_payload_allocation_after_budget_initialization()
         }
         assert_eq!(probe.allocated(), 0);
         drop(pressure);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
-        assert_eq!(
-            foreign_root.available_bytes(),
-            foreign_root.capacity_bytes()
-        );
+        root.assert_idle();
+        foreign_root.assert_idle();
     }
 }
 
@@ -80,7 +77,7 @@ fn isolated_legacy_outer_bridge_control_returns_capacity_before_freeing_its_arc(
     pause.inspect_while_dropping(
         move || drop(bridge),
         || {
-            assert_eq!(root.available_bytes(), root.capacity_bytes());
+            root.assert_idle();
             let all_data = policy.admit(
                 IngressClass::Data,
                 AllocationPlan::checked(
@@ -130,7 +127,7 @@ fn isolated_outer_bridge_stays_charged_after_children_drop_until_its_deallocatio
                 }
             },
             || {
-                assert_eq!(root.capacity_bytes() - root.available_bytes(), bytes);
+                assert_eq!(root.reserved_work_bytes(), bytes);
                 let _pressure = policy
                     .admit(
                         IngressClass::Data,
@@ -151,7 +148,7 @@ fn isolated_outer_bridge_stays_charged_after_children_drop_until_its_deallocatio
             },
         );
         assert_eq!(probe.live(), 0);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -164,12 +161,12 @@ fn outer_bridge_custody_survives_clone_and_releases_on_unwind() {
     assert!(probe.live() >= size_of::<Bridge>() && probe.live() <= bytes);
     let last = owner.clone();
     drop(owner);
-    assert!(root.capacity_bytes() - root.available_bytes() >= bytes);
+    assert!(root.reserved_work_bytes() >= bytes);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
         let _owner = last;
         panic!("synthetic bridge owner unwind");
     }));
     assert!(result.is_err());
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

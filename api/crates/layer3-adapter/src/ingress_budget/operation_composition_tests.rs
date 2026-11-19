@@ -46,7 +46,7 @@ fn composed_source_refuses_before_initialization_or_box_allocation() {
     assert!(!called.load(Ordering::Relaxed));
     assert_eq!(probe.allocated(), 0);
     drop(held);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -86,11 +86,8 @@ fn composed_source_preserves_error_identity_and_rejects_foreign_results() {
             ));
         }
         drop((returned, original));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
-        assert_eq!(
-            foreign_root.available_bytes(),
-            foreign_root.capacity_bytes()
-        );
+        root.assert_idle();
+        foreign_root.assert_idle();
     }
     let returned = AdmittedOperation::from_owned(&policy, IngressClass::Data, plan(0), |_| async {
         AdmittedOperation::new(&foreign, IngressClass::Data, plan(8192), |_| async {
@@ -106,11 +103,8 @@ fn composed_source_preserves_error_identity_and_rejects_foreign_results() {
         returned.refusal(),
         Some(AdmissionRefusal::InvalidPlan { .. })
     ));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
-    assert_eq!(
-        foreign_root.available_bytes(),
-        foreign_root.capacity_bytes()
-    );
+    root.assert_idle();
+    foreign_root.assert_idle();
 }
 
 #[test]
@@ -149,7 +143,7 @@ fn isolated_composed_result_and_future_have_independent_physical_lifetimes() {
             .unwrap()
         });
         let result = probe.track(|| (&mut operation).now_or_never().unwrap().unwrap());
-        let charged = root.capacity_bytes() - root.available_bytes();
+        let charged = root.reserved_work_bytes();
         assert!(probe.peak() <= charged);
         assert_eq!(result.len(), 65_536);
         eprintln!(
@@ -160,18 +154,15 @@ fn isolated_composed_result_and_future_have_independent_physical_lifetimes() {
         if result_first {
             drop(result);
             assert!(probe.live() > 0);
-            assert_eq!(
-                root.capacity_bytes() - root.available_bytes(),
-                operation.requested_bytes()
-            );
+            assert_eq!(root.reserved_work_bytes(), operation.requested_bytes());
             drop(operation);
         } else {
             drop(operation);
             assert!(probe.live() >= 65_536);
-            assert!(root.capacity_bytes() - root.available_bytes() >= probe.live());
+            assert!(root.reserved_work_bytes() >= probe.live());
             drop(result);
         }
         assert_eq!(probe.live(), 0);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }

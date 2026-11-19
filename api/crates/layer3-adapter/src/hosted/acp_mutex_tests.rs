@@ -38,7 +38,7 @@ fn isolated_mutex_backing_is_admitted_before_first_unlock_and_freed_before_relea
     let (root, policy) = fixture();
     let mut probe = AllocationProbe::new();
     let mutex = probe.track(|| BridgeMutex::new(7, Some(&policy)).unwrap());
-    let admitted = root.capacity_bytes() - root.available_bytes();
+    let admitted = root.reserved_work_bytes();
     assert!(probe.peak() <= admitted);
     assert!(probe.live() <= admitted);
     let constructed = probe.allocated();
@@ -57,10 +57,10 @@ fn isolated_mutex_backing_is_admitted_before_first_unlock_and_freed_before_relea
     let shared = Arc::new(mutex);
     let last = shared.clone();
     drop(shared);
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), admitted);
+    assert_eq!(root.reserved_work_bytes(), admitted);
     drop(last);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     drop(probe);
 
     let mut probe = AllocationProbe::new();
@@ -69,7 +69,7 @@ fn isolated_mutex_backing_is_admitted_before_first_unlock_and_freed_before_relea
         probe.track(|| drop(raw.try_lock().unwrap()));
         #[cfg(target_vendor = "apple")]
         assert_eq!(probe.live(), size_of::<libc::pthread_mutex_t>());
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
         eprintln!("raw_bridge_mutex retained={} admitted=0", probe.live());
     }
     assert_eq!(probe.live(), 0);
@@ -99,5 +99,5 @@ fn mutex_refusal_does_not_initialize_backing_and_legacy_locking_is_unchanged() {
     assert!(mutex._storage.is_none());
     *mutex.try_lock().unwrap() = 5;
     assert_eq!(*mutex.try_lock().unwrap(), 5);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

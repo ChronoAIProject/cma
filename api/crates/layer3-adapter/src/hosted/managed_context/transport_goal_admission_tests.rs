@@ -223,7 +223,7 @@ fn goal_probe_preserves_exact_home_session_and_before_after_status() {
         assert_eq!(source.status.calls.load(SeqCst), reads);
         assert!(result.belongs_to(&policy));
         drop(result);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -249,7 +249,7 @@ fn goal_errors_cancellation_and_foreign_recovery_preserve_custody() {
             assert!(matches!(error, AdmittedError::Unsupported(_)));
         }
         drop(error);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
     let (binding, source) = binding(3, "conversation", output("conversation"), None);
     let mut operation = Box::pin(
@@ -260,7 +260,7 @@ fn goal_errors_cancellation_and_foreign_recovery_preserve_custody() {
     assert!(operation.as_mut().now_or_never().is_none());
     assert_eq!(source.calls.load(SeqCst), 1);
     drop(operation);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 
     let (_, foreign) = self::policy();
     let (binding, source) = self::binding(0, "conversation", output("conversation"), Some(foreign));
@@ -272,7 +272,7 @@ fn goal_errors_cancellation_and_foreign_recovery_preserve_custody() {
         .unwrap_err();
     assert!(error.refusal().is_some());
     assert_eq!(source.calls.load(SeqCst), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -292,10 +292,10 @@ fn isolated_goal_admission_precedes_command_copies_and_owns_parsed_results() {
     });
     assert!(*result);
     assert!(probe.peak() >= SCRIPT.len());
-    assert!(probe.live() <= root.capacity_bytes() - root.available_bytes());
+    assert!(probe.live() <= root.reserved_work_bytes());
     drop(result);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     drop(probe);
     let pressure = policy
         .admit(
@@ -335,7 +335,7 @@ fn isolated_goal_admission_precedes_command_copies_and_owns_parsed_results() {
     assert_eq!(probe.allocated(), 0);
     assert_eq!(source.calls.load(SeqCst), 1);
     drop((probe, pressure));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -361,7 +361,7 @@ async fn actual_bridge_transport_receipt_requires_owned_goal_absence_and_stable_
         drop(fixture);
         assert!(root.available_bytes() < root.capacity_bytes());
         drop(result);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -373,7 +373,7 @@ fn malformed_goal_json_refuses_without_second_status_or_legacy_fallback() {
         // the small goal fixture intentionally cannot admit a 4 MiB source.
         let error = JsonFrame::decode_admitted(&bytes, &policy).unwrap_err();
         assert!(error.belongs_to(&policy));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
     let (binding, source) = binding(0, "conversation", b"unknown output".to_vec(), None);
     assert!(binding
@@ -383,7 +383,7 @@ fn malformed_goal_json_refuses_without_second_status_or_legacy_fallback() {
         .unwrap()
         .is_err());
     assert_eq!(source.status.calls.load(SeqCst), 1);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -411,7 +411,7 @@ fn strict_goal_inspection_preserves_status_errors_and_malformed_output_category(
         }
         assert_eq!(source.calls.load(SeqCst), usize::from(fault < 5));
         drop(result);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
     let (binding, source) = binding(0, "conversation", b"malformed".to_vec(), None);
     let error = binding
@@ -422,5 +422,5 @@ fn strict_goal_inspection_preserves_status_errors_and_malformed_output_category(
         .unwrap_err();
     assert!(matches!(error, AdmittedError::Unsupported(_)));
     assert_eq!(source.status.calls.load(SeqCst), 1);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

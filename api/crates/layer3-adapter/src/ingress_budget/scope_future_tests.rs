@@ -13,7 +13,7 @@ struct Payload {
 impl Drop for Payload {
     fn drop(&mut self) {
         self.charged_at_drop
-            .store(self.root.available_bytes() == 12 * 1024, Ordering::SeqCst);
+            .store(self.root.reserved_work_bytes() == 4096, Ordering::SeqCst);
     }
 }
 
@@ -46,7 +46,7 @@ fn dropping_an_unpolled_transformation_drops_input_before_custody() {
         .resolve();
     drop(operation);
     assert!(charged_at_drop.load(Ordering::SeqCst));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -65,7 +65,7 @@ async fn cancelling_a_suspended_transformation_drops_input_before_custody() {
     task.abort();
     assert!(matches!(task.await, Err(error) if error.is_cancelled()));
     assert!(charged_at_drop.load(Ordering::SeqCst));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -90,7 +90,7 @@ async fn completed_success_and_error_keep_the_input_owner_through_result_drop() 
         })
         .await
         .unwrap();
-        assert_eq!(root.available_bytes(), 12 * 1024);
+        assert_eq!(root.available_bytes(), 12 * 1024 - root.metadata_bytes());
         let outcome = task.await.unwrap().transpose();
         let value = match outcome {
             Ok(value) => {
@@ -103,10 +103,10 @@ async fn completed_success_and_error_keep_the_input_owner_through_result_drop() 
             }
         };
         assert_eq!(value.bytes.len(), 2048);
-        assert_eq!(root.available_bytes(), 12 * 1024);
+        assert_eq!(root.available_bytes(), 12 * 1024 - root.metadata_bytes());
         drop(value);
         assert!(charged_at_drop.load(Ordering::SeqCst));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -123,5 +123,5 @@ async fn panicking_async_transformations_release_input_before_custody() {
     );
     assert!(task.await.unwrap_err().is_panic());
     assert!(charged_at_drop.load(Ordering::SeqCst));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

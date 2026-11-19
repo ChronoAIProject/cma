@@ -127,7 +127,7 @@ fn pending_channel_allocations() {
         let id = format!("synthetic-{index}");
         replies.push(probe.track(|| calls.register(&id, false)).unwrap());
     }
-    let admitted = root.capacity_bytes() - root.available_bytes();
+    let admitted = root.reserved_work_bytes();
     assert!(
         probe.peak() <= admitted,
         "RPC allocation peak {} > {admitted}",
@@ -139,14 +139,14 @@ fn pending_channel_allocations() {
         probe.live()
     );
     drop(calls);
-    assert!(probe.live() <= root.capacity_bytes() - root.available_bytes());
+    assert!(probe.live() <= root.reserved_work_bytes());
     assert!(
         probe.live() > 0,
         "receivers must still own their oneshot storage"
     );
     drop(replies);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 fn acknowledgement_channel_allocations() {
@@ -178,7 +178,7 @@ fn acknowledgement_channel_allocations() {
             .track(|| runtime.block_on(receipt.acknowledge()))
             .unwrap();
     }
-    let admitted = root.capacity_bytes() - root.available_bytes();
+    let admitted = root.reserved_work_bytes();
     assert!(
         probe.peak() <= admitted,
         "ACK allocation peak {} > {admitted}",
@@ -193,10 +193,10 @@ fn acknowledgement_channel_allocations() {
         values.push(probe.track(|| runtime.block_on(receiver.recv())).unwrap());
     }
     drop((receipt, receiver));
-    assert!(probe.live() <= root.capacity_bytes() - root.available_bytes());
+    assert!(probe.live() <= root.reserved_work_bytes());
     drop(values);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 fn measured<T: serde::de::DeserializeOwned>(name: &'static str, value: Value) {
@@ -209,11 +209,11 @@ fn measured_result<T: serde::de::DeserializeOwned>(name: &'static str, value: Va
     // allocation group for this decode, like the existing decoder fixtures.
     drop(TypedAdmission::new::<T>(&value, &policy).unwrap());
     let admission = TypedAdmission::new::<T>(&value, &policy).unwrap();
-    let reserved_peak = root.capacity_bytes() - root.available_bytes();
+    let reserved_peak = root.reserved_work_bytes();
     let mut probe = AllocationProbe::new();
     let decoded = probe.track(|| admission.decode::<T>(&value));
     assert_eq!(decoded.is_ok(), valid, "{name}: unexpected decode result");
-    let retained = root.capacity_bytes() - root.available_bytes();
+    let retained = root.reserved_work_bytes();
     assert!(
         probe.peak() <= reserved_peak,
         "{name}: peak {} > allowance {reserved_peak}",
@@ -227,7 +227,7 @@ fn measured_result<T: serde::de::DeserializeOwned>(name: &'static str, value: Va
     eprintln!("typed={name} requested_peak={} requested_retained={} allocation_churn={} admitted_peak={reserved_peak} admitted_retained={retained}", probe.peak(), probe.live(), probe.allocated());
     drop(decoded);
     assert_eq!(probe.live(), 0, "{name}: storage leaked");
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 fn pressure_before_decode() {
@@ -274,7 +274,7 @@ fn pressure_before_decode() {
     drop(old);
     assert_eq!(baseline.live(), 0);
     drop((blocked, frame, raw));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 fn updates() -> Vec<(&'static str, Value)> {

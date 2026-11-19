@@ -44,7 +44,7 @@ fn isolated_accounted_effect_deallocation_contract() {
     assert!(
         pause.admission_blocked_while_dropping(&policy, IngressClass::Data, move || drop(clone))
     );
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     assert_eq!(component.available_permits(), 8192);
     assert_eq!(probe.live(), 0);
 }

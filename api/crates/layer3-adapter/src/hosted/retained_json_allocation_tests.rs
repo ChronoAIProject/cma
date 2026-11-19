@@ -23,16 +23,20 @@ fn isolated_accounted_json_deallocation_contract() {
     let pools = JsonPools::new(TREE_BYTES, SCRATCH_BYTES).with_ownership(&policy);
     drop(pools.decode(b"null").unwrap());
     let mut probe = AllocationProbe::new();
-    let (frame, pause) = probe.pause_deallocation(
+    let (frame, pause) = probe.pause_deallocation_containing(
         deallocation::arc_allocation_bytes::<IngressReservation>(),
         || pools.decode(br#"{"result":"synthetic result"}"#).unwrap(),
+        |frame| match &frame.storage {
+            Storage::Accounted(owner) => &*owner._storage as *const IngressReservation as usize,
+            _ => panic!("expected accounted JSON"),
+        },
     );
     let result = frame.clone().into_result();
     drop(frame);
     assert!(
         pause.admission_blocked_while_dropping(&policy, IngressClass::Data, move || drop(result))
     );
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     assert_eq!(probe.live(), 0);
 }
 

@@ -200,13 +200,12 @@ async fn admitted_refresh_channel_selects_sources_and_preserves_delivery_classif
             writes,
         ));
         match &retained {
-            Outcome::Ambiguous(error) | Outcome::PreWriteFailure(error) => assert_eq!(
-                root.capacity_bytes() - root.available_bytes(),
-                error.requested_bytes()
-            ),
-            _ => assert_eq!(root.available_bytes(), root.capacity_bytes()),
+            Outcome::Ambiguous(error) | Outcome::PreWriteFailure(error) => {
+                assert_eq!(root.reserved_work_bytes(), error.requested_bytes())
+            }
+            _ => root.assert_idle(),
         }
         drop(retained);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }

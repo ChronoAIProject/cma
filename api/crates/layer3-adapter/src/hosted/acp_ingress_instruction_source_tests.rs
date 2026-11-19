@@ -149,14 +149,11 @@ async fn instruction_recovery_uses_admitted_sources_and_preserves_uncertain_outc
             }
             let clone = error.clone();
             drop((fixture, scope, result, source, legacy_source));
-            assert_eq!(
-                root.capacity_bytes() - root.available_bytes(),
-                clone.requested_bytes()
-            );
+            assert_eq!(root.reserved_work_bytes(), clone.requested_bytes());
             drop(clone);
         } else {
             drop((fixture, scope, result, source, legacy_source));
         }
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }

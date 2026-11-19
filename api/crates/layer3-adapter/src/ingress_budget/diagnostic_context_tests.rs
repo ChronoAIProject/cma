@@ -95,7 +95,7 @@ fn isolated_error_context_admits_old_and_new_text_overlap() {
         let clone = probe.track(|| error.clone());
         drop((scope, error));
         assert!(probe.live() >= expected.len());
-        assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+        assert_eq!(root.reserved_work_bytes(), charged);
         eprintln!(
             "context peak={} retained={} admitted={charged}",
             probe.peak(),
@@ -103,7 +103,7 @@ fn isolated_error_context_admits_old_and_new_text_overlap() {
         );
         probe.track(|| drop(clone));
         assert_eq!(probe.live(), 0);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
     let mut probe = AllocationProbe::new();
     let error = probe.track(|| AdapterError::Unavailable(source.clone()).context(&context));
@@ -143,7 +143,7 @@ fn context_pressure_preserves_the_original_runtime_category_and_detail() {
             Some(&category("original failure".into()))
         );
         drop((scope, error));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 

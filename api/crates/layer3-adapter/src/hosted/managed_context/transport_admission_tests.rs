@@ -265,10 +265,10 @@ fn admitted_tool_binding_is_shared_through_installation_and_repeated_preparation
                 .unwrap()
                 .unwrap()
         });
-        let charged = root.capacity_bytes() - root.available_bytes();
+        let charged = root.reserved_work_bytes();
         assert!(probe.peak() <= charged);
         let cloned = probe.track(|| prepared.clone_admitted(&policy).unwrap());
-        assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+        assert_eq!(root.reserved_work_bytes(), charged);
         probe.track(|| {
             binding
                 .confirm_transport_admitted(&prepared, "conversation", 1, &policy)
@@ -277,7 +277,7 @@ fn admitted_tool_binding_is_shared_through_installation_and_repeated_preparation
                 .unwrap()
         });
         drop((prepared, cloned));
-        assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+        assert_eq!(root.reserved_work_bytes(), charged);
         assert!(probe.live() > 0);
         assert!(probe.live() <= charged);
         let frame = binding.tools_frame(Some(&policy)).unwrap();
@@ -301,7 +301,7 @@ fn admitted_tool_binding_is_shared_through_installation_and_repeated_preparation
         drop(next);
         drop((binding, source));
         assert_eq!(probe.live(), 0);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -345,12 +345,9 @@ fn admitted_tool_failures_keep_categories_and_never_install_unconfirmed_bindings
             }
             let clone = error.clone();
             drop((binding, source, error));
-            assert_eq!(
-                root.capacity_bytes() - root.available_bytes(),
-                clone.requested_bytes()
-            );
+            assert_eq!(root.reserved_work_bytes(), clone.requested_bytes());
             drop(clone);
-            assert_eq!(root.available_bytes(), root.capacity_bytes());
+            root.assert_idle();
         }
     }
 }
@@ -374,10 +371,7 @@ fn admitted_tool_foreign_sources_and_cancelled_work_release_without_installation
             .unwrap();
         assert!(error.refusal().is_some());
         assert_eq!(source.preparations.load(SeqCst), 0);
-        assert_eq!(
-            foreign_root.available_bytes(),
-            foreign_root.capacity_bytes()
-        );
+        foreign_root.assert_idle();
         for fault in [3, 4] {
             let (binding, source) = self::binding(provider, fault, None);
             if fault == 3 {
@@ -413,7 +407,7 @@ fn admitted_tool_foreign_sources_and_cancelled_work_release_without_installation
             }
             assert_eq!(source.preparations.load(SeqCst), 1);
             assert!(binding.0.installed_transport.read().unwrap().is_none());
-            assert_eq!(root.available_bytes(), root.capacity_bytes());
+            root.assert_idle();
         }
     }
 }

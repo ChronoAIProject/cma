@@ -112,7 +112,7 @@ fn admitted_transport_refuses_legacy_sources_before_invocation_and_before_instal
         assert!(matches!(error, AdmittedError::Unsupported(_)));
         assert!(binding.0.installed_transport.read().unwrap().is_none());
         drop(prepared);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -149,6 +149,6 @@ fn admitted_transport_refuses_pressure_before_copying_source_bindings() {
         assert_eq!(source.preparations.load(SeqCst), 0);
         assert_eq!(probe.allocated(), 0);
         drop(pressure);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }

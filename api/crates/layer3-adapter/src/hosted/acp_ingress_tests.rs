@@ -44,7 +44,7 @@ fn bridge_identity_custody_survives_shared_owners_and_refuses_before_copying() {
     assert_eq!(root.available_bytes(), held);
     assert!(held <= root.capacity_bytes() - 264);
     drop(remaining);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]

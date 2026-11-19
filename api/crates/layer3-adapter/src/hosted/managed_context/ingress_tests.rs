@@ -93,7 +93,7 @@ fn isolated_managed_tool_copy_contract() {
         let (root, policy) = policy();
         let mut probe = AllocationProbe::new();
         let frame = probe.track(|| binding.tools_frame(Some(&policy))).unwrap();
-        let charged = root.capacity_bytes() - root.available_bytes();
+        let charged = root.reserved_work_bytes();
         assert_eq!(*frame, expected);
         assert!(probe.peak() <= charged);
         eprintln!(
@@ -103,11 +103,11 @@ fn isolated_managed_tool_copy_contract() {
         );
         let clone = frame.shared().unwrap();
         drop(frame);
-        assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+        assert_eq!(root.reserved_work_bytes(), charged);
         assert!(probe.live() > 0);
         drop(clone);
         assert_eq!(probe.live(), 0);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
         drop(probe);
         let available = policy.budget(IngressClass::Data).available_bytes();
         let blocker = policy
@@ -149,7 +149,7 @@ fn admitted_tool_replacement_preserves_ambiguity_refusal_without_partial_admissi
         let admitted = binding.tools_frame(Some(&policy)).unwrap_err();
         assert_eq!(admitted.to_string(), legacy.to_string());
         assert!(matches!(admitted, AdapterError::Unsupported(_)));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -175,7 +175,7 @@ fn explicit_transport_replaces_the_matching_tool_before_the_installed_transport(
             assert_eq!(root.available_bytes(), held);
             assert_eq!(*clone, expected);
             drop(clone);
-            assert_eq!(root.available_bytes(), root.capacity_bytes());
+            root.assert_idle();
             assert_eq!(
                 *binding
                     .tools_frame_for_transport(explicit.as_ref(), None)

@@ -70,7 +70,7 @@ pub(super) fn configuration_request_allocations() {
             drop(actual);
             assert_eq!(probe.live(), 0);
             drop(storage);
-            assert_eq!(root.available_bytes(), root.capacity_bytes());
+            root.assert_idle();
         }
     }
 }
@@ -255,7 +255,7 @@ pub(super) fn bridge_identity_allocations() {
     drop(identities);
     assert_eq!(probe.live(), 0);
     drop(storage);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 pub(super) fn http_descriptor_allocations() {
@@ -306,7 +306,7 @@ pub(super) fn http_descriptor_allocations() {
                 drop((descriptor, copied));
                 assert_eq!(probe.live(), 0);
                 drop(storage);
-                assert_eq!(root.available_bytes(), root.capacity_bytes());
+                root.assert_idle();
             }
         }
     }
@@ -375,7 +375,7 @@ pub(super) fn outgoing_json_allocations() {
         let mut actual = AllocationProbe::new();
         let frame =
             actual.track(|| serde_json::json!({"sessionId":"s".repeat(1024), "prompt":update}));
-        let admitted = root.capacity_bytes() - root.available_bytes();
+        let admitted = root.reserved_work_bytes();
         assert!(
             actual.peak() <= admitted,
             "{name}: JSON peak {} > {admitted}",
@@ -384,6 +384,6 @@ pub(super) fn outgoing_json_allocations() {
         drop(frame);
         assert_eq!(actual.live(), 0);
         drop(storage);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }

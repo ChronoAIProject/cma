@@ -78,7 +78,7 @@ async fn receipt_query_uses_the_admitted_source_only_after_local_readiness() {
     drop((fixture, source));
     assert!(root.available_bytes() < root.capacity_bytes());
     drop((first, transport));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -154,7 +154,7 @@ async fn instruction_query_preserves_reply_validation_and_cached_result() {
         drop(fixture);
         assert!(root.available_bytes() < root.capacity_bytes());
         drop((value, cached));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -418,5 +418,5 @@ fn isolated_readiness_query_admits_the_maximum_identity_before_copying() {
     assert_eq!(fixture.root.available_bytes(), baseline);
     let root = fixture.root.clone();
     drop((fixture, relay, capture));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

@@ -62,7 +62,7 @@ fn unsupported_source_refuses_without_boxing_or_invoking_legacy_production() {
         .all(|error| matches!(error, AdmittedError::Unsupported(_))));
     assert_eq!(probe.allocated(), 0);
     assert_eq!(source.0.load(Ordering::Relaxed), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     assert!(matches!(
         port.credential("synthetic-sandbox", &runtime, &agent, false, None)
             .now_or_never()
@@ -135,7 +135,7 @@ fn admitted_source_keeps_arguments_and_output_owner_without_legacy_fallback() {
     assert!(output.belongs_to(&policy));
     assert!(root.available_bytes() < root.capacity_bytes());
     drop(output);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -190,5 +190,5 @@ async fn unsupported_backend_exchange_refuses_without_boxing_or_transport_work()
     assert_eq!(probe.allocated(), 0);
     assert!(backend.requests().await.is_empty());
     drop(scope);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

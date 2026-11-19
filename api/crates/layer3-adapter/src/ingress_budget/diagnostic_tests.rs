@@ -39,13 +39,13 @@ async fn diagnostic_result_clones_retain_exact_formatted_storage() {
     assert!(
         matches!(result.as_adapter(), Some(AdapterError::OperationIdentityConflict(value)) if value.len()==4106)
     );
-    let charged = root.capacity_bytes() - root.available_bytes();
+    let charged = root.reserved_work_bytes();
     assert_eq!(result.requested_bytes(), charged);
     let clone = result.clone();
     drop((scope, result));
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+    assert_eq!(root.reserved_work_bytes(), charged);
     drop(clone);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -63,7 +63,7 @@ async fn cancellation_drops_formatted_work_before_its_scope() {
     drop(scope);
     assert!(root.available_bytes() < root.capacity_bytes());
     drop(operation);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -95,7 +95,7 @@ async fn diagnostic_growth_refusal_uses_the_pre_admitted_error_owner_without_tex
     );
     assert!(result.requested_bytes() > 0);
     drop((scope, result));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -117,7 +117,7 @@ async fn empty_runtime_errors_keep_their_original_category() {
             .unwrap_err();
         assert_eq!(error.as_adapter(), Some(&category(String::new())));
         drop((error, scope));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -145,5 +145,5 @@ async fn refusing_the_error_owner_precedes_operation_polling() {
         Err(AdmittedError::Refused(AdmissionRefusal::AtCapacity { .. }))
     ));
     drop((scope, pressure));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
