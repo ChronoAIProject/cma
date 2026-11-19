@@ -3,6 +3,20 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['spend-observe-unknown-field', 'invalid_request'],
+  ['spend-observe-unsupported-source', 'invalid_request'],
+  ['spend-observe-adjustment-source', 'invalid_request'],
+  ['spend-observe-fractional-units', 'invalid_request'],
+  ['spend-observe-negative-units', 'invalid_request'],
+  ['spend-observe-unsafe-units', 'invalid_request'],
+  ['spend-observe-null-units', 'invalid_request'],
+  ['spend-observe-missing-field', 'invalid_request'],
+  ['spend-observe-malformed', 'invalid_request'],
+  ['spend-observe-malformed-writes_closed', 'invalid_request'],
+  ['spend-observe-malformed-absent', 'platform_spend_unavailable'],
+  ['spend-observe-malformed-absent_forbidden', 'forbidden'],
+  ['spend-observe-malformed-forbidden', 'forbidden'],
+  ['spend-observe-malformed-anonymous', 'not_authenticated'],
   ['admin-admission-ceilings-invalid', 'invalid_request'],
   ['admin-admission-stop-invalid', 'invalid_request'],
   ['admin-admission-resume-invalid', 'invalid_request'],
