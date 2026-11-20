@@ -197,11 +197,15 @@ impl PoolTargetStore for MongoNativeWarmPools {
     }
 
     async fn claim(&self) -> Result<Option<PoolTarget>, WarmPoolError> {
-        self.claim_matching(None).await
+        self.claim_matching(None, true).await
     }
 
     async fn claim_target(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
-        self.claim_matching(Some(id)).await
+        self.claim_matching(Some(id), false).await
+    }
+
+    async fn claim_retirement(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
+        self.claim_matching(Some(id), true).await
     }
 
     async fn bind(
@@ -244,7 +248,11 @@ impl PoolTargetStore for MongoNativeWarmPools {
 }
 
 impl MongoNativeWarmPools {
-    async fn claim_matching(&self, id: Option<&str>) -> Result<Option<PoolTarget>, WarmPoolError> {
+    async fn claim_matching(
+        &self,
+        id: Option<&str>,
+        include_retiring: bool,
+    ) -> Result<Option<PoolTarget>, WarmPoolError> {
         let now = DateTime::now();
         let mut filter = self.scope();
         filter.extend(
@@ -252,6 +260,8 @@ impl MongoNativeWarmPools {
         );
         if let Some(id) = id {
             filter.insert("_id", id);
+        }
+        if !include_retiring {
             filter.insert("retiring", doc! {"$ne":true});
         }
         self.targets.find_one_and_update(filter, doc! {"$set":{

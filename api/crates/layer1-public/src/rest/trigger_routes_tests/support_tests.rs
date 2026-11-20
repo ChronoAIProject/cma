@@ -366,6 +366,7 @@ impl TestApp {
             false,
             Arc::new(FixedSandboxCredentialPrerequisite::Ready),
             None,
+            Default::default(),
         )
         .await
     }
@@ -375,6 +376,7 @@ impl TestApp {
             true,
             Arc::new(FixedSandboxCredentialPrerequisite::Ready),
             None,
+            Default::default(),
         )
         .await
     }
@@ -382,7 +384,7 @@ impl TestApp {
     pub async fn with_credential_prerequisite(
         prerequisite: Arc<dyn SandboxCredentialPrerequisite>,
     ) -> Self {
-        Self::configured(false, prerequisite, None).await
+        Self::configured(false, prerequisite, None, Default::default()).await
     }
 
     pub async fn with_inline_materializer(
@@ -392,14 +394,23 @@ impl TestApp {
             false,
             Arc::new(FixedSandboxCredentialPrerequisite::Ready),
             Some(materializer),
+            Default::default(),
         )
         .await
+    }
+
+    pub async fn with_admission_policy(
+        policy: layer2_core::trigger_domain::LaunchAdmissionPolicy,
+        prerequisite: Arc<dyn SandboxCredentialPrerequisite>,
+    ) -> Self {
+        Self::configured(false, prerequisite, None, policy).await
     }
 
     async fn configured(
         private_profiles: bool,
         prerequisite: Arc<dyn SandboxCredentialPrerequisite>,
         materializer: Option<Arc<super::inline_image_routes::CredentialMaterializer>>,
+        admission_policy: layer2_core::trigger_domain::LaunchAdmissionPolicy,
     ) -> Self {
         let profiles = Arc::new(InMemoryProfileStore::default());
         let (agent, _workspace, sandbox) = publish_profiles(&profiles, private_profiles).await;
@@ -476,7 +487,8 @@ impl TestApp {
             broker.clone(),
             policy.clone(),
             prerequisite,
-        );
+        )
+        .with_admission_policy(admission_policy);
         let connections = ServiceConnectionService::new(launches.clone(), broker.clone());
         let operations = Arc::new(MemoryOperationStore::default());
         let operation_store: Arc<dyn OperationStore> = operations.clone();

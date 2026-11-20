@@ -120,6 +120,12 @@ impl HierarchyReadStore for InMemorySandboxStore {
             return Ok(None);
         };
         Ok(Some(WorkspaceHierarchyRecord {
+            task_activity_at: state.agents.values()
+                .filter(|agent| &agent.workspace_id == id)
+                .filter_map(|agent| {
+                    let entries = state.agent_logs.get(&agent.id).map_or(&[][..], Vec::as_slice);
+                    crate::sandbox::task_activity::from_log(agent, entries).map(|at| (agent.id.clone(), at))
+                }).collect(),
             task_started_at: state.agents.values().filter(|agent| &agent.workspace_id == id).filter_map(|agent| {
                 let turn = agent.conversation.active_turn?;
                 let at = state.agent_logs.get(&agent.id)?.iter().find(|entry| matches!(entry.kind, crate::sandbox::AgentLogKind::TurnStarted { turn_sequence, .. } if turn_sequence == turn))?.appended_at.clone();

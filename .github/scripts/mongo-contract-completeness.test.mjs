@@ -73,6 +73,28 @@ test('metadata completeness catches omitted task-home and newly introduced modul
   }
 });
 
+test('visitor admission contracts remain covered by the Launch prefix and cannot be omitted', () => {
+  const prefix = 'store::trigger_definitions::launch_mongo_integration_tests::';
+  assert.ok(requiredPrefixes.includes(prefix));
+  for (const name of [
+    'faults::transient_failures_keep_the_eight_attempt_baseline_and_enable_sixteen_attempts',
+    'faults::transient_insert_retries_but_permanent_driver_and_domain_refusals_do_not',
+    'faults::unknown_commit_reconciles_without_replaying_the_admission_body',
+    'rollout::disabled_and_enabled_replicas_preserve_quota_replay_and_cancellation_across_days',
+    'rollout::disabled_contention_retains_baseline_refusals_without_overspending',
+  ]) {
+    const fullName = `${prefix}visitor_contention::${name}`;
+    const metadata = inventory();
+    const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+    cases[fullName] = caseMetadata(true);
+    assert.equal(check(metadata).status, 0, fullName);
+    cases[fullName] = caseMetadata(false);
+    const result = check(metadata);
+    assert.equal(result.status, 1, fullName);
+    assert.ok(result.stderr.includes(fullName), result.stderr);
+  }
+});
+
 test('metadata completeness rejects helper selection and stale or undocumented exceptions', () => {
   const metadata = inventory();
   metadata['rust-suites']['cma::bin/cma'].testcases[child] = caseMetadata(true);
@@ -113,7 +135,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 149);
+  assert.equal(new Set(requiredPrefixes).size, 150);
   assert.ok(requiredPrefixes.includes('store::directory::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('sandbox::agent_worker_tests::cleanup_contention_tests::'));
   assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));

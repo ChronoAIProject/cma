@@ -5,8 +5,7 @@ import time
 
 from . import key_marker_view, reviewed_literals
 from .common import digest_bytes
-from .gate import valid_digest
-from .package_evidence import LAYER_ID, fields, matches, require
+from .package_evidence import image_binding, require
 
 ENCODING = "utf8-invalid-byte-replacement"
 PUBLIC_KEY_LABEL = b"-----BEGIN PUBLIC KEY-----"
@@ -18,18 +17,18 @@ MAX_RENDER_SECONDS = 5
 REPLACEMENTS = dict.fromkeys(range(0xDC80, 0xDD00), 0xFFFD)
 
 
-def validate(row, package):
+def validate(row, package, *, portable=False):
     proof = row["native_json_key_view"]
-    fields(proof, {"encoding", "archive_sha256", "image_config", "image_manifest", "matches"})
+    image_binding(proof, {"encoding", "matches"}, portable=portable)
     require(proof["encoding"] == ENCODING and row["component"] == key_marker_view.SCOPE
             and row["platform"] == "linux/amd64"
-            and row["member"] is None and package["authority_type"] == "arch-signature"
-            and valid_digest(proof["archive_sha256"]) and matches(LAYER_ID, proof["image_config"])
-            and (proof["image_manifest"] is None or matches(LAYER_ID, proof["image_manifest"])))
+            and row["member"] is None and package["authority_type"] == "arch-signature")
     origin = row.get("derived_payload")
     require((package["name"] == "file" and row["path"] == key_marker_view.PATHS["file"] and origin is None)
-            or (package["name"] == "shared-mime-info" and origin is not None and origin["kind"] == "mime-index"))
-    candidates = key_marker_view.validate_matches(proof["matches"], normalize=True, max_parts=MAX_RECORD_PARTS)
+            or (not portable and package["name"] == "shared-mime-info" and origin is not None
+                and origin["kind"] == "mime-index"))
+    candidates = key_marker_view.validate_matches(proof["matches"], normalize=True, max_parts=MAX_RECORD_PARTS,
+                                                 portable=portable)
     for item in candidates.values():
         original, detector = item["original"], item["detector"]
         require(original["size"] <= MAX_MATCH_BYTES and detector["size"] <= min(MAX_MATCH_BYTES, 3 * original["size"])
