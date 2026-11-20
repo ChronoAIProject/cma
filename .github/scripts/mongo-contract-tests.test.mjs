@@ -269,8 +269,12 @@ for (const reuse of [false, true]) {
       const f = fixture(scenario, reuse);
       try {
         const run = () => execFileSync('bash', f.args, { env: f.env, timeout: 15000, stdio: 'pipe' });
-        if (scenario === 'success') run(); else assert.throws(run);
+        let stderr = '';
+        if (scenario === 'success') run(); else assert.throws(run, error => { stderr = String(error.stderr); return true; });
         if (scenario.startsWith('entropy-')) { assert.deepEqual(f.calls().map(row => [row.command,row.args[1]]), [['cargo','list']]); continue; }
+        assert.equal(stderr.includes('per-test budget of nextest profile mongo-ordinary'), scenario === 'test-error',
+          'only a failed ordinary partition names the budget remedy');
+        if (scenario === 'test-error') assert.match(stderr, /Mongo partition count:1\/2 failed \(exit 7\)[^]*dedicated mode[^]*mongo-contract-tests\.sh/);
         const calls = f.calls();
         assert.ok(calls.every(row => row.authenticatedUri === undefined), 'listing and execution discard authenticated caller authority');
         const cargo = calls.filter(row => row.command === 'cargo' && row.args[1] === 'run');
@@ -281,7 +285,7 @@ for (const reuse of [false, true]) {
             : isolatedTest ? `package(=cma) and test(=${isolatedTest})` : ordinaryPredicate;
           const selection = `${predicate} & ${fixturePredicate} & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`;
           const build = reuse ? ['--binaries-metadata', join(f.metadata, 'binaries-metadata.json'), '--cargo-metadata', join(f.metadata, 'cargo-metadata.json')] : ['--workspace', '--locked'];
-          const operation = action === 'list' ? ['--message-format', 'json'] : ['--no-tests', 'fail', '--test-threads', '1', '--no-fail-fast', ...(cargo.indexOf(row) < isolatedTests.length ? ['--success-output', 'final'] : ['--partition', row.args[row.args.indexOf('--partition')+1]])];
+          const operation = action === 'list' ? ['--message-format', 'json'] : ['--no-tests', 'fail', '--test-threads', '1', '--no-fail-fast', ...(cargo.indexOf(row) < isolatedTests.length ? ['--success-output', 'final'] : ['--partition', row.args[row.args.indexOf('--partition')+1], '--profile', 'mongo-ordinary'])];
           assert.deepEqual(row.args, ['nextest', action, ...build, ...operation, '--run-ignored', 'only', '-E', selection]);
           if (action === 'list') assert.equal(row.uri, undefined, 'listing must discard caller Mongo URI too');
         }
