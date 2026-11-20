@@ -1,4 +1,4 @@
-import { act, render } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { CmaWebClient } from '../api/client';
 import type { AgentDetail, SandboxDetail } from '../api/types';
@@ -7,6 +7,7 @@ import { sandboxFixture } from '../test/hierarchy';
 import { BOOTSTRAP_AGENT, bootstrapSandbox } from '../test/bootstrap';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { lifecycleStorageKey } from './lifecycleIntent';
+import { lifecycleRecoveryKey } from './lifecycleIntentStorage';
 
 const starting: AgentDetail = {
   ...AGENT_DETAIL,
@@ -57,6 +58,25 @@ function show(client: CmaWebClient, workspaceId?: string, sandboxId?: string) {
   return { ...render(<AgentLifecycleCard {...props} />), props, onCreated };
 }
 const advance = async (ms = 0) => act(async () => vi.advanceTimersByTimeAsync(ms));
+
+it('does not open a late Agent observation after the owner closes creation', async () => {
+  let resolve!: (agent: AgentDetail) => void;
+  const client = clientFor({
+    readAgent: () =>
+      new Promise((done) => {
+        resolve = done;
+      }),
+  });
+  const view = show(client);
+  await advance();
+  fireEvent.click(screen.getByText('Close', { selector: 'button' }));
+  expect(view.props.onClose).toHaveBeenCalledOnce();
+  await act(async () => resolve(starting));
+  await advance();
+  expect(view.onCreated).not.toHaveBeenCalled();
+  expect(client.createAgentLifecycle).not.toHaveBeenCalled();
+  expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toContain('same-key');
+});
 
 it.each(['provisioning', 'installing'] as const)(
   'opens the admitted bootstrap Agent during parent %s with its actual Starting status',
@@ -128,7 +148,14 @@ it('opens the real Starting Agent once before lifecycle success without recreati
   expect(client.readAgent).toHaveBeenCalledExactlyOnceWith('agt_1', expect.anything());
   expect(client.readSandbox).toHaveBeenCalledExactlyOnceWith('sbx_1', expect.anything());
   expect(
-    JSON.parse(sessionStorage.getItem(lifecycleStorageKey('owner', 'wsp_1', 'sbx_1'))!).intent,
+    JSON.parse(
+      sessionStorage.getItem(
+        lifecycleRecoveryKey(
+          { owner: 'owner', workspaceId: 'wsp_1', sandboxId: 'sbx_1' },
+          { agentId: 'agt_1', operationId: 'operation-one' },
+        ),
+      )!,
+    ).intent,
   ).toMatchObject({ key: 'same-key', agentId: 'agt_1', receipt: { id: 'operation-one' } });
   unmount();
   await advance(60_000);
