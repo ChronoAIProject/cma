@@ -216,6 +216,9 @@ export class QueuedCommandTracker {
           this.throttle(error, delay);
         }
       }
+    } else {
+      // An early refresh must retain the discovery read deferred by its cooldown.
+      this.discoveryNext = Math.min(this.discoveryNext, this.discoveryRetryAt);
     }
     this.remember();
     await this.reconcile(signal, identityChanged);
