@@ -17,6 +17,7 @@ pub mod ownership;
 mod root_storage;
 pub mod scope;
 pub mod sizing;
+mod source_erasure;
 pub mod watch;
 
 pub use crate::conversation_channel::admitted::{

@@ -128,6 +128,97 @@ async fn admitted_open_refuses_missing_process_metadata_before_allocating_work()
 
 struct UnpolledSocket;
 
+#[tokio::test]
+async fn admitted_open_refuses_a_subscription_from_another_attachment() {
+    use crate::hosted::subscriptions::AdmittedSubscriptionBinding;
+    use crate::ingress_budget::{sizing, AdmissionRefusal, AdmittedError};
+    use futures_util::FutureExt;
+
+    let root = IngressBudget::new(128 * 1024 * 1024);
+    let empty = AllocationPlan::checked("no downstream fixture work", &[]).unwrap();
+    let bounds =
+        IngressOwnershipPolicy::conversation_bounds(root.capacity_bytes(), 2, empty, empty)
+            .unwrap();
+    let policy = IngressOwnershipPolicy::new_admitted(root.clone(), bounds).unwrap();
+    drop(
+        policy
+            .admit(
+                IngressClass::Data,
+                AllocationPlan::checked("release locks", &[1]).unwrap(),
+            )
+            .unwrap(),
+    );
+    let first = policy.admit_attachment().unwrap();
+    let second = policy.admit_attachment().unwrap();
+    let source = first
+        .policy()
+        .admit(
+            IngressClass::Data,
+            AllocationPlan::checked(
+                "synthetic source",
+                &[sizing::shared_owner_bytes::<NeverSubscription>()],
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .initialize(|| NeverSubscription);
+    let binding = AdmittedSubscriptionBinding::new(
+        first.policy(),
+        source.into(),
+        "synthetic-sandbox",
+        &crate::RuntimeHandle("synthetic-runtime".into()),
+        &crate::AgentSlot("synthetic-agent".into()),
+    )
+    .unwrap();
+    let mut settings = super::super::tests::settings(None, false);
+    settings.retained_json = true;
+    settings.bounded_raw_output = true;
+    settings.bounded_permission_state = true;
+    settings.shared_runtime_output = true;
+    settings.output_json_budget = true;
+    let (updates, _) = mpsc::channel(1);
+    let socket = Box::new(UnpolledSocket);
+    let cwd = "/synthetic/work".to_owned();
+    let mut probe = AllocationProbe::new();
+    let result = probe.track(|| {
+        Bridge::open_admitted(
+            socket,
+            "agent",
+            cwd,
+            (settings, Some(binding), second),
+            None,
+            None,
+            updates,
+        )
+        .now_or_never()
+    });
+    assert!(matches!(
+        result,
+        Some(Err(AdmittedError::Refused(AdmissionRefusal::InvalidPlan {
+            phase: "subscription binding ownership"
+        })))
+    ));
+    assert_eq!(probe.allocated(), 0);
+    drop(first);
+    root.assert_idle();
+}
+
+struct NeverSubscription;
+
+#[async_trait::async_trait]
+impl crate::hosted::HostedSubscriptionSource for NeverSubscription {
+    async fn credential(
+        &self,
+        _: &str,
+        _: &crate::RuntimeHandle,
+        _: &crate::AgentSlot,
+        _: bool,
+        _: Option<&str>,
+    ) -> crate::Result<crate::hosted::HostedSubscriptionCredential> {
+        panic!("foreign binding cannot invoke its source");
+    }
+}
+
 impl futures_util::Stream for UnpolledSocket {
     type Item =
         Result<crate::ingress_budget::SharedOwned<Message>, crate::ingress_budget::AdmittedError>;

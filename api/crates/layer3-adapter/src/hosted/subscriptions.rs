@@ -6,6 +6,10 @@ use crate::{AgentSlot, RuntimeCredential, RuntimeHandle};
 #[path = "subscriptions_reply.rs"]
 mod reply;
 
+#[path = "subscriptions_binding.rs"]
+mod binding;
+pub(super) use binding::{AdmittedSubscriptionBinding, SubscriptionBinding};
+
 /// Short-lived native access authority. Renewable OAuth secrets stay in CMA.
 #[derive(Debug, Clone)]
 pub enum HostedSubscriptionCredential {

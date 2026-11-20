@@ -1,8 +1,9 @@
 use super::*;
 use crate::allocation_probe::{deallocation, AllocationProbe};
 use crate::hosted::acp::ingress::fixture::fixture;
-use crate::hosted::subscriptions::HostedSubscriptionSource;
+use crate::hosted::subscriptions::{HostedSubscriptionBinding, HostedSubscriptionSource};
 use crate::hosted::update_relay::UpdateRelay;
+use crate::ingress_budget::{sizing, SharedOwned};
 use crate::{AgentSlot, RuntimeCredential, RuntimeHandle};
 use futures_util::FutureExt;
 use serde_json::json;
@@ -95,7 +96,7 @@ impl HostedSubscriptionSource for Source {
 fn credential_reply_refuses_before_source_allocation_while_legacy_still_allocates() {
     if deallocation::isolated("hosted::subscriptions::reply::tests::credential_reply_refuses_before_source_allocation_while_legacy_still_allocates") { return; }
     let fixture = fixture();
-    let (binding, source) = binding(0, None);
+    let (binding, source) = binding(&fixture.policy, 0, None);
     let id = json!(7);
     let params = json!({});
     let pressure = fixture
@@ -121,14 +122,22 @@ fn credential_reply_refuses_before_source_allocation_while_legacy_still_allocate
     ));
     assert_eq!(probe.allocated(), 0);
     assert_eq!(source.calls.load(SeqCst), 0);
-    let legacy = probe.track(|| binding.credential(&params).now_or_never().unwrap().unwrap());
+    let (legacy_binding, legacy_source) = legacy_binding(0, None);
+    let legacy = probe.track(|| {
+        legacy_binding
+            .credential(&params)
+            .now_or_never()
+            .unwrap()
+            .unwrap()
+    });
     assert_eq!(
         legacy["tokens"]["accessToken"].as_str().unwrap().len(),
         4096
     );
     assert!(probe.peak() >= 4096);
     assert!(probe.live() >= 4096);
-    assert_eq!(source.legacy.load(SeqCst), 1);
+    assert_eq!(source.legacy.load(SeqCst), 0);
+    assert_eq!(legacy_source.legacy.load(SeqCst), 1);
     drop(legacy);
     assert_eq!(probe.live(), 0);
     drop((probe, pressure));
@@ -136,7 +145,7 @@ fn credential_reply_refuses_before_source_allocation_while_legacy_still_allocate
 
 #[test]
 fn legacy_binding_preserves_the_original_source_without_an_admitted_port() {
-    let (binding, source) = binding(5, None);
+    let (binding, source) = legacy_binding(5, None);
     let legacy = binding
         .credential(&json!({}))
         .now_or_never()
@@ -147,7 +156,7 @@ fn legacy_binding_preserves_the_original_source_without_an_admitted_port() {
     assert_eq!(source.calls.load(SeqCst), 0);
 }
 
-fn binding(
+fn legacy_binding(
     mode: u8,
     foreign: Option<IngressOwnershipPolicy>,
 ) -> (HostedSubscriptionBinding, Arc<Source>) {
@@ -168,11 +177,77 @@ fn binding(
     )
 }
 
+fn binding(
+    policy: &IngressOwnershipPolicy,
+    mode: u8,
+    foreign: Option<IngressOwnershipPolicy>,
+) -> (AdmittedSubscriptionBinding, SharedOwned<Source>) {
+    let source = policy
+        .admit(
+            IngressClass::Data,
+            AllocationPlan::checked(
+                "synthetic subscription source",
+                &[sizing::shared_owner_bytes::<Source>()],
+            )
+            .unwrap(),
+        )
+        .unwrap()
+        .initialize(|| Source {
+            calls: AtomicUsize::new(0),
+            legacy: AtomicUsize::new(0),
+            mode,
+            foreign,
+        });
+    let binding = AdmittedSubscriptionBinding::new(
+        policy,
+        source.clone().into(),
+        "synthetic-sandbox",
+        &RuntimeHandle("synthetic-runtime".into()),
+        &AgentSlot("synthetic-agent".into()),
+    )
+    .unwrap();
+    (binding, source)
+}
+
+#[test]
+fn isolated_subscription_binding_keeps_initial_storage_charged_after_cloning() {
+    const TEST: &str = "hosted::subscriptions::reply::tests::isolated_subscription_binding_keeps_initial_storage_charged_after_cloning";
+    if deallocation::isolated(TEST) {
+        return;
+    }
+    let fixture = fixture();
+    let baseline = fixture.root.available_bytes();
+    let mut probe = AllocationProbe::new();
+    let (binding, source) = probe.track(|| binding(&fixture.policy, 0, None));
+    assert!(
+        probe.live() > 0,
+        "measure initial source and binding storage"
+    );
+    assert!(
+        probe.live() <= baseline - fixture.root.available_bytes(),
+        "initial subscription storage must retain admission"
+    );
+    let allocated = probe.allocated();
+    let retained = probe.track(|| binding.clone());
+    assert_eq!(
+        probe.allocated(),
+        allocated,
+        "clones share admitted storage"
+    );
+    drop((binding, source));
+    assert!(probe.live() > 0);
+    assert!(probe.live() <= baseline - fixture.root.available_bytes());
+    drop(retained);
+    assert_eq!(probe.live(), 0);
+    assert_eq!(fixture.root.available_bytes(), baseline);
+}
+
 #[test]
 fn isolated_credential_reply_retains_independent_json_and_never_invokes_legacy() {
     if deallocation::isolated("hosted::subscriptions::reply::tests::isolated_credential_reply_retains_independent_json_and_never_invokes_legacy") { return; }
     let fixture = fixture();
-    let (binding, source) = binding(0, None);
+    let idle = fixture.root.available_bytes();
+    let (binding, source) = binding(&fixture.policy, 0, None);
     let id = json!("correlation");
     let params = json!({});
     // The shared policy owns its semaphore backing before this operation begins.
@@ -221,13 +296,13 @@ fn isolated_credential_reply_retains_independent_json_and_never_invokes_legacy()
     assert!(probe.live() >= 4096);
     drop(result);
     assert_eq!(probe.live(), 0);
-    assert_eq!(fixture.root.available_bytes(), baseline);
+    assert_eq!(fixture.root.available_bytes(), idle);
 }
 
 #[test]
 fn credential_reply_preserves_warm_rules_and_rejects_bad_identity_before_source() {
     let fixture = fixture();
-    let (binding, source) = binding(1, None);
+    let (binding, source) = binding(&fixture.policy, 1, None);
     let id = json!(7);
     let params = json!({});
     let warm = binding
@@ -279,7 +354,7 @@ fn credential_source_errors_and_cancelled_work_keep_their_owner_until_drop() {
     let id = json!(7);
     let params = json!({});
     let baseline = fixture.root.available_bytes();
-    let (binding, source) = binding(2, None);
+    let (binding, source) = binding(&fixture.policy, 2, None);
     let error = binding
         .reply_admitted(&id, &params, &fixture.policy)
         .unwrap()
@@ -295,7 +370,8 @@ fn credential_source_errors_and_cancelled_work_keep_their_owner_until_drop() {
     drop(error);
     assert_eq!(fixture.root.available_bytes(), baseline);
 
-    let (binding, source) = self::binding(3, None);
+    let (binding, source) = self::binding(&fixture.policy, 3, None);
+    let binding_baseline = fixture.root.available_bytes();
     let mut operation = Box::pin(
         binding
             .reply_admitted(&id, &params, &fixture.policy)
@@ -304,9 +380,12 @@ fn credential_source_errors_and_cancelled_work_keep_their_owner_until_drop() {
     assert!(operation.as_mut().now_or_never().is_none());
     assert_eq!(source.calls.load(SeqCst), 1);
     drop(operation);
+    assert_eq!(fixture.root.available_bytes(), binding_baseline);
+    drop((binding, source));
     assert_eq!(fixture.root.available_bytes(), baseline);
     let foreign = self::fixture();
-    let (binding, source) = self::binding(0, Some(foreign.policy.clone()));
+    let (binding, source) = self::binding(&fixture.policy, 0, Some(foreign.policy.clone()));
+    let binding_baseline = fixture.root.available_bytes();
     let error = binding
         .reply_admitted(&id, &params, &fixture.policy)
         .unwrap()
@@ -319,14 +398,16 @@ fn credential_source_errors_and_cancelled_work_keep_their_owner_until_drop() {
     ));
     assert_eq!(source.calls.load(SeqCst), 0);
     assert_eq!(source.legacy.load(SeqCst), 0);
+    assert_eq!(fixture.root.available_bytes(), binding_baseline);
+    drop((binding, source));
     assert_eq!(fixture.root.available_bytes(), baseline);
 }
 
 #[tokio::test]
 async fn actual_bridge_uses_admitted_credentials_and_retains_the_final_socket_frame() {
     let mut fixture = fixture();
-    let (binding, source) = binding(0, None);
-    fixture.bridge.subscription = Some(binding);
+    let (binding, source) = binding(&fixture.policy, 0, None);
+    fixture.bridge.subscription = Some(binding.into());
     let request = json!({"method":"cma/codex/credentials", "id":"call", "params":{}});
     let frame = JsonFrame::prepare(&request, Some(&fixture.policy)).unwrap();
     let (updates, capture) = UpdateRelay::capture_admitted(&fixture.policy).unwrap();
@@ -358,8 +439,8 @@ async fn actual_bridge_uses_admitted_credentials_and_retains_the_final_socket_fr
 async fn actual_bridge_keeps_redacted_refusal_under_data_pressure() {
     for (mode, pressure) in [(0, true), (2, false), (5, false)] {
         let mut fixture = fixture();
-        let (binding, source) = binding(mode, None);
-        fixture.bridge.subscription = Some(binding);
+        let (binding, source) = binding(&fixture.policy, mode, None);
+        fixture.bridge.subscription = Some(binding.into());
         let request = json!({"method":"cma/codex/credentials", "id":"call", "params":{}});
         let frame = JsonFrame::prepare(&request, Some(&fixture.policy)).unwrap();
         let (updates, capture) = UpdateRelay::capture_admitted(&fixture.policy).unwrap();

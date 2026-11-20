@@ -118,7 +118,7 @@ pub(super) struct Bridge {
     output_json_budget: bool,
     shared_runtime_output: bool,
     pub(super) agent_correlation_digest: String,
-    pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
+    pub(super) subscription: Option<super::subscriptions::SubscriptionBinding>,
     sink: Shared<Mutex<Sink>>,
     pub(super) pending: Pending,
     request_namespace: String,

@@ -93,7 +93,7 @@ impl Bridge {
             ingress::legacy(stream),
             expected_agent,
             cwd,
-            (settings, subscription, bounded, None),
+            (settings, subscription.map(Into::into), bounded, None),
             resume_conversation,
             recovered_prompt,
             updates_tx,
@@ -114,7 +114,7 @@ impl Bridge {
         cwd: String,
         (settings, subscription, attachment): (
             HostedAgentOpenSettings,
-            Option<crate::hosted::subscriptions::HostedSubscriptionBinding>,
+            Option<crate::hosted::subscriptions::AdmittedSubscriptionBinding>,
             crate::ingress_budget::IngressAttachment,
         ),
         resume_conversation: Option<String>,
@@ -128,6 +128,15 @@ impl Bridge {
     > {
         let policy = attachment.into_policy();
         ingress::components::require(&policy)?;
+        if subscription
+            .as_ref()
+            .is_some_and(|binding| !binding.belongs_to(&policy))
+        {
+            return Err(crate::ingress_budget::AdmissionRefusal::InvalidPlan {
+                phase: "subscription binding ownership",
+            }
+            .into());
+        }
         let scope = IngressWorkScope::new(policy.admit(
             IngressClass::Data,
             AllocationPlan::checked("admitted open scope", &[sizing::shared_owner_bytes::<()>()])?,
@@ -149,7 +158,12 @@ impl Bridge {
                     ingress::admitted(stream, policy.clone()),
                     expected_agent,
                     cwd,
-                    (settings, subscription, true, Some(policy.clone())),
+                    (
+                        settings,
+                        subscription.map(Into::into),
+                        true,
+                        Some(policy.clone()),
+                    ),
                     resume_conversation,
                     recovered_prompt,
                     updates_tx,
@@ -166,7 +180,7 @@ impl Bridge {
         cwd: String,
         (settings, subscription, bounded, ingress): (
             HostedAgentOpenSettings,
-            Option<crate::hosted::subscriptions::HostedSubscriptionBinding>,
+            Option<crate::hosted::subscriptions::SubscriptionBinding>,
             bool,
             Option<crate::ingress_budget::IngressOwnershipPolicy>,
         ),
