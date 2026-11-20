@@ -163,6 +163,11 @@ pub(crate) struct UsageQuery {
     owner: Option<String>,
     #[param(minimum = 1, maximum = 200, default = 50)]
     limit: Option<u16>,
+    /// Continuation returned by this endpoint for the same caller and filters.
+    /// Signed continuations expire 15 minutes after the first page; on
+    /// invalid_query restart without a cursor. Pages read live data, not a
+    /// frozen snapshot. Legacy cursors are accepted only during transition.
+    #[param(max_length = 4096)]
     cursor: Option<String>,
 }
 impl UsageQuery {
@@ -227,7 +232,7 @@ async fn summary_response(
     }
 }
 #[utoipa::path(get, path="/api/v1/usage/sandboxes", tag="usage", params(UsageQuery), responses((status=200,body=UsagePageView),
-    (status=400,description="invalid_query: use a valid cursor and a limit from 1 through 200",body=super::ProblemDocument,content_type="application/problem+json")))]
+    (status=400,description="invalid_query: use a limit from 1 through 200; restart without a cursor if the continuation is invalid or expired",body=super::ProblemDocument,content_type="application/problem+json")))]
 pub(crate) async fn list(
     State(service): Service,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -240,7 +245,7 @@ pub(crate) async fn list(
     list_response(&service, &caller, false, query).await
 }
 #[utoipa::path(get, path="/api/v1/admin/usage/sandboxes", tag="usage", params(UsageQuery), responses((status=200,body=UsagePageView),
-    (status=400,description="invalid_query: use a valid cursor and a limit from 1 through 200",body=super::ProblemDocument,content_type="application/problem+json")))]
+    (status=400,description="invalid_query: use a limit from 1 through 200; restart without a cursor if the continuation is invalid or expired",body=super::ProblemDocument,content_type="application/problem+json")))]
 pub(crate) async fn admin_list(
     State(service): Service,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -302,7 +307,7 @@ pub(crate) async fn read(
     }
 }
 #[utoipa::path(get, path="/api/v1/usage/sandboxes/{id}/events", tag="usage", params(("id"=String,Path),UsageQuery), responses((status=200,body=UsageEventsView),
-    (status=400,description="invalid_query: use a valid cursor and a limit from 1 through 200",body=super::ProblemDocument,content_type="application/problem+json")))]
+    (status=400,description="invalid_query: use a limit from 1 through 200; restart without a cursor if the continuation is invalid or expired",body=super::ProblemDocument,content_type="application/problem+json")))]
 pub(crate) async fn events(
     State(service): Service,
     AuthenticatedCaller(caller): AuthenticatedCaller,
@@ -317,7 +322,15 @@ pub(crate) async fn events(
         Ok(page) => page,
         Err(error) => return problem(error),
     };
-    match service.events(&caller, &SandboxId(id), &page).await {
+    match service
+        .events(
+            &caller,
+            &SandboxId(id),
+            query.owner.map(SubjectId).as_ref(),
+            &page,
+        )
+        .await
+    {
         Ok(value) => Json(UsageEventsView {
             items: value.items.into_iter().map(Into::into).collect(),
             next: value.next,
@@ -334,6 +347,11 @@ fn now() -> u64 {
 }
 fn problem(error: UsageReadError) -> Response {
     let (status, code, detail) = match error {
+        UsageReadError::InvalidCursor => (
+            StatusCode::BAD_REQUEST,
+            "invalid_query",
+            "Usage continuation is invalid or expired. Restart from the first page without a cursor.",
+        ),
         UsageReadError::Forbidden => (
             StatusCode::FORBIDDEN,
             "forbidden",

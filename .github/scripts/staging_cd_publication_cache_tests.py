@@ -106,10 +106,14 @@ class CacheTests(unittest.TestCase):
         with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
             self.assertTrue(cache.restore())
             transfer.assert_called_once_with('inject', cache.accepted, namespace=cache.namespace)
+            # A hit now refreshes the bundle; an empty extraction is withheld and
+            # leaves the accepted bundle untouched.
             self.assertFalse(cache.export_mounts())
+            self.assertEqual(transfer.call_args.args[0], 'extract')
+            self.assertEqual(tool.validate_bundle(cache.accepted, cache.key.prefix)["prefix"], cache.key.prefix)
             (cache.accepted / 'target.tar.gz').write_bytes(b'changed')
             self.assertFalse(self.cache().restore())
-            self.assertEqual(transfer.call_count, 1)
+            self.assertEqual(transfer.call_count, 2)
 
     def test_partial_restore_seeds_current_graph_only_after_qualification(self):
         cache = self.cache()
@@ -127,7 +131,10 @@ class CacheTests(unittest.TestCase):
             transfer.side_effect = None
             self.assertTrue(cache.restore())
             self.assertEqual(cache.restore_result, "hit")
-            self.assertFalse(cache.export_mounts())
+            # An exact hit still exports the newer compiler state for the next build.
+            transfer.side_effect = lambda op, directory, **kwargs: self.populate(directory)
+            self.assertTrue(cache.export_mounts())
+            self.assertEqual(tool.validate_bundle(cache.accepted, cache.key.prefix)["prefix"], cache.key.prefix)
 
     def test_family_miss_and_failed_transfer_use_clean_build_namespaces(self):
         first = self.cache()

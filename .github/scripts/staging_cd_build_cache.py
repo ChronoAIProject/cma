@@ -93,7 +93,9 @@ class BuildCache:
         return {key: self.env[key] for key in RUNTIME_KEYS}
 
     def export_mounts(self):
-        if self.key is None or self.restore_result == "hit":
+        # Refresh after exact hits too. Restoring the first bundle of the day all
+        # day long made each build recompile everything merged since that seed.
+        if self.key is None:
             return False
         require(not self.pending.exists(), "Cargo cache export must be fresh")
         try:
