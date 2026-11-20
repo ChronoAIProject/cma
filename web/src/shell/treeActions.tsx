@@ -104,6 +104,7 @@ export function agentActions(
   status: AgentStatus,
   permissions: TreePermissions,
   runtimeAvailable = true,
+  runtimeUnavailableReason = 'Sandbox status is unavailable. Check its status.',
 ): TreeRowAction[] {
   const actions: TreeRowAction[] = [];
   if (permissions.stopAgent)
@@ -114,7 +115,16 @@ export function agentActions(
       disabled:
         !runtimeAvailable ||
         !['starting', 'ready', 'working', 'waiting_approval', 'paused'].includes(status),
-      reason: !runtimeAvailable ? 'Available when the Sandbox is active.' : undefined,
+      reason:
+        status === 'stopped'
+          ? 'Agent is already stopped.'
+          : status === 'failed'
+            ? 'Agent has failed. There is no running Agent to stop.'
+            : status === 'deleted'
+              ? 'Agent has been deleted.'
+              : !runtimeAvailable
+                ? runtimeUnavailableReason
+                : undefined,
     });
   if (permissions.deleteAgent)
     actions.push({

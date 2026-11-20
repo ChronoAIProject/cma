@@ -159,3 +159,44 @@ it('omits Stop for a shared reader even when account permissions include stoppin
   expect(screen.queryByRole('menuitem', { name: /^Stop agent/ })).not.toBeInTheDocument();
   expect(onAgentAction).not.toHaveBeenCalled();
 });
+
+it.each([
+  { sandbox: sandboxFixture('paused'), stale: false, reason: /resume the Sandbox/ },
+  { sandbox: sandboxFixture('reviving'), stale: false, reason: /Resuming\./ },
+  { sandbox: sandboxFixture('failed'), stale: false, reason: /unavailable.*Check its status/ },
+  { sandbox: sandboxFixture('paused'), stale: true, reason: /unavailable.*Check its status/ },
+  { sandbox: undefined, stale: false, reason: /Checking Sandbox status/ },
+])(
+  'uses the current Sandbox observation for a nonterminal Stop reason: $reason',
+  async ({ sandbox, stale, reason }) => {
+    const onAgentAction = vi.fn();
+    const actor = userEvent.setup();
+    render(
+      <AgentSurface
+        agentId="agt_1"
+        controller={controller(
+          {
+            status: 'ready',
+            detail: AGENT_DETAIL,
+            workspace: workspaceFixture(),
+            conversation: conversationFromTranscript(AGENT_TRANSCRIPT),
+          },
+          undefined,
+          { progressObservation: sandbox === undefined ? undefined : { sandbox, stale } },
+        )}
+        detailsOpen={false}
+        onDetailsOpenChange={vi.fn()}
+        onNavigate={vi.fn()}
+        permissions={ALL_ACTIONS}
+        onAgentAction={onAgentAction}
+      />,
+    );
+    await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
+    const stop = screen.getByRole('menuitem', { name: /^Stop agent / });
+    expect(stop).toHaveAccessibleName(expect.stringMatching(reason));
+    expect(stop).toHaveAttribute('aria-disabled', 'true');
+    await actor.click(stop);
+    await actor.keyboard('{Enter} ');
+    expect(onAgentAction).not.toHaveBeenCalled();
+  },
+);

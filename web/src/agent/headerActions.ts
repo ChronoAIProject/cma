@@ -19,9 +19,10 @@ export function agentHeaderMenu(
   permissions: TreePermissions | undefined,
   runtimeAvailable: boolean,
   busy: boolean,
+  runtimeUnavailableReason?: string,
 ): MenuEntry[] {
   if (permissions === undefined) return [];
-  const rows = agentActions(status, permissions, runtimeAvailable).map(
+  const rows = agentActions(status, permissions, runtimeAvailable, runtimeUnavailableReason).map(
     (action): MenuEntry & { readonly danger?: boolean } => ({
       id: action.id,
       label:

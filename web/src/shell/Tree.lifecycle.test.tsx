@@ -2,6 +2,7 @@ import '../test/connectedAccounts';
 import { useState } from 'react';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+import userEvent from '@testing-library/user-event';
 import { CmaClientProvider } from '../api/context';
 import type { SandboxDetail } from '../api/types';
 import { AgentSurface } from '../agent/AgentSurface';
@@ -10,6 +11,7 @@ import type { AppRoute } from '../routing/routes';
 import { agentClient } from '../test/agent';
 import { sandboxFixture, workspaceFixture } from '../test/hierarchy';
 import { Tree } from './Tree';
+import type { TreeProps } from './Tree';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -132,5 +134,87 @@ it.each(['minimum', 'maximum', 'changing'] as const)(
     expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled();
     expect(readHistory).toHaveBeenCalledOnce();
     expect(runAgent).not.toHaveBeenCalled();
+  },
+);
+
+it.each(['sandbox', 'agent'] as const)(
+  'explains terminal Stop in the %s tree through Resume without dispatching',
+  async (view) => {
+    const user = userEvent.setup();
+    const onAction = vi.fn();
+    const props: TreeProps = {
+      viewerId: 'stop-reasons',
+      view,
+      items: [],
+      route: { kind: 'home' },
+      permissions: {
+        createWorkspace: false,
+        createAgent: false,
+        pauseSandbox: false,
+        deleteSandbox: false,
+        removeWorkspace: false,
+        stopAgent: true,
+        deleteAgent: true,
+        exportHistory: true,
+      },
+      onNavigate: vi.fn(),
+      onAction,
+    };
+    const rendered = render(<Tree {...props} />);
+    for (const [status, reason] of [
+      ['stopped', 'Agent is already stopped.'],
+      ['failed', 'Agent has failed. There is no running Agent to stop.'],
+    ] as const) {
+      for (const sandboxStatus of ['paused', 'reviving', 'active'] as const) {
+        rendered.rerender(
+          <Tree
+            {...props}
+            items={[
+              { sandbox: sandboxFixture(sandboxStatus), workspaces: [workspaceFixture(status)] },
+            ]}
+          />,
+        );
+        await user.click(screen.getByRole('button', { name: 'Options for Agent one' }));
+        const stop = screen.getByRole('menuitem', { name: `Stop ${reason}` });
+        expect(stop).toHaveAttribute('aria-disabled', 'true');
+        expect(screen.getByRole('menuitem', { name: /^Delete/ })).toHaveAttribute(
+          'aria-disabled',
+          String(sandboxStatus !== 'active'),
+        );
+        expect(screen.getByRole('menuitem', { name: 'Export history' })).not.toHaveAttribute(
+          'aria-disabled',
+          'true',
+        );
+        await user.click(stop);
+        act(() => stop.focus());
+        await user.keyboard('{Enter} ');
+        expect(onAction).not.toHaveBeenCalled();
+        await user.keyboard('{Escape}');
+      }
+    }
+    for (const { sandboxStatus, refreshError, lifecycleBusy, reason } of [
+      { sandboxStatus: 'paused', reason: /resume the Sandbox/ },
+      { sandboxStatus: 'reviving', reason: /Resuming\./ },
+      {
+        sandboxStatus: 'paused',
+        refreshError: 'Refresh failed',
+        reason: /unavailable.*Check its status/,
+      },
+      { sandboxStatus: 'active', lifecycleBusy: true, reason: /action is in progress/ },
+    ] as const) {
+      rendered.rerender(
+        <Tree
+          {...props}
+          refreshError={refreshError}
+          lifecycleBusy={lifecycleBusy}
+          items={[{ sandbox: sandboxFixture(sandboxStatus), workspaces: [workspaceFixture()] }]}
+        />,
+      );
+      await user.click(screen.getByRole('button', { name: 'Options for Agent one' }));
+      const stop = screen.getByRole('menuitem', { name: /^Stop / });
+      expect(stop).toHaveTextContent(reason);
+      expect(stop).toHaveAttribute('aria-disabled', 'true');
+      await user.keyboard('{Escape}');
+    }
   },
 );

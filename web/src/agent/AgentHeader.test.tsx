@@ -4,6 +4,8 @@ import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
 import { AgentHeader } from './AgentHeader';
 import { agentHeaderMenu } from './headerActions';
+import { sandboxActionUnavailableReason, sandboxChildrenAvailable } from '../sandbox/lifecycle';
+import { sandboxFixture } from '../test/hierarchy';
 import type { TreePermissions } from '../shell/Tree';
 
 const permissions: TreePermissions = {
@@ -228,7 +230,7 @@ it.each(['stopped', 'failed', 'runtime-unavailable', 'busy', 'no-permission', 's
       if (condition === 'busy')
         expect(stop).toHaveTextContent('Another action is still being confirmed.');
       if (condition === 'runtime-unavailable')
-        expect(stop).toHaveTextContent('Available when the Sandbox is active.');
+        expect(stop).toHaveTextContent('Sandbox status is unavailable. Check its status.');
       await user.click(stop!);
     }
     expect(onMoreAction).not.toHaveBeenCalled();
@@ -237,5 +239,45 @@ it.each(['stopped', 'failed', 'runtime-unavailable', 'busy', 'no-permission', 's
         'aria-disabled',
         'true',
       );
+  },
+);
+
+it.each([
+  ['stopped', 'Agent is already stopped.'],
+  ['failed', 'Agent has failed. There is no running Agent to stop.'],
+  ['deleted', 'Agent has been deleted.'],
+] as const)(
+  'keeps the %s reason accessible through runtime changes and the busy guard',
+  async (status, reason) => {
+    const user = userEvent.setup();
+    const onMoreAction = vi.fn();
+    const view = render(draw());
+    for (const sandboxStatus of ['paused', 'reviving', 'active', 'failed'] as const) {
+      const sandbox = sandboxFixture(sandboxStatus);
+      for (const busy of [false, true]) {
+        view.rerender(
+          draw({
+            status,
+            onMoreAction,
+            moreActions: agentHeaderMenu(
+              status,
+              permissions,
+              sandboxChildrenAvailable(sandbox),
+              busy,
+              sandboxActionUnavailableReason(sandbox),
+            ),
+          }),
+        );
+        await user.click(screen.getByRole('button', { name: 'More Agent actions' }));
+        const expected = busy ? 'Another action is still being confirmed.' : reason;
+        const stop = screen.getByRole('menuitem', { name: `Stop agent ${expected}` });
+        expect(stop).toHaveAttribute('aria-disabled', 'true');
+        await user.click(stop);
+        act(() => stop.focus());
+        await user.keyboard('{Enter} ');
+        expect(onMoreAction).not.toHaveBeenCalled();
+        await user.keyboard('{Escape}');
+      }
+    }
   },
 );

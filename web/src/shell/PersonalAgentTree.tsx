@@ -8,7 +8,11 @@ import { keyboardNavigation, agentSignal } from './treePresentation';
 import { observedTaskStatus } from './taskStatus';
 import { taskPresentation } from './taskPresentation';
 import { IconDataOutline16 } from '../ui/icons';
-import { sandboxChildrenAvailable, sandboxChildStatus } from '../sandbox/lifecycle';
+import {
+  sandboxActionUnavailableReason,
+  sandboxChildrenAvailable,
+  sandboxChildStatus,
+} from '../sandbox/lifecycle';
 import { taskTitle } from './taskTitle';
 import type { AgentSummary, SandboxDetail } from '../api/types';
 
@@ -178,6 +182,11 @@ export function PersonalAgentTree({
                         !busySandboxIds?.has(sandbox.id) &&
                         !refreshError &&
                         sandboxChildrenAvailable(sandbox),
+                      sandboxActionUnavailableReason(
+                        sandbox,
+                        !!refreshError,
+                        lifecycleBusy || busySandboxIds?.has(sandbox.id),
+                      ),
                     ),
                     ...(environmentNotice
                       ? [

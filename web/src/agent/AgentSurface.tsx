@@ -23,7 +23,7 @@ import { Alert } from '../ui/Alert';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { agentBreadcrumb, agentHeaderMenu } from './headerActions';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
-import { sandboxChildrenAvailable } from '../sandbox/lifecycle';
+import { sandboxActionUnavailableReason, sandboxChildrenAvailable } from '../sandbox/lifecycle';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
 import type { SteeringMode } from './SteeringMode';
@@ -210,6 +210,7 @@ export function AgentSurface({
     readOnly ? undefined : permissions,
     observed !== undefined && !observed.stale && sandboxChildrenAvailable(observed.sandbox),
     actionsBusy,
+    sandboxActionUnavailableReason(observed?.sandbox, observed?.stale),
   );
   // A subscription Agent can be signed in again from the header menu.
   const signInAgain =
