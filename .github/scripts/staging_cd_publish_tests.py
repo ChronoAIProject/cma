@@ -221,6 +221,25 @@ class PublicationTests(unittest.TestCase):
                 # Preflight, one readback per uncertain copy, then verification after success.
                 self.assertEqual(registry.manifest.call_count, 1 + len(readbacks) + (expected is dict))
 
+    def test_unreadable_tag_or_lost_authority_never_repeats_the_copy(self):
+        timeout = subprocess.TimeoutExpired("skopeo", 1800)
+        superseded = Refusal("Publication reservation is superseded and burned")
+        cases = (
+            # The tag cannot be read back: the outcome stays uncertain and is refused.
+            ([timeout], ["unreadable"], None, "outcome is uncertain", 2),
+            # Proven absent, but authority moved on before the repeat could start.
+            ([timeout], [None], Mock(side_effect=[True, True, superseded]), "superseded", 3),
+        )
+        for copies, readbacks, checks, message, check_count in cases:
+            with self.subTest(message=message), tempfile.TemporaryDirectory() as directory:
+                result, runner, checks, registry = self.publish_with(directory, copies, readbacks, checks=checks)
+                self.assertIsInstance(result, Refusal)
+                self.assertRegex(str(result), message)
+                copied = [call for call in runner.call_args_list if call.args[0][1] == "copy"]
+                self.assertEqual(len(copied), 1)
+                self.assertEqual(checks.call_count, check_count)
+                self.assertEqual(registry.manifest.call_count, 2)
+
     def test_copy_attempts_share_the_single_copy_budget(self):
         now = [0.0]
         def slow(seconds):
