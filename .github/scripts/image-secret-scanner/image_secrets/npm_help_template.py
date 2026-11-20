@@ -45,14 +45,16 @@ def cook(raw):
             return None
         parts.extend((raw[start:token.start()], token[0][1:]))
         start = token.end()
-    return b"".join([*parts, raw[start:]])
+    return b"".join([*parts, raw[start:]]).replace(b"\r\n", b"\n").replace(b"\r", b"\n")
 
 
 def marker_range(data, proof):
     start, end = reviewed_literals.extent(proof["raw_template"])
     left, right = reviewed_literals.extent(proof["raw_example"])
+    line_endings = (b"\r", b"\n")
     if (start < len(OPEN_TEMPLATE) or data[start - len(OPEN_TEMPLATE):start] != OPEN_TEMPLATE
-            or data[end:end + 1] != b"`" or data[left - 1:left] != b"\n" or data[right:right + 1] != b"\n"):
+            or data[end:end + 1] != b"`" or data[left - 1:left] not in line_endings
+            or data[right:right + 1] not in line_endings):
         return set()
     raw = data[start:end]
     line = data[left:right]
