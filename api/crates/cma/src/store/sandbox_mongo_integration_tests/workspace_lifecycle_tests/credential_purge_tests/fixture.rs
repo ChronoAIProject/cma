@@ -12,6 +12,12 @@ impl Fixture {
     pub async fn new(prefix: &str) -> Self {
         let (client, name) = database(prefix).await;
         let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+        let mut session = client.start_session().await.unwrap();
+        start_transaction(&mut session).await.unwrap();
+        crate::store::work_schema::floor::retain(&store, &mut session)
+            .await
+            .unwrap();
+        session.commit_transaction().await.unwrap();
         let parent = retired_sandbox("sbx_credential_purge");
         store.create_sandbox(parent.clone()).await.unwrap();
         store
