@@ -1,10 +1,10 @@
 use std::sync::atomic::Ordering;
-use std::sync::Arc;
 
 use super::acp::{Bridge, Outcome};
 use super::acp_inbound::{blocked_from_locator, outcome_for};
 use super::acp_provider_failure::{normalize, unknown};
 use super::update_relay::UpdateRelay;
+use crate::ingress_budget::diagnostic::make;
 use crate::{ConversationInput, ConversationUpdate, PromptResponse};
 
 impl Bridge {
@@ -13,15 +13,7 @@ impl Bridge {
         input: ConversationInput,
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
-        let recovering = self.recovering_context.load(Ordering::SeqCst);
-        if recovering != 0
-            && !matches!(&input,
-            ConversationInput::RefreshContext { operation_sequence, .. } if *operation_sequence == recovering)
-        {
-            return Err(crate::AdapterError::OperationIdentityConflict(
-                "admitted context recovery must complete before other input".into(),
-            ));
-        }
+        let _session_storage = self.input_storage(&input)?;
         let session = self.session().await?;
         match input {
             ConversationInput::Configure {
@@ -67,12 +59,13 @@ impl Bridge {
                 Ok(())
             }
             ConversationInput::Steer(content) => {
+                let _json_storage =
+                    super::acp::ingress::identity::json_storage(self.ingress.as_ref(), &content)?;
                 // Probe before mutation so an older retained runtime refuses
                 // steering without creating a competing prompt or waiter.
                 let support = self.call("cma/steer", serde_json::json!({ "action": "support" }))
                     .await.map_err(|error| match error {
-                        crate::AdapterError::Rejected(_) => crate::AdapterError::Unsupported(
-                            "this runtime cannot safely steer an active turn; update the Sandbox when idle".into()),
+                        crate::AdapterError::Rejected(_) => make(crate::AdapterError::Unsupported, format_args!("this runtime cannot safely steer an active turn; update the Sandbox when idle")),
                         other => other,
                     })?;
                 if support
@@ -81,8 +74,9 @@ impl Bridge {
                     != Some(true)
                     || support.get("version").and_then(serde_json::Value::as_u64) != Some(1)
                 {
-                    return Err(crate::AdapterError::Unsupported(
-                        "runtime steering contract is unavailable".into(),
+                    return Err(make(
+                        crate::AdapterError::Unsupported,
+                        format_args!("runtime steering contract is unavailable"),
                     ));
                 }
                 let result = self
@@ -97,8 +91,9 @@ impl Bridge {
                     || result.get("sessionId").and_then(serde_json::Value::as_str)
                         != Some(session.as_str())
                 {
-                    return Err(crate::AdapterError::Unavailable(
-                        "runtime steering was not confirmed".into(),
+                    return Err(make(
+                        crate::AdapterError::Unavailable,
+                        format_args!("runtime steering was not confirmed"),
                     ));
                 }
                 Ok(())
@@ -131,8 +126,9 @@ impl Bridge {
                 let held = match restored {
                     Some(restored) => self.blocked.lock().await.remove(&id).unwrap_or(restored),
                     None => self.blocked.lock().await.remove(&id).ok_or_else(|| {
-                        crate::AdapterError::Rejected(
-                            "nothing is waiting for this permission answer".into(),
+                        make(
+                            crate::AdapterError::Rejected,
+                            format_args!("nothing is waiting for this permission answer"),
                         )
                     })?,
                 };
@@ -160,14 +156,63 @@ impl Bridge {
                 Ok(())
             }
             ConversationInput::Cancel => {
-                self.send(&serde_json::json!({
+                let storage = self
+                    .ingress
+                    .as_ref()
+                    .map(|policy| {
+                        policy.reserve(
+                            crate::ingress_budget::IngressClass::Control,
+                            super::permission_state::reply_plan()?,
+                        )
+                    })
+                    .transpose()?;
+                let frame = serde_json::json!({
                     "jsonrpc": "2.0",
                     "method": "session/cancel",
                     "params": { "sessionId": session },
-                }))
-                .await
+                });
+                let result = self.send_control_frame(&frame).await;
+                drop(frame);
+                drop(storage);
+                result
             }
         }
+    }
+
+    pub(super) fn input_storage(
+        &self,
+        input: &ConversationInput,
+    ) -> crate::Result<Option<crate::ingress_budget::ReservationBundle>> {
+        let recovering = self.recovering_context.load(Ordering::SeqCst);
+        if recovering != 0
+            && !matches!(input,
+            ConversationInput::RefreshContext { operation_sequence, .. } if *operation_sequence == recovering)
+        {
+            return Err(make(
+                crate::AdapterError::OperationIdentityConflict,
+                format_args!("admitted context recovery must complete before other input"),
+            ));
+        }
+        self.ingress
+            .as_ref()
+            .map(|policy| {
+                let class = if matches!(
+                    input,
+                    ConversationInput::Cancel | ConversationInput::PermissionAnswer { .. }
+                ) {
+                    crate::ingress_budget::IngressClass::Control
+                } else {
+                    crate::ingress_budget::IngressClass::Data
+                };
+                policy.reserve(
+                    class,
+                    crate::ingress_budget::AllocationPlan::new(
+                        "input conversation identity",
+                        &[1024],
+                    )?,
+                )
+            })
+            .transpose()
     }
 
     async fn drive_prompt(
@@ -177,6 +222,8 @@ impl Bridge {
         prompt_id: Option<crate::PromptIdentity>,
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
+        let _json_storage =
+            super::acp::ingress::identity::json_storage(self.ingress.as_ref(), &content)?;
         self.answered.lock().await.clear();
         self.owned_prompt_waiters.fetch_add(1, Ordering::SeqCst);
         let params = serde_json::json!({
@@ -186,11 +233,11 @@ impl Bridge {
         let recoverable =
             prompt_id.is_some() || self.bounded_raw_output || self.json_pools.is_some();
         let bounded_permissions = self.permission_state.is_some();
-        let terminal_identity = prompt_id.clone();
+        let terminal_identity = self.ingress.is_none().then(|| prompt_id.clone()).flatten();
         match self.begin_prompt(params, prompt_id).await {
             Ok(waiting) => {
-                let answered_permissions = Arc::clone(&self.answered);
-                let owned_prompt_waiters = Arc::clone(&self.owned_prompt_waiters);
+                let answered_permissions = self.answered.clone();
+                let owned_prompt_waiters = self.owned_prompt_waiters.clone();
                 let updates = updates.clone();
                 tokio::spawn(async move {
                     // A turn can outlive any API request. The bridge owns the
@@ -224,6 +271,11 @@ impl Bridge {
             Err(error) => {
                 let previous = self.owned_prompt_waiters.fetch_sub(1, Ordering::SeqCst);
                 debug_assert!(previous > 0, "failed prompt releases its waiter");
+                if self.ingress.is_some() {
+                    // Admission or send uncertainty is not a native terminal.
+                    // The caller retains the original durable input identity.
+                    return Err(error);
+                }
                 updates
                     .send(scoped_turn_outcome(unknown(), false, terminal_identity))
                     .await;

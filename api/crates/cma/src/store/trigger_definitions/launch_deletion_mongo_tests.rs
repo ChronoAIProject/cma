@@ -1,6 +1,7 @@
 use super::*;
 use futures_util::TryStreamExt;
 use layer2_core::account_deletion::AccountDeletionStore;
+use layer2_core::trigger_domain::LaunchAdmissionPolicy;
 use std::collections::BTreeSet;
 
 #[path = "launch_deletion_monitor.rs"]
@@ -226,6 +227,25 @@ async fn publisher_deletion_refuses_fresh_launch_without_changing_admission_coun
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn visitor_deletion_committed_before_fence_retries_and_refuses_launch() {
+    for (policy, authority) in [
+        (
+            LaunchAdmissionPolicy::Baseline,
+            LaunchAuthorityClass::SandboxCreator,
+        ),
+        (
+            LaunchAdmissionPolicy::Baseline,
+            LaunchAuthorityClass::Visitor,
+        ),
+        (
+            LaunchAdmissionPolicy::VisitorAllowance,
+            LaunchAuthorityClass::Visitor,
+        ),
+    ] {
+        deletion_before_fence(policy, authority).await;
+    }
+}
+
+async fn deletion_before_fence(policy: LaunchAdmissionPolicy, authority: LaunchAuthorityClass) {
     let seed = seeded("visitor_fence_cutover").await;
     let trigger = published(&seed, "visitor_fence_cutover").await;
     let db = seed.client.database(&seed.database);
@@ -233,15 +253,24 @@ async fn visitor_deletion_committed_before_fence_retries_and_refuses_launch() {
         .await
         .unwrap();
     let (store, monitor) = monitor::monitored(&seed).await;
+    let store = store.with_launch_admission_policy(policy);
     let visitor = SubjectId::new("visitor");
     monitor.pause_fence(&visitor);
+    let mut candidate = launch(&trigger, 'a', 'a');
+    candidate.authority = authority;
     let admission = LaunchAdmission {
-        launch: launch(&trigger, 'a', 'a'),
+        launch: candidate,
         trigger: trigger.clone(),
         events: vec![LaunchEventKind::Created],
     };
     let in_flight = tokio::spawn(async move { store.admit_launch(admission).await });
     monitor.paused().await;
+    if policy == LaunchAdmissionPolicy::VisitorAllowance {
+        assert!(monitor
+            .commands()
+            .iter()
+            .any(|command| { command.get_str("find").ok() == Some("visitor_launch_days") }));
+    }
     deletions
         .request(&visitor, "delete-visitor-before-fence", NOW)
         .await
@@ -262,6 +291,14 @@ async fn visitor_deletion_committed_before_fence_retries_and_refuses_launch() {
     );
     assert!(owner_launch_ids(&db).await.is_empty());
     assert_eq!(stats(&seed, &trigger).await.launches_total, 0);
+    assert_eq!(
+        db.collection::<Document>("visitor_launch_days")
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0,
+        "a prepared quota charge must not survive the deletion refusal"
+    );
     db.drop().await.unwrap();
 }
 

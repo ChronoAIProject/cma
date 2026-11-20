@@ -250,6 +250,7 @@ fn composed_rest_router() -> Router {
         Arc::new(LaunchPolicy {
             enabled: true,
             orchestration_paused: false,
+            visitor_launches_per_day: 5,
         }),
         Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
     );

@@ -27,6 +27,7 @@ impl LaunchPolicySource for LiveLaunchPolicy {
         Ok(LaunchPolicy {
             enabled: stored.settings.triggers.enabled,
             orchestration_paused: stored.settings.triggers.orchestration_paused,
+            visitor_launches_per_day: stored.settings.limits.visitor_max_launches_per_day,
         })
     }
 }

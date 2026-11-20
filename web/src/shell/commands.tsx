@@ -14,6 +14,7 @@ import {
   IconPlusOutline16,
   IconRightUpOutline16,
 } from '../ui/icons';
+import { taskActivityOrder } from './taskGroups';
 import type { Command } from './CommandMenu';
 import type { NavigationSandbox } from './navigation';
 
@@ -75,9 +76,8 @@ export function shellCommands({
       });
       for (const agent of workspace.agents) {
         if (agent.status === 'deleted') continue;
-        const at = Date.parse(agent.updatedAt);
         agents.push({
-          at: Number.isFinite(at) ? at : 0,
+          at: taskActivityOrder(agent),
           command: {
             id: `agent:${agent.id}`,
             searchTerms: [agent.id],
@@ -134,6 +134,8 @@ export function shellCommands({
     ...(canOpenOperations ? [go('operations', 'Operations', { kind: 'operations' })] : []),
   ];
   // Most recent first, so an empty query already lists the likely target.
-  const recent = [...agents].sort((a, b) => b.at - a.at).map(({ command }) => command);
+  const recent = [...agents]
+    .sort((a, b) => b.at - a.at || a.command.id.localeCompare(b.command.id))
+    .map(({ command }) => command);
   return [...recent, ...sandboxes, ...workspaces, ...actions, ...destinations];
 }

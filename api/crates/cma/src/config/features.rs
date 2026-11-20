@@ -10,6 +10,7 @@ mod resource_list_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub visitor_launch_admission: bool,
     pub usage_signed_cursors_enabled: bool,
     pub usage_strict_cursors_enabled: bool,
     pub visitor_two_sandbox_defaults: bool,
@@ -97,6 +98,7 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            visitor_launch_admission: flag(lookup, "CHRONO_VISITOR_LAUNCH_ADMISSION_ENABLED")?,
             usage_signed_cursors_enabled: flag(lookup, "CHRONO_USAGE_SIGNED_CURSORS_ENABLED")?,
             usage_strict_cursors_enabled: flag(lookup, "CHRONO_USAGE_STRICT_CURSORS_ENABLED")?,
             visitor_two_sandbox_defaults: flag(
@@ -352,6 +354,8 @@ mod observation_tests;
 #[cfg(test)]
 #[path = "features/ownership_retry_hint_tests.rs"]
 mod ownership_retry_hint_tests;
+
+mod launch_admission;
 
 #[cfg(test)]
 #[path = "features/visitor_defaults_tests.rs"]

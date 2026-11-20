@@ -9,17 +9,21 @@ from deployables import known_components
 
 from staging_cd_common import Refusal, matches, require
 from staging_cd_receipts import canonical, final_tag_oid, final_tag_text, validate_receipt
-from staging_cd_versions import BASE_VERSION, DEPLOYABLES, FINISH_STARTED_BUILDS, LEVELS, bump, version_tuple
+from staging_cd_versions import BASE_VERSION, DEPLOYABLES, LEVELS, bump, version_tuple
 
 KNOWN_DEPLOYABLES = known_components()
 FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump", "run_id", "run_attempt"}
 
 
 class ReservationSuperseded(Refusal):
-    """A validated same-component successor has taken this reservation."""
+    """A validated same-component successor, or a final of the same source, has taken this reservation."""
 
     def __init__(self):
         super().__init__("Publication reservation is superseded and burned")
+
+
+class SourceAlreadyFinal(ReservationSuperseded):
+    """An older run finalized this exact source first, so no newer run owns its deployment."""
 
 
 def validate_reservation(value):
@@ -142,7 +146,11 @@ class Reservations:
     def require_current(self, value, *, build_started):
         """Supersession is derived from immutable tags; burned refs stay intact.
 
-        Each caller states whether this reservation's build has started.
+        Every lane queues only its newest reservation and finishes a build it
+        has started. Each caller states whether this reservation's build has
+        started: before it, a newer reservation or final, or a final of the
+        same source, takes over and this one yields; after it, only a final
+        fences it, and that is a failure.
         """
         validate_reservation(value)
         component = value["component"]
@@ -150,13 +158,12 @@ class Reservations:
         require(value in pending, "Publication reservation is missing")
         history = self.api.history()
         position = history.position(value["source"])
-        finishing = component in FINISH_STARTED_BUILDS
-        if finishing and build_started:
+        if build_started:
             # The successor waits for this build instead of revoking it. A
             # higher or later final still fails below; it never becomes a skip.
             pending = [item for item in pending if version_tuple(item["version"]) <= version_tuple(value["version"])]
         candidates = pending + [tag["receipt"]["identity"] for tag in finals]
-        if finishing and not build_started:
+        if not build_started:
             for item in candidates:
                 if version_tuple(item["version"]) > version_tuple(value["version"]):
                     # A larger number alone still fences writes, but cannot
@@ -169,6 +176,14 @@ class Reservations:
         require(all((item["source"] not in history.positions or history.position(item["source"]) <= position)
                     and version_tuple(item["version"]) <= version_tuple(value["version"])
                     for item in candidates), "Publication reservation is superseded and burned")
+        # A source has one final per component. When an earlier same-source
+        # build finishes first, as a contract group's fresh claim allows, this
+        # reservation can never finalize: the source is already published, so
+        # it yields before building. After its build starts it still fails.
+        if any(tag["receipt"]["source"] == value["source"] for tag in finals):
+            if not build_started:
+                raise SourceAlreadyFinal()
+            raise Refusal("This merge already has a different immutable release")
         return True
 
     def remove_after_publication(self, receipt, expected_oid):
@@ -224,9 +239,9 @@ class Reservations:
                 "Final annotation could not be created")
         expected_oid = created.stdout.strip()
         self.mark("tag_push")
-        # A successor and a finalizer compete for the same insert-only outcome.
-        # Even takeover during the push cannot produce an obsolete final tag.
-        # In a lane that finishes started builds, only this finalizer writes it.
+        # The insert-only outcome is written atomically with the final tag.
+        # Allocation no longer claims it, since a started build may finish;
+        # an older allocator that did claim it still makes this push fail.
         result = self.command("push", "--atomic", "--porcelain", "https://github.com/ChronoAIProject/cma.git",
                               expected_oid + ":" + outcome_ref(component, expected["version"]),
                               expected_oid + ":refs/tags/" + receipt["tag"])
