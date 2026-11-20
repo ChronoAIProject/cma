@@ -28,6 +28,7 @@ mod requirements;
 mod resolution;
 mod revision;
 mod service_connection_service;
+mod standing;
 pub mod store;
 mod trigger_service;
 mod worker_effects;

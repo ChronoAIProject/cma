@@ -5,6 +5,7 @@ use crate::ingress_budget::diagnostic::text;
 /// error JSON; preserve only the category before worker logs retain the failure.
 pub(super) fn protected_setup_failure(error: AdapterError, phase: &'static str) -> AdapterError {
     let category = match error {
+        AdapterError::AccessRevoked => return AdapterError::AccessRevoked,
         AdapterError::InputAuthorityUnavailable(_) => AdapterError::InputAuthorityUnavailable,
         AdapterError::PromptNotWritten(_) => AdapterError::PromptNotWritten,
         AdapterError::Unavailable(_) | AdapterError::RuntimeStartupHold(_) => {

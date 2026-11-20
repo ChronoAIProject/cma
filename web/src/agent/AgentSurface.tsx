@@ -21,7 +21,7 @@ import './Agent.css';
 import { OwnerAgentHeader } from './OwnerAgentHeader';
 import { Alert } from '../ui/Alert';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
-import { agentBreadcrumb, agentHeaderMenu } from './headerActions';
+import { agentBreadcrumb, agentHeaderMenu, selectAgentAction } from './headerActions';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
 import { sandboxChildrenAvailable } from '../sandbox/lifecycle';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
@@ -29,6 +29,7 @@ import { agentProgress } from '../sandbox/progress';
 import type { SteeringMode } from './SteeringMode';
 import { AgentOpening, AgentUnavailable, AgentCommandNotices } from './AgentSurfaceStates';
 import { AgentSandboxStatus } from './AgentSandboxStatus';
+import { setupEnvironmentRoute } from './setupEnvironment';
 import { agentOriginEntries, useAgentSource } from './source';
 import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
 import { QueuedMessages } from './QueuedMessages';
@@ -206,6 +207,14 @@ export function AgentSurface({
       : (connectionError ?? connections.error ?? controller.actionError);
   const preparation = agentProgress({ ...detail, status }, state.sandboxEvents ?? []);
   const observed = controller.progressObservation;
+  const setupRoute = setupEnvironmentRoute(
+    status,
+    detail.sandbox.id,
+    viewerId,
+    !readOnly && permissions?.deleteSandbox === true,
+    observed,
+  );
+  const reviewEnvironment = setupRoute ? () => onNavigate(setupRoute) : undefined;
   const headerMenu = agentHeaderMenu(
     status,
     readOnly ? undefined : permissions,
@@ -265,21 +274,12 @@ export function AgentSurface({
               );
           }}
           moreActions={headerMenu}
-          onMoreAction={
-            onAgentAction === undefined || readOnly
-              ? undefined
-              : (id) =>
-                  onAgentAction({
-                    kind: id as 'stop_agent' | 'delete_agent' | 'export_history',
-                    agentId,
-                  })
+          onReviewEnvironment={reviewEnvironment}
+          onMoreAction={(id) =>
+            selectAgentAction(id, agentId, readOnly ? undefined : onAgentAction)
           }
         />
 
-        {/*
-        One row for every state message, so a second message can never be
-        auto-placed below the composer, and each takes its severity's tone.
-      */}
         <div className="agent-surface__alerts">
           <AgentAccessRequests
             key={`access:${agentId}`}
@@ -390,6 +390,7 @@ export function AgentSurface({
             <AgentSandboxStatus
               observation={controller.progressObservation}
               onNavigate={onNavigate}
+              onReviewEnvironment={reviewEnvironment}
             />
           </OwnerMessageStream>
         </div>

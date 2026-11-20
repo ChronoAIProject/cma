@@ -8,6 +8,54 @@ use futures_util::FutureExt;
 
 type Category = fn(String) -> AdapterError;
 
+#[test]
+fn access_revoked_survives_protected_setup_diagnostics() {
+    assert_eq!(
+        protected_setup_failure(AdapterError::AccessRevoked, "current_authority"),
+        AdapterError::AccessRevoked,
+    );
+}
+
+#[test]
+fn access_revoked_remains_typed_without_diagnostic_allocation_under_pressure() {
+    let plan = |bytes| AllocationPlan::checked("revocation diagnostics fixture", &[bytes]).unwrap();
+    let root = IngressBudget::new(64 * 1024);
+    let policy = IngressOwnershipPolicy::new(
+        root.clone(),
+        ClassBounds::new(root.capacity_bytes(), plan(4096), plan(4096)).unwrap(),
+    )
+    .unwrap();
+    let scope = IngressWorkScope::new(
+        policy
+            .admit(IngressClass::Data, plan(sizing::shared_owner_bytes::<()>()))
+            .unwrap(),
+    );
+    let available = policy.budget(IngressClass::Data).available_bytes();
+    let pressure = policy
+        .admit(IngressClass::Data, plan(available))
+        .unwrap()
+        .initialize(|| vec![0u8; available - 1024]);
+    let mut probe = AllocationProbe::new();
+    let error = scope
+        .run(async {
+            probe.track(|| {
+                protected_setup_failure(
+                    AdapterError::AccessRevoked.context("credential issuance"),
+                    "current_authority",
+                )
+                .context("current authority")
+            })
+        })
+        .now_or_never()
+        .unwrap();
+    assert_eq!(*error, AdapterError::AccessRevoked);
+    assert!(!error.is_runtime_loss());
+    assert_eq!(probe.allocated(), 0);
+    assert_eq!(policy.budget(IngressClass::Data).available_bytes(), 0);
+    drop((error, pressure, scope));
+    root.assert_idle();
+}
+
 fn cases() -> Vec<(AdapterError, Category)> {
     let mut cases: Vec<_> = [
         AdapterError::PromptNotWritten as Category,

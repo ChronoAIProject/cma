@@ -37,7 +37,9 @@ class AllocationSnapshotTests(unittest.TestCase):
         self.assertEqual([args[1] for args in server.commands].count("ls-remote"), 1)
         pushes = [args for args in server.commands if args[1] == "push"]
         self.assertEqual(len(pushes), 1)
-        self.assertEqual(len([arg for arg in pushes[0] if ":refs/tags/" in arg]), 3)
+        # The AM reservation and its claim; a started predecessor keeps its outcome ref.
+        self.assertEqual(len([arg for arg in pushes[0] if ":refs/tags/" in arg]), 2)
+        self.assertFalse(any("cma-allocation-outcome/" in arg for arg in pushes[0]))
         self.assertEqual([path for path in server.calls if path.startswith("actions/")],
                          [])
         self.assertFalse(any("matching-refs" in path for path in server.calls))

@@ -65,6 +65,32 @@ def load(raw, packages):
     return packet
 
 
+def load_portable(raw, packages):
+    """Rebuild-stable form: exact paths, bytes, DER inventories and the link; no image or finding identity."""
+    fields(raw, {"files", "alias"})
+    require(isinstance(raw["files"], list) and 1 <= len(raw["files"]) <= len(arch_trust.FILES))
+    files = {}
+    for record in raw["files"]:
+        fields(record, {"path", "file_sha256", "certificates", "der_sha256s", "proof_sha256", "native"})
+        path, count, hashes = record["path"], record["certificates"], record["der_sha256s"]
+        require(isinstance(path, str) and path in arch_trust.FILES and path not in files
+                and type(count) is int and count == arch_trust.FILES[path]
+                and valid_digest(record["file_sha256"]) and valid_digest(record["proof_sha256"]))
+        require(isinstance(hashes, list) and len(hashes) == count
+                and all(valid_digest(value) for value in hashes) and hashes == sorted(set(hashes)))
+        if path == arch_trust.GNUPG:
+            verify_gnupg(record, packages)
+        else:
+            require(record["native"] is None)
+        files[path] = record
+    alias = raw["alias"]
+    if alias is not None:
+        fields(alias, {"path", "link_target", "proof_sha256"})
+        require(alias["path"] == arch_trust.ALIAS and alias["link_target"] == arch_trust.LINK
+                and arch_trust.TLS in files and valid_digest(alias["proof_sha256"]))
+    return {"files": files, "alias": alias}
+
+
 def load_catalog(raw, packages):
     packets = raw if isinstance(raw, list) else [raw]
     require(0 < len(packets) <= 16)

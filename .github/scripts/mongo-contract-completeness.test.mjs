@@ -6,6 +6,15 @@ import test from 'node:test';
 import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
 
 const taskHome = 'sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::';
+
+test('Usage continuation Mongo contract remains in the ordinary selector', () => {
+  const name = 'store::sandbox_mongo_integration_tests::sandbox_usage_tests::continuation::usage_signed_continuations_cross_replicas_preserve_raw_store_and_reject_scope_changes';
+  const prefix = requiredPrefixes.find(prefix => name.startsWith(prefix));
+  assert.ok(prefix, 'new Usage Mongo contract must be selected');
+  const runner = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  assert.ok(runner.includes(`test(${prefix})`));
+  assert.ok(!runner.includes(`not test(=${name})`));
+});
 const child = `${taskHome}subprocess::task_home_create_child`;
 const caseMetadata = (selected, ignored = true) => ({
   ignored, 'filter-match': {status: selected ? 'matches' : 'mismatch'},
@@ -99,7 +108,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 146);
+  assert.equal(new Set(requiredPrefixes).size, 148);
   assert.ok(requiredPrefixes.includes('store::directory::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('sandbox::agent_worker_tests::cleanup_contention_tests::'));
   assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
@@ -217,6 +226,31 @@ test('usage hotfix keeps reader and startup contracts while assigning only the e
 });
 
 const resourceExecutionPrefix = 'store::resource_access::execution::mongo_tests::';
+test('standing permission loss uses its authenticated fixture while replica acceptance stays ordinary', () => {
+  const prefix = 'auth::account_standing::mongo_tests::replicas::';
+  const permission = `${prefix}fresh_snapshot_cannot_mask_real_database_permission_failure`;
+  const acceptance = `${prefix}other_replica_acceptance_revokes_fresh_request_stream_frame_and_command`;
+  const declared = JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8'));
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  assert.equal(declared[permission]?.kind, 'fixture');
+  assert.ok(source.includes(`not test(=${permission})`));
+  assert.ok(!source.includes(`not test(=${acceptance})`));
+  assert.equal(declared[acceptance], undefined);
+  const metadata = inventory();
+  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  cases[permission] = caseMetadata(false);
+  cases[acceptance] = caseMetadata(true);
+  const exclusions = {...exceptions, [permission]: declared[permission]};
+  const result = check(metadata, exclusions);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /5 ignored CMA tests; 3 selected; 1 separate-fixture tests; 1 child helpers/);
+  cases[permission] = caseMetadata(true);
+  assert.match(check(metadata, exclusions).stderr, /Selected non-ordinary contracts/);
+  cases[permission] = caseMetadata(false);
+  cases[acceptance] = caseMetadata(false);
+  assert.match(check(metadata, exclusions).stderr, /Omitted eligible Mongo contracts/);
+});
+
 test('resource execution selection includes root and nested contracts without omissions', () => {
   assert.equal(requiredPrefixes.filter(prefix => prefix === resourceExecutionPrefix).length, 1);
   const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');

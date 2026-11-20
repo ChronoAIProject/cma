@@ -3848,6 +3848,11 @@ The provider-facing connection operations are generic:
 | `GET /v1/channel-connections` | Owner-scoped ready connections with bounded cursor pagination. |
 | `DELETE /v1/channel-connections/{connection_ref}` | Cancel an unbound operation. A live matching channel must be deleted through channel management first. |
 
+The default error response for these operations and relay-resource connection
+discovery is an RFC 9457 Problem with `Content-Type: application/problem+json`.
+Successful create/read/list responses use `application/json`; successful
+cancellation returns an empty `204` response.
+
 Organization ownership uses the existing `X-CMAEG-Owner` header and current
 NyxID organization authorization. Cross-owner or cross-owner-kind reads and
 cancellation return 404. A repeated create must use the same record ID, event
