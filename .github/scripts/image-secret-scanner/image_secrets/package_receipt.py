@@ -313,13 +313,66 @@ def arch_trust_decisions(report, evidence, observations, verified, packet):
     return rows
 
 
+def portable_trust_decisions(report, evidence, observations, verified, packet, owners):
+    """Locate the reviewed paths by name; every image, layer, entry and finding identity is this scan's."""
+    seen = report["inventory"].get("arch_trust", {})
+    coordinate_keys = ("image", "layer", "entry")
+    unresolved = {tuple(row[key] for key in coordinate_keys) for row in report["findings"]
+                  if row["scope"] == "layer" and row["rule"] not in ADVISORY_RULES
+                  and (row["rule"] != CERTIFICATE_RULE or "member" in row)}
+    expected_paths = {path_digest(path): expected for path, expected in arch_trust.portable_entries(packet).items()}
+    candidates = [row for row in report["findings"] if row["scope"] == "layer" and row["rule"] == CERTIFICATE_RULE
+                  and "member" not in row and row["layer"] == arch_trust.LAYER and row["path"] in expected_paths]
+    rows = []
+    targets = {}
+    # The alias is decided only after its image's TLS bundle has its own decision.
+    for finding in sorted(candidates, key=lambda row: row["path"] == path_digest(arch_trust.ALIAS)):
+        expected = expected_paths[finding["path"]]
+        coordinate = tuple(finding[key] for key in coordinate_keys)
+        occurrence = observations.get(coordinate)
+        checked = verified.get(coordinate, {}).get(ARCH_CERTIFICATE_ADVISORY)
+        if (coordinate in unresolved or occurrence is None or checked is None
+                or checked.get("namespace_verified") is not True):
+            continue
+        platform, _, _, _, (path, file_sha256, _) = occurrence
+        if (platform != arch_trust.PLATFORM or path != expected["path"] or file_sha256 != finding.get("file_sha256")
+                or file_sha256 != finding.get("candidate_sha256")):
+            continue
+        position = dict(zip(coordinate_keys, coordinate))
+        proof = {"public_path": path, "catalog": "portable", **checked}
+        row = {**receipt_context(finding, occurrence, file_sha256), "classification": ARCH_CERTIFICATE_ADVISORY,
+               "arch_trust": proof, "proof_sha256": expected["proof_sha256"]}
+        if path == arch_trust.ALIAS:
+            target = targets.get(finding["image"])
+            if (target is None or position not in seen.get("aliases", ())
+                    or checked["link_target"] != expected["link_target"]):
+                continue
+            proof["target_finding_id"] = target["finding_id"]
+        else:
+            observed = dict(position, member_sha256=checked["member_sha256"], der_sha256s=checked["der_sha256s"])
+            if (observed not in seen.get("files", ()) or file_sha256 != expected["file_sha256"]
+                    or checked["der_sha256s"] != expected["der_sha256s"]):
+                continue
+            native = expected["native"]
+            if native is not None:
+                owner = owners.get(coordinate)
+                if owner is None:
+                    continue
+                proof["native"] = dict(native, package=evidence.packages[native["package_sha256"]], current_owner=owner)
+            if path == arch_trust.TLS:
+                targets[finding["image"]] = row
+        rows.append(row)
+    return rows
+
+
 def build(archive, output, report, component, evidence, *, source=None):
     require(component in SCOPES and report["policy"].get("staging_runtime_component") == component)
     require(report["archive_sha256"] == digest_file(archive))
     vector_checks = {}
     database_checks = {}
-    portable = (PortableOccurrences(evidence.portable_entries, evidence.packages, source, component)
-                if component == evidence.portable_component and evidence.portable_entries else None)
+    trust = evidence.portable_trust if component == evidence.portable_component else None
+    portable = (PortableOccurrences(evidence.portable_entries or {}, evidence.packages, source, component, trust=trust)
+                if component == evidence.portable_component and (evidence.portable_entries or trust) else None)
     with tempfile.TemporaryDirectory(prefix="package-occurrences-", dir=output) as tmp:
         observations = collect(archive, Path(tmp), report, component, evidence,
                                vector_checks=vector_checks, database_checks=database_checks, portable=portable)
@@ -338,6 +391,9 @@ def build(archive, output, report, component, evidence, *, source=None):
     if component == arch_trust.COMPONENT and evidence.arch_trust:
         for packet in evidence.arch_trust.values():
             rows.extend(arch_trust_decisions(report, evidence, observations, vector_checks, packet))
+    if component == arch_trust.COMPONENT and trust is not None:
+        rows.extend(portable_trust_decisions(report, evidence, observations, vector_checks, trust,
+                                             portable.trust_owners(observations)))
     require(report["archive_sha256"] == digest_file(archive))
     return {
         "schema": "cma-staging-package-decisions-v1",

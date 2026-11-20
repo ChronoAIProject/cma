@@ -8,7 +8,7 @@ from .portable_ownership import STATUS_PATH, check_reserved_inputs, dpkg_identit
 
 
 class PortableOccurrences:
-    def __init__(self, entries, packages, source, component):
+    def __init__(self, entries, packages, source, component, trust=None):
         self.entries = entries
         self.packages = packages
         self.source = source
@@ -17,7 +17,15 @@ class PortableOccurrences:
         self.inputs = set()
         self.status = {}
         self.masked_status = set()
-        self.arch = (ArchOwnership((row for row, _ in entries.values()), packages)
+        # A package-owned trust certificate needs the same pacman ownership proof as a package row.
+        self.trust_rows = {}
+        for path, record in (trust["files"].items() if trust else ()):
+            native = record["native"]
+            if native is not None:
+                self.trust_rows[path, record["file_sha256"]] = {
+                    "path": path, "file_sha256": record["file_sha256"], "package_sha256": native["package_sha256"],
+                    "ownership": {"mtree_sha256": native["mtree_sha256"]}}
+        self.arch = (ArchOwnership([*(row for row, _ in entries.values()), *self.trust_rows.values()], packages)
                      if component == "runtime-omarchy" else None)
         for (platform, path, sha256), record in entries.items():
             row, _ = record
@@ -83,6 +91,15 @@ class PortableOccurrences:
                 row, reviews = self.entries[platform, path, sha256]
                 result[coordinate] = (row, reviews, owner)
         return result
+
+    def trust_owners(self, observations):
+        """Current pacman ownership of each observed package-owned trust certificate, by coordinate."""
+        candidates = defaultdict(list)
+        for coordinate, (platform, _, _, _, (path, sha256, _)) in observations.items():
+            row = self.trust_rows.get((path, sha256))
+            if row is not None and platform == "linux/amd64" and self.arch is not None:
+                candidates[coordinate[:2]].append((coordinate, row, self.packages[row["package_sha256"]]))
+        return self.arch.prove(candidates) if candidates else {}
 
     def owner(self, row, coordinate, installed, source_checks):
         package = self.packages[row["package_sha256"]]
