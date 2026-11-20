@@ -7,6 +7,7 @@ import { taskExperience } from '../test/taskExperience';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { AgentLifecycleFollowup } from './AgentLifecycleFollowup';
 import { TaskHome } from './TaskHome';
+import { lifecycleRecoveryKey } from './lifecycleIntentStorage';
 import { lifecycleStorageKey } from './lifecycleIntent';
 
 afterEach(() => {
@@ -15,11 +16,15 @@ afterEach(() => {
 });
 
 const key = lifecycleStorageKey('owner');
+const recoveryKey = lifecycleRecoveryKey(
+  { owner: 'owner' },
+  { agentId: 'agt_1', operationId: 'operation' },
+);
 const request = (task: boolean) => ({
   name: 'Saved creation',
   ...(task ? { initial_message: 'Saved task' } : {}),
 });
-const retained = (task: boolean, accepted: boolean) => {
+const retained = (task: boolean, accepted: boolean, bound = false) => {
   sessionStorage.setItem(
     key,
     JSON.stringify({
@@ -27,7 +32,9 @@ const retained = (task: boolean, accepted: boolean) => {
       intent: {
         key: 'original-key',
         body: request(task),
-        ...(accepted ? { receipt: { id: 'operation' }, agentId: 'agt_1' } : {}),
+        ...(accepted
+          ? { receipt: { id: 'operation' }, ...(bound ? { agentId: 'agt_1' } : {}) }
+          : {}),
       },
     }),
   );
@@ -60,7 +67,7 @@ const surfaces = [
 it.each(surfaces.flatMap((row) => [true, false].map((task) => ({ ...row, task }))))(
   '$surface names its visible status action for a retained task=$task',
   async ({ surface, label, task }) => {
-    retained(task, true);
+    retained(task, true, surface === 'followup');
     const create = vi.fn();
     const read = vi.fn().mockRejectedValueOnce(new TypeError('Failed to fetch')).mockResolvedValue({
       id: 'operation',
@@ -86,7 +93,9 @@ it.each(surfaces.flatMap((row) => [true, false].map((task) => ({ ...row, task })
     fireEvent.click(button);
     await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
     expect(create).not.toHaveBeenCalled();
-    expect(sessionStorage.getItem(key)).toContain('original-key');
+    expect(sessionStorage.getItem(surface === 'followup' ? recoveryKey : key)).toContain(
+      'original-key',
+    );
   },
 );
 
@@ -121,7 +130,7 @@ it.each(
 it.each([true, false])(
   'follow-up offers its visible status action after an uncertain continuation, task=%s',
   async (task) => {
-    retained(task, true);
+    retained(task, true, true);
     const target = { type: 'workspace' as const, id: 'wsp_1' };
     const read = vi.fn().mockResolvedValue({
       id: 'operation',
@@ -152,6 +161,6 @@ it.each([true, false])(
     expect(create).toHaveBeenCalledTimes(1);
     expect(create.mock.calls[0]?.[0]).toEqual(request(task));
     expect(create.mock.calls[0]?.[1].idempotencyKey).toBe('original-key');
-    expect(sessionStorage.getItem(key)).toContain('original-key');
+    expect(sessionStorage.getItem(recoveryKey)).toContain('original-key');
   },
 );
