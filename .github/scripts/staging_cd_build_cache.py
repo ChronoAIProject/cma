@@ -13,6 +13,7 @@ from staging_cd_build import snapshot
 from staging_cd_build_cargo_keys import identity
 from staging_cd_common import require
 from staging_cd_cache_context import context
+from staging_cd_cargo_artifact import MAX_BUNDLE_BYTES
 from staging_cd_reservations import validate_reservation
 
 SCOPES = {"am": "cma-am", "eg": "cma-eg", "web": "cma-web",
@@ -58,6 +59,7 @@ class BuildCache:
         self.key = identity(source, component) if component in ("am", "eg") else None
         self.namespace = uuid.uuid4().hex
         self.restore_result = "miss"
+        self.export_reason = None
 
     def restore(self):
         self.restore_result = "miss"
@@ -68,7 +70,8 @@ class BuildCache:
             require(self.accepted.is_dir() and not self.accepted.is_symlink(),
                     "Build cache accepted root is invalid")
             tool = bridge()
-            manifest = tool.validate_bundle(self.accepted, self.key.prefix, family=self.key.family)
+            manifest = tool.validate_bundle(self.accepted, self.key.prefix, family=self.key.family,
+                                            max_archive=MAX_BUNDLE_BYTES)
             exact = manifest["prefix"] == self.key.prefix
             # A different graph must let Cargo resolve and verify its own registry.
             tool.transfer("inject" if exact else "inject-target", self.accepted, namespace=self.namespace)
@@ -95,23 +98,42 @@ class BuildCache:
     def export_mounts(self):
         # Refresh after exact hits too. Restoring the first bundle of the day all
         # day long made each build recompile everything merged since that seed.
+        self.export_reason = None
         if self.key is None:
             return False
         require(not self.pending.exists(), "Cargo cache export must be fresh")
         try:
             tool = bridge()
             tool.transfer("extract", self.pending, namespace=self.namespace)
-            tool.seal(self.pending, self.key.prefix, family=self.key.family)
+            tool.seal(self.pending, self.key.prefix, family=self.key.family, max_archive=MAX_BUNDLE_BYTES)
             if self.accepted.exists():
                 require(not self.accepted.is_symlink(), "Build cache accepted root is invalid")
                 shutil.rmtree(self.accepted)
             self.pending.rename(self.accepted)
             return True
-        except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError):
+        except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError) as error:
+            self.export_reason = withheld_reason(error)
             return False
         finally:
             if self.pending.exists() and not self.pending.is_symlink():
                 shutil.rmtree(self.pending)
+
+
+# Fixed vocabulary only: exception text, paths and sizes never reach the log.
+WITHHELD_REASONS = (("compressed cache exceeds", "oversize-compressed"),
+                    ("expanded cache exceeds", "oversize-expanded"),
+                    ("empty mount", "empty"))
+
+
+def withheld_reason(error):
+    if isinstance(error, subprocess.SubprocessError):
+        return "transfer-failed"
+    if isinstance(error, ValueError):
+        text = str(error)
+        for marker, reason in WITHHELD_REASONS:
+            if marker in text:
+                return reason
+    return "invalid"
 
 
 def lookup_key(root, component, env):
