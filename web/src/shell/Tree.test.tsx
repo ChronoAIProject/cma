@@ -205,7 +205,7 @@ describe('Sandbox navigation tree', () => {
     },
   );
 
-  it('moves a resuming Paused record into Live while keeping retained conversations accessible', () => {
+  it('moves a resuming Paused record into Changing while keeping retained conversations accessible', () => {
     const items = navigationFixture('paused').map((item) => ({
       ...item,
       sandbox: {
@@ -221,7 +221,7 @@ describe('Sandbox navigation tree', () => {
       },
     }));
     renderTree({ items });
-    expect(screen.getByRole('tree', { name: 'Live sandboxes' })).toHaveTextContent('Atlas');
+    expect(screen.getByRole('tree', { name: 'Changing sandboxes' })).toHaveTextContent('Atlas');
     expect(screen.getByRole('tree', { name: 'Paused sandboxes' })).not.toHaveTextContent('Atlas');
     expect(screen.getByRole('link', { name: /Atlas/ })).toHaveTextContent('Resuming');
     expect(screen.getByRole('button', { name: 'Collapse Atlas' })).toBeInTheDocument();

@@ -10,7 +10,14 @@ import { scopeValue } from './scope';
 import { SandboxBranch, type TreeExpansion } from './HierarchyTree';
 import { keyboardNavigation } from '../shell/treePresentation';
 import '../shell/Tree.css';
-import { sandboxFilterEmpty, sandboxNavigationGroups } from '../shell/navigationStatuses';
+import {
+  sandboxFilterEmpty,
+  sandboxNavigationGroup,
+  sandboxNavigationGroups,
+} from '../shell/navigationStatuses';
+import { sandboxSummary } from '../api/rest/hierarchy';
+import { DeletionProgressList } from '../shell/DeletionProgressList';
+import { useTreeFocus } from '../shell/useTreeFocus';
 
 interface Props {
   readonly client: ResourceViewsClient;
@@ -76,6 +83,14 @@ function SandboxTreePage({
     [client, organization, shared, cursor],
   );
   const current = useAuthorizedRead(read);
+  const focus = useTreeFocus();
+  const items = current.state.status === 'ready' ? current.state.value.items : [];
+  const navigationGroups = new Map(
+    items.map((sandbox) => [
+      sandbox.id,
+      sandboxNavigationGroup(sandbox.access === 'shared' ? sandbox : sandboxSummary(sandbox)),
+    ]),
+  );
   const accessSummaries = useAccessSummaries(
     client,
     'sandbox',
@@ -83,7 +98,7 @@ function SandboxTreePage({
     scopeValue(organization, shared),
   );
   return (
-    <div className="scoped-navigation__tree resource-tree">
+    <div className="scoped-navigation__tree resource-tree" {...focus}>
       <Button size="sm" onClick={current.reload}>
         {shared === true ? 'Refresh shared Sandboxes' : 'Refresh organization'}
       </Button>
@@ -95,6 +110,10 @@ function SandboxTreePage({
         <p role="alert">{current.state.message}</p>
       ) : (
         <>
+          <DeletionProgressList
+            sandboxes={items.filter((sandbox) => navigationGroups.get(sandbox.id) === 'deleting')}
+            onViewStatus={(sandboxId) => onNavigate({ kind: 'sandbox', sandboxId })}
+          />
           {current.state.value.items.length === 0 ? (
             <p>
               {statusFilter !== 'all'
@@ -109,17 +128,14 @@ function SandboxTreePage({
                 <SandboxGroup
                   key={label}
                   label={label}
-                  items={
-                    current.state.status === 'ready'
-                      ? current.state.value.items.filter(
-                          (sandbox) =>
-                            sandbox.status !== 'retired' &&
-                            (statusFilter === 'all' || sandbox.status === statusFilter) &&
-                            (statusFilter !== 'all' ||
-                              (sandbox.status === 'paused') === (id === 'paused')),
-                        )
-                      : []
-                  }
+                  items={items.filter(
+                    (sandbox) =>
+                      navigationGroups.get(sandbox.id) !== 'hidden' &&
+                      navigationGroups.get(sandbox.id) !== 'deleting' &&
+                      (statusFilter === 'all'
+                        ? navigationGroups.get(sandbox.id) === id
+                        : sandbox.status === statusFilter),
+                  )}
                   client={client}
                   expansion={expansion}
                   route={route}
