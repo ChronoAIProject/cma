@@ -3,7 +3,9 @@ import hashlib
 import json
 from pathlib import Path
 import unittest
+from unittest.mock import patch
 
+import staging_cd_release_ownership as ownership
 from staging_cd_allocate import allocate_queue
 from staging_cd_allocation_fixture import AllocationServer
 from staging_cd_allocation_io import AllocationIO
@@ -21,12 +23,13 @@ class TransitionOwnerTests(unittest.TestCase):
     def setUp(self):
         self.server = AllocationServer(5, reserved=False)
         self.changes = []
+        self.completed = set()
         request = self.server.request
 
         def read(path, **kwargs):
             response = request(path, **kwargs)
             if path.startswith("actions/runs/"):
-                response["status"] = "in_progress"
+                response["status"] = "completed" if response["id"] in self.completed else "in_progress"
             return response
 
         self.server.request = read
@@ -110,22 +113,42 @@ class TransitionOwnerTests(unittest.TestCase):
         finals["am"] = self.finalize(successor["am"]["reservation"])
         self.assert_web_pushes_preserve_owner(successor["runtime"]["reservation"], finals)
 
-    def test_same_source_group_claim_refuses_before_building_once_the_started_peer_finalizes(self):
-        original = self.push(GROUP)
-        successor = self.push({"am"})
-        publisher = Reservations(self.server, "fixture", Path.cwd())
-        for key in sorted(GROUP - {"am"}):
-            old, new = original[key]["reservation"], successor[key]["reservation"]
-            # The group claims a fresh version of the same source the original is still building.
-            self.assertEqual((new["source"], new["previous"]), (old["source"], old["version"]))
-            self.assertTrue(publisher.require_current(new, build_started=False))
-            # Under the lane lock the original build finishes and finalizes first.
-            final = self.finalize(old)
-            for started in (False, True):
-                with self.subTest(component=key, started=started), \
-                        self.assertRaisesRegex(Refusal, "different immutable release") as error:
-                    publisher.require_current(new, build_started=started)
-                # One final per source: the claim can never finalize, so it fails rather than rebuild.
-                self.assertNotIsInstance(error.exception, ReservationSuperseded)
-            self.assertEqual([tag["receipt"] for tag in self.server.tags(key)], [final])
-            self.assertIn(pending_name(new), self.server.refs)
+    def owned(self, task):
+        env = {"CD_COMPONENT": task["component"], "CD_TASKS": json.dumps([task]), "GH_TOKEN": "fixture",
+               "GITHUB_RUN_ID": str(task["reservation"]["run_id"]), "GITHUB_RUN_ATTEMPT": "1"}
+        with patch.object(ownership, "event_identity"):
+            return ownership.owned(env, Path.cwd(), github=lambda _token: self.server)
+
+    def test_same_source_claim_skips_once_its_started_peer_finalizes_and_the_next_push_resumes_it(self):
+        for pushed in sorted(GROUP):
+            with self.subTest(pushed=pushed):
+                self.setUp()
+                original = self.push(GROUP)
+                successor = self.push({pushed})
+                publisher = Reservations(self.server, "fixture", Path.cwd())
+                finals = {}
+                for key in sorted(GROUP - {pushed}):
+                    old, new = original[key]["reservation"], successor[key]["reservation"]
+                    # The group claims a fresh version of the same source the original is still building.
+                    self.assertEqual((new["source"], new["previous"]), (old["source"], old["version"]))
+                    self.assertTrue(publisher.require_current(new, build_started=False))
+                    self.assertTrue(self.owned(successor[key]))
+                    # Under the lane lock the original build finishes and finalizes first.
+                    finals[key] = self.finalize(old)
+                    # The source is published: the claim yields before building, and the
+                    # ownership precheck skips its restores. A started build would fail instead.
+                    with self.assertRaises(ReservationSuperseded):
+                        publisher.require_current(new, build_started=False)
+                    self.assertFalse(self.owned(successor[key]))
+                    with self.assertRaisesRegex(Refusal, "different immutable release") as error:
+                        publisher.require_current(new, build_started=True)
+                    self.assertNotIsInstance(error.exception, ReservationSuperseded)
+                    self.assertIn(pending_name(new), self.server.refs)
+                finals[pushed] = self.finalize(successor[pushed]["reservation"])
+                # Both runs have ended; the burned claims stay, and an unrelated push resumes the group.
+                self.completed.update({801, 802})
+                resumed = self.push({"web"})
+                self.assertEqual(resumed.keys(), GROUP | {"web"})
+                for key in GROUP:
+                    self.assertEqual(resumed[key], {"component": key, "mode": "resume", "receipt": finals[key]})
+                self.assertEqual(resumed["web"]["mode"], "publish")

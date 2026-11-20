@@ -16,7 +16,7 @@ FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", 
 
 
 class ReservationSuperseded(Refusal):
-    """A validated same-component successor has taken this reservation."""
+    """A validated same-component successor, or a final of the same source, has taken this reservation."""
 
     def __init__(self):
         super().__init__("Publication reservation is superseded and burned")
@@ -144,8 +144,9 @@ class Reservations:
 
         Every lane queues only its newest reservation and finishes a build it
         has started. Each caller states whether this reservation's build has
-        started: before it, a newer reservation or final takes over and this
-        one yields; after it, only a higher final fences it.
+        started: before it, a newer reservation or final, or a final of the
+        same source, takes over and this one yields; after it, only a final
+        fences it, and that is a failure.
         """
         validate_reservation(value)
         component = value["component"]
@@ -173,9 +174,12 @@ class Reservations:
                     for item in candidates), "Publication reservation is superseded and burned")
         # A source has one final per component. When an earlier same-source
         # build finishes first, as a contract group's fresh claim allows, this
-        # reservation can never finalize, so refuse before building it again.
-        require(all(tag["receipt"]["source"] != value["source"] for tag in finals),
-                "This merge already has a different immutable release")
+        # reservation can never finalize: the source is already published, so
+        # it yields before building. After its build starts it still fails.
+        if any(tag["receipt"]["source"] == value["source"] for tag in finals):
+            if not build_started:
+                raise ReservationSuperseded()
+            raise Refusal("This merge already has a different immutable release")
         return True
 
     def remove_after_publication(self, receipt, expected_oid):
