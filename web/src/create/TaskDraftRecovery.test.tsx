@@ -119,3 +119,32 @@ it('keeps both drafts and the chosen button focused after a refused recovery wri
   await waitFor(() => expect(screen.getByLabelText('Document type')).toHaveFocus());
   expect(screen.getByLabelText('Subject')).toHaveValue(exactFields.subject);
 });
+
+it.each(['template', 'recovery'])(
+  'does not steal focus from an edited field after %s selection',
+  (mode) => {
+    if (mode === 'recovery') seedCompetingDrafts();
+    const callbacks: FrameRequestCallback[] = [];
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((callback) => {
+      callbacks.push(callback);
+      return callbacks.length;
+    });
+    const { create } = setup();
+    if (mode === 'recovery') {
+      showRecovery();
+      restore();
+    } else fireEvent.click(screen.getByRole('button', { name: 'Write a document' }));
+    const subject = screen.getByLabelText('Subject');
+    subject.focus();
+    fireEvent.change(subject, { target: { value: 'User chose this field' } });
+    act(() => {
+      for (const callback of callbacks) callback(0);
+    });
+    expect(subject).toHaveFocus();
+    expect(subject).toHaveValue('User chose this field');
+    expect(screen.getByLabelText('Document type')).toHaveValue(
+      mode === 'recovery' ? exactFields.type : '',
+    );
+    expect(create).not.toHaveBeenCalled();
+  },
+);

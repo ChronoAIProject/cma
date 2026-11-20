@@ -91,12 +91,15 @@ function TaskHomeContent({
   const templateDraft = useTaskTemplateDraftSwitch(
     draft,
     (template) => {
-      requestAnimationFrame(() =>
+      const previousFocus = document.activeElement;
+      requestAnimationFrame(() => {
+        if (document.activeElement !== previousFocus && document.activeElement !== document.body)
+          return;
         (template
           ? form.current?.querySelector<HTMLInputElement>('[data-template-field]')
           : input.current
-        )?.focus(),
-      );
+        )?.focus();
+      });
     },
     () => setValidation(undefined),
   );
