@@ -1,4 +1,9 @@
-use super::*;
+use std::num::NonZeroU32;
+
+use super::{
+    anonymous_public::{self, AnonymousPublicConfig},
+    positive_u32, rate_default_lease, MINIMUM_HEALTH_REQUESTS_PER_MINUTE,
+};
 
 /// Per-key request budgets enforced by this process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11,6 +16,7 @@ pub struct RateLimitConfig {
     pub control_per_minute: NonZeroU32,
     pub control_tier_enabled: bool,
     pub response_input_tier_enabled: bool,
+    pub anonymous_public: AnonymousPublicConfig,
     pub default_lease_enabled: bool,
 }
 
@@ -62,6 +68,7 @@ impl RateLimitConfig {
                 120,
                 1,
             )?,
+            anonymous_public: anonymous_public::from_lookup(lookup)?,
         })
     }
 }

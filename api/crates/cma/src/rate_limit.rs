@@ -43,11 +43,13 @@ use axum::{
 use governor::{clock::Clock, DefaultKeyedRateLimiter, Quota, RateLimiter};
 use layer1_public::{rest::HttpProblem, AuthenticatedSubject};
 
+mod anonymous;
 mod lease;
 mod shared;
 mod tiers;
 mod visitor;
 
+use anonymous::{is_anonymous_public_route, AnonymousPublicBudget};
 use tiers::{is_rest_path, request_tier, uses_client_operation_key, RequestTier};
 #[allow(unused_imports)] // Consumed by the Trigger route composition that injects this slice.
 pub(crate) use visitor::CmaLaunchQuota;
@@ -96,6 +98,7 @@ pub(crate) struct RateLimiters {
     control: KeyedLimiter,
     response_input_tier_enabled: bool,
     control_tier_enabled: bool,
+    anonymous_public: AnonymousPublicBudget,
     default_leases: lease::LeaseTable,
     visitor_launches: VisitorLaunchQuota,
     trusted_proxies: TrustedProxyConfig,
@@ -118,6 +121,10 @@ impl RateLimiters {
             Quota::per_minute(config.input_per_minute),
             Quota::per_minute(config.control_per_minute),
             trusted_proxies,
+        );
+        limiters.anonymous_public = AnonymousPublicBudget::new(
+            config.anonymous_public.per_minute,
+            config.anonymous_public.concurrency,
         );
         limiters.response_input_tier_enabled = config.response_input_tier_enabled;
         limiters.control_tier_enabled = config.control_tier_enabled;
@@ -144,6 +151,7 @@ impl RateLimiters {
             control: RateLimiter::keyed(control),
             response_input_tier_enabled: false,
             control_tier_enabled: false,
+            anonymous_public: AnonymousPublicBudget::default(),
             default_leases: lease::LeaseTable::default(),
             visitor_launches: VisitorLaunchQuota::default(),
             trusted_proxies,
@@ -214,6 +222,22 @@ pub(crate) async fn admit(
         limiters.response_input_tier_enabled,
         limiters.control_tier_enabled,
     );
+    let _anonymous_permit = if is_anonymous_public_route(request.uri().path()) {
+        match limiters.anonymous_public.try_admit() {
+            Ok(permit) => Some(permit),
+            Err(retry_after_seconds) => {
+                return limited_response(
+                    &limiters,
+                    &request,
+                    retry_after_seconds,
+                    "anonymous_public",
+                    tier,
+                )
+            }
+        }
+    } else {
+        None
+    };
     let client = resolve_client(&request, &limiters.trusted_proxies);
     request.extensions_mut().insert(client.clone());
     let budget = if tier == RequestTier::Health {
@@ -409,6 +433,10 @@ mod tests;
 #[cfg(test)]
 #[path = "rate_limit_input_tests.rs"]
 mod input_tests;
+
+#[cfg(test)]
+#[path = "rate_limit/anonymous_tests.rs"]
+mod anonymous_tests;
 
 #[cfg(test)]
 #[path = "rate_limit_control_tests.rs"]
