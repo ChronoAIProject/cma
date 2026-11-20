@@ -160,14 +160,15 @@ test('LOCAL successful Bot creation preserves dirty-document history without a n
   await fixture.route(page, baseURL!);
   const creations = await routeHistoryBot(page);
   await page.addInitScript(() => Object.defineProperty(window, 'navigation', { value: undefined }));
-  await page.goto('/bots');
-  await expect(page.getByRole('region', { name: 'Consumer workspace', exact: true })).toBeVisible();
+  await page.goto('/artifacts');
+  await expect(page.getByRole('link', { name: /Product brief/ })).toBeVisible();
   const entry = () => page.evaluate(() => ({ path: location.pathname, state: history.state }));
   const entries = [await entry()];
-  await page
-    .getByRole('region', { name: 'Consumer workspace', exact: true })
-    .getByRole('button', { name: 'New consumer', exact: true })
-    .click();
+  await page.evaluate(() =>
+    window.dispatchEvent(
+      new CustomEvent('cma:route-request', { detail: '/bots/new', cancelable: true }),
+    ),
+  );
   const wizard = page.getByRole('region', { name: 'New consumer', exact: true });
   await wizard.getByLabel('Consumer name', { exact: true }).fill('History consumer');
   await page.evaluate(() =>
@@ -201,6 +202,11 @@ test('LOCAL successful Bot creation preserves dirty-document history without a n
   const modal = page.getByRole('dialog', { name: 'Leave without saving?' });
   for (let attempt = 0; attempt < 2; attempt++) {
     await page.evaluate(() => history.go(-4));
+    await expect
+      .poll(async () =>
+        fixture.boundary.errors.length ? fixture.boundary.errors : await modal.isVisible(),
+      )
+      .toBe(true);
     await modal.getByRole('button', { name: 'Stay', exact: true }).click();
     await expect(title).toHaveValue('Draft after creation');
     expect(await title.evaluate((node, old) => node === old, original)).toBe(true);
@@ -214,7 +220,7 @@ test('LOCAL successful Bot creation preserves dirty-document history without a n
   }
   await page.evaluate(() => history.go(-4));
   await modal.getByRole('button', { name: 'Leave without saving', exact: true }).click();
-  await expect(page).toHaveURL(/\/bots$/);
+  await expect(page).toHaveURL(/\/artifacts$/);
   expect(await entry()).toEqual(entries[0]);
   for (const expected of entries.slice(1)) {
     await page.evaluate(() => history.forward());
