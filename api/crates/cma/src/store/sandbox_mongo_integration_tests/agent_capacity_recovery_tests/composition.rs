@@ -17,6 +17,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize};
 
 mod faults;
 mod later_progress;
+mod quota;
 
 #[derive(Default)]
 struct Native {
@@ -88,6 +89,13 @@ fn service(store: &MongoSandboxStore, enabled: bool) -> RecoveryService {
 
 async fn admitted(store: &MongoSandboxStore) -> (Caller, RecoveryRequest, RecoveryWork) {
     let agent = fixture::capacity_fixture(store).await;
+    admit_fixture(store, agent).await
+}
+
+async fn admit_fixture(
+    store: &MongoSandboxStore,
+    agent: Agent,
+) -> (Caller, RecoveryRequest, RecoveryWork) {
     let caller = Caller::new(
         agent.owner.clone(),
         Authorization::new([Capability::UseOwnSandboxes]),
@@ -107,7 +115,7 @@ async fn admitted(store: &MongoSandboxStore) -> (Caller, RecoveryRequest, Recove
     assert_eq!(work.phase, RecoveryPhase::Admitted);
     assert_eq!(
         records::collection(store)
-            .count_documents(doc! {})
+            .count_documents(doc! {"agent_id":agent.id.as_str()})
             .await
             .unwrap(),
         1
