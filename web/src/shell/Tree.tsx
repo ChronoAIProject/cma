@@ -177,6 +177,7 @@ export function Tree({
       </Presence>
       {view === 'agent' ? (
         <PersonalAgentTree
+          viewerId={viewerId}
           currentTask={currentTask}
           active={active}
           items={visibleItems}
