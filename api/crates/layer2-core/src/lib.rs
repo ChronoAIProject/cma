@@ -5,6 +5,7 @@
 //! idempotency, time, and pressure primitives that do not presume a resource
 //! hierarchy.
 
+pub mod account_deletion;
 pub mod activity;
 pub mod activity_detail;
 pub mod activity_service;

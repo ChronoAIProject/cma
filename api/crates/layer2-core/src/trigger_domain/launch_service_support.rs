@@ -173,6 +173,9 @@ pub(super) fn store_error(error: LaunchStoreError) -> LaunchServiceError {
         LaunchStoreError::VisitorQuota { limit, reset_at } => {
             LaunchServiceError::VisitorQuota { limit, reset_at }
         }
+        LaunchStoreError::AccountDeletionInProgress => {
+            LaunchServiceError::AccountDeletionInProgress
+        }
         LaunchStoreError::NotFound => LaunchServiceError::NotFound,
         LaunchStoreError::CommandConflict => LaunchServiceError::IdempotencyKeyReused,
         LaunchStoreError::Conflict { .. } | LaunchStoreError::LeaseHeld => {

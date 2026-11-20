@@ -1,6 +1,7 @@
 //! Production control-plane service and router assembly.
 use std::sync::Arc;
 mod access;
+mod account_deletion;
 pub(crate) mod activity;
 mod adapter;
 mod agent_manager;
@@ -31,7 +32,7 @@ use crate::{
         SandboxLifecycleComposition, SandboxLifecycleDependencies,
     },
     store::{DefaultProfileSpec, MongoStores},
-    trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
+    trigger::{TriggerComposition, TriggerCompositionDependencies},
 };
 use axum::Router;
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
@@ -45,11 +46,12 @@ pub(crate) use state::ControlPlaneComposition;
 impl ControlPlaneComposition {
     async fn assemble(config: &Config) -> Result<Self, String> {
         let stores = stores::connect(config).await?;
+        let (deletions, standing) = account_deletion::compose(config, &stores).await?;
         let activity = ActivityService::new(stores.activity.clone());
         let documents::DocumentComposition {
             service: documents,
             maintenance: document_blob_maintenance,
-        } = documents::compose(config, &stores)?;
+        } = documents::compose(config, &stores, standing.clone())?;
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
@@ -63,29 +65,24 @@ impl ControlPlaneComposition {
         ));
         let subscriptions =
             crate::connections::CodexSubscriptions::new(stores.codex_subscriptions.clone());
-        let access_tools = credentials::agent_access_tools(config, &stores)?;
-        let (provider_tools, provider_tool_routes) = credentials::provider_tools(config, &stores)?;
+        let access_tools = credentials::agent_access_tools(config, &stores, standing.clone())?;
+        let (provider_tools, provider_tool_routes) =
+            credentials::provider_tools(config, &stores, standing.clone())?;
         let adapters = adapter::production_adapter(
             config,
             stores.sandbox_model.clone(),
             subscriptions.clone(),
             access_tools.clone(),
             provider_tools,
+            standing.clone(),
         )
         .await?;
         let adapter = adapters.owned;
         let auth =
-            credentials::authentication(config, &stores, &users, &activity, settings.clone())?;
-        let broker = Arc::new(
-            CmaServiceConnectionBroker::from_auth_config_with_callback(
-                &config.auth_mode,
-                config.nyxid_public_url.as_deref(),
-                Some(config.public_url.as_str()),
-                Arc::clone(&auth),
-            )
-            .map_err(|error| format!("service connection broker is not usable: {error}"))?
-            .with_subscriptions(subscriptions.clone()),
-        );
+            credentials::authentication(config, &stores, &users, &activity, settings.clone())?
+                .with_account_standing(standing.clone())
+                .with_account_deletion_enabled(config.account_deletion_enabled);
+        let broker = credentials::connection_broker(config, auth.clone(), subscriptions.clone())?;
         let connection_prerequisite = crate::connections::ConnectionPrerequisite::new(
             auth.clone(),
             broker.clone(),
@@ -114,7 +111,7 @@ impl ControlPlaneComposition {
         let ownership = agent_manager
             .as_ref()
             .map(|manager| manager.coordinator.clone());
-        let resource_access = bindings::resource_access(&stores, auth.clone());
+        let resource_access = bindings::resource_access(&stores, auth.clone(), standing.clone());
         let agent_page_origin = layer1_public::agent_page::AgentPageOrigin::new(&config.public_url)
             .map_err(|error| error.to_string())?;
         let projections = AgentProjectionServices::new(
@@ -263,6 +260,7 @@ impl ControlPlaneComposition {
         )?;
         sandbox_lifecycle.register_inline_lifecycle(lifecycle_drain);
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
+            standing,
             common_first_messages: config.features.trigger_command_admission,
             agent_reads: projections.reads(),
             credentials: connection_prerequisite.clone(),
@@ -371,6 +369,7 @@ impl ControlPlaneComposition {
         );
         let metadata = routes::agent_metadata(&stores, resource_access.clone(), config);
         let resource_routes = rest::profiles_router(profiles)
+            .merge(rest::account_deletion_router(deletions))
             .merge(rest::answer_deliverables_router(deliverables))
             .merge(media::router(media))
             .merge(rest::documents_router(documents.clone()))
