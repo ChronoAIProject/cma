@@ -11,6 +11,7 @@ mod reopen_retirement_tests;
 mod reserved_recovery_tests;
 mod retained_reopen_tests;
 mod retire_action_matrix_tests;
+mod retirement_credentials_tests;
 mod retirement_retry_tests;
 mod retirement_tests;
 mod reviewer_boundary_retained;

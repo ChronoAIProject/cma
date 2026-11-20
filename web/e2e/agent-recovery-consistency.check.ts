@@ -118,6 +118,7 @@ test('LOCAL running reload shows loading until activity is known, then agrees wi
     await expect(page.getByText('Loading conversation activity.', { exact: true })).toBeVisible();
     await expect(task(page)).toHaveAccessibleName(/Loading activity/);
     await expect(header(page)).toHaveAttribute('title', /Loading activity/);
+    await expect.poll(() => fixture.snapshotPending).toBe(true);
     fixture.releaseSnapshot();
     await page.getByRole('button', { name: 'View activity', exact: true }).click();
     await expect(page.locator('.thinking__activity')).toContainText(
@@ -130,6 +131,7 @@ test('LOCAL running reload shows loading until activity is known, then agrees wi
     await expect.poll(() => fixture.snapshots).toBe(4);
     await expect(page.getByText('Loading conversation activity.', { exact: true })).toBeVisible();
     await expect(task(page)).toHaveAccessibleName(/Loading activity/);
+    await expect.poll(() => fixture.snapshotPending).toBe(true);
     fixture.releaseSnapshot();
     await expect(task(page)).toHaveAccessibleName(/Working/);
     await expect(header(page)).toHaveAttribute('title', /Working/);

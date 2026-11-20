@@ -42,6 +42,7 @@ mod retry_schedule;
 pub mod sandbox;
 pub mod sandbox_metrics;
 pub mod sandbox_usage;
+pub mod sandbox_usage_cursor;
 pub mod sandbox_usage_service;
 pub mod sequence;
 pub mod trigger_domain;

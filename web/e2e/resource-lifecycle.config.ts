@@ -9,9 +9,18 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname))
 process.env.PLAYWRIGHT_NO_COPY_PROMPT = '1';
 export default defineConfig({
   testDir: '.',
-  testMatch: ['resource-lifecycle.check.ts', 'agent-stop-deletion.check.ts'],
+  testMatch: [
+    'resource-lifecycle-creation.check.ts',
+    'resource-lifecycle-progress.check.ts',
+    'resource-lifecycle-shell.check.ts',
+    'resource-lifecycle-overview.check.ts',
+    'resource-lifecycle-history.check.ts',
+    'resource-lifecycle-deletion.check.ts',
+    'agent-stop-deletion.check.ts',
+  ],
   workers: 1,
   retries: 0,
+  forbidOnly: true,
   timeout: 30000,
   reporter: 'list',
   outputDir: mkdtempSync(join(tmpdir(), 'cma-resource-lifecycle-browser-')),

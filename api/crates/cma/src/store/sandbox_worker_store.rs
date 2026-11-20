@@ -321,6 +321,17 @@ async fn purge_in_transaction(
     {
         return Err(PurgeError::Conflict);
     }
+    if super::sandbox_credentials::purge::required(
+        &store.client.database(&store.sandboxes.namespace().db),
+        &aggregate,
+        &sandbox,
+        session,
+    )
+    .await
+    .map_err(PurgeError::Driver)?
+    {
+        return Err(PurgeError::Conflict);
+    }
     let seq = aggregate
         .get_i64("last_seq")
         .map_err(|_| PurgeError::Conflict)?;
