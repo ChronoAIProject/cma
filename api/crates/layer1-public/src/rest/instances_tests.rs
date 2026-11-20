@@ -59,6 +59,8 @@ pub(super) mod runtime_update_tests;
 mod service_access_tests;
 #[path = "sandbox_visible_inventory_tests.rs"]
 mod visible_inventory_tests;
+#[path = "sandbox_visitor_boundary_tests.rs"]
+mod visitor_boundary_tests;
 type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);
 
@@ -749,51 +751,6 @@ async fn sandbox_lifecycle_problem_projection_preserves_typed_codes() {
         let problem: Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(problem["code"], code);
         assert!(!problem.to_string().contains("private"));
-    }
-}
-
-#[tokio::test]
-async fn visitor_direct_creation_is_forbidden_before_any_effect() {
-    let fixture = fixture(2);
-    let (profile_id, _) = publish_sandbox_profile(
-        &fixture.profiles,
-        "sbp_visitor_boundary",
-        "publisher",
-        ProfileVisibility::Public,
-        vec![],
-    )
-    .await;
-    for _ in 0..2 {
-        let (status, problem) = json_response(
-            &fixture.router,
-            request(
-                Method::POST,
-                "/api/v1/sandboxes",
-                Some(json!({
-                    "sandbox_profile": { "id": profile_id, "revision": 1 },
-                    "name": "visitor-box"
-                })),
-                Some((
-                    "visitor",
-                    Authorization::new([
-                        Capability::LaunchTriggers,
-                        Capability::UseOwnSandboxes,
-                        Capability::DeleteOwnSandbox,
-                    ]),
-                )),
-                Some("visitor-direct-create"),
-            ),
-        )
-        .await;
-        assert_eq!(status, StatusCode::FORBIDDEN);
-        assert_eq!(problem["code"], "forbidden");
-        let sandboxes = fixture
-            .store
-            .list_sandboxes(&SubjectId::new("visitor"), &Default::default())
-            .await
-            .unwrap();
-        assert_eq!(sandboxes.items.len(), 0);
-        assert_eq!(fixture.operations.records.lock().unwrap().len(), 0);
     }
 }
 
