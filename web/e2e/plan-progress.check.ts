@@ -140,13 +140,15 @@ for (const width of [1440, 390]) {
       await page.screenshot({ path: `${evidence}/active-${width}.png`, fullPage: true });
       current = proof.replay;
       stream!.write(proof.replay.slice(proof.changed.length));
-      await expect(plan).toContainText('Response finished · Plan completion not fully reported');
+      await expect(plan).toContainText('Turn ended · Check unfinished plan steps and output.');
       await expect(header).toHaveCount(0);
       await page.reload();
       await expect(plan).toHaveCount(1);
       await expect(toggle).toHaveAttribute('aria-expanded', 'false');
       await expect(plan).toContainText('Completed 1/3 steps');
-      await expect(plan.getByText(/Completed all|\bETA\b|estimated remaining/i)).toHaveCount(0);
+      await expect(
+        plan.getByText(/plan steps reported complete|\bETA\b|estimated remaining/i),
+      ).toHaveCount(0);
       await toggle.click();
       await expect(plan.getByText('Waiting', { exact: true })).toBeVisible();
       await page.screenshot({ path: `${evidence}/replayed-${width}.png`, fullPage: true });
