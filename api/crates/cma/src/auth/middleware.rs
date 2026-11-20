@@ -106,7 +106,8 @@ async fn attach_subject_inner(
             if let Some(seconds) = retry_after {
                 return identity_failure_after(seconds);
             }
-            if request.uri().path() == "/auth/session"
+            if (request.method() == axum::http::Method::GET
+                || request.uri().path() == "/auth/session")
                 && matches!(&error, layer2_core::StoreError::Unavailable(detail) if detail == "identity_provider_unavailable")
             {
                 return identity_failure();

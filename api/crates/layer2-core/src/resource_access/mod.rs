@@ -6,6 +6,7 @@ mod audit;
 mod authority;
 mod binding;
 mod context;
+pub mod execution;
 mod identity;
 mod inventory;
 mod inventory_memberships;

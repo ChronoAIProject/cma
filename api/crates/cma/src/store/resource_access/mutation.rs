@@ -88,10 +88,11 @@ impl ResourceShareStore for MongoSandboxStore {
     }
 }
 
-async fn apply(
+async fn apply_inner(
     store: &MongoSandboxStore,
     request: &ShareMutation,
     session: &mut ClientSession,
+    guarded: bool,
 ) -> Result<ShareMutationReceipt, ReadError> {
     if let Some(receipt) = store
         .resource_share_commands
@@ -100,6 +101,9 @@ async fn apply(
         .await?
     {
         return Ok(request.replay(records::read_receipt(&receipt)?)?);
+    }
+    if !guarded {
+        super::execution::refuse_legacy_change(store, request, session).await?;
     }
     fence_recipients(store, request, session).await?;
     let snapshot = snapshot::read(store, &request.target(), session).await?;
@@ -226,4 +230,19 @@ pub(in crate::store) async fn fence_lineage(
         }
     }
     Ok(())
+}
+
+async fn apply(
+    store: &MongoSandboxStore,
+    request: &ShareMutation,
+    session: &mut ClientSession,
+) -> Result<ShareMutationReceipt, ReadError> {
+    apply_inner(store, request, session, false).await
+}
+pub(super) async fn apply_execution_finalization(
+    store: &MongoSandboxStore,
+    permit: &super::execution::FinalizationPermit,
+    session: &mut ClientSession,
+) -> Result<ShareMutationReceipt, ReadError> {
+    apply_inner(store, permit.request(), session, true).await
 }

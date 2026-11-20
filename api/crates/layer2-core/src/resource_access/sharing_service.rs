@@ -122,6 +122,14 @@ impl ResourceAccessService {
         {
             return Ok(request.replay(receipt)?);
         }
+        if self.execution.is_some()
+            && matches!(
+                request.change,
+                ShareChange::Revoke { .. } | ShareChange::SetMode { .. }
+            )
+        {
+            return Err(ResourceAccessStoreError::Conflict.into());
+        }
         let organization = match &request.change {
             ShareChange::Create { target_org_id, .. } => Some(target_org_id),
             ShareChange::CreateLink { audience, .. } => audience.organization(),

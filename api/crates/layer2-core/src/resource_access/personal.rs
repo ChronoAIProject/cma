@@ -83,6 +83,12 @@ impl ResourceAccessService {
             return Err(ResourceAccessStoreError::Conflict.into());
         }
         self.validate_binding_authority(authorized).await?;
+        if let Some(policy) = &self.execution {
+            policy
+                .validate_read(authorized, capability)
+                .await
+                .map_err(execution::access_error)?;
+        }
         authorized.decision.require(capability)?;
         Ok(())
     }

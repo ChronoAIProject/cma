@@ -30,6 +30,7 @@ pub struct AuthorizedResource {
 
 #[derive(Clone)]
 pub struct ResourceAccessService {
+    pub(super) execution: Option<execution::ResourceExecutionPolicy>,
     pub(super) store: Arc<dyn ResourceShareStore>,
     pub(super) bindings: Option<Arc<crate::sandbox::binding::BindingAccessService>>,
     pub(super) organizations: Arc<dyn OrganizationAuthority>,
@@ -48,6 +49,7 @@ impl ResourceAccessService {
             directory: None,
             standing: Arc::new(crate::account_deletion::AvailableAccounts),
             bindings: None,
+            execution: None,
         }
     }
 
@@ -66,6 +68,12 @@ impl ResourceAccessService {
         }
         self.require_account_available(&context.caller.subject, false)
             .await?;
+        if let Some(policy) = &self.execution {
+            policy
+                .require_active()
+                .await
+                .map_err(execution::access_error)?;
+        }
         if context.credential_source == CredentialSource::Binding {
             return self.authorize_binding(context, target, capability).await;
         }
@@ -156,7 +164,13 @@ impl ResourceAccessService {
             unavailable = true;
         }
         // Membership IO must not hold a stale grant or retain an old root identity.
-        let refreshed = self.store.resource_access_snapshot(target).await?;
+        let mut refreshed = self.store.resource_access_snapshot(target).await?;
+        if let Some(policy) = &self.execution {
+            policy
+                .filter_shares(&mut refreshed)
+                .await
+                .map_err(execution::access_error)?;
+        }
         if snapshot.fence() != refreshed.fence() {
             return Err(ResourceAccessStoreError::Conflict.into());
         }

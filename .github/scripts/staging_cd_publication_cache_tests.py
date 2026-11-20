@@ -323,8 +323,9 @@ class CacheTests(unittest.TestCase):
         self.assertGreater(workflow.index('Retain accepted Cargo mounts'),
                            workflow.index('Build once, scan every layer, and publish exact bytes'))
         self.assertIn("github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'", workflow)
-        self.assertIn("restore-keys: |\n            ${{ steps.build-cache.outputs.prefix }}\n            ${{ steps.build-cache.outputs.family }}", workflow)
-        self.assertIn("key: ${{ steps.publication.outputs.build-cache-key }}", workflow)
+        self.assertIn("run: python3 -B .github/scripts/staging_cd_cargo_artifact.py", workflow)
+        self.assertIn("name: cma-cd-cargo-${{ inputs.component }}", workflow)
+        self.assertIn("path: ${{ steps.build-cache.outputs.directory }}", workflow)
         self.assertIn('actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd', workflow)
         self.assertIn('core.setSecret(value)', workflow)
         self.assertNotIn('core.info(value)', workflow)

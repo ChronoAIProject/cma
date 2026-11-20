@@ -98,6 +98,14 @@ fn allowed(method: &Method, path: &str) -> bool {
             matches!(*method, Method::GET | Method::PUT | Method::DELETE)
         }
         ["", "v1", "channels", value, "test"] if id(value) => method == Method::POST,
+        ["", "v1", "channels", value, "sources", index, "test"]
+            if id(value)
+                && index
+                    .parse::<usize>()
+                    .is_ok_and(|parsed| parsed.to_string() == *index) =>
+        {
+            method == Method::POST
+        }
         ["", "v1", "channels", value, "routing"] if id(value) => method == Method::PUT,
         ["", "v1", "channels", value, "outbound-messages"] if id(value) => method == Method::POST,
         ["", "v1", "channels", value, "outbound-messages", delivery]
