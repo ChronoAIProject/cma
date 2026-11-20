@@ -35,6 +35,7 @@ async fn authenticated_launch_creation_is_outside_the_budget() {
         governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
         governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
         governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
+        governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
         super::TrustedProxyConfig::sample(),
     );
     limiters.anonymous_public =
@@ -118,6 +119,7 @@ async fn anonymous_permit_is_held_for_the_request_and_released_on_cancellation()
     use tower::ServiceExt;
 
     let mut limiters = super::RateLimiters::from_quotas(
+        governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
         governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
         governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
         governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
@@ -239,6 +241,7 @@ async fn refusal_precedes_downstream_budget_io() {
     use tower::ServiceExt;
 
     let mut limiters = super::RateLimiters::from_quotas(
+        governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
         governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
         governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
         governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),

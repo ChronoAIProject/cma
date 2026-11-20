@@ -5,7 +5,10 @@ use std::{num::NonZeroU32, sync::Arc};
 use governor::{clock::Clock, DefaultDirectRateLimiter, Quota, RateLimiter};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
-use super::retry_after_seconds;
+use super::{
+    retry_after_seconds,
+    tiers::{exact_path_segments, is_public_trigger_preview},
+};
 
 const DEFAULT_PER_MINUTE: NonZeroU32 = NonZeroU32::new(1_200).expect("non-zero default");
 const DEFAULT_CONCURRENCY: NonZeroU32 = NonZeroU32::new(16).expect("non-zero default");
@@ -52,34 +55,4 @@ pub(super) fn is_anonymous_public_route(path: &str) -> bool {
             path,
             &["api", "v1", "triggers", "public", "*", "entry-intent"],
         )
-}
-
-pub(super) fn is_public_trigger_preview(path: &str) -> bool {
-    exact_path_segments(path, &["api", "v1", "triggers", "public", "*"])
-        || exact_path_segments(path, &["api", "v1", "triggers", "public", "*", "badge.svg"])
-}
-
-/// Keep identity-free routes on a network budget even when a browser sends a cookie.
-pub(super) fn uses_client_operation_key(path: &str) -> bool {
-    if matches!(
-        path,
-        "/auth/connections/check" | "/auth/connections/start" | "/auth/connections/cancel"
-    ) {
-        return false;
-    }
-    path == "/openapi.json"
-        || path == "/api/v1/conformance"
-        || is_public_trigger_preview(path)
-        || path == "/.well-known/agent-card.json"
-        || path == "/auth"
-        || path.starts_with("/auth/")
-}
-
-fn exact_path_segments(path: &str, expected: &[&str]) -> bool {
-    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
-    expected.iter().all(|expected| {
-        segments
-            .next()
-            .is_some_and(|actual| *expected == "*" || actual == *expected)
-    }) && segments.next().is_none()
 }
