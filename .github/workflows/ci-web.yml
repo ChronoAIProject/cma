@@ -83,7 +83,7 @@ jobs:
         name: "Local browser guard mechanics"
         working-directory: "web"
         run: |
-          node --test ../.github/scripts/agent-v2-ci.test.mjs ../.github/scripts/tree-row-menu-ci.test.mjs ../.github/scripts/new-agent-request-ci.test.mjs
+          node --test ../.github/scripts/agent-v2-ci.test.mjs ../.github/scripts/tree-row-menu-ci.test.mjs ../.github/scripts/new-agent-request-ci.test.mjs ../.github/scripts/lifecycle-browser-ci.test.mjs
           npm run e2e:mechanics
       -
         name: "CSS collisions"
@@ -118,6 +118,40 @@ jobs:
         with:
           name: "row-menu-failure"
           path: "${{ runner.temp }}/cma-row-menu"
+          retention-days: 1
+      -
+        name: "Local resource lifecycle contracts"
+        id: resource_lifecycle
+        timeout-minutes: 5
+        env:
+          CMA_LIFECYCLE_EVIDENCE_DIR: "${{ runner.temp }}/cma-resource-lifecycle"
+        run: |
+          node node_modules/playwright/cli.js test --config e2e/resource-lifecycle.config.ts --list
+          node node_modules/playwright/cli.js test --config e2e/resource-lifecycle.config.ts
+      -
+        name: "Resource lifecycle failure evidence"
+        if: "failure() && steps.resource_lifecycle.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "resource-lifecycle-failure"
+          path: "${{ runner.temp }}/cma-resource-lifecycle"
+          retention-days: 1
+      -
+        name: "Local Sandbox status filter contracts"
+        id: sandbox_status_filter
+        timeout-minutes: 5
+        env:
+          CMA_SANDBOX_FILTER_EVIDENCE_DIR: "${{ runner.temp }}/cma-sandbox-filter"
+        run: |
+          node node_modules/playwright/cli.js test --config e2e/sandbox-status-filter.config.ts --list
+          node node_modules/playwright/cli.js test --config e2e/sandbox-status-filter.config.ts
+      -
+        name: "Sandbox status filter failure evidence"
+        if: "failure() && steps.sandbox_status_filter.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "sandbox-status-filter-failure"
+          path: "${{ runner.temp }}/cma-sandbox-filter"
           retention-days: 1
       -
         name: "Local New agent request isolation"
