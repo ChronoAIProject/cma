@@ -470,9 +470,25 @@ async fn never_configured_launches_add_no_capacity_commands_or_receipts() {
         !unset.iter().any(|(_, command)| command.get_str("find").ok()
             == Some("sandbox_admissions")
             || command.get_str("aggregate").ok() == Some("sandboxes")
-            || command.get_str("update").ok() == Some("sandbox_admissions")
             || command.get_str("insert").ok() == Some("sandbox_admissions"))
     );
+    let fences: Vec<_> = unset
+        .iter()
+        .filter(|(_, command)| command.get_str("update").ok() == Some("sandbox_admissions"))
+        .collect();
+    assert_eq!(fences.len(), 1);
+    let updates = fences[0].1.get_array("updates").unwrap();
+    assert_eq!(updates.len(), 1);
+    let update = updates[0].as_document().unwrap();
+    assert_eq!(
+        update.get_document("q").unwrap(),
+        &doc! {"_id":admitted.owner.as_str()}
+    );
+    assert_eq!(
+        update.get_document("u").unwrap(),
+        &doc! {"$inc":{"fence":1_i64},"$setOnInsert":{"document_schema_version":crate::store::schema::DOCUMENT_SCHEMA_VERSION}}
+    );
+    assert!(update.get_bool("upsert").unwrap());
     let row = seed
         .client
         .database(&seed.database)
@@ -482,15 +498,19 @@ async fn never_configured_launches_add_no_capacity_commands_or_receipts() {
         .unwrap()
         .unwrap();
     assert!(!row.contains_key("home_capacity_admission"));
-    assert_eq!(
-        seed.client
-            .database(&seed.database)
-            .collection::<Document>("sandbox_admissions")
-            .count_documents(doc! {})
+    let admissions = seed
+        .client
+        .database(&seed.database)
+        .collection::<Document>("sandbox_admissions");
+    assert_eq!(admissions.count_documents(doc! {}).await.unwrap(), 2);
+    for owner in ["launch-capacity-0", "launch-capacity-1"] {
+        let row = admissions
+            .find_one(doc! {"_id":owner})
             .await
-            .unwrap(),
-        0
-    );
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.get_i64("fence").unwrap(), 1);
+    }
     eprintln!("trigger_retained_homes unset commands={} extra_commands=0 capacity_counts=0 capacity_fences=0 receipt_writes=0", unset.len());
     seed.client.database(&seed.database).drop().await.unwrap();
 }
@@ -523,7 +543,13 @@ async fn unactivated_deployment_cap_keeps_legacy_worker_admission() {
         .unwrap()
         .unwrap();
     assert!(!row.contains_key("home_capacity_admission"));
-    assert_eq!(admissions.count_documents(doc! {}).await.unwrap(), 0);
+    assert_eq!(admissions.count_documents(doc! {}).await.unwrap(), 1);
+    let fence = admissions
+        .find_one(doc! {"_id":first.owner.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(fence.get_i64("fence").unwrap(), 1);
     let second = seed
         .store
         .admit_launch(request(&trigger, 1))
