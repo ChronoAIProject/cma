@@ -1,12 +1,11 @@
 """Publish final digest-bound version tags, then remove successful and fenced reservations."""
 import json
 import os
-import subprocess
 import time
 from pathlib import Path
 
 from staging_cd_admission import event_identity
-from staging_cd_common import Refusal, require
+from staging_cd_common import require
 from staging_cd_github import GitHub
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_finalize_diagnostics import run_finalization
@@ -46,11 +45,12 @@ def prune(publisher, receipt):
     """Remove burned reservations a new final has fenced, without risking the release.
 
     The final is published and verified by now. A failed pruning keeps every
-    burned tag, which only costs later reads, so it never fails finalization.
+    burned tag, which only costs later reads, so no error of it may fail
+    finalization. An interrupt or exit still stops the job.
     """
     try:
         removed = publisher.prune_burned(receipt)
-    except (Refusal, OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+    except Exception:  # noqa: BLE001 - reported as fixed text; the published final stands.
         return "retained", 0
     return "complete", removed if type(removed) is int else 0
 

@@ -225,8 +225,9 @@ class BurnedReservationPruningTests(unittest.TestCase):
 
     def test_finalization_reports_pruning_and_never_fails_a_published_release_over_it(self):
         receipt = fixture_receipt()
-        for outcome, line in ((3, "result=complete removed=3"), (Refusal("GitHub API request failed"),
-                                                                  "result=retained removed=0")):
+        retained = "result=retained removed=0"
+        for outcome, line in ((3, "result=complete removed=3"), (Refusal("GitHub API request failed"), retained),
+                              (RuntimeError("private detail"), retained), (AttributeError("private"), retained)):
             with self.subTest(outcome=outcome), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "receipts.json"
                 path.write_text("[]")
@@ -242,7 +243,11 @@ class BurnedReservationPruningTests(unittest.TestCase):
                     self.assertEqual(staging_cd_finalize.main(), 0)
                 store.return_value.prune_burned.assert_called_once_with(receipt)
                 self.assertIn("PRUNE finalize component=web " + line + "\n", stdout.getvalue())
-                self.assertEqual("::warning" in stdout.getvalue(), isinstance(outcome, Refusal))
+                self.assertEqual("::warning" in stdout.getvalue(), isinstance(outcome, Exception))
+                self.assertNotIn("private", stdout.getvalue())
+        for interrupt in (KeyboardInterrupt, SystemExit):
+            with self.subTest(interrupt=interrupt), self.assertRaises(interrupt):
+                staging_cd_finalize.prune(Mock(prune_burned=Mock(side_effect=interrupt)), receipt)
 
 
 if __name__ == "__main__":
