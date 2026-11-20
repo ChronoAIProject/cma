@@ -1,7 +1,8 @@
 //! R1 V1/V3 probes exercise production startup, without a bridge or provider mock.
 //! Passing refusal assertions reproduce a blocked design premise, not a restore.
 use super::*;
-use std::path::PathBuf;
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
 
 struct Fixture {
     root: PathBuf,
@@ -14,6 +15,7 @@ impl Fixture {
             "cma-home-restore-preflight-{}",
             uuid::Uuid::new_v4()
         ));
+        std::fs::create_dir(&root).unwrap();
         let mut config = RuntimeConfig::for_test(root.join("home"));
         config.home_identity = Some("a".repeat(43));
         config.state_root = root.join("state");
@@ -22,10 +24,15 @@ impl Fixture {
             "TMPDIR".into(),
             root.join("transfer").to_str().unwrap().into(),
         );
-        for path in [&config.home, &config.state_root, &root.join("transfer")] {
+        let fixture = Self { root, config };
+        for path in [
+            &fixture.config.home,
+            &fixture.config.state_root,
+            &fixture.root.join("transfer"),
+        ] {
             std::fs::create_dir_all(path).unwrap();
         }
-        Self { root, config }
+        fixture
     }
 
     async fn start(&self) -> Result<Arc<Supervisor>> {
@@ -65,6 +72,10 @@ impl Drop for Fixture {
     }
 }
 
+fn file_hash(path: &Path) -> [u8; 32] {
+    Sha256::digest(std::fs::read(path).unwrap()).into()
+}
+
 #[tokio::test]
 async fn v1_completed_install_without_binding_refuses_real_startup() {
     let mut fixture = Fixture::new();
@@ -100,6 +111,12 @@ async fn v1_completed_install_without_binding_refuses_real_startup() {
         install,
         crate::install_state::InstallRecord::Completed { .. }
     ));
+    let install_path = fixture
+        .config
+        .checkpoint_root
+        .join("runtime-state/install-v2.json");
+    let preserved_paths = [&session, &worktree.join(".git"), &install_path];
+    let before = preserved_paths.map(|path| file_hash(path));
     fixture.quarantine_internal_state();
     assert_eq!(
         std::fs::read_dir(&fixture.config.state_root)
@@ -135,12 +152,18 @@ async fn v1_completed_install_without_binding_refuses_real_startup() {
         .state_root
         .join("mutation-ledger-v2.current.json")
         .exists());
+    assert!(!fixture
+        .config
+        .state_root
+        .join("mutation-ledger-v2")
+        .exists());
     assert!(!fixture.barrier().exists());
     assert_eq!(
         crate::install_state::inspect(&fixture.config).unwrap(),
         Some(install)
     );
-    assert_eq!(std::fs::read(session).unwrap(), contents);
+    assert_eq!(preserved_paths.map(|path| file_hash(path)), before);
+    assert_eq!(std::fs::read(&session).unwrap(), contents);
     eprintln!("V1 boundary: binding/new ledger/agent startup validation not reached; no Codex process launched");
 }
 
