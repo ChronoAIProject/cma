@@ -2,6 +2,7 @@ import type { UsageMetricReport } from '@cma/client';
 import { Button } from '../../ui/Button';
 import { IconRefreshOutline16 } from '../../ui/icons/IconRefreshOutline16';
 import { displayQuantity } from './model';
+import { sandboxCount } from './sandboxCount';
 
 function dateTime(value: number | string) {
   const numeric = Number(value);
@@ -56,7 +57,7 @@ export function UsageOverviewHeader({
       {report?.summary && (
         <div className="usage-overview-meta">
           <p>
-            {displayQuantity(report.summary.sandbox_count)} Sandboxes ·{' '}
+            {sandboxCount(report.summary.sandbox_count)} ·{' '}
             {displayQuantity(report.summary.running_count)} running
           </p>
           <p>
