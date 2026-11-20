@@ -28,6 +28,9 @@ impl UsageWorkers {
         Ok(Self { store, exporter })
     }
     pub(crate) fn spawn(self, shutdown: &mut crate::shutdown::ShutdownCoordinator) {
+        if let Some(projection) = self.store.spawn_usage_projection(shutdown.subscribe()) {
+            shutdown.push(projection);
+        }
         shutdown.push(self.store.spawn_usage_meter(shutdown.subscribe()));
         if let Some(exporter) = self.exporter {
             shutdown.push(exporter.spawn(shutdown.subscribe()));
