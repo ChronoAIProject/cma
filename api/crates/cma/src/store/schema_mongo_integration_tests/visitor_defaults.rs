@@ -223,15 +223,11 @@ async fn production_startup_injects_the_same_default_into_admin_and_sandbox_poli
                     &format!("visitor_{index}"),
                     &format!("launch_{index}"),
                 );
+                let name = SandboxAdmissionName::Allocate(sandbox.name.clone());
                 store
                     .admit_sandbox(
-                        SandboxAdmission::new(
-                            sandbox,
-                            SandboxAdmissionName::Allocate("visitor".into()),
-                            limit,
-                            "2026-09-05T00:00:00Z".into(),
-                        )
-                        .unwrap(),
+                        SandboxAdmission::new(sandbox, name, limit, "2026-09-05T00:00:00Z".into())
+                            .unwrap(),
                     )
                     .await
             }
