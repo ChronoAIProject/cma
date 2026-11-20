@@ -2,12 +2,13 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { constants, createReadStream, createWriteStream } from 'node:fs';
-import { chmod, copyFile, mkdir, readFile, writeFile, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { chmod, copyFile, readFile, writeFile } from 'node:fs/promises';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { check, hash, safeFailure } from './lib/checks.mjs';
 import { workloadFor } from './lib/provider-start-schema.mjs';
 import { reduceProviderStart } from './lib/provider-start.mjs';
+import { prepareEvidenceDirectory } from './lib/evidence-directory.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../../..');
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
@@ -40,10 +41,7 @@ async function run(mode, outputPath) {
   check(outputPath && process.env.CARGO_TARGET_DIR, 'output_and_assigned_cargo_lane_required');
   clean();
   const source = git('rev-parse', 'HEAD');
-  const output = resolve(outputPath);
-  await mkdir(output, { recursive: true, mode: 0o700 });
-  const location = relative(await realpath(root), await realpath(output));
-  check(location.startsWith('..') || isAbsolute(location), 'evidence_must_be_outside_repository');
+  const output = await prepareEvidenceDirectory(root, outputPath);
   const env = { ...process.env, CARGO_INCREMENTAL: '0', CARGO_BUILD_JOBS: '4', RUST_MIN_STACK: '33554432' };
   const build = await command('nice', ['-n', '10', process.env.CARGO ?? 'cargo', 'test', '--locked', '-p', 'cmaeg',
     '--lib', '--no-run', '--message-format=json'], env, resolve(output, 'build.log'));
