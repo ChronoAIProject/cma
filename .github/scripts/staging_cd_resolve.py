@@ -6,7 +6,7 @@ from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHub
 from staging_cd_receipts import canonical, validate_receipt
 from staging_cd_registry import Registry
-from staging_cd_runtime import run_private
+from staging_cd_runtime import SKIPPED, run_private
 from staging_cd_targets import RUNTIME_TARGETS, TARGETS
 from staging_cd_versions import DEPLOYABLES, version_tuple
 from staging_cd_watermark import record_withheld
@@ -87,8 +87,9 @@ def main():
         timestamp,
     )
     from staging_cd_component_admission import automatic_admission
-    from staging_cd_set import dispatch_set, document, verify_set
+    from staging_cd_set import OVERTAKEN, OvertakenByNewerFinal, dispatch_set, document, verify_set
     env = os.environ
+    overtaken = []
     def operation(_masker):
         api, registry = GitHub(env.get("GH_TOKEN")), Registry()
         event_identity(env)
@@ -129,7 +130,17 @@ def main():
             else:
                 require(mode == "release", "Automatic bootstrap is forbidden")
             admitted = document(env["CD_RELEASE_SET"])
-            value = verify_set(admitted, api, registry, automatic=inputs is None, inputs=inputs)
+            try:
+                value = verify_set(admitted, api, registry, automatic=inputs is None, inputs=inputs)
+            except OvertakenByNewerFinal as error:
+                # Deploy nothing; each newer final's own run promotes it.
+                overtaken.extend(error.components)
+                output(env, "disposition", OVERTAKEN)
+                if env.get("GITHUB_STEP_SUMMARY"):
+                    with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                        summary.write(f"Deployment skipped: {OVERTAKEN} for {', '.join(error.components)}. "
+                                      "A newer final's run owns this deployment.\n")
+                return SKIPPED
             record_withheld(env, admitted["receipts"], value["receipts"])
             remaining(started, mode=mode)
         else:
@@ -138,7 +149,12 @@ def main():
         output(env, "mode", mode)
         output(env, "started_at", started)
         return True
-    return run_private(operation, None)
+    status = run_private(operation, None)
+    if status == 0 and overtaken:
+        # Fixed component tokens only; this run deploys nothing for them.
+        print(f"SKIP deployment reason={OVERTAKEN} components={','.join(overtaken)}: "
+              "a newer final's run owns this deployment")
+    return status
 
 
 if __name__ == "__main__":

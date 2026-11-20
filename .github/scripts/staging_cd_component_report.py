@@ -6,7 +6,7 @@ from staging_cd_common import require
 from staging_cd_compatibility import GROUP
 from staging_cd_component_admission import validate_failures
 from staging_cd_deploy_result import STATES
-from staging_cd_set import document
+from staging_cd_set import OVERTAKEN, document
 from staging_cd_targets import TARGETS
 
 CONCLUSIONS = {"success", "failure", "skipped", "cancelled"}
@@ -44,6 +44,7 @@ def summarize(env):
             require(c in lanes and not env.get("CD_FINALIZED_" + c.upper().replace("-", "_")),
                     "Superseded publication conflicts with finalization evidence")
             superseded[c] = disposition
+    overtaken = set()
     passed = env["CD_INFRASTRUCTURE_RESULT"] == "success"
     lines = ["| Component | Publish + finalize | Admit | Deploy job | Controller outcome |",
              "|---|---|---|---|---|"]
@@ -63,6 +64,14 @@ def summarize(env):
         payload = document(outputs["component_result"]) if outputs.get("component_result") else None
         states = payload["components"] if payload is not None else {}
         require(isinstance(states, dict) and states.keys() <= set(admitted), "Unexpected controller outcome")
+        disposition = outputs.get("deploy_disposition") or ""
+        require(disposition in ("", OVERTAKEN), "Unknown deployment disposition")
+        if disposition:
+            # The deploy job found a newer final at a later source for every
+            # admitted member and deployed nothing. Its run owns the release.
+            require(lane != "contract" and bool(admitted) and not GROUP & set(admitted) and payload is None
+                    and outputs.get("deploy") == "success", "Overtaken deployment conflicts with its evidence")
+            overtaken.update(admitted)
         if superseded.keys() & selected:
             # A contract cannot promote partially. Check the other selected
             # publishers independently so supersession cannot conceal a failure.
@@ -81,21 +90,24 @@ def summarize(env):
             publish = outcome(env["CD_PUBLISH_" + c.upper().replace("-", "_")]) if c in selected else "retained"
             admit = failures.get(c) or ("admitted" if c in admitted else missing)
             deploy = outcome(outputs["deploy"]) if outputs.get("deploy") else missing
-            state = "unreported"
+            state = OVERTAKEN if c in overtaken else "unreported"
             if c in states:
                 state = states[c]["state"]
                 require(state in STATES and states[c]["reason"] == STATES[state], "Invalid controller outcome")
             lines.append(f"| {c} | {publish} | {admit} | {deploy} | {state} |")
             passed &= (publish in ("success", "retained") and job["result"] == "success"
                        and outputs.get("admit") == "success" and c in admitted and deploy == "success"
-                       and state == "controller-verified")
+                       and state in ("controller-verified", OVERTAKEN))
     for c, disposition in sorted(superseded.items()):
         lines.append(f"{c} publication skipped: {disposition}. This run has no verified {c} release.")
         if disposition == "source_already_final":
             lines.append(f"{c}: an older run finalized this source. The next develop push resumes this "
                          "group's final; push to deploy (a re-run allocates nothing once develop moves on).")
             passed = False
-    if superseded and passed:
+    for c in sorted(overtaken):
+        lines.append(f"{c} deployment skipped: {OVERTAKEN}. A newer final's run owns this deployment; "
+                     f"this run has no verified {c} release.")
+    if (superseded or overtaken) and passed:
         return lines, None
     return lines, passed
 

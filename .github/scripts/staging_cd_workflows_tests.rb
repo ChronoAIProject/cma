@@ -248,6 +248,32 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal '${{ runner.temp }}/public-admission/admission.json', evidence['with']['path']
   end
 
+  def test_an_overtaken_set_skips_every_deployment_step_and_reaches_the_component_report
+    deploy = workflow('staging-deploy')
+    job = deploy['jobs']['deploy']
+    assert_equal '${{ steps.release.outputs.disposition }}', job.dig('outputs', 'disposition')
+    trigger = deploy['on'] || deploy.fetch(true)
+    assert_equal '${{ jobs.deploy.outputs.disposition }}', trigger.dig('workflow_call', 'outputs', 'disposition', 'value')
+    steps = job['steps']
+    verify = steps.index { |step| step['id'] == 'release' }
+    assert_equal 'verify', steps[verify].dig('env', 'CD_RESOLVE_MODE')
+    gate = "steps.release.outputs.disposition == ''"
+    steps.drop(verify + 1).each do |step|
+      condition = step['if'].to_s
+      # Cleanup always runs; the proof echo needs a coordinator result; every other step is gated.
+      next if condition.start_with?('always()')
+
+      assert_includes condition, gate, step['name']
+    end
+    assert_equal ["Verified staging receipts ${{ steps.coordinate.outputs.controller_proof }}",
+                  'Remove private checkout', 'Remove isolated deployment tools'],
+                 steps.drop(verify + 1).select { |step| step['if'].to_s.start_with?('always()') }.map { |s| s['name'] }
+    promote = workflow('staging-promote')
+    trigger = promote['on'] || promote.fetch(true)
+    assert_equal '${{ jobs.deploy.outputs.disposition }}',
+                 trigger.dig('workflow_call', 'outputs', 'deploy_disposition', 'value')
+  end
+
   def test_proven_takeover_in_any_lane_skips_finalize_and_reaches_the_component_report
     release = workflow('staging-release')
     assert_equal '${{ steps.publication.outputs.disposition }}', release.dig('jobs', 'publish', 'outputs', 'disposition')

@@ -26,6 +26,8 @@ on:
         value: ${{ jobs.admit.outputs.status }}
       deploy:
         value: ${{ jobs.deploy.outputs.status }}
+      deploy_disposition:
+        value: ${{ jobs.deploy.outputs.disposition }}
       admitted:
         value: ${{ jobs.admit.outputs.admitted }}
       failures:
