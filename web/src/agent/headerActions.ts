@@ -5,6 +5,20 @@ import type { TreeAction, TreePermissions } from '../shell/Tree';
 import type { MenuEntry } from '../ui/Menu';
 import type { Crumb } from '../ui/PageHeader';
 
+export function selectAgentAction(
+  id: string,
+  agentId: string,
+  onAction?: (action: TreeAction) => void,
+) {
+  if (
+    id === 'stop_agent' ||
+    id === 'delete_agent' ||
+    id === 'export_history' ||
+    id === 'export_retained_conversation'
+  )
+    onAction?.({ kind: id, agentId });
+}
+
 /**
  * The Agent header's More actions: Stop agent and Export history, then
  * Delete agent behind a separator — the shared style contracts
@@ -50,12 +64,7 @@ export function agentHeaderActionHandler(
 ) {
   return onAction === undefined || readOnly
     ? undefined
-    : (id: string) =>
-        onAction({
-          kind: id as
-            'stop_agent' | 'delete_agent' | 'export_history' | 'export_retained_conversation',
-          agentId,
-        });
+    : (id: string) => selectAgentAction(id, agentId, onAction);
 }
 
 /** Where an owner's Agent lives, ending at the Agent itself. */

@@ -11,6 +11,7 @@ import { IconDataOutline16 } from '../ui/icons';
 import { sandboxChildrenAvailable, sandboxChildStatus } from '../sandbox/lifecycle';
 import { taskTitle } from './taskTitle';
 import type { AgentSummary, SandboxDetail } from '../api/types';
+import { setupEnvironmentRoute, SETUP_ENVIRONMENT_NOTICE } from '../agent/setupEnvironment';
 
 interface AgentCard {
   readonly sandbox: SandboxDetail;
@@ -47,6 +48,7 @@ function agentCards(
 /** Agent view uses the same authorized hierarchy and parent lifecycle barriers. */
 export function PersonalAgentTree({
   currentTask,
+  viewerId,
   active,
   items,
   statusFilter,
@@ -61,6 +63,7 @@ export function PersonalAgentTree({
 }: Pick<
   TreeProps,
   | 'currentTask'
+  | 'viewerId'
   | 'items'
   | 'active'
   | 'statusFilter'
@@ -116,6 +119,13 @@ export function PersonalAgentTree({
           <div role="group" aria-label={heading} key={heading}>
             <h3 className="task-group__heading">{heading}</h3>
             {rows.map(({ sandbox, agent, presentation }) => {
+              const setupRoute = setupEnvironmentRoute(
+                agent.status,
+                agent.sandboxId,
+                viewerId,
+                permissions.deleteSandbox,
+                { sandbox, stale: refreshError !== undefined },
+              );
               const { status, label, parentNotice, showRunningTime } = presentation;
               const environmentNotice =
                 parentNotice !== undefined || presentation.group === 'Status unavailable';
@@ -179,11 +189,12 @@ export function PersonalAgentTree({
                         !refreshError &&
                         sandboxChildrenAvailable(sandbox),
                     ),
-                    ...(environmentNotice
+                    ...(setupRoute || environmentNotice
                       ? [
                           {
                             id: 'view_environment',
-                            label: 'View environment',
+                            label: setupRoute ? 'Review environment' : 'View environment',
+                            reason: setupRoute ? SETUP_ENVIRONMENT_NOTICE : undefined,
                             icon: <IconDataOutline16 />,
                           },
                         ]
