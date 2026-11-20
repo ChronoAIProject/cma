@@ -313,31 +313,62 @@ fn production_providers() -> String {
     .to_string()
 }
 
-/// Secret references every deployment injects, as synthetic placeholders.
-fn secrets() -> Vec<(String, String)> {
+/// The secret names staging's Event Gateway receives, exactly.
+const STAGING_SECRETS: &[&str] = &[
+    "CMAEG_CMA_CLIENT_ID",
+    "CMAEG_CMA_CLIENT_SECRET",
+    "CMAEG_CMA_SERVICE_TOKEN",
+    "CMAEG_MASTER_KEYS",
+    "CMAEG_MONGODB_URI",
+    "CMAEG_NYXID_CLIENT_ID",
+    "CMAEG_NYXID_CLIENT_SECRET",
+];
+
+/// The secret names production's Event Gateway receives, exactly.
+const PRODUCTION_SECRETS: &[&str] = &[
+    "CMAEG_CMA_CLIENT_ID",
+    "CMAEG_CMA_CLIENT_SECRET",
+    "CMAEG_CMA_SERVICE_TOKEN",
+    "CMAEG_CONSOLE_CLIENT_SECRET",
+    "CMAEG_MASTER_KEYS",
+    "CMAEG_MONGODB_URI",
+    "CMAEG_NYXID_CLIENT_ID",
+    "CMAEG_NYXID_CLIENT_SECRET",
+    "CMAEG_STT_API_KEY",
+];
+
+/// A synthetic placeholder for each named secret.
+fn secrets(names: &[&str]) -> Vec<(String, String)> {
     use base64::Engine as _;
-    let ring = base64::engine::general_purpose::STANDARD_NO_PAD.encode([7_u8; 32]);
-    let mut values = vec![("CMAEG_MASTER_KEYS".to_owned(), format!("1:{ring}"))];
-    for name in [
-        "CMAEG_CMA_SERVICE_TOKEN",
-        "CMAEG_CMA_CLIENT_ID",
-        "CMAEG_CMA_CLIENT_SECRET",
-        "CMAEG_NYXID_CLIENT_ID",
-        "CMAEG_NYXID_CLIENT_SECRET",
-        "CMAEG_STT_API_KEY",
-        "CMAEG_CONSOLE_CLIENT_SECRET",
-    ] {
-        values.push((name.to_owned(), "placeholder".to_owned()));
-    }
-    values
+    names
+        .iter()
+        .map(|name| {
+            let value = match *name {
+                "CMAEG_MASTER_KEYS" => format!(
+                    "1:{}",
+                    base64::engine::general_purpose::STANDARD_NO_PAD.encode([7_u8; 32])
+                ),
+                "CMAEG_MONGODB_URI" => "mongodb://127.0.0.1:27017".to_owned(),
+                _ => "placeholder".to_owned(),
+            };
+            ((*name).to_owned(), value)
+        })
+        .collect()
 }
 
 const PROBE: &str = "CMAEG_TEST_GRADUATION_PROBE";
 const PROBED: &str = "graduation probe loaded";
 
 /// Load every startup configuration in a child process holding exactly
-/// `base` plus `overrides`, and check each graduated gate there.
-fn probe(label: &str, base: &[(&str, &str)], overrides: &[(&str, &str)], mode: &str) {
+/// `base`, placeholders for `secret_names` and `overrides`, and check each
+/// graduated gate there.
+fn probe(
+    label: &str,
+    base: &[(&str, &str)],
+    secret_names: &[&str],
+    overrides: &[(&str, &str)],
+    mode: &str,
+) {
     let mut command = Command::new(std::env::current_exe().unwrap());
     command
         .args([
@@ -353,7 +384,7 @@ fn probe(label: &str, base: &[(&str, &str)], overrides: &[(&str, &str)], mode: &
     }
     let output = command
         .envs(base.iter().copied())
-        .envs(secrets())
+        .envs(secrets(secret_names))
         .envs(overrides.iter().copied())
         .env(PROBE, mode)
         .output()
@@ -368,18 +399,36 @@ fn probe(label: &str, base: &[(&str, &str)], overrides: &[(&str, &str)], mode: &
 
 #[test]
 fn staging_loads_with_graduated_gates_unset() {
-    probe("staging, graduated gates unset", STAGING, &[], "on");
+    probe(
+        "staging, graduated gates unset",
+        STAGING,
+        STAGING_SECRETS,
+        &[],
+        "on",
+    );
 }
 
 #[test]
 fn staging_loads_with_every_graduated_gate_explicitly_false() {
     let off: Vec<_> = names().map(|name| (name, "false")).collect();
-    probe("staging, every graduated gate false", STAGING, &off, "off");
+    probe(
+        "staging, every graduated gate false",
+        STAGING,
+        STAGING_SECRETS,
+        &off,
+        "off",
+    );
 }
 
 #[test]
 fn staging_loads_with_each_graduated_gate_alone_explicitly_false() {
-    probe("staging, each graduated gate false", STAGING, &[], "each");
+    probe(
+        "staging, each graduated gate false",
+        STAGING,
+        STAGING_SECRETS,
+        &[],
+        "each",
+    );
 }
 
 #[test]
@@ -388,6 +437,7 @@ fn production_loads_without_its_graduated_entries() {
     probe(
         "production, graduated gates unset",
         PRODUCTION,
+        PRODUCTION_SECRETS,
         &[("CMAEG_PROVIDERS", &providers)],
         "on",
     );
