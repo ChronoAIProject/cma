@@ -157,7 +157,7 @@ def main():
         output(env, "mode", mode)
         output(env, "started_at", started)
         return True
-    status = run_private(operation, None)
+    status = run_private(operation, None, subject="release-set")
     if status == 0 and overtaken:
         # Fixed component tokens only; this run deploys nothing for them.
         stage = "admission" if env.get("CD_RESOLVE_MODE") == "automatic" else "deployment"

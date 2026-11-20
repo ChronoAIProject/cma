@@ -73,7 +73,7 @@ def run_finalization(operation):
             diagnostics.reason = diagnostics.classify(error)
             raise
 
-    status = run_private(guarded, None)
+    status = run_private(guarded, None, subject="finalize", explain=False)
     if status:
         stage = diagnostics.stage if diagnostics.stage in STAGES else "event"
         allowed = set(REASONS.values()) | FALLBACK_REASONS

@@ -43,9 +43,9 @@
         },
         "declined": {
           "title": "Step did not confirm success",
-          "meaning": "The step finished without returning success, for example because it was invoked with an unknown command.",
-          "cause": "change",
-          "next": "Check that the workflow invokes this script with a supported command and environment."
+          "meaning": "The step finished without raising but did not confirm success, for example because a child process failed or the command is unknown.",
+          "cause": "unknown",
+          "next": "Check that the workflow passes a supported command; if the step runs a child process, re-run, then reproduce that child locally."
         }
       }
     },

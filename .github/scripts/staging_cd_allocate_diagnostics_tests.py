@@ -24,7 +24,7 @@ class AllocationDiagnosticsTests(unittest.TestCase):
                 with contextlib.redirect_stdout(output):
                     status = allocation.run_allocation(operation)
                 self.assertEqual(status, 1)
-                self.assertEqual(output.getvalue(), "FAIL\nFAIL allocation " + code + "\n")
+                self.assertEqual(output.getvalue(), "FAIL allocation\nFAIL allocation " + code + "\n")
 
     def test_unknown_text_never_becomes_a_public_reason(self):
         for error, code in ((Refusal("private\n::warning::fixture"), "UNCLASSIFIED_REFUSAL"),
@@ -34,13 +34,13 @@ class AllocationDiagnosticsTests(unittest.TestCase):
                 raise error
             with contextlib.redirect_stdout(output):
                 self.assertEqual(allocation.run_allocation(operation), 1)
-            self.assertEqual(output.getvalue(), "FAIL\nFAIL allocation " + code + "\n")
+            self.assertEqual(output.getvalue(), "FAIL allocation\nFAIL allocation " + code + "\n")
 
     def test_success_preserves_pass_and_entrypoint_uses_boundary(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             self.assertEqual(allocation.run_allocation(lambda _: True), 0)
-        self.assertEqual(output.getvalue(), "PASS\n")
+        self.assertEqual(output.getvalue(), "PASS allocation\n")
         with patch.object(allocation, "run_allocation", return_value=23) as boundary:
             self.assertEqual(allocation.main(), 23)
         boundary.assert_called_once()
@@ -56,7 +56,7 @@ class AllocationDiagnosticsTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             status = allocation.run_allocation(lambda _: allocation.allocate_queue(queue, api, reservations, 10, 1))
         self.assertEqual(status, 1)
-        self.assertEqual(output.getvalue(), "FAIL\nFAIL allocation RESERVATION_OWNER_UNREADABLE\n")
+        self.assertEqual(output.getvalue(), "FAIL allocation\nFAIL allocation RESERVATION_OWNER_UNREADABLE\n")
         reservations.insert.assert_not_called()
         api.request.assert_called_once_with("actions/runs/9/attempts/1", allow_not_found=True)
 
@@ -75,7 +75,7 @@ raise SystemExit(run_allocation(operation))
         result = subprocess.run([sys.executable, "-B", "-c", program], cwd=Path(__file__).parent,
                                 capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, "FAIL\nFAIL allocation RESERVATION_OWNER_UNREADABLE\n")
+        self.assertEqual(result.stdout, "FAIL allocation\nFAIL allocation RESERVATION_OWNER_UNREADABLE\n")
         self.assertEqual(result.stderr, "")
 
 

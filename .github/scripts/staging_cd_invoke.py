@@ -320,7 +320,7 @@ def main():
             if refusal.reason in PRECONDITIONS:
                 reason = refusal.reason
         return outcome in (0, DISABLED, SUPERSEDED_BY_NEWER_FINAL)
-    result = run_private(operation, None)
+    result = run_private(operation, None, subject="deploy", explain=False)
     if result == 0 and outcome == SUPERSEDED_BY_NEWER_FINAL:
         # Nothing was deployed; fixed component tokens only cross this boundary.
         print(f"SKIP deployment reason={OVERTAKEN} components={','.join(overtaken_keys)}: "

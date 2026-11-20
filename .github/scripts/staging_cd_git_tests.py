@@ -272,7 +272,7 @@ class GitPublicationTests(unittest.TestCase):
             return True
         with contextlib.redirect_stdout(output):
             self.assertEqual(run_finalization(operation), 1)
-        self.assertEqual(output.getvalue(), "FAIL\nFAIL finalize stage=final_verify reason=final_unverified\n")
+        self.assertEqual(output.getvalue(), "FAIL finalize\nFAIL finalize stage=final_verify reason=final_unverified\n")
         self.assertEqual(self.api.tags.call_count, 5)  # Initial/current-authority reads plus three settlement reads.
         self.assertEqual(self.publisher.sleep.call_count, 2)
         self.assertEqual(self.publisher.list(), [value])
@@ -304,7 +304,7 @@ class GitPublicationTests(unittest.TestCase):
             with contextlib.redirect_stdout(output):
                 self.assertEqual(run_finalization(operation), 1)
             self.assertEqual(output.getvalue(),
-                             f"FAIL\nFAIL finalize stage=reservation_read reason=reservation_{failure}\n")
+                             f"FAIL finalize\nFAIL finalize stage=reservation_read reason=reservation_{failure}\n")
             self.publisher.command.assert_not_called()
             self.publisher.sleep.assert_not_called()
             self.assertEqual(self.publisher.list(), before)

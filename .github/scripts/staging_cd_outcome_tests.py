@@ -206,18 +206,21 @@ class ReportTests(unittest.TestCase):
     def test_error_site_names_public_frames_and_never_the_message(self):
         def fail():
             raise KeyError(PRIVATE)
+        raised_at = inspect.currentframe().f_lineno - 1
         try:
             fail()
         except KeyError as error:
-            site = ci_outcome.error_site(error)
-        self.assertRegex(site, r"\Astaging_cd_outcome_tests\.py:\d+\Z")
+            self.assertEqual(ci_outcome.error_site(error), f"staging_cd_outcome_tests.py:{raised_at}")
+        try:
+            raise KeyError(PRIVATE)
+        except KeyError as error:
+            self.assertEqual(ci_outcome.error_site(error), f"staging_cd_outcome_tests.py:{raised_at + 7}")
         namespace = {}
         exec(compile("def outside():\n    raise ValueError('x')\n", "/elsewhere/" + PRIVATE + ".py", "exec"), namespace)
         try:
             namespace["outside"]()
         except ValueError as error:
-            self.assertRegex(ci_outcome.error_site(error), r"\Astaging_cd_outcome_tests\.py:\d+\Z")
-            error.__traceback__ = error.__traceback__.tb_next
+            # Only the catching frame is public, and it names a call, not the failure.
             self.assertIsNone(ci_outcome.error_site(error))
         error = ValueError()
         error.site = "../" + PRIVATE + ".py:1"

@@ -64,7 +64,7 @@ def run_allocation(operation):
             reason = REFUSAL_CODES.get(str(error), "UNCLASSIFIED_REFUSAL")
             raise
 
-    status = run_private(guarded, None)
+    status = run_private(guarded, None, subject="allocation", explain=False)
     if status:
         print("FAIL allocation " + reason)
     return status

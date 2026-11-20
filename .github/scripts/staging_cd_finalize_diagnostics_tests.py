@@ -41,10 +41,10 @@ class FinalizeDiagnosticsTests(unittest.TestCase):
                     print("private response")
                     raise error
                 self.assertEqual(self.observe(operation),
-                                 (1, f"FAIL\nFAIL finalize stage=final_verify reason={reason}\n"))
+                                 (1, f"FAIL finalize\nFAIL finalize stage=final_verify reason={reason}\n"))
 
     def test_success_and_real_entrypoint_keep_boundary(self):
-        self.assertEqual(self.observe(lambda *_: True), (0, "PASS\n"))
+        self.assertEqual(self.observe(lambda *_: True), (0, "PASS finalize\n"))
         with patch.object(finalization, "run_finalization", return_value=23) as boundary:
             self.assertEqual(finalization.main(), 23)
         boundary.assert_called_once()
@@ -67,7 +67,7 @@ class FinalizeDiagnosticsTests(unittest.TestCase):
                         patch.object(finalization, "GitHub", return_value=api), \
                         patch.object(finalization, "Reservations") as store, contextlib.redirect_stdout(output):
                     self.assertEqual(finalization.main(), 1)
-                self.assertEqual(output.getvalue(), "FAIL\nFAIL finalize stage=attempt reason=attempt_burned\n")
+                self.assertEqual(output.getvalue(), "FAIL finalize\nFAIL finalize stage=attempt reason=attempt_burned\n")
                 store.return_value.finalize.assert_not_called()
 
     def test_github_and_registry_reads_share_a_budget_inside_the_job_timeout(self):
@@ -97,7 +97,7 @@ class FinalizeDiagnosticsTests(unittest.TestCase):
             diagnostics.stage = "private-stage"
             diagnostics.reason = "private-reason"
             return False
-        self.assertEqual(self.observe(operation), (1, "FAIL\nFAIL finalize stage=event reason=unexpected_error\n"))
+        self.assertEqual(self.observe(operation), (1, "FAIL finalize\nFAIL finalize stage=event reason=unexpected_error\n"))
 
     def test_native_and_child_output_is_suppressed(self):
         program = """
@@ -115,7 +115,7 @@ raise SystemExit(run_finalization(operation))
         result = subprocess.run([sys.executable, "-B", "-c", program], cwd=Path(__file__).parent,
                                 capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, "FAIL\nFAIL finalize stage=cleanup_read reason=cleanup_unverified\n")
+        self.assertEqual(result.stdout, "FAIL finalize\nFAIL finalize stage=cleanup_read reason=cleanup_unverified\n")
         self.assertEqual(result.stderr, "")
 
 

@@ -85,12 +85,16 @@ def error_site(error):
     """Return where a failure was raised, never what it said.
 
     Refusals record their raising line when constructed. Other exceptions use
-    the innermost traceback frame that belongs to these public scripts.
+    the innermost traceback frame that belongs to these public scripts. The
+    frame that caught the exception names only its call, not the failure, so
+    it counts only when the exception was raised there.
     """
     recorded = getattr(error, "site", None)
     if isinstance(recorded, str) and SITE.fullmatch(recorded):
         return recorded
     site, trace = None, getattr(error, "__traceback__", None)
+    if trace is not None and trace.tb_next is not None:
+        trace = trace.tb_next
     while trace is not None:
         site = source_site(trace.tb_frame.f_code.co_filename, trace.tb_lineno) or site
         trace = trace.tb_next

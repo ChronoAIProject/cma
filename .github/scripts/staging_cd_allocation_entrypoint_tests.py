@@ -56,7 +56,7 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertEqual(len(server.refs), 4)
         self.assertEqual(store.list(), store.planned)
         self.assertIn("phase=complete count=1", output)
-        self.assertTrue(output.endswith("PASS\n"))
+        self.assertTrue(output.endswith("PASS allocation\n"))
         self.assertEqual(emitted.call_count, 2)
 
     def test_partial_settlement_fails_without_output_or_repeating_prior_push(self):
@@ -69,7 +69,7 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertNotIn("phase=complete", output)
         self.assertIn("phase=readback-conflict count=1", output)
-        self.assertTrue(output.endswith("FAIL\nFAIL allocation RESERVATION_VERIFY_FAILED\n"))
+        self.assertTrue(output.endswith("FAIL allocation\nFAIL allocation RESERVATION_VERIFY_FAILED\n"))
         self.assertNotIn("fixture", output)
 
     def test_replan_keeps_controller_proof_for_current_final(self):

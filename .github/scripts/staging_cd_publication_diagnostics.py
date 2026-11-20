@@ -85,7 +85,7 @@ def run_publication(operation, *, on_superseded=None):
             diagnostics.reason = diagnostics.classify(error)
             raise
 
-    status = run_private(guarded, None)
+    status = run_private(guarded, None, subject="publication", explain=False)
     if not status and diagnostics.reason == "reservation_superseded":
         print(f"SKIP publication stage={diagnostics.stage} reason=reservation_superseded")
     if status:

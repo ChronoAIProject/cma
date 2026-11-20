@@ -46,7 +46,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                     self.assertEqual(diagnostics.stage, "receipt")
                     return True
                 with patch("staging_cd_publish.inspect", return_value=digest):
-                    self.assertEqual(self.observe(operation), (0, "PASS\n"))
+                    self.assertEqual(self.observe(operation), (0, "PASS publication\n"))
                 receipt = receipts[0]
                 self.assertEqual(receipt["runtime_smoke"], proof)
                 encoded = private_document(release_set({component: receipt}))["components"][component]
@@ -87,7 +87,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                                        smoke=smoke, source=fixture_source(root / "source"), diagnostics=diagnostics)
                     with patch("staging_cd_publish.inspect", return_value=digest):
                         self.assertEqual(self.observe(operation),
-                                         (1, f"FAIL\nFAIL publication stage={stage} reason={reason}\n"))
+                                         (1, f"FAIL publication\nFAIL publication stage={stage} reason={reason}\n"))
                     runner.assert_not_called()
                     registry.exists.assert_not_called()
                     self.assertFalse((root / "registry-auth.json").exists())
@@ -113,7 +113,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                                    smoke=smoke, source=fixture_source(root / "source"), diagnostics=diagnostics)
                 with patch("staging_cd_publish.inspect", return_value=digest):
                     self.assertEqual(self.observe(operation),
-                                     (1, "FAIL\nFAIL publication stage=registry_copy reason=registry_denied\n"))
+                                     (1, "FAIL publication\nFAIL publication stage=registry_copy reason=registry_denied\n"))
                 smoke.assert_called_once()
                 self.assertEqual(runner.call_count, 2)
                 registry.exists.assert_not_called()

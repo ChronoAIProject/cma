@@ -147,7 +147,7 @@ class RuntimeSmokeTests(unittest.TestCase):
             with redirect_stdout(public):
                 self.assertEqual(main(), 1)
             self.assertEqual(public.getvalue(),
-                             "FAIL\nFAIL publication stage=runtime_smoke reason=validation_refused\n")
+                             "FAIL publication\nFAIL publication stage=runtime_smoke reason=validation_refused\n")
             self.assertEqual(json.loads(output.with_name("runtime-cleanup.json").read_text()), error.receipt)
             self.assertFalse(output.exists())
             self.assertEqual(list(root.glob("cma-publication-*")), [])

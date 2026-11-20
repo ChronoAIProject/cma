@@ -161,7 +161,7 @@ class InvokeTests(unittest.TestCase):
                 reason = {"controller": "private-unreported", "controller-reason": "private-image-version"}.get(stage, reason)
                 expected = "FAIL precondition=" + reason
                 public = [line for line in output.getvalue().splitlines() if not line.startswith("::add-mask::")]
-                self.assertEqual(public, ["FAIL", expected])
+                self.assertEqual(public, ["FAIL deploy", expected])
                 self.assertIn(expected, summary.read_text().splitlines())
                 self.assertNotIn(marker, summary.read_text())
                 self.assertEqual(runner.call_count, int(stage.startswith("controller")))
@@ -299,7 +299,7 @@ class InvokeTests(unittest.TestCase):
                         self.assertNotIn("FAIL verification=", text)
                         self.assertIn(f"FAIL release={expected} recovery=verified", text.splitlines())
                 if expected is not None:
-                    self.assertEqual(public, ["FAIL", f"FAIL release={expected} recovery=verified"])
+                    self.assertEqual(public, ["FAIL deploy", f"FAIL release={expected} recovery=verified"])
                     self.assertIn(invoke.RESULTS[10], summary.read_text())
 
     def test_rollback_uncertainty_emits_fixed_operator_alert_and_preserves_revision_summary(self):
@@ -501,7 +501,8 @@ class InvokeTests(unittest.TestCase):
             env = self.environment(root)
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                code = run_private(lambda masker: invoke.deploy(env, masker, lambda _: script, policy_reader=lambda *_, **kw: ["web"]) == 0, None)
+                code = run_private(lambda masker: invoke.deploy(env, masker, lambda _: script, policy_reader=lambda *_, **kw: ["web"]) == 0, None,
+                                   subject="deploy")
             self.assertEqual(code, 0)
             self.assertNotIn("private stdout", output.getvalue())
             value = json.loads(observed.read_text())

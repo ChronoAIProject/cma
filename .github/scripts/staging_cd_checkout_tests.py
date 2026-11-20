@@ -78,9 +78,20 @@ class CheckoutTests(unittest.TestCase):
                 with patch.dict(os.environ, env, clear=True), patch.object(sys, "argv", args), contextlib.redirect_stdout(output):
                     self.assertEqual(checkout.main(), 0 if expected == "PASS" else 1)
                 lines = output.getvalue().splitlines()
-                self.assertEqual(lines[-1], expected)
-                self.assertTrue(all(line.startswith("::add-mask::") for line in lines[:-1]))
-                self.assertFalse(summary.exists())
+                if expected == "PASS":
+                    self.assertEqual(lines[-1], "PASS private-checkout")
+                    self.assertTrue(all(line.startswith("::add-mask::") for line in lines[:-1]))
+                    self.assertFalse(summary.exists())
+                    continue
+                # A failure names its kind and check; the summary gains only that explanation.
+                reason = "refused" if args[1:] else "declined"
+                self.assertRegex(lines[-2], rf"\AFAIL private-checkout reason={reason}( at=staging_cd_\w+\.py:\d+)? cause=")
+                self.assertTrue(lines[-1].startswith("::error "))
+                self.assertTrue(all(line.startswith("::add-mask::") for line in lines[:-2]))
+                rows = summary.read_text().splitlines()
+                summary.unlink()
+                self.assertEqual(rows[2:3], [row for row in rows if row.startswith("| private-checkout | ")])
+                self.assertEqual(len(rows), 3)
 
 
 if __name__ == "__main__":
