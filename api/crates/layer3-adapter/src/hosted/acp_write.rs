@@ -1,4 +1,5 @@
 use super::*;
+use crate::ingress_budget::diagnostic::text;
 
 impl Bridge {
     pub(in crate::hosted) async fn send(&self, frame: &serde_json::Value) -> crate::Result<()> {
@@ -13,12 +14,15 @@ impl Bridge {
         if self.retired.load(Ordering::SeqCst) {
             return Err(retired_before_write(prompt));
         }
+        if self.ingress.is_some() {
+            return self.send_admitted_frame(frame).await;
+        }
         let body = serde_json::to_vec(frame)
-            .map_err(|_| AdapterError::Rejected("ACP frame could not be encoded".into()))?;
+            .map_err(|_| AdapterError::Rejected(text("ACP frame could not be encoded")))?;
         if body.len() > MAX_FRAME_BYTES {
-            return Err(AdapterError::Rejected(
-                "ACP frame exceeds the size limit".into(),
-            ));
+            return Err(AdapterError::Rejected(text(
+                "ACP frame exceeds the size limit",
+            )));
         }
         let mut framed = Vec::with_capacity(body.len() + 1);
         framed.push(LANE_CONVERSATION);
@@ -43,8 +47,8 @@ impl Bridge {
 
 pub(super) fn retired_before_write(prompt: bool) -> AdapterError {
     if prompt {
-        AdapterError::PromptNotWritten("conversation link has retired".into())
+        AdapterError::PromptNotWritten(text("conversation link has retired"))
     } else {
-        AdapterError::Unavailable("conversation link has retired".into())
+        AdapterError::Unavailable(text("conversation link has retired"))
     }
 }
