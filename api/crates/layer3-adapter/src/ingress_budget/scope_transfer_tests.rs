@@ -27,15 +27,15 @@ async fn completed_child_result_transfers_only_into_its_exact_receiving_scope() 
             let pointer = output.as_ptr();
             let transferred = output.into_current().unwrap();
             assert_eq!(transferred.as_ptr(), pointer);
-            assert_eq!(root.capacity_bytes() - root.available_bytes(), 8192);
+            assert_eq!(root.reserved_work_bytes(), 8192);
             transferred
         })
         .await;
     drop(scope);
     assert_eq!(output[4095], 19);
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), 8192);
+    assert_eq!(root.reserved_work_bytes(), 8192);
     drop(output);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -61,10 +61,10 @@ async fn transfer_mismatch_preserves_the_original_value_and_custody() {
         })
         .await;
     drop(scope);
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), 8192);
+    assert_eq!(root.reserved_work_bytes(), 8192);
     assert_eq!(output[4095], 7);
     drop(output);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -80,7 +80,7 @@ async fn unowned_transfer_requires_both_sides_to_be_disabled() {
         .await;
     assert_eq!(rejected.as_ptr(), pointer);
     drop((rejected, scope));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -97,17 +97,17 @@ async fn heap_error_transfer_to_a_scope_clone_allocates_nothing_and_keeps_custod
             let result = probe.track(|| output.into_current().unwrap());
             assert_eq!(result.as_ref().unwrap_err().as_ptr(), original);
             assert_eq!(probe.allocated(), allocated);
-            assert_eq!(root.capacity_bytes() - root.available_bytes(), 8192);
+            assert_eq!(root.reserved_work_bytes(), 8192);
             result
         })
         .await;
     drop((scope, receiving));
     assert_eq!(probe.live(), 4096);
-    assert!(probe.live() <= root.capacity_bytes() - root.available_bytes());
+    assert!(probe.live() <= root.reserved_work_bytes());
     assert_eq!(returned.as_ref().unwrap_err().len(), 4096);
     drop(returned);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 struct NonClonePayload {
@@ -126,7 +126,7 @@ impl std::fmt::Debug for NonClonePayload {
 
 impl Drop for NonClonePayload {
     fn drop(&mut self) {
-        assert!(self.root.capacity_bytes() - self.root.available_bytes() >= self.bytes.capacity());
+        assert!(self.root.reserved_work_bytes() >= self.bytes.capacity());
         self.dropped.store(true, Ordering::SeqCst);
     }
 }
@@ -159,18 +159,12 @@ async fn nested_foreign_scope_rejection_preserves_a_non_clone_payload_and_its_ow
     drop((scope, foreign));
     assert_eq!(rejected.bytes[4095], 31);
     assert!(!dropped.load(Ordering::SeqCst));
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), 8192);
-    assert_eq!(
-        foreign_root.capacity_bytes() - foreign_root.available_bytes(),
-        8192
-    );
+    assert_eq!(root.reserved_work_bytes(), 8192);
+    assert_eq!(foreign_root.reserved_work_bytes(), 8192);
     drop(rejected);
     assert!(dropped.load(Ordering::SeqCst));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
-    assert_eq!(
-        foreign_root.available_bytes(),
-        foreign_root.capacity_bytes()
-    );
+    root.assert_idle();
+    foreign_root.assert_idle();
 }
 
 #[tokio::test]
@@ -196,9 +190,9 @@ async fn cancellation_drops_transferred_payload_before_its_receiving_scope() {
     });
     ready.await.unwrap();
     assert!(!dropped.load(Ordering::SeqCst));
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), 8192);
+    assert_eq!(root.reserved_work_bytes(), 8192);
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
     assert!(dropped.load(Ordering::SeqCst));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

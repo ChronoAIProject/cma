@@ -86,10 +86,10 @@ fn sender_clones_retain_source_without_allocating_an_erasure_wrapper() {
     assert!(*result);
     drop(result);
     assert!(probe.live() >= 512);
-    assert!(root.capacity_bytes() - root.available_bytes() >= bytes);
+    assert!(root.reserved_work_bytes() >= bytes);
     drop(last);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -110,11 +110,8 @@ fn outer_and_declared_source_ownership_must_both_match_before_query() {
         assert_eq!(probe.allocated(), 0);
         assert_eq!(source.invoked.load(Ordering::Relaxed), 0);
         drop((result, receiver, source));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
-        assert_eq!(
-            foreign_root.available_bytes(),
-            foreign_root.capacity_bytes()
-        );
+        root.assert_idle();
+        foreign_root.assert_idle();
     }
 }
 
@@ -141,12 +138,12 @@ fn isolated_type_erasure_preserves_payload_identity_and_physical_deallocation_cu
     let last = erased.clone();
     assert!(erased.ptr_eq(&last));
     drop(erased);
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), bytes);
+    assert_eq!(root.reserved_work_bytes(), bytes);
     assert!(
         pause.admission_blocked_while_dropping(&policy, IngressClass::Data, move || {
             drop(last);
         })
     );
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

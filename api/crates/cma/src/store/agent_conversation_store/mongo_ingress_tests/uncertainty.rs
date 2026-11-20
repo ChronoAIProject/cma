@@ -262,7 +262,7 @@ async fn cancelled_readback(unavailable_read: bool) {
         .await
         .unwrap();
     let settled = tokio::time::timeout(Duration::from_secs(5), async {
-        while root.available_bytes() != root.capacity_bytes() {
+        while root.available_bytes() != root.capacity_bytes() - root.metadata_bytes() {
             tokio::task::yield_now().await;
         }
     })
@@ -306,7 +306,7 @@ async fn cancelled_readback(unavailable_read: bool) {
     assert_eq!(final_logs, original_logs);
     assert_eq!(
         held,
-        root.capacity_bytes() - WORK_BYTES,
+        root.capacity_bytes() - root.metadata_bytes() - WORK_BYTES,
         "cancelled caller released a live Mongo proof"
     );
     assert_eq!(child_scope, Some(WORK_BYTES));

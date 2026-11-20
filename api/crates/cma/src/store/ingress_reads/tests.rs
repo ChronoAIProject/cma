@@ -59,7 +59,7 @@ fn successful_conversion_retains_only_data_until_the_final_shared_owner_drops() 
     let value = decode::<Text>(&raw, &policy).unwrap();
     assert_eq!(*value, "x".repeat(8192));
     assert!(value.belongs_to(&policy));
-    assert!(root.available_bytes() < root.capacity_bytes());
+    assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     assert_eq!(
         policy
             .budget(IngressClass::Transformation)
@@ -73,7 +73,10 @@ fn successful_conversion_retains_only_data_until_the_final_shared_owner_drops() 
     drop(raw);
     assert_eq!(root.available_bytes(), retained);
     drop(shared);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[test]
@@ -101,7 +104,10 @@ fn data_refusal_precedes_domain_conversion_and_releases_partial_work_admission()
         .unwrap();
     drop(control);
     drop(occupied);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 struct ExcessiveWorking;
@@ -131,7 +137,10 @@ fn conversion_refusal_after_raw_preflight_never_calls_the_schema_decoder() {
         Err(RowError::Refused(LayoutError::Capacity))
     ));
     assert_eq!(DECODE_CALLS.get(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[test]
@@ -149,7 +158,10 @@ fn each_conversion_plans_its_own_row_after_a_smaller_success() {
     assert_eq!(root.available_bytes(), held);
     assert_eq!(*small, "x".repeat(32));
     drop(small);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[test]
@@ -163,15 +175,18 @@ fn domain_error_keeps_its_original_class_and_work_owner_until_drop() {
         matches!(&*error, SandboxStoreError::Corrupt(message) if message == "missing synthetic text")
     );
     assert!(error.belongs_to(&policy));
-    assert!(root.available_bytes() < root.capacity_bytes());
+    assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     assert_eq!(
         policy.budget(IngressClass::Data).available_bytes(),
         policy.bounds().data_bytes()
     );
     drop(raw);
-    assert!(root.available_bytes() < root.capacity_bytes());
+    assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     drop(error);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[test]
@@ -199,7 +214,10 @@ fn preflight_pressure_is_distinct_from_a_malformed_stored_row() {
         Err(RowError::Refused(LayoutError::Structure))
     ));
     assert_eq!(DECODE_CALLS.get(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 struct Panicking;
@@ -226,7 +244,10 @@ fn unwind_releases_partial_domain_conversion_and_both_reservations() {
         decode::<Panicking>(&raw, &policy)
     }));
     assert!(result.is_err());
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 fn read_plan() -> AllocationPlan {
@@ -253,14 +274,17 @@ async fn read_refusal_precedes_query_and_future_construction() {
     assert!(!initialized.get());
     assert_eq!(root.available_bytes(), before);
     drop(occupied);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test]
 async fn read_retains_only_the_exact_converted_row_after_completion() {
     let (root, policy) = policy();
     let value = load::<Text, _>(&policy, read_plan(), || {
-        assert!(root.available_bytes() < root.capacity_bytes());
+        assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
         std::future::ready(Ok(Some(raw(8192))))
     })
     .await
@@ -286,7 +310,10 @@ async fn read_retains_only_the_exact_converted_row_after_completion() {
     assert_eq!(root.available_bytes(), held);
     assert_eq!(*value, "x".repeat(8192));
     drop(value);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test]
@@ -298,7 +325,10 @@ async fn absent_read_and_domain_failure_remain_distinct_and_owned() {
             .unwrap()
             .is_none()
     );
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     let pointer = Cell::new(std::ptr::null());
     let error = load::<Text, _>(&policy, read_plan(), || {
         let message = "synthetic read failure".repeat(128);
@@ -313,9 +343,12 @@ async fn absent_read_and_domain_failure_remain_distinct_and_owned() {
     assert!(matches!(&*error, SandboxStoreError::Unavailable(message)
         if message.as_ptr() == pointer.get()));
     assert!(error.belongs_to(&policy));
-    assert!(root.available_bytes() < root.capacity_bytes());
+    assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     drop(error);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test]
@@ -327,9 +360,15 @@ async fn cancelling_a_pending_read_drops_its_future_before_returning_capacity() 
     }
     impl Drop for Pending {
         fn drop(&mut self) {
-            assert!(self.root.available_bytes() < self.root.capacity_bytes());
+            assert!(
+                self.root.available_bytes()
+                    < self.root.capacity_bytes() - self.root.metadata_bytes()
+            );
             drop(std::mem::take(&mut self.payload));
-            assert!(self.root.available_bytes() < self.root.capacity_bytes());
+            assert!(
+                self.root.available_bytes()
+                    < self.root.capacity_bytes() - self.root.metadata_bytes()
+            );
             self.dropped
                 .store(true, std::sync::atomic::Ordering::SeqCst);
         }
@@ -351,13 +390,19 @@ async fn cancelling_a_pending_read_drops_its_future_before_returning_capacity() 
             dropped: dropped.clone(),
             payload: vec![3; 8192],
         });
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - root.metadata_bytes()
+        );
         tokio::pin!(read);
         assert!(futures_util::poll!(&mut read).is_pending());
-        assert!(root.available_bytes() < root.capacity_bytes());
+        assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     }
     assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test]
@@ -365,14 +410,17 @@ async fn unwinding_during_query_construction_returns_read_capacity() {
     use futures_util::FutureExt;
     let (root, policy) = policy();
     let read = load::<Text, std::future::Ready<_>>(&policy, read_plan(), || {
-        assert!(root.available_bytes() < root.capacity_bytes());
+        assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
         panic!("synthetic query construction failure");
     });
     assert!(std::panic::AssertUnwindSafe(read)
         .catch_unwind()
         .await
         .is_err());
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 struct CopyOverlap;
@@ -408,5 +456,8 @@ async fn raw_buffer_spare_capacity_remains_charged_through_conversion_admission(
         Err(RowError::Refused(LayoutError::Capacity))
     ));
     assert_eq!(DECODE_CALLS.get(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }

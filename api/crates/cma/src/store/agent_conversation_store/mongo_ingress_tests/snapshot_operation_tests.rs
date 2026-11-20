@@ -33,10 +33,13 @@ async fn synchronous_snapshot_admits_before_poll_and_transfers_independent_reten
         .unwrap();
     assert_eq!(
         root.available_bytes(),
-        root.capacity_bytes() - unpolled.requested_bytes()
+        root.capacity_bytes() - root.metadata_bytes() - unpolled.requested_bytes()
     );
     drop(unpolled);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 
     let legacy = fixture
         .store
@@ -54,7 +57,7 @@ async fn synchronous_snapshot_admits_before_poll_and_transfers_independent_reten
     assert_eq!(*snapshot, legacy);
     drop(operation);
     let retained = root.available_bytes();
-    assert!(retained < root.capacity_bytes());
+    assert!(retained < root.capacity_bytes() - root.metadata_bytes());
     drop(result);
     assert!(root.available_bytes() > retained);
     assert_eq!(
@@ -63,10 +66,13 @@ async fn synchronous_snapshot_admits_before_poll_and_transfers_independent_reten
             .available_bytes(),
         policy.bounds().transformation_bytes()
     );
-    assert!(root.available_bytes() < root.capacity_bytes());
+    assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     assert_eq!(*snapshot, legacy);
     drop(snapshot);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     fixture.finish().await;
 }
 
@@ -104,9 +110,12 @@ async fn synchronous_snapshot_preserves_corruption_and_missing_row_outcomes() {
         matches!(&*error, AgentConversationError::Corrupt(detail) if detail.as_ptr() == address)
     );
     assert!(error.belongs_to(&policy));
-    assert!(root.available_bytes() < root.capacity_bytes());
+    assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     drop(error);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 
     fixture
         .store
@@ -122,7 +131,10 @@ async fn synchronous_snapshot_preserves_corruption_and_missing_row_outcomes() {
         .unwrap();
     assert!(missing.as_ref().unwrap().is_none());
     drop(missing);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     fixture.finish().await;
 }
 
@@ -173,9 +185,12 @@ async fn synchronous_snapshot_keeps_the_original_unavailable_error_owned() {
         matches!(&*error, AgentConversationError::Unavailable(message) if message.as_ptr() == address)
     );
     assert!(error.belongs_to(&policy));
-    assert!(root.available_bytes() < root.capacity_bytes());
+    assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     drop(error);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     drop(admin);
     fixture.finish().await;
 }

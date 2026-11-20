@@ -86,7 +86,7 @@ fn isolated_socket_errors_retain_storage_through_read_and_every_sink_failure() {
     let mut probe = AllocationProbe::new();
     let raw_error = probe.track(|| legacy.next().now_or_never().unwrap().unwrap().unwrap_err());
     assert_eq!(probe.live(), 2048);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     drop(raw_error);
     assert_eq!(probe.live(), 0);
     drop(probe);
@@ -124,14 +124,14 @@ fn isolated_socket_errors_retain_storage_through_read_and_every_sink_failure() {
     assert!(errors.iter().all(|error| error.belongs_to(&policy)));
     assert!(errors.iter().all(|error| matches!(error.as_adapter(), Some(crate::AdapterError::Unavailable(text)) if text.len() == 2048)));
     assert!(probe.live() >= 5 * 2048);
-    assert!(probe.live() <= root.capacity_bytes() - root.available_bytes());
+    assert!(probe.live() <= root.reserved_work_bytes());
     let clone = probe.track(|| errors[0].clone());
     drop((socket, errors, policy));
     assert!(probe.live() >= 2048);
-    assert!(probe.live() <= root.capacity_bytes() - root.available_bytes());
+    assert!(probe.live() <= root.reserved_work_bytes());
     drop(clone);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -152,7 +152,7 @@ fn socket_producer_refuses_before_error_allocation_when_control_is_exhausted() {
     assert!(errors.iter().all(|error| error.refusal().is_some()));
     assert_eq!(probe.allocated(), 0);
     drop((probe, socket, pressure));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -236,5 +236,5 @@ fn bridge_consumes_owned_errors_without_second_allocation_or_changed_classificat
     assert_eq!(probe.live(), 0);
     assert_eq!(root.available_bytes(), baseline);
     drop((probe, socket, scope));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

@@ -48,7 +48,7 @@ fn isolated_relay_and_capture_deallocation_contract() {
                 }
             })
         );
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
         assert_eq!(probe.live(), 0);
     }
     for sender_last in [false, true] {
@@ -88,7 +88,7 @@ fn isolated_relay_and_capture_deallocation_contract() {
             })
         );
         drop(downstream);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
         assert_eq!(probe.live(), 0);
     }
 }
@@ -108,7 +108,7 @@ async fn capture_refuses_overflow_without_waiting_for_a_consumer() {
     assert!(capture.take().is_err());
     assert_eq!(root.available_bytes(), before);
     drop((sender, capture));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -124,7 +124,7 @@ async fn capture_transfers_one_effect_and_retains_its_own_capacity_through_last_
     drop(capture);
     assert_eq!(root.available_bytes(), before);
     drop(sender);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -142,7 +142,7 @@ async fn admitted_relay_releases_queue_only_after_sender_and_cancelled_receiver_
     assert!(task.await.unwrap_err().is_cancelled());
     assert_eq!(root.available_bytes(), before);
     drop(sender);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -174,5 +174,5 @@ async fn poisoned_capture_keeps_payload_charged_until_its_final_handle_drops() {
     drop(capture);
     assert_eq!(root.available_bytes(), retained);
     drop(sender);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

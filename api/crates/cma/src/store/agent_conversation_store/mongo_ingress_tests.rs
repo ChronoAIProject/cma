@@ -146,7 +146,10 @@ async fn refused_snapshot_keeps_existing_records_and_returns_all_partial_admissi
     assert_eq!(occupied.len(), payload_bytes);
     assert!(occupied.iter().all(|byte| *byte == 7));
     drop(occupied);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     fixture.finish().await;
 }
 
@@ -166,7 +169,7 @@ async fn near_limit_prefix_and_exact_receipt_survive_owned_snapshot_retries() {
             .unwrap()
             .unwrap();
         assert_eq!(snapshot.checkpoint.as_ref(), Some(&checkpoint));
-        assert!(root.available_bytes() < root.capacity_bytes());
+        assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
         assert_eq!(
             policy
                 .budget(IngressClass::Transformation)
@@ -174,7 +177,10 @@ async fn near_limit_prefix_and_exact_receipt_survive_owned_snapshot_retries() {
             96 * 1024 * 1024
         );
         drop(snapshot);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - root.metadata_bytes()
+        );
     }
     fixture.finish().await;
 }
@@ -200,12 +206,15 @@ async fn corrupt_raw_checkpoint_retains_error_custody_until_final_drop() {
         .unwrap_err();
     assert!(matches!(&*error, SandboxStoreError::Corrupt(_)));
     assert!(error.belongs_to(&policy));
-    assert!(root.available_bytes() < root.capacity_bytes());
+    assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     assert_eq!(
         policy.budget(IngressClass::Data).available_bytes(),
         policy.bounds().data_bytes()
     );
     drop(error);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     fixture.finish().await;
 }

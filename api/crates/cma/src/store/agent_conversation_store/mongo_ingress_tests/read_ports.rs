@@ -57,7 +57,7 @@ async fn admitted_transaction_reads_preserve_order_own_writes_and_retained_rows(
     let first = page[0].clone();
     drop(page);
     assert!(root.available_bytes() > held);
-    assert!(root.available_bytes() < root.capacity_bytes());
+    assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     assert_eq!(first.get_str("value").unwrap(), "second");
     transaction
         .update_one(&rows, doc! {"_id":"b"}, doc! {"$set":{"value":"changed"}})
@@ -76,7 +76,10 @@ async fn admitted_transaction_reads_preserve_order_own_writes_and_retained_rows(
     );
     assert_eq!(first.get_str("value").unwrap(), "second");
     drop((result, first));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     transaction.release().abort_transaction().await.unwrap();
     // A later transaction on this same session observes the original state.
     let mut later = TransactionScope::start(&mut session).await.unwrap();
@@ -91,7 +94,10 @@ async fn admitted_transaction_reads_preserve_order_own_writes_and_retained_rows(
     drop(row);
     later.release().abort_transaction().await.unwrap();
     drop((session, rows));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     fixture.finish().await;
 }
 
@@ -132,7 +138,10 @@ async fn transaction_read_refusal_precedes_query_construction_and_leaves_legacy_
         })
         .unwrap();
     drop(unpolled);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     let occupied = policy
         .admit(
             IngressClass::Data,
@@ -179,7 +188,10 @@ async fn transaction_read_refusal_precedes_query_construction_and_leaves_legacy_
         .is_some());
     transaction.release().abort_transaction().await.unwrap();
     drop(session);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     fixture.finish().await;
 }
 
@@ -253,9 +265,12 @@ async fn transaction_read_keeps_original_driver_labels_and_error_allocation() {
         });
         assert_eq!(std::ptr::from_ref(moved.kind.as_ref()), address);
         assert!(moved.belongs_to(&policy));
-        assert!(root.available_bytes() < root.capacity_bytes());
+        assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
         drop(moved);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - root.metadata_bytes()
+        );
         let _ = transaction.release().abort_transaction().await;
     }
     drop((session, admin));

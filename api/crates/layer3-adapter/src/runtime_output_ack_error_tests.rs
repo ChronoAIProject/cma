@@ -54,7 +54,7 @@ fn isolated_full_and_closed_errors_can_outlive_the_operation_without_allocating(
     drop(receiver);
     repeat(&receipt, AdmittedAckError::Closed);
     drop(receipt);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn invalid_and_poisoned_ack_errors_do_not_copy_the_identity() {
     repeat(&receipt, AdmittedAckError::Poisoned);
     assert_eq!(root.available_bytes(), baseline);
     drop((receipt, receiver));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -111,7 +111,7 @@ fn control_pressure_preserves_original_receipt_and_allows_exact_retry() {
     drop((receipt, receiver));
     assert!(root.available_bytes() < root.capacity_bytes());
     drop(ack);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -131,7 +131,7 @@ fn checked_channel_refuses_invalid_or_exhausted_capacity_without_allocating() {
         ));
     }
     assert_eq!(probe.allocated(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     drop(probe);
     let pressure = policy
         .admit(
@@ -154,7 +154,7 @@ fn checked_channel_refuses_invalid_or_exhausted_capacity_without_allocating() {
     )));
     assert_eq!(probe.allocated(), 0);
     drop((probe, pressure));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]

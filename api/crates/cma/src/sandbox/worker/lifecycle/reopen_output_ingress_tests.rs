@@ -265,7 +265,7 @@ async fn reopen_result_stays_charged_through_blocked_ack_and_cancellation() {
         assert!(futures_util::poll!(&mut draining).is_pending());
         assert_eq!(
             root.available_bytes(),
-            root.capacity_bytes() - 8192,
+            root.capacity_bytes() - root.metadata_bytes() - 8192,
             "reopen released its returned outcome before acknowledgement completed"
         );
         if cancel {
@@ -279,7 +279,10 @@ async fn reopen_result_stays_charged_through_blocked_ack_and_cancellation() {
             assert_eq!(acknowledged.recv().await, Some(source));
             assert_eq!(acknowledged.recv().await, None);
         }
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - root.metadata_bytes()
+        );
     }
 }
 
@@ -350,6 +353,9 @@ async fn enabled_reopen_uses_admitted_ack_and_refuses_legacy_or_full_queues() {
         assert!(legacy_acknowledged.try_recv().is_err());
         drop(acknowledged);
         drop(recorder);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - root.metadata_bytes()
+        );
     }
 }

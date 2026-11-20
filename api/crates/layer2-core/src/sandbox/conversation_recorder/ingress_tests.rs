@@ -31,6 +31,10 @@ fn fixture() -> (IngressBudget, Recorder) {
     )
 }
 
+fn idle_bytes(root: &IngressBudget) -> usize {
+    root.capacity_bytes() - root.metadata_bytes()
+}
+
 fn plan(bytes: usize) -> AllocationPlan {
     AllocationPlan::checked("recorder operation fixture", &[bytes]).unwrap()
 }
@@ -200,7 +204,7 @@ async fn enabled_helpers_select_every_admitted_port_and_keep_the_original_timest
         .unwrap();
     assert_eq!(recorder.calls.load(Ordering::SeqCst), 0);
     drop(operation);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(root.available_bytes(), idle_bytes(&root));
     service
         .restore_recording(&id, 7, &mut session)
         .await
@@ -211,7 +215,7 @@ async fn enabled_helpers_select_every_admitted_port_and_keep_the_original_timest
         .unwrap();
     assert_eq!(result.appended[0].appended_at, "1970-01-01T00:00:00Z");
     assert!(result.belongs_to(&recorder.policy));
-    assert_eq!(root.available_bytes(), root.capacity_bytes() - 4096);
+    assert_eq!(root.available_bytes(), idle_bytes(&root) - 4096);
     drop(result);
     service
         .record_output_in_session(&id, 7, &mut session, &update, at)
@@ -226,7 +230,7 @@ async fn enabled_helpers_select_every_admitted_port_and_keep_the_original_timest
         .await
         .unwrap();
     assert_eq!(recorder.calls.load(Ordering::SeqCst), 31);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(root.available_bytes(), idle_bytes(&root));
 }
 
 #[tokio::test]
@@ -250,9 +254,9 @@ async fn operation_refusal_precedes_initialization_and_future_storage() {
         .unwrap_err();
     assert_eq!(*error, AgentConversationError::CapacityExceeded);
     assert_eq!(recorder.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes() - 8192);
+    assert_eq!(root.available_bytes(), idle_bytes(&root) - 8192);
     drop(held);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(root.available_bytes(), idle_bytes(&root));
 }
 
 #[tokio::test]
@@ -281,9 +285,9 @@ async fn domain_error_keeps_its_data_owner_after_operation_storage_is_gone() {
         .admit(IngressClass::Transformation, plan(8192))
         .unwrap();
     drop(available);
-    assert_eq!(root.available_bytes(), root.capacity_bytes() - 4096);
+    assert_eq!(root.available_bytes(), idle_bytes(&root) - 4096);
     drop(error);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(root.available_bytes(), idle_bytes(&root));
 }
 
 #[tokio::test]
@@ -303,9 +307,9 @@ async fn cancellation_drops_pending_result_and_operation_with_their_owners() {
     ));
     assert!(futures_util::poll!(&mut operation).is_pending());
     assert_eq!(recorder.calls.load(Ordering::SeqCst), 4);
-    assert!(root.available_bytes() < root.capacity_bytes() - 4096);
+    assert!(root.available_bytes() < idle_bytes(&root) - 4096);
     drop(operation);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(root.available_bytes(), idle_bytes(&root));
 }
 
 #[tokio::test]
@@ -337,7 +341,7 @@ async fn operation_errors_are_classified_without_copying_diagnostics() {
                 AgentConversationError::Unavailable(String::new())
             }
         );
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(root.available_bytes(), idle_bytes(&root));
     }
     for (error, expected) in [
         (
@@ -383,11 +387,8 @@ async fn foreign_operation_is_dropped_without_polling_or_recording() {
         AgentConversationError::InvalidState("invalid recording allocation plan")
     );
     assert_eq!(other_recorder.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(other_root.available_bytes(), other_root.capacity_bytes());
-    assert_eq!(
-        session_root.available_bytes(),
-        session_root.capacity_bytes()
-    );
+    assert_eq!(other_root.available_bytes(), idle_bytes(&other_root));
+    assert_eq!(session_root.available_bytes(), idle_bytes(&session_root));
 }
 
 #[tokio::test]
@@ -423,7 +424,7 @@ async fn another_attachment_on_the_same_root_cannot_supply_the_recording_operati
     assert_eq!(recorder.calls.load(Ordering::SeqCst), 0);
     assert_eq!(root.available_bytes(), before);
     drop((error, session, recorder, original, other));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(root.available_bytes(), idle_bytes(&root));
 }
 
 #[tokio::test]
@@ -488,5 +489,5 @@ async fn data_pressure_refuses_recording_before_initialization_and_preserves_ack
         recorder,
         pressure,
     ));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(root.available_bytes(), idle_bytes(&root));
 }

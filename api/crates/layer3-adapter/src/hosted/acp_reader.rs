@@ -95,25 +95,21 @@ async fn with_diagnostics(
     reader: &Bridge,
     operation: impl std::future::Future<Output = bool>,
 ) -> bool {
-    use crate::ingress_budget::{sizing, AllocationPlan, IngressClass, IngressWorkScope};
+    use crate::ingress_budget::{diagnostic, IngressClass, IngressWorkScope};
     let Some(policy) = &reader.ingress else {
         return operation.await;
     };
     // Reader and ACK tasks do not inherit the opening caller's task locals.
     // Keep refusal/close diagnostics independent of exhausted data capacity.
-    let plan = AllocationPlan::checked(
-        "reader diagnostic scope",
-        &[sizing::shared_owner_bytes::<()>()],
-    )
-    .expect("fixed diagnostic scope layout");
+    let plan = diagnostic::scope_entry_plan().expect("fixed diagnostic scope layout");
     let Ok(storage) = policy.admit(IngressClass::Control, plan) else {
         return false;
     };
     IngressWorkScope::new(storage)
-        .initialize_owned(|| async { Ok(operation.await) })
-        .resolve_admitted_result(policy, IngressClass::Control)
+        .initialize_owned(|| operation)
+        .resolve_diagnostic_bool(policy, IngressClass::Control)
         .await
-        .is_ok_and(|completed| *completed)
+        .unwrap_or(false)
 }
 
 async fn dispatch_inner(
@@ -178,3 +174,11 @@ async fn legacy_ack(receiver: &mut Option<AckReceiver>) -> Option<Ack> {
         None => std::future::pending().await,
     }
 }
+
+#[cfg(test)]
+#[path = "acp_reader_control_tests.rs"]
+mod control_tests;
+
+#[cfg(test)]
+#[path = "acp_reader_progress_tests.rs"]
+mod progress_tests;

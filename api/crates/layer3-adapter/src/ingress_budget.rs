@@ -1,20 +1,23 @@
 //! Shared admission for accounted ingress owners; this is not an RSS bound.
 
-use std::sync::{atomic::AtomicUsize, Arc, OnceLock};
+use std::sync::{atomic::AtomicBool, Arc, OnceLock};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const PROCESS_BYTES: usize = 128 * 1024 * 1024;
 
 mod attachment;
+mod classes;
 pub(crate) mod custody;
 pub(crate) mod diagnostic;
 pub mod failure;
 pub mod observation;
 pub mod operation;
 pub mod ownership;
+mod root_storage;
 pub mod scope;
 pub mod sizing;
+mod source_erasure;
 pub mod watch;
 
 pub use crate::conversation_channel::admitted::{
@@ -44,15 +47,11 @@ pub struct IngressBudget(
 struct BudgetPolicy {
     capacity: usize,
     classes: OnceLock<ClassPools>,
+    initializing_classes: AtomicBool,
+    bootstrap: root_storage::Bootstrap,
 }
 
-struct ClassPools {
-    bounds: ClassBounds,
-    data: Arc<Semaphore>,
-    transformation: Arc<Semaphore>,
-    control: Arc<Semaphore>,
-    active_attachments: AtomicUsize,
-}
+use classes::ClassPools;
 
 /// Explicit runtime-only policy. Constructing this does not enable any caller.
 #[derive(Clone)]
@@ -63,21 +62,20 @@ pub struct IngressOwnershipPolicy {
 
 impl IngressOwnershipPolicy {
     pub fn new(root: IngressBudget, bounds: ClassBounds) -> crate::Result<Self> {
+        Self::new_admitted(root, bounds).map_err(Into::into)
+    }
+
+    /// Construct the opt-in policy with fixed, allocation-free refusals.
+    pub fn new_admitted(
+        root: IngressBudget,
+        bounds: ClassBounds,
+    ) -> Result<Self, AdmissionRefusal> {
         if root.2.is_some() || root.3.is_some() || bounds.total_bytes() != root.1.capacity {
-            return Err(sizing::invalid());
+            return Err(AdmissionRefusal::InvalidPlan {
+                phase: "class policy root",
+            });
         }
-        // Repeated attachments must share class semaphores, not just the root.
-        // A second policy cannot recreate the data ceiling on the same root.
-        let classes = root.1.classes.get_or_init(|| ClassPools {
-            bounds,
-            data: Arc::new(Semaphore::new(bounds.data_bytes())),
-            transformation: Arc::new(Semaphore::new(bounds.transformation_bytes())),
-            control: Arc::new(Semaphore::new(bounds.control_bytes())),
-            active_attachments: AtomicUsize::new(0),
-        });
-        if classes.bounds != bounds {
-            return Err(sizing::invalid());
-        }
+        classes::install(&root, bounds)?;
         Ok(Self { root, bounds })
     }
 
@@ -130,11 +128,14 @@ impl IngressBudget {
     }
 
     pub fn new(bytes: usize) -> Self {
+        let bootstrap = root_storage::Bootstrap::new();
         Self(
             Arc::new(Semaphore::new(bytes)),
             Arc::new(BudgetPolicy {
                 capacity: bytes,
                 classes: OnceLock::new(),
+                initializing_classes: AtomicBool::new(false),
+                bootstrap,
             }),
             None,
             None,
@@ -153,6 +154,36 @@ impl IngressBudget {
         self.1.capacity
     }
 
+    /// Fixed construction allowance before opt-in; included in metadata_bytes
+    /// after policy installation. The process constructor installs one root.
+    pub fn bootstrap_bytes(&self) -> usize {
+        self.1.bootstrap.bytes()
+    }
+
+    /// Resident root, class and process storage stays charged while retained.
+    pub fn metadata_bytes(&self) -> usize {
+        self.1
+            .classes
+            .get()
+            .map_or(0, |classes| classes.bounds.metadata_bytes())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn reserved_work_bytes(&self) -> usize {
+        assert!(self.2.is_none(), "inspect the process root");
+        self.capacity_bytes() - self.metadata_bytes() - self.available_bytes()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn assert_idle(&self) {
+        assert!(self.2.is_none(), "inspect the process root");
+        assert_eq!(
+            self.available_bytes() + self.metadata_bytes(),
+            self.capacity_bytes(),
+            "only resident metadata may remain charged"
+        );
+    }
+
     fn try_reserve(&self, bytes: usize) -> Option<AggregateReservation> {
         let bytes = u32::try_from(bytes).ok()?;
         let class = match &self.2 {
@@ -164,7 +195,17 @@ impl IngressBudget {
             root,
             class,
             attachment: self.3.clone(),
+            policy: self.1.clone(),
         })
+    }
+}
+
+impl Drop for IngressBudget {
+    fn drop(&mut self) {
+        // The policy owns the class-pool allowance. Release this handle's
+        // semaphore before dropping that policy, including on a final handle.
+        drop(self.2.take());
+        drop(self.3.take());
     }
 }
 
@@ -172,6 +213,8 @@ struct AggregateReservation {
     root: OwnedSemaphorePermit,
     class: Option<OwnedSemaphorePermit>,
     attachment: Option<custody::SharedCustody<attachment::AttachmentStorage>>,
+    // Keep class pools through permit release and their final physical drop.
+    policy: Arc<BudgetPolicy>,
 }
 
 impl AggregateReservation {
@@ -187,6 +230,7 @@ impl AggregateReservation {
                     .expect("class and root reservations match")
             }),
             attachment: self.attachment.clone(),
+            policy: self.policy.clone(),
         })
     }
 }
@@ -226,3 +270,7 @@ mod tests;
 #[cfg(test)]
 #[path = "ingress_budget/executor_storage_tests.rs"]
 mod executor_storage_tests;
+
+#[cfg(test)]
+#[path = "ingress_budget/root_storage_tests.rs"]
+mod root_storage_tests;

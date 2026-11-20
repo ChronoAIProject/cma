@@ -55,6 +55,7 @@ pub struct ClassBounds {
     total: usize,
     control: usize,
     transformation: usize,
+    metadata: usize,
     maximum_attachments: Option<NonZeroUsize>,
 }
 
@@ -66,7 +67,18 @@ impl ClassBounds {
     ) -> Result<Self> {
         let control = concurrent_control.requested_bytes();
         let transformation = largest_transformation.requested_bytes();
-        let floors = control.checked_add(transformation).ok_or_else(invalid)?;
+        let metadata = AllocationPlan::new(
+            "resident root and class metadata",
+            &[
+                super::classes::storage_bytes().map_err(AdapterError::from)?,
+                super::root_storage::Bootstrap::new().bytes(),
+            ],
+        )?
+        .requested_bytes();
+        let floors = control
+            .checked_add(transformation)
+            .and_then(|bytes| bytes.checked_add(metadata))
+            .ok_or_else(invalid)?;
         if control == 0 || transformation == 0 || floors >= total || total > u32::MAX as usize {
             return Err(invalid());
         }
@@ -74,6 +86,7 @@ impl ClassBounds {
             total,
             control,
             transformation,
+            metadata,
             maximum_attachments: None,
         })
     }
@@ -85,13 +98,40 @@ impl ClassBounds {
         self.total
     }
     pub fn data_bytes(self) -> usize {
-        self.total - self.control - self.transformation
+        self.total - self.control - self.transformation - self.metadata
     }
     pub fn control_bytes(self) -> usize {
         self.control
     }
     pub fn transformation_bytes(self) -> usize {
         self.transformation
+    }
+
+    pub fn metadata_bytes(self) -> usize {
+        self.metadata
+    }
+
+    pub(crate) fn process_storage_bytes(self) -> usize {
+        self.metadata
+            - super::root_storage::Bootstrap::new().bytes()
+            - super::classes::storage_bytes().expect("bounds validate the platform layout")
+    }
+
+    /// Process-static allocations precede admitted load and outlive attachments.
+    pub(crate) fn with_process_storage(mut self, plan: AllocationPlan) -> Result<Self> {
+        let metadata = self
+            .metadata
+            .checked_add(plan.requested_bytes())
+            .ok_or_else(invalid)?;
+        let reserved = metadata
+            .checked_add(self.control)
+            .and_then(|bytes| bytes.checked_add(self.transformation))
+            .ok_or_else(invalid)?;
+        if reserved >= self.total {
+            return Err(invalid());
+        }
+        self.metadata = metadata;
+        Ok(self)
     }
 
     pub fn maximum_attachments(self) -> Option<usize> {
@@ -108,13 +148,40 @@ pub fn array_bytes<T>(capacity: usize) -> Result<usize> {
     capacity.checked_mul(size_of::<T>()).ok_or_else(invalid)
 }
 
+pub(crate) fn semaphore_storage_bytes() -> std::result::Result<usize, super::AdmissionRefusal> {
+    if !cfg!(any(target_os = "linux", target_vendor = "apple")) {
+        return Err(super::AdmissionRefusal::InvalidPlan {
+            phase: "unsupported class pool layout",
+        });
+    }
+    // Tokio 1.53.3 releases permits through the pinned std mutex.
+    AllocationPlan::checked(
+        "semaphore storage",
+        &[
+            size_of::<tokio::sync::Semaphore>(),
+            2 * size_of::<usize>(),
+            align_of::<tokio::sync::Semaphore>(),
+            super::root_storage::lazy_lock_bytes(),
+        ],
+    )
+    .map(AllocationPlan::requested_bytes)
+}
+
 /// Both Arc headers, the payload layout and the separately shared reservation.
 pub fn shared_owner_bytes<T>() -> usize {
-    size_of::<T>()
-        + size_of::<super::ReservationBundle>()
-        + 4 * size_of::<usize>()
-        + align_of::<T>()
-        + align_of::<super::ReservationBundle>()
+    shared_allocation_bytes::<T>() + shared_allocation_bytes::<super::ReservationBundle>()
+}
+
+pub(crate) fn shared_allocation_bytes<T>() -> usize {
+    // Rust 1.96.1 ArcInner is repr(C, align(2)): two atomic reference counts
+    // followed by T. sizeof includes the actual inter-field and trailing padding.
+    #[repr(C, align(2))]
+    struct Allocation<T> {
+        _strong: std::sync::atomic::AtomicUsize,
+        _weak: std::sync::atomic::AtomicUsize,
+        _value: T,
+    }
+    size_of::<Allocation<T>>()
 }
 
 /// Fallible initialization constructs exactly one returned owner. Its plan must
@@ -166,3 +233,11 @@ pub(super) fn invalid() -> AdapterError {
         format_args!("ingress allocation plan exceeds its supported bounds"),
     )
 }
+
+#[cfg(test)]
+#[path = "sizing_tests.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "process_storage_tests.rs"]
+mod process_storage_tests;

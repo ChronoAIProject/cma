@@ -184,14 +184,18 @@ async fn blocked_read(admitted: bool) {
         "the retained prefix and exact receipt must survive the read"
     );
     assert!(control_correct);
-    assert_eq!(remaining_after_drop, root.capacity_bytes());
+    assert_eq!(
+        remaining_after_drop,
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     eprintln!(
         "SNAPSHOT_READ_PROOF admitted={admitted} queries_while_blocked={queries} read_reserved_bytes={} result_reserved_bytes={} control_completed={control_correct}",
-        root.capacity_bytes() - gate.available_at_query.load(Ordering::SeqCst),
-        root.capacity_bytes() - remaining_with_result,
+        root.capacity_bytes() - root.metadata_bytes() - gate.available_at_query.load(Ordering::SeqCst),
+        root.capacity_bytes() - root.metadata_bytes() - remaining_with_result,
     );
     assert!(
-        gate.available_at_query.load(Ordering::SeqCst) < root.capacity_bytes(),
+        gate.available_at_query.load(Ordering::SeqCst)
+            < root.capacity_bytes() - root.metadata_bytes(),
         "snapshot query reached Mongo without its read allowance"
     );
     assert!(
@@ -207,7 +211,7 @@ async fn blocked_read(admitted: bool) {
         transformation_after_read,
         policy.bounds().transformation_bytes()
     );
-    assert!(remaining_with_result < root.capacity_bytes());
+    assert!(remaining_with_result < root.capacity_bytes() - root.metadata_bytes());
     assert!(
         remaining_with_result > held,
         "returned data must release read work capacity"

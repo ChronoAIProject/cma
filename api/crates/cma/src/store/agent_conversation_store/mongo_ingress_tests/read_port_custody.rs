@@ -50,7 +50,10 @@ fn admitted_page_preserves_exact_canonical_byte_and_row_boundaries() {
         ))
     ));
     drop(page);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[test]
@@ -76,7 +79,10 @@ fn page_accounts_canonical_documents_with_repeated_bson_keys() {
         .iter()
         .all(|value| value.get_str("value").unwrap() == "xxxx"));
     drop(values);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[test]
@@ -103,10 +109,13 @@ fn page_refusal_preserves_prior_rows_and_independent_data_custody() {
     let held = root.available_bytes();
     drop(values);
     assert!(root.available_bytes() > held);
-    assert!(root.available_bytes() < root.capacity_bytes());
+    assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     assert_eq!(first.get_str("value").unwrap().len(), 8192);
     drop(first);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test]
@@ -145,9 +154,12 @@ async fn source_error_preserves_its_nonclone_payload_through_operation_compositi
         .unwrap()
         .starts_with("synthetic"));
     assert!(error.belongs_to(&policy));
-    assert!(root.available_bytes() < root.capacity_bytes());
+    assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     drop(error);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[test]
@@ -187,5 +199,8 @@ fn stored_corruption_and_allocation_refusal_have_different_error_channels() {
         Err(layer2_core::sandbox::ingress_ownership::AdmittedError::Refused(_))
     ));
     drop(storage);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }

@@ -21,7 +21,7 @@ fn prepared_projection_keeps_custody_and_serialization_failure_rolls_back() {
     assert_eq!(root.available_bytes(), retained);
     assert_eq!(result["text"].as_str().unwrap().len(), 65_536);
     drop(result);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     // The borrowed sizing pass accepts sequences, but JSON object keys cannot
     // be sequences. Exercise failure after reservation in real serialization.
     let invalid = std::collections::BTreeMap::from([(vec![1u8, 2], "value")]);
@@ -33,7 +33,7 @@ fn prepared_projection_keeps_custody_and_serialization_failure_rolls_back() {
             AdapterError::Rejected("runtime parameters could not be prepared".into()).to_string()
         );
     }
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     let legacy = JsonFrame::prepare(&value, None).unwrap();
     assert!(legacy.shared().is_none());
     assert_eq!(*legacy, value);

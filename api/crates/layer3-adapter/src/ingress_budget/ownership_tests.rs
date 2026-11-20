@@ -22,7 +22,7 @@ fn policy() -> (IngressBudget, IngressOwnershipPolicy) {
 fn data_saturation_preserves_real_control_and_transformation_allocations() {
     let (root, policy) = policy();
     let data = policy
-        .reserve(IngressClass::Data, plan(5120))
+        .reserve(IngressClass::Data, plan(policy.bounds().data_bytes()))
         .unwrap()
         .initialize(|| vec![7u8; 4000]);
     assert!(policy.reserve(IngressClass::Data, plan(1)).is_err());
@@ -38,7 +38,7 @@ fn data_saturation_preserves_real_control_and_transformation_allocations() {
     assert_eq!(work[0], 8);
     assert_eq!(root.available_bytes(), 0);
     drop((control, work, data));
-    assert_eq!(root.available_bytes(), 8192);
+    assert_eq!(root.available_bytes(), 8192 - root.metadata_bytes());
 }
 
 #[test]
@@ -52,10 +52,10 @@ fn split_and_shared_clone_hold_payload_until_last_owner() {
     let clone = owner.clone();
     assert!(clone.ptr_eq(&owner));
     drop((owner, bundle));
-    assert_eq!(root.available_bytes(), 6144);
+    assert_eq!(root.available_bytes(), 6144 - root.metadata_bytes());
     assert_eq!(clone[1023], 42);
     drop(clone);
-    assert_eq!(root.available_bytes(), 8192);
+    assert_eq!(root.available_bytes(), 8192 - root.metadata_bytes());
 }
 
 #[test]
@@ -63,9 +63,12 @@ fn repeated_policy_and_existing_component_share_the_same_class_ceiling() {
     let (root, policy) = policy();
     let duplicate = IngressOwnershipPolicy::new(root.clone(), policy.bounds()).unwrap();
     let component = Arc::new(Semaphore::new(8192));
-    let held =
-        IngressReservation::try_acquire(&component, Some(&policy.budget(IngressClass::Data)), 5120)
-            .unwrap();
+    let held = IngressReservation::try_acquire(
+        &component,
+        Some(&policy.budget(IngressClass::Data)),
+        policy.bounds().data_bytes(),
+    )
+    .unwrap();
     assert!(duplicate.reserve(IngressClass::Data, plan(1)).is_err());
     assert!(IngressReservation::try_acquire(
         &component,
@@ -73,14 +76,14 @@ fn repeated_policy_and_existing_component_share_the_same_class_ceiling() {
         1,
     )
     .is_none());
-    assert_eq!(component.available_permits(), 3072);
+    assert_eq!(component.available_permits(), 3072 + root.metadata_bytes());
     assert!(IngressOwnershipPolicy::new(
         root.clone(),
         ClassBounds::new(8192, plan(512), plan(2048)).unwrap(),
     )
     .is_err());
     drop(held);
-    assert_eq!(root.available_bytes(), 8192);
+    assert_eq!(root.available_bytes(), 8192 - root.metadata_bytes());
 }
 
 #[test]
@@ -99,7 +102,7 @@ fn overflow_refusal_and_initialization_failure_release_every_allowance() {
         error.unwrap_err(),
         AdmissionRefusal::InvalidPlan { phase: "malformed" }
     );
-    assert_eq!(root.available_bytes(), 8192);
+    assert_eq!(root.available_bytes(), 8192 - root.metadata_bytes());
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         policy
             .reserve(IngressClass::Data, plan(1024))
@@ -107,7 +110,7 @@ fn overflow_refusal_and_initialization_failure_release_every_allowance() {
             .initialize(|| panic!("decode unwound"));
     }));
     assert!(result.is_err());
-    assert_eq!(root.available_bytes(), 8192);
+    assert_eq!(root.available_bytes(), 8192 - root.metadata_bytes());
 }
 
 #[test]
@@ -120,11 +123,11 @@ fn payload_destructor_runs_before_reservation_release() {
     }
     let (root, policy) = policy();
     let owner = policy
-        .reserve(IngressClass::Data, plan(5120))
+        .reserve(IngressClass::Data, plan(policy.bounds().data_bytes()))
         .unwrap()
         .initialize(|| Observe(root.clone()));
     drop(owner);
-    assert_eq!(root.available_bytes(), 8192);
+    assert_eq!(root.available_bytes(), 8192 - root.metadata_bytes());
 }
 
 #[test]
@@ -140,10 +143,10 @@ fn independent_growth_reserves_old_plus_new_until_old_capacity_is_freed() {
         .reserve(IngressClass::Transformation, plan(2048))
         .unwrap();
     let new = working.initialize(|| old.iter().take(1024).copied().collect::<Vec<_>>());
-    assert_eq!(root.available_bytes(), 2048);
+    assert_eq!(root.available_bytes(), 2048 - root.metadata_bytes());
     drop(old);
-    assert_eq!(root.available_bytes(), 6144);
+    assert_eq!(root.available_bytes(), 6144 - root.metadata_bytes());
     assert_eq!(new.len(), 1024);
     drop(new);
-    assert_eq!(root.available_bytes(), 8192);
+    assert_eq!(root.available_bytes(), 8192 - root.metadata_bytes());
 }

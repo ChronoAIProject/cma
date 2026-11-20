@@ -86,7 +86,10 @@ async fn a_new_transaction_sizes_the_replaced_row_without_reusing_earlier_admiss
     );
     drop(current);
     later.release().abort_transaction().await.unwrap();
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     drop((session, rows));
     other.shutdown().await;
     fixture.finish().await;
@@ -129,6 +132,9 @@ async fn admitted_and_legacy_reads_use_the_same_ordinary_work_schema_predicate()
     drop(page);
     transaction.release().abort_transaction().await.unwrap();
     drop(session);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     fixture.finish().await;
 }

@@ -33,17 +33,17 @@ fn isolated_queue_storage_and_refusal_contract() {
     let mut probe = AllocationProbe::new();
     let (sender, receiver) =
         probe.track(|| AdmittedConversationInputSender::channel(3, policy.clone()).unwrap());
-    let held = root.capacity_bytes() - root.available_bytes();
+    let held = root.reserved_work_bytes();
     assert!(probe.peak() > 0);
     assert!(probe.peak() <= held);
     let clone = probe.track(|| sender.clone());
     let peak = probe.peak();
     probe.track(|| drop((sender, clone)));
     assert!(probe.live() > 0, "the receiver still owns queue storage");
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), held);
+    assert_eq!(root.reserved_work_bytes(), held);
     probe.track(|| drop(receiver));
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     assert!(probe.peak() <= held);
     eprintln!("input_queue requested_peak={peak} admitted={held}");
     drop(probe);
@@ -61,7 +61,7 @@ fn isolated_queue_storage_and_refusal_contract() {
     let mut probe = AllocationProbe::new();
     let (legacy_sender, legacy_receiver) = probe.track(|| mpsc::channel::<u8>(3));
     drop((legacy_sender, allowance));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     assert!(
         probe.live() > 0,
         "a sender-only allowance releases while raw receiver storage is live"
@@ -91,7 +91,7 @@ fn isolated_queue_storage_and_refusal_contract() {
     drop(error);
     assert_eq!(probe.live(), 0);
     drop((probe, scope));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 
     let (sender, receiver) = AdmittedConversationInputSender::channel(1, policy.clone()).unwrap();
     let inputs: [_; 128] = std::array::from_fn(|_| input(&policy, "retained input"));
@@ -136,5 +136,5 @@ fn isolated_queue_storage_and_refusal_contract() {
         probe.allocated()
     );
     drop((results, copies, probe, pressure, scopes, sender, receiver));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

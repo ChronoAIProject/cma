@@ -12,6 +12,9 @@ pub(in crate::hosted) mod typed;
 #[path = "acp_ingress_identity.rs"]
 pub(in crate::hosted) mod identity;
 
+#[path = "acp_ingress_components.rs"]
+pub(super) mod components;
+
 pub(in crate::hosted) type PreparedUpdate =
     Result<crate::RuntimeOutputUpdate, SharedOwned<crate::hosted::runtime_decode::Error>>;
 
@@ -42,12 +45,15 @@ impl crate::ingress_budget::IngressOwnershipPolicy {
             ],
         )?
         .requested_bytes();
+        let diagnostics = crate::ingress_budget::diagnostic::scope_entry_plan()?.requested_bytes();
         let attachment = AllocationPlan::new(
             "attachment control",
             &[
                 crate::RuntimeOutputReceipt::control_bound(128)?.requested_bytes(),
                 2 * reply,
-                1024, // Input worker's validated conversation-id copy.
+                1024,        // Input worker's validated conversation-id copy.
+                diagnostics, // Serial reader can overlap the independent ACK task.
+                diagnostics,
             ],
         )?
         .requested_bytes();
@@ -65,6 +71,7 @@ impl crate::ingress_budget::IngressOwnershipPolicy {
                 &[typed::maximum_working_bytes()?.max(consumer_transformation.requested_bytes())],
             )?,
         )?
+        .with_process_storage(components::storage_plan()?)?
         .with_attachment_limit(maximum_attachments)
     }
 }

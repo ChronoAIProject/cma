@@ -44,10 +44,10 @@ fn diagnostic_source_result_preserves_owner_identity_and_last_clone() {
     drop((scope, result));
     assert!(probe.live() >= 4096);
     assert!(probe.live() <= copy.requested_bytes());
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), source_bytes);
+    assert_eq!(root.reserved_work_bytes(), source_bytes);
     drop(copy);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -84,9 +84,9 @@ fn diagnostic_source_result_keeps_source_when_local_capacity_is_full() {
         matches!(result.as_adapter(), Some(AdapterError::RuntimeLedgerHold(detail)) if detail.len() == 4096)
     );
     drop(scope);
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), source_bytes);
+    assert_eq!(root.reserved_work_bytes(), source_bytes);
     drop(result);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -123,11 +123,8 @@ fn diagnostic_source_result_retains_local_errors_and_rejects_foreign_owners() {
         })
     );
     drop((scope, foreign_scope));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
-    assert_eq!(
-        foreign_root.available_bytes(),
-        foreign_root.capacity_bytes()
-    );
+    root.assert_idle();
+    foreign_root.assert_idle();
 }
 
 #[test]
@@ -146,5 +143,5 @@ fn diagnostic_source_cancellation_drops_both_source_and_local_storage() {
     drop(scope);
     assert!(root.available_bytes() < root.capacity_bytes());
     drop(pending);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

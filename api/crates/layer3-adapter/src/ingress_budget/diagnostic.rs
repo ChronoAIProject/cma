@@ -24,6 +24,37 @@ tokio::task_local! {
     static CURRENT: Context;
 }
 
+pub(crate) fn scope_entry_plan() -> Result<AllocationPlan, AdmissionRefusal> {
+    AllocationPlan::checked(
+        "diagnostic work scope",
+        &[super::sizing::shared_allocation_bytes::<
+            super::ReservationBundle,
+        >()],
+    )
+}
+
+impl<F: Future<Output = bool>> OwnedWork<F> {
+    /// A boolean result cannot retain a heap-owning error beyond the operation.
+    /// Keep diagnostic text admitted while polling without an unused error Arc.
+    pub(crate) async fn resolve_diagnostic_bool(
+        self,
+        policy: &IngressOwnershipPolicy,
+        class: IngressClass,
+    ) -> Result<bool, AdmissionRefusal> {
+        if !self.belongs_to(policy) {
+            return Err(AdmissionRefusal::InvalidPlan {
+                phase: "diagnostic operation ownership",
+            });
+        }
+        let context = Context {
+            scope: self.work_scope().expect("validated operation owner"),
+            policy: policy.clone(),
+            class,
+        };
+        Ok(*CURRENT.scope(context, self.resolve()).await)
+    }
+}
+
 impl<F, T> OwnedWork<F>
 where
     F: Future<Output = crate::Result<T>>,
@@ -200,3 +231,7 @@ mod context_tests;
 #[cfg(test)]
 #[path = "diagnostic_source_tests.rs"]
 mod source_tests;
+
+#[cfg(test)]
+#[path = "diagnostic_bool_tests.rs"]
+mod bool_tests;

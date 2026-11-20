@@ -1,17 +1,25 @@
 use super::*;
 
 #[test]
-fn installed_transport_can_cross_policy_modes_without_losing_its_authority() {
+fn admitted_context_keeps_transport_authority_and_refuses_legacy_installation() {
     for provider in [false, true] {
         let (root, policy) = super::super::super::guidance_admission::fixture::policy();
-        let (binding, source) = binding(provider, 6, None);
+        let (binding, source) = binding(&policy, provider, 6, None);
         let raw = if provider {
             ToolTransport::Provider(Box::new(source.provider.clone()))
         } else {
             ToolTransport::Access(source.access.clone())
         };
+        assert!(matches!(
+            binding
+                .confirm_transport(&raw, "conversation", 1)
+                .now_or_never()
+                .unwrap(),
+            Err(AdapterError::Unsupported(_))
+        ));
+        assert_eq!(source.confirmations.load(SeqCst), 0);
         binding
-            .confirm_transport(&raw, "conversation", 1)
+            .confirm_transport_admitted(&raw, "conversation", 1, &policy)
             .now_or_never()
             .unwrap()
             .unwrap();
@@ -39,14 +47,17 @@ fn installed_transport_can_cross_policy_modes_without_losing_its_authority() {
             .unwrap()
             .unwrap()
             .unwrap();
-        binding
-            .confirm_transport(&legacy, "conversation", 1)
-            .now_or_never()
-            .unwrap()
-            .unwrap();
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert!(matches!(
+            binding
+                .confirm_transport(&legacy, "conversation", 1)
+                .now_or_never()
+                .unwrap(),
+            Err(AdapterError::Unsupported(_))
+        ));
         assert_eq!(source.preparations.load(SeqCst), 1);
-        assert_eq!(source.confirmations.load(SeqCst), 1);
+        assert_eq!(source.confirmations.load(SeqCst), 2);
+        drop((binding, source, legacy));
+        root.assert_idle();
     }
 }
 
@@ -113,7 +124,7 @@ fn binding_snapshot_admits_nested_strings_and_refuses_before_copying() {
     ] {
         let mut probe = AllocationProbe::new();
         let snapshot = probe.track(|| raw.clone_admitted(&policy).unwrap());
-        let charged = root.capacity_bytes() - root.available_bytes();
+        let charged = root.reserved_work_bytes();
         assert!(probe.peak() > 4096);
         assert!(
             probe.peak() <= charged,
@@ -129,7 +140,7 @@ fn binding_snapshot_admits_nested_strings_and_refuses_before_copying() {
         }
         let clone = snapshot.clone_admitted(&policy).unwrap();
         drop(snapshot);
-        assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+        assert_eq!(root.reserved_work_bytes(), charged);
         drop(clone);
         assert_eq!(probe.live(), 0);
         drop(probe);
@@ -148,6 +159,6 @@ fn binding_snapshot_admits_nested_strings_and_refuses_before_copying() {
         assert!(error.refusal().is_some());
         assert_eq!(probe.allocated(), 0);
         drop(pressure);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }

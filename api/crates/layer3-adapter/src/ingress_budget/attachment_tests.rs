@@ -33,7 +33,7 @@ fn repeated_policies_share_the_limit_and_refuse_before_allocation() {
     assert!(policy.admit_attachment().is_err());
     drop(retained);
     drop(repeated.admit_attachment().unwrap());
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     let different = policy.bounds().with_attachment_limit(2).unwrap();
     assert!(IngressOwnershipPolicy::new(root.clone(), different).is_err());
 }
@@ -61,7 +61,7 @@ fn capacity_refusal_rolls_back_the_slot_without_allocating() {
     assert_eq!(probe.allocated(), 0);
     drop(pressure);
     drop(policy.admit_attachment().unwrap());
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn policies_without_a_counted_attachment_bound_cannot_start_one() {
         Err(AdmissionRefusal::InvalidPlan { .. })
     ));
     assert_eq!(probe.allocated(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -108,7 +108,7 @@ fn split_payloads_and_component_reservations_retain_the_attachment() {
     assert!(policy.admit_attachment().is_err());
     drop(component_storage);
     drop(policy.admit_attachment().unwrap());
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -141,7 +141,7 @@ fn scope_extensions_keep_their_own_attachment_through_unwind() {
     }));
     assert!(result.is_err());
     drop(policy.admit_attachment().unwrap());
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn retention_transfers_the_attachment_and_rejects_another_attachments_owner() {
     drop(retained);
     drop(policy.admit_attachment().unwrap());
     drop(second);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -219,7 +219,7 @@ fn concurrent_admission_counts_retained_payloads_after_startup_tokens_drop() {
     assert!(policy.admit_attachment().is_err());
     drop(payloads);
     drop(policy.admit_attachment().unwrap());
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -234,19 +234,19 @@ fn isolated_attachment_slot_and_storage_survive_physical_owner_deallocation() {
         deallocation::arc_allocation_bytes::<AttachmentStorage>(),
         || policy.admit_attachment().unwrap(),
     );
-    let charged = root.capacity_bytes() - root.available_bytes();
+    let charged = root.reserved_work_bytes();
     let retained = attachment.policy().clone();
     drop(attachment);
     pause.inspect_while_dropping(
         move || drop(retained),
         || {
             assert!(policy.admit_attachment().is_err());
-            assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+            assert_eq!(root.reserved_work_bytes(), charged);
         },
     );
     assert!(probe.allocated() <= charged);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     drop(policy.admit_attachment().unwrap());
 }
 
@@ -270,5 +270,5 @@ fn isolated_inside_arc_slot_control_returns_before_physical_deallocation() {
         },
     );
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

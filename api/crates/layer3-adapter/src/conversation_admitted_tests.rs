@@ -123,7 +123,7 @@ async fn runtime_errors_retain_input_storage_until_the_last_result_clone() {
     assert!(!sender.is_closed());
     drop(sender);
     driver.await.unwrap();
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -154,7 +154,7 @@ async fn authority_refusal_is_owned_and_leaves_the_ordered_writer_usable() {
     driver.await.unwrap();
     assert!(root.available_bytes() < root.capacity_bytes());
     drop(outcome);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -181,7 +181,7 @@ async fn cancelling_an_authority_check_releases_the_input_and_keeps_the_writer()
     assert_eq!(root.available_bytes(), baseline);
     drop(sender);
     driver.await.unwrap();
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -215,7 +215,7 @@ async fn cancelling_after_handler_entry_retires_the_writer_and_drops_owned_input
     driver.await.unwrap();
     assert!(sender.is_closed());
     drop(sender);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test(start_paused = true)]
@@ -250,7 +250,7 @@ async fn a_timed_out_queued_input_keeps_storage_until_the_receiver_drops_it() {
     assert_eq!(calls.load(Ordering::Acquire), 1);
     drop(sender);
     driver.await.unwrap();
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -281,7 +281,7 @@ async fn unsupported_guard_is_refused_without_constructing_its_check_future() {
     ));
     drop(sender);
     driver.await.unwrap();
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -359,12 +359,9 @@ fn identity_clones_retain_storage_and_cannot_mix_process_roots() {
     assert_eq!(channel.conversation_id(), "conversation");
     let clone = channel.identity().clone();
     drop((channel, receiver));
-    assert_eq!(
-        root.capacity_bytes() - root.available_bytes(),
-        plan.requested_bytes()
-    );
+    assert_eq!(root.reserved_work_bytes(), plan.requested_bytes());
     drop(clone);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 
     let (other_root, other_policy) = fixture();
     let identity = other_policy
@@ -376,9 +373,9 @@ fn identity_clones_retain_storage_and_cannot_mix_process_roots() {
         AdmittedConversationChannel::new(sender, identity),
         Err(AdmissionRefusal::InvalidPlan { .. })
     ));
-    assert_eq!(other_root.available_bytes(), other_root.capacity_bytes());
+    other_root.assert_idle();
     drop(receiver);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -411,6 +408,6 @@ async fn a_foreign_outcome_retires_the_writer_without_a_false_prewrite_claim() {
     driver.await.unwrap();
     assert!(sender.is_closed());
     drop(sender);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
-    assert_eq!(other_root.available_bytes(), other_root.capacity_bytes());
+    root.assert_idle();
+    other_root.assert_idle();
 }

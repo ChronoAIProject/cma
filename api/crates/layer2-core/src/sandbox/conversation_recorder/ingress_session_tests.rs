@@ -123,7 +123,10 @@ fn snapshot_operation_requires_an_explicit_store_implementation() {
             .agent_message_snapshot_operation(&AgentId("agt_unsupported_snapshot".into()), &policy),
         Err(AdmittedError::Unsupported(_))
     ));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test]
@@ -261,7 +264,10 @@ async fn legacy_implementations_refuse_enabled_and_already_owned_sessions_before
         assert_eq!(serde_json::to_string(session.assembly()).unwrap(), before);
     }
     assert_eq!(recorder.calls.load(Ordering::SeqCst), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test]
@@ -292,11 +298,17 @@ async fn returned_session_error_keeps_its_enclosing_work_owner_until_drop() {
         })
         .await;
     drop(scope);
-    assert_eq!(root.available_bytes(), root.capacity_bytes() - 8192);
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes() - 8192
+    );
     assert_eq!(
         **result,
         AgentConversationError::Unavailable("retained failure".repeat(128))
     );
     drop(result);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }

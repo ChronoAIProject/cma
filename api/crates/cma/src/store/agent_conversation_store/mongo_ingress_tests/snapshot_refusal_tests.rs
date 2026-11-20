@@ -67,7 +67,10 @@ async fn valid_ignored_sidecars_refuse_without_reporting_snapshot_corruption() {
             matches!(result, Err(AdmittedError::Unsupported(_))),
             "{result:?}"
         );
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - root.metadata_bytes()
+        );
         let error = fixture
             .store
             .admitted_agent_message_snapshot(&fixture.agent.id, &policy)
@@ -77,7 +80,10 @@ async fn valid_ignored_sidecars_refuse_without_reporting_snapshot_corruption() {
             matches!(&*error, SandboxStoreError::Unavailable(message) if message.capacity() == 0)
         );
         drop(error);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - root.metadata_bytes()
+        );
         // Refusal supplies no snapshot for success/ACK and does not mutate or
         // quarantine the original Agent, checkpoint, receipt or ignored sidecar.
         let after = fixture
@@ -129,7 +135,10 @@ async fn snapshot_operation_keeps_data_and_read_pressure_outside_domain_results(
         );
         assert_eq!(root.available_bytes(), held);
         drop(pressure);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - root.metadata_bytes()
+        );
     }
     assert_eq!(
         fixture
@@ -180,7 +189,7 @@ async fn snapshot_operation_keeps_genuine_domain_corruption_owned() {
         assert!(matches!(&*error, SandboxStoreError::Corrupt(message) if !message.is_empty()));
         assert!(error.belongs_to(&policy));
         let held = root.available_bytes();
-        assert!(held < root.capacity_bytes());
+        assert!(held < root.capacity_bytes() - root.metadata_bytes());
         let address = match &*error {
             SandboxStoreError::Corrupt(message) => message.as_ptr(),
             _ => unreachable!(),
@@ -192,7 +201,10 @@ async fn snapshot_operation_keeps_genuine_domain_corruption_owned() {
         assert_eq!(mapped.as_ptr(), address);
         assert_eq!(root.available_bytes(), held);
         drop(mapped);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - root.metadata_bytes()
+        );
     }
     fixture.finish().await;
 }

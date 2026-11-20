@@ -24,6 +24,7 @@ import { agentActions, sandboxActions, workspaceActions } from './treeActions';
 import { CreationBadge, useTreeCreation } from './treeCreation';
 import './Tree.css';
 import { statusLabel } from '../vocabulary/status';
+import { taskActivityOrder } from './taskGroups';
 import { activityLabel, agentSignal, stateMeta, keyboardNavigation } from './treePresentation';
 import { PersonalAgentTree } from './PersonalAgentTree';
 import { DeletionProgressList } from './DeletionProgressList';
@@ -400,9 +401,13 @@ export function Tree({
                                                         id={agent.id}
                                                         facts={channelFacts}
                                                       />
-                                                      <time dateTime={agent.updatedAt}>
-                                                        {activityLabel(agent.updatedAt)}
-                                                      </time>
+                                                      {Number.isFinite(taskActivityOrder(agent)) ? (
+                                                        <time dateTime={agent.taskActivityAt}>
+                                                          {activityLabel(agent.taskActivityAt!)}
+                                                        </time>
+                                                      ) : (
+                                                        <span>Task time unavailable</span>
+                                                      )}
                                                     </>,
                                                   )}
                                                   actions={agentActions(

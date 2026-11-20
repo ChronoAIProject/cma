@@ -33,10 +33,10 @@ async fn an_enqueued_result_keeps_its_error_until_the_unpolled_receiver_drops() 
     }));
     ready.notified().await;
     drop(sender);
-    assert!(root.capacity_bytes() - root.available_bytes() >= 4096);
+    assert!(root.reserved_work_bytes() >= 4096);
     drop(operation);
     driver.await.unwrap();
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -52,9 +52,9 @@ async fn a_completed_unjoined_sender_keeps_the_owned_result_after_driver_teardow
         tokio::task::yield_now().await;
     }
     driver.await.unwrap();
-    assert!(root.capacity_bytes() - root.available_bytes() >= 4096);
+    assert!(root.reserved_work_bytes() >= 4096);
     drop(operation);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -76,7 +76,7 @@ async fn handler_panic_is_ambiguous_and_frees_the_owned_input_after_unwind() {
     assert!(driver.await.unwrap_err().is_panic());
     assert!(sender.is_closed());
     drop(sender);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -104,9 +104,9 @@ fn observations_reject_raw_and_foreign_root_watches() {
             })
         ));
         drop(receiver);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
-    assert_eq!(other_root.available_bytes(), other_root.capacity_bytes());
+    other_root.assert_idle();
 }
 
 #[tokio::test(start_paused = true)]
@@ -192,6 +192,6 @@ async fn admitted_observations_extend_loading_then_restore_the_delivery_deadline
         ));
         driver.await.unwrap();
         drop((progress, history));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }

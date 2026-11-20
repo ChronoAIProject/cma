@@ -74,7 +74,7 @@ fn isolated_rpc_error_formatting_precedes_construction_and_retains_the_result() 
         let cloned = probe.track(|| error.clone());
         drop((scope, error));
         assert!(probe.live() >= expected.len());
-        assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+        assert_eq!(root.reserved_work_bytes(), charged);
         eprintln!(
             "rpc_diagnostic requested_peak={} retained={} admitted={charged}",
             probe.peak(),
@@ -82,7 +82,7 @@ fn isolated_rpc_error_formatting_precedes_construction_and_retains_the_result() 
         );
         probe.track(|| drop(cloned));
         assert_eq!(probe.live(), 0);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 
     for class in [
@@ -123,7 +123,7 @@ fn isolated_rpc_error_formatting_precedes_construction_and_retains_the_result() 
             probe.allocated()
         );
         drop((result, scope, probe));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 
     let frame = JsonFrame::legacy(serde_json::json!({"error":{"message":"x".repeat(65_536)}}));

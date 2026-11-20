@@ -7,7 +7,7 @@ use futures_util::FutureExt;
 use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 pub(in crate::hosted) struct Source {
-    status: Arc<super::super::receipt_admission::tests::Source>,
+    status: crate::ingress_budget::SharedOwned<super::super::receipt_admission::tests::Source>,
     response: ResponseFrame,
     fault: u8,
     foreign: Option<IngressOwnershipPolicy>,
@@ -94,11 +94,16 @@ impl HostedBackend for Source {
 }
 
 pub(in crate::hosted) fn binding(
+    policy: &IngressOwnershipPolicy,
     fault: u8,
     content: &str,
     foreign: Option<IngressOwnershipPolicy>,
-) -> (HostedContextRefresh, Arc<Source>) {
+) -> (
+    HostedContextRefresh,
+    crate::ingress_budget::SharedOwned<Source>,
+) {
     let (base, status) = super::super::receipt_admission::tests::binding(
+        policy,
         if fault == 12 {
             1
         } else if fault == 13 {
@@ -108,62 +113,58 @@ pub(in crate::hosted) fn binding(
         },
         None,
     );
-    let content = if fault == 6 {
-        "different instructions"
-    } else {
-        content
-    };
-    let mut file = crate::AgentFileReadReceipt {
-        path: base.0.path.clone(),
-        size_bytes: content.len() as u64,
-        sha256: format!("{:x}", Sha256::digest(content.as_bytes())),
-        content_base64: base64::engine::general_purpose::STANDARD.encode(content),
-    };
-    match fault {
-        1 => file.path.push_str(".other"),
-        2 => file.content_base64 = "invalid!".into(),
-        3 => file.sha256 = "b".repeat(64),
-        4 => file.size_bytes += 1,
-        5 => file.size_bytes = MAX_INSTRUCTIONS as u64 + 1,
-        _ => {}
-    }
-    let response = if matches!(fault, 8 | 14) {
-        ResponseFrame::Failure(WireFailure {
-            operation: WireOperation::ReadAgentFile,
-            code: "synthetic_failure".into(),
-            detail: if fault == 14 {
-                content.into()
-            } else {
-                "retained detail".into()
-            },
-            retryable: true,
-        })
-    } else if fault == 11 {
-        ResponseFrame::Failure(WireFailure {
-            operation: WireOperation::WriteAgentFile,
-            code: "wrong_operation".into(),
-            detail: "retained detail".into(),
-            retryable: false,
-        })
-    } else {
-        ResponseFrame::ReadAgentFile(file)
-    };
-    let source = Arc::new(Source {
-        status,
-        response,
-        fault,
-        foreign,
-        reads: AtomicUsize::new(0),
+    let source = super::super::binding_fixture::source(policy, content.len() * 2 + 4096, || {
+        let content = if fault == 6 {
+            "different instructions"
+        } else {
+            content
+        };
+        let mut file = crate::AgentFileReadReceipt {
+            path: base.0.path.clone(),
+            size_bytes: content.len() as u64,
+            sha256: format!("{:x}", Sha256::digest(content.as_bytes())),
+            content_base64: base64::engine::general_purpose::STANDARD.encode(content),
+        };
+        match fault {
+            1 => file.path.push_str(".other"),
+            2 => file.content_base64 = "invalid!".into(),
+            3 => file.sha256 = "b".repeat(64),
+            4 => file.size_bytes += 1,
+            5 => file.size_bytes = MAX_INSTRUCTIONS as u64 + 1,
+            _ => {}
+        }
+        let response = if matches!(fault, 8 | 14) {
+            ResponseFrame::Failure(WireFailure {
+                operation: WireOperation::ReadAgentFile,
+                code: "synthetic_failure".into(),
+                detail: if fault == 14 {
+                    content.into()
+                } else {
+                    "retained detail".into()
+                },
+                retryable: true,
+            })
+        } else if fault == 11 {
+            ResponseFrame::Failure(WireFailure {
+                operation: WireOperation::WriteAgentFile,
+                code: "wrong_operation".into(),
+                detail: "retained detail".into(),
+                retryable: false,
+            })
+        } else {
+            ResponseFrame::ReadAgentFile(file)
+        };
+        Source {
+            status,
+            response,
+            fault,
+            foreign,
+            reads: AtomicUsize::new(0),
+        }
     });
-    let context = HostedContextRefresh::new(
-        source.clone(),
-        base.0.handle.clone(),
-        base.0.identity.clone(),
-        "/home/cma/.cma/agents/synthetic/home",
-        base.0.cwd.clone(),
-        Vec::new(),
-    )
-    .unwrap();
+    let mut sources = super::super::binding_fixture::sources(&base);
+    sources.backend = source.clone().into();
+    let context = super::super::binding_fixture::rebuild(policy, &base, sources, &[]);
     (context, source)
 }
 
@@ -196,7 +197,7 @@ fn policy() -> (IngressBudget, IngressOwnershipPolicy) {
 fn instruction_confirmation_preserves_validation_and_owned_failures() {
     for fault in [0, 1, 2, 3, 4, 5, 6, 7, 8, 11, 12, 13] {
         let (root, policy) = policy();
-        let (binding, source) = binding(fault, "exact instructions", None);
+        let (binding, source) = binding(&policy, fault, "exact instructions", None);
         let result = binding
             .confirm_instructions_admitted("exact instructions", &policy)
             .unwrap()
@@ -227,14 +228,14 @@ fn instruction_confirmation_preserves_validation_and_owned_failures() {
         drop((binding, source));
         assert!(root.available_bytes() < root.capacity_bytes());
         drop(result);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
 #[test]
 fn instruction_source_refuses_legacy_and_foreign_producers_before_poll() {
     let (root, policy) = policy();
-    let (legacy, files) = super::super::writer_tests::binding(0);
+    let (legacy, files) = super::super::writer_tests::owned_binding(&policy, 0);
     let error = legacy
         .confirm_instructions_admitted("instructions", &policy)
         .unwrap()
@@ -243,9 +244,10 @@ fn instruction_source_refuses_legacy_and_foreign_producers_before_poll() {
         .unwrap_err();
     assert!(matches!(error, AdmittedError::Unsupported(_)));
     assert_eq!(files.status_reads.load(SeqCst), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    drop((legacy, files));
+    root.assert_idle();
     let (foreign_root, foreign) = self::policy();
-    let (binding, source) = binding(0, "instructions", Some(foreign));
+    let (binding, source) = binding(&policy, 0, "instructions", Some(foreign));
     let error = binding
         .confirm_instructions_admitted("instructions", &policy)
         .unwrap()
@@ -257,17 +259,16 @@ fn instruction_source_refuses_legacy_and_foreign_producers_before_poll() {
         Some(AdmissionRefusal::InvalidPlan { .. })
     ));
     assert_eq!(source.reads.load(SeqCst), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
-    assert_eq!(
-        foreign_root.available_bytes(),
-        foreign_root.capacity_bytes()
-    );
+    drop((binding, source));
+    root.assert_idle();
+    foreign_root.assert_idle();
 }
 
 #[test]
 fn instruction_cancellation_and_pressure_release_every_owner() {
     let (root, policy) = policy();
-    let (binding, source) = binding(10, "instructions", None);
+    let (binding, source) = binding(&policy, 10, "instructions", None);
+    let baseline = root.available_bytes();
     let mut pending = Box::pin(
         binding
             .confirm_instructions_admitted("instructions", &policy)
@@ -276,7 +277,7 @@ fn instruction_cancellation_and_pressure_release_every_owner() {
     assert!(pending.as_mut().now_or_never().is_none());
     assert_eq!(source.reads.load(SeqCst), 1);
     drop(pending);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(root.available_bytes(), baseline);
     let pressure = policy
         .admit(
             IngressClass::Data,
@@ -299,15 +300,15 @@ fn instruction_cancellation_and_pressure_release_every_owner() {
     ));
     assert_eq!(probe.allocated(), 0);
     assert_eq!(source.reads.load(SeqCst), 1);
-    drop((probe, pressure));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    drop((probe, pressure, binding, source));
+    root.assert_idle();
 }
 
 #[test]
 fn instruction_source_error_stays_charged_through_last_clone() {
     if crate::allocation_probe::deallocation::isolated("hosted::managed_context::instructions_admission::tests::instruction_source_error_stays_charged_through_last_clone") { return; }
     let (root, policy) = policy();
-    let (binding, source) = binding(7, "instructions", None);
+    let (binding, source) = binding(&policy, 7, "instructions", None);
     let mut probe = AllocationProbe::new();
     let error = probe.track(|| {
         binding
@@ -320,10 +321,10 @@ fn instruction_source_error_stays_charged_through_last_clone() {
     let clone = probe.track(|| error.clone());
     drop((binding, source, error));
     assert!(probe.live() >= 2048);
-    assert!(probe.live() <= root.capacity_bytes() - root.available_bytes());
+    assert!(probe.live() <= root.reserved_work_bytes());
     drop(clone);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -331,10 +332,11 @@ fn instruction_decode_admits_peak_overlap_and_refuses_before_decoding() {
     if crate::allocation_probe::deallocation::isolated("hosted::managed_context::instructions_admission::tests::instruction_decode_admits_peak_overlap_and_refuses_before_decoding") { return; }
     let (root, policy) = policy();
     let expected = "i".repeat(MAX_INSTRUCTIONS);
-    let (_, source) = binding(0, &expected, None);
+    let (_, source) = binding(&policy, 0, &expected, None);
     let ResponseFrame::ReadAgentFile(file) = &source.response else {
         unreachable!()
     };
+    let source_baseline = root.available_bytes();
     let mut probe = AllocationProbe::new();
     let result = probe.track(|| {
         verify_instructions(file, &expected, &policy)
@@ -342,7 +344,7 @@ fn instruction_decode_admits_peak_overlap_and_refuses_before_decoding() {
             .unwrap()
             .unwrap()
     });
-    let charged = root.capacity_bytes() - root.available_bytes();
+    let charged = source_baseline - root.available_bytes();
     assert!(probe.peak() >= MAX_INSTRUCTIONS);
     assert!(
         probe.peak() <= charged,
@@ -356,7 +358,7 @@ fn instruction_decode_admits_peak_overlap_and_refuses_before_decoding() {
     );
     drop(result);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(root.available_bytes(), source_baseline);
     drop(probe);
     let pressure = policy
         .admit(
@@ -395,7 +397,8 @@ fn instruction_decode_admits_peak_overlap_and_refuses_before_decoding() {
     eprintln!("legacy_instruction_decode peak={} charged=0", probe.peak());
     drop((baseline, pressure));
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    drop(source);
+    root.assert_idle();
 }
 
 #[test]
@@ -403,7 +406,7 @@ fn instruction_wire_error_accounts_formatting_overlap_and_retained_clones() {
     if crate::allocation_probe::deallocation::isolated("hosted::managed_context::instructions_admission::tests::instruction_wire_error_accounts_formatting_overlap_and_retained_clones") { return; }
     let (root, policy) = policy();
     let detail = "e".repeat(64 * 1024);
-    let (binding, source) = binding(14, &detail, None);
+    let (binding, source) = binding(&policy, 14, &detail, None);
     let mut probe = AllocationProbe::new();
     let error = probe.track(|| {
         binding
@@ -413,7 +416,7 @@ fn instruction_wire_error_accounts_formatting_overlap_and_retained_clones() {
             .unwrap()
             .unwrap_err()
     });
-    let charged = root.capacity_bytes() - root.available_bytes();
+    let charged = root.reserved_work_bytes();
     assert!(probe.peak() >= detail.len() * 2);
     assert!(
         probe.peak() <= charged,
@@ -437,5 +440,5 @@ fn instruction_wire_error_accounts_formatting_overlap_and_retained_clones() {
     );
     drop(clone);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

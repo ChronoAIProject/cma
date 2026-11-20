@@ -42,15 +42,15 @@ async fn extension_survives_completed_future_and_every_result_clone() {
         .await
         .into_shared_admitted()
         .unwrap();
-    let charged = root.capacity_bytes() - root.available_bytes();
+    let charged = root.reserved_work_bytes();
     assert_eq!(charged, scope.requested_bytes());
     assert!(charged >= 4096 + size_of::<Node>());
     let clone = owned.clone();
     drop((scope, owned));
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+    assert_eq!(root.reserved_work_bytes(), charged);
     assert_eq!(clone.len(), 4096);
     drop(clone);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -79,11 +79,11 @@ async fn cancelled_parent_cannot_release_an_inherited_extended_result() {
     while !child.is_finished() {
         tokio::task::yield_now().await;
     }
-    assert!(root.capacity_bytes() - root.available_bytes() >= 8192);
+    assert!(root.reserved_work_bytes() >= 8192);
     let result = child.await.unwrap();
     assert_eq!(result.len(), 8192);
     drop(result);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -96,10 +96,7 @@ fn foreign_root_overflow_and_contention_leave_no_partial_allowance() {
         scope.admit_extra(&foreign, IngressClass::Data, plan(4096)),
         Err(AdmissionRefusal::InvalidPlan { .. })
     ));
-    assert_eq!(
-        foreign_root.available_bytes(),
-        foreign_root.capacity_bytes()
-    );
+    foreign_root.assert_idle();
     assert!(matches!(
         scope.admit_extra(&policy, IngressClass::Data, plan(u32::MAX as usize)),
         Err(AdmissionRefusal::InvalidPlan { .. })
@@ -113,7 +110,7 @@ fn foreign_root_overflow_and_contention_leave_no_partial_allowance() {
     assert_eq!(extensions.requested_bytes(), 0);
     assert_eq!(root.available_bytes(), before);
     drop((lock, scope));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -128,9 +125,9 @@ fn split_keeps_extension_storage_with_its_original_owner() {
     let retained = bundle.requested_bytes();
     assert!(retained >= 512 + 4096 + size_of::<Node>());
     drop(child);
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), retained);
+    assert_eq!(root.reserved_work_bytes(), retained);
     drop(bundle);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -143,7 +140,7 @@ fn long_extension_list_drops_without_recursive_stack_growth() {
             .unwrap();
     }
     drop(scope);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -175,7 +172,7 @@ fn isolated_extension_allocation_contract() {
         .unwrap();
     let node = extensions.nodes.get_mut().take().unwrap();
     let live = probe.live();
-    let charged = root.capacity_bytes() - root.available_bytes();
+    let charged = root.reserved_work_bytes();
     let (storage, tail) = probe.track(|| pop(node));
     assert!(tail.is_none());
     assert_eq!(
@@ -183,10 +180,10 @@ fn isolated_extension_allocation_contract() {
         live - size_of::<Node>(),
         "free node before guard release"
     );
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+    assert_eq!(root.reserved_work_bytes(), charged);
     drop((extensions, storage));
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     drop(probe);
     let mut probe = crate::allocation_probe::AllocationProbe::new();
     let scope = probe.track(|| new_scope(&policy));
@@ -202,7 +199,7 @@ fn isolated_extension_allocation_contract() {
     );
     let clone = probe.track(|| result.clone());
     probe.track(|| drop((scope, result)));
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+    assert_eq!(root.reserved_work_bytes(), charged);
     assert!(probe.live() >= 8192);
     eprintln!(
         "extended_scope peak={} retained={} admitted={charged}",
@@ -211,7 +208,7 @@ fn isolated_extension_allocation_contract() {
     );
     probe.track(|| drop(clone));
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     drop(probe);
 
     let scope = new_scope(&policy);
@@ -249,5 +246,5 @@ fn isolated_extension_allocation_contract() {
     let control = probe.track(|| scope.initialize_owned(|| vec![0u8; 128]));
     assert_eq!(control.len(), 128);
     drop((control, probe, scope, pressure));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

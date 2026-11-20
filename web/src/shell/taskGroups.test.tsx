@@ -54,3 +54,11 @@ it('uses stable theme-aware fallback colours with at least 3:1 sidebar contrast'
   expect(taskColor('one')).toBe(taskColor('one'));
   expect(taskColor('one')).toMatch(/^var\(--dsw-alias-workspace-/);
 });
+
+it.each([undefined, '', 'invalid'])(
+  'does not turn missing task time into a date group: %s',
+  (at) => {
+    expect(taskGroup('completed', at, new Date())).toBe('Task time unavailable');
+    expect(taskTime(at, new Date())).toBe('Task time unavailable');
+  },
+);

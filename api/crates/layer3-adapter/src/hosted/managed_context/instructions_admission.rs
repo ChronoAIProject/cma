@@ -12,6 +12,7 @@ impl HostedContextRefresh {
         expected: &'a str,
         policy: &IngressOwnershipPolicy,
     ) -> Result<AdmittedOperation<'a, ()>, AdmittedError> {
+        self.require_owner(policy)?;
         let owned_policy = policy.clone();
         AdmittedOperation::from_owned(
             policy,

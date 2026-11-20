@@ -50,7 +50,7 @@ fn digest_matches_all_pinned_native_vectors() {
         assert_eq!(&*digest, vector["bindingDigest"].as_str().unwrap());
         assert!(root.available_bytes() < root.capacity_bytes());
         drop(digest);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -78,7 +78,7 @@ fn admitted_digest_refuses_invalid_input_and_releases_partial_reservations() {
         let legacy = binding_digest(cwd, &servers).unwrap_err();
         assert!(matches!(admitted, AdapterError::Unavailable(_)));
         assert_eq!(admitted.to_string(), legacy.to_string());
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
     for class in [IngressClass::Data, IngressClass::Transformation] {
         let available = policy.budget(class).available_bytes();
@@ -96,7 +96,7 @@ fn admitted_digest_refuses_invalid_input_and_releases_partial_reservations() {
         ));
         assert_eq!(root.available_bytes(), remaining);
         drop(blocker);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
@@ -153,15 +153,15 @@ fn isolated_digest_allocation_contract() {
         "digest retained {} > {retained}",
         probe.live()
     );
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), retained);
+    assert_eq!(root.reserved_work_bytes(), retained);
     eprintln!("digest requested_peak={} requested_retained={} admitted_peak={peak_bound} admitted_retained={retained}", probe.peak(), probe.live());
     let BindingDigest::Admitted(digest) = digest else {
         panic!("digest escaped its owner")
     };
     let copy = digest.clone();
     drop(digest);
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), retained);
+    assert_eq!(root.reserved_work_bytes(), retained);
     drop(copy);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

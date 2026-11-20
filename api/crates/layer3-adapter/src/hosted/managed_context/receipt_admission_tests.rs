@@ -103,27 +103,19 @@ impl HostedBackend for Source {
 }
 
 pub(in crate::hosted) fn binding(
+    policy: &IngressOwnershipPolicy,
     fault: u8,
     foreign: Option<IngressOwnershipPolicy>,
-) -> (HostedContextRefresh, Arc<Source>) {
-    let source = Arc::new(Source {
+) -> (
+    HostedContextRefresh,
+    crate::ingress_budget::SharedOwned<Source>,
+) {
+    let source = super::super::binding_fixture::source(policy, 0, || Source {
         calls: AtomicUsize::new(0),
         fault,
         foreign,
     });
-    let binding = HostedContextRefresh::new(
-        source.clone(),
-        RuntimeHandle("synthetic-runtime".into()),
-        RuntimeStatusRequest {
-            sandbox_id: "synthetic-sandbox".into(),
-            generation: 3,
-            home_identity: "h".repeat(43),
-        },
-        "/home/cma/.cma/agents/synthetic/home",
-        "/home/cma/work".into(),
-        Vec::new(),
-    )
-    .unwrap();
+    let binding = super::super::binding_fixture::context(policy, source.clone().into());
     (binding, source)
 }
 
@@ -156,7 +148,7 @@ fn source_receipt_keeps_storage_and_rejects_stale_or_unready_status() {
     }
     for fault in 0..=2 {
         let (root, policy) = policy();
-        let (binding, source) = binding(fault, None);
+        let (binding, source) = binding(&policy, fault, None);
         let mut probe = AllocationProbe::new();
         let result = probe.track(|| {
             binding
@@ -169,7 +161,7 @@ fn source_receipt_keeps_storage_and_rejects_stale_or_unready_status() {
         assert_eq!(source.calls.load(SeqCst), 1);
         assert!(result.belongs_to(&policy));
         assert_eq!(result.is_some(), fault == 0);
-        assert!(probe.live() <= root.capacity_bytes() - root.available_bytes());
+        assert!(probe.live() <= root.reserved_work_bytes());
         if fault == 0 {
             assert_eq!(result.as_ref().unwrap().len(), 64);
             assert!(probe.live() >= 64);
@@ -191,14 +183,14 @@ fn source_receipt_keeps_storage_and_rejects_stale_or_unready_status() {
         assert!(root.available_bytes() < root.capacity_bytes());
         drop(result);
         assert_eq!(probe.live(), 0);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }
 
 #[test]
 fn source_error_retains_custody_and_foreign_operation_is_never_polled() {
     let (root, policy) = policy();
-    let (binding, source) = binding(3, None);
+    let (binding, source) = binding(&policy, 3, None);
     let error = binding
         .readiness_receipt_admitted("synthetic-session", 7, &policy)
         .unwrap()
@@ -213,10 +205,10 @@ fn source_error_retains_custody_and_foreign_operation_is_never_polled() {
     drop((binding, source));
     assert!(root.available_bytes() < root.capacity_bytes());
     drop(error);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 
     let (foreign_root, foreign) = self::policy();
-    let (binding, source) = self::binding(0, Some(foreign));
+    let (binding, source) = self::binding(&policy, 0, Some(foreign));
     let error = binding
         .readiness_receipt_admitted("synthetic-session", 7, &policy)
         .unwrap()
@@ -228,17 +220,16 @@ fn source_error_retains_custody_and_foreign_operation_is_never_polled() {
         Some(AdmissionRefusal::InvalidPlan { .. })
     ));
     assert_eq!(source.calls.load(SeqCst), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
-    assert_eq!(
-        foreign_root.available_bytes(),
-        foreign_root.capacity_bytes()
-    );
+    drop((binding, source));
+    root.assert_idle();
+    foreign_root.assert_idle();
 }
 
 #[test]
 fn status_admission_precedes_io_and_cancellation_releases_request_and_future() {
     let (root, policy) = policy();
-    let (binding, source) = binding(4, None);
+    let (binding, source) = binding(&policy, 4, None);
+    let baseline = root.available_bytes();
     let mut operation = Box::pin(
         binding
             .readiness_receipt_admitted("synthetic-session", 7, &policy)
@@ -247,7 +238,7 @@ fn status_admission_precedes_io_and_cancellation_releases_request_and_future() {
     assert!(operation.as_mut().now_or_never().is_none());
     assert_eq!(source.calls.load(SeqCst), 1);
     drop(operation);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(root.available_bytes(), baseline);
     let pressure = policy
         .admit(
             IngressClass::Data,
@@ -270,6 +261,6 @@ fn status_admission_precedes_io_and_cancellation_releases_request_and_future() {
     ));
     assert_eq!(probe.allocated(), 0);
     assert_eq!(source.calls.load(SeqCst), 1);
-    drop((probe, pressure));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    drop((probe, pressure, binding, source));
+    root.assert_idle();
 }

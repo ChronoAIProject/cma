@@ -23,11 +23,14 @@ fn snapshot_decode_error_keeps_its_work_reservation_until_the_error_drops() {
     drop(raw);
     assert_eq!(root.available_bytes(), held);
     assert!(
-        held < root.capacity_bytes(),
+        held < root.capacity_bytes() - root.metadata_bytes(),
         "returned snapshot error lost allocation custody"
     );
     drop(result);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[test]
@@ -53,9 +56,12 @@ fn retained_decode_errors_have_independent_owners_and_return_all_capacity() {
     let held = root.available_bytes();
     drop(errors.pop());
     assert!(root.available_bytes() > held);
-    assert!(root.available_bytes() < root.capacity_bytes());
+    assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     drop(errors);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 fn malformed_large_key() -> RawDocumentBuf {
@@ -77,7 +83,10 @@ fn malformed_large_key_returns_only_a_fixed_refusal_after_dropping_parser_scratc
         result,
         Err(SnapshotError::Refused(SnapshotRefusal::Structure))
     ));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     assert!(
         matches!(SnapshotRefusal::Structure.into_error(), SandboxStoreError::Unavailable(message) if message.capacity() == 0)
     );
@@ -114,12 +123,18 @@ fn preflight_refuses_before_reading_a_malformed_key_when_scratch_cannot_be_admit
         )
     ));
     drop(occupied);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     assert!(matches!(
         decode(&raw, &policy),
         Err(SnapshotError::Refused(SnapshotRefusal::Structure))
     ));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[test]
@@ -146,7 +161,10 @@ fn oversized_raw_row_is_refused_before_preflight_or_typed_decode() {
     ));
     assert_eq!(root.available_bytes(), held);
     drop(occupied);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test]
@@ -185,13 +203,16 @@ async fn driver_read_failure_keeps_its_diagnostic_charged_until_final_drop() {
         matches!(&*error, SandboxStoreError::Unavailable(message) if message == "conversation snapshot read failed")
     );
     assert!(error.belongs_to(&policy));
-    assert!(root.available_bytes() < root.capacity_bytes());
+    assert!(root.available_bytes() < root.capacity_bytes() - root.metadata_bytes());
     assert_eq!(
         policy.budget(IngressClass::Data).available_bytes(),
         policy.bounds().data_bytes()
     );
     drop(error);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     drop(admin);
     fixture.finish().await;
 }
@@ -213,6 +234,9 @@ async fn missing_snapshot_returns_all_read_capacity() {
         .await
         .unwrap();
     assert!(result.is_none());
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     fixture.finish().await;
 }

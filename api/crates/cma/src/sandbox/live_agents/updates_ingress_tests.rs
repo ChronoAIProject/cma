@@ -222,7 +222,7 @@ async fn quiet_flush_keeps_original_receipt_charged_through_retries_and_exact_ac
         .unwrap();
     assert_eq!(
         root.available_bytes(),
-        root.capacity_bytes() - QUIET_DELIVERY_BYTES,
+        root.capacity_bytes() - root.metadata_bytes() - QUIET_DELIVERY_BYTES,
         "quiet buffering released the original receipt owner"
     );
     assert_eq!(
@@ -234,7 +234,7 @@ async fn quiet_flush_keeps_original_receipt_charged_through_retries_and_exact_ac
     assert!(futures_util::poll!(&mut flush).is_pending());
     assert_eq!(
         root.available_bytes(),
-        root.capacity_bytes() - QUIET_DELIVERY_BYTES
+        root.capacity_bytes() - root.metadata_bytes() - QUIET_DELIVERY_BYTES
     );
     assert!(acknowledged.try_recv().is_err());
     flush.await.unwrap();
@@ -242,7 +242,10 @@ async fn quiet_flush_keeps_original_receipt_charged_through_retries_and_exact_ac
     assert_eq!(acknowledged.try_recv().unwrap(), recorder.source);
     assert!(acknowledged.try_recv().is_err());
     assert!(pending.is_none());
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -261,11 +264,14 @@ async fn cancelling_quiet_flush_retains_original_receipt_until_pending_state_dro
     drop(flush);
     assert_eq!(
         root.available_bytes(),
-        root.capacity_bytes() - QUIET_DELIVERY_BYTES
+        root.capacity_bytes() - root.metadata_bytes() - QUIET_DELIVERY_BYTES
     );
     assert!(acknowledged.try_recv().is_err());
     drop(pending);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     assert!(acknowledged.try_recv().is_err());
 }
 
@@ -282,7 +288,7 @@ async fn replacing_quiet_receipt_releases_only_the_superseded_delivery() {
             .unwrap();
         assert_eq!(
             root.available_bytes(),
-            root.capacity_bytes() - QUIET_DELIVERY_BYTES,
+            root.capacity_bytes() - root.metadata_bytes() - QUIET_DELIVERY_BYTES,
             "exactly the newest quiet delivery must remain charged"
         );
         assert_eq!(pending.as_ref().unwrap().source.cursor, retained_cursor);
@@ -290,7 +296,10 @@ async fn replacing_quiet_receipt_releases_only_the_superseded_delivery() {
     }
     assert_eq!(pending.as_ref().unwrap().source.cursor, 2);
     drop(pending);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -347,7 +356,10 @@ async fn quiet_ack_uses_control_capacity_while_data_is_saturated() {
     assert!(pending.is_none());
     assert_eq!(recorder.attempts.load(Ordering::SeqCst), 3);
     drop((committed, acknowledged, pressure));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 struct OwnedResultRecorder {
@@ -425,7 +437,10 @@ async fn returned_commit_stays_charged_through_blocked_ack_and_cancellation() {
             &mut pending,
         ));
         assert!(futures_util::poll!(&mut operation).is_pending());
-        assert_eq!(root.available_bytes(), root.capacity_bytes() - 4096);
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - root.metadata_bytes() - 4096
+        );
         if cancel {
             drop(operation);
             assert_eq!(receive.recv().await, Some(source));
@@ -436,6 +451,9 @@ async fn returned_commit_stays_charged_through_blocked_ack_and_cancellation() {
             assert_eq!(receive.recv().await, Some(source));
             assert_eq!(receive.recv().await, None);
         }
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - root.metadata_bytes()
+        );
     }
 }

@@ -47,8 +47,8 @@ fn receipt_hash_matches_the_existing_json_contract_for_every_field() {
     let mut status = status();
     for text in ["plain", "quote\" slash\\", "\0\n\t", "世界🌍", ""] {
         let original = binding.receipt(&status, text, 1);
-        Arc::get_mut(&mut binding.0).unwrap().handle.0 = text.into();
-        Arc::get_mut(&mut binding.0).unwrap().path = text.repeat(4);
+        binding.legacy_mut().handle.0 = text.into();
+        binding.legacy_mut().path = text.repeat(4);
         status.sandbox_id = text.repeat(2);
         status.home_identity = text.repeat(3);
         status.boot_id = text.repeat(5);
@@ -83,8 +83,8 @@ fn isolated_receipt_hash_allocates_only_the_fixed_digest_result() {
     }
     let (mut binding, _) = writer_tests::binding(0);
     let mut status = status();
-    Arc::get_mut(&mut binding.0).unwrap().handle.0 = "h".repeat(1024);
-    Arc::get_mut(&mut binding.0).unwrap().path = "p".repeat(4096);
+    binding.legacy_mut().handle.0 = "h".repeat(1024);
+    binding.legacy_mut().path = "p".repeat(4096);
     status.sandbox_id = "s".repeat(256);
     let session = "\"\\世界🌍".repeat(128);
     let mut probe = AllocationProbe::new();

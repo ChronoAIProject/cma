@@ -17,13 +17,13 @@ fn fragment(delta: &str) -> AgentLiveFragment {
 }
 
 fn policy(data_bytes: usize) -> (IngressBudget, IngressOwnershipPolicy) {
-    let root = IngressBudget::new(data_bytes + 2048);
-    let bounds = ClassBounds::new(
-        data_bytes + 2048,
-        AllocationPlan::new("control", &[1024]).unwrap(),
-        AllocationPlan::new("transformation", &[1024]).unwrap(),
-    )
-    .unwrap();
+    let plan = |bytes| AllocationPlan::new("live fixture", &[bytes]).unwrap();
+    let metadata = ClassBounds::new(64 * 1024, plan(1024), plan(1024))
+        .unwrap()
+        .metadata_bytes();
+    let root = IngressBudget::new(data_bytes + 2048 + metadata);
+    let bounds = ClassBounds::new(root.capacity_bytes(), plan(1024), plan(1024)).unwrap();
+    assert_eq!(bounds.data_bytes(), data_bytes);
     let policy = IngressOwnershipPolicy::new(root.clone(), bounds).unwrap();
     (root, policy)
 }
@@ -62,7 +62,10 @@ fn data_pressure_preserves_control_and_gaps_are_ordered() {
     hub.publish(Some(fragment("later")));
     assert_eq!(watching.try_recv().unwrap().delta, "later");
     drop(control);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     assert_eq!(budget.available(), bytes * 2);
 }
 
@@ -90,7 +93,10 @@ fn copies_use_length_but_shared_owners_keep_storage_after_every_lane_closes() {
     assert_eq!(root.available_bytes(), 2048);
     assert_eq!(budget.available(), 0);
     drop(last);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     assert_eq!(budget.available(), bytes);
 }
 
@@ -102,7 +108,10 @@ fn refusal_rolls_back_both_local_and_class_capacity() {
         let (root, policy) = policy(data_bytes);
         let (budget, _) = setup(local_bytes, &policy);
         assert!(budget.copy_chunk(&source, &source.delta).is_none());
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - root.metadata_bytes()
+        );
         assert_eq!(
             policy.budget(IngressClass::Data).available_bytes(),
             data_bytes
@@ -139,7 +148,10 @@ fn multibyte_chunks_keep_one_owner_each_through_broadcast_eviction() {
     }
     assert_eq!(first.try_recv(), Err(TryRecvError::Lagged(44)));
     drop((first, second));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     assert_eq!(budget.available(), bytes);
 }
 
@@ -159,7 +171,10 @@ async fn cancelled_receiver_and_absent_subscribers_do_not_keep_payloads() {
     assert_eq!(watching.recv().await.unwrap().delta, "after cancellation");
     assert_eq!(budget.available(), bytes);
     drop(watching);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[test]
@@ -200,7 +215,10 @@ fn concurrent_publication_cannot_overshoot_the_data_class() {
     assert_eq!(root.available_bytes(), 2048);
     assert_eq!(budget.available(), bytes * 14);
     drop(deliveries);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
     assert_eq!(budget.available(), bytes * 16);
 }
 
@@ -229,5 +247,8 @@ async fn retained_payload_does_not_restore_a_revoked_publishers_authority() {
     assert_eq!(root.available_bytes(), 2048);
     authority.revoke();
     assert_eq!(watching.try_recv(), Err(TryRecvError::Lagged(1)));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }

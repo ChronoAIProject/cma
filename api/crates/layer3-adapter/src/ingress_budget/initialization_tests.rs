@@ -44,7 +44,7 @@ fn isolated_heap_initialization_error_keeps_custody() {
         .unwrap_err();
     drop(policy);
     assert_eq!(error.len(), 4096);
-    let charged = root.capacity_bytes() - root.available_bytes();
+    let charged = root.reserved_work_bytes();
     assert!(probe.live() >= 4096);
     assert!(
         probe.live() <= charged,
@@ -57,11 +57,11 @@ fn isolated_heap_initialization_error_keeps_custody() {
     assert!(clone.ptr_eq(&error));
     assert_eq!(probe.allocated(), allocated);
     drop(error);
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+    assert_eq!(root.reserved_work_bytes(), charged);
     assert!(probe.live() >= 4096);
     drop(clone);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -95,7 +95,7 @@ fn static_failure_releases_partial_storage_without_allocating_an_error_owner() {
     assert_eq!(error, refusal);
     assert_eq!(probe.allocated(), 512);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     let success = probe
         .track(|| {
             policy
@@ -105,10 +105,10 @@ fn static_failure_releases_partial_storage_without_allocating_an_error_owner() {
         })
         .unwrap();
     assert_eq!(success[511], 23);
-    assert!(probe.live() <= root.capacity_bytes() - root.available_bytes());
+    assert!(probe.live() <= root.reserved_work_bytes());
     drop(success);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -151,5 +151,5 @@ fn fallible_owner_layout_covers_either_returned_branch() {
     assert!(probe.live() <= bytes);
     drop(success);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

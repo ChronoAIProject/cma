@@ -68,7 +68,7 @@ impl HostedProviderToolSource for Legacy {
 fn admitted_transport_refuses_legacy_sources_before_invocation_and_before_installation() {
     for provider in [false, true] {
         let (root, policy) = super::super::super::guidance_admission::fixture::policy();
-        let (mut binding, _) = binding(provider, 0, None);
+        let (binding, _) = binding(&policy, provider, 0, None);
         let prepared = binding
             .prepare_transport_admitted(
                 "conversation",
@@ -80,12 +80,21 @@ fn admitted_transport_refuses_legacy_sources_before_invocation_and_before_instal
             .unwrap()
             .unwrap()
             .unwrap();
-        let state = Arc::get_mut(&mut binding.0).unwrap();
+        let mut sources = super::super::super::binding_fixture::sources(&binding);
+        let legacy = super::super::super::binding_fixture::source(&policy, 0, || Legacy);
         if provider {
-            state.provider.as_mut().unwrap().0 = Arc::new(Legacy);
+            sources.provider.as_mut().unwrap().0 = legacy.into();
         } else {
-            state.access.as_mut().unwrap().0 = Arc::new(Legacy);
+            sources.access.as_mut().unwrap().0 = legacy.into();
         }
+        let replacement = super::super::super::binding_fixture::rebuild(
+            &policy,
+            &binding,
+            sources,
+            &binding.0.tools,
+        );
+        drop(binding);
+        let binding = replacement;
         assert!(binding
             .prepare_transport_admitted("conversation", 1, None, &policy)
             .now_or_never()
@@ -111,8 +120,8 @@ fn admitted_transport_refuses_legacy_sources_before_invocation_and_before_instal
             .unwrap_err();
         assert!(matches!(error, AdmittedError::Unsupported(_)));
         assert!(binding.0.installed_transport.read().unwrap().is_none());
-        drop(prepared);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        drop((prepared, binding));
+        root.assert_idle();
     }
 }
 
@@ -120,7 +129,7 @@ fn admitted_transport_refuses_legacy_sources_before_invocation_and_before_instal
 fn admitted_transport_refuses_pressure_before_copying_source_bindings() {
     for provider in [false, true] {
         let (root, policy) = super::super::super::guidance_admission::fixture::policy();
-        let (binding, source) = binding(provider, 0, None);
+        let (binding, source) = binding(&policy, provider, 0, None);
         let pressure = policy
             .admit(
                 IngressClass::Data,
@@ -148,7 +157,7 @@ fn admitted_transport_refuses_pressure_before_copying_source_bindings() {
         assert!(error.refusal().is_some());
         assert_eq!(source.preparations.load(SeqCst), 0);
         assert_eq!(probe.allocated(), 0);
-        drop(pressure);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        drop((pressure, binding, source));
+        root.assert_idle();
     }
 }

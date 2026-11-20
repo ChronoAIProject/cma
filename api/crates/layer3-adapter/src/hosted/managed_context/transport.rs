@@ -56,6 +56,7 @@ impl HostedContextRefresh {
                 self.tools_for_transport(transport)?,
             )));
         };
+        self.require_owner(policy)?;
         // Keep one installed binding snapshot through sizing and construction.
         // Admission is nonwaiting and no async operation runs under this lock.
         let installed = self
@@ -197,6 +198,11 @@ impl HostedContextRefresh {
         session: &str,
         sequence: u64,
     ) -> crate::Result<()> {
+        if matches!(&self.0, Shared::Admitted(_)) {
+            return Err(AdapterError::Unsupported(
+                "admitted context transport requires an ownership policy".into(),
+            ));
+        }
         match (transport, &self.0.access, &self.0.provider) {
             (ToolTransport::Access(binding), Some((source, _)), None) => {
                 source.confirm_transport(binding, session, sequence).await?;

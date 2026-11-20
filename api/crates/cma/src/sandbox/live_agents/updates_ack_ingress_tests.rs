@@ -53,7 +53,10 @@ async fn admitted_ack_refusal_retains_pending_identity_until_exact_retry() {
     assert!(receiver.recv().await.is_none());
     drop(receiver);
     drop(error);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test]
@@ -89,7 +92,10 @@ async fn enabled_ack_refuses_closed_queue_and_preserves_the_pending_receipt() {
     assert_eq!(root.available_bytes(), before);
     drop(pending);
     drop(error);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test]
@@ -106,7 +112,10 @@ async fn admitted_ack_cannot_substitute_a_different_committed_source() {
     assert!(receiver.recv().await.is_none());
     drop(receiver);
     drop(error);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 struct AdmittedRecorder {
@@ -241,5 +250,8 @@ async fn enabled_live_restore_record_and_flush_enter_admitted_ports_before_ack()
     drop(receiver);
     drop(session);
     drop(recorder);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }

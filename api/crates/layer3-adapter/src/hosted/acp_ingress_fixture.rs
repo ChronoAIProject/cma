@@ -46,17 +46,33 @@ pub(in crate::hosted) struct Fixture {
 }
 
 pub(in crate::hosted) fn fixture() -> Fixture {
-    use super::super::{
-        output::ReliableOutput, recovery::PromptRecovery, Bridge, ConversationState,
-    };
     let root = IngressBudget::new(128 * 1024 * 1024);
     let plan = |bytes| AllocationPlan::new("bridge fixture", &[bytes]).unwrap();
     let bounds =
         IngressOwnershipPolicy::conversation_bounds(root.capacity_bytes(), 200, plan(0), plan(0))
             .unwrap();
     let policy = IngressOwnershipPolicy::new(root.clone(), bounds).unwrap();
+    build(
+        root,
+        policy,
+        JsonPools::new(32 * 1024 * 1024, 13 * 1024 * 1024),
+    )
+}
+
+pub(in crate::hosted) fn attached_fixture(
+    root: &IngressBudget,
+    process: &IngressOwnershipPolicy,
+) -> Fixture {
+    let attachment = process.admit_attachment().unwrap();
+    build(root.clone(), attachment.into_policy(), JsonPools::process())
+}
+
+fn build(root: IngressBudget, policy: IngressOwnershipPolicy, pools: JsonPools) -> Fixture {
+    use super::super::{
+        output::ReliableOutput, recovery::PromptRecovery, Bridge, ConversationState,
+    };
     let data = policy.budget(IngressClass::Data);
-    let pools = JsonPools::new(32 * 1024 * 1024, 13 * 1024 * 1024).with_ownership(&policy);
+    let pools = pools.with_ownership(&policy);
     let stream = uuid::Uuid::from_u128(1);
     let writes = Arc::new(StdMutex::new(Vec::with_capacity(16)));
     let (sink, _) = admitted(Box::new(SyntheticSocket(writes.clone())), policy.clone())
@@ -155,15 +171,16 @@ pub(in crate::hosted) fn fixture() -> Fixture {
 
 impl Fixture {
     pub(in crate::hosted) async fn activate(&self) {
+        self.activate_as("conversation").await;
+    }
+
+    pub(in crate::hosted) async fn activate_as(&self, session: &str) {
         let (relay, captured) = UpdateRelay::capture_admitted(&self.policy).unwrap();
         self.bridge
-            .activate_session("conversation".into(), &relay)
+            .activate_session(session.into(), &relay)
             .await
             .unwrap();
-        self.bridge
-            .activate_output("conversation", &relay)
-            .await
-            .unwrap();
+        self.bridge.activate_output(session, &relay).await.unwrap();
         assert!(captured.take().unwrap().is_none());
     }
 

@@ -86,7 +86,7 @@ fn isolated_future_custody_control_does_not_own_task_storage_kept_by_wakers() {
             .unwrap();
             let waker = retained.lock().unwrap().take().unwrap();
             if matches!(end, End::Complete) {
-                assert_eq!(root.capacity_bytes() - root.available_bytes(), 4096);
+                assert_eq!(root.reserved_work_bytes(), 4096);
             }
             let result = task.await;
             match (&result, end) {
@@ -96,7 +96,7 @@ fn isolated_future_custody_control_does_not_own_task_storage_kept_by_wakers() {
                 _ => panic!("unexpected executor outcome"),
             }
             drop(result);
-            assert_eq!(root.available_bytes(), root.capacity_bytes());
+            root.assert_idle();
             let executor_bytes = probe.live();
             assert!(
                 executor_bytes > 0,

@@ -10,7 +10,7 @@ use std::sync::{
 };
 
 pub(in crate::hosted) struct Source {
-    status: Arc<status_fixture::Source>,
+    status: crate::ingress_budget::SharedOwned<status_fixture::Source>,
     pub(in crate::hosted) text: Mutex<String>,
     pub(in crate::hosted) reads: AtomicUsize,
     pub(in crate::hosted) writes: AtomicUsize,
@@ -166,11 +166,16 @@ impl HostedBackend for Source {
 }
 
 pub(in crate::hosted) fn binding(
+    policy: &IngressOwnershipPolicy,
     fault: u8,
     original: &str,
     foreign: Option<IngressOwnershipPolicy>,
-) -> (HostedContextRefresh, Arc<Source>) {
-    let (mut binding, status) = status_fixture::binding(
+) -> (
+    HostedContextRefresh,
+    crate::ingress_budget::SharedOwned<Source>,
+) {
+    let (base, status) = status_fixture::binding(
+        policy,
         if fault == 15 {
             1
         } else if fault == 16 {
@@ -180,19 +185,27 @@ pub(in crate::hosted) fn binding(
         },
         None,
     );
-    let mut text = String::with_capacity(MAX_INSTRUCTIONS);
-    text.push_str(original);
-    let source = Arc::new(Source {
-        status,
-        text: Mutex::new(text),
-        reads: AtomicUsize::new(0),
-        writes: AtomicUsize::new(0),
-        fault,
-        foreign,
-    });
+    let source = super::super::binding_fixture::source(
+        policy,
+        MAX_INSTRUCTIONS + super::super::binding_fixture::mutex_backing(),
+        || {
+            let mut text = String::with_capacity(MAX_INSTRUCTIONS);
+            text.push_str(original);
+            Source {
+                status,
+                text: Mutex::new(text),
+                reads: AtomicUsize::new(0),
+                writes: AtomicUsize::new(0),
+                fault,
+                foreign,
+            }
+        },
+    );
     // Initialize fixture mutex backing before measuring the ingress operation.
     drop(source.text.lock().unwrap());
-    Arc::get_mut(&mut binding.0).unwrap().backend = source.clone();
+    let mut sources = super::super::binding_fixture::sources(&base);
+    sources.backend = source.clone().into();
+    let binding = super::super::binding_fixture::rebuild(policy, &base, sources, &[]);
     (binding, source)
 }
 

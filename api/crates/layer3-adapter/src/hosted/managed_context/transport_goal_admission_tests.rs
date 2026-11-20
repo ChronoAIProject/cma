@@ -8,13 +8,10 @@ use crate::{
     AgentLaunch, ConversationChannel, ConversationUpdate, RuntimeHandle, RuntimeObservation,
 };
 use futures_util::FutureExt;
-use std::sync::{
-    atomic::{AtomicUsize, Ordering::SeqCst},
-    Arc,
-};
+use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
 struct Source {
-    status: Arc<status_fixture::Source>,
+    status: crate::ingress_budget::SharedOwned<status_fixture::Source>,
     calls: AtomicUsize,
     fault: u8,
     output: Vec<u8>,
@@ -121,12 +118,17 @@ impl HostedBackend for Source {
 }
 
 fn binding(
+    policy: &IngressOwnershipPolicy,
     fault: u8,
     session: &str,
     output: Vec<u8>,
     foreign: Option<IngressOwnershipPolicy>,
-) -> (HostedContextRefresh, Arc<Source>) {
-    let (mut binding, status) = status_fixture::binding(
+) -> (
+    HostedContextRefresh,
+    crate::ingress_budget::SharedOwned<Source>,
+) {
+    let (base, status) = status_fixture::binding(
+        policy,
         if fault == 5 {
             1
         } else if fault == 6 {
@@ -136,18 +138,24 @@ fn binding(
         },
         None,
     );
-    let source = Arc::new(Source {
-        status,
-        calls: AtomicUsize::new(0),
-        fault,
-        output,
-        expected_input: serde_json::to_vec(&serde_json::json!({
-            "home":"/home/cma/.cma/agents/synthetic/home", "session": session,
-        }))
-        .unwrap(),
-        foreign,
-    });
-    Arc::get_mut(&mut binding.0).unwrap().backend = source.clone();
+    let source = super::super::binding_fixture::source(
+        policy,
+        output.len() + session.len() * 6 + 1024,
+        || Source {
+            status,
+            calls: AtomicUsize::new(0),
+            fault,
+            output: output.clone(),
+            expected_input: serde_json::to_vec(&serde_json::json!({
+                "home":"/home/cma/.cma/agents/synthetic/home", "session": session,
+            }))
+            .unwrap(),
+            foreign,
+        },
+    );
+    let mut sources = super::super::binding_fixture::sources(&base);
+    sources.backend = source.clone().into();
+    let binding = super::super::binding_fixture::rebuild(policy, &base, sources, &[]);
     (binding, source)
 }
 
@@ -211,7 +219,7 @@ fn goal_probe_preserves_exact_home_session_and_before_after_status() {
             2,
         ),
     ] {
-        let (binding, source) = binding(fault, "conversation", raw, None);
+        let (binding, source) = binding(&policy, fault, "conversation", raw, None);
         let result = binding
             .transport_goal_absent_admitted("conversation", &policy)
             .unwrap()
@@ -222,8 +230,8 @@ fn goal_probe_preserves_exact_home_session_and_before_after_status() {
         assert_eq!(source.calls.load(SeqCst), 1);
         assert_eq!(source.status.calls.load(SeqCst), reads);
         assert!(result.belongs_to(&policy));
-        drop(result);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        drop((result, binding, source));
+        root.assert_idle();
     }
 }
 
@@ -231,7 +239,8 @@ fn goal_probe_preserves_exact_home_session_and_before_after_status() {
 fn goal_errors_cancellation_and_foreign_recovery_preserve_custody() {
     let (root, policy) = policy();
     for fault in [2, 4] {
-        let (binding, source) = binding(fault, "conversation", output("conversation"), None);
+        let (binding, source) =
+            binding(&policy, fault, "conversation", output("conversation"), None);
         let error = binding
             .transport_goal_absent_admitted("conversation", &policy)
             .unwrap()
@@ -248,10 +257,10 @@ fn goal_errors_cancellation_and_foreign_recovery_preserve_custody() {
         } else {
             assert!(matches!(error, AdmittedError::Unsupported(_)));
         }
-        drop(error);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        drop((error, binding, source));
+        root.assert_idle();
     }
-    let (binding, source) = binding(3, "conversation", output("conversation"), None);
+    let (binding, source) = binding(&policy, 3, "conversation", output("conversation"), None);
     let mut operation = Box::pin(
         binding
             .transport_goal_absent_admitted("conversation", &policy)
@@ -260,10 +269,17 @@ fn goal_errors_cancellation_and_foreign_recovery_preserve_custody() {
     assert!(operation.as_mut().now_or_never().is_none());
     assert_eq!(source.calls.load(SeqCst), 1);
     drop(operation);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    drop((binding, source));
+    root.assert_idle();
 
     let (_, foreign) = self::policy();
-    let (binding, source) = self::binding(0, "conversation", output("conversation"), Some(foreign));
+    let (binding, source) = self::binding(
+        &policy,
+        0,
+        "conversation",
+        output("conversation"),
+        Some(foreign),
+    );
     let error = binding
         .transport_goal_absent_admitted("conversation", &policy)
         .unwrap()
@@ -272,7 +288,8 @@ fn goal_errors_cancellation_and_foreign_recovery_preserve_custody() {
         .unwrap_err();
     assert!(error.refusal().is_some());
     assert_eq!(source.calls.load(SeqCst), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    drop((binding, source));
+    root.assert_idle();
 }
 
 #[test]
@@ -280,7 +297,8 @@ fn isolated_goal_admission_precedes_command_copies_and_owns_parsed_results() {
     if deallocation::isolated("hosted::managed_context::transport_goal_admission::tests::isolated_goal_admission_precedes_command_copies_and_owns_parsed_results") { return; }
     let (root, policy) = policy();
     let session = "s\"\n".repeat(300);
-    let (binding, source) = binding(0, &session, output(&session), None);
+    let (binding, source) = binding(&policy, 0, &session, output(&session), None);
+    let baseline = root.available_bytes();
     let mut probe = AllocationProbe::new();
     let result = probe.track(|| {
         binding
@@ -292,10 +310,10 @@ fn isolated_goal_admission_precedes_command_copies_and_owns_parsed_results() {
     });
     assert!(*result);
     assert!(probe.peak() >= SCRIPT.len());
-    assert!(probe.live() <= root.capacity_bytes() - root.available_bytes());
+    assert!(probe.live() <= baseline - root.available_bytes());
     drop(result);
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(root.available_bytes(), baseline);
     drop(probe);
     let pressure = policy
         .admit(
@@ -334,15 +352,21 @@ fn isolated_goal_admission_precedes_command_copies_and_owns_parsed_results() {
     ));
     assert_eq!(probe.allocated(), 0);
     assert_eq!(source.calls.load(SeqCst), 1);
-    drop((probe, pressure));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    drop((probe, pressure, binding, source));
+    root.assert_idle();
 }
 
 #[tokio::test]
 async fn actual_bridge_transport_receipt_requires_owned_goal_absence_and_stable_status() {
     for fault in [0, 1] {
         let mut fixture = crate::hosted::acp::ingress::fixture::fixture();
-        let (binding, source) = binding(fault, "conversation", output("conversation"), None);
+        let (binding, source) = binding(
+            &fixture.policy,
+            fault,
+            "conversation",
+            output("conversation"),
+            None,
+        );
         fixture.bridge.context_refresh = Some(binding);
         fixture.activate().await;
         let result = fixture
@@ -360,8 +384,8 @@ async fn actual_bridge_transport_receipt_requires_owned_goal_absence_and_stable_
         let root = fixture.root.clone();
         drop(fixture);
         assert!(root.available_bytes() < root.capacity_bytes());
-        drop(result);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        drop((result, source));
+        root.assert_idle();
     }
 }
 
@@ -373,9 +397,9 @@ fn malformed_goal_json_refuses_without_second_status_or_legacy_fallback() {
         // the small goal fixture intentionally cannot admit a 4 MiB source.
         let error = JsonFrame::decode_admitted(&bytes, &policy).unwrap_err();
         assert!(error.belongs_to(&policy));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
-    let (binding, source) = binding(0, "conversation", b"unknown output".to_vec(), None);
+    let (binding, source) = binding(&policy, 0, "conversation", b"unknown output".to_vec(), None);
     assert!(binding
         .transport_goal_absent_admitted("conversation", &policy)
         .unwrap()
@@ -383,14 +407,16 @@ fn malformed_goal_json_refuses_without_second_status_or_legacy_fallback() {
         .unwrap()
         .is_err());
     assert_eq!(source.status.calls.load(SeqCst), 1);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    drop((binding, source));
+    root.assert_idle();
 }
 
 #[test]
 fn strict_goal_inspection_preserves_status_errors_and_malformed_output_category() {
     let (root, policy) = policy();
     for fault in [0, 1, 5, 6] {
-        let (binding, source) = binding(fault, "conversation", output("conversation"), None);
+        let (binding, source) =
+            binding(&policy, fault, "conversation", output("conversation"), None);
         let result = binding
             .transport_goal_absent_strict_admitted("conversation", &policy)
             .unwrap()
@@ -410,10 +436,10 @@ fn strict_goal_inspection_preserves_status_errors_and_malformed_output_category(
             _ => unreachable!(),
         }
         assert_eq!(source.calls.load(SeqCst), usize::from(fault < 5));
-        drop(result);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        drop((result, binding, source));
+        root.assert_idle();
     }
-    let (binding, source) = binding(0, "conversation", b"malformed".to_vec(), None);
+    let (binding, source) = binding(&policy, 0, "conversation", b"malformed".to_vec(), None);
     let error = binding
         .transport_goal_absent_strict_admitted("conversation", &policy)
         .unwrap()
@@ -422,5 +448,6 @@ fn strict_goal_inspection_preserves_status_errors_and_malformed_output_category(
         .unwrap_err();
     assert!(matches!(error, AdmittedError::Unsupported(_)));
     assert_eq!(source.status.calls.load(SeqCst), 1);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    drop((binding, source));
+    root.assert_idle();
 }

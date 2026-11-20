@@ -232,3 +232,73 @@ async fn lost_binding_ack_retries_only_zero_before_the_admission_barrier() {
         ]
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn startup_wait_retires_superseded_pools_instead_of_waiting_for_the_supervisor() {
+    // An earlier pod may already have marked the target retiring and deferred.
+    for already_retiring in [false, true] {
+        startup_wait_retires_superseded(already_retiring).await;
+    }
+}
+
+async fn startup_wait_retires_superseded(already_retiring: bool) {
+    // The default plan is configured but its target is not recorded yet, so
+    // readiness keeps waiting; the only recorded target is a superseded plan of
+    // the same image. The wait must retire it before the bounded gate expires.
+    let calls = Arc::new(Mutex::new(vec![]));
+    let mut current = target();
+    current.plan.spec.image =
+        crate::warm_pools::deployment_image(current.plan.spec.image.uri.clone());
+    let provider = Provider {
+        calls: calls.clone(),
+        original: current.plan.clone(),
+        refuse_replaced_uid: AtomicBool::new(false),
+        retired: AtomicBool::new(false),
+    };
+    let mut superseded = current.clone();
+    superseded.plan.config_sha256 = "superseded-pod-policy".into();
+    superseded.binding = Some(provider.binding());
+    superseded.retiring = already_retiring;
+    let store = Arc::new(Memory {
+        target: Mutex::new(superseded),
+        bind_response_loss: AtomicBool::new(false),
+        retirement_block: Mutex::new(std::collections::VecDeque::new()),
+        drain_block: Mutex::new(std::collections::VecDeque::new()),
+        calls,
+    });
+    let home = provider.original.spec.home.clone();
+    let capacity = layer3_adapter::SandboxCapacity {
+        cpu_millis: provider.original.spec.cpu_millis,
+        memory_mib: provider.original.spec.memory_mib,
+    };
+    let image = provider.original.spec.image.uri.clone();
+    let adapter = layer3_adapter::codex::CodexAdapter::with_backend(
+        resize::PoolBackend(provider),
+        layer3_adapter::codex::CodexSandboxSpec::default(),
+    );
+    let service = NativeWarmPools::new(
+        store.clone(),
+        Arc::new(adapter),
+        image,
+        Some(home),
+        capacity,
+        1,
+        None,
+    );
+    assert!(matches!(
+        service.await_default_ready().await,
+        Err(WarmPoolError::Unavailable)
+    ));
+    let calls = store.calls.lock().unwrap().clone();
+    let claim = format!("claim-retire:{}", current.id);
+    for step in [claim.as_str(), "mark-provider", "resize:0", "finish:true"] {
+        assert!(
+            calls.iter().any(|call| call == step),
+            "{step} missing from {calls:?}"
+        );
+    }
+    // The generic claim paths, which could zero an unbound default, are never used.
+    assert!(!calls
+        .iter()
+        .any(|call| call.starts_with("claim:") || call == "configure:0"));
+}

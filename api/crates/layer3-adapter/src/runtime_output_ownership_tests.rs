@@ -40,7 +40,7 @@ fn isolated_ack_queue_deallocation_contract() {
                 }
             }
         ));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
         assert_eq!(probe.live(), 0);
     }
 }
@@ -97,7 +97,7 @@ async fn shared_delivery_preserves_receipt_and_effect_through_recorder_retries()
             Some(ConversationUpdate::Failed { .. })
         ));
     }
-    assert_eq!(root.available_bytes(), 4096);
+    assert_eq!(root.available_bytes(), 4096 - root.metadata_bytes());
     retries[0]
         .delivery()
         .receipt
@@ -107,7 +107,7 @@ async fn shared_delivery_preserves_receipt_and_effect_through_recorder_retries()
         .unwrap();
     assert_eq!(received.recv().await.unwrap().cursor, 7);
     drop(retries);
-    assert_eq!(root.available_bytes(), 8192);
+    root.assert_idle();
 }
 
 #[test]
@@ -162,12 +162,12 @@ async fn admitted_ack_progresses_at_data_ceiling_and_owns_its_copy_until_sink_dr
         receipt.source.native_conversation_id.as_ptr()
     );
     drop((data, receipt, receiver));
-    assert_eq!(root.available_bytes(), 65536 - ack.requested_bytes());
+    assert_eq!(root.reserved_work_bytes(), ack.requested_bytes());
     let final_sink = ack.clone();
     drop(ack);
     assert_eq!(final_sink.native_conversation_id.len(), 1024);
     drop(final_sink);
-    assert_eq!(root.available_bytes(), 65536);
+    root.assert_idle();
 }
 
 #[test]
@@ -218,7 +218,7 @@ fn invalid_and_saturated_ack_refuse_before_cloning_or_retaining_queue_slot() {
     drop(receiver);
     assert!(sender.send(&source()).is_err());
     drop(sender);
-    assert_eq!(root.available_bytes(), 65536);
+    root.assert_idle();
 }
 
 #[test]
@@ -227,10 +227,10 @@ fn ack_queue_capacity_is_charged_until_last_handle_even_after_receiver_closes() 
     assert!(RuntimeOutputReceipt::admitted_channel(policy.clone(), 0).is_err());
     let (sender, receiver) = RuntimeOutputReceipt::admitted_channel(policy, 1).unwrap();
     let clone = sender.clone();
-    let reserved = 65536 - root.available_bytes();
+    let reserved = root.reserved_work_bytes();
     assert!(reserved > 0);
     drop((sender, receiver));
-    assert_eq!(65536 - root.available_bytes(), reserved);
+    assert_eq!(root.reserved_work_bytes(), reserved);
     drop(clone);
-    assert_eq!(root.available_bytes(), 65536);
+    root.assert_idle();
 }

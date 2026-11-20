@@ -22,13 +22,13 @@ async fn observers_outlive_the_bridge_without_releasing_watch_storage() {
     assert_eq!(history.take_latest(), Some(deadline));
     let copy = observation.clone();
     drop((fixture, observation));
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), held);
+    assert_eq!(root.reserved_work_bytes(), held);
     assert!(history.changed().await.is_err());
     assert_eq!(progress.latest(), 0);
     drop((progress, history));
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), held);
+    assert_eq!(root.reserved_work_bytes(), held);
     drop(copy);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]

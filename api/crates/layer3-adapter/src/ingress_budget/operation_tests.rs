@@ -51,7 +51,7 @@ fn initial_refusal_allocates_no_future_and_never_invokes_the_source() {
     assert!(!initialized.load(Ordering::Relaxed));
     assert_eq!(probe.allocated(), 0);
     drop((failed, pressure));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -98,18 +98,18 @@ fn isolated_source_future_and_result_keep_physical_storage_charged() {
         if result_first {
             probe.track(|| drop(result));
             assert!(probe.live() > 0, "completed operation still owns its box");
-            assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+            assert_eq!(root.reserved_work_bytes(), charged);
             probe.track(|| drop(operation));
         } else {
             let retained = probe.live();
             probe.track(|| drop(operation));
             assert!(probe.live() < retained, "completed future box was freed");
             assert!(probe.live() >= 65_536, "returned payload remains owned");
-            assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+            assert_eq!(root.reserved_work_bytes(), charged);
             probe.track(|| drop(result));
         }
         assert_eq!(probe.live(), 0);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 
     let (root, policy) = fixture();
@@ -132,7 +132,7 @@ fn isolated_source_future_and_result_keep_physical_storage_charged() {
     );
     probe.track(|| drop((unplanned, result)));
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -165,7 +165,7 @@ fn cancellation_frees_source_data_and_box_before_returning_the_allowance() {
     assert!(probe.peak() <= operation.requested_bytes());
     probe.track(|| drop(operation));
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -186,12 +186,9 @@ fn source_errors_keep_owned_diagnostics_after_the_future_is_gone() {
     );
     let copy = error.clone();
     drop(error);
-    assert_eq!(
-        root.capacity_bytes() - root.available_bytes(),
-        copy.requested_bytes()
-    );
+    assert_eq!(root.reserved_work_bytes(), copy.requested_bytes());
     drop(copy);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -213,5 +210,5 @@ fn compiler_layout_covers_a_large_inline_future_before_it_is_polled() {
     assert!(probe.peak() <= operation.requested_bytes());
     probe.track(|| drop(operation));
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }

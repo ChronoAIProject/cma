@@ -25,7 +25,7 @@ fn isolated_shared_container_lifetime_and_legacy_allocation_control() {
     let mut probe = AllocationProbe::new();
     let legacy = probe.track(|| Shared::new([19u8; 1024], None, "legacy fixture").unwrap());
     assert!(probe.live() >= 1024);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     assert_eq!(legacy.requested_bytes(), 0);
     let clone = legacy.clone();
     drop(legacy);
@@ -37,17 +37,17 @@ fn isolated_shared_container_lifetime_and_legacy_allocation_control() {
         || Shared::new([31u8; 1024], Some(&policy), "shared fixture").unwrap(),
         |owner| (&**owner as *const [u8; 1024]) as usize,
     );
-    let charged = root.capacity_bytes() - root.available_bytes();
+    let charged = root.reserved_work_bytes();
     assert_eq!(owner.requested_bytes(), charged);
     let clone = owner.clone();
     drop(owner);
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+    assert_eq!(root.reserved_work_bytes(), charged);
     assert_eq!(clone[1023], 31);
     assert!(
         pause.admission_blocked_while_dropping(&policy, IngressClass::Data, move || drop(clone))
     );
     assert_eq!(probe.live(), 0);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn shared_container_pressure_refuses_before_allocating_and_drops_input() {
     assert_eq!(probe.allocated(), 0);
     assert_eq!(dropped.load(SeqCst), 1);
     drop(pressure);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[tokio::test]
@@ -97,18 +97,15 @@ async fn bridge_container_clones_keep_storage_after_parent_drop() {
         + waiters.requested_bytes();
     assert!(outer > 0);
     drop(fixture);
-    assert!(root.capacity_bytes() - root.available_bytes() >= outer);
+    assert!(root.reserved_work_bytes() >= outer);
     assert!(calls.lock().await.is_empty());
     assert!(answers.lock().await.is_empty());
     waiters.fetch_add(1, SeqCst);
     drop((sink, calls, answers));
-    assert_eq!(
-        root.capacity_bytes() - root.available_bytes(),
-        waiters.requested_bytes()
-    );
+    assert_eq!(root.reserved_work_bytes(), waiters.requested_bytes());
     assert_eq!(waiters.load(SeqCst), 1);
     drop(waiters);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 #[test]
@@ -132,7 +129,7 @@ fn isolated_bridge_waiter_backing_stays_charged_through_final_deallocation() {
     let last = first.clone();
     let charged = first.requested_bytes();
     drop(fixture);
-    assert_eq!(root.capacity_bytes() - root.available_bytes(), charged);
+    assert_eq!(root.reserved_work_bytes(), charged);
     assert!(
         pause.admission_blocked_while_dropping(&policy, IngressClass::Data, move || {
             let barrier = Arc::new(std::sync::Barrier::new(2));
@@ -146,7 +143,7 @@ fn isolated_bridge_waiter_backing_stays_charged_through_final_deallocation() {
             child.join().unwrap();
         })
     );
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
     drop((policy, root));
     assert_eq!(probe.live(), 0);
 }

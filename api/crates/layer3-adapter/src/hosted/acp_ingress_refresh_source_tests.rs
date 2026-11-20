@@ -17,6 +17,7 @@ async fn admitted_refresh_channel_selects_sources_and_preserves_delivery_classif
     for fault in [0, 2, 11, 20, 21, 22, 23, 24, 25, 26, 255] {
         let mut fixture = fixture();
         let (binding, source) = files::binding(
+            &fixture.policy,
             if (20..=26).contains(&fault) { 0 } else { fault },
             "Old managed\n\nOwner exact text  \n",
             None,
@@ -24,6 +25,7 @@ async fn admitted_refresh_channel_selects_sources_and_preserves_delivery_classif
         let (binding, tools) = if (24..=26).contains(&fault) {
             let (binding, source) =
                 crate::hosted::managed_context::transport_admission::tests::attach(
+                    &fixture.policy,
                     binding,
                     fault == 25,
                     if fault == 26 { 5 } else { 0 },
@@ -34,8 +36,14 @@ async fn admitted_refresh_channel_selects_sources_and_preserves_delivery_classif
             (binding, None)
         };
         let receipt = files::receipt(&binding, &fixture.policy);
-        let (legacy, legacy_source) = writer_tests::binding(0);
-        fixture.bridge.context_refresh = Some(if fault == 255 { legacy } else { binding });
+        let (legacy, legacy_source) = writer_tests::owned_binding(&fixture.policy, 0);
+        fixture.bridge.context_refresh = Some(if fault == 255 {
+            drop(binding);
+            legacy
+        } else {
+            drop(legacy);
+            binding
+        });
         fixture.activate().await;
         fixture.bridge.recovering_context.store(1, SeqCst);
         if tools.is_some() {
@@ -200,13 +208,12 @@ async fn admitted_refresh_channel_selects_sources_and_preserves_delivery_classif
             writes,
         ));
         match &retained {
-            Outcome::Ambiguous(error) | Outcome::PreWriteFailure(error) => assert_eq!(
-                root.capacity_bytes() - root.available_bytes(),
-                error.requested_bytes()
-            ),
-            _ => assert_eq!(root.available_bytes(), root.capacity_bytes()),
+            Outcome::Ambiguous(error) | Outcome::PreWriteFailure(error) => {
+                assert_eq!(root.reserved_work_bytes(), error.requested_bytes())
+            }
+            _ => root.assert_idle(),
         }
         drop(retained);
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }

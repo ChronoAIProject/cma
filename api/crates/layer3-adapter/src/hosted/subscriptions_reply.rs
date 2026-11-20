@@ -1,4 +1,4 @@
-use super::{HostedSubscriptionBinding, HostedSubscriptionCredential};
+use super::{AdmittedSubscriptionBinding, HostedSubscriptionCredential};
 use crate::hosted::{acp::Bridge, retained_json::JsonFrame};
 use crate::ingress_budget::{
     AdmissionRefusal, AdmittedError, AdmittedOperation, AllocationPlan, IngressClass,
@@ -38,13 +38,16 @@ fn invalid(phase: &'static str) -> AdmittedError {
     AdmissionRefusal::InvalidPlan { phase }.into()
 }
 
-impl HostedSubscriptionBinding {
+impl AdmittedSubscriptionBinding {
     pub(in crate::hosted) fn reply_admitted<'a>(
         &'a self,
         id: &'a Value,
         params: &'a Value,
         policy: &IngressOwnershipPolicy,
     ) -> Result<AdmittedOperation<'a, JsonFrame>, AdmittedError> {
+        if !self.belongs_to(policy) {
+            return Err(invalid("subscription binding ownership"));
+        }
         if !params.is_object() || !crate::hosted::acp_correlation::valid_call_with_policy(id, true)
         {
             return Err(invalid("subscription request boundary"));
@@ -63,10 +66,11 @@ impl HostedSubscriptionBinding {
             IngressClass::Data,
             AllocationPlan::checked("subscription reply operation", &[0])?,
             move |scope| async move {
-                let source = self.source.credential_admitted(
-                    &self.sandbox_id,
-                    &self.runtime,
-                    &self.agent,
+                let binding = self.value();
+                let source = binding.source.credential_admitted(
+                    &binding.sandbox_id,
+                    &binding.runtime,
+                    &binding.agent,
                     refresh,
                     previous,
                     &owned_policy,

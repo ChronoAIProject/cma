@@ -52,7 +52,10 @@ async fn reconciliation_inherits_the_actual_allocation_scope() {
     assert_eq!(*result, Some(4096));
     drop(result);
     drop(scope);
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test]
@@ -91,9 +94,15 @@ async fn cancelled_caller_cannot_release_a_detached_proof_allocation() {
     // JoinHandle cancellation is not child cancellation; let the actual child
     // finish dropping its output before checking the final balance.
     tokio::task::yield_now().await;
-    assert_eq!(held_after_cancel, 4096);
-    assert_eq!(*observation.lock().unwrap(), Some(4096));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(held_after_cancel, 4096 - root.metadata_bytes());
+    assert_eq!(
+        *observation.lock().unwrap(),
+        Some(4096 - root.metadata_bytes())
+    );
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test(start_paused = true)]
@@ -128,9 +137,15 @@ async fn timed_out_reconciliation_keeps_its_proof_charged_until_real_completion(
     release.send(()).unwrap();
     done.await.unwrap();
     tokio::task::yield_now().await;
-    assert_eq!(held_after_timeout, 4096);
-    assert_eq!(*observation.lock().unwrap(), Some(4096));
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    assert_eq!(held_after_timeout, 4096 - root.metadata_bytes());
+    assert_eq!(
+        *observation.lock().unwrap(),
+        Some(4096 - root.metadata_bytes())
+    );
+    assert_eq!(
+        root.available_bytes(),
+        root.capacity_bytes() - root.metadata_bytes()
+    );
 }
 
 #[tokio::test]
@@ -175,15 +190,18 @@ async fn detached_drop(panic_after_cancel: bool) {
     release.send(()).unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(2), async {
         while observation.lock().unwrap().is_none()
-            || root.available_bytes() != root.capacity_bytes()
+            || root.available_bytes() != root.capacity_bytes() - root.metadata_bytes()
         {
             tokio::task::yield_now().await;
         }
     })
     .await
     .expect("detached task did not drop its actual proof and scope");
-    assert_eq!(held_after_cancel, 4096);
-    assert_eq!(*observation.lock().unwrap(), Some(4096));
+    assert_eq!(held_after_cancel, 4096 - root.metadata_bytes());
+    assert_eq!(
+        *observation.lock().unwrap(),
+        Some(4096 - root.metadata_bytes())
+    );
 }
 
 #[tokio::test]
@@ -221,7 +239,7 @@ async fn completed_reconciliation_keeps_payload_and_error_custody_in_the_receive
             })
             .await;
         drop(scope);
-        assert_eq!(root.available_bytes(), 4096);
+        assert_eq!(root.available_bytes(), 4096 - root.metadata_bytes());
         assert_eq!(result.is_err(), failure);
         let proof = match &*result {
             Ok(proof) | Err(proof) => proof,
@@ -229,8 +247,14 @@ async fn completed_reconciliation_keeps_payload_and_error_custody_in_the_receive
         assert!(proof.bytes.iter().all(|byte| *byte == 17));
         assert!(observation.lock().unwrap().is_none());
         drop(result);
-        assert_eq!(*observation.lock().unwrap(), Some(4096));
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        assert_eq!(
+            *observation.lock().unwrap(),
+            Some(4096 - root.metadata_bytes())
+        );
+        assert_eq!(
+            root.available_bytes(),
+            root.capacity_bytes() - root.metadata_bytes()
+        );
     }
 }
 
@@ -286,10 +310,16 @@ fn full_reconciliation_slots_refuse_before_polling_or_detaching_proof() {
             };
             assert!(message.contains("prior reconciliations remain pending"));
             assert!(!polled.load(std::sync::atomic::Ordering::SeqCst));
-            assert_eq!(*observation.lock().unwrap(), Some(4096));
+            assert_eq!(
+                *observation.lock().unwrap(),
+                Some(4096 - root.metadata_bytes())
+            );
             drop(output);
             drop(scope);
-            assert_eq!(root.available_bytes(), root.capacity_bytes());
+            assert_eq!(
+                root.available_bytes(),
+                root.capacity_bytes() - root.metadata_bytes()
+            );
             assert_eq!(super::RECONCILIATION_SLOTS.available_permits(), 0);
             drop(occupied);
             assert_eq!(

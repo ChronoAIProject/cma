@@ -101,7 +101,7 @@ async fn delivery_case(cancel: bool, retained_history: bool) {
         ));
     }
     tokio::task::yield_now().await;
-    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    root.assert_idle();
 }
 
 fn input(retained_history: bool) -> ConversationInput {

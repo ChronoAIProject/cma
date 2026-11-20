@@ -51,9 +51,16 @@ async fn instruction_recovery_uses_admitted_sources_and_preserves_uncertain_outc
     for fault in [0, 1, 7, 255] {
         let mut fixture = fixture();
         let root = fixture.root.clone();
-        let (context, source) = binding(fault, "exact instructions", None);
-        let (legacy, legacy_source) = crate::hosted::managed_context::writer_tests::binding(0);
-        fixture.bridge.context_refresh = Some(if fault == 255 { legacy } else { context });
+        let (context, source) = binding(&fixture.policy, fault, "exact instructions", None);
+        let (legacy, legacy_source) =
+            crate::hosted::managed_context::writer_tests::owned_binding(&fixture.policy, 0);
+        fixture.bridge.context_refresh = Some(if fault == 255 {
+            drop(context);
+            legacy
+        } else {
+            drop(legacy);
+            context
+        });
         fixture.bridge.instructions_support.store(1, SeqCst);
         fixture.activate().await;
         let scope = IngressWorkScope::new(
@@ -149,14 +156,11 @@ async fn instruction_recovery_uses_admitted_sources_and_preserves_uncertain_outc
             }
             let clone = error.clone();
             drop((fixture, scope, result, source, legacy_source));
-            assert_eq!(
-                root.capacity_bytes() - root.available_bytes(),
-                clone.requested_bytes()
-            );
+            assert_eq!(root.reserved_work_bytes(), clone.requested_bytes());
             drop(clone);
         } else {
             drop((fixture, scope, result, source, legacy_source));
         }
-        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        root.assert_idle();
     }
 }

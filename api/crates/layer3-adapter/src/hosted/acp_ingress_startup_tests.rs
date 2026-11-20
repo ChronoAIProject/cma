@@ -425,7 +425,7 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
     let _ = server.await;
     drop(policy);
     drop(received);
-    assert!(fixture.root.capacity_bytes() - fixture.root.available_bytes() >= bridge_bytes);
+    assert!(fixture.root.reserved_work_bytes() >= bridge_bytes);
     drop(retained_bridge);
     let readiness = retained_support
         .managed_context_may_be_ready()
@@ -434,7 +434,7 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
         .unwrap();
     assert!(!*readiness);
     drop(readiness);
-    assert!(fixture.root.capacity_bytes() - fixture.root.available_bytes() >= bridge_bytes);
+    assert!(fixture.root.reserved_work_bytes() >= bridge_bytes);
     drop(retained_support);
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         while fixture.root.available_bytes() != baseline - retained_identity - waiter_bytes {
