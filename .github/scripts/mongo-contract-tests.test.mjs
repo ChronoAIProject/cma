@@ -9,6 +9,7 @@ import './mongo-contract-completeness.test.mjs';
 import './mongo-contract-registry.test.mjs';
 import { registerSelectionTests } from './mongo-contract-selection-tests.mjs';
 import { registerShardTests } from './mongo-contract-shards.test.mjs';
+import { registerRegistryRunnerTests } from './mongo-contract-registry-runner-tests.mjs';
 
 const scaleTest = 'store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages';
 const ownerTest = 'store::usage_reports::tests::owner_allocation::metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound';
@@ -212,41 +213,10 @@ if (command === 'cargo') {
   };
 }
 
+registerRegistryRunnerTests({fixture, requiredPrefixes});
+
 for (const reuse of [false, true]) {
   const mode = reuse ? 'archive' : 'source';
-  test(`${mode}: adding one suite file extends the runner without shared-file edits`, () => {
-    const f = fixture('success', reuse);
-    try {
-      const prefix = 'new_independent_suite::mongo_tests::';
-      writeFileSync(join(f.directory, 'repo/.github/scripts/mongo-contract-suites/new-suite.json'),
-        JSON.stringify({prefix}));
-      execFileSync('bash', [...f.args, '--list'], {env: f.env, timeout: 10000, stdio: 'pipe'});
-      const calls = f.calls();
-      assert.equal(calls.length, 1);
-      assert.equal(calls[0].command, 'cargo');
-      const filter = calls[0].args[calls[0].args.indexOf('-E') + 1];
-      assert.ok(filter.endsWith(`(${[...requiredPrefixes, prefix].sort().map(value => `test(${value})`).join(' | ')})`));
-      assert.equal(f.containers().length, 0);
-      assert.equal(f.volumes().length, 0);
-    } finally { f.close(); }
-  });
-
-  test(`${mode}: invalid registrations fail before Cargo or fixture allocation`, () => {
-    for (const entry of [{prefix: requiredPrefixes[0]}, {prefix: 'bad) or all()'}]) {
-      const f = fixture('success', reuse);
-      try {
-        writeFileSync(join(f.directory, 'repo/.github/scripts/mongo-contract-suites/invalid.json'),
-          JSON.stringify(entry));
-        assert.throws(() => execFileSync('bash', [...f.args, 'count:1/1'], {
-          env: f.env, timeout: 10000, stdio: 'pipe',
-        }), error => error.status === 1 && /Mongo suite registry failed:/.test(error.stderr));
-        assert.equal(existsSync(f.log), false);
-        assert.equal(f.containers().length, 0);
-        assert.equal(f.volumes().length, 0);
-      } finally { f.close(); }
-    }
-  });
-
   test(`${mode}: CPU profiles retain the shared runner, selection and failure policy`, () => {
     for (const scenario of ['success', 'cpu-error', 'cpu-empty']) {
       const f = fixture(scenario, reuse);
