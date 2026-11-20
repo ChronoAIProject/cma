@@ -21,7 +21,12 @@ on:
       - "checks_requested"
 concurrency:
   group: "ci-${{ github.workflow }}-${{ github.ref }}"
-  cancel-in-progress: true
+  # A develop push run is the only writer of the image and cargo caches every
+  # PR restores, so a newer merge must not cancel it mid-build (14 of 15 were
+  # cancelled on 20 Nov). The group still runs one at a time, and a newer
+  # pending run still replaces an older pending one. PRs and release refs
+  # keep cancelling superseded runs.
+  cancel-in-progress: "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"
 permissions:
   contents: "read"
 jobs:

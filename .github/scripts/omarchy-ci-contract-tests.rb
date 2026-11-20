@@ -35,6 +35,9 @@ module OmarchyCIContractTests
     reject.call("release ref runs can overlap") do |value|
       value["ci"]["concurrency"]["cancel-in-progress"] = false
     end
+    reject.call("a newer merge cancels the develop cache writer") do |value|
+      value["ci"]["concurrency"]["cancel-in-progress"] = true
+    end
     names = CIContract.load_inputs["ci"]["jobs"]["omarchy"]["steps"].map { |step| step["name"] }.compact
     names.each do |name|
       %w[removed skipped changed-failure-policy fake-success].each do |mutation|
