@@ -70,7 +70,14 @@ impl Cache {
                 .unwrap();
             }
             // Fixed vocabulary only. Do not expose driver errors, IDs or data.
-            for reason in ["database", "budget", "invalid_snapshot", "timeout"] {
+            for reason in [
+                "database",
+                "budget",
+                "invalid_snapshot",
+                "timeout",
+                "invalid_selection",
+                "not_started",
+            ] {
                 writeln!(
                     text,
                     "cma_task_cohort_sample_error{{window=\"{window}\",reason=\"{reason}\"}} {}",

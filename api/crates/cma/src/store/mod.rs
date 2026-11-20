@@ -175,6 +175,7 @@ pub(crate) mod segment_operations;
 pub mod settings;
 mod shared_child_capacity;
 mod suggestions;
+pub(crate) mod task_audit;
 mod trigger_definitions;
 mod trigger_first_messages;
 mod warm_sandboxes;

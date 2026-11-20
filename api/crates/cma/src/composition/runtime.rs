@@ -10,6 +10,7 @@ pub(super) fn worker_observations(
     stores
         .worker_observations()
         .with_work_retry_policy(config.features.work_retry_policy_enabled)
+        .with_task_audit(config.task_audit.clone())
 }
 
 pub(super) struct RuntimeServices {
