@@ -69,6 +69,15 @@ function queueHarness() {
         data: rows,
         next_after: null,
       });
+    if (String(url).includes('/commands/')) {
+      const commandId = String(url).split('/').at(-1)!;
+      const source = queuedObservation(commandId.replace('cmd_', 'resp_')).response;
+      return json({
+        ...source,
+        receipt: { ...source.receipt, command_id: commandId },
+        status: 'cancelled',
+      });
+    }
     const id = String(url).split('/').at(-2)!;
     const body = JSON.parse(String(init?.body));
     const key = new Headers(init?.headers).get('idempotency-key')!;
@@ -193,9 +202,13 @@ it('retains managed source identity after cancellation, reload and access suspen
   );
   await waitFor(() => expect(second.result.current.managedCommandIds.has('cmd_one')).toBe(true));
   await waitFor(() => expect(second.result.current.items).toHaveLength(2));
+  expect(second.result.current.outcomes[0]).toMatchObject({
+    kind: 'cancelled',
+    commandId: 'cmd_one',
+  });
   second.rerender({ enabled: false });
   second.rerender({ enabled: true });
-  expect(second.result.current.managedCommandIds.has('cmd_one')).toBe(true);
+  await waitFor(() => expect(second.result.current.managedCommandIds.has('cmd_one')).toBe(true));
   expect(second.result.current.items.some((x) => x.commandId === 'cmd_one')).toBe(false);
   second.unmount();
 });
