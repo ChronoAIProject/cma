@@ -196,6 +196,7 @@ impl MongoSandboxStore {
             name,
             objects,
             &mut super::schema::StartupObserver::new(Default::default()),
+            Default::default(),
         )
         .await
     }
@@ -205,6 +206,7 @@ impl MongoSandboxStore {
         name: &str,
         objects: std::sync::Arc<dyn super::CheckpointBlobStore>,
         observer: &mut super::schema::StartupObserver,
+        initial_settings: super::settings_defaults::InitialSettings,
     ) -> Result<Self, StoreError> {
         let database = client.database(name);
         require_transaction_topology(&database).await?;
@@ -213,7 +215,7 @@ impl MongoSandboxStore {
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let bindings = super::bindings::BindingCollections::open(&database, observer).await?;
         let store = Self::handles(client, name, checkpoint_objects, bindings);
-        super::budget::initialize_settings(&store).await?;
+        super::budget::initialize_settings(&store, initial_settings).await?;
         super::sandboxes::ensure_indexes(&store.sandboxes).await?;
         super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;
         super::sandbox_usage::ensure_indexes(&store).await?;

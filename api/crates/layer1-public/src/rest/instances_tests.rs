@@ -59,6 +59,8 @@ pub(super) mod runtime_update_tests;
 mod service_access_tests;
 #[path = "sandbox_visible_inventory_tests.rs"]
 mod visible_inventory_tests;
+#[path = "sandbox_visitor_boundary_tests.rs"]
+mod visitor_boundary_tests;
 type OperationKey = (String, String, String);
 type OperationRecord = ([u8; 32], Option<Vec<u8>>);
 
