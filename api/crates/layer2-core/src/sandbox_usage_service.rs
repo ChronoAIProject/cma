@@ -2,6 +2,7 @@
 
 use crate::sandbox::store::{Page, PageRequest, SandboxStoreError};
 use crate::sandbox_usage::{SandboxUsage, UsageEvent, UsageTotals};
+use crate::sandbox_usage_cursor::{CursorError, Scope, UsageCursors};
 use crate::{Caller, Capability, SandboxId, SubjectId};
 use async_trait::async_trait;
 use std::sync::Arc;
@@ -37,6 +38,8 @@ pub trait SandboxUsageStore: Send + Sync {
 
 #[derive(Debug, thiserror::Error)]
 pub enum UsageReadError {
+    #[error("invalid usage continuation; restart from the first page")]
+    InvalidCursor,
     #[error("usage access denied")]
     Forbidden,
     #[error("sandbox usage not found")]
@@ -47,11 +50,12 @@ pub enum UsageReadError {
 
 pub struct SandboxUsageService {
     store: Arc<dyn SandboxUsageStore>,
+    cursors: UsageCursors,
 }
 
 impl SandboxUsageService {
-    pub fn new(store: Arc<dyn SandboxUsageStore>) -> Arc<Self> {
-        Arc::new(Self { store })
+    pub fn new(store: Arc<dyn SandboxUsageStore>, cursors: UsageCursors) -> Arc<Self> {
+        Arc::new(Self { store, cursors })
     }
 
     pub async fn list(
@@ -62,7 +66,20 @@ impl SandboxUsageService {
         page: &PageRequest,
     ) -> Result<Page<SandboxUsage>, UsageReadError> {
         let owner = scope(caller, admin, owner)?;
-        Ok(self.store.usage_page(owner, page).await?)
+        let scope = Scope {
+            caller,
+            admin,
+            owner,
+            sandbox: None,
+            filter_owner: owner,
+        };
+        let chain = self.cursors.begin(&scope, page).map_err(cursor_error)?;
+        let mut result = self.store.usage_page(owner, &chain.page).await?;
+        result.next = self
+            .cursors
+            .finish(&scope, chain, result.next)
+            .map_err(cursor_error)?;
+        Ok(result)
     }
 
     pub async fn summary(
@@ -99,10 +116,31 @@ impl SandboxUsageService {
         &self,
         caller: &Caller,
         id: &SandboxId,
+        owner_filter: Option<&SubjectId>,
         page: &PageRequest,
     ) -> Result<Page<UsageEvent>, UsageReadError> {
-        self.read(caller, id).await?;
-        Ok(self.store.usage_events(id, page).await?)
+        let retained = self.read(caller, id).await?;
+        let scope = Scope {
+            caller,
+            admin: caller.authorization.allows(Capability::ReadAllSandboxes),
+            owner: Some(&retained.owner),
+            sandbox: Some(id),
+            filter_owner: owner_filter,
+        };
+        let chain = self.cursors.begin(&scope, page).map_err(cursor_error)?;
+        let mut result = self.store.usage_events(id, &chain.page).await?;
+        result.next = self
+            .cursors
+            .finish(&scope, chain, result.next)
+            .map_err(cursor_error)?;
+        Ok(result)
+    }
+}
+
+fn cursor_error(error: CursorError) -> UsageReadError {
+    match error {
+        CursorError::Invalid => UsageReadError::InvalidCursor,
+        CursorError::Store(error) => UsageReadError::Store(error),
     }
 }
 

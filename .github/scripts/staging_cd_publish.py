@@ -225,7 +225,7 @@ def main():
             output.write_text(canonical(receipts) + "\n", encoding="utf-8")
             # Persist successful publication before optional cache work. A later
             # cache timeout must not lose the receipt for an immutable pushed tag.
-            if cache is not None and cache.restore_result != "hit":
+            if cache is not None:
                 diagnostics.mark("cache_export")
                 with timings.stage("cache-export"):
                     accepted = cache.export_mounts()
