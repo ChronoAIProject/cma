@@ -13,6 +13,11 @@ from staging_cd_versions import BASE_VERSION, DEPLOYABLES, LEVELS, bump, version
 
 KNOWN_DEPLOYABLES = known_components()
 FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump", "run_id", "run_attempt"}
+# A pending tag and its final belong to one owner exactly when these agree.
+OWNER = ("source", "run_id", "run_attempt", "version", "pr")
+# One finalization prunes at most this many burned reservations; the next prunes the rest.
+PRUNE_LIMIT = 128
+REMOTE = "https://github.com/ChronoAIProject/cma.git"
 
 
 class ReservationSuperseded(Refusal):
@@ -40,6 +45,12 @@ def validate_reservation(value):
 def pending_name(value):
     validate_reservation(value)
     return KNOWN_DEPLOYABLES[value["component"]] + "/pending/v" + value["version"]
+
+
+def claim_ref(value):
+    # Bumps from one predecessor can have different version names (minor vs
+    # patch). Both must compete for the same immutable successor slot.
+    return "refs/tags/cma-allocation/" + value["component"] + "/after-v" + value["previous"]
 
 
 def outcome_ref(component, version):
@@ -79,6 +90,8 @@ class Reservations:
     def __init__(self, api, token, root, runner=subprocess.run, *, mark=lambda _stage: None, sleep=time.sleep):
         self.api, self.root, self.runner = api, root, runner
         self.mark, self.sleep = mark, sleep
+        # The complete final inventory each cleanup verified, by component.
+        self.settled = {}
         require(isinstance(token, str) and token and not any(c.isspace() for c in token),
                 "Version reservation credential is invalid")
         header = "AUTHORIZATION: basic " + base64.b64encode(("x-access-token:" + token).encode()).decode()
@@ -89,27 +102,42 @@ class Reservations:
 
     def list(self, component=None):
         require(component is None or component in DEPLOYABLES, "Unknown reservation component")
-        result = []
-        for key, deployable in DEPLOYABLES.items():
-            if component is not None and component != key:
-                continue
-            rows = self.api.request("git/matching-refs/tags/" + deployable + "/pending/v")
-            require(isinstance(rows, list), "Pending tag inventory is malformed")
-            for row in rows:
-                require(isinstance(row, dict) and isinstance(row.get("object"), dict)
-                        and row["object"].get("type") == "tag" and matches(r"[0-9a-f]{40}", row["object"].get("sha")),
-                        "Pending tag lacks reservation provenance")
-            self.api.preload_tags(rows)
-            for row in rows:
-                tag = self.api.request("git/tags/" + row["object"]["sha"])
-                value = validate_reservation(json.loads(tag["message"]))
-                require(value["component"] == key and tag.get("tag") == pending_name(value)
-                        and row.get("ref") == "refs/tags/" + pending_name(value)
-                        and isinstance(tag.get("object"), dict) and tag["object"].get("type") == "commit"
-                        and tag["object"].get("sha") == value["source"],
-                        "Pending version ref differs from its reservation")
-                result.append(value)
+        result = [value for key in DEPLOYABLES if component in (None, key) for value, _ in self.inventory(key)]
         require(len({pending_name(item) for item in result}) == len(result), "Duplicate pending version")
+        return result
+
+    def inventory(self, key):
+        """One lane's validated reservations, each with the tag object its live ref names."""
+        rows = self.api.request("git/matching-refs/tags/" + DEPLOYABLES[key] + "/pending/v")
+        require(isinstance(rows, list), "Pending tag inventory is malformed")
+        for row in rows:
+            require(isinstance(row, dict) and isinstance(row.get("object"), dict)
+                    and row["object"].get("type") == "tag" and matches(r"[0-9a-f]{40}", row["object"].get("sha")),
+                    "Pending tag lacks reservation provenance")
+        self.api.preload_tags(rows)
+        result = []
+        for row in rows:
+            tag = self.api.request("git/tags/" + row["object"]["sha"])
+            value = validate_reservation(json.loads(tag["message"]))
+            require(value["component"] == key and tag.get("tag") == pending_name(value)
+                    and row.get("ref") == "refs/tags/" + pending_name(value)
+                    and isinstance(tag.get("object"), dict) and tag["object"].get("type") == "commit"
+                    and tag["object"].get("sha") == value["source"],
+                    "Pending version ref differs from its reservation")
+            result.append((value, row["object"]["sha"]))
+        return result
+
+    def claims(self, component):
+        """One lane's live allocation claims, each naming the reservation object that won it."""
+        prefix = "refs/tags/cma-allocation/" + component + "/after-v"
+        rows = self.api.request("git/matching-refs/" + prefix.removeprefix("refs/"))
+        require(isinstance(rows, list), "Allocation claim inventory is malformed")
+        result = {}
+        for row in rows:
+            require(isinstance(row, dict) and isinstance(row.get("ref"), str) and row["ref"].startswith(prefix)
+                    and row["ref"] not in result and isinstance(row.get("object"), dict)
+                    and matches(r"[0-9a-f]{40}", row["object"].get("sha")), "Allocation claim inventory is malformed")
+            result[row["ref"]] = row["object"]["sha"]
         return result
 
     def command(self, *args, data=None):
@@ -146,7 +174,7 @@ class Reservations:
         return True
 
     def require_current(self, value, *, build_started):
-        """Supersession is derived from immutable tags; burned refs stay intact.
+        """Supersession is derived from immutable tags; burned refs stay until a final fences them.
 
         Every lane queues only its newest reservation and finishes a build it
         has started. Each caller states whether this reservation's build has
@@ -205,22 +233,75 @@ class Reservations:
         self.mark("cleanup_verify")
         component = receipt["identity"]["component"]
         require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
-        finals = [tag for tag in self.api.tags(component) if tag["name"] == receipt["tag"]]
+        observed = self.api.tags(component)
+        finals = [tag for tag in observed if tag["name"] == receipt["tag"]]
         require(len(finals) == 1 and finals[0]["receipt"] == receipt and finals[0]["oid"] == expected_oid,
                 "Pending deletion requires the verified matching final receipt")
         self.api.require_current_versions({component: receipt})
+        self.settled[component] = observed
         matches = [item for item in self.list(component) if item["version"] == receipt["identity"]["version"]]
         if not matches:
             return
-        require(len(matches) == 1 and all(matches[0][key] == receipt["identity"][key]
-                                         for key in ("source", "run_id", "run_attempt", "version", "pr")),
+        require(len(matches) == 1 and all(matches[0][key] == receipt["identity"][key] for key in OWNER),
                 "Pending version belongs to another source")
         self.mark("cleanup_delete")
-        self.command("push", "https://github.com/ChronoAIProject/cma.git",
-                     ":refs/tags/" + pending_name(matches[0]))
+        self.command("push", REMOTE, ":refs/tags/" + pending_name(matches[0]))
         self.mark("cleanup_read")
         remaining = [item for item in self.list(component) if item["version"] == receipt["identity"]["version"]]
         require(not remaining, "Published reservation cleanup failed")
+
+    def prune_burned(self, receipt):
+        """Remove this lane's reservations that its verified finals have made unusable.
+
+        Runs after finalization verified the lane's new final and its own
+        cleanup. A lane runs one release at a time, so no other build of it is
+        running; a burned attempt can never finalize, and finals are never
+        removed. A reservation below a final from the same or a later source
+        therefore can never publish: require_current refuses it once its build
+        starts. A queued run still holding one yields to that final before
+        building, exactly as with the tag present. A reservation whose own
+        final exists is settled. The current run's reservations, burned
+        versions above every final, and any whose claim names another object
+        remain. Each removed tag takes the allocation claim only it backs, in
+        one atomic push leased to the observed objects, so every claim left
+        stays backed. Returns the number of reservations removed.
+        """
+        identity = receipt["identity"]
+        component = identity["component"]
+        require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
+        finals = self.settled.get(component)
+        finals = [tag["receipt"]["identity"] for tag in (self.api.tags(component) if finals is None else finals)]
+        history = self.api.history()
+        claims, backed = self.claims(component), {claim_ref(final) for final in finals}
+        doomed, removed = {}, 0
+        for value, oid in sorted(self.inventory(component), key=lambda entry: version_tuple(entry[0]["version"])):
+            if removed == PRUNE_LIMIT:
+                break
+            if value["run_id"] == identity["run_id"]:
+                continue
+            if value["source"] in history.positions:
+                fenced = any(self.supersedes(final, value, history) for final in finals)
+            else:
+                # A source that left history can never build; any higher final fences it.
+                fenced = any(version_tuple(final["version"]) > version_tuple(value["version"]) for final in finals)
+            settled = any(all(final[key] == value[key] for key in OWNER) for final in finals)
+            claim = claim_ref(value)
+            if not (fenced or settled) or claims.get(claim, oid) != oid:
+                continue
+            doomed["refs/tags/" + pending_name(value)] = oid
+            if claim in claims and claim not in backed:
+                doomed[claim] = oid
+            removed += 1
+        if not doomed:
+            return 0
+        # Deletions only, never an update. Each lease names the object read
+        # above; a moved ref rejects the whole transaction, claims included.
+        self.command("push", "--atomic", "--porcelain",
+                     *("--force-with-lease=" + ref + ":" + oid for ref, oid in doomed.items()),
+                     REMOTE, *(":" + ref for ref in doomed))
+        remaining = {"refs/tags/" + pending_name(value) for value, _ in self.inventory(component)}
+        require(not (remaining | self.claims(component).keys()) & doomed.keys(), "Burned reservation pruning failed")
+        return removed
 
     def finalize(self, receipt, verify_digest, *, recovery_oid=None):
         self.mark("receipt")

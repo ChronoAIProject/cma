@@ -1,11 +1,12 @@
-"""Publish final digest-bound version tags, then remove successful reservations."""
+"""Publish final digest-bound version tags, then remove successful and fenced reservations."""
 import json
 import os
+import subprocess
 import time
 from pathlib import Path
 
 from staging_cd_admission import event_identity
-from staging_cd_common import require
+from staging_cd_common import Refusal, require
 from staging_cd_github import GitHub
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_finalize_diagnostics import run_finalization
@@ -41,8 +42,22 @@ def finalize(tasks, receipts, publisher, registry, *, recovery_oids=None, mark=l
     return receipts[-1]
 
 
+def prune(publisher, receipt):
+    """Remove burned reservations a new final has fenced, without risking the release.
+
+    The final is published and verified by now. A failed pruning keeps every
+    burned tag, which only costs later reads, so it never fails finalization.
+    """
+    try:
+        removed = publisher.prune_burned(receipt)
+    except (Refusal, OSError, subprocess.SubprocessError, ValueError, KeyError, TypeError):
+        return "retained", 0
+    return "complete", removed if type(removed) is int else 0
+
+
 def main():
     env = os.environ
+    pruned = []
     def operation(_masker, diagnostics):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Final version tags only accept develop pushes")
@@ -76,8 +91,15 @@ def main():
         diagnostics.mark("output")
         output(env, "receipt", canonical(receipt))
         output(env, "component", receipt["identity"]["component"])
+        pruned.append((receipt["identity"]["component"], *prune(publisher, receipt)))
         return True
-    return run_finalization(operation)
+    status = run_finalization(operation)
+    # Only fixed fields cross the private output boundary.
+    for component, result, removed in pruned:
+        print(f"PRUNE finalize component={component} result={result} removed={removed}")
+        if result != "complete":
+            print(f"::warning title=Burned reservations retained::{component} kept its burned pending tags")
+    return status
 
 
 if __name__ == "__main__":
