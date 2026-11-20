@@ -157,7 +157,15 @@ class Reservations:
         validate_reservation(value)
         component = value["component"]
         pending, finals = self.list(component), self.api.tags(component)
-        require(value in pending, "Publication reservation is missing")
+        if value not in pending:
+            # Pruning removes a reservation only once a final at or after its
+            # source has fenced it. A queued run still yields to that final
+            # before building; a started build or any other absence fails.
+            require(not build_started, "Publication reservation is missing")
+            history = self.api.history()
+            require(any(self.supersedes(tag["receipt"]["identity"], value, history) for tag in finals),
+                    "Publication reservation is missing")
+            raise ReservationSuperseded()
         history = self.api.history()
         position = history.position(value["source"])
         if build_started:
@@ -167,14 +175,8 @@ class Reservations:
         candidates = pending + [tag["receipt"]["identity"] for tag in finals]
         if not build_started:
             for item in candidates:
-                if version_tuple(item["version"]) > version_tuple(value["version"]):
-                    # A larger number alone still fences writes, but cannot
-                    # turn malformed or unrelated provenance into a handled skip.
-                    chain = history
-                    if item["source"] not in chain.positions:
-                        chain = self.api.history_containing(item["source"])
-                    if chain.position(item["source"]) >= chain.position(value["source"]):
-                        raise ReservationSuperseded()
+                if self.supersedes(item, value, history):
+                    raise ReservationSuperseded()
         require(all((item["source"] not in history.positions or history.position(item["source"]) <= position)
                     and version_tuple(item["version"]) <= version_tuple(value["version"])
                     for item in candidates), "Publication reservation is superseded and burned")
@@ -187,6 +189,17 @@ class Reservations:
                 raise SourceAlreadyFinal()
             raise Refusal("This merge already has a different immutable release")
         return True
+
+    def supersedes(self, item, value, history):
+        """A higher version from the same or a later develop source takes over a queued reservation."""
+        if version_tuple(item["version"]) <= version_tuple(value["version"]):
+            return False
+        # A larger number alone still fences writes, but cannot turn
+        # malformed or unrelated provenance into a handled skip.
+        chain = history
+        if item["source"] not in chain.positions:
+            chain = self.api.history_containing(item["source"])
+        return chain.position(item["source"]) >= chain.position(value["source"])
 
     def remove_after_publication(self, receipt, expected_oid):
         self.mark("cleanup_verify")
