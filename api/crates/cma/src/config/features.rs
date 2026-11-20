@@ -3,9 +3,9 @@
 mod agent_event_page_tests;
 pub(super) mod home_backup;
 #[cfg(test)]
-mod home_backup_tests;
-#[cfg(test)]
 mod home_backup_expiry_tests;
+#[cfg(test)]
+mod home_backup_tests;
 #[cfg(test)]
 #[path = "ingress_coordinator_tests.rs"]
 mod ingress_coordinator_tests;

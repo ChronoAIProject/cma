@@ -241,3 +241,18 @@ fn shared_observation_requires_routed_replicas_and_bounded_replay() {
             .agent_shared_observation
     );
 }
+
+#[test]
+fn home_backup_expiry_cannot_enable_without_a_qualified_production_provider() {
+    let key = "CHRONO_HOME_BACKUP_EXPIRY_ENABLED";
+    assert!(!configured(&[]).unwrap().features.home_backup_expiry_enabled);
+    assert!(
+        !configured(&[(key, "false")])
+            .unwrap()
+            .features
+            .home_backup_expiry_enabled
+    );
+    let error = configured(&[(key, "true")]).unwrap_err();
+    assert!(error.contains(key));
+    assert!(error.contains("qualified deletion provider"));
+}

@@ -253,6 +253,9 @@ impl Config {
         }
 
         let features = FeatureFlags::from_lookup(&mut lookup)?;
+        if features.home_backup_expiry_enabled {
+            return Err("CHRONO_HOME_BACKUP_EXPIRY_ENABLED requires a qualified deletion provider; retention preparation cannot be enabled".into());
+        }
         let home_backup = HomeBackupConfig::from_lookup(&mut lookup, features.home_backup_enabled)?;
         let account_deletion_enabled = account_deletion::enabled(&mut lookup)?;
         let account_erasure_transaction_drain_seconds =

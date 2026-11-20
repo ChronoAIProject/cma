@@ -188,7 +188,7 @@ impl ControlPlaneComposition {
         .with_user_directory(Arc::clone(&users))
         .with_runtime_updates(runtime.updates.clone())
         .with_maintenance(stores.sandbox_model.clone())
-        .with_warm_pools(runtime.warm_pools.clone())
+        .with_warm_pools(native_warm_pools.clone())
         .with_platform_spend(stores::platform_spend(&stores, &activity, &settings))
         .with_admission_ceilings(stores::admission_ceilings(&stores, config))
         .with_admission_control(Arc::new(
@@ -474,7 +474,6 @@ impl ControlPlaneComposition {
             relay.as_ref(),
         );
         Ok(Self {
-            home_backup_expiry: runtime::home_backup_expiry(config, &stores)?,
             activity_worker,
             workers,
             document_blob_maintenance,
@@ -492,7 +491,7 @@ impl ControlPlaneComposition {
             command_scheduler,
             sandbox_control_scheduler,
             sandbox_lifecycle,
-            native_warm_pools: runtime.warm_pools,
+            native_warm_pools,
             native_prepared: adapters.preparation,
             agent_access_worker: agent_access.worker,
         })

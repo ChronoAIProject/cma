@@ -34,6 +34,7 @@ impl Workers {
                 ("sandbox_reconciliation", true),
                 ("agent_capacity_recovery", true),
                 ("native_warm_pools", false),
+                #[cfg(test)]
                 ("home_backup_expiry", false),
             ]
             .into_iter()
