@@ -337,7 +337,7 @@ async fn rejection_of_a_replaced_cookie_generation_never_signs_out_the_current_l
 }
 
 #[tokio::test]
-async fn browser_transport_failure_and_total_deadline_do_not_sign_out_or_mutate_credentials() {
+async fn browser_transport_failure_and_body_deadline_do_not_sign_out_or_mutate_credentials() {
     let fixture = Fixture::new().await;
     let retained = fixture.seed().await;
     let browser = Browser::new(&fixture).await;
@@ -352,20 +352,15 @@ async fn browser_transport_failure_and_total_deadline_do_not_sign_out_or_mutate_
         );
     }
     *fixture.auth.metadata.write().await = Some(metadata);
-    let gate = Arc::new(Gate::default());
-    fixture.control.userinfo.write().await.gate = Some(gate.clone());
-    let (app, headers) = (browser.app.clone(), browser.headers.clone());
-    let pending =
-        tokio::spawn(async move { request(&app, &headers, Method::GET, "/api/v1/agents").await });
-    tokio::time::timeout(Duration::from_secs(2), gate.reached.notified())
-        .await
-        .unwrap();
-    tokio::time::pause();
-    tokio::time::advance(PROVIDER_VERIFICATION_TIMEOUT + Duration::from_secs(1)).await;
-    let (status, body) = pending.await.unwrap();
-    tokio::time::resume();
+    {
+        let mut reply = fixture.control.userinfo.write().await;
+        reply.body = "{".into();
+        reply.stream_tail = Some((Duration::from_secs(2), Ok("}".into())));
+    }
+    let (status, body) = browser.request(Method::GET, "/api/v1/agents").await;
     assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
     assert_eq!(body["code"], "store_failed");
+    assert_eq!(body["retryable"], false);
     browser.unchanged(&fixture, &retained).await;
 }
 
