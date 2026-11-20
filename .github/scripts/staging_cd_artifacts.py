@@ -4,15 +4,21 @@ import json
 import os
 import re
 import subprocess
+import time
 import zipfile
 from pathlib import Path
 
+import ci_retry
 from deployables import registry as deployable_registry
 from staging_cd_build import command, inspect
-from staging_cd_common import matches, require
+from staging_cd_common import Refusal, matches, require
 from staging_cd_versions import DEPLOYABLES, REPOSITORY
 
 MAX_ARTIFACT = 8 * 1024 * 1024 * 1024
+# The reuse probe's reads and download share one budget. Spending it falls back
+# to a build, which is always correct, instead of holding the publish step.
+REUSE_SECONDS = 900
+DOWNLOAD_SECONDS = 600
 
 
 def qualifies(metadata, expected, run):
@@ -33,17 +39,32 @@ def qualifies(metadata, expected, run):
             and workflow.get("runId") == str(run["id"]) and workflow.get("runAttempt") == str(run["run_attempt"]))
 
 
-def download(artifact, destination, token):
+def download(artifact, destination, token, *, deadline=None, retry=None):
     require(type(artifact.get("id")) is int and artifact["id"] > 0
             and type(artifact.get("size_in_bytes")) is int and 0 < artifact["size_in_bytes"] <= MAX_ARTIFACT
             and matches(r"sha256:[0-9a-f]{64}", artifact.get("digest")), "CI artifact identity is incomplete")
     env = {key: value for key, value in os.environ.items() if key in ("PATH", "HOME", "LANG", "LC_ALL")}
     env.update(GH_TOKEN=token, GH_HOST="github.com", GH_PROMPT_DISABLED="1")
-    with destination.open("xb") as stream:
-        result = subprocess.run(["gh", "api", f"repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip"],
-                                env=env, stdout=stream, stderr=subprocess.PIPE, timeout=600, check=False)
-    require(result.returncode == 0 and 0 < destination.stat().st_size <= MAX_ARTIFACT,
-            "CI artifact download failed")
+
+    policy = ci_retry.bounded(retry, deadline)
+
+    def attempt():
+        timeout = ci_retry.attempt_timeout(DOWNLOAD_SECONDS, deadline, policy.get("clock", time.monotonic))
+        if timeout is None:
+            raise Refusal("CI artifact download budget expired") from ci_retry.TransientError()
+        stream = destination.open("xb")  # never adopts a file this download did not create
+        try:
+            with stream:
+                result = subprocess.run(["gh", "api", f"repos/{REPOSITORY}/actions/artifacts/{artifact['id']}/zip"],
+                                        env=env, stdout=stream, stderr=subprocess.PIPE, timeout=timeout, check=False)
+            if result.returncode != 0:
+                raise Refusal("CI artifact download failed") from ci_retry.cli_cause(result.stderr)
+        except BaseException:
+            destination.unlink(missing_ok=True)  # only this attempt's partial bytes
+            raise
+
+    ci_retry.call(attempt, name="artifact-download", classify=ci_retry.classify, **policy)
+    require(0 < destination.stat().st_size <= MAX_ARTIFACT, "CI artifact download failed")
     digest = hashlib.sha256()
     with destination.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -51,13 +72,15 @@ def download(artifact, destination, token):
     require("sha256:" + digest.hexdigest() == artifact["digest"], "CI artifact checksum differs")
 
 
-def try_reuse(expected, directory, api, token, downloader=download, runner=command):
-    pr = api.request("pulls/" + str(expected["pr"]))
+def fetch(expected, api, archive, token, downloader, deadline):
+    """Find and download the newest successful PR run's native image artifact."""
+    pr = api.request("pulls/" + str(expected["pr"]), deadline=deadline)
     require(pr.get("merged") is True and pr.get("merge_commit_sha") == expected["source"]
             and isinstance(pr.get("head"), dict) and matches(r"[0-9a-f]{40}", pr["head"].get("sha")),
             "PR artifact source cannot be established")
     head = pr["head"]["sha"]
-    data = api.request("actions/workflows/ci.yml/runs?event=pull_request&head_sha=" + head + "&status=success&per_page=100")
+    data = api.request("actions/workflows/ci.yml/runs?event=pull_request&head_sha=" + head
+                       + "&status=success&per_page=100", deadline=deadline)
     require(isinstance(data, dict) and isinstance(data.get("workflow_runs"), list), "CI run inventory is malformed")
     runs = [run for run in data["workflow_runs"] if run.get("event") == "pull_request"
             and run.get("status") == "completed" and run.get("conclusion") == "success"
@@ -67,7 +90,7 @@ def try_reuse(expected, directory, api, token, downloader=download, runner=comma
     if not runs:
         return None
     run = max(runs, key=lambda item: (item["id"], item["run_attempt"]))
-    listing = api.request(f"actions/runs/{run['id']}/artifacts?per_page=100")
+    listing = api.request(f"actions/runs/{run['id']}/artifacts?per_page=100", deadline=deadline)
     require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list)
             and listing.get("total_count") == len(listing["artifacts"]), "CI artifact inventory is incomplete")
     component = deployable_registry()[DEPLOYABLES[expected["component"]]]["component"]
@@ -76,8 +99,23 @@ def try_reuse(expected, directory, api, token, downloader=download, runner=comma
     if not artifacts:
         return None
     require(len(artifacts) == 1, "Native PR artifact is ambiguous")
+    downloader(artifacts[0], archive, token, deadline=deadline)
+    return run
+
+
+def try_reuse(expected, directory, api, token, downloader=download, runner=command, *, clock=time.monotonic):
     archive = directory / "candidate.zip"
-    downloader(artifacts[0], archive, token)
+    try:
+        run = fetch(expected, api, archive, token, downloader, clock() + REUSE_SECONDS)
+    except Exception as error:  # noqa: BLE001 - only an exhausted transient failure is tolerated.
+        if ci_retry.classify(error) != ci_retry.TRANSIENT:
+            raise
+        # The PR artifact stayed unreachable through bounded retries, and the
+        # download removed its own partial bytes. A build from source costs
+        # time; failing here would burn the reserved version.
+        return None
+    if run is None:
+        return None
     with zipfile.ZipFile(archive) as source:
         entries = source.infolist()
         require(len(entries) <= 3 and len({entry.filename for entry in entries}) == len(entries)

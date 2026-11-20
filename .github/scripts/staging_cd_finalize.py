@@ -1,6 +1,7 @@
 """Publish final digest-bound version tags, then remove successful reservations."""
 import json
 import os
+import time
 from pathlib import Path
 
 from staging_cd_admission import event_identity
@@ -12,6 +13,10 @@ from staging_cd_receipts import canonical, final_tag_oid, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_reservations import Reservations
 from staging_cd_resolve import output
+
+# The job allows fifteen minutes, including checkout and the receipt download.
+# GitHub and registry reads share this budget and refuse cleanly once it is spent.
+FINALIZE_READ_SECONDS = 600
 
 
 def finalize(tasks, receipts, publisher, registry, *, recovery_oids=None, mark=lambda _stage: None):
@@ -41,7 +46,9 @@ def main():
     def operation(_masker, diagnostics):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Final version tags only accept develop pushes")
-        api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(env.get("CD_COMPONENT"), Path.cwd()))
+        deadline = time.monotonic() + FINALIZE_READ_SECONDS
+        api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(env.get("CD_COMPONENT"), Path.cwd()),
+                     deadline=deadline)
         publisher = Reservations(api, env.get("GH_TOKEN"), Path.cwd(), mark=diagnostics.mark)
         diagnostics.mark("artifact")
         path = Path(env["CD_RECEIPTS_PATH"])
@@ -64,7 +71,7 @@ def main():
                 require(existing[0].get("oid") == expected_oid,
                         "Prior-attempt final tag object differs")
                 recovery_oids[receipt["tag"]] = expected_oid
-        receipt = finalize(json.loads(env["CD_TASKS"]), receipts, publisher, Registry(),
+        receipt = finalize(json.loads(env["CD_TASKS"]), receipts, publisher, Registry(deadline=deadline),
                            recovery_oids=recovery_oids, mark=diagnostics.mark)
         diagnostics.mark("output")
         output(env, "receipt", canonical(receipt))
