@@ -47,6 +47,9 @@ impl HierarchyProblem {
     }
     pub(crate) fn sandbox(error: SandboxServiceError) -> Self {
         match error {
+            SandboxServiceError::AccountDeletionInProgress => Self::ResourceAccess(
+                layer2_core::resource_access::ResourceAccessError::AccountDeletionInProgress,
+            ),
             SandboxServiceError::GlobalCapacityReached => Self::GlobalCapacityReached,
             SandboxServiceError::Budget(reason) => Self::Budget(reason),
             SandboxServiceError::AdmissionPaused => Self::AdmissionPaused,

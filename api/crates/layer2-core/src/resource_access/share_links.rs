@@ -255,6 +255,18 @@ impl ResourceAccessService {
                         && l.audience.allows_subject(&context.caller.subject)
                 })
                 .ok_or(AccessError::NotFound)?;
+            // Token possession is proved before account state can be observed.
+            // The store serializes the recipient's authoritative deletion check
+            // with the grant; this cached check also covers independent stores.
+            if self
+                .standing
+                .erasing(&context.caller.subject)
+                .await
+                .map_err(|_| ResourceAccessStoreError::Unavailable)?
+            {
+                return Err(ResourceAccessStoreError::ShareRecipientUnavailable.into());
+            }
+            self.require_owner_available(&share.owner, false).await?;
             if let Some(org) = link.audience.organization() {
                 let evidence = self
                     .organizations

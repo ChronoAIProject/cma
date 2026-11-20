@@ -9,6 +9,8 @@ use super::*;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ResourceAccessError {
+    #[error("account deletion is in progress")]
+    AccountDeletionInProgress,
     #[error(transparent)]
     Access(#[from] AccessError),
     #[error(transparent)]
@@ -22,6 +24,7 @@ pub enum ResourceAccessError {
 pub struct AuthorizedResource {
     pub snapshot: ResourceAccessSnapshot,
     pub decision: AccessDecision,
+    pub(crate) caller: crate::Caller,
     pub(crate) binding: Option<crate::sandbox::binding::BindingConversationAuthority>,
 }
 
@@ -31,6 +34,7 @@ pub struct ResourceAccessService {
     pub(super) store: Arc<dyn ResourceShareStore>,
     pub(super) bindings: Option<Arc<crate::sandbox::binding::BindingAccessService>>,
     pub(super) organizations: Arc<dyn OrganizationAuthority>,
+    pub(super) standing: Arc<dyn crate::account_deletion::AccountStanding>,
     pub(super) directory: Option<Arc<crate::UserDirectory>>,
 }
 
@@ -43,6 +47,7 @@ impl ResourceAccessService {
             store,
             organizations,
             directory: None,
+            standing: Arc::new(crate::account_deletion::AvailableAccounts),
             bindings: None,
             execution: None,
         }
@@ -61,6 +66,8 @@ impl ResourceAccessService {
         if !context.validate_principal() {
             return Err(AccessError::NotFound.into());
         }
+        self.require_account_available(&context.caller.subject, false)
+            .await?;
         if let Some(policy) = &self.execution {
             policy
                 .require_active()
@@ -84,9 +91,11 @@ impl ResourceAccessService {
                     .authorization
                     .allows(crate::Capability::UseOwnSandboxes))
         {
+            self.require_owner_available(&scope.owner, false).await?;
             return Ok(AuthorizedResource {
                 snapshot,
                 decision: independent,
+                caller: context.caller.clone(),
                 binding: None,
             });
         }
@@ -165,6 +174,8 @@ impl ResourceAccessService {
         if snapshot.fence() != refreshed.fence() {
             return Err(ResourceAccessStoreError::Conflict.into());
         }
+        self.require_account_available(&context.caller.subject, false)
+            .await?;
         let decision = AccessDecision::evaluate(
             &current,
             &refreshed.scope(target)?,
@@ -178,9 +189,12 @@ impl ResourceAccessService {
             }
             return Err(error.into());
         }
+        self.require_owner_available(&refreshed.scope(target)?.owner, false)
+            .await?;
         Ok(AuthorizedResource {
             snapshot: refreshed,
             binding: None,
+            caller: context.caller.clone(),
             decision,
         })
     }
