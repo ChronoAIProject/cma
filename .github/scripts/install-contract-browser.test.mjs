@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   downloadAttempts,
   downloadBackoffMs,
@@ -21,12 +22,18 @@ function downloaderError(message, output, code) {
   return Object.assign(new Error(message), { output, code });
 }
 
+// A killed process reparented to an init that never reaps (a container's
+// PID 1) stays a zombie; it still answers signal 0 but runs nothing.
 function gone(pid) {
   try {
     process.kill(pid, 0);
-    return false;
   } catch (error) {
     return error.code === 'ESRCH';
+  }
+  try {
+    return readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1]?.startsWith('Z') ?? false;
+  } catch {
+    return false;
   }
 }
 
