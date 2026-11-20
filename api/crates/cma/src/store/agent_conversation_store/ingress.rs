@@ -1,10 +1,9 @@
 //! Borrowed BSON preflight; wire length and requested allocation are distinct.
 
 use crate::store::ingress_reads::layout::{BsonLayout, LayoutError};
-use layer2_core::sandbox::ingress_ownership::{
-    sizing::shared_owner_bytes, AllocationPlan, IngressClass, IngressOwnershipPolicy,
-    ReservationBundle,
-};
+#[cfg(test)]
+use layer2_core::sandbox::ingress_ownership::IngressOwnershipPolicy;
+use layer2_core::sandbox::ingress_ownership::{sizing::shared_owner_bytes, AllocationPlan};
 use layer2_core::sandbox::store::{AgentMessageSnapshot, SandboxStoreError};
 use mongodb::bson::Document;
 #[cfg(test)]
@@ -48,19 +47,6 @@ fn add(a: usize, b: usize) -> Result<usize, SnapshotRefusal> {
 
 fn mul(a: usize, b: usize) -> Result<usize, SnapshotRefusal> {
     a.checked_mul(b).ok_or_else(corrupt)
-}
-
-pub(super) fn reserve(
-    policy: &IngressOwnershipPolicy,
-    class: IngressClass,
-    phase: &'static str,
-    allocations: &[usize],
-) -> Result<ReservationBundle, SnapshotRefusal> {
-    let plan =
-        AllocationPlan::checked(phase, allocations).map_err(|_| SnapshotRefusal::Capacity)?;
-    policy
-        .admit(class, plan)
-        .map_err(|_| SnapshotRefusal::Capacity)
 }
 
 #[derive(Debug)]
@@ -108,16 +94,11 @@ impl SnapshotLayout {
     }
 }
 
-pub(super) fn read_allowance(
-    policy: &IngressOwnershipPolicy,
-    id_bytes: usize,
-) -> Result<ReservationBundle, SnapshotRefusal> {
+pub(super) fn read_plan(id_bytes: usize) -> Result<AllocationPlan, SnapshotRefusal> {
     // find_one requests a single row. The pinned driver's response backing,
     // cursor row copy and RawDocumentBuf deserialization can overlap. Allow a
     // complete maximum BSON document for each, plus command/response envelopes.
-    reserve(
-        policy,
-        IngressClass::Transformation,
+    AllocationPlan::checked(
         "conversation raw snapshot",
         &[
             3 * MAX_DOCUMENT_BYTES,
@@ -127,4 +108,5 @@ pub(super) fn read_allowance(
             shared_owner_bytes::<SandboxStoreError>(),
         ],
     )
+    .map_err(|_| SnapshotRefusal::Capacity)
 }

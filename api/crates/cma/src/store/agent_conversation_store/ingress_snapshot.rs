@@ -5,8 +5,8 @@ use crate::store::ingress_reads::{
     row::{self, ConversionPlan, RowError, RowSchema},
 };
 use layer2_core::sandbox::ingress_ownership::{
-    sizing::shared_owner_bytes, AdmittedError, AdmittedOperation, AllocationPlan, IngressClass,
-    IngressOwnershipPolicy, IngressWorkScope, OwnedWork, SharedOwned,
+    AdmittedError, AdmittedOperation, AllocationPlan, IngressClass, IngressOwnershipPolicy,
+    IngressWorkScope, OwnedWork, SharedOwned,
 };
 use layer2_core::sandbox::store::{AgentMessageSnapshot, SandboxStoreError};
 use layer2_core::AgentId;
@@ -70,53 +70,31 @@ async fn load_inner(
     id: &AgentId,
     policy: &IngressOwnershipPolicy,
 ) -> Result<Option<SharedOwned<AgentMessageSnapshot>>, SnapshotError> {
-    let mut read_storage = ingress::read_allowance(policy, id.as_str().len())?;
-    let raw = match store
-        .agents
-        .clone_with_type::<RawDocumentBuf>()
-        .find_one(doc! { "_id": id.as_str() })
-        .await
-    {
-        Ok(raw) => raw,
-        Err(error) => {
-            let scope = IngressWorkScope::new(read_storage);
-            drop(error);
-            // The read plan covers this bounded diagnostic and its owner. Do not
-            // format a driver payload into an independently escaping String.
-            return Err(SnapshotError::Owned(scope.initialize_owned(|| {
-                SandboxStoreError::Unavailable("conversation snapshot read failed".into())
-            })));
-        }
-    };
-    let Some(raw) = raw else {
-        return Ok(None);
-    };
-    // find_one has completed and dropped its cursor/response. Keep custody of
-    // the returned raw buffer while returning the no-longer-live read copies.
-    let raw_storage = read_storage
-        .split_admitted(
-            AllocationPlan::checked(
-                "conversation returned raw snapshot",
-                &[raw.as_bytes().len(), shared_owner_bytes::<RawDocumentBuf>()],
-            )
-            .map_err(|_| SnapshotRefusal::Capacity)?,
-        )
-        .map_err(|_| SnapshotRefusal::Capacity)?;
-    let raw = raw_storage.initialize(|| raw);
-    drop(read_storage);
-    let result = decode(&raw, policy);
-    drop(raw);
-    result.map(Some)
+    row::load::<SnapshotSchema, _>(policy, ingress::read_plan(id.as_str().len())?, || async {
+        store
+            .agents
+            .clone_with_type::<RawDocumentBuf>()
+            .find_one(doc! { "_id": id.as_str() })
+            .await
+            .map_err(|_| SandboxStoreError::Unavailable("conversation snapshot read failed".into()))
+    })
+    .await
+    .map_err(snapshot_error)
 }
 
+#[cfg(test)]
 pub(super) fn decode(
     raw: &mongodb::bson::RawDocument,
     policy: &IngressOwnershipPolicy,
 ) -> Result<SharedOwned<AgentMessageSnapshot>, SnapshotError> {
-    row::decode::<SnapshotSchema>(raw, policy).map_err(|error| match error {
+    row::decode::<SnapshotSchema>(raw, policy).map_err(snapshot_error)
+}
+
+fn snapshot_error(error: RowError) -> SnapshotError {
+    match error {
         RowError::Refused(error) => SnapshotError::Refused(error.into()),
         RowError::Domain(error) => SnapshotError::Owned(error),
-    })
+    }
 }
 
 struct SnapshotSchema;

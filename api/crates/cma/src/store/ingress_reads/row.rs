@@ -5,7 +5,7 @@ use layer2_core::sandbox::ingress_ownership::{
     IngressWorkScope, OwnedWork, SharedOwned,
 };
 use layer2_core::sandbox::store::SandboxStoreError;
-use mongodb::bson::{Document, RawDocument};
+use mongodb::bson::{Document, RawDocument, RawDocumentBuf};
 
 use super::layout::{BsonLayout, LayoutError};
 
@@ -34,6 +34,50 @@ impl From<LayoutError> for RowError {
     fn from(error: LayoutError) -> Self {
         Self::Refused(error)
     }
+}
+
+/// The caller's plan covers its query, raw response and bounded error mapping.
+/// Pass a factory: constructing a query/future before this entry evades admission.
+/// Driver allocation limits and detached cleanup need their own qualified port.
+pub(crate) async fn load<S, F>(
+    policy: &IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+    initialize: impl FnOnce() -> F,
+) -> Result<Option<SharedOwned<S::Value>>, RowError>
+where
+    S: RowSchema,
+    F: std::future::Future<Output = Result<Option<RawDocumentBuf>, SandboxStoreError>>,
+{
+    let mut read_storage = policy
+        .admit(IngressClass::Transformation, read_plan)
+        .map_err(|_| LayoutError::Capacity)?;
+    let raw = match initialize().await {
+        Ok(raw) => raw,
+        Err(error) => {
+            return Err(RowError::Domain(
+                IngressWorkScope::new(read_storage).initialize_owned(|| error),
+            ));
+        }
+    };
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    // BSON's wire length can be shorter than its Vec backing. Moving the bytes
+    // exposes that capacity without copying or changing the validated header.
+    let bytes = raw.into_bytes();
+    let raw_storage = read_storage
+        .split_admitted(
+            AllocationPlan::checked(
+                "ingress returned raw row",
+                &[bytes.capacity(), shared_owner_bytes::<RawDocumentBuf>()],
+            )
+            .map_err(|_| LayoutError::Capacity)?,
+        )
+        .map_err(|_| LayoutError::Capacity)?;
+    let raw = RawDocumentBuf::from_bytes(bytes).map_err(|_| LayoutError::Structure)?;
+    let raw = raw_storage.initialize(|| raw);
+    drop(read_storage);
+    decode::<S>(&raw, policy).map(Some)
 }
 
 pub(crate) fn decode<S: RowSchema>(

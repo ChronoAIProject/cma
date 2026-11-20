@@ -8,7 +8,7 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::bson::{doc, Document, RawDocumentBuf};
 
 use super::layout::{BsonLayout, LayoutError};
-use super::row::{decode, ConversionPlan, RowError, RowSchema};
+use super::row::{decode, load, ConversionPlan, RowError, RowSchema};
 
 thread_local! {
     static DECODE_CALLS: Cell<usize> = const { Cell::new(0) };
@@ -226,5 +226,187 @@ fn unwind_releases_partial_domain_conversion_and_both_reservations() {
         decode::<Panicking>(&raw, &policy)
     }));
     assert!(result.is_err());
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+fn read_plan() -> AllocationPlan {
+    AllocationPlan::checked("synthetic raw read", &[512 * 1024]).unwrap()
+}
+
+#[tokio::test]
+async fn read_refusal_precedes_query_and_future_construction() {
+    let (root, policy) = policy();
+    let occupied = policy
+        .admit(IngressClass::Transformation, read_plan())
+        .unwrap();
+    let before = root.available_bytes();
+    let initialized = Cell::new(false);
+    let result = load::<Text, _>(&policy, read_plan(), || {
+        initialized.set(true);
+        std::future::ready(Ok(Some(raw(32))))
+    })
+    .await;
+    assert!(matches!(
+        result,
+        Err(RowError::Refused(LayoutError::Capacity))
+    ));
+    assert!(!initialized.get());
+    assert_eq!(root.available_bytes(), before);
+    drop(occupied);
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+#[tokio::test]
+async fn read_retains_only_the_exact_converted_row_after_completion() {
+    let (root, policy) = policy();
+    let value = load::<Text, _>(&policy, read_plan(), || {
+        assert!(root.available_bytes() < root.capacity_bytes());
+        std::future::ready(Ok(Some(raw(8192))))
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(*value, "x".repeat(8192));
+    assert!(value.belongs_to(&policy));
+    assert_eq!(
+        policy
+            .budget(IngressClass::Transformation)
+            .available_bytes(),
+        policy.bounds().transformation_bytes()
+    );
+    let held = root.available_bytes();
+    let larger = load::<Text, _>(&policy, read_plan(), || {
+        std::future::ready(Ok(Some(raw(policy.bounds().data_bytes()))))
+    })
+    .await;
+    assert!(matches!(
+        larger,
+        Err(RowError::Refused(LayoutError::Capacity))
+    ));
+    assert_eq!(root.available_bytes(), held);
+    assert_eq!(*value, "x".repeat(8192));
+    drop(value);
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+#[tokio::test]
+async fn absent_read_and_domain_failure_remain_distinct_and_owned() {
+    let (root, policy) = policy();
+    assert!(
+        load::<Text, _>(&policy, read_plan(), || std::future::ready(Ok(None)))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+    let pointer = Cell::new(std::ptr::null());
+    let error = load::<Text, _>(&policy, read_plan(), || {
+        let message = "synthetic read failure".repeat(128);
+        pointer.set(message.as_ptr());
+        std::future::ready(Err(SandboxStoreError::Unavailable(message)))
+    })
+    .await
+    .unwrap_err();
+    let RowError::Domain(error) = error else {
+        panic!("read failure lost its domain category");
+    };
+    assert!(matches!(&*error, SandboxStoreError::Unavailable(message)
+        if message.as_ptr() == pointer.get()));
+    assert!(error.belongs_to(&policy));
+    assert!(root.available_bytes() < root.capacity_bytes());
+    drop(error);
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+#[tokio::test]
+async fn cancelling_a_pending_read_drops_its_future_before_returning_capacity() {
+    struct Pending {
+        root: IngressBudget,
+        dropped: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        payload: Vec<u8>,
+    }
+    impl Drop for Pending {
+        fn drop(&mut self) {
+            assert!(self.root.available_bytes() < self.root.capacity_bytes());
+            drop(std::mem::take(&mut self.payload));
+            assert!(self.root.available_bytes() < self.root.capacity_bytes());
+            self.dropped
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    impl std::future::Future for Pending {
+        type Output = Result<Option<RawDocumentBuf>, SandboxStoreError>;
+        fn poll(
+            self: std::pin::Pin<&mut Self>,
+            _: &mut std::task::Context<'_>,
+        ) -> std::task::Poll<Self::Output> {
+            std::task::Poll::Pending
+        }
+    }
+    let (root, policy) = policy();
+    let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let read = load::<Text, _>(&policy, read_plan(), || Pending {
+            root: root.clone(),
+            dropped: dropped.clone(),
+            payload: vec![3; 8192],
+        });
+        assert_eq!(root.available_bytes(), root.capacity_bytes());
+        tokio::pin!(read);
+        assert!(futures_util::poll!(&mut read).is_pending());
+        assert!(root.available_bytes() < root.capacity_bytes());
+    }
+    assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+#[tokio::test]
+async fn unwinding_during_query_construction_returns_read_capacity() {
+    use futures_util::FutureExt;
+    let (root, policy) = policy();
+    let read = load::<Text, std::future::Ready<_>>(&policy, read_plan(), || {
+        assert!(root.available_bytes() < root.capacity_bytes());
+        panic!("synthetic query construction failure");
+    });
+    assert!(std::panic::AssertUnwindSafe(read)
+        .catch_unwind()
+        .await
+        .is_err());
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
+
+struct CopyOverlap;
+
+impl RowSchema for CopyOverlap {
+    type Value = String;
+    const INVALID_RAW: &'static str = Text::INVALID_RAW;
+
+    fn plan(layout: BsonLayout) -> Result<ConversionPlan, LayoutError> {
+        Ok(ConversionPlan {
+            temporary_bytes: 600 * 1024,
+            ..Text::plan(layout)?
+        })
+    }
+
+    fn decode(row: Document) -> Result<String, SandboxStoreError> {
+        Text::decode(row)
+    }
+}
+
+#[tokio::test]
+async fn raw_buffer_spare_capacity_remains_charged_through_conversion_admission() {
+    let (root, policy) = policy();
+    DECODE_CALLS.set(0);
+    let result = load::<CopyOverlap, _>(&policy, read_plan(), || {
+        let mut bytes = Vec::with_capacity(256 * 1024);
+        bytes.extend_from_slice(raw(32).as_bytes());
+        std::future::ready(Ok(Some(RawDocumentBuf::from_bytes(bytes).unwrap())))
+    })
+    .await;
+    assert!(matches!(
+        result,
+        Err(RowError::Refused(LayoutError::Capacity))
+    ));
+    assert_eq!(DECODE_CALLS.get(), 0);
     assert_eq!(root.available_bytes(), root.capacity_bytes());
 }
