@@ -130,7 +130,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 149);
+  assert.equal(new Set(requiredPrefixes).size, 150);
   assert.ok(requiredPrefixes.includes('store::directory::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('sandbox::agent_worker_tests::cleanup_contention_tests::'));
   assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
@@ -144,6 +144,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   assert.ok(requiredPrefixes.includes('store::migrations::index_toolkit::tests::'));
   assert.ok(requiredPrefixes.includes('store::sandbox_usage::interval_index::tests::'));
   assert.ok(requiredPrefixes.includes('store::sandbox_usage_export::mongo_tests::'));
+  assert.ok(requiredPrefixes.includes('store::agent_task_status::activity::tests::'));
   assert.ok(requiredPrefixes.includes('rate_limit::lease::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('store::worker_observations::parked::tests::'));
   assert.ok(line.includes(`not test(=${child})`));
