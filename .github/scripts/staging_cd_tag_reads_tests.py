@@ -162,6 +162,30 @@ class BurnedReservationPruningTests(unittest.TestCase):
         self.assertEqual(next_reservation("web", self.sources[-1], f.tree, 43, "patch", 7, 1,
                                           f.api.tags("web"), store.list("web"))["version"], "0.11.2")
 
+    def test_a_claim_unlisted_by_a_lagging_api_still_leaves_with_its_reservation(self):
+        f = self.fixture
+        burned, _, own, current, queued = self.lane()
+        receipt = f.receipt(current)
+        self.assertTrue(f.publisher.finalize(receipt, lambda *_: True))
+        # GitHub's ref listings can trail Git. Allocation pushed each reservation
+        # with its claim atomically, and one advertisement shows both or neither.
+        request = f.request
+        def lagging(path, **_kwargs):
+            return [] if path.startswith("git/matching-refs/tags/cma-allocation/") else request(path)
+        commands, runner = [], f.publisher.runner
+        def observe(args, **kwargs):
+            commands.append(args[1])
+            return runner(args, **kwargs)
+        f.publisher.runner = observe
+        with patch.object(f.api, "request", side_effect=lagging):
+            self.assertEqual(f.publisher.prune_burned(receipt), 4)
+        self.assertFalse({claim_ref(value) for value in burned} & self.refs("refs/tags/cma-allocation/"))
+        store = AllocationSnapshot(f.api, "fixture", f.work, AllocationIO(f.runner))
+        with patch.object(f.api, "request", side_effect=self.annotated(f.request)):
+            store.load()
+        self.assertEqual(store.list("web"), [own, queued])
+        self.assertEqual(commands, ["ls-remote", "push", "ls-remote"])
+
     @staticmethod
     def annotated(request):
         def read(path, **_kwargs):

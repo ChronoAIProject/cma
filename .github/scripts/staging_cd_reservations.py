@@ -106,9 +106,10 @@ class Reservations:
         require(len({pending_name(item) for item in result}) == len(result), "Duplicate pending version")
         return result
 
-    def inventory(self, key):
+    def inventory(self, key, rows=None):
         """One lane's validated reservations, each with the tag object its live ref names."""
-        rows = self.api.request("git/matching-refs/tags/" + DEPLOYABLES[key] + "/pending/v")
+        if rows is None:
+            rows = self.api.request("git/matching-refs/tags/" + DEPLOYABLES[key] + "/pending/v")
         require(isinstance(rows, list), "Pending tag inventory is malformed")
         for row in rows:
             require(isinstance(row, dict) and isinstance(row.get("object"), dict)
@@ -127,18 +128,25 @@ class Reservations:
             result.append((value, row["object"]["sha"]))
         return result
 
-    def claims(self, component):
-        """One lane's live allocation claims, each naming the reservation object that won it."""
-        prefix = "refs/tags/cma-allocation/" + component + "/after-v"
-        rows = self.api.request("git/matching-refs/" + prefix.removeprefix("refs/"))
-        require(isinstance(rows, list), "Allocation claim inventory is malformed")
-        result = {}
-        for row in rows:
-            require(isinstance(row, dict) and isinstance(row.get("ref"), str) and row["ref"].startswith(prefix)
-                    and row["ref"] not in result and isinstance(row.get("object"), dict)
-                    and matches(r"[0-9a-f]{40}", row["object"].get("sha")), "Allocation claim inventory is malformed")
-            result[row["ref"]] = row["object"]["sha"]
-        return result
+    def advertised(self, component):
+        """One lane's pending tags and allocation successor claims, from one live advertisement.
+
+        Allocation pushes a reservation and its claim atomically, so a single
+        advertisement shows both or neither. Separate listings could miss a
+        claim and leave it without the reservation that backs it.
+        """
+        prefixes = ("refs/tags/" + DEPLOYABLES[component] + "/pending/v",
+                    "refs/tags/cma-allocation/" + component + "/after-v")
+        result = self.command("ls-remote", "--refs", REMOTE, *(prefix + "*" for prefix in prefixes))
+        require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024,
+                "Burned reservation inventory is unavailable")
+        pending, claims = {}, {}
+        for line in result.stdout.splitlines():
+            oid, separator, ref = line.partition("\t")
+            require(separator and matches(r"[0-9a-f]{40}", oid) and ref.startswith(prefixes)
+                    and ref not in pending and ref not in claims, "Burned reservation inventory is malformed")
+            (pending if ref.startswith(prefixes[0]) else claims)[ref] = oid
+        return pending, claims
 
     def command(self, *args, data=None):
         return self.runner(["git", *args], cwd=self.root, env=self.env, input=data, text=True,
@@ -262,9 +270,10 @@ class Reservations:
         building, exactly as with the tag present. A reservation whose own
         final exists is settled. The current run's reservations, burned
         versions above every final, and any whose claim names another object
-        remain. Each removed tag takes the allocation claim only it backs, in
-        one atomic push leased to the observed objects, so every claim left
-        stays backed. Returns the number of reservations removed.
+        remain. Each removed tag takes the cma-allocation/ successor claim only
+        it backs, both read in one advertisement and deleted in one atomic push
+        leased to the observed objects, so every claim left stays backed.
+        Returns the number of reservations removed.
         """
         identity = receipt["identity"]
         component = identity["component"]
@@ -272,9 +281,12 @@ class Reservations:
         finals = self.settled.get(component)
         finals = [tag["receipt"]["identity"] for tag in (self.api.tags(component) if finals is None else finals)]
         history = self.api.history()
-        claims, backed = self.claims(component), {claim_ref(final) for final in finals}
+        pending, claims = self.advertised(component)
+        backed = {claim_ref(final) for final in finals}
+        # Objects are read for the refs of that advertisement, never a later listing.
+        rows = [{"ref": ref, "object": {"type": "tag", "sha": oid}} for ref, oid in pending.items()]
         doomed, removed = {}, 0
-        for value, oid in sorted(self.inventory(component), key=lambda entry: version_tuple(entry[0]["version"])):
+        for value, oid in sorted(self.inventory(component, rows), key=lambda entry: version_tuple(entry[0]["version"])):
             if removed == PRUNE_LIMIT:
                 break
             if value["run_id"] == identity["run_id"]:
@@ -299,8 +311,8 @@ class Reservations:
         self.command("push", "--atomic", "--porcelain",
                      *("--force-with-lease=" + ref + ":" + oid for ref, oid in doomed.items()),
                      REMOTE, *(":" + ref for ref in doomed))
-        remaining = {"refs/tags/" + pending_name(value) for value, _ in self.inventory(component)}
-        require(not (remaining | self.claims(component).keys()) & doomed.keys(), "Burned reservation pruning failed")
+        pending, claims = self.advertised(component)
+        require(not (pending.keys() | claims.keys()) & doomed.keys(), "Burned reservation pruning failed")
         return removed
 
     def finalize(self, receipt, verify_digest, *, recovery_oid=None):
