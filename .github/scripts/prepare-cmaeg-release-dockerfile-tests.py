@@ -31,7 +31,8 @@ class ReleaseRecipeTests(unittest.TestCase):
         self.assertEqual(actual["runtime"], source["runtime"])
         self.assertNotIn("local-preview", actual)
         build = actual["build"]
-        self.assertLess(build.index("COPY native/cmaeg /out/cmaeg"), build.index(release.ALLOCATOR_GATE))
+        self.assertLess(build.index("COPY native/cmaeg /out/cmaeg"), build.index(release.STRIP_BINARY))
+        self.assertLess(build.index(release.STRIP_BINARY), build.index(release.ALLOCATOR_GATE))
         self.assertLess(build.index(release.ALLOCATOR_GATE), build.index(release.SANDBOX_GATE))
         self.assertIn(release.MEDIA_REPORT, actual["runtime"])
         self.assertNotIn("cargo ", build)
@@ -46,6 +47,8 @@ class ReleaseRecipeTests(unittest.TestCase):
 
     def test_rejects_missing_or_weakened_gates(self):
         mutations = [
+            (release.STRIP_BINARY, ""),
+            (release.STRIP_BINARY, release.STRIP_BINARY + " || true"),
             (release.ALLOCATOR_GATE, "RUN file /out/cmaeg"),
             (release.ALLOCATOR_GATE, release.ALLOCATOR_GATE + " || true"),
             (release.SANDBOX_GATE, "RUN true"),
@@ -66,6 +69,13 @@ class ReleaseRecipeTests(unittest.TestCase):
     def test_rejects_replaced_binary_after_allocator_gate(self):
         changed = DOCKERFILE.replace(release.ALLOCATOR_GATE, release.ALLOCATOR_GATE + "\nCOPY unchecked /out/cmaeg")
         with self.assertRaisesRegex(ValueError, "unexpected instruction"):
+            release.render(changed)
+
+    def test_rejects_stripping_after_allocator_qualification(self):
+        changed = DOCKERFILE.replace(release.STRIP_BINARY, "").replace(
+            release.ALLOCATOR_GATE, release.ALLOCATOR_GATE + "\n" + release.STRIP_BINARY
+        )
+        with self.assertRaisesRegex(ValueError, "stripping must precede"):
             release.render(changed)
 
     def test_rejects_changed_compiler_route(self):
