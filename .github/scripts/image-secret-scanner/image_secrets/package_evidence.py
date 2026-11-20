@@ -122,6 +122,7 @@ class PackageEvidence:
             native_json_key_view,
             npm_help_template,
             nyxid_format_labels,
+            pooled_literals,
             portable_ownership,
             reviewed_literals,
         )
@@ -154,14 +155,15 @@ class PackageEvidence:
         for row in raw["entries"]:
             require(isinstance(row, dict))
             shape = row.keys() - {"derived_payload", "reviewed_literals", "key_marker_view", "native_json_key_view",
-                                  "elf_nul_key_view", "npm_help_template", "nyxid_format_labels", "certificate_blocks"}
+                                  "elf_nul_key_view", "npm_help_template", "nyxid_format_labels", "certificate_blocks",
+                                  "pooled_literals"}
             require(shape in (entry_fields, entry_fields | {"self_test"}, entry_fields | {"digest_frames"},
                               entry_fields | {"nested_certificate"}, entry_fields | {"distribution_config"},
                               entry_fields | {"debian_control"}, entry_fields | {"distribution_config", "self_test"}))
             if portable:
                 unsupported = ({"nested_certificate", "derived_payload"} if native_arch else {
                     "nested_certificate", "elf_nul_key_view", "distribution_config", "key_marker_view",
-                    "native_json_key_view", "certificate_blocks",
+                    "native_json_key_view", "certificate_blocks", "pooled_literals",
                 })
                 require(row["component"] == portable_component and row["member"] is None
                         and type(row["occurrences"]) is int and 1 <= row["occurrences"] <= 2
@@ -176,8 +178,8 @@ class PackageEvidence:
             marker_views = {"key_marker_view", "elf_nul_key_view"}
             require(not marker_views.intersection(row) or (not derived and shape == entry_fields))
             require("native_json_key_view" not in row or shape == entry_fields)
-            require(not {"npm_help_template", "nyxid_format_labels", "certificate_blocks"}.intersection(row)
-                    or (not derived and literals and shape == entry_fields))
+            literal_helpers = {"npm_help_template", "nyxid_format_labels", "certificate_blocks", "pooled_literals"}
+            require(not literal_helpers.intersection(row) or (not derived and literals and shape == entry_fields))
             require(row["component"] in SCOPES and matches(PLATFORM, row["platform"])
                     and valid_digest(row["file_sha256"])
                     and valid_digest(row["package_sha256"]) and row["package_sha256"] in packages
@@ -236,6 +238,8 @@ class PackageEvidence:
                 nyxid_format_labels.validate(row, package)
             if "certificate_blocks" in row:
                 certificate_blocks.validate(row, package)
+            if "pooled_literals" in row:
+                pooled_literals.validate(row, package)
             key_views = {}
             for name, validator in (("key_marker_view", key_marker_view.validate),
                                     ("native_json_key_view", native_json_key_view.validate)):
