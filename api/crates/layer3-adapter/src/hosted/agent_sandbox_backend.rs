@@ -1,5 +1,8 @@
 use super::{HostedAgentOpenSettings, HostedBackend, HostedControlTransport};
 use crate::binding_diagnostics::{adapter as timed, Stage};
+use crate::ingress_budget::{
+    AdmissionRefusal, AdmittedError, AdmittedOperation, IngressOwnershipPolicy, OwnedWork,
+};
 use crate::{
     agent_sandbox::AgentSandboxClient,
     provider::ProviderSandboxRequest,
@@ -344,6 +347,28 @@ impl HostedBackend for AgentSandboxBackend {
         self.transport.exchange(handle, request).await
     }
 
+    fn exchange_admitted<'a>(
+        &'a self,
+        handle: &'a RuntimeHandle,
+        request: OwnedWork<RequestFrame>,
+        policy: &IngressOwnershipPolicy,
+    ) -> std::result::Result<AdmittedOperation<'a, ResponseFrame>, AdmittedError> {
+        if !request.belongs_to(policy) {
+            return Err(AdmissionRefusal::InvalidPlan {
+                phase: "native exchange request ownership",
+            }
+            .into());
+        }
+        if matches!(&*request, RequestFrame::RuntimeStatus(_)) {
+            // Status must retain exchange_bound_status's assignment and Pod
+            // checks. Its native reads do not yet have admitted ports.
+            return Err(AdmittedError::Unsupported(
+                "native status validation requires admitted reads",
+            ));
+        }
+        self.transport.exchange_admitted(handle, request, policy)
+    }
+
     async fn export_agent_history(
         &self,
         handle: &RuntimeHandle,
@@ -404,3 +429,7 @@ mod history_tests;
 #[cfg(test)]
 #[path = "runtime_routing_tests.rs"]
 mod routing_tests;
+
+#[cfg(test)]
+#[path = "agent_sandbox_backend_ingress_tests.rs"]
+mod ingress_tests;
