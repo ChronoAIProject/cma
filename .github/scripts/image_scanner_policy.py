@@ -16,8 +16,8 @@ APPROVED_CLASSIFICATIONS: dict[str, tuple[str, str]] = {}
 # (content manifest SHA256, authentic SA-01 review SHA256). Remains disabled
 # until the exact catalog and resolver have received that independent verdict.
 APPROVED_CONTENT_POLICY = (
-    "7ac9546ab794e16152d024e8593497347399dd906e3986744b8917e3b5eb87cb",
-    "21bd0a107965dd588fab2bcb0c9ac6839efd967e8f2355f21d688a73dff03ca9",
+    "33a57fd8afde5c4284988fb1a986e2719963faa050eb7811a79a0e31a884d519",
+    "4c55e69e42b7b92a7eddbccaaf7180cea6a773c82aacd82baa400aa916c967f5",
 )
 PACKAGE_EVIDENCE = Path(".github/scripts/image-package-evidence.json")
 # Independently reviewed evidence and verdict digests. Evidence gathered from
