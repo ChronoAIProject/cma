@@ -182,16 +182,11 @@ async fn cursor_bindings_independently_guard_a_compatible_shared_scan_resume() {
             .await
             .unwrap();
         let mut cursor = Cursor::default();
-        super::progress::prepare(
-            &mut cursor,
-            BTreeSet::from(["a".to_owned()]),
-            Options {
-                allocation_rollups_enabled: Some(false),
-                agent_shared_observation: Some(false),
-                billing_enabled: false,
-            },
-            &operations,
-        );
+        let first = erase_records(&db, &targets, &mut cursor, NOW)
+            .await
+            .unwrap();
+        assert!(first.has_more);
+        assert!(first.deleted.is_empty());
         cursor.operation = operations
             .iter()
             .position(|(entry, indexed)| entry.collection == "activity" && !indexed)
