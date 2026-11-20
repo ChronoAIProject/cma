@@ -166,9 +166,16 @@ describe('shellCommands', () => {
           {
             ...workspace,
             agents: [
-              { ...first, id: 'agt_old', updatedAt: '2026-09-01T00:00:00Z' },
-              { ...first, id: 'agt_new', updatedAt: '2026-09-09T00:00:00Z' },
-              { ...first, id: 'agt_bad', updatedAt: 'not a date' },
+              {
+                ...first,
+                id: 'agt_old',
+                taskActivityAt: '2026-09-01T00:00:00Z',
+                updatedAt: '2026-11-20T00:00:00Z',
+              },
+              { ...first, id: 'agt_new', taskActivityAt: '2026-09-09T00:00:00Z' },
+              { ...first, id: 'agt_z_missing', taskActivityAt: undefined },
+              { ...first, id: 'agt_bad', taskActivityAt: 'not a date' },
+              { ...first, id: 'agt_a_missing', taskActivityAt: undefined },
             ],
           },
         ],
@@ -177,7 +184,13 @@ describe('shellCommands', () => {
     const ids = shellCommands(options({ items }))
       .filter(({ group }) => group === 'Agents')
       .map(({ id }) => id);
-    expect(ids).toEqual(['agent:agt_new', 'agent:agt_old', 'agent:agt_bad']);
+    expect(ids).toEqual([
+      'agent:agt_new',
+      'agent:agt_old',
+      'agent:agt_a_missing',
+      'agent:agt_bad',
+      'agent:agt_z_missing',
+    ]);
   });
 
   it('leaves out deleted Agents, removed Workspaces and retiring Sandboxes', () => {

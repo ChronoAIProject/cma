@@ -41,7 +41,7 @@ class Remote:
 
     def __call__(self, path, *, timeout, output=None):
         self.paths.append(path)
-        assert 0 < timeout <= 180
+        assert 0 < timeout <= transport.DOWNLOAD_SECONDS
         prefix = f"repos/{REPO}/actions/"
         if path.startswith(prefix + "artifacts?name="):
             assert path == f"{prefix}artifacts?name=cma-cd-cargo-{self.component}&per_page=50"

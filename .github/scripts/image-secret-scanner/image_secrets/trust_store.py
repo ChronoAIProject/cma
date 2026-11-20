@@ -105,10 +105,13 @@ def link_target(path, value):
 
 
 class TrustStore:
-    def __init__(self):
+    def __init__(self, tracked=()):
         self.nodes = {}
         self.dirs = set()
         self.ambiguous = set()
+        # Reviewed paths outside the OS trust roots, such as a package-owned
+        # certificate, get the same replacement and ancestor accounting.
+        self.tracked = {str(p) for path in tracked for p in (PurePosixPath(path), *PurePosixPath(path).parents)}
 
     def observe(self, member, location, physical, inspect_der):
         path = location["path"]
@@ -117,7 +120,7 @@ class TrustStore:
             hidden = name.parent if name.name == ".wh..wh..opq" else name.parent / name.name[4:]
             self.ambiguous.add(str(hidden))
             return
-        if not (trust_path(path) or path in ROOTS or path in ANCESTORS):
+        if not (trust_path(path) or path in ROOTS or path in ANCESTORS or path in self.tracked):
             return
         if any("overlay." in key for key in member.pax_headers):
             self.ambiguous.add(path)
@@ -153,6 +156,11 @@ class TrustStore:
             str(parent) in self.ambiguous or str(parent) in self.nodes
             for parent in PurePosixPath(path).parents
         )
+
+    def final_entry(self, path, layer):
+        # The layer's entry is the only one at this path, and no entry hides,
+        # replaces or overlays it or an ancestor in any layer of the image.
+        return not self.unresolved(path) and self.nodes.get(path) == (layer, None, None)
 
     def direct_alias(self, path, target, layer):
         if self.unresolved(path) or self.unresolved(target) or self.nodes.get(path) != (layer, None, target):
