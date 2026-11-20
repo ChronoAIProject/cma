@@ -348,8 +348,9 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget, revi
                 if selected is not None:
                     path, candidate, package_databases = selected
                     portable_paths[path].append(index)
-                    payload = {None: candidate} if candidate is not None else {}
-                    found = read_entry(layer, member, {None}, workspace, budget, payload, package_databases)
+                    # Reopen every occurrence and each reviewed member as the detector decoded it.
+                    payload = candidate or {}
+                    found = read_entry(layer, member, {None, *payload}, workspace, budget, payload, package_databases)
                     if found is not None:
                         result[index] = found
                 elif index in requested:

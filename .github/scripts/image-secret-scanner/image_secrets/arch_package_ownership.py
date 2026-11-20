@@ -93,7 +93,7 @@ def observe_mask(path, member):
 class ArchOwnership:
     def __init__(self, rows, packages):
         self.targets = set()
-        self.verified_members = defaultdict(list)
+        self.verified_members = defaultdict(set)
         self.layers = defaultdict(dict)
         self.masks = defaultdict(set)
         self.invalid = set()
@@ -102,7 +102,8 @@ class ArchOwnership:
             package = packages[row["package_sha256"]]
             directory = f'{package["name"]}-{package["version"]}'
             self.targets.add(path)
-            self.verified_members[directory].append((path, row["file_sha256"], row["ownership"]["mtree_sha256"]))
+            # Member rows of one container share its single installed checksum record.
+            self.verified_members[directory].add((path, row["file_sha256"], row["ownership"]["mtree_sha256"]))
 
     def observe(self, layer, member, path, coordinate, budget):
         scope = coordinate[:2]
