@@ -4,6 +4,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -86,8 +87,12 @@ export function repairDependencies(packages, run, log) {
   }
 }
 
-// Successful CI downloads of the locked Chromium (167 MiB) take 3-5s.
+// Successful CI downloads of the locked Chromium (167 MiB) take 3-5s. Each
+// attempt allows 12x that; the download is idempotent, so a transient
+// failure is retried after a short backoff.
+export const downloadAttempts = 3;
 export const downloadTimeoutMs = 60_000;
+export const downloadBackoffMs = [5_000, 15_000];
 const downloadTailLines = 40;
 const unsupportedHost = /does not support \S+ on (\S+)/;
 const networkFailure =
@@ -173,37 +178,56 @@ export function runBounded(command, args, { timeoutMs, ...options }) {
   });
 }
 
-export async function downloadBrowser(attempt, log) {
-  try {
-    await attempt(downloadTimeoutMs);
-    return;
-  } catch (error) {
-    const tail = outputTail(error.output);
+export async function downloadBrowser(attempt, log, wait = delay) {
+  let failure;
+  for (let count = 1; count <= downloadAttempts; count += 1) {
     log(
-      tail.length
-        ? `Browser downloader output, last ${tail.length} lines:\n${tail.join('\n')}`
-        : 'Browser downloader printed no output.',
+      `browser download attempt ${count}/${downloadAttempts}; locked Playwright Chromium, ` +
+        `${downloadTimeoutMs / 1000}s limit`,
     );
-    const output = String(error.output ?? '');
-    const host = unsupportedHost.exec(output)?.[1];
-    if (host) {
-      throw new Error(
-        `Pinned Playwright Chromium download refused: the locked Playwright has no Chromium build for ${host}. ` +
-          'This is not a network failure. Update the locked Playwright version in web/package-lock.json ' +
-          `or run on a supported runner. Browser contract tests remain required. ${describe(error)}`,
+    const started = Date.now();
+    try {
+      await attempt(downloadTimeoutMs);
+      return;
+    } catch (error) {
+      failure = error;
+      const seconds = ((Date.now() - started) / 1000).toFixed(1);
+      log(
+        `browser download attempt ${count}/${downloadAttempts} failed after ${seconds}s: ${describe(error)}`,
       );
+      // An unsupported host fails identically every time; retrying only delays the report.
+      if (unsupportedHost.test(String(error.output ?? '')) || count === downloadAttempts) break;
+      const backoff = downloadBackoffMs[count - 1];
+      log(`browser download retry in ${backoff / 1000}s`);
+      await wait(backoff);
     }
-    const network = error.code === 'ETIMEDOUT' || networkFailure.test(output);
+  }
+  const tail = outputTail(failure.output);
+  log(
+    tail.length
+      ? `Browser downloader output, last ${tail.length} lines:\n${tail.join('\n')}`
+      : 'Browser downloader printed no output.',
+  );
+  const output = String(failure.output ?? '');
+  const host = unsupportedHost.exec(output)?.[1];
+  if (host) {
     throw new Error(
-      `Pinned Playwright Chromium download failed (${downloadTimeoutMs / 1000}s limit); ` +
-        (network
-          ? 'likely a network or CDN failure. '
-          : 'the downloader output above shows no network failure. ') +
-        'Re-run the job; if it persists, check runner access to cdn.playwright.dev or the configured proxy, ' +
-        'and the locked Playwright version in web/package-lock.json. ' +
-        `Browser contract tests remain required. ${describe(error)}`,
+      `Pinned Playwright Chromium download refused: the locked Playwright has no Chromium build for ${host}. ` +
+        'This is not a network failure, so it was not retried. Update the locked Playwright version ' +
+        `in web/package-lock.json or run on a supported runner. Browser contract tests remain required. ${describe(failure)}`,
     );
   }
+  const network = failure.code === 'ETIMEDOUT' || networkFailure.test(output);
+  throw new Error(
+    `Pinned Playwright Chromium download failed after ${downloadAttempts} bounded attempts ` +
+      `(${downloadTimeoutMs / 1000}s each); ` +
+      (network
+        ? 'likely a network or CDN failure. '
+        : 'the downloader output above shows no network failure. ') +
+      'Re-run the job; if it persists, check runner access to cdn.playwright.dev or the configured proxy, ' +
+      'and the locked Playwright version in web/package-lock.json. ' +
+      `Browser contract tests remain required. ${describe(failure)}`,
+  );
 }
 
 export async function ensureBrowser(ops) {

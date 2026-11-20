@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  downloadAttempts,
+  downloadBackoffMs,
   downloadBrowser,
   downloadTimeoutMs,
   ensureBrowser,
@@ -330,58 +332,90 @@ test(
   },
 );
 
-test('an unsupported host is reported as such, with the downloader output', async () => {
-  const logs = [];
-  await assert.rejects(
-    downloadBrowser(
-      () =>
-        Promise.reject(
-          downloaderError(
-            'Command failed with exit code 1: node cli.js install',
-            unsupportedOutput,
-          ),
-        ),
-      (message) => logs.push(message),
+function downloadFixture(outcomes) {
+  const logs = [],
+    waits = [],
+    limits = [];
+  return {
+    logs,
+    waits,
+    limits,
+    attempt: async (timeoutMs) => {
+      limits.push(timeoutMs);
+      const outcome = outcomes[limits.length - 1];
+      if (outcome) throw outcome;
+    },
+    log: (message) => logs.push(message),
+    wait: async (ms) => {
+      waits.push(ms);
+    },
+  };
+}
+
+test('a transient download failure is retried after a bounded backoff, then succeeds', async () => {
+  const run = downloadFixture([
+    downloaderError(
+      'Command failed with exit code 1: node cli.js install',
+      'Error: socket hang up\n',
     ),
-    /no Chromium build for ubuntu26\.04-x64.*not a network failure.*web\/package-lock\.json.*remain required/s,
-  );
+  ]);
+  await downloadBrowser(run.attempt, run.log, run.wait);
+  assert.deepEqual(run.limits, [downloadTimeoutMs, downloadTimeoutMs]);
+  assert.deepEqual(run.waits, [downloadBackoffMs[0]]);
   assert.match(
-    logs.join('\n'),
+    run.logs[0],
+    /^browser download attempt 1\/3; locked Playwright Chromium, 60s limit$/,
+  );
+  assert.match(run.logs[1], /^browser download attempt 1\/3 failed after \d+\.\ds: Command failed/);
+  assert.match(run.logs.at(-1), /^browser download attempt 2\/3;/);
+  assert.ok(!run.logs.some((row) => /downloader output/.test(row)));
+});
+
+test('downloads stop at the attempt cap and report the last output tail and guidance', async () => {
+  const failure = downloaderError(
+    'Command timed out after 60s: node cli.js install',
+    'Downloading Chrome for Testing from https://cdn.playwright.dev/cft.zip\n|■ | 10% of 167.3 MiB\n',
+    'ETIMEDOUT',
+  );
+  const run = downloadFixture([failure, failure, failure, undefined]);
+  await assert.rejects(
+    downloadBrowser(run.attempt, run.log, run.wait),
+    /after 3 bounded attempts \(60s each\); likely a network or CDN failure\. Re-run the job.*cdn\.playwright\.dev.*web\/package-lock\.json.*remain required.*timed out after 60s/s,
+  );
+  assert.equal(downloadAttempts, 3);
+  assert.equal(run.limits.length, downloadAttempts);
+  assert.deepEqual(run.waits, downloadBackoffMs);
+  assert.equal(run.logs.filter((row) => /^browser download attempt \d\/3;/.test(row)).length, 3);
+  assert.equal(
+    run.logs.at(-1),
+    'Browser downloader output, last 2 lines:\n' +
+      '  Downloading Chrome for Testing from https://cdn.playwright.dev/cft.zip\n' +
+      '  |■ | 10% of 167.3 MiB',
+  );
+});
+
+test('an unsupported host is reported as such at once, with the downloader output', async () => {
+  const run = downloadFixture([
+    downloaderError('Command failed with exit code 1: node cli.js install', unsupportedOutput),
+  ]);
+  await assert.rejects(
+    downloadBrowser(run.attempt, run.log, run.wait),
+    /no Chromium build for ubuntu26\.04-x64.*not a network failure, so it was not retried.*web\/package-lock\.json.*remain required/s,
+  );
+  assert.equal(run.limits.length, 1);
+  assert.deepEqual(run.waits, []);
+  assert.match(
+    run.logs.join('\n'),
     /last 2 lines:\n {2}Failed to install browsers\n {2}Error: ERROR: Playwright does not support/,
   );
 });
 
-test('a downloader timeout is reported as likely network with owner guidance', async () => {
-  const logs = [];
-  let limit;
+test('a non-network downloader failure says so and shows that it printed nothing', async () => {
+  const failure = downloaderError('Command failed with exit code 1: node cli.js install', '');
+  const run = downloadFixture([failure, failure, failure]);
   await assert.rejects(
-    downloadBrowser(
-      (timeoutMs) => {
-        limit = timeoutMs;
-        throw downloaderError(
-          'Command timed out after 60s: node cli.js install',
-          '|■ | 10% of 167.3 MiB\n',
-          'ETIMEDOUT',
-        );
-      },
-      (message) => logs.push(message),
-    ),
-    /likely a network or CDN failure.*Re-run the job.*cdn\.playwright\.dev.*web\/package-lock\.json.*timed out after 60s/s,
+    downloadBrowser(run.attempt, run.log, run.wait),
+    /after 3 bounded attempts.*shows no network failure.*Re-run the job/s,
   );
-  assert.equal(limit, downloadTimeoutMs);
-  assert.match(logs.join('\n'), /10% of 167\.3 MiB/);
-});
-
-test('a non-network downloader failure says so and still shows that it printed nothing', async () => {
-  const logs = [];
-  await assert.rejects(
-    downloadBrowser(
-      () => {
-        throw downloaderError('Command failed with exit code 1: node cli.js install', '');
-      },
-      (message) => logs.push(message),
-    ),
-    /shows no network failure.*Re-run the job/s,
-  );
-  assert.deepEqual(logs, ['Browser downloader printed no output.']);
+  assert.equal(run.logs.at(-1), 'Browser downloader printed no output.');
 });
