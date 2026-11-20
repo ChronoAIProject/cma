@@ -147,6 +147,14 @@ jobs:
     name: Release web
     needs: allocate
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['web'] != ''
+    # Each release_* job runs one release of its component at a time. Newer
+    # pushes queue behind the running build, which finishes; a queued job that
+    # a newer reservation already owns skips in seconds, so the newest source
+    # always builds next.
+    concurrency:
+      group: cma-staging-web-release
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-release.yml
     permissions:
       contents: write
@@ -160,9 +168,6 @@ jobs:
     name: Release am
     needs: allocate
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['am'] != ''
-    # One AM release at a time. Newer pushes queue behind the running build
-    # instead of each starting one; a queued job that a newer reservation
-    # already owns skips in seconds, so the newest source always builds next.
     concurrency:
       group: cma-staging-am-release
       queue: max
@@ -180,6 +185,10 @@ jobs:
     name: Release eg
     needs: allocate
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['eg'] != ''
+    concurrency:
+      group: cma-staging-eg-release
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-release.yml
     permissions:
       contents: write
@@ -193,6 +202,10 @@ jobs:
     name: Release runtime
     needs: allocate
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['runtime'] != ''
+    concurrency:
+      group: cma-staging-runtime-release
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-release.yml
     permissions:
       contents: write
@@ -206,6 +219,10 @@ jobs:
     name: Release runtime-omarchy
     needs: allocate
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['runtime-omarchy'] != ''
+    concurrency:
+      group: cma-staging-runtime-omarchy-release
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-release.yml
     permissions:
       contents: write

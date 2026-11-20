@@ -37,33 +37,32 @@ class StagingWorkflowTest < Minitest::Test
     refute jobs.fetch('plan').key?('needs')
     assert_equal 'plan', jobs.fetch('allocate').fetch('needs')
     %w[web am eg runtime runtime_omarchy].each do |component|
-      release = jobs.fetch("release_#{component}")
-      assert_equal 'allocate', release.fetch('needs')
-      next if component == 'am'
-
-      refute release.key?('concurrency')
+      assert_equal 'allocate', jobs.fetch("release_#{component}").fetch('needs')
     end
     workflow('staging-release').fetch('jobs').each_value { |job| refute job.key?('concurrency') }
     refute jobs['allocate']['steps'].any? { |step| step['run'].to_s.match?(/buildx|skopeo|deploy\.py/) }
   end
 
-  def test_agent_manager_releases_run_one_at_a_time_and_queued_ones_skip_restores
+  def test_each_lane_runs_one_release_at_a_time_and_queued_ones_skip_restores
     jobs = workflow('staging-cd')['jobs']
-    assert_equal({ 'group' => 'cma-staging-am-release', 'queue' => 'max', 'cancel-in-progress' => false },
-                 jobs.fetch('release_am').fetch('concurrency'))
     groups = jobs.values.map { |job| job.dig('concurrency', 'group') }.compact
-    assert_equal 1, groups.count('cma-staging-am-release')
+    %w[web am eg runtime runtime-omarchy].each do |component|
+      lock = "cma-staging-#{component}-release"
+      assert_equal({ 'group' => lock, 'queue' => 'max', 'cancel-in-progress' => false },
+                   jobs.fetch("release_#{component.tr('-', '_')}").fetch('concurrency'))
+      assert_equal 1, groups.count(lock)
+    end
 
     steps = workflow('staging-release')['jobs']['publish']['steps']
     index = ->(name) { steps.index { |step| step['name'] == name } }
-    ownership = steps[index.call('Check Agent Manager release ownership')]
+    ownership = steps[index.call('Check release ownership')]
     assert_equal 'ownership', ownership['id']
-    assert_equal "inputs.component == 'am'", ownership['if']
+    refute ownership.key?('if'), 'every component checks ownership before its restores'
     assert_equal true, ownership['continue-on-error']
-    assert_equal 'python3 -B .github/scripts/staging_cd_am_ownership.py', ownership['run']
+    assert_equal 'python3 -B .github/scripts/staging_cd_release_ownership.py', ownership['run']
     restores = ['Restore compatible Cargo mounts', 'Restore authenticated layer detector evidence']
     restores.each do |name|
-      assert_operator index.call('Check Agent Manager release ownership'), :<, index.call(name)
+      assert_operator index.call('Check release ownership'), :<, index.call(name)
       assert_includes steps[index.call(name)]['if'], "steps.ownership.outputs.superseded != 'true'"
     end
     publication = steps[index.call('Build once, scan every layer, and publish exact bytes')]
