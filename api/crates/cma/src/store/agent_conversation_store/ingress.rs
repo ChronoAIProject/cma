@@ -3,7 +3,9 @@
 use crate::store::ingress_reads::layout::{BsonLayout, LayoutError};
 #[cfg(test)]
 use layer2_core::sandbox::ingress_ownership::IngressOwnershipPolicy;
-use layer2_core::sandbox::ingress_ownership::{sizing::shared_owner_bytes, AllocationPlan};
+use layer2_core::sandbox::ingress_ownership::{
+    sizing::shared_owner_bytes, AdmissionRefusal, AdmittedError, AllocationPlan,
+};
 use layer2_core::sandbox::store::{AgentMessageSnapshot, SandboxStoreError};
 use mongodb::bson::Document;
 #[cfg(test)]
@@ -18,13 +20,23 @@ pub(super) enum SnapshotRefusal {
 }
 
 impl SnapshotRefusal {
-    // Refusal can occur before any allocation is admitted. Preserve its category
-    // without constructing a heap diagnostic outside a work owner.
-    pub(super) fn into_error(self) -> SandboxStoreError {
+    pub(super) fn into_admitted_error(self) -> AdmittedError {
         match self {
-            Self::Capacity => SandboxStoreError::Unavailable(String::new()),
-            Self::Structure => SandboxStoreError::Corrupt(String::new()),
+            Self::Capacity => AdmissionRefusal::AtCapacity {
+                phase: "conversation snapshot",
+            }
+            .into(),
+            Self::Structure => {
+                AdmittedError::Unsupported("conversation snapshot BSON layout is unsupported")
+            }
         }
+    }
+
+    // The older port has no admission-error channel. An unqualified preflight
+    // shape cannot establish corruption; use its allocation-free unavailable
+    // outcome. Only the domain validator may return an owned Corrupt finding.
+    pub(super) fn into_error(self) -> SandboxStoreError {
+        SandboxStoreError::Unavailable(String::new())
     }
 }
 

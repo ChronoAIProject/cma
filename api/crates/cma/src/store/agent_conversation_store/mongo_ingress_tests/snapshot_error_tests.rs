@@ -79,8 +79,12 @@ fn malformed_large_key_returns_only_a_fixed_refusal_after_dropping_parser_scratc
     ));
     assert_eq!(root.available_bytes(), root.capacity_bytes());
     assert!(
-        matches!(SnapshotRefusal::Structure.into_error(), SandboxStoreError::Corrupt(message) if message.capacity() == 0)
+        matches!(SnapshotRefusal::Structure.into_error(), SandboxStoreError::Unavailable(message) if message.capacity() == 0)
     );
+    assert!(matches!(
+        SnapshotRefusal::Structure.into_admitted_error(),
+        layer2_core::sandbox::ingress_ownership::AdmittedError::Unsupported(_)
+    ));
 }
 
 #[test]
@@ -103,6 +107,12 @@ fn preflight_refuses_before_reading_a_malformed_key_when_scratch_cannot_be_admit
         Err(SnapshotError::Refused(SnapshotRefusal::Capacity))
     ));
     assert_eq!(root.available_bytes(), held);
+    assert!(matches!(
+        SnapshotRefusal::Capacity.into_admitted_error(),
+        layer2_core::sandbox::ingress_ownership::AdmittedError::Refused(
+            layer2_core::sandbox::ingress_ownership::AdmissionRefusal::AtCapacity { .. }
+        )
+    ));
     drop(occupied);
     assert_eq!(root.available_bytes(), root.capacity_bytes());
     assert!(matches!(

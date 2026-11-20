@@ -28,13 +28,11 @@ pub(super) fn operation<'a>(
         IngressClass::Transformation,
         AllocationPlan::checked("conversation snapshot operation", &[])?,
         move |scope| async move {
-            Ok(match load_inner(store, id, policy).await {
-                Ok(snapshot) => scope.initialize_owned(|| Ok(snapshot)),
-                Err(SnapshotError::Owned(error)) => error.map(Err),
-                Err(SnapshotError::Refused(refusal)) => {
-                    scope.initialize_owned(|| Err(refusal.into_error()))
-                }
-            })
+            match load_inner(store, id, policy).await {
+                Ok(snapshot) => Ok(scope.initialize_owned(|| Ok(snapshot))),
+                Err(SnapshotError::Owned(error)) => Ok(error.map(Err)),
+                Err(SnapshotError::Refused(refusal)) => Err(refusal.into_admitted_error()),
+            }
         },
     )
 }

@@ -14,6 +14,7 @@ mod read_ports;
 mod snapshot_error_tests;
 mod snapshot_operation_tests;
 mod snapshot_pressure;
+mod snapshot_refusal_tests;
 mod uncertainty;
 
 fn policy() -> (IngressBudget, IngressOwnershipPolicy) {
