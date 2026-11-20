@@ -161,8 +161,8 @@ it('shows missing task time explicitly and orders undated tasks by ID', () => {
       .getAllByRole('treeitem')
       .map((row) => row.getAttribute('aria-label')),
   ).toEqual([
-    'Task a, Completed, Task time unavailable',
-    'Task z, Completed, Task time unavailable',
+    'Task a, Turn ended, Task time unavailable',
+    'Task z, Turn ended, Task time unavailable',
   ]);
   expect(group.querySelector('time')).toBeNull();
 });
