@@ -31,8 +31,9 @@ async fn capacity_refusal_is_atomic_discoverable_and_completes_after_release() {
             .discover(RecoveryStream::ExpiredLease, None, &later)
             .await
             .unwrap()
-            .requests,
-        [request.clone()]
+            .requests
+            .as_slice(),
+        std::slice::from_ref(&request)
     );
     release(&store, other).await;
     let next = claim(&reopened, &caller, &request, &later).await;
