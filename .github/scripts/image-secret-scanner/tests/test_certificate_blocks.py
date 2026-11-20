@@ -43,10 +43,11 @@ class CertificateBlockTests(unittest.TestCase):
         self.scratch.cleanup()
 
     def certificate(self):
-        # Shift the subject until one 64-character body line decodes to the packet header.
-        for pad in range(1, 64):
-            der = openssl("req", "-x509", "-new", "-key", str(self.key), "-subj", "/CN=" + "c" * pad, "-days", "1",
-                          "-addext", f"subjectKeyIdentifier={PACKET}aabbccddeeff00112233445566778899",
+        # Pad inside the key identifier, one byte at a time, until one 64-character
+        # body line decodes to the packet header (issuer and subject repeat a name).
+        for pad in range(48):
+            der = openssl("req", "-x509", "-new", "-key", str(self.key), "-subj", "/CN=fixture", "-days", "1",
+                          "-addext", f"subjectKeyIdentifier={'ab' * pad}{PACKET}aabbccddeeff00112233445566778899",
                           "-outform", "DER")
             if der.find(bytes.fromhex(PACKET)) % 48 == 0:
                 return der
