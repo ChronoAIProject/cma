@@ -220,7 +220,7 @@ async fn retained_loser_debt_survives_revoke_and_delete_failures_across_restart(
         let debts = observer.revocations(&f.claim.id).await.unwrap();
         if attempt < 2 {
             assert!(matches!(result, Err(CredentialError::Unavailable(_))));
-            assert_eq!(debts, [loser.clone()]);
+            assert_eq!(debts.as_slice(), std::slice::from_ref(&loser));
         } else {
             let recovered = result.unwrap();
             assert_eq!(recovered.authority, winner.authority);
@@ -228,8 +228,12 @@ async fn retained_loser_debt_survives_revoke_and_delete_failures_across_restart(
             assert!(debts.is_empty());
         }
         assert_eq!(
-            observer.revocations(&unrelated.sandbox_id).await.unwrap(),
-            [unrelated.clone()]
+            observer
+                .revocations(&unrelated.sandbox_id)
+                .await
+                .unwrap()
+                .as_slice(),
+            std::slice::from_ref(&unrelated)
         );
         let stored = observer.get(&f.claim.id, 1).await.unwrap().unwrap();
         assert_eq!(stored.authority, winner.authority);
