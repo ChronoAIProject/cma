@@ -2,7 +2,7 @@
 #[path = "replay_legacy_authorized.rs"]
 pub(super) mod authorized;
 
-use crate::stream_telemetry::{self, Kind, Poll};
+use crate::stream_telemetry::{self, CloseReason, Contract, ContractKind, Kind, Poll};
 use std::{collections::VecDeque, convert::Infallible, time::Duration};
 
 use axum::{
@@ -93,55 +93,68 @@ pub(super) async fn open(
 }
 
 fn response(open: Following) -> Response {
-    let stream = stream::unfold(open, |mut open| async move {
-        loop {
-            if let Some(event) = open.pending.pop_front() {
+    let contract = Contract::new(ContractKind::Agui);
+    let evidence = contract.clone();
+    let stream = stream::unfold(open, move |mut open| {
+        let evidence = evidence.clone();
+        async move {
+            loop {
+                if let Some(event) = open.pending.pop_front() {
+                    if let Some(authorization) = &open.authorization {
+                        if let Err(error) =
+                            open.state.reads.validate_event_stream(authorization).await
+                        {
+                            evidence.record(CloseReason::read(&error));
+                            return None;
+                        }
+                    }
+                    if matches!(event.kind, "RUN_FINISHED" | "RUN_ERROR") {
+                        evidence.terminal_frame();
+                    }
+                    return Some((Ok::<_, Infallible>(event.sse()), open));
+                }
+                if open.ended || !open.follow {
+                    evidence.replay_complete(!open.follow);
+                    return None;
+                }
+                let wake = tokio::time::Instant::now() + Duration::from_millis(100);
+                let wake = open
+                    .authorization
+                    .as_ref()
+                    .and_then(AgentEventStreamAuthorization::revalidation_deadline)
+                    .map_or(wake, |deadline| deadline.min(wake));
+                tokio::time::sleep_until(wake).await;
+                let poll = Poll::new(Kind::Agui);
                 if let Some(authorization) = &open.authorization {
-                    if open
-                        .state
-                        .reads
-                        .validate_event_stream(authorization)
-                        .await
-                        .is_err()
-                    {
+                    match open.state.reads.event_stream_snapshot(authorization).await {
+                        Ok(snapshot) => open.queue_authorized(snapshot),
+                        Err(error) => {
+                            evidence.record(CloseReason::read(&error));
+                            return None;
+                        }
+                    }
+                    poll.complete(!open.pending.is_empty());
+                    continue;
+                }
+                match open.state.reads.log_snapshot(&open.caller, &open.id).await {
+                    Ok((agent, history)) => {
+                        open.queue(&history);
+                        open.interrupt_pending(&agent, &history);
+                        open.queue_live(&agent);
+                    }
+                    Err(error) => {
+                        evidence.record(CloseReason::read(&error));
                         return None;
                     }
                 }
-                return Some((Ok::<_, Infallible>(event.sse()), open));
-            }
-            if open.ended || !open.follow {
-                return None;
-            }
-            let wake = tokio::time::Instant::now() + Duration::from_millis(100);
-            let wake = open
-                .authorization
-                .as_ref()
-                .and_then(AgentEventStreamAuthorization::revalidation_deadline)
-                .map_or(wake, |deadline| deadline.min(wake));
-            tokio::time::sleep_until(wake).await;
-            let poll = Poll::new(Kind::Agui);
-            if let Some(authorization) = &open.authorization {
-                match open.state.reads.event_stream_snapshot(authorization).await {
-                    Ok(snapshot) => open.queue_authorized(snapshot),
-                    Err(_) => return None,
-                }
                 poll.complete(!open.pending.is_empty());
-                continue;
             }
-            match open.state.reads.log_snapshot(&open.caller, &open.id).await {
-                Ok((agent, history)) => {
-                    open.queue(&history);
-                    open.interrupt_pending(&agent, &history);
-                    open.queue_live(&agent);
-                }
-                Err(_) => return None,
-            }
-            poll.complete(!open.pending.is_empty());
         }
     });
     let mut response = Sse::new(stream_telemetry::observe(stream, Kind::Agui))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response();
+    response.extensions_mut().insert(contract);
     response
         .headers_mut()
         .insert("cache-control", "no-cache, no-store".parse().unwrap());

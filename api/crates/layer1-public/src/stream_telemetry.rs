@@ -70,6 +70,162 @@ fn increment(counter: &AtomicU64) {
     });
 }
 
+/// The protocol paths covered by semantic close observations in this slice.
+#[derive(Clone, Copy, Debug)]
+pub enum ContractKind {
+    Agui,
+    Responses,
+    ResponsesV2,
+}
+impl ContractKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Agui => "agui",
+            Self::Responses => "responses",
+            Self::ResponsesV2 => "responses_v2",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CloseReason {
+    NormalTerminal = 1,
+    FiniteReplay,
+    AuthorizationRevoked,
+    AuthorizationUnavailable,
+    DependencyError,
+    ServerError,
+    PaginationRequired,
+    EofUnexplained,
+    DropUnknown,
+    UnclassifiedStream,
+}
+impl CloseReason {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::NormalTerminal => "normal_terminal",
+            Self::FiniteReplay => "finite_replay",
+            Self::AuthorizationRevoked => "authorization_revoked",
+            Self::AuthorizationUnavailable => "authorization_unavailable",
+            Self::DependencyError => "dependency_error",
+            Self::ServerError => "server_error",
+            Self::PaginationRequired => "pagination_required",
+            Self::EofUnexplained => "eof_unexplained",
+            Self::DropUnknown => "drop_unknown",
+            Self::UnclassifiedStream => "unclassified_stream",
+        }
+    }
+    fn from_byte(value: u8) -> Option<Self> {
+        Some(match value {
+            1 => Self::NormalTerminal,
+            2 => Self::FiniteReplay,
+            3 => Self::AuthorizationRevoked,
+            4 => Self::AuthorizationUnavailable,
+            5 => Self::DependencyError,
+            6 => Self::ServerError,
+            7 => Self::PaginationRequired,
+            8 => Self::EofUnexplained,
+            9 => Self::DropUnknown,
+            10 => Self::UnclassifiedStream,
+            _ => return None,
+        })
+    }
+    pub(crate) fn read(error: &layer2_core::sandbox::AgentReadError) -> Self {
+        use layer2_core::sandbox::AgentReadError as E;
+        match error {
+            E::Access(_) | E::Forbidden | E::NotFound => Self::AuthorizationUnavailable,
+            E::Unavailable(_) | E::RuntimeCapacity(_) => Self::DependencyError,
+            E::TranscriptPaginationRequired => Self::PaginationRequired,
+            _ => Self::ServerError,
+        }
+    }
+    pub(crate) fn command(error: &layer2_core::sandbox::agent_io::CommandAdmissionError) -> Self {
+        use layer2_core::sandbox::agent_io::{
+            CommandAdmissionError as E, CommandAuthorizationError as A, CommandLedgerError as L,
+        };
+        match error {
+            E::Authority(A::Revoked) => Self::AuthorizationRevoked,
+            E::Access(_) | E::Authority(A::Unavailable) | E::Ledger(L::NotFound) => {
+                Self::AuthorizationUnavailable
+            }
+            E::Ledger(L::Unavailable) => Self::DependencyError,
+            _ => Self::ServerError,
+        }
+    }
+    fn completed(self) -> bool {
+        matches!(self, Self::NormalTerminal | Self::FiniteReplay)
+    }
+}
+
+/// Actual body disposition, supplied only by the existing HTTP body observer.
+#[derive(Clone, Copy)]
+pub enum BodyEnd {
+    Eof,
+    Error,
+    Dropped,
+}
+
+/// Evidence shared through response extensions. Cloning/dropping it never counts
+/// a connection; the serving process owns opened/closed counts at the body.
+#[derive(Clone)]
+pub struct Contract {
+    kind: ContractKind,
+    evidence: Arc<Evidence>,
+}
+#[derive(Default)]
+struct Evidence {
+    reason: std::sync::atomic::AtomicU8,
+    terminal_frame: std::sync::atomic::AtomicBool,
+}
+impl Contract {
+    pub fn new(kind: ContractKind) -> Self {
+        Self {
+            kind,
+            evidence: Arc::default(),
+        }
+    }
+    pub fn kind(&self) -> ContractKind {
+        self.kind
+    }
+    pub fn record(&self, reason: CloseReason) {
+        // Preserve the first failure even if a later poll reaches natural EOF.
+        let _ = self
+            .evidence
+            .reason
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| {
+                if CloseReason::from_byte(old).is_some_and(|reason| !reason.completed()) {
+                    None
+                } else {
+                    Some(reason as u8)
+                }
+            });
+    }
+    pub(crate) fn terminal_frame(&self) {
+        self.evidence.terminal_frame.store(true, Ordering::Relaxed);
+    }
+    pub(crate) fn replay_complete(&self, finite: bool) {
+        self.record(if finite {
+            CloseReason::FiniteReplay
+        } else if self.evidence.terminal_frame.load(Ordering::Relaxed) {
+            CloseReason::NormalTerminal
+        } else {
+            CloseReason::EofUnexplained
+        });
+    }
+    pub fn close_reason(&self, end: BodyEnd) -> CloseReason {
+        let reason = CloseReason::from_byte(self.evidence.reason.load(Ordering::Relaxed));
+        if let Some(failure) = reason.filter(|reason| !reason.completed()) {
+            return failure;
+        }
+        match end {
+            BodyEnd::Eof => reason.unwrap_or(CloseReason::EofUnexplained),
+            BodyEnd::Error => CloseReason::ServerError,
+            BodyEnd::Dropped => CloseReason::DropUnknown,
+        }
+    }
+}
+
 /// Called by the serving process's bounded diagnostics timer, never per frame.
 pub fn emit() {
     counters().emit();
@@ -77,6 +233,13 @@ pub fn emit() {
 impl Counters {
     fn emit(&self) {
         for (index, kind) in LABELS.iter().enumerate() {
+            metrics::gauge!("cma_sse_contract_coverage", "stream_kind" => *kind).set(
+                if matches!(*kind, "agui" | "responses" | "responses_v2") {
+                    1.0
+                } else {
+                    0.0
+                },
+            );
             metrics::gauge!("cma_public_streams_active", "stream_kind" => *kind)
                 .set(self.active[index].load(Ordering::Relaxed) as f64);
             tracing::info!(parent: None, metric = "cma_public_streams_active", stream_kind = kind,
