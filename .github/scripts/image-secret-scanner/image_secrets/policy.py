@@ -1,20 +1,38 @@
 """Detection policy and narrow reviewed exceptions, independent of archive traversal."""
 
 import json
+import mmap
 import re
-from pathlib import PurePosixPath
+import tempfile
+from pathlib import Path, PurePosixPath
 
+from . import credential_url as CREDENTIAL_URL
 from .allowlist import Allowlist as Allowlist
 from .common import digest_bytes, digest_file
+from .key_material import OPENSSH, START, binary_key_in_file
+from .openpgp import PRIVATE_ARMOR, secret_key_stream
 
 PRIVATE = re.compile(rb"-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----")
 SERVICE_ACCOUNT = re.compile(rb'"type"\s*:\s*"service_account"')
-CREDENTIAL_URL = re.compile(rb"[a-zA-Z][a-zA-Z0-9+.-]*://[^\s/:@]+:([^\s/@]+)@")
 CONFIG_SECRET = re.compile(
     rb"(?i)(?:^|[\s\"'])(?:--)?((?:[A-Z0-9]+[_-])*(?:password|passwd|secret|"
     rb"(?:api|access|auth|bearer|refresh|session|private|client)[_-]?(?:key|token|secret)|"
     rb"credentials?))(?:[\"'])?(?:\s*[:=]\s*|\s+)[\"']?([^\s\"']+)"
 )
+
+
+def inspect_tar_xattrs(member, location, findings, budget, workspace):
+    for index, (name, value) in enumerate(member.pax_headers.items()):
+        if not name.startswith("SCHILY.xattr."):
+            continue
+        data = value.encode("utf-8", "surrogateescape")
+        budget.reserve(len(data))
+        # Gitleaks receives the JSON view. The byte-oriented detectors also
+        # need the original attribute bytes without JSON escaping.
+        with tempfile.NamedTemporaryFile(dir=workspace, prefix="pax-value-") as stored:
+            stored.write(data)
+            stored.flush()
+            findings.inspect(Path(stored.name), dict(location, view="pax-xattr", xattr=index))
 
 
 def path_rule(name):
@@ -78,7 +96,7 @@ class Findings:
         self.seen.add(key)
         exception = (
             self.allowlist.match(rule, location, value_digest, file_digest)
-            if value_digest or file_digest
+            if self.allowlist is not None and (value_digest or file_digest)
             else None
         )
         if exception:
@@ -93,15 +111,33 @@ class Findings:
                 checksum = digest_file(path)
                 self.add(rule, location, checksum, file_digest=checksum)
         tail = b""
+        url_checked = False
+        binary_checked = False
         with path.open("rb") as stream:
             for block in iter(lambda: stream.read(1024 * 1024), b""):
                 data = tail + block
+                if (PRIVATE_ARMOR in data
+                        or (not tail and data[0] & 0x80 and secret_key_stream(path))):
+                    self.add("content.openpgp-private-key", location)
+                if not binary_checked and (OPENSSH in data or START.search(data)):
+                    binary_checked = True
+                    if binary_key_in_file(path):
+                        self.add("content.binary-private-key", location)
                 if PRIVATE.search(data):
                     self.add("content.private-key-header", location)
                 if SERVICE_ACCOUNT.search(data):
                     self.add("content.service-account", location)
-                if CREDENTIAL_URL.search(data):
-                    self.add("content.credential-url", location)
+                if not url_checked and b"://" in data:
+                    url_checked = True
+                    if not tail and len(block) < 1024 * 1024:
+                        found_url = CREDENTIAL_URL.search(data)
+                    else:
+                        # A valid authority can straddle any read boundary and
+                        # outgrow the overlap used by the other signatures.
+                        with mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as contents:
+                            found_url = CREDENTIAL_URL.search(contents)
+                    if found_url:
+                        self.add("content.credential-url", location)
                 if location["scope"] == "config" and CONFIG_SECRET.search(data):
                     self.add("config.secret-assignment", location)
                 tail = data[-8192:]

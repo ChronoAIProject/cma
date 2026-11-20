@@ -272,6 +272,16 @@ mod tests {
     }
 
     #[test]
+    fn visitor_sandbox_defaults_agree() {
+        let limits = PlatformLimits::default();
+        assert_eq!(
+            u32::from(crate::sandbox::SandboxPolicy::default().max_sandboxes_per_visitor),
+            limits.visitor_max_sandboxes
+        );
+        assert_eq!(limits.visitor_max_sandboxes, 1);
+    }
+
+    #[test]
     fn inactivity_accepts_only_the_documented_inclusive_range() {
         for seconds in [MIN_PAUSE_AFTER_SECONDS, MAX_PAUSE_AFTER_SECONDS] {
             let mut settings = PlatformSettings::default();

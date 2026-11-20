@@ -2,9 +2,11 @@
 
 import json
 import os
+from pathlib import Path
 import re
 import sys
 
+from ci_events import full_ci_required
 from version_label import deployables
 
 EXPECTED = {
@@ -15,7 +17,7 @@ EXPECTED = {
 }
 
 
-def evaluate(track, needs):
+def evaluate(track, needs, *, full=False):
     expected = EXPECTED[track]
     if set(needs) != expected | {"changes"}:
         raise ValueError("missing or unexpected gate dependency")
@@ -31,6 +33,8 @@ def evaluate(track, needs):
         raise ValueError("invalid test track schema")
     if tracks != {key: value == "true" for key, value in booleans.items()}:
         raise ValueError("inconsistent test track outputs")
+    if full and not all(tracks.values()):
+        raise ValueError("full CI event requires every product track")
     deployables(json.loads(outputs.get("deployables", "null")))
     for rust_track in ("am", "eg"):
         packages = json.loads(outputs.get(rust_track + "_packages", "null"))
@@ -59,8 +63,10 @@ def evaluate(track, needs):
 
 def main():
     try:
-        result = evaluate(sys.argv[1], json.loads(os.environ["NEEDS"]))
-    except (IndexError, KeyError, TypeError, ValueError) as error:
+        event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
+        full = full_ci_required(event, os.environ['GITHUB_EVENT_NAME'], os.environ['GITHUB_REPOSITORY'])
+        result = evaluate(sys.argv[1], json.loads(os.environ["NEEDS"]), full=full)
+    except (IndexError, KeyError, OSError, TypeError, ValueError) as error:
         print(f"::error::Track gate failed: {error}")
         return 1
     print(result)

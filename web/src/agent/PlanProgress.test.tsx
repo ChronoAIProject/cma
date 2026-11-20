@@ -73,7 +73,7 @@ it('replaces reordered and ambiguous plans without guessing progress, then clear
 });
 
 it.each([
-  ['turn_completed', 'Response finished · Plan completion not fully reported'],
+  ['turn_completed', 'Turn ended · Check unfinished plan steps and output.'],
   ['turn_failed', 'Response failed'],
   ['turn_interrupted', 'Response cancelled'],
 ])('keeps the reported plan states when %s ends the response', (type, summary) => {
@@ -97,7 +97,7 @@ it.each([
   expect(within(plan).getByText('Completed 1/3 steps')).toBeVisible();
   expect(within(plan).getByText('Waiting')).toBeVisible();
   expect(within(plan).queryByText(/Current step/)).not.toBeInTheDocument();
-  expect(screen.queryByText(/Completed all/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/plan steps reported complete/)).not.toBeInTheDocument();
 });
 
 it('retains a successful fully reported plan across live completion and transcript recovery', () => {
@@ -117,7 +117,7 @@ it('retains a successful fully reported plan across live completion and transcri
     'agent',
   );
   const view = render(<MessageStream conversation={conversation} onApproval={() => {}} />);
-  expect(screen.getByText('Completed all 3 steps')).toBeVisible();
+  expect(screen.getByText('Turn ended · 3 plan steps reported complete')).toBeVisible();
   conversation = mergeTranscriptSnapshot(
     conversation,
     conversationFromTranscript({
@@ -136,7 +136,7 @@ it('retains a successful fully reported plan across live completion and transcri
     }),
   );
   view.rerender(<MessageStream conversation={conversation} onApproval={() => {}} />);
-  expect(screen.getByText('Completed all 3 steps')).toBeVisible();
+  expect(screen.getByText('Turn ended · 3 plan steps reported complete')).toBeVisible();
   expect(screen.getByRole('button', { name: 'View plan' })).toHaveAttribute(
     'aria-expanded',
     'false',
@@ -226,7 +226,7 @@ it.each([
   );
   render(<MessageStream conversation={conversation} onApproval={() => {}} />);
   expect(screen.getByText(summary)).toBeVisible();
-  expect(screen.queryByText(/Completed all|Current step/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/plan steps reported complete|Current step/)).not.toBeInTheDocument();
 });
 
 it('does not regress a cleared plan when an older public replay frame arrives', () => {
@@ -305,5 +305,5 @@ it('does not turn an incomplete plan report into a fully completed plan', () => 
   expect(screen.getByText('Progress unknown')).toBeVisible();
   expect(screen.getByText('Some plan steps unavailable')).toBeVisible();
   expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
-  expect(screen.queryByText(/Completed all/)).not.toBeInTheDocument();
+  expect(screen.queryByText(/plan steps reported complete/)).not.toBeInTheDocument();
 });

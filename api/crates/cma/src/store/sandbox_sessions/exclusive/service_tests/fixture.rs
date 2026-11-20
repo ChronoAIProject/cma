@@ -172,7 +172,11 @@ pub(super) fn service_with_access(
     let reads = AgentReadService::new(store.clone(), Arc::new(Resources))
         .with_sessions(store)
         .with_resource_access(access);
-    DesktopService::new(reads, adapter).with_replicas_enabled(replicas)
+    DesktopService::new(reads, adapter).with_admission(if replicas {
+        layer2_core::sandbox::DesktopAdmission::Protected
+    } else {
+        layer2_core::sandbox::DesktopAdmission::Disabled
+    })
 }
 
 fn worktree(agent: &Agent, index: usize) -> Worktree {

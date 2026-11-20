@@ -59,7 +59,7 @@ it.each([true, false])(
     );
     expect(
       within(await screen.findByRole('treeitem', { name: /^Shared research/ })).getByText(
-        'Completed',
+        'Turn ended',
       ),
     ).toBeVisible();
     expect(requests[0]?.searchParams.get('task_status')).toBe('completed');

@@ -1,7 +1,7 @@
 //! Public allocation usage API, shared by Settings and Operations.
 use crate::AuthenticatedCaller;
 use axum::{
-    extract::{Path, Query, State},
+    extract::{rejection::QueryRejection, Path, Query, State},
     http::{header, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
@@ -157,10 +157,11 @@ pub(crate) struct UsageEventsView {
 }
 
 #[derive(Default, Deserialize, utoipa::IntoParams)]
-#[serde(deny_unknown_fields)]
 #[into_params(parameter_in = Query)]
+#[serde(deny_unknown_fields)]
 pub(crate) struct UsageQuery {
     owner: Option<String>,
+    #[param(minimum = 1, maximum = 200, default = 50)]
     limit: Option<u16>,
     /// Continuation returned by this endpoint for the same caller and filters.
     /// Signed continuations expire 15 minutes after the first page; on
@@ -179,6 +180,14 @@ impl UsageQuery {
 }
 type Service = State<Arc<SandboxUsageService>>;
 
+fn parse_query(
+    query: Result<Query<UsageQuery>, QueryRejection>,
+) -> Result<UsageQuery, UsageReadError> {
+    query
+        .map(|Query(query)| query)
+        .map_err(|_| SandboxStoreError::InvalidPage.into())
+}
+
 /// Lifetime allocated resource-time for the authenticated owner.
 #[utoipa::path(get, path="/api/v1/usage", tag="usage", responses((status=200,body=UsageSummaryView)))]
 pub(crate) async fn summary(
@@ -188,12 +197,17 @@ pub(crate) async fn summary(
     summary_response(&service, &caller, false, None).await
 }
 /// Deployment-wide totals; optionally restrict to one owner. Requires cma:admin:sandboxes.
-#[utoipa::path(get, path="/api/v1/admin/usage", tag="usage", params(UsageQuery), responses((status=200,body=UsageSummaryView)))]
+#[utoipa::path(get, path="/api/v1/admin/usage", tag="usage", params(UsageQuery), responses((status=200,body=UsageSummaryView),
+    (status=400,description="invalid_query: malformed or unknown query parameters",body=super::ProblemDocument,content_type="application/problem+json")))]
 pub(crate) async fn admin_summary(
     State(service): Service,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Query(query): Query<UsageQuery>,
+    query: Result<Query<UsageQuery>, QueryRejection>,
 ) -> Response {
+    let query = match parse_query(query) {
+        Ok(query) => query,
+        Err(error) => return problem(error),
+    };
     summary_response(&service, &caller, true, query.owner.map(SubjectId).as_ref()).await
 }
 async fn summary_response(
@@ -217,20 +231,30 @@ async fn summary_response(
         Err(error) => problem(error),
     }
 }
-#[utoipa::path(get, path="/api/v1/usage/sandboxes", tag="usage", params(UsageQuery), responses((status=200,body=UsagePageView),(status=400,body=super::ProblemDocument,content_type="application/problem+json",description="Invalid continuation or page size; restart without a cursor.")))]
+#[utoipa::path(get, path="/api/v1/usage/sandboxes", tag="usage", params(UsageQuery), responses((status=200,body=UsagePageView),
+    (status=400,description="invalid_query: use a limit from 1 through 200; restart without a cursor if the continuation is invalid or expired",body=super::ProblemDocument,content_type="application/problem+json")))]
 pub(crate) async fn list(
     State(service): Service,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Query(query): Query<UsageQuery>,
+    query: Result<Query<UsageQuery>, QueryRejection>,
 ) -> Response {
+    let query = match parse_query(query) {
+        Ok(query) => query,
+        Err(error) => return problem(error),
+    };
     list_response(&service, &caller, false, query).await
 }
-#[utoipa::path(get, path="/api/v1/admin/usage/sandboxes", tag="usage", params(UsageQuery), responses((status=200,body=UsagePageView),(status=400,body=super::ProblemDocument,content_type="application/problem+json",description="Invalid continuation or page size; restart without a cursor.")))]
+#[utoipa::path(get, path="/api/v1/admin/usage/sandboxes", tag="usage", params(UsageQuery), responses((status=200,body=UsagePageView),
+    (status=400,description="invalid_query: use a limit from 1 through 200; restart without a cursor if the continuation is invalid or expired",body=super::ProblemDocument,content_type="application/problem+json")))]
 pub(crate) async fn admin_list(
     State(service): Service,
     AuthenticatedCaller(caller): AuthenticatedCaller,
-    Query(query): Query<UsageQuery>,
+    query: Result<Query<UsageQuery>, QueryRejection>,
 ) -> Response {
+    let query = match parse_query(query) {
+        Ok(query) => query,
+        Err(error) => return problem(error),
+    };
     list_response(&service, &caller, true, query).await
 }
 async fn list_response(
@@ -282,13 +306,18 @@ pub(crate) async fn read(
         Err(error) => problem(error),
     }
 }
-#[utoipa::path(get, path="/api/v1/usage/sandboxes/{id}/events", tag="usage", params(("id"=String,Path),UsageQuery), responses((status=200,body=UsageEventsView),(status=400,body=super::ProblemDocument,content_type="application/problem+json",description="Invalid continuation or page size; restart without a cursor.")))]
+#[utoipa::path(get, path="/api/v1/usage/sandboxes/{id}/events", tag="usage", params(("id"=String,Path),UsageQuery), responses((status=200,body=UsageEventsView),
+    (status=400,description="invalid_query: use a limit from 1 through 200; restart without a cursor if the continuation is invalid or expired",body=super::ProblemDocument,content_type="application/problem+json")))]
 pub(crate) async fn events(
     State(service): Service,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     Path(id): Path<String>,
-    Query(query): Query<UsageQuery>,
+    query: Result<Query<UsageQuery>, QueryRejection>,
 ) -> Response {
+    let query = match parse_query(query) {
+        Ok(query) => query,
+        Err(error) => return problem(error),
+    };
     let page = match query.page() {
         Ok(page) => page,
         Err(error) => return problem(error),

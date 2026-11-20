@@ -68,3 +68,58 @@ fn labels_are_closed_and_counter_saturation_cannot_affect_streams() {
     increment(&counter);
     assert_eq!(counter.load(Ordering::Relaxed), u64::MAX);
 }
+
+#[test]
+fn close_evidence_keeps_ambiguity_and_failures_without_inventing_revocation() {
+    use layer2_core::sandbox::{
+        agent_io::{CommandAdmissionError as C, CommandAuthorizationError as A},
+        AgentReadError as R,
+    };
+    for error in [R::NotFound, R::Forbidden] {
+        assert_eq!(
+            CloseReason::read(&error),
+            CloseReason::AuthorizationUnavailable
+        );
+    }
+    assert_eq!(
+        CloseReason::read(&R::Unavailable("private dependency detail".into())),
+        CloseReason::DependencyError
+    );
+    assert_eq!(
+        CloseReason::command(&C::Authority(A::Revoked)),
+        CloseReason::AuthorizationRevoked
+    );
+    assert_eq!(
+        CloseReason::command(&C::Authority(A::Unavailable)),
+        CloseReason::AuthorizationUnavailable
+    );
+    let evidence = Contract::new(ContractKind::Agui);
+    let retained = evidence.clone();
+    evidence.terminal_frame();
+    drop(evidence);
+    assert_eq!(
+        retained.close_reason(BodyEnd::Dropped),
+        CloseReason::DropUnknown
+    );
+    assert_eq!(
+        retained.close_reason(BodyEnd::Eof),
+        CloseReason::EofUnexplained
+    );
+    retained.replay_complete(false);
+    assert_eq!(
+        retained.close_reason(BodyEnd::Eof),
+        CloseReason::NormalTerminal
+    );
+    assert_eq!(
+        retained.close_reason(BodyEnd::Error),
+        CloseReason::ServerError
+    );
+    retained.record(CloseReason::AuthorizationUnavailable);
+    retained.record(CloseReason::NormalTerminal);
+    for end in [BodyEnd::Eof, BodyEnd::Dropped, BodyEnd::Error] {
+        assert_eq!(
+            retained.close_reason(end),
+            CloseReason::AuthorizationUnavailable
+        );
+    }
+}

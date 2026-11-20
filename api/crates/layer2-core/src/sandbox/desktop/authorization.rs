@@ -16,9 +16,7 @@ impl DesktopService {
         id: &AgentId,
         authority: Arc<dyn DesktopAuthorization>,
     ) -> Result<DesktopConnection, DesktopError> {
-        if !self.replicas_enabled {
-            return self.open(caller, id).await;
-        }
+        self.require_protected()?;
         // These current reads have no runtime effects and neither depends on
         // the other's result. Both must succeed before acquiring any authority.
         let (_, (sandbox_id, runtime)) = tokio::try_join!(

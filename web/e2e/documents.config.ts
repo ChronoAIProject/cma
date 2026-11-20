@@ -7,13 +7,23 @@ if (!['127.0.0.1', 'localhost'].includes(new URL(baseURL).hostname))
   throw new Error('Document checks require a loopback preview.');
 export default defineConfig({
   testDir: '.',
-  testMatch: 'documents.check.ts',
+  testMatch: [
+    'documents.check.ts',
+    'documents-unsaved.check.ts',
+    'documents-legacy-history.check.ts',
+  ],
   workers: 1,
   retries: 0,
   forbidOnly: true,
   timeout: 45_000,
   reporter: 'list',
   outputDir: mkdtempSync(join(tmpdir(), 'cma-documents-')),
+  webServer: {
+    command: `npm run preview -- --host 127.0.0.1 --port ${Number(new URL(baseURL).port) || 80} --strictPort`,
+    url: baseURL,
+    reuseExistingServer: false,
+    timeout: 30_000,
+  },
   use: {
     baseURL,
     trace: 'off',

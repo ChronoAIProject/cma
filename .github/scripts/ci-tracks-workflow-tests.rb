@@ -90,9 +90,13 @@ def validate(documents, actions)
   check_component_cache_writers(documents)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
-  require_check(events.keys == ['pull_request'], 'CI must be PR-only')
+  require_check(events.keys.sort == %w[pull_request push], 'CI must cover PRs and develop pushes')
+  require_check(events['push'] == {'branches' => ['develop']}, 'CI push must cover develop without path filters')
+  require_check(ci['permissions'] == {'contents' => 'read'}, 'CI permissions must remain read-only')
+  require_check(ci['concurrency'] == {'group' => 'ci-${{ github.workflow }}-${{ github.ref }}',
+    'cancel-in-progress' => true}, 'CI concurrency must remain per ref')
   pr = events.fetch('pull_request')
-  require_check(pr.fetch('branches') == ['develop'], 'CI target differs')
+  require_check(pr.fetch('branches') == %w[develop main], 'CI target differs')
   require_check(pr.fetch('types').sort == %w[opened reopened synchronize edited labeled unlabeled].sort, 'label event coverage differs')
   require_check(!pr.key?('paths') && !pr.key?('paths-ignore'), 'required checks must always be created')
   jobs = ci.fetch('jobs')
@@ -120,6 +124,18 @@ def validate(documents, actions)
     'DEPLOYABLES' => '${{ needs.changes.outputs.deployables }}',
     'SELECTOR_RESULT' => '${{ needs.changes.result }}', 'GH_TOKEN' => '${{ github.token }}'
   }, 'version selector or live label context differs')
+  selector = jobs.fetch('changes').fetch('steps').find { |step| step['id'] == 'select' }
+  require_check(selector && selector['run'] == 'python3 -B .github/scripts/ci_tracks/selection.py --ci' &&
+    !selector.key?('if') && !selector.key?('continue-on-error'), 'CI-specific selection must be required')
+  %w[am eg web].each do |track|
+    [track, "#{track}-images"].each do |key|
+      require_check(jobs.fetch(key)['if'] == "needs.changes.outputs.#{track} == 'true'", 'product selection differs')
+    end
+  end
+  %w[am eg].each do |track|
+    require_check(jobs.fetch(track)['with'] == {'track' => track, 'packages' => "${{ needs.changes.outputs.#{track}_packages }}"},
+      'selected Rust packages must reach the test workflow')
+  end
   %w[deployables test_tracks].each { |key| require_check(jobs.fetch('changes').fetch('outputs').key?(key), 'shared selector output absent') }
   %w[runtime-images omarchy rust-test-build].each do |key|
     require_check(jobs.fetch(key).fetch('if') == "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'", 'shared Rust prerequisite selection differs')
@@ -226,7 +242,16 @@ mutations = [
   ->(d) { d['ci-web']['jobs']['web']['steps'].find { |s| s['name'] == 'Restore npm download cache' }['uses'] = 'actions/cache@v4' },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Restore Trivy databases' }['with'].delete('restore-keys') },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['with'].delete('cache') },
-  ->(d) { d['ci'][true]['push'] = {'branches' => ['develop']} },
+  ->(d) { d['ci'][true].delete('push') },
+  ->(d) { d['ci'][true]['push']['paths'] = ['web/**'] },
+  ->(d) { d['ci'][true]['pull_request']['branches'].delete('main') },
+  ->(d) { d['ci']['jobs']['changes']['steps'].last['run'] = 'python3 -B .github/scripts/ci_tracks/selection.py' },
+  ->(d) { d['ci']['jobs']['am']['if'] = 'false' },
+  ->(d) { d['ci']['jobs']['eg']['if'] = 'false' },
+  ->(d) { d['ci']['jobs']['web-images']['if'] = 'false' },
+  ->(d) { d['ci']['jobs']['eg']['with']['packages'] = '["cmaeg"]' },
+  ->(d) { d['ci']['permissions']['contents'] = 'write' },
+  ->(d) { d['ci']['concurrency']['cancel-in-progress'] = false },
   ->(d) { d['ci']['jobs']['gate-eg']['needs'].delete('runtime-images') },
   ->(d) { d['ci']['jobs']['gate-am']['if'] = 'success()' },
   ->(d) { d['ci']['jobs']['version-label']['name'] = 'Optional label' },

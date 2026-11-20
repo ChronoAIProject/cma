@@ -108,7 +108,7 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
   const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 145);
+  assert.equal(new Set(requiredPrefixes).size, 146);
   assert.ok(requiredPrefixes.includes('store::directory::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('sandbox::agent_worker_tests::cleanup_contention_tests::'));
   assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
@@ -130,7 +130,8 @@ const desktopChild = 'store::sandbox_sessions::exclusive::process_tests::desktop
 const desktopParent = 'store::sandbox_sessions::exclusive::process_tests::independent_processes_preserve_claim_after_holder_exit';
 const desktopPerformance = 'store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows';
 const desktopEndpoints = [
-  'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_legacy_provider_connects_before_receiver_activation',
+  'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_disabled_services_and_ownerless_receiver_refuse_new_streams',
+  'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::retained_legacy_rows_block_until_close_or_expiry_and_cannot_release_successor',
   'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver',
   'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing',
   'store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority',
@@ -153,7 +154,7 @@ test('desktop selection keeps the process parent while declaring its exact child
   const [metadata, exclusions] = desktopInventory();
   const result = check(metadata, exclusions);
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stdout, /11 ignored CMA tests; 3 selected; 6 separate-fixture tests; 2 child helpers/);
+  assert.match(result.stdout, /12 ignored CMA tests; 3 selected; 7 separate-fixture tests; 2 child helpers/);
   const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
   assert.ok(source.includes(`not test(=${desktopChild})`));
   assert.ok(source.includes(`not test(=${desktopPerformance})`));
@@ -222,4 +223,34 @@ test('usage hotfix keeps reader and startup contracts while assigning only the e
   }
   cases[`${matrix}_another_contract`] = caseMetadata(false);
   assert.equal(check(metadata, exclusions).status, 1);
+});
+
+const resourceExecutionPrefix = 'store::resource_access::execution::mongo_tests::';
+test('resource execution selection includes root and nested contracts without omissions', () => {
+  assert.equal(requiredPrefixes.filter(prefix => prefix === resourceExecutionPrefix).length, 1);
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const line = source.split('\n').find(value => value.trimStart().startsWith('-E '));
+  const included = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
+  assert.equal(included.filter(prefix => prefix === resourceExecutionPrefix).length, 1);
+  assert.ok(!line.includes(`not test(${resourceExecutionPrefix})`));
+  const names = [
+    'ticket_continuation_and_release_write_conflict_with_freeze',
+    'races::registration_before_freeze_is_retained_until_every_exact_ack',
+    'uncertainty::ambiguous_commits_preserve_frozen_members_and_replay_the_exact_final_receipt',
+  ].map(name => resourceExecutionPrefix + name);
+  const metadata = inventory();
+  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  for (const name of names) cases[name] = caseMetadata(true);
+  const selected = check(metadata);
+  assert.equal(selected.status, 0, selected.stderr);
+  const missingSuite = structuredClone(metadata);
+  delete missingSuite['rust-suites']['cma::bin/cma'];
+  assert.equal(check(missingSuite).status, 1);
+  for (const omitted of [names, ...names.map(name => [name])]) {
+    for (const name of omitted) cases[name] = caseMetadata(false);
+    const result = check(metadata);
+    assert.equal(result.status, 1);
+    for (const name of omitted) assert.ok(result.stderr.includes(name), result.stderr);
+    for (const name of omitted) cases[name] = caseMetadata(true);
+  }
 });
