@@ -2,7 +2,7 @@
 
 import re
 
-from . import library_vectors, nested_certificates, reviewed_literals
+from . import go_cli_strings, library_vectors, nested_certificates, reviewed_literals
 from .common import digest_bytes
 from .gate import (
     FORMAT_MARKER_ADVISORY,
@@ -42,6 +42,8 @@ def validate(row, package):
         require(row["component"] == nested_certificates.COMPONENT and row["path"] == nested_certificates.WHEEL
                 and row["member"] is not None and package["name"] == "python" and package["authority_type"] == "arch-signature"
                 and row["package_member"]["path"][-1] == row["path"] and valid_digest(proof["record_sha256"]))
+    elif kind == "go-cli-strings":
+        fields(proof, common | {"strings"})
     else:
         fields(proof, common)
         require(kind == "mime-index" and row["path"] in MIME_TARGETS and row["member"] is None
@@ -64,6 +66,7 @@ def validate(row, package):
     finding_ids = proof["findings"]
     require(isinstance(finding_ids, list) and 0 < len(finding_ids) == len(row["matches"]) <= 128
             and all(valid_digest(value) for value in finding_ids) and len(set(finding_ids)) == len(finding_ids))
+    return go_cli_strings.validate(row, package, proof) if kind == "go-cli-strings" else None
 
 
 def verify_compiled(data, proof):

@@ -21,6 +21,8 @@ DEBIAN_CONTROL_ADVISORY = "published-debian-control-path"
 FORMAT_MARKER_ADVISORY = "published-format-marker"
 KEY_MARKER_VIEW_RULE = "gitleaks.private-key"
 KEY_MARKER_VIEW_ADVISORY = "published-key-format-records"
+GO_CLI_RULES = frozenset({"gitleaks.github-oauth", "gitleaks.image-secret-assignment"})
+GO_CLI_ADVISORY = "published-adjacent-go-strings"
 URL_EXAMPLE_ADVISORY = "published-credential-url-example"
 FORMAT_MARKER_RULES = frozenset({"content.private-key-header", "content.openpgp-private-key"})
 URL_EXAMPLE_RULE = "content.credential-url"
@@ -35,6 +37,7 @@ PACKAGE_ADVISORY_RULES = {
     DEBIAN_CONTROL_ADVISORY: frozenset({DEBIAN_CONTROL_RULE}),
     FORMAT_MARKER_ADVISORY: FORMAT_MARKER_RULES,
     KEY_MARKER_VIEW_ADVISORY: frozenset({KEY_MARKER_VIEW_RULE}),
+    GO_CLI_ADVISORY: GO_CLI_RULES,
     URL_EXAMPLE_ADVISORY: frozenset({URL_EXAMPLE_RULE}),
     CERTIFICATE_ADVISORY: frozenset({CERTIFICATE_RULE}),
     ARCH_CERTIFICATE_ADVISORY: frozenset({CERTIFICATE_RULE}),

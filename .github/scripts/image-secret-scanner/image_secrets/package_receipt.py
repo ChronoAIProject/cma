@@ -16,6 +16,8 @@ from .gate import (
     DISTRIBUTION_ADVISORY,
     DISTRIBUTION_RULE,
     EXECUTABLE_TEST_ADVISORY,
+    GO_CLI_ADVISORY,
+    GO_CLI_RULES,
     KEY_MARKER_VIEW_ADVISORY,
     SELF_TEST_RULES,
     TEST_VECTOR_ADVISORIES,
@@ -23,7 +25,9 @@ from .gate import (
 from .package_evidence import PUBLIC_RULES, SCOPES, require
 from .package_occurrences import collect
 
-PACKAGE_MATCH_RULES = PUBLIC_RULES | SELF_TEST_RULES | reviewed_literals.RULES | {CERTIFICATE_RULE, DISTRIBUTION_RULE}
+PACKAGE_MATCH_RULES = PUBLIC_RULES | SELF_TEST_RULES | reviewed_literals.RULES | GO_CLI_RULES | {
+    CERTIFICATE_RULE, DISTRIBUTION_RULE,
+}
 
 
 def path_digest(path):
@@ -164,6 +168,12 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
             return None
         classification = explanation
         extra[key] = {**claim, **{field: value for field, value in proof.items() if field != "matches"}}
+    if explanation == GO_CLI_ADVISORY:
+        claim = verified.get("go_cli_strings", {}).get((finding["rule"], finding.get("candidate_sha256")))
+        if claim is None or claim["finding_id"] != finding["finding_id"]:
+            return None
+        classification = explanation
+        extra["derived_payload"] = dict(origin, strings=[claim], findings=[finding["finding_id"]])
     raw_checksum = finding.get("file_sha256")
     aggregate = (explanation in TEST_VECTOR_ADVISORIES | reviewed_literals.CLASSES | {DIGEST_FRAME_ADVISORY}
                  and finding["rule"] != "gitleaks.private-key")

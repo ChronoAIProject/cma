@@ -13,6 +13,7 @@ from . import (
     derived_payload,
     digest_frames,
     distribution_config,
+    go_cli_strings,
     key_marker_view,
     library_vectors,
     native_json_key_view,
@@ -267,6 +268,11 @@ def read_payload_candidate(stream, member, path, workspace, expected, reviews):
             if "native_json_key_view" in expected and (origin is None or verified.get("derived_payload")):
                 verified["native_json_key_view"] = native_json_key_view.verify(
                     payload, metadata, expected["native_json_key_view"])
+            if origin is not None and origin["kind"] == "go-cli-strings" and member.mode & 0o111:
+                checked = go_cli_strings.verify(payload, metadata, origin)
+                if checked:
+                    verified["go_cli_strings"] = checked
+                    verified["derived_payload"] = True
             vector = expected.get("self_test")
             eligible = vector is not None and (member.mode & 0o111 if "executable" in vector
                                                else member.size <= library_vectors.MAX_LIBRARY_BYTES)

@@ -98,6 +98,7 @@ class PackageEvidence:
             derived_payload,
             digest_frames,
             distribution_config,
+            go_cli_strings,
             key_marker_view,
             library_vectors,
             native_json_key_view,
@@ -168,8 +169,7 @@ class PackageEvidence:
                     normalized(part)
             key = (row["component"], row["platform"], row["layer"], row["diff_id"], row["entry"], locator)
             require(key not in entries)
-            if derived:
-                derived_payload.validate(row, package)
+            go_strings = derived_payload.validate(row, package) if derived else None
             if "npm_help_template" in row:
                 npm_help_template.validate(row, package)
             key_views = key_marker_view.validate(row, package) if "key_marker_view" in row else {}
@@ -194,7 +194,9 @@ class PackageEvidence:
                 fields(match, MATCH_FIELDS)
                 require(valid_digest(match["proof_sha256"])
                         and (match["line"] is None or ordinal(match["line"]) and match["line"] > 0))
-                if match["rule"] in PUBLIC_RULES:
+                if go_strings is not None:
+                    go_cli_strings.acceptable_match(match, go_strings)
+                elif match["rule"] in PUBLIC_RULES:
                     require(valid_digest(match["candidate_sha256"]) and match["explanation"] in EXPLANATIONS)
                 elif match["explanation"] in reviewed_literals.CLASSES:
                     reviewed_literals.acceptable_match(match, literals)
@@ -209,6 +211,8 @@ class PackageEvidence:
                 identity = (match["rule"], match["candidate_sha256"], match["line"])
                 require(identity not in verified)
                 verified[identity] = match
+            if go_strings is not None:
+                require(go_strings.keys() == {(rule, sha) for rule, sha, _ in verified})
             if self_test is not None:
                 vector_advisory = library_vectors.classification(self_test)
                 vector_matches = [match for (rule, _, _), match in verified.items()
