@@ -1,0 +1,281 @@
+use super::tests::{count, database, drain, put, sandbox, NOW};
+use super::{catalog::InventorySet as Set, *};
+use mongodb::{
+    bson::{doc, Document},
+    event::{command::CommandEvent, EventHandler},
+    options::ClientOptions,
+    Client,
+};
+use std::sync::{Arc, Mutex};
+
+fn orphan_rows(owner: &str, suffix: &str) -> Vec<(&'static str, Document)> {
+    let sandbox = format!("purged-{suffix}");
+    let agent = format!("orphan-agent-{suffix}");
+    vec![
+        (
+            "resource_policies",
+            doc! {"_id":&sandbox,"owner_kind":"person","owner_subject":owner},
+        ),
+        ("sandbox_usage", doc! {"_id":&sandbox,"owner":owner}),
+        (
+            "agent_creation_provenance",
+            doc! {"_id":&agent,"record":{"owner":{"kind":"person","subject":owner},"sandbox_id":&sandbox,"agent_id":&agent,"workspace_id":format!("workspace-{suffix}"),"worktree_id":format!("worktree-{suffix}")}},
+        ),
+        (
+            "agent_lifecycle_operations",
+            doc! {"_id":format!("operation-{suffix}"),"owner":owner,"sandbox_id":&sandbox,"agent_id":&agent},
+        ),
+        (
+            "sandbox_metric_bindings",
+            doc! {"_id":format!("metric-{suffix}"),"owner":owner,"sandbox_id":&sandbox},
+        ),
+        (
+            "resource_shares",
+            doc! {"_id":format!("share-{suffix}"),"sandbox_id":&sandbox,"record":{"owner":owner}},
+        ),
+        (
+            "agent_commands",
+            doc! {"_id":format!("command-{suffix}"),"agent_id":&agent},
+        ),
+        (
+            "agent_log_segments",
+            doc! {"_id":format!("segment-{suffix}"),"agent_id":&agent,"conversation":"retained conversation"},
+        ),
+        (
+            "binding_event_media_uploads",
+            doc! {"_id":format!("upload-{suffix}"),"record":{"agent_id":&agent}},
+        ),
+    ]
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn purged_sandbox_history_is_erased_without_touching_another_owner() {
+    let db = database().await;
+    let owned = orphan_rows("a", "a");
+    let other = orphan_rows("b", "b");
+    for (collection, row) in owned.iter().chain(&other) {
+        put(&db, collection, row.clone()).await;
+    }
+    let mut inventory = ErasureInventory::default();
+    let removed = drain(&db, "a", &mut inventory).await;
+    for (collection, _) in &owned {
+        assert_eq!(removed.get(*collection), Some(&1), "{collection}");
+        assert_eq!(count(&db, collection).await, 1, "{collection}");
+    }
+    for (collection, expected) in other {
+        assert_eq!(
+            db.collection::<Document>(collection)
+                .find_one(doc! {"_id":expected.get("_id").unwrap().clone()})
+                .await
+                .unwrap(),
+            Some(expected),
+            "surviving owner's {collection} changed"
+        );
+    }
+    assert!(inventory.sandboxes.contains(&"purged-a".into()));
+    assert!(inventory.agents.contains(&"orphan-agent-a".into()));
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn historical_closure_waits_for_inventory_acknowledgement_before_effects() {
+    let db = database().await;
+    for (collection, row) in orphan_rows("a", "a") {
+        put(&db, collection, row).await;
+    }
+    let subject = SubjectId::new("a");
+    let inventory = ErasureInventory::default();
+    let mut cursor = Cursor::default();
+    for _ in 0..3 {
+        let batch = erase_records(
+            &db,
+            &[Target {
+                subject: &subject,
+                inventory: &inventory,
+            }],
+            &mut cursor,
+            NOW,
+        )
+        .await
+        .unwrap();
+        let discovered = batch
+            .discovered
+            .get("a")
+            .expect("historical ownership must be handed off");
+        assert!(discovered.sandboxes.contains(&"purged-a".into()));
+        assert!(discovered.agents.contains(&"orphan-agent-a".into()));
+        assert!(batch.deleted.is_empty() && batch.redacted.is_empty());
+        assert!(batch.waiting && batch.has_more);
+        assert_eq!(count(&db, "resource_policies").await, 1);
+        assert_eq!(count(&db, "agent_creation_provenance").await, 1);
+        assert_eq!(count(&db, "agent_log_segments").await, 1);
+    }
+    let removed = drain(&db, "a", &mut ErasureInventory::default()).await;
+    assert_eq!(removed.get("agent_log_segments"), Some(&1));
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn historical_sources_independently_recover_roots_and_agent_ids() {
+    let db = database().await;
+    put(
+        &db,
+        "resource_policies",
+        doc! {"_id":"policy-root","owner_kind":"person","owner_subject":"a"},
+    )
+    .await;
+    put(&db, "sandbox_usage", doc! {"_id":"usage-root","owner":"a"}).await;
+    put(
+        &db,
+        "sandbox_usage_events",
+        doc! {"_id":"usage-event","owner":"a","sandbox_id":"event-root"},
+    )
+    .await;
+    put(&db, "agent_creation_provenance", doc! {"_id":"provenance-agent","record":{"owner":{"kind":"person","subject":"a"},"sandbox_id":"provenance-root","workspace_id":"provenance-workspace","worktree_id":"provenance-worktree"}}).await;
+    put(&db, "agent_lifecycle_operations", doc! {"_id":"operation","owner":"a","sandbox_id":"operation-root","agent_id":"operation-agent"}).await;
+    put(
+        &db,
+        "sandbox_metric_bindings",
+        doc! {"_id":"metric","owner":"a","sandbox_id":"metric-root"},
+    )
+    .await;
+    put(
+        &db,
+        "resource_shares",
+        doc! {"_id":"share","sandbox_id":"share-root","record":{"owner":"a"}},
+    )
+    .await;
+    put(
+        &db,
+        "agent_reuse_bindings",
+        doc! {"_id":"reuse","owner":"a","sandbox_id":"reuse-root","agent_id":"reuse-agent"},
+    )
+    .await;
+    put(&db, "provider_bindings", doc! {"_id":"binding","record":{"owner":"a","sandbox_id":"binding-root","workspace_id":"binding-workspace","existing_agent":{"agent_id":"binding-agent"}}}).await;
+    put(&db, "provider_binding_preparations", doc! {"_id":"preparation","owner":"a","binding_id":"old-binding","record":{"previous":{"sandbox_id":"previous-root","workspace_id":"previous-workspace"},"reserved":{"sandbox_id":"reserved-root","workspace_id":"reserved-workspace"}}}).await;
+    put(&db, "native_prepared_sandboxes", doc! {"_id":"prepared-root","record":{"ownership":{"owner":"a"},"payload":{"id":"prepared-root","workspaces":[{"id":"prepared-workspace","agents":[{"id":"prepared-agent","worktree_id":"prepared-worktree"}]}]}}}).await;
+    put(&db, "sandbox_usage_report_control", doc! {"_id":"diagnostic:physical","record":{"owner_subject":"a","sandbox_id":"diagnostic-root"}}).await;
+    put(
+        &db,
+        "service_connection_handoffs",
+        doc! {"_id":"handoff","owner":"a","launch_id":"historic-launch"},
+    )
+    .await;
+    let subject = SubjectId::new("a");
+    let inventory = ErasureInventory::default();
+    let context = super::context::load(
+        &db,
+        &Target {
+            subject: &subject,
+            inventory: &inventory,
+        },
+    )
+    .await
+    .unwrap();
+    for root in [
+        "policy-root",
+        "usage-root",
+        "event-root",
+        "provenance-root",
+        "operation-root",
+        "metric-root",
+        "share-root",
+        "reuse-root",
+        "binding-root",
+        "previous-root",
+        "reserved-root",
+        "prepared-root",
+        "diagnostic-root",
+    ] {
+        assert!(context.ids(Set::Sandboxes).contains(&root.into()), "{root}");
+    }
+    for agent in [
+        "provenance-agent",
+        "operation-agent",
+        "reuse-agent",
+        "binding-agent",
+        "prepared-agent",
+    ] {
+        assert!(context.ids(Set::Agents).contains(&agent.into()), "{agent}");
+    }
+    assert!(context
+        .ids(Set::Workspaces)
+        .contains(&"provenance-workspace".into()));
+    assert!(context
+        .ids(Set::Worktrees)
+        .contains(&"provenance-worktree".into()));
+    assert!(context.ids(Set::Bindings).contains(&"old-binding".into()));
+    assert!(context
+        .ids(Set::Launches)
+        .contains(&"historic-launch".into()));
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn stale_launch_and_binding_inventory_cannot_erase_other_owners_children() {
+    let db = database().await;
+    put(&db, "trigger_launches", doc! {"_id":"launch-b","owner":"b"}).await;
+    put(
+        &db,
+        "trigger_launch_events",
+        doc! {"_id":"event-b","launch_id":"launch-b"},
+    )
+    .await;
+    put(
+        &db,
+        "trigger_launch_input_protocols",
+        doc! {"_id":"launch-b"},
+    )
+    .await;
+    put(
+        &db,
+        "provider_bindings",
+        doc! {"_id":"binding-b","record":{"owner":"b"}},
+    )
+    .await;
+    put(
+        &db,
+        "binding_conversations",
+        doc! {"_id":"conversation-b","binding_id":"binding-b"},
+    )
+    .await;
+    put(
+        &db,
+        "trigger_launch_events",
+        doc! {"_id":"event-a","launch_id":"launch-a"},
+    )
+    .await;
+    put(
+        &db,
+        "trigger_launch_input_protocols",
+        doc! {"_id":"launch-a"},
+    )
+    .await;
+    put(
+        &db,
+        "binding_conversations",
+        doc! {"_id":"conversation-a","binding_id":"binding-a"},
+    )
+    .await;
+    let mut inventory = ErasureInventory {
+        launches: vec!["launch-a".into(), "launch-b".into()],
+        bindings: vec!["binding-a".into(), "binding-b".into()],
+        ..Default::default()
+    };
+    let removed = drain(&db, "a", &mut inventory).await;
+    assert_eq!(removed.get("trigger_launch_events"), Some(&1));
+    assert_eq!(removed.get("trigger_launch_input_protocols"), Some(&1));
+    assert_eq!(removed.get("binding_conversations"), Some(&1));
+    assert_eq!(count(&db, "trigger_launches").await, 1);
+    assert_eq!(count(&db, "trigger_launch_events").await, 1);
+    assert_eq!(count(&db, "trigger_launch_input_protocols").await, 1);
+    assert_eq!(count(&db, "binding_conversations").await, 1);
+    db.drop().await.unwrap();
+}
+
+#[path = "history_resume_tests.rs"]
+mod resume;
