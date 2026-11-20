@@ -146,14 +146,38 @@ class ReleaseTagTests(unittest.TestCase):
             self.api.request(path, {"tag": "synthetic"})
             self.assertEqual(remote.call_count, 2)
 
-    def test_mismatched_bytes_and_invalid_id_refuse(self):
+    def test_mismatched_or_malformed_bytes_are_never_trusted_and_invalid_ids_refuse(self):
         oid = hashlib.sha1(b"tag 2\0ok").hexdigest()
-        with patch("staging_cd_release_tags.subprocess.run", side_effect=[
-                Mock(stdout=f"{oid} tag 2\n".encode()), Mock(stdout=b"no")]):
-            with self.assertRaisesRegex(Refusal, "advertised ID"):
-                read_local_tag(oid, self.root)
+        for batch in (b"no", f"{oid} tag 2\nno\n".encode()):
+            with self.subTest(batch=batch), patch("staging_cd_release_tags.subprocess.run", side_effect=[
+                    Mock(stdout=f"{oid} tag 2\n".encode()), Mock(stdout=batch)]):
+                self.assertIsNone(read_local_tag(oid, self.root))
         with self.assertRaisesRegex(Refusal, "Invalid release tag"):
             read_local_tag("refs/heads/develop", self.root)
+
+    def test_local_mismatch_failure_or_timeout_defers_to_the_verified_api(self):
+        value, row = self.pending(1)
+        oid = row["object"]["sha"]
+        tag = {"sha": oid, "tag": pending_name(value), "message": json.dumps(value) + "\n",
+               "object": {"type": "commit", "sha": self.commit}}
+        def tampered(args, **kwargs):
+            # Same size, other bytes: the object no longer hashes to its ID.
+            result = subprocess.run(args, **kwargs)
+            if args[-1] == "--batch":
+                result.stdout = result.stdout.replace(b'"run_id": 1', b'"run_id": 7')
+            return result
+        def failing(error):
+            def run(_args, **_kwargs):
+                raise error
+            return run
+        for name, runner in (("mismatch", tampered), ("error", failing(subprocess.CalledProcessError(128, "git"))),
+                             ("timeout", failing(subprocess.TimeoutExpired("git", 30))), ("absent git", failing(OSError()))):
+            with self.subTest(failure=name):
+                api = GitHub("fixture", local_tags=LocalTags(self.root, runner=runner))
+                results = [Mock(returncode=0, stdout=json.dumps(item)) for item in ([row], tag)]
+                with patch.object(api, "runner", side_effect=results) as remote:
+                    self.assertEqual(Reservations(api, "fixture", self.root).list("web"), [value])
+                self.assertEqual(remote.call_args.args[0][-1], "repos/ChronoAIProject/cma/git/tags/" + oid)
 
     def test_local_reader_does_not_follow_replace_refs(self):
         first, ref = self.pending(1)

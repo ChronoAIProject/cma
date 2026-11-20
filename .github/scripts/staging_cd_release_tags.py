@@ -20,9 +20,15 @@ MAX_FETCH_REFS = 256
 REMOTE = f"https://github.com/{REPOSITORY}.git"
 
 
+class Unreadable(Exception):
+    """Local Git output that cannot be trusted; the API reads those objects instead."""
+
+
 def decode_tag(oid, raw):
-    """Return GitHub's three consumed fields for canonical unsigned release tags."""
-    require(git_tag_oid(raw) == oid, "Local tag object differs from advertised ID")
+    """Return GitHub's three consumed fields for canonical unsigned release tags, else None."""
+    if git_tag_oid(raw) != oid:
+        # Never trusted, never fatal: the verified API read answers for this ID.
+        return None
     # Only decode the simple annotated commit tags emitted by Reservations.
     # GitHub handles any other encoding, signature, header or tag type.
     header, sep, message = raw.partition(b"\n\n")
@@ -58,22 +64,35 @@ class LocalTags:
         return self.read([match[1]])[0].get(match[1]) if match else None
 
     def read(self, oids):
-        """Return canonical local tags by ID, and the IDs absent from the checkout."""
+        """Return canonical local tags by ID, and the IDs absent from the checkout.
+
+        An object is returned only when its bytes hash to the advertised ID.
+        A mismatch, a failing or slow cat-file, or malformed output is never
+        trusted and never fatal: those objects are left to the verified API.
+        """
         oids = list(dict.fromkeys(oids))
         for oid in oids:
             require(isinstance(oid, str) and re.fullmatch(OID, oid), "Invalid release tag object ID")
         if not oids:
             return {}, []
+        try:
+            return self.batch(oids)
+        except (OSError, subprocess.SubprocessError, Unreadable):
+            return {}, []
+
+    def batch(self, oids):
         git = ["--no-replace-objects", "--no-lazy-fetch", "cat-file"]
         lines = self.run([*git, "--batch-check"], data="".join(oid + "\n" for oid in oids).encode()).splitlines()
-        require(len(lines) == len(oids), "Local tag object differs from advertised ID")
+        if len(lines) != len(oids):
+            raise Unreadable()
         sizes, absent = {}, []
         for oid, line in zip(oids, lines):
             if line == oid.encode() + b" missing":
                 absent.append(oid)
                 continue
             match = re.fullmatch(oid.encode() + rb" ([a-z]+) ([0-9]{1,10})", line)
-            require(match is not None, "Local tag object differs from advertised ID")
+            if match is None:
+                raise Unreadable()
             if match[1] == b"tag" and int(match[2]) <= MAX_TAG:
                 sizes[oid] = int(match[2])
         found = {}
@@ -83,13 +102,14 @@ class LocalTags:
             for oid, size in sizes.items():
                 header = f"{oid} tag {size}\n".encode()
                 start = offset + len(header)
-                require(raw.startswith(header, offset) and raw[start + size:start + size + 1] == b"\n",
-                        "Local tag object differs from advertised ID")
+                if not (raw.startswith(header, offset) and raw[start + size:start + size + 1] == b"\n"):
+                    raise Unreadable()
                 value = decode_tag(oid, raw[start:start + size])
                 if value is not None:
                     found[oid] = value
                 offset = start + size + 1
-            require(offset == len(raw), "Local tag object differs from advertised ID")
+            if offset != len(raw):
+                raise Unreadable()
         return found, absent
 
     def load(self, refs):
