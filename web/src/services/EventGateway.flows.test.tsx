@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { EventGateway } from './EventGateway';
@@ -85,7 +85,6 @@ it('retains an uncertain edit while switching channels and retries the original 
 });
 
 it('retains an uncertain create across navigation and removes a freshly created channel after deletion', async () => {
-  const actor = userEvent.setup();
   const existing = channel('Existing'),
     created = channel('Created', 2);
   let creates = 0;
@@ -100,15 +99,26 @@ it('retains an uncertain create across navigation and removes a freshly created 
     return json({ items: [existing] });
   });
   vi.stubGlobal('fetch', fetcher);
-  render(<EventGateway session={session} denied={vi.fn()} />);
+  vi.stubGlobal('EventSource', undefined);
+  await act(async () => {
+    render(<EventGateway session={session} denied={vi.fn()} />);
+  });
   const channels = within(screen.getByRole('region', { name: 'Channels' }));
-  const existingChannel = await channels.findByRole('button', { name: /Existing/ });
-  await actor.click(existingChannel);
-  await screen.findByRole('heading', { name: 'Existing' });
+  const existingChannel = channels.getByRole('button', { name: /^Existing/ });
+  const openExisting = () => fireEvent.click(existingChannel);
+  // Each mocked response settles in React's async act, so the next assertion
+  // observes the committed UI without pointer timers or polling the workspace.
+  const submit = async (button: HTMLElement) => {
+    expect(button).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(button);
+    });
+  };
+  openExisting();
+  expect(screen.getByRole('heading', { name: 'Existing' })).toBeVisible();
   const newChannel = screen.getByRole('button', { name: 'New channel' });
-  await actor.click(newChannel);
-  const submit = screen.getByRole('button', { name: 'Create channel' });
-  const form = submit.closest('form')!;
+  fireEvent.click(newChannel);
+  const form = screen.getByRole('button', { name: 'Create channel' }).closest('form')!;
   const editor = within(form.parentElement!);
   fireEvent.change(within(form).getByLabelText('Channel name'), {
     target: { value: 'Created' },
@@ -125,27 +135,28 @@ it('retains an uncertain create across navigation and removes a freshly created 
   fireEvent.change(within(form).getByLabelText('Route IDs 1'), {
     target: { value: 'fixture-route' },
   });
-  await actor.click(submit);
-  await editor.findByRole('button', { name: 'Retry same request' });
-  await actor.click(existingChannel);
+  await submit(within(form).getByRole('button', { name: 'Create channel' }));
+  expect(editor.getByRole('button', { name: 'Retry same request' })).toBeVisible();
+  openExisting();
   expect(form).not.toBeVisible();
   expect(screen.getByRole('heading', { name: 'Existing' })).toBeVisible();
-  await actor.click(newChannel);
+  fireEvent.click(newChannel);
   expect(form).toBeVisible();
   expect(within(form).getByLabelText('Channel name')).toBeDisabled();
-  await actor.click(editor.getByRole('button', { name: 'Retry same request' }));
-  await screen.findByRole('heading', { name: 'Created' });
+  await submit(editor.getByRole('button', { name: 'Retry same request' }));
+  const details = within(screen.getByRole('region', { name: 'Created details' }));
+  expect(details.getByRole('heading', { name: 'Created' })).toBeVisible();
   const requests = fetcher.mock.calls.filter(([, init]) => init?.method === 'POST');
   expect(requests).toHaveLength(2);
   expect(requests[1]?.[1]?.body).toBe(requests[0]?.[1]?.body);
   expect(requests[1]?.[1]?.headers).toEqual(requests[0]?.[1]?.headers);
-  await userEvent.click(await screen.findByRole('button', { name: /Channel: Created/ }));
-  const inspector = within(screen.getByRole('dialog'));
-  await actor.click(inspector.getByRole('button', { name: 'Delete channel' }));
-  await actor.click(inspector.getByRole('button', { name: 'Confirm delete' }));
-  await waitFor(() =>
-    expect(screen.queryByRole('heading', { name: 'Created' })).not.toBeInTheDocument(),
-  );
+  // The delivery graph is lazy-loaded. Wait for its control in the new map.
+  const map = within(details.getByRole('region', { name: 'Delivery map' }));
+  fireEvent.click(await map.findByRole('button', { name: /Channel: Created/ }));
+  const settings = within(screen.getByRole('dialog', { name: 'Channel settings' }));
+  fireEvent.click(settings.getByRole('button', { name: 'Delete channel' }));
+  await submit(settings.getByRole('button', { name: 'Confirm delete' }));
+  expect(screen.queryByRole('heading', { name: 'Created' })).not.toBeInTheDocument();
   expect(screen.getByRole('region', { name: 'Channel workspace' })).toBeVisible();
   expect(channels.queryByRole('button', { name: /^Created/ })).not.toBeInTheDocument();
   expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toEqual([

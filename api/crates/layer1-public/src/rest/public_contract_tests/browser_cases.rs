@@ -26,6 +26,13 @@ impl BrowserAdapter for super::runtime::Files {
         handle: &RuntimeHandle,
         request: &BrowserRequest,
     ) -> Result<BrowserReceipt> {
+        self.browser_calls
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let barrier = self.browser_barrier.lock().unwrap().clone();
+        if let Some(barrier) = barrier {
+            barrier.wait().await;
+            barrier.wait().await;
+        }
         if let Some(directory) = &self.browser_relay {
             return super::native_browser_chain::forward(directory, request).await;
         }
@@ -51,6 +58,9 @@ impl BrowserAdapter for super::runtime::Files {
         })
     }
 }
+
+#[path = "browser_conflict_tests.rs"]
+mod conflict_tests;
 
 pub(super) async fn scenario(name: &str) -> Option<super::Scenario> {
     let kind = name.strip_prefix("browser_")?;

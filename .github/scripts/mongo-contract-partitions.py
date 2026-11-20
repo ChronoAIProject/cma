@@ -23,11 +23,14 @@ DIAGNOSTICS_TEST = ("store::mongo_diagnostics::mongo_tests::"
                     "real_mongo_monitoring_privacy_and_overhead")
 SCAN_COOPERATION_TEST = ("store::agent_log_telemetry::tests::cooperation::benchmark::"
                          "local_scan_scheduling_abba_reproduction")
+BSON_CEILING_TEST = ("store::sandbox_mongo_integration_tests::resource_access_tests::"
+                     "personal_inventory::failures::"
+                     "personal_agent_list_preserves_sources_near_the_bson_document_ceiling")
 # The audit keeps its 30-second bound; competing fixtures must not consume its
 # resource window while it validates and promotes a full 10,000-row unit.
 ISOLATED_TESTS = (("--scale", SCALE_TEST), ("--owner-allocation", OWNER_ALLOCATION_TEST),
                   ("--audit-bounds", AUDIT_BOUNDS_TEST), ("--diagnostics", DIAGNOSTICS_TEST),
-                  ("--scan-cooperation", SCAN_COOPERATION_TEST))
+                  ("--scan-cooperation", SCAN_COOPERATION_TEST), ("--bson-ceiling", BSON_CEILING_TEST))
 CLEANUP_FAILURE = 125
 SCHEDULE = runpy.run_path(str(Path(__file__).with_name("mongo-contract-schedule.py")))
 
@@ -57,7 +60,7 @@ def partition_plan(script):
     print(f"Mongo contracts: {len(selected)} tests, {count} partitions, "
           f"at most {TESTS_PER_FIXTURE} tests per fixture, "
           f"{CONCURRENT_FIXTURES} concurrent ordinary fixtures; "
-          "report scale, owner allocation, audit bounds, diagnostics and scan cooperation run alone first", flush=True)
+          f"{len(ISOLATED_TESTS)} isolated contracts run alone first", flush=True)
     with Path(__file__).with_name("mongo-contract-timings.json").open() as source:
         model = json.load(source)
     costs = SCHEDULE["partition_costs"](metadata, count, {name for _, name in ISOLATED_TESTS}, model)

@@ -16,6 +16,7 @@ mod observation;
 mod profiles;
 mod routes;
 mod runtime;
+mod runtime_inventory;
 mod stores;
 use crate::{
     auth::{service_portal, AuthState},
@@ -181,10 +182,12 @@ impl ControlPlaneComposition {
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
         let native_warm_pools = runtime.warm_pools;
-        let admin = layer1_public::rest::admin::AdminState::new(
+        let admin = runtime_inventory::admin_state(
+            config.features,
             Arc::clone(&settings),
             sandbox_operators,
             Arc::clone(&activity),
+            Arc::clone(&adapter),
         )
         .with_user_directory(Arc::clone(&users))
         .with_runtime_updates(runtime.updates.clone())
