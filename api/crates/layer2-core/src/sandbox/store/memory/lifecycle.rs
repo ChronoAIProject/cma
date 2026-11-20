@@ -303,5 +303,6 @@ fn sandbox_admission_replay(
             "sandbox admission origin disagrees with its aggregate".into(),
         ));
     }
-    SandboxAdmissionReplay::new(sandbox.clone(), name.clone(), fingerprint.clone()).map(Some)
+    SandboxAdmissionReplay::from_retained(sandbox.clone(), name.clone(), fingerprint.clone())
+        .map(Some)
 }
