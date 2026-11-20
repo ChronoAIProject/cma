@@ -12,6 +12,7 @@ from staging_cd_allocation_fixture import AllocationServer
 from staging_cd_allocation_snapshot import AllocationConflict, AllocationSnapshot, SnapshotAPI
 from staging_cd_allocation_io import AllocationIO
 from staging_cd_history import DevelopHistory
+from staging_cd_outcome_tests import legacy
 
 
 class AllocationEntrypointTests(unittest.TestCase):
@@ -47,7 +48,7 @@ class AllocationEntrypointTests(unittest.TestCase):
                 patch.object(allocation, "Reservations", side_effect=store), \
                 patch.object(allocation, "output", side_effect=emit) as emitted:
             status = allocation.main()
-        return status, server, stores[0], output.getvalue(), events, emitted
+        return status, server, stores[0], legacy(output.getvalue()), events, emitted
 
     def test_success_emits_matrix_after_both_exact_ref_readbacks(self):
         status, server, store, output, events, emitted = self.execute()

@@ -19,6 +19,7 @@ from staging_cd_finalize_diagnostics import REASONS, run_finalization
 from image_scanner_policy import MANIFEST_SHA256
 from staging_cd_receipts import published_receipt
 from staging_cd_reservations import next_reservation
+from staging_cd_outcome_tests import legacy
 
 
 class FinalizeDiagnosticsTests(unittest.TestCase):
@@ -26,7 +27,7 @@ class FinalizeDiagnosticsTests(unittest.TestCase):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             status = run_finalization(operation)
-        return status, output.getvalue()
+        return status, legacy(output.getvalue())
 
     def test_fixed_reasons_and_unknown_errors_withhold_private_text(self):
         cases = [(Refusal(message), reason) for message, reason in REASONS.items()]
@@ -67,7 +68,7 @@ class FinalizeDiagnosticsTests(unittest.TestCase):
                         patch.object(finalization, "GitHub", return_value=api), \
                         patch.object(finalization, "Reservations") as store, contextlib.redirect_stdout(output):
                     self.assertEqual(finalization.main(), 1)
-                self.assertEqual(output.getvalue(), "FAIL finalize\nFAIL finalize stage=attempt reason=attempt_burned\n")
+                self.assertEqual(legacy(output.getvalue()), "FAIL finalize\nFAIL finalize stage=attempt reason=attempt_burned\n")
                 store.return_value.finalize.assert_not_called()
 
     def test_github_and_registry_reads_share_a_budget_inside_the_job_timeout(self):
@@ -115,7 +116,7 @@ raise SystemExit(run_finalization(operation))
         result = subprocess.run([sys.executable, "-B", "-c", program], cwd=Path(__file__).parent,
                                 capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, "FAIL finalize\nFAIL finalize stage=cleanup_read reason=cleanup_unverified\n")
+        self.assertEqual(legacy(result.stdout), "FAIL finalize\nFAIL finalize stage=cleanup_read reason=cleanup_unverified\n")
         self.assertEqual(result.stderr, "")
 
 

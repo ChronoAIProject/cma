@@ -77,7 +77,7 @@ def main():
         output(env, "receipt", canonical(receipt))
         output(env, "component", receipt["identity"]["component"])
         return True
-    return run_finalization(operation)
+    return run_finalization(operation, component=env.get("CD_COMPONENT"))
 
 
 if __name__ == "__main__":

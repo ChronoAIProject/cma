@@ -31,7 +31,7 @@
         },
         "os-error": {
           "title": "System or network call failed",
-          "meaning": "A file, process or network operation failed; its error text is withheld because it can contain private data.",
+          "meaning": "A file, process or network operation failed; its error text is withheld because it can contain sensitive data.",
           "cause": "transient",
           "next": "Re-run the failed jobs. If it repeats, check the service or file used at the reported line."
         },
@@ -61,7 +61,7 @@
         },
         "build_failed": {
           "title": "Image build failed",
-          "meaning": "The image build exited unsuccessfully; its output is withheld because it can contain private data.",
+          "meaning": "The image build exited unsuccessfully; its output is withheld because it can contain sensitive data.",
           "cause": "change",
           "next": "Build the component's Dockerfile locally at the reserved commit to see the error, fix it and push."
         },
@@ -688,7 +688,7 @@
     "deploy-precondition": {
       "title": "Deployment not admitted",
       "line": "FAIL precondition={code}",
-      "effect": "Nothing. The private controller was not started.",
+      "effect": "Nothing. The deployment controller was not started.",
       "codes": {
         "mode": {
           "title": "Deployment mode invalid",
@@ -697,16 +697,16 @@
           "next": "Check the dispatch inputs or the workflow's deployment mode."
         },
         "checkout": {
-          "title": "Private checkout invalid",
-          "meaning": "The private infrastructure checkout is absent, differs from the resolved commit or links its entry point.",
+          "title": "Infrastructure checkout invalid",
+          "meaning": "The infrastructure checkout is absent, differs from the resolved commit or links its entry point.",
           "cause": "operator",
           "next": "An operator must check the infrastructure revision resolved for this run."
         },
         "policy": {
           "title": "Deployment policy unreadable",
-          "meaning": "The private deployment policy could not be read or is invalid.",
+          "meaning": "The deployment policy could not be read or is invalid.",
           "cause": "operator",
-          "next": "An operator must check the private deployment policy."
+          "next": "An operator must check the deployment policy."
         },
         "credentials-format": {
           "title": "Deployment credentials malformed",
@@ -737,13 +737,13 @@
     "deploy-private": {
       "title": "Deployment refused",
       "line": "FAIL precondition=private-{code}",
-      "effect": "Nothing. The private controller refused before any mutation.",
+      "effect": "Nothing. The deployment controller refused before any mutation.",
       "codes": {
         "permit": {
           "title": "Deployment permit refused",
-          "meaning": "The private controller did not grant this run a deployment permit.",
+          "meaning": "The deployment controller did not grant this run a deployment permit.",
           "cause": "operator",
-          "next": "An operator must check the private deployment permit for this repository."
+          "next": "An operator must check the deployment permit for this repository."
         },
         "authentication": {
           "title": "Deployment authentication failed",
@@ -815,7 +815,7 @@
           "title": "Request schema refused",
           "meaning": "The controller does not support this release request's schema.",
           "cause": "operator",
-          "next": "Align the private controller and this repository on one release request schema."
+          "next": "Align the deployment controller and this repository on one release request schema."
         },
         "fence": {
           "title": "Deployment fence held",
@@ -839,7 +839,7 @@
           "title": "Refusal reason unreported",
           "meaning": "The controller refused before any mutation but reported no reason.",
           "cause": "unknown",
-          "next": "An operator must read the private controller's log for this run."
+          "next": "An operator must read the deployment controller's log for this run."
         },
         "unrecognized": {
           "title": "Refusal reason unrecognized",
@@ -864,7 +864,7 @@
           "title": "Deployment write rejected",
           "meaning": "The deployment service returned an unexpected response to the change.",
           "cause": "unknown",
-          "next": "An operator must read the private controller's log for the response."
+          "next": "An operator must read the deployment controller's log for the response."
         },
         "read-timeout": {
           "title": "Status read timed out",
@@ -876,7 +876,7 @@
           "title": "Status read invalid",
           "meaning": "The deployment status response was invalid.",
           "cause": "unknown",
-          "next": "An operator must read the private controller's log for the response."
+          "next": "An operator must read the deployment controller's log for the response."
         },
         "status-reconcile": {
           "title": "Status not reconciled",
@@ -972,7 +972,7 @@
           "title": "Status shape invalid",
           "meaning": "The deployment status document had an unexpected shape.",
           "cause": "unknown",
-          "next": "An operator must read the private controller's log."
+          "next": "An operator must read the deployment controller's log."
         },
         "pod-evidence": {
           "title": "Pod evidence missing",
@@ -1026,13 +1026,13 @@
           "title": "Controller result invalid",
           "meaning": "The controller's component result was missing or failed validation.",
           "cause": "unknown",
-          "next": "An operator must read the private controller's log for this run."
+          "next": "An operator must read the deployment controller's log for this run."
         },
         "unreported": {
           "title": "Reason unreported",
           "meaning": "The controller reported no reason for this check.",
           "cause": "unknown",
-          "next": "An operator must read the private controller's log for this run."
+          "next": "An operator must read the deployment controller's log for this run."
         },
         "unrecognized": {
           "title": "Reason unrecognized",

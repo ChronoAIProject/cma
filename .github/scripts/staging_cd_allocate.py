@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 
+from ci_outcome import error_site, report
 from staging_cd_admission import event_identity
 from staging_cd_compatibility import GROUP
 from staging_cd_transition import complete_group
@@ -54,19 +55,21 @@ FALLBACK_CODES = frozenset({"UNEXPECTED_ERROR", "UNCLASSIFIED_REFUSAL"})
 def run_allocation(operation):
     # Never echo exception text or private output. Only this closed vocabulary
     # crosses the existing output boundary; unknown failures remain generic.
-    reason = "UNEXPECTED_ERROR"
+    reason, site = "UNEXPECTED_ERROR", None
 
     def guarded(masker):
-        nonlocal reason
+        nonlocal reason, site
         try:
             return operation(masker)
-        except Refusal as error:
-            reason = REFUSAL_CODES.get(str(error), "UNCLASSIFIED_REFUSAL")
+        except Exception as error:
+            site = error_site(error)
+            if isinstance(error, Refusal):
+                reason = REFUSAL_CODES.get(str(error), "UNCLASSIFIED_REFUSAL")
             raise
 
     status = run_private(guarded, None, subject="allocation", explain=False)
     if status:
-        print("FAIL allocation " + reason)
+        report("allocation", reason, subject="allocation", site=site)
     return status
 
 

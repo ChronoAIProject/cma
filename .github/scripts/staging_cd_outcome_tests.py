@@ -9,6 +9,7 @@ import string
 import subprocess
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 import ci_outcome
@@ -50,6 +51,31 @@ def public_texts(outputs):
     return "\n".join(part for part in outputs if part is not None)
 
 
+EXPLAINED = re.compile(r"(?P<line>.*?)(?: component=[a-z,-]+| at=(?:\?|(?:[A-Za-z0-9_-]+/){0,2}[A-Za-z0-9_-]+\.py:\d+))*"
+                       r" cause=(?:change|transient|operator|unknown)")
+
+
+def legacy(text):
+    """Return a log as its consumers parse it: the original machine lines.
+
+    Every explained line must keep its original prefix, carry only validated
+    appended fields and be followed by its annotation; both are removed here.
+    """
+    kept, lines = [], text.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith(("::error ", "::warning ")):
+            if not (index and EXPLAINED.fullmatch(lines[index - 1])):
+                raise AssertionError("annotation without an explained line: " + line[:80])
+            continue
+        match = EXPLAINED.fullmatch(line)
+        if match:
+            if not (index + 1 < len(lines) and lines[index + 1].startswith(("::error ", "::warning "))):
+                raise AssertionError("explained line without an annotation: " + line)
+            line = match["line"]
+        kept.append(line + "\n")
+    return "".join(kept)
+
+
 class CatalogueTests(unittest.TestCase):
     def test_every_code_of_every_vocabulary_has_an_entry(self):
         for family, expected in vocabularies().items():
@@ -70,7 +96,8 @@ class CatalogueTests(unittest.TestCase):
                     text = value[key]
                     self.assertIsInstance(text, str)
                     self.assertTrue(text.strip(), key)
-                    self.assertNotRegex(text, r"[\r\n{}|]|::")
+                    # Leak tests use "private" as their marker; explanations never say it.
+                    self.assertNotRegex(text, r"[\r\n{}|]|::|(?i:private)")
                     self.assertLessEqual(len(text), 240)
         self.assertEqual(set(ci_outcome.CATALOGUE["causes"]), set(ci_outcome.CAUSES))
 
@@ -90,7 +117,7 @@ class CatalogueTests(unittest.TestCase):
                     self.assertNotIn("\n", spec["line"])
                 for key in ("effect", "title"):
                     if key in spec:
-                        self.assertNotRegex(spec[key], r"[\r\n{}|]|::")
+                        self.assertNotRegex(spec[key], r"[\r\n{}|]|::|(?i:private)")
                 for code in codes(family):
                     self.assertRegex(code, r"\A[A-Za-z][A-Za-z0-9_-]{0,47}\Z")
         self.assertEqual(ci_outcome.COMPONENTS, __import__("staging_cd_targets").TARGETS)
@@ -263,6 +290,63 @@ def refusal_calls():
                     yield path.name, node.lineno, node.args[1] if len(node.args) == 2 else None, constants
                 elif node.func.id in refusals - custom:
                     yield path.name, node.lineno, node.args[0] if len(node.args) == 1 else None, constants
+
+
+class DiagnosticReportTests(unittest.TestCase):
+    """Publication, finalization and allocation failures name their check and next step."""
+
+    def explained(self, run):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary"
+            output = io.StringIO()
+            with unittest.mock.patch.dict("os.environ", {"GITHUB_STEP_SUMMARY": str(summary)}), \
+                    contextlib.redirect_stdout(output):
+                self.assertEqual(run(), 1)
+            first, line, annotation = output.getvalue().splitlines()
+            self.assertNotIn(PRIVATE, output.getvalue() + summary.read_text())
+            self.assertEqual(summary.read_text().splitlines()[:2], [ci_outcome.HEADER, ci_outcome.RULE])
+            self.assertEqual(len(summary.read_text().splitlines()), 3)
+            return first, line, annotation
+
+    def test_publication_reports_stage_component_and_reservation_check(self):
+        from staging_cd_publication_diagnostics import run_publication
+        from staging_cd_reservations import validate_reservation
+        line_of = next(number for number, text in enumerate(
+            Path(__file__).with_name("staging_cd_reservations.py").read_text().splitlines(), 1)
+            if "def validate_reservation" in text) + 1
+
+        def operation(_masker, diagnostics):
+            diagnostics.mark("build")
+            validate_reservation({"schema": PRIVATE})
+        first, line, annotation = self.explained(lambda: run_publication(operation, component="am"))
+        self.assertEqual(first, "FAIL publication")
+        self.assertEqual(line, "FAIL publication stage=build reason=validation_refused component=am"
+                               f" at=staging_cd_reservations.py:{line_of} cause=change")
+        self.assertTrue(annotation.startswith(f"::error file=.github/scripts/staging_cd_reservations.py,line={line_of},"))
+        self.assertIn("Stage build: builds the component image", annotation)
+
+    def test_finalization_reports_stage_component_and_check(self):
+        from staging_cd_common import require
+        from staging_cd_finalize_diagnostics import run_finalization
+
+        def operation(_masker, diagnostics):
+            diagnostics.mark("tag_push")
+            require(False, "Final annotation could not be created")
+        raised_at = inspect.getsourcelines(operation)[1] + 2
+        _, line, annotation = self.explained(lambda: run_finalization(operation, component="web"))
+        self.assertEqual(line, "FAIL finalize stage=tag_push reason=annotation_failed component=web"
+                               f" at=staging_cd_outcome_tests.py:{raised_at} cause=transient")
+        self.assertIn("Next step: Re-run the failed jobs.", annotation)
+
+    def test_allocation_reports_the_code_and_its_check(self):
+        import staging_cd_allocate as allocation
+        line_of = next(number for number, text in enumerate(
+            Path(__file__).with_name("staging_cd_allocate.py").read_text().splitlines(), 1)
+            if '"Release queue is invalid")' in text) - 1
+        _, line, annotation = self.explained(lambda: allocation.run_allocation(
+            lambda _masker: allocation.allocate_queue({"head": PRIVATE}, None, None, 1, 1)))
+        self.assertEqual(line, f"FAIL allocation QUEUE_INVALID at=staging_cd_allocate.py:{line_of} cause=unknown")
+        self.assertIn("title=allocation%3A Release queue invalid", annotation)
 
 
 class RefusalSiteTests(unittest.TestCase):

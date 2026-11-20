@@ -11,6 +11,7 @@ import staging_cd_allocate as allocation
 from staging_cd_common import Refusal
 import staging_cd_queue_tests
 from staging_cd_reservations import next_reservation
+from staging_cd_outcome_tests import legacy
 
 
 class AllocationDiagnosticsTests(unittest.TestCase):
@@ -24,7 +25,7 @@ class AllocationDiagnosticsTests(unittest.TestCase):
                 with contextlib.redirect_stdout(output):
                     status = allocation.run_allocation(operation)
                 self.assertEqual(status, 1)
-                self.assertEqual(output.getvalue(), "FAIL allocation\nFAIL allocation " + code + "\n")
+                self.assertEqual(legacy(output.getvalue()), "FAIL allocation\nFAIL allocation " + code + "\n")
 
     def test_unknown_text_never_becomes_a_public_reason(self):
         for error, code in ((Refusal("private\n::warning::fixture"), "UNCLASSIFIED_REFUSAL"),
@@ -34,7 +35,7 @@ class AllocationDiagnosticsTests(unittest.TestCase):
                 raise error
             with contextlib.redirect_stdout(output):
                 self.assertEqual(allocation.run_allocation(operation), 1)
-            self.assertEqual(output.getvalue(), "FAIL allocation\nFAIL allocation " + code + "\n")
+            self.assertEqual(legacy(output.getvalue()), "FAIL allocation\nFAIL allocation " + code + "\n")
 
     def test_success_preserves_pass_and_entrypoint_uses_boundary(self):
         output = io.StringIO()
@@ -56,7 +57,7 @@ class AllocationDiagnosticsTests(unittest.TestCase):
         with contextlib.redirect_stdout(output):
             status = allocation.run_allocation(lambda _: allocation.allocate_queue(queue, api, reservations, 10, 1))
         self.assertEqual(status, 1)
-        self.assertEqual(output.getvalue(), "FAIL allocation\nFAIL allocation RESERVATION_OWNER_UNREADABLE\n")
+        self.assertEqual(legacy(output.getvalue()), "FAIL allocation\nFAIL allocation RESERVATION_OWNER_UNREADABLE\n")
         reservations.insert.assert_not_called()
         api.request.assert_called_once_with("actions/runs/9/attempts/1", allow_not_found=True)
 
@@ -75,7 +76,7 @@ raise SystemExit(run_allocation(operation))
         result = subprocess.run([sys.executable, "-B", "-c", program], cwd=Path(__file__).parent,
                                 capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, "FAIL allocation\nFAIL allocation RESERVATION_OWNER_UNREADABLE\n")
+        self.assertEqual(legacy(result.stdout), "FAIL allocation\nFAIL allocation RESERVATION_OWNER_UNREADABLE\n")
         self.assertEqual(result.stderr, "")
 
 

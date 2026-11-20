@@ -16,6 +16,7 @@ import staging_cd_publish_tests as publication_fixtures
 from staging_cd_receipts_tests import fixture_identity, fixture_runtime_receipt
 from staging_cd_runtime_smoke import CleanupIncomplete
 from staging_cd_set import private_document, release_set
+from staging_cd_outcome_tests import legacy
 
 
 class RuntimeDiagnosticsTests(unittest.TestCase):
@@ -23,7 +24,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             status = run_publication(operation)
-        return status, output.getvalue()
+        return status, legacy(output.getvalue())
 
     def test_runtime_publication_preserves_smoke_and_bootstrap_after_diagnostics(self):
         for component in ("runtime", "runtime-omarchy"):

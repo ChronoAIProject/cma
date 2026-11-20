@@ -19,6 +19,7 @@ from staging_cd_publication_diagnostics import ImageCommandRefusal, run_publicat
 import staging_cd_publish as publication
 import staging_cd_publish_tests as fixtures
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt
+from staging_cd_outcome_tests import legacy
 
 
 class PublicationDiagnosticTests(unittest.TestCase):
@@ -26,7 +27,7 @@ class PublicationDiagnosticTests(unittest.TestCase):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             status = run_publication(operation)
-        return status, output.getvalue()
+        return status, legacy(output.getvalue())
 
     def test_command_denials_classify_without_releasing_bytes(self):
         cases = [(b'DENIED: permission_denied: write_package private', 'registry_denied'),
@@ -110,7 +111,7 @@ class PublicationDiagnosticTests(unittest.TestCase):
                 self.assertEqual(publication.main(), 1)
             snapshot.assert_not_called()
             self.assertFalse(Path(env['CD_RECEIPTS_PATH']).exists())
-            self.assertEqual(output.getvalue(),
+            self.assertEqual(legacy(output.getvalue()),
                              'FAIL publication\nFAIL publication stage=validate reason=reservation_owner_mismatch\n')
 
     def test_entrypoint_reports_build_timeout_and_persists_only_success(self):
@@ -140,7 +141,7 @@ class PublicationDiagnosticTests(unittest.TestCase):
                     stack.enter_context(contextlib.redirect_stdout(output))
                     status = publication.main()
                 lines = output.getvalue().splitlines()
-                summary = '\n'.join(line for line in lines if not line.startswith('{')) + '\n'
+                summary = legacy('\n'.join(line for line in lines if not line.startswith('{')) + '\n')
                 metrics = [json.loads(line) for line in lines if line.startswith('{')]
                 self.assertEqual(len(metrics), 4)
                 self.assertEqual([row['stage'] for row in metrics[:3]], ['source', 'reuse', 'build'])
@@ -196,7 +197,7 @@ raise SystemExit(run_publication(operation))
         result = subprocess.run([sys.executable, '-B', '-c', program], cwd=Path(__file__).parent,
                                 capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, 'FAIL publication\nFAIL publication stage=registry_copy reason=registry_denied\n')
+        self.assertEqual(legacy(result.stdout), 'FAIL publication\nFAIL publication stage=registry_copy reason=registry_denied\n')
         self.assertEqual(result.stderr, '')
 
 

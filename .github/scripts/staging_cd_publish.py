@@ -301,7 +301,7 @@ def main():
         require(env.get("CD_COMPONENT") in DEPLOYABLES, "Unexpected superseded component")
         step_output(env, "disposition", skip["disposition"])
 
-    result = run_publication(operation, on_superseded=superseded)
+    result = run_publication(operation, on_superseded=superseded, component=env.get("CD_COMPONENT"))
     # run_private has restored the public descriptors; only fixed stage records
     # cross that boundary, including the failing phase on an unsuccessful run.
     component = env.get("CD_COMPONENT")

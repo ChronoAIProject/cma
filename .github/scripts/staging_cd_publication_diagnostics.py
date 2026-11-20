@@ -4,6 +4,7 @@ import re
 import subprocess
 import urllib.error
 
+from ci_outcome import error_site, report
 from image_secret_gate import ScanRefusal
 from image_scan_evidence import project as project_scan_evidence
 from staging_cd_common import Refusal
@@ -34,6 +35,7 @@ class PublicationDiagnostics:
     def __init__(self):
         self.stage = "validate"
         self.reason = "unexpected_error"
+        self.site = None
         self.scan_evidence = None
 
     def mark(self, stage):
@@ -68,7 +70,7 @@ class PublicationDiagnostics:
         return "unexpected_error"
 
 
-def run_publication(operation, *, on_superseded=None):
+def run_publication(operation, *, on_superseded=None, component=None):
     diagnostics = PublicationDiagnostics()
 
     def guarded(masker):
@@ -83,16 +85,19 @@ def run_publication(operation, *, on_superseded=None):
                 return SKIPPED
         except Exception as error:
             diagnostics.reason = diagnostics.classify(error)
+            diagnostics.site = error_site(error)
             raise
 
     status = run_private(guarded, None, subject="publication", explain=False)
     if not status and diagnostics.reason == "reservation_superseded":
         print(f"SKIP publication stage={diagnostics.stage} reason=reservation_superseded")
     if status:
-        # No exception text, paths, identifiers or scanner findings cross here.
+        # No exception text, paths, identifiers or scanner findings cross here:
+        # only fixed tokens and the public source line that failed.
         stage = diagnostics.stage if diagnostics.stage in STAGES else "validate"
         reason = diagnostics.reason if diagnostics.reason in REASONS else "unexpected_error"
-        print(f"FAIL publication stage={stage} reason={reason}")
+        report("publication", reason, subject="publication", stage=stage, site=diagnostics.site,
+               component=component)
         if diagnostics.scan_evidence is not None:
             print("SCAN_EVIDENCE " + json.dumps(diagnostics.scan_evidence, sort_keys=True))
     return status
