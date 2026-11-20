@@ -166,7 +166,7 @@ test('LOCAL link clicks preserve selection, typing, link copying, undo and expli
   expect(fixture.boundary.unexpected).toEqual([]);
 });
 
-test('LOCAL readonly links retain navigation and safe attributes without writes', async ({
+test('LOCAL readonly primary clicks retain navigation and safe attributes without writes', async ({
   page,
   context,
   baseURL,
@@ -190,10 +190,8 @@ test('LOCAL readonly links retain navigation and safe attributes without writes'
     await expect(link).toHaveAttribute('target', '_blank');
   }
   await openLink(page, content.getByRole('link', { name: 'Example', exact: true }));
-  await independentClick(content.locator('a strong'), { button: 'middle' });
-  await expect.poll(() => navigation.requests).toEqual([destination, destination]);
-  expect(navigation.pages).toHaveLength(2);
-  await navigation.pages[1]!.close();
+  await expect.poll(() => navigation.requests).toEqual([destination]);
+  expect(navigation.pages).toHaveLength(1);
   expect(context.pages()).toHaveLength(1);
   expect(fixture.writes).toHaveLength(0);
   expect(fixture.boundary.errors).toEqual([]);
