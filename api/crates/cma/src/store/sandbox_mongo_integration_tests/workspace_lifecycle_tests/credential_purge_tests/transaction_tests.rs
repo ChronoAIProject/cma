@@ -90,7 +90,7 @@ async fn committed_purge_prevents_a_late_protected_issuance_owner() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a replica set"]
-async fn unknown_purge_commit_reconciles_only_after_issuance_guard_allows_deletion() {
+async fn unknown_purge_commit_deletes_only_after_issuance_guard_allows_deletion() {
     let f = Fixture::new("purge_unknown_commit").await;
     f.seed_intent(&f.intent(IssuanceState::Unknown)).await;
     let app = format!("purge-issuance-{}", uuid::Uuid::new_v4());
@@ -143,9 +143,29 @@ async fn unknown_purge_commit_reconciles_only_after_issuance_guard_allows_deleti
         "unresolved issuance cannot reach server commit"
     );
     assert_eq!(after, before);
-    completed.unwrap();
+    // Injected write-concern errors allow local commit without waiting for
+    // majority visibility, so immediate reconciliation may remain unknown.
+    match completed {
+        Ok(()) => {}
+        Err(SandboxStoreError::Unavailable(message)) => {
+            assert!(message.starts_with("sandbox purge commit remained unknown:"));
+        }
+        result => panic!("unexpected purge result: {result:?}"),
+    }
     assert!(commits.load(Ordering::SeqCst) >= 5);
-    assert!(f.store.get_sandbox(&f.parent.id).await.unwrap().is_none());
+    assert!(f
+        .rows("sandboxes")
+        .find_one(doc! {"_id":f.parent.id.as_str()})
+        .await
+        .unwrap()
+        .is_none());
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while f.store.get_sandbox(&f.parent.id).await.unwrap().is_some() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
     assert_eq!(
         f.rows("sandbox_credential_issuance")
             .count_documents(doc! {})
