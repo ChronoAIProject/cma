@@ -34,7 +34,7 @@ class GitHub:
 
     def history(self):
         if self._history is None:
-            self._history = DevelopHistory.load(self.request)
+            self._history = DevelopHistory.load(self.request, runner=self.runner)
         return self._history
 
     def history_containing(self, source):

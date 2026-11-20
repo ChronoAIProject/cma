@@ -52,6 +52,11 @@ it('loads completed Agent deletion activity even before request acceptance is co
     />,
   );
   expect(await screen.findByRole('dialog', { name: 'Agent deleted' })).toBeInTheDocument();
+  expect(screen.getByText(/Its Sandbox environment is retained and still counts/)).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Review parent environment' })).toHaveAttribute(
+    'href',
+    `/sandboxes/${AGENT_DETAIL.sandbox.id}`,
+  );
   expect(screen.getByRole('region', { name: 'Recorded activity' })).not.toBeVisible();
   fireEvent.click(screen.getByText('Cleanup progress'));
   expect(readAgentEvents).toHaveBeenCalledTimes(1);

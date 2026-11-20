@@ -10,6 +10,8 @@ async fn open_cursor_survives_real_adoption_without_resetting_history() {
     segments::schema::migrate(&f.client.database(&f.name))
         .await
         .unwrap();
+    crate::store::migrations::agent_log_source_keys::prepare_for_test(&f.client.database(&f.name))
+        .await;
     let reads = f.reads(false);
     let authorization = reads
         .authorize_event_stream(&context(f.agent.owner.clone()), None, &f.agent.id)
@@ -106,6 +108,8 @@ async fn cursor_crosses_tiny_segment_boundaries_and_refuses_changed_original() {
     segments::schema::migrate(&f.client.database(&f.name))
         .await
         .unwrap();
+    crate::store::migrations::agent_log_source_keys::prepare_for_test(&f.client.database(&f.name))
+        .await;
     let entries = f.store.agent_log_prefix(&f.agent.id, 410).await.unwrap();
     f.store
         .agents
