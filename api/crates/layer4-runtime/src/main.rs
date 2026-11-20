@@ -79,8 +79,15 @@ mod writer_control_relay;
 mod writer_fence;
 mod writer_process;
 
+fn main() {
+    if let Some(status) = resource_execution::bootstrap::command() {
+        std::process::exit(status);
+    }
+    runtime_main();
+}
+
 #[tokio::main]
-async fn main() {
+async fn runtime_main() {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(

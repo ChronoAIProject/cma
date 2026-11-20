@@ -10,6 +10,7 @@ use layer3_adapter::{
 };
 use tokio::sync::Semaphore;
 
+pub(crate) mod bootstrap;
 mod clock;
 mod control;
 mod gate;
