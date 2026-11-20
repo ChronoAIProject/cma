@@ -45,7 +45,7 @@ function navigationSummary(items: readonly NavigationSandbox[]): string {
   );
 }
 
-async function allSandboxes(client: CmaWebClient, signal: AbortSignal) {
+export async function allSandboxes(client: CmaWebClient, signal: AbortSignal) {
   const items: SandboxSummary[] = [];
   const seen = new Set<string>();
   let cursor: string | undefined;

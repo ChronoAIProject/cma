@@ -51,27 +51,47 @@ fn refusal(result: Result<Socket, Error>, expected: u16) {
 
 #[tokio::test]
 #[ignore = "requires dedicated desktop-replica fixture runner and disposable Mongo"]
-async fn public_legacy_provider_connects_before_receiver_activation() {
+async fn public_disabled_services_and_ownerless_receiver_refuse_new_streams() {
     let f = Fixture::new(false).await;
-    assert_eq!(f.discovery(0).await.status(), 200);
-    let result = f.connect(0).await;
-    let failure = match result {
-        Ok(mut socket) => {
-            echo(&mut socket, 50).await;
-            socket.close(None).await.unwrap();
-            f.available(0, Duration::from_secs(5)).await;
-            None
+    for ingress in 0..2 {
+        let response = f.discovery(ingress).await;
+        assert_eq!(response.status(), 503);
+        assert_eq!(response.headers()["retry-after"], "1");
+        assert_eq!(response.headers()["cache-control"], "no-store, private");
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["code"], "desktop_authority_unavailable");
+    }
+    let (left, right) = tokio::join!(f.connect(0), f.connect(1));
+    for result in [left, right] {
+        match result {
+            Err(Error::Http(response)) => {
+                assert_eq!(response.status(), 503);
+                assert_eq!(response.headers()["retry-after"], "1");
+                assert_eq!(response.headers()["cache-control"], "no-store, private");
+                let body: serde_json::Value =
+                    serde_json::from_slice(response.body().as_ref().unwrap()).unwrap();
+                assert_eq!(body["code"], "desktop_authority_unavailable");
+            }
+            _ => panic!("disabled authority must refuse before upgrade"),
         }
-        Err(Error::Http(response)) => Some(format!("public status {}", response.status().as_u16())),
-        Err(_) => Some("public transport failure".into()),
-    };
-    let opens = f.proxy.state.opens.load(Ordering::SeqCst);
+    }
+    assert_eq!(f.proxy.state.opens.load(Ordering::SeqCst), 0);
     assert!(f.proxy.state.confirmations.lock().unwrap().is_empty());
+    assert_eq!(
+        f.resources
+            .stores
+            .db
+            .collection::<mongodb::bson::Document>("sandbox_sessions")
+            .count_documents(mongodb::bson::doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    let ownerless = tokio_tungstenite::connect_async(f.raw_receiver_request(None)).await;
+    assert!(matches!(ownerless, Err(Error::Http(response)) if response.status() == 400));
     assert!(!f.root.path.join("state/desktop-owner/floor.json").exists());
     assert!(!f.root.path.join("state/desktop-owner.activated").exists());
     f.cleanup().await;
-    assert_eq!(failure, None, "never-activated legacy must return the echo");
-    assert_eq!(opens, 1);
 }
 
 #[tokio::test]
@@ -228,4 +248,65 @@ async fn delayed_receiver_renewal_ack_cannot_restore_public_authority() {
     successor.close(None).await.unwrap();
     f.available(0, Duration::from_secs(5)).await;
     f.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires dedicated desktop-replica fixture runner and disposable Mongo"]
+async fn retained_legacy_rows_block_until_close_or_expiry_and_cannot_release_successor() {
+    for expires in [false, true] {
+        let f = Fixture::new(true).await;
+        let id = &f.resources.stores.request.sandbox_id;
+        let expiry = layer2_core::rfc3339_at(
+            std::time::SystemTime::now() + Duration::from_secs(if expires { 2 } else { 90 }),
+        );
+        f.resources
+            .stores
+            .left
+            .open_sandbox_session(id, "retained-legacy", &expiry)
+            .await
+            .unwrap();
+        assert!(f
+            .resources
+            .stores
+            .right
+            .has_open_sandbox_session(id, &layer2_core::now_rfc3339())
+            .await
+            .unwrap());
+        assert_eq!(f.discovery(0).await.status(), 409);
+        refusal(f.connect(1).await, 409);
+        assert_eq!(f.proxy.state.opens.load(Ordering::SeqCst), 0);
+        if !expires {
+            f.resources
+                .left
+                .close(id.clone(), "retained-legacy".into())
+                .await;
+        }
+        f.available(0, Duration::from_secs(5)).await;
+        let mut successor = f.connect(0).await.unwrap();
+        echo(&mut successor, 30).await;
+        let owner = f.proxy.last_owner();
+        assert_ne!(owner.session_id, "retained-legacy");
+        let sessions = f
+            .resources
+            .stores
+            .db
+            .collection::<mongodb::bson::Document>("sandbox_sessions");
+        let query = mongodb::bson::doc! { "_id": &owner.session_id };
+        let before = sessions.find_one(query.clone()).await.unwrap().unwrap();
+        let _ = f
+            .resources
+            .stores
+            .right
+            .renew_sandbox_session(id, "retained-legacy", &expiry)
+            .await;
+        f.resources
+            .right
+            .close(id.clone(), "retained-legacy".into())
+            .await;
+        assert_eq!(sessions.find_one(query).await.unwrap().unwrap(), before);
+        echo(&mut successor, 31).await;
+        successor.close(None).await.unwrap();
+        f.available(1, Duration::from_secs(5)).await;
+        f.cleanup().await;
+    }
 }

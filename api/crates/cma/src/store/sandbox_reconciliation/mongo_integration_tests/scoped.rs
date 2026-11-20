@@ -12,6 +12,7 @@ mod uncertainty;
 async fn adopted(store: &MongoSandboxStore, id: &str) -> (Sandbox, Agent) {
     let db = store.client.database(&store.agents.namespace().db);
     segments::schema::migrate(&db).await.unwrap();
+    crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;
     let mut sandbox = active_sandbox(id);
     let mut agent = ready_agent(&sandbox, &format!("agt_{id}"));
     agent.conversation.last_seq = 2;

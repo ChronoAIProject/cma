@@ -19,8 +19,8 @@ selected(inventory, 'layer4-runtime', [child])
 print(json.dumps({'parents': parents, 'child': child}))
 `, new URL('desktop-replica-contract.py', import.meta.url).pathname], {encoding: 'utf8'});
   const {parents, child} = JSON.parse(result);
-  assert.equal(parents.length, 4);
-  assert.equal(new Set(parents).size, 4);
+  assert.equal(parents.length, 5);
+  assert.equal(new Set(parents).size, 5);
   assert.equal(child, 'link::desktop::tests::child_fixture::desktop_receiver_child');
 });
 

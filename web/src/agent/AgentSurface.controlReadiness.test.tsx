@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, it, vi } from 'vitest';
 import { AGENT_DETAIL } from '../test/agent';
 import { workspaceFixture } from '../test/hierarchy';
@@ -52,7 +52,9 @@ it.each(['loading', 'unavailable'] as const)(
     expect(screen.getByRole('button', { name: 'Stop response' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Remove queued message 1' })).toBeEnabled();
     fireEvent.click(screen.getByRole('button', { name: 'Allow' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Stop response' }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Stop response' }));
+    });
     fireEvent.click(screen.getByRole('button', { name: 'Remove queued message 1' }));
     expect(controls.approve).toHaveBeenCalledExactlyOnceWith('live', 'allow');
     expect(controls.interrupt).toHaveBeenCalledOnce();

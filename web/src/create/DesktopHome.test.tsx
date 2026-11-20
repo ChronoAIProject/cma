@@ -1,3 +1,4 @@
+import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -44,6 +45,7 @@ it('drops a legacy desktop draft choice without changing its task or blocking su
   vi.stubGlobal('fetch', transport);
   const client = {
     ...createRestWebClient(createClient({ fetch: transport })),
+    readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     taskExperience: taskExperience('owner'),
   };
   render(<TaskHome client={client} viewerId="owner" canCreateSandbox onCreated={() => {}} />);
@@ -160,6 +162,7 @@ it('recovers a lost desktop creation receipt after reload into the same task Age
   vi.stubGlobal('fetch', transport);
   const client = {
     ...createRestWebClient(createClient({ fetch: transport })),
+    readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     taskExperience: taskExperience('owner'),
   };
   const opened = vi.fn();

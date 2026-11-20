@@ -2,7 +2,8 @@
 
 mod desktop;
 pub use desktop::{
-    DesktopAuthorization, DesktopConnection, DesktopError, DesktopFrame, DesktopService,
+    DesktopAdmission, DesktopAuthorization, DesktopConnection, DesktopError, DesktopFrame,
+    DesktopService,
 };
 mod admin;
 mod auto_pause_operator;

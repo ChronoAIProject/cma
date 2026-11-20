@@ -207,7 +207,7 @@ export function AgentSurface({
   const observed = controller.progressObservation;
   const headerMenu = agentHeaderMenu(
     status,
-    permissions,
+    readOnly ? undefined : permissions,
     observed !== undefined && !observed.stale && sandboxChildrenAvailable(observed.sandbox),
     actionsBusy,
   );
@@ -446,6 +446,15 @@ export function AgentSurface({
             queueWhileStarting={state.v2 !== undefined}
             starting={starting}
             controlsUnavailable={controller.controlsUnavailable || !controlReady}
+            responseControls={
+              accessUncertain
+                ? 'checking-access'
+                : readOnly
+                  ? 'denied'
+                  : !controlReady
+                    ? 'checking'
+                    : controller.responseControls
+            }
             requestPending={
               controller.pendingMessage !== undefined || controller.pendingControl === true
             }

@@ -151,6 +151,7 @@ async fn owned_discovery_claims_a_real_segmented_agent_after_restart() {
     .agent;
     let db = client.database(&name);
     schema::migrate(&db).await.unwrap();
+    crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;
     let mut session = client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
     writer_gate::replace(

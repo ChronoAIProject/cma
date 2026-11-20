@@ -65,3 +65,23 @@ it('round-trips collapsible details without silently removing their contents', (
   expect(restored.content?.[0]?.content?.[1]?.type).toBe('detailsContent');
   expect(JSON.stringify(restored.content?.[0]?.content?.[1])).toContain('Body');
 });
+
+it('imports exact bare link ranges without changing suffixes or explicit historical hrefs', () => {
+  const manager = new MarkdownManager({ extensions: documentExtensions() });
+  const url = 'https://example.test/en/about/previous-releases';
+  const markdown = `Node URL：${url}；访问 UTC：2026\n\n[既有链接](${url}；访问)`;
+  const parsed = manager.parse(markdown);
+  expect(parsed.content?.[0]?.content).toEqual([
+    { type: 'text', text: 'Node URL：' },
+    { type: 'text', text: url, marks: [{ type: 'link', attrs: { href: url, title: null } }] },
+    { type: 'text', text: '；访问 UTC：2026' },
+  ]);
+  expect(parsed.content?.[1]?.content).toEqual([
+    {
+      type: 'text',
+      text: '既有链接',
+      marks: [{ type: 'link', attrs: { href: `${url}；访问`, title: null } }],
+    },
+  ]);
+  expect(manager.parse(manager.serialize(parsed))).toEqual(parsed);
+});

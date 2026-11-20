@@ -1,10 +1,29 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 export function registerShardTests({fixture, ...isolated}) {
+  test('generated predecessor starts ordinary Mongo and propagates launch failure', () => {
+    const f = fixture('run-error');
+    try {
+      const generator = fileURLToPath(new URL('agent-log-predecessor-tests.py', import.meta.url));
+      const generate = 'import pathlib, runpy, sys; print(runpy.run_path(sys.argv[1])["fixture_runner"](pathlib.Path(sys.argv[2])))';
+      const runner = join(f.directory, 'predecessor.sh');
+      writeFileSync(runner, execFileSync('python3', ['-B', '-c', generate, generator, join(f.directory, 'repo')]));
+      assert.throws(() => execFileSync('bash', [runner], {env: f.env, timeout: 10000, stdio: 'pipe'}),
+        error => error.status === 23);
+      const starts = f.calls().filter(row => row.command === 'docker' && row.args[0] === 'run');
+      assert.equal(starts.length, 1);
+      assert.equal(starts[0].args[starts[0].args.indexOf('--wiredTigerCacheSizeGB') + 1], '0.25');
+      assert.equal(starts[0].args[starts[0].args.indexOf('--memory') + 1], '2g');
+      assert.equal(f.containers().length, 0);
+      assert.equal(f.volumes().length, 0);
+    } finally { f.close(); }
+  });
+
   test('archive: nine CI lanes execute the complete inventory exactly once', () => {
     const selected = [];
     const partitions = [];
@@ -30,8 +49,8 @@ export function registerShardTests({fixture, ...isolated}) {
       } finally { f.close(); }
     }
     assert.deepEqual(partitions.sort(), Array.from({length: 9}, (_, i) => `count:${i + 1}/9`).sort());
-    assert.equal(selected.length, 326);
-    assert.equal(new Set(selected).size, 326);
+    assert.equal(selected.length, 327);
+    assert.equal(new Set(selected).size, 327);
     for (const name of Object.values(isolated)) assert.ok(selected.includes(name));
   });
 

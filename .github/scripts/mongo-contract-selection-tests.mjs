@@ -11,7 +11,7 @@ function selectionFunctions(source) {
   return source.slice(start, end);
 }
 
-export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, fixturePredicate, ordinaryPredicate, qualificationPredicate}) {
+export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, fixturePredicate, ordinaryPredicate, qualificationPredicate}) {
   test('selection proof parses old and isolated owner and audit predicates', () => {
     const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
     const result = execFileSync('python3', ['-c', `
@@ -19,9 +19,9 @@ import json, runpy, sys
 parse = runpy.run_path(sys.argv[1])["mongo_filters"]
 source = sys.argv[2]
 before = "\\n".join(line for line in source.splitlines()
-    if not line.startswith(("readonly owner_allocation_test=", "readonly audit_bounds_test=", "readonly diagnostics_test=", "readonly scan_cooperation_test="))
-    and not line.strip().startswith(("owner-allocation)", "audit-bounds)", "diagnostics)", "scan-cooperation)")))
-before = before.replace('not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test))', 'not test(=$scale_test)')
+    if not line.startswith(("readonly owner_allocation_test=", "readonly audit_bounds_test=", "readonly diagnostics_test=", "readonly scan_cooperation_test=", "readonly bson_ceiling_test="))
+    and not line.strip().startswith(("owner-allocation)", "audit-bounds)", "diagnostics)", "scan-cooperation)", "bson-ceiling)")))
+before = before.replace('not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test) or test(=$bson_ceiling_test))', 'not test(=$scale_test)')
 print(json.dumps({"before": parse(before), "after": parse(source)}))
 `, fileURLToPath(new URL('backend-selection-proof.py', import.meta.url)), source], {
       env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
@@ -58,26 +58,31 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
     for (const mode of ['all', 'scale', 'owner-allocation', 'audit-bounds', 'cpu-profile']) assert.equal(before[mode], after[mode]);
   });
 
-  test('selection proof preserves the corpus while moving scan cooperation out of ordinary partitions', () => {
-    const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
-    const result = execFileSync('python3', ['-c', `
+  for (const [mode, variable, testName] of [
+    ['scan-cooperation', 'scan_cooperation_test', scanTest],
+    ['bson-ceiling', 'bson_ceiling_test', bsonCeilingTest],
+  ]) {
+    test(`selection proof moves only ${mode} from ordinary partitions`, () => {
+      const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+      const result = execFileSync('python3', ['-c', `
 import json, runpy, sys
 parse = runpy.run_path(sys.argv[1])["mongo_filters"]
-source = sys.argv[2]
+source, mode, variable = sys.argv[2:]
 before = "\\n".join(line for line in source.splitlines()
-    if not line.startswith("readonly scan_cooperation_test=")
-    and not line.strip().startswith("scan-cooperation)"))
-before = before.replace(' or test(=$scan_cooperation_test)', '')
+    if not line.startswith(f"readonly {variable}=")
+    and not line.strip().startswith(f"{mode})"))
+before = before.replace(f' or test(=$\{variable})', '')
 print(json.dumps({"before": parse(before), "after": parse(source)}))
-`, fileURLToPath(new URL('backend-selection-proof.py', import.meta.url)), source], {
-      env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
+`, fileURLToPath(new URL('backend-selection-proof.py', import.meta.url)), source, mode, variable], {
+        env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
+      });
+      const {before, after} = JSON.parse(result);
+      const {[mode]: isolated, ...remaining} = after;
+      assert.ok(isolated.startsWith(`package(=cma) and test(=${testName}) & ${fixturePredicate} & (`));
+      remaining.ordinary = remaining.ordinary.replace(` or test(=${testName})`, '');
+      assert.deepEqual(remaining, before);
     });
-    const {before, after} = JSON.parse(result);
-    assert.equal(before['scan-cooperation'], undefined);
-    assert.ok(after['scan-cooperation'].startsWith(`package(=cma) and test(=${scanTest}) & ${fixturePredicate} & (`));
-    assert.equal(after.ordinary.replace(` or test(=${scanTest})`, ''), before.ordinary);
-    for (const mode of ['all', 'scale', 'owner-allocation', 'audit-bounds', 'diagnostics', 'cpu-profile']) assert.equal(before[mode], after[mode]);
-  });
+  }
 }
 
 test('focused Agent-list runner keeps the complete ordinary and full selections', () => {

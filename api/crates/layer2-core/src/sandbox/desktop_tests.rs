@@ -51,7 +51,7 @@ async fn desktop_fixture(
     a.work.step = AgentWorkStep::None;
     store.create_agent(a).await.unwrap();
     DesktopService::new(
-        AgentReadService::new(store, Arc::new(Resources)),
+        AgentReadService::new(store.clone(), Arc::new(Resources)).with_sessions(store),
         Arc::new(UnusedRuntime {
             status: None,
             file_root: None,
@@ -61,19 +61,18 @@ async fn desktop_fixture(
 
 #[tokio::test]
 async fn desktop_uses_sandbox_configuration_without_changing_frozen_conversation_grants() {
-    let service =
-        desktop_fixture(true, false, SandboxStatus::Active, true, AgentStatus::Ready).await;
+    let service = desktop_fixture(true, false, SandboxStatus::Active, true, AgentStatus::Ready)
+        .await
+        .with_admission(DesktopAdmission::Protected);
     let owner = Caller::new(
         SubjectId("owner".into()),
         Authorization::new([Capability::UseOwnSandboxes]),
     );
     let id = AgentId("agt_test".into());
     assert!(service.available(&owner, &id).await.is_ok());
-    // The ordinary runtime fixture does not implement a desktop stream. The
-    // authorized open reaches that runtime and returns its unavailability.
     assert!(matches!(
         service.open(&owner, &id).await,
-        Err(DesktopError::RuntimeUnavailable)
+        Err(DesktopError::AuthorityUnavailable)
     ));
     let other = Caller::new(SubjectId("other".into()), owner.authorization.clone());
     assert!(matches!(
@@ -99,7 +98,9 @@ async fn desktop_refuses_headless_isolated_paused_and_unbound_sandboxes() {
         (true, false, SandboxStatus::Paused, true),
         (true, false, SandboxStatus::Active, false),
     ] {
-        let service = desktop_fixture(machine, isolated, status, bound, AgentStatus::Ready).await;
+        let service = desktop_fixture(machine, isolated, status, bound, AgentStatus::Ready)
+            .await
+            .with_admission(DesktopAdmission::Protected);
         assert!(matches!(
             service.available(&owner, &AgentId("agt_test".into())).await,
             Err(DesktopError::Unavailable)
@@ -132,7 +133,9 @@ async fn desktop_startup_requires_an_active_owned_machine_and_refuses_terminal_a
             AgentStatus::Failed,
             AgentStatus::Deleted,
         ] {
-            let service = desktop_fixture(true, false, sandbox_status, true, agent_status).await;
+            let service = desktop_fixture(true, false, sandbox_status, true, agent_status)
+                .await
+                .with_admission(DesktopAdmission::Protected);
             let expected = sandbox_status == SandboxStatus::Active
                 && matches!(
                     agent_status,
@@ -146,3 +149,6 @@ async fn desktop_startup_requires_an_active_owned_machine_and_refuses_terminal_a
         }
     }
 }
+
+#[path = "desktop/admission_tests.rs"]
+mod admission;
