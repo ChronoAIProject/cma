@@ -99,6 +99,8 @@ class Reservations:
                 require(isinstance(row, dict) and isinstance(row.get("object"), dict)
                         and row["object"].get("type") == "tag" and matches(r"[0-9a-f]{40}", row["object"].get("sha")),
                         "Pending tag lacks reservation provenance")
+            self.api.preload_tags(rows)
+            for row in rows:
                 tag = self.api.request("git/tags/" + row["object"]["sha"])
                 value = validate_reservation(json.loads(tag["message"]))
                 require(value["component"] == key and tag.get("tag") == pending_name(value)

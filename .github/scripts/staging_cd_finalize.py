@@ -47,7 +47,7 @@ def main():
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Final version tags only accept develop pushes")
         deadline = time.monotonic() + FINALIZE_READ_SECONDS
-        api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(env.get("CD_COMPONENT"), Path.cwd()),
+        api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(Path.cwd()),
                      deadline=deadline)
         publisher = Reservations(api, env.get("GH_TOKEN"), Path.cwd(), mark=diagnostics.mark)
         diagnostics.mark("artifact")

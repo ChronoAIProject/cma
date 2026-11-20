@@ -8,11 +8,14 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from staging_cd_common import Refusal
-from staging_cd_receipts import annotation
-from staging_cd_receipts_tests import fixture_receipt
+from staging_cd_receipts import annotation, final_tag_text
+from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt
 from staging_cd_github import GitHub
-from staging_cd_release_tags import MAX_TAG, local_tag_reader, read_local_tag
-from staging_cd_reservations import Reservations, next_reservation
+from staging_cd_release_tags import MAX_TAG, LocalTags, local_tag_reader, read_local_tag
+from staging_cd_reservations import Reservations, next_reservation, pending_name
+from staging_cd_versions import DEPLOYABLES
+
+LANES = sorted(DEPLOYABLES)
 
 
 class ReleaseTagTests(unittest.TestCase):
@@ -25,20 +28,61 @@ class ReleaseTagTests(unittest.TestCase):
         self.git("config", "user.email", "fixture@example.invalid")
         self.commit = self.git("commit-tree", self.git("mktree"), "-m", "Synthetic root")
         self.tree = self.git("rev-parse", self.commit + "^{tree}")
-        self.api = GitHub("fixture", local_tags=local_tag_reader("web", self.root))
+        self.api = GitHub("fixture", local_tags=LocalTags(self.root))
         self.store = Reservations(self.api, "fixture", self.root)
 
     def git(self, *args, data=None):
         return subprocess.run(["git", *args], cwd=self.root, input=data, capture_output=True,
                               check=True, timeout=5, text=True).stdout.strip()
 
-    def pending(self, owner):
-        value = next_reservation("web", self.commit, self.tree, 1, "patch", owner, 1, [], [])
-        name = "cma-web/pending/v" + value["version"]
+    def pending(self, owner, component="web", earlier=()):
+        value = next_reservation(component, self.commit, self.tree, 1, "patch", owner, 1, [], list(earlier))
+        name = pending_name(value)
         raw = (f"object {self.commit}\ntype commit\ntag {name}\n"
                "tagger Fixture <fixture@example.invalid> 0 +0000\n\n" + json.dumps(value) + "\n")
         oid = self.git("mktag", data=raw)
         return value, {"ref": "refs/tags/" + name, "object": {"type": "tag", "sha": oid}}
+
+    def final(self, component):
+        make = fixture_runtime_receipt if component.startswith("runtime") else fixture_receipt
+        receipt = make(component=component, source=self.commit, tree=self.tree)
+        oid = self.git("mktag", data=final_tag_text(receipt))
+        return receipt, {"ref": "refs/tags/" + receipt["tag"], "object": {"type": "tag", "sha": oid}}
+
+    def test_every_lane_reads_annotations_from_its_checkout_after_each_live_inventory(self):
+        for lane in LANES:
+            with self.subTest(lane=lane):
+                api = GitHub("fixture", local_tags=local_tag_reader(self.root))
+                store = Reservations(api, "fixture", self.root)
+                value, pending = self.pending(1, lane)
+                receipt, final = self.final(lane)
+                rows = [Mock(returncode=0, stdout=json.dumps(rows)) for rows in ([pending], [final]) * 2]
+                with patch.object(api, "runner", side_effect=rows) as remote, \
+                        patch.object(api, "history"), patch.object(api, "history_containing"):
+                    for _ in range(2):
+                        self.assertEqual(store.list(lane), [value])
+                        record, = api.tags(lane)
+                        self.assertEqual((record["oid"], record["receipt"]), (final["object"]["sha"], receipt))
+                # Both inventories are re-read at every check; no annotation goes to the API.
+                self.assertEqual([c.args[0][-1].split("/cma/")[1] for c in remote.call_args_list],
+                                 ["git/matching-refs/tags/" + DEPLOYABLES[lane] + suffix
+                                  for suffix in ("/pending/v", "/v")] * 2)
+
+    def test_one_inventory_reads_every_local_annotation_in_two_git_calls(self):
+        values, rows, calls = [], [], []
+        for owner in range(1, 41):
+            value, row = self.pending(owner, earlier=values)
+            values.append(value)
+            rows.append(row)
+        def runner(args, **kwargs):
+            calls.append(args[1:])
+            return subprocess.run(args, **kwargs)
+        api = GitHub("fixture", local_tags=LocalTags(self.root, runner=runner))
+        with patch.object(api, "runner", return_value=Mock(returncode=0, stdout=json.dumps(rows))) as remote:
+            self.assertEqual(Reservations(api, "fixture", self.root).list("web"), values)
+        self.assertEqual(remote.call_count, 1)
+        self.assertEqual(calls, [["--no-replace-objects", "--no-lazy-fetch", "cat-file", mode]
+                                 for mode in ("--batch-check", "--batch")])
 
     def test_local_body_matches_and_each_ref_inventory_is_remote(self):
         first, ref = self.pending(1)
@@ -52,7 +96,6 @@ class ReleaseTagTests(unittest.TestCase):
             self.assertEqual(self.store.list("web"), [])
         self.assertEqual([c.args[0][-1].split("/cma/")[1] for c in remote.call_args_list],
                          ["git/matching-refs/tags/cma-web/pending/v"] * 4)
-        self.assertIsNone(local_tag_reader("am", self.root))
 
     def test_missing_signed_non_tag_and_oversize_defer_to_github(self):
         prefix = f"object {self.commit}\ntype commit\ntag sample\ntagger F <f@example.invalid> 0 +0000\n\n"
