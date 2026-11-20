@@ -142,10 +142,11 @@ it('refreshes unavailable files when readiness changes and preserves an edited f
   view.rerender(panel(client, 'activity'));
   view.rerender(panel(client, 'details'));
   view.rerender(panel(client));
-  expect(screen.getByRole('textbox', { name: 'Contents of notes.txt' })).toHaveValue(
+  expect(await screen.findByRole('textbox', { name: 'Contents of notes.txt' })).toHaveValue(
     'Retain the unsaved draft',
   );
-  expect(fileClient.list).toHaveBeenCalledTimes(1);
+  expect(fileClient.list).toHaveBeenCalledTimes(2);
+  expect(fileClient.read).toHaveBeenCalledOnce();
 });
 
 it('selects the available browser without starting a hidden file read', async () => {

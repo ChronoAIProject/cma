@@ -41,7 +41,10 @@ def directory_evidence(stream, tail, offset, start):
         stream.seek(end - 20)
         if stream.read(4) == ZIP64_LOCATOR:
             return True
-    if entries == disk_entries == cd_size == cd_offset == disk == cd_disk == 0:
+    # A zero-entry directory may still follow omitted physical local records.
+    # Recognize it even with a nonzero declared offset; strict framing and
+    # leading-span validation decide whether those preceding bytes are valid.
+    if entries == disk_entries == cd_size == disk == cd_disk == 0:
         return True
     # For SFX archives, stored offsets may exclude the executable prefix.
     actual_directory = end - cd_size

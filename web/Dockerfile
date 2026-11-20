@@ -21,7 +21,7 @@ RUN npm run build \
     && mv dist /build/image/html \
     && cp -al /build/image/html/assets /build/image/current/assets
 
-FROM nginxinc/nginx-unprivileged:1.29-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:1.29-alpine-slim AS runtime
 ARG CHRONO_BUILD=dev
 ARG CHRONO_BUILD_SHA=development
 ARG CHRONO_WEB_REPLICA_RECOVERY_ENABLED=false

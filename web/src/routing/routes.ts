@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { browserHistory } from './browserHistory';
 
 export type ProfileKind = 'agent' | 'workspace' | 'sandbox';
 
@@ -271,39 +272,45 @@ function currentRoute(): RouteState {
 
 export function useAppRouter(): AppRouter {
   const [state, setState] = useState<RouteState>(currentRoute);
-  useEffect(() => {
-    const onPopState = () => setState(currentRoute());
-    window.addEventListener('popstate', onPopState);
-    return () => window.removeEventListener('popstate', onPopState);
+  const history = useRef<ReturnType<typeof browserHistory> | undefined>(undefined);
+  const controller = useCallback(() => {
+    history.current ??= browserHistory(() =>
+      setState((previous) => {
+        const next = currentRoute();
+        if (next.backgroundRoute && routePath(next.backgroundRoute) === routePath(previous.route))
+          return { ...next, backgroundRoute: previous.route };
+        return next;
+      }),
+    );
+    return history.current;
   }, []);
+  useEffect(() => {
+    controller();
+    return () => {
+      history.current?.dispose();
+      history.current = undefined;
+    };
+  }, [controller]);
 
-  const navigate = useCallback<AppRouter['navigate']>((next, options) => {
-    const current = parseRoute(window.location.pathname);
-    const opening = next.kind === 'usage' && current.kind !== 'usage';
-    const background = opening
-      ? window.location.pathname + window.location.search + window.location.hash
-      : undefined;
-    const path = routePath(next);
-    const historyState =
-      next.kind === 'usage'
-        ? opening
-          ? { usageBackground: background }
-          : window.history.state
-        : null;
-    if (options?.replace === true) window.history.replaceState(historyState, '', path);
-    else if (current.kind !== 'usage' || next.kind !== 'usage')
-      window.history.pushState(historyState, '', path);
-    queueMicrotask(() => window.dispatchEvent(new Event('cma:navigate')));
-    setState((previous) => ({
-      route: parseRoute(path),
-      backgroundRoute:
+  const navigate = useCallback<AppRouter['navigate']>(
+    (next, options) => {
+      const current = parseRoute(window.location.pathname);
+      const opening = next.kind === 'usage' && current.kind !== 'usage';
+      const background = opening
+        ? window.location.pathname + window.location.search + window.location.hash
+        : undefined;
+      const path = routePath(next);
+      const historyState =
         next.kind === 'usage'
           ? opening
-            ? previous.route
-            : (previous.backgroundRoute ?? SAFE_USAGE_BACKGROUND)
-          : undefined,
-    }));
-  }, []);
+            ? { usageBackground: background }
+            : window.history.state
+          : null;
+      if (current.kind === 'usage' && next.kind === 'usage' && !options?.replace) return;
+      controller().navigate(path, historyState, options?.replace);
+    },
+    [controller],
+  );
 
   const closeUsage = useCallback(() => {
     if (savedBackground() && window.history.length > 1) window.history.back();

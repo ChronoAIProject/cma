@@ -3,7 +3,9 @@
 from contextlib import redirect_stderr, redirect_stdout
 import io
 import json
+from pathlib import Path
 import subprocess
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -38,6 +40,10 @@ class BatchTests(unittest.TestCase):
         self.workspace = patch.object(selection, 'workspace', side_effect=lambda tree: Workspace(metadata(tree), tree))
         self.workspace.start()
         self.addCleanup(self.workspace.stop)
+        # Call counts are observed in this process; forked workers keep their own.
+        self.sequential = patch.object(batch_selection, 'workers', return_value=1)
+        self.sequential.start()
+        self.addCleanup(self.sequential.stop)
 
     def git(self, *args):
         return subprocess.check_output(['git', *args], cwd=self.root, stderr=subprocess.PIPE, text=True).strip()
@@ -56,6 +62,21 @@ class BatchTests(unittest.TestCase):
         self.assertIn('cma-web', actual[0]['deployables'])
         self.assertIn('cma-event-gateway', actual[1]['deployables'])
         self.assertIn('cma-web', actual[2]['deployables'])
+
+    def test_parallel_summaries_match_sequential_results_and_cache(self):
+        sequential = batch_selection.determine_many(self.root, self.revisions, parallel=1)
+        for parallel in (2, 4):
+            with self.subTest(parallel=parallel), tempfile.TemporaryDirectory() as directory:
+                cache = SelectionCache(Path(directory), 'a' * 64)
+                self.assertEqual(batch_selection.determine_many(self.root, self.revisions, cache, parallel), sequential)
+                saved = sorted(path.name for path in Path(directory).iterdir())
+                self.assertEqual([name for name in saved if not name.startswith('inputs-')],
+                                 sorted(revision + '.json' for revision in self.revisions))
+                warm = SelectionCache(Path(directory), 'a' * 64)
+                with patch.object(batch_selection, 'summarize', side_effect=AssertionError('must reuse')):
+                    self.assertEqual(batch_selection.determine_many(self.root, self.revisions, warm, parallel),
+                                     sequential)
+                self.assertEqual(warm.hits, len(self.revisions))
 
     def test_batch_rejects_missing_reordered_duplicate_or_invalid_commits(self):
         for revisions in ([], [self.first, self.third], list(reversed(self.revisions)),
