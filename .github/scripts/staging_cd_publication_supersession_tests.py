@@ -43,12 +43,14 @@ def final_tag(value):
 
 
 class SupersededPublicationTests(unittest.TestCase):
-    def exercise(self, version, boundary, directory, *, successor="pending", component="am"):
+    def exercise(self, version, boundary, directory, *, successor="pending", component="am",
+                 pending_after_build=False):
         held = reservation(version, "a" * 40, 100, component)
         later = reservation(version + 1, "b" * 40, 101, component)
+        newest = reservation(version + 2, "c" * 40, 102, component)
         pending, trace = [held], []
         api = Mock()
-        history = DevelopHistory(later["source"], [later["source"], held["source"]])
+        history = DevelopHistory(newest["source"], [newest["source"], later["source"], held["source"]])
         api.history.return_value = api.history_containing.return_value = history
         api.tags.return_value = []
         owners = Reservations(api, "fixture", directory)
@@ -71,6 +73,8 @@ class SupersededPublicationTests(unittest.TestCase):
         def build(_root, _reservation, dest, **_kwargs):
             trace.append("build")
             arrive("after-build")
+            if pending_after_build:
+                pending.append(newest)
             archive = dest / "image.oci.tar"
             archive.write_bytes(b"synthetic image")
             return archive, release
@@ -152,8 +156,9 @@ class SupersededPublicationTests(unittest.TestCase):
             (7, "after-verify", PUBLISHED),
         ]):
             with self.subTest(component=component, boundary=boundary), tempfile.TemporaryDirectory() as directory:
+                # A newer pending reservation arrives first and is passed; only the final stops the build.
                 code, log, trace, output, receipt = self.exercise(version, boundary, directory, successor="final",
-                                                                  component=component)
+                                                                  component=component, pending_after_build=True)
                 self.assertEqual(code, 1)
                 self.assertEqual(trace, steps)
                 self.assertIn("FAIL publication", log)
