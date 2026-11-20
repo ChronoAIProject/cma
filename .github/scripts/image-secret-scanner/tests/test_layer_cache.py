@@ -62,6 +62,18 @@ class LayerCacheTests(unittest.TestCase):
         self.assertNotIn("PRIVATE KEY", text)
         self.assertNotIn("nested.tar", text)
 
+    def test_replayed_elf_findings_bind_to_original_file_bytes(self):
+        archive = self.root / "binary.tar"
+        binary = bytes.fromhex("7f454c4600ff") + fake_key()
+        docker_archive(archive, [tar_bytes([("lib/example.so", binary)])])
+        _, warm = self.paired(archive, 1)
+        rows = [row for row in warm["findings"] if row["rule"].startswith("gitleaks.")]
+        self.assertTrue(rows)
+        for row in rows:
+            self.assertEqual(row["file_sha256"], digest_bytes(binary))
+            self.assertNotIn("line", row)
+            self.assertNotIn("_file_sha256", row)
+
     def test_changed_layer_is_scanned_but_identical_layer_hits(self):
         archive = self.root / "change.tar"
         fixed = tar_bytes([("fixed", b"stable\n")])

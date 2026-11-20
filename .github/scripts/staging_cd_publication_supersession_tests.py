@@ -13,6 +13,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import staging_cd_publish as publisher
+from image_scanner_policy import MANIFEST_SHA256
 from image_secret_gate import checksum
 from staging_cd_build_guard import run
 from staging_cd_common import Refusal
@@ -59,12 +60,13 @@ class SupersededPublicationTests(unittest.TestCase):
             archive.write_bytes(b"synthetic image")
             return archive, release
 
-        def scan(archive, report):
+        def scan(archive, report, *, component):
+            self.assertEqual(component, "am")
             trace.append("scan")
             report.mkdir()
-            (report / "REPORT.json").write_text(json.dumps({"counts": {
+            (report / "REPORT.json").write_text(json.dumps({"policy": {"staging_runtime_component": None}, "counts": {
                 "detected": 0, "blocking": 0, "advisory": 0, "reviewed": 0, "allowlisted": 0}}))
-            return checksum(archive)
+            return checksum(archive), ("1.0.4", MANIFEST_SHA256)
 
         def transport(args, **kwargs):
             trace.append(args[1])
