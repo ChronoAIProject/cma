@@ -31,6 +31,7 @@ import {
 } from './security';
 import { Journal, launchIsQuiescent } from './journal';
 import RedactedReporter from './reporter';
+import { tc117Fixture, instanceOrigins } from './visitor-abuse-environment';
 import type { APIRequestContext, BrowserContext, Route } from '@playwright/test';
 import type { FullResult, TestCase, TestResult } from '@playwright/test/reporter';
 
@@ -110,6 +111,35 @@ function fixtureDocument() {
   };
   return { document, env, manifest, state, directory };
 }
+
+describe('opt-in TC-117 prerequisites', () => {
+  it('leaves every existing fixture scenario unchanged without TC-117 accounts', () => {
+    const fixture = fixtureDocument();
+    expect(Object.keys(fixtures(fixture.env).visitors)).toEqual(visitorCases);
+    writeFileSync(fixture.manifest, JSON.stringify({ ...fixture.document, tc117: 'invalid' }));
+    expect(Object.keys(fixtures(fixture.env).visitors)).toEqual(visitorCases);
+    expect(() => tc117Fixture(fixture.env)).toThrow('tc117');
+  });
+  it('fails explicitly when the selected campaign has no TC-117 section', () => {
+    expect(() => tc117Fixture(fixtureDocument().env)).toThrow('tc117');
+  });
+  it('defers absent instance origins but refuses malformed or duplicate pairs', () => {
+    expect(instanceOrigins(undefined)).toEqual([]);
+    expect(instanceOrigins('https://one.example.test,https://two.example.test')).toEqual([
+      'https://one.example.test',
+      'https://two.example.test',
+    ]);
+    for (const value of [
+      '',
+      'https://one.example.test',
+      'https://one.example.test,https://one.example.test/',
+      'https://one.example.test,http://two.example.test',
+      'https://one.example.test,https://two.example.test/path',
+      'https://one.example.test,https://two.example.test,https://three.example.test',
+    ])
+      expect(() => instanceOrigins(value)).toThrow();
+  });
+});
 
 describe('staging harness fail-closed prerequisites', () => {
   const valid = {
