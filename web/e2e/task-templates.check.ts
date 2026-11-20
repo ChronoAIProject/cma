@@ -289,3 +289,82 @@ test('LOCAL a storage refusal keeps the partial template and the prior saved dra
   ).toEqual(stored);
   expect(writes).toEqual([]);
 });
+
+for (const width of [1440, 390]) {
+  test(`LOCAL ${width}px competing legacy drafts recover without discarding fields or starting work`, async ({
+    page,
+    baseURL,
+  }) => {
+    const { writes, boundary } = await fixture(page, baseURL!, false);
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto('/');
+    await settle(page);
+    await page.getByRole('button', { name: 'Write a document', exact: true }).click();
+    await page.getByLabel('Document type', { exact: true }).fill(' report ');
+    await page.getByLabel('Subject', { exact: true }).fill('  草稿 [subject]  ');
+    await page.evaluate(() => {
+      sessionStorage.setItem(
+        `cma:task-draft:${JSON.stringify([location.origin, 'local-owner', null, null])}`,
+        JSON.stringify({
+          version: 2,
+          text: '  Competing predecessor text  ',
+          revision: 'predecessor-edit',
+        }),
+      );
+    });
+    await page.reload();
+    await settle(page);
+    await expect(page.getByLabel('Subject', { exact: true })).toHaveValue('  草稿 [subject]  ');
+    await page.getByText('Other saved task drafts (1)', { exact: true }).click();
+    await expect(page.getByLabel('Saved draft 1 details')).toHaveValue(
+      'Task:   Competing predecessor text  \n\nShared desktop: not included',
+    );
+    const recover = page.getByRole('button', { name: 'Use this saved draft' });
+    const stored = await page.evaluate(() =>
+      Object.entries(sessionStorage).filter(([key]) => key.startsWith('cma:task-draft:')),
+    );
+    await page.evaluate(() => {
+      const write = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (key.startsWith('cma:task-draft:'))
+          throw new DOMException('Synthetic refusal', 'QuotaExceededError');
+        write.call(this, key, value);
+      };
+    });
+    await recover.focus();
+    await recover.press('Enter');
+    await expect(page.getByRole('alert')).toContainText('could not be saved');
+    await expect(recover).toBeFocused();
+    await expect(page.getByLabel('Subject', { exact: true })).toHaveValue('  草稿 [subject]  ');
+    expect(
+      await page.evaluate(() =>
+        Object.entries(sessionStorage).filter(([key]) => key.startsWith('cma:task-draft:')),
+      ),
+    ).toEqual(stored);
+    await page.reload();
+    await settle(page);
+    await page.getByText('Other saved task drafts (1)', { exact: true }).click();
+    await recover.click();
+    await expect(page.getByLabel('Your task')).toHaveValue('  Competing predecessor text  ');
+    await expect(page.getByLabel('Your task')).toBeFocused();
+    await expect(page.getByLabel('Saved draft 1 details')).toHaveValue(
+      'Write a document\nDocument type:  report \nSubject:   草稿 [subject]  \nAudience: \n\nShared desktop: not included',
+    );
+    await page.reload();
+    await settle(page);
+    await page.getByText('Other saved task drafts (1)', { exact: true }).click();
+    await recover.click();
+    await expect(page.getByLabel('Document type', { exact: true })).toBeFocused();
+    await expect(page.getByLabel('Subject', { exact: true })).toHaveValue('  草稿 [subject]  ');
+    await expect(page.getByLabel('Audience', { exact: true })).toHaveValue('');
+    await expect(page.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    await page.getByLabel('Subject', { exact: true }).press('Control+Enter');
+    expect(writes).toEqual([]);
+    expect(boundary.writes).toEqual([]);
+    expect(boundary.unexpected).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
+      true,
+    );
+  });
+}

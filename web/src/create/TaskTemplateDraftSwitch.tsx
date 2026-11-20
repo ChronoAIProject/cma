@@ -3,6 +3,7 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { compileTaskTemplate, templateDefinition, type TaskTemplateId } from './taskTemplateModel';
 import type { useTaskDraft } from './taskDraft';
+import { TaskDraftRecovery } from './TaskDraftRecovery';
 
 export function useTaskTemplateDraftSwitch(
   draft: ReturnType<typeof useTaskDraft>,
@@ -65,6 +66,15 @@ export function useTaskTemplateDraftSwitch(
     clear,
     feedback: (
       <>
+        <TaskDraftRecovery
+          drafts={draft.recoverable}
+          onRestore={(id) => {
+            const saved = draft.recoverable.find((value) => value.id === id);
+            if (!saved || !draft.restoreSavedDraft(id)) return;
+            clearValidation();
+            focus(Boolean(saved.draft.template));
+          }}
+        />
         {!draft.template &&
           draft.templates?.map((template) => (
             <div key={template.id} className="task-home__status">

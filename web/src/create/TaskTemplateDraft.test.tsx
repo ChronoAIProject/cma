@@ -4,7 +4,11 @@ import { unavailableClient, type CmaWebClient } from '../api/client';
 import { taskExperience } from '../test/taskExperience';
 import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { TaskHome } from './TaskHome';
-import { discardSubmittedTaskDraft, taskDraftStorageKey } from './taskDraft';
+import {
+  discardSubmittedTaskDraft,
+  taskDraftStorageKey,
+  legacyTaskDraftStorageKey,
+} from './taskDraft';
 import { emptyTemplate, taskTemplates } from './taskTemplateModel';
 import { retainTaskViewer } from './taskIdentity';
 
@@ -174,11 +178,19 @@ it.each([
   '{invalid',
   JSON.stringify({ version: 99, text: 'Newer draft' }),
   JSON.stringify({
-    version: 2,
+    version: 3,
+    legacyObserved: null,
+    recoverable: [],
     text: 'Saved text',
     templates: [emptyTemplate('code'), emptyTemplate('code')],
   }),
-  JSON.stringify({ version: 2, text: 'Saved text', templates: [{ id: 'document', fields: {} }] }),
+  JSON.stringify({
+    version: 3,
+    legacyObserved: null,
+    recoverable: [],
+    text: 'Saved text',
+    templates: [{ id: 'document', fields: {} }],
+  }),
 ])('does not overwrite an unreadable stored draft: %s', (raw) => {
   const key = taskDraftStorageKey('owner');
   sessionStorage.setItem(key, raw);
@@ -192,7 +204,12 @@ it.each([
 
 it('does not overwrite a draft after an initial storage read fails and later recovers', () => {
   const key = taskDraftStorageKey('owner');
-  const raw = JSON.stringify({ version: 2, text: 'Unseen saved text' });
+  const raw = JSON.stringify({
+    version: 3,
+    legacyObserved: null,
+    recoverable: [],
+    text: 'Unseen saved text',
+  });
   sessionStorage.setItem(key, raw);
   const original = Storage.prototype.getItem;
   const deny = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(function (
@@ -214,7 +231,7 @@ it.each([1, 2])(
   'retains version-%s templates without making legacy placeholders runnable',
   (version) => {
     sessionStorage.setItem(
-      taskDraftStorageKey('owner'),
+      legacyTaskDraftStorageKey('owner'),
       JSON.stringify({
         version,
         text: version === 1 ? taskTemplates[0].legacy : 'Separate text',
