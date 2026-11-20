@@ -287,7 +287,8 @@ def read_payload_candidate(stream, member, path, workspace, expected, reviews):
 def verify_literals(verified, payload, metadata, expected):
     origin = expected.get("derived_payload")
     mime_index = expected["path"] if origin is not None and origin["kind"] == "mime-index" else None
-    checks = reviewed_literals.verify(payload, metadata, expected["reviewed_literals"], mime_index=mime_index)
+    checks = reviewed_literals.verify(payload, metadata, expected["reviewed_literals"], mime_index=mime_index,
+                                      npm_template=expected.get("npm_help_template"))
     verified["reviewed_literals"] = checks
     if mime_index is not None and checks:
         verified["derived_payload"] = True

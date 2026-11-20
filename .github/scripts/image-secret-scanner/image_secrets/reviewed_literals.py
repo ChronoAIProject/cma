@@ -8,7 +8,7 @@ import re
 import time
 from itertools import zip_longest
 
-from . import credential_url, java_class
+from . import credential_url, java_class, npm_help_template
 from .common import digest_bytes
 from .gate import (
     FORMAT_MARKER_ADVISORY,
@@ -149,11 +149,13 @@ def exact_spans(data, entry, marker_ranges=None):
     return True
 
 
-def verify(path, metadata, proof, *, mime_index=None, class_member=False):
+def verify(path, metadata, proof, *, mime_index=None, class_member=False, npm_template=None):
     if not 0 < path.stat().st_size <= MAX_BYTES:
         return {}
     with path.open("rb") as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
         boundaries = None if mime_index is None else marker_ranges(data, mime_index)
+        if npm_template is not None:
+            boundaries = npm_help_template.marker_range(data, npm_template)
         markers = any(entry["rule"] in FORMAT_MARKER_RULES for entry in proof["findings"])
         if markers and class_member:
             boundaries = java_class.utf8_spans(data)

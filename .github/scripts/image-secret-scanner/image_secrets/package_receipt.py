@@ -4,7 +4,7 @@ import json
 import tempfile
 from pathlib import Path
 
-from . import arch_trust, nested_certificates, reviewed_literals
+from . import arch_trust, nested_certificates, npm_help_template, reviewed_literals
 from .common import digest_bytes, digest_file
 from .gate import (
     ADVISORY_RULES,
@@ -149,6 +149,8 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         classification = explanation
         extra["reviewed_literal"] = dict({key: binding[key] for key in ("archive_sha256", "image_config", "image_manifest")},
                                          **claim)
+        if finding["rule"] == npm_help_template.RULE and "npm_help_template" in expected:
+            extra["npm_help_template"] = expected["npm_help_template"]
     if explanation == KEY_MARKER_VIEW_ADVISORY:
         candidate = finding.get("candidate_sha256")
         for key in ("key_marker_view", "native_json_key_view"):
