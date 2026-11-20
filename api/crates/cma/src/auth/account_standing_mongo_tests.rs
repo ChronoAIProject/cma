@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn gate_adds_no_mongo_command_per_request() {
+async fn allowed_requests_read_current_mongo_authority() {
     use axum::{body::Body, http::Request, routing::get, Router};
     use tower::ServiceExt;
     let mut options = ClientOptions::parse(
@@ -16,7 +16,7 @@ async fn gate_adds_no_mongo_command_per_request() {
     let commands = Arc::new(AtomicUsize::new(0));
     let observed = commands.clone();
     options.command_event_handler = Some(EventHandler::callback(move |event| {
-        if matches!(event, CommandEvent::Started(_)) {
+        if matches!(event, CommandEvent::Started(ref event) if event.command_name == "find") {
             observed.fetch_add(1, Ordering::SeqCst);
         }
     }));
@@ -59,7 +59,7 @@ async fn gate_adds_no_mongo_command_per_request() {
             .unwrap();
         assert_eq!(response.status(), 200);
     }
-    assert_eq!(commands.load(Ordering::SeqCst), 0);
+    assert_eq!(commands.load(Ordering::SeqCst), 200);
     db.drop().await.unwrap();
 }
 
@@ -82,7 +82,7 @@ impl SnapshotSource for GatedMongoPointSource {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn stale_fallback_concurrent_frames_issue_one_real_mongo_point_read() {
+async fn concurrent_frames_issue_independent_real_mongo_reads() {
     const FRAMES: usize = 32;
     for erasing in [false, true] {
         let mut options = ClientOptions::parse(
@@ -150,7 +150,7 @@ async fn stale_fallback_concurrent_frames_issue_one_real_mongo_point_read() {
         while let Some(frame) = frames.join_next().await {
             assert_eq!(frame.unwrap(), Ok(erasing));
         }
-        assert_eq!(point_reads.load(Ordering::SeqCst), 1);
+        assert_eq!(point_reads.load(Ordering::SeqCst), FRAMES);
         db.drop().await.unwrap();
     }
 }
@@ -399,3 +399,6 @@ async fn runtime_subscriptions_refuse_erasing_owner_before_token_custody() {
     ));
     db.drop().await.unwrap();
 }
+
+#[path = "account_standing_mongo_tests/replicas.rs"]
+mod replicas;

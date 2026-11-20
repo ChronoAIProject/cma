@@ -2,7 +2,7 @@ use super::AccountDeletionError;
 use crate::SubjectId;
 use async_trait::async_trait;
 
-/// Cached read authority; delayed effects use the authoritative check.
+/// Read authority may reuse denials; delayed effects require a fresh check.
 #[async_trait]
 pub trait AccountStanding: Send + Sync {
     async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError>;

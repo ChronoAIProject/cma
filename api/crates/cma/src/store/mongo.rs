@@ -320,8 +320,9 @@ impl MongoStores {
             .await
             .map_err(|_| StoreError::Unavailable("initialize document registry".into()))?;
         let account_deletions = Arc::new(
-            super::account_deletions::MongoAccountDeletionStore::open(&client.database(database))
-                .await?,
+            super::account_deletions::MongoAccountDeletionStore::from_database(
+                &client.database(database),
+            ),
         );
         let request_limits = Arc::new(
             super::request_limits::MongoRequestLimits::open(&client.database(database)).await?,

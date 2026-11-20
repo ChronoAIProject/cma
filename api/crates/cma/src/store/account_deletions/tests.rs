@@ -803,7 +803,7 @@ async fn standing_queries_use_indexes_and_project_only_authority() {
     let observed = commands.clone();
     options.command_event_handler = Some(EventHandler::callback(move |event| {
         if let CommandEvent::Started(event) = event {
-            if event.command_name == "find" {
+            if event.command_name == "find" && event.command.get_str("find").ok() == Some(RECORDS) {
                 observed.lock().unwrap().push(event.command);
             }
         }
@@ -918,3 +918,5 @@ async fn standing_queries_use_indexes_and_project_only_authority() {
     }));
     db.drop().await.unwrap();
 }
+
+mod startup;

@@ -32,13 +32,13 @@ fn fixture() -> (Arc<Source>, ErasingSnapshot, SubjectId) {
     (source, gate, SubjectId::new("deleting-owner"))
 }
 #[tokio::test(start_paused = true)]
-async fn startup_snapshot_success_uses_memory_and_refreshes_in_background() {
+async fn startup_snapshot_caches_denials_and_refreshes_in_background() {
     let (source, gate, subject) = fixture();
     let gate = Arc::new(gate);
     let refreshing = gate.start().await;
     assert_eq!(source.refreshes.load(Ordering::SeqCst), 1);
     assert!(!gate.erasing(&subject).await.unwrap());
-    assert_eq!(source.point_reads.load(Ordering::SeqCst), 0);
+    assert_eq!(source.point_reads.load(Ordering::SeqCst), 1);
     source
         .hashes
         .write()
@@ -49,7 +49,7 @@ async fn startup_snapshot_success_uses_memory_and_refreshes_in_background() {
     tokio::task::yield_now().await;
     assert_eq!(source.refreshes.load(Ordering::SeqCst), 2);
     assert!(gate.erasing(&subject).await.unwrap());
-    assert_eq!(source.point_reads.load(Ordering::SeqCst), 0);
+    assert_eq!(source.point_reads.load(Ordering::SeqCst), 1);
     refreshing.abort();
 }
 #[tokio::test(start_paused = true)]
@@ -111,7 +111,7 @@ async fn uncertain_local_denial_requires_successful_snapshot_reconciliation() {
     assert!(gate.erasing(&subject).await.unwrap());
 }
 #[tokio::test]
-async fn other_replica_denies_within_one_refresh() {
+async fn other_replica_denies_before_another_refresh() {
     let (source, first, subject) = fixture();
     let other = ErasingSnapshot::with_source(source.clone());
     first.refresh().await.unwrap();
@@ -122,7 +122,6 @@ async fn other_replica_denies_within_one_refresh() {
         .unwrap()
         .insert(subject_hash(&subject));
     first.insert_local(&subject_hash(&subject));
-    other.refresh().await.unwrap();
     assert!(other.erasing(&subject).await.unwrap());
 }
 #[tokio::test]
@@ -147,14 +146,14 @@ async fn stale_snapshot_authority_failure_never_allows() {
     assert!(gate.erasing(&subject).await.is_err());
 }
 #[tokio::test]
-async fn gate_adds_no_mongo_command_per_request() {
+async fn every_allow_requires_its_own_point_read() {
     let (source, gate, subject) = fixture();
     gate.refresh().await.unwrap();
     for _ in 0..100 {
         assert!(!gate.erasing(&subject).await.unwrap());
     }
     assert_eq!(source.refreshes.load(Ordering::SeqCst), 1);
-    assert_eq!(source.point_reads.load(Ordering::SeqCst), 0);
+    assert_eq!(source.point_reads.load(Ordering::SeqCst), 100);
 }
 #[tokio::test]
 async fn other_owner_is_unaffected() {
@@ -688,4 +687,31 @@ async fn account_route_authentication_failures_are_private() {
         assert_eq!(response.status(), 503);
         assert_eq!(response.headers()["cache-control"], "private, no-store");
     }
+}
+
+#[tokio::test]
+async fn fresh_negative_snapshot_cannot_authorize_after_other_replica_accepts() {
+    let (source, accepting, subject) = fixture();
+    let observing = ErasingSnapshot::with_source(source.clone());
+    accepting.refresh().await.unwrap();
+    observing.refresh().await.unwrap();
+    assert!(!observing.erasing(&subject).await.unwrap());
+    source
+        .hashes
+        .write()
+        .unwrap()
+        .insert(subject_hash(&subject));
+    accepting.insert_local(&subject_hash(&subject));
+    assert!(observing.erasing(&subject).await.unwrap());
+}
+
+#[tokio::test]
+async fn fresh_negative_snapshot_cannot_mask_authority_unavailability() {
+    let (source, gate, subject) = fixture();
+    gate.refresh().await.unwrap();
+    source.failed.store(true, Ordering::SeqCst);
+    assert_eq!(
+        gate.erasing(&subject).await,
+        Err(AccountDeletionError::Unavailable)
+    );
 }

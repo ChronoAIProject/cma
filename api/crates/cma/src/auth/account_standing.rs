@@ -1,4 +1,4 @@
-//! Process-local access revocation, refreshed independently of request traffic.
+//! Conservative denial cache; every allow requires a fresh authority read.
 use std::{
     collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex, RwLock},
@@ -6,7 +6,6 @@ use std::{
 };
 
 use axum::{http::header, response::Response};
-use futures_util::{future::BoxFuture, future::Shared, FutureExt};
 use layer2_core::{
     account_deletion::{
         subject_hash, AccountDeletionError, AccountStanding, OwnerSessionAuthority,
@@ -21,39 +20,8 @@ use crate::store::account_deletions::MongoAccountDeletionStore;
 
 const MAX_SNAPSHOT_AGE: Duration = Duration::from_secs(10);
 const REFRESH_PERIOD: Duration = Duration::from_secs(1);
-const MAX_FALLBACK_SUBJECTS: usize = 256;
-type PointLookup =
-    Shared<BoxFuture<'static, (tokio::time::Instant, Result<bool, AccountDeletionError>)>>;
-
-struct PointWaiter<'a> {
-    fallback: &'a Mutex<BTreeMap<String, PointLookup>>,
-    hash: &'a str,
-    lookup: Option<PointLookup>,
-}
-impl PointWaiter<'_> {
-    async fn wait(mut self) -> Result<bool, AccountDeletionError> {
-        self.lookup.as_mut().expect("live standing lookup").await.1
-    }
-}
-impl Drop for PointWaiter<'_> {
-    fn drop(&mut self) {
-        let Some(lookup) = self.lookup.take() else {
-            return;
-        };
-        let mut fallback = self.fallback.lock().expect("standing fallback lock");
-        // A normally completed waiter has no Shared identity left. The final
-        // cancelled waiter removes its lookup while other frames keep theirs.
-        if fallback
-            .get(self.hash)
-            .is_some_and(|current| current.ptr_eq(&lookup) && current.strong_count() == Some(2))
-        {
-            fallback.remove(self.hash);
-        }
-        // Serialize dropping the caller reference with other waiter drops, so
-        // simultaneous cancellations cannot leave a map-only pending future.
-        drop(lookup);
-    }
-}
+const MAX_POINT_READS: usize = 256;
+const MAX_CACHED_DENIALS: usize = 256;
 
 #[async_trait::async_trait]
 trait SnapshotSource: Send + Sync {
@@ -83,7 +51,8 @@ pub(crate) struct ErasingSnapshot {
     source: Arc<dyn SnapshotSource>,
     state: RwLock<Snapshot>,
     refresh_lock: tokio::sync::Mutex<()>,
-    fallback: Mutex<BTreeMap<String, PointLookup>>,
+    denials: Mutex<BTreeMap<String, tokio::time::Instant>>,
+    point_reads: tokio::sync::Semaphore,
 }
 
 impl ErasingSnapshot {
@@ -95,7 +64,8 @@ impl ErasingSnapshot {
             source,
             state: RwLock::new(Snapshot::default()),
             refresh_lock: tokio::sync::Mutex::new(()),
-            fallback: Mutex::new(BTreeMap::new()),
+            denials: Mutex::new(BTreeMap::new()),
+            point_reads: tokio::sync::Semaphore::new(MAX_POINT_READS),
         }
     }
     pub(crate) async fn start(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
@@ -119,6 +89,7 @@ impl ErasingSnapshot {
         hashes.extend(state.local.keys().cloned());
         state.hashes = hashes;
         state.refreshed_at = Some(Instant::now());
+        self.denials.lock().expect("standing denial lock").clear();
         Ok(())
     }
     pub(crate) fn spawn_refresh(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
@@ -148,49 +119,34 @@ impl ErasingSnapshot {
         state
             .refreshed_at
             .filter(|at| at.elapsed() <= MAX_SNAPSHOT_AGE)
-            .map(|_| state.hashes.contains(hash))
+            .filter(|_| state.hashes.contains(hash))
+            .map(|_| true)
     }
-    fn point_lookup(
-        &self,
-        hash: &str,
-        subject: &SubjectId,
-    ) -> Result<PointLookup, AccountDeletionError> {
-        let mut fallback = self.fallback.lock().expect("standing fallback lock");
-        if let Some(lookup) = fallback.get(hash) {
-            let reusable = match lookup.peek() {
-                None => lookup.strong_count().is_some_and(|count| count > 1),
-                // Completed denials and source failures remain conservative for
-                // at most one refresh period. Allows are shared only in flight.
-                Some((at, result)) => !matches!(result, Ok(false)) && at.elapsed() < REFRESH_PERIOD,
-            };
-            if reusable {
-                return Ok(lookup.clone());
-            }
-            fallback.remove(hash);
+    fn cached_denial(&self, hash: &str) -> bool {
+        self.snapshot_result(hash) == Some(true)
+            || self
+                .denials
+                .lock()
+                .expect("standing denial lock")
+                .get(hash)
+                .is_some_and(|at| at.elapsed() < REFRESH_PERIOD)
+    }
+    async fn point_read(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
+        let _permit = self
+            .point_reads
+            .try_acquire()
+            .map_err(|_| AccountDeletionError::Unavailable)?;
+        // An invocation cannot join an older read: that read may have observed
+        // absence before another replica durably accepted deletion.
+        self.source.erasing(subject).await
+    }
+    fn cache_denial(&self, hash: String) {
+        let mut denials = self.denials.lock().expect("standing denial lock");
+        denials.retain(|_, at| at.elapsed() < REFRESH_PERIOD);
+        if denials.len() >= MAX_CACHED_DENIALS {
+            denials.pop_first();
         }
-        if fallback.len() >= MAX_FALLBACK_SUBJECTS {
-            let removable = fallback
-                .iter()
-                .find(|(_, lookup)| lookup.peek().is_some() || lookup.strong_count() == Some(1))
-                .map(|(hash, _)| hash.clone());
-            let Some(removable) = removable else {
-                return Err(AccountDeletionError::Unavailable);
-            };
-            fallback.remove(&removable);
-        }
-        let source = self.source.clone();
-        let subject = subject.clone();
-        // Shared polling keeps other frames alive when one is cancelled. The
-        // final waiter drops an unfinished read immediately; no detached task
-        // retains the source or drains work after cancellation or shutdown.
-        let lookup = async move {
-            let result = source.erasing(&subject).await;
-            (tokio::time::Instant::now(), result)
-        }
-        .boxed()
-        .shared();
-        fallback.insert(hash.to_owned(), lookup.clone());
-        Ok(lookup)
+        denials.insert(hash, tokio::time::Instant::now());
     }
 }
 
@@ -198,31 +154,22 @@ impl ErasingSnapshot {
 impl AccountStanding for ErasingSnapshot {
     async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
         let hash = subject_hash(subject);
-        if let Some(result) = self.snapshot_result(&hash) {
-            return Ok(result);
+        if self.cached_denial(&hash) {
+            return Ok(true);
         }
-        let result = match self.point_lookup(&hash, subject) {
-            Ok(lookup) => {
-                PointWaiter {
-                    fallback: &self.fallback,
-                    hash: &hash,
-                    lookup: Some(lookup),
-                }
-                .wait()
-                .await
-            }
-            Err(error) => Err(error),
-        };
-        // A denial learned while the read was in flight overrides its allow.
-        // A concurrent refresh cannot weaken an authority refusal or failure.
-        if self.snapshot_result(&hash) == Some(true) {
+        let result = self.point_read(subject).await;
+        if matches!(result, Ok(true)) {
+            self.cache_denial(hash.clone());
+        }
+        // A denial learned during this read overrides its result.
+        if self.cached_denial(&hash) {
             Ok(true)
         } else {
             result
         }
     }
     async fn authoritative(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
-        self.source.erasing(subject).await
+        self.point_read(subject).await
     }
     fn insert_local(&self, hash: &str) {
         let mut state = self.state.write().expect("standing snapshot lock");

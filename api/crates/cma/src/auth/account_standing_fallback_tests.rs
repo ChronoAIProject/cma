@@ -51,7 +51,7 @@ fn fixture(
     (source, gate)
 }
 
-async fn concurrent_frames_share_result(result: Result<bool, AccountDeletionError>) {
+async fn concurrent_frames_read_independently(result: Result<bool, AccountDeletionError>) {
     const FRAMES: usize = 32;
     let (source, gate) = fixture(result.clone(), true);
     let barrier = Arc::new(Barrier::new(FRAMES + 1));
@@ -66,28 +66,34 @@ async fn concurrent_frames_share_result(result: Result<bool, AccountDeletionErro
     }
     barrier.wait().await;
     source.entered.notified().await;
-    tokio::task::yield_now().await;
-    assert_eq!(source.point_reads.load(Ordering::SeqCst), 1);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while source.point_reads.load(Ordering::SeqCst) < FRAMES {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(source.point_reads.load(Ordering::SeqCst), FRAMES);
     source.release.add_permits(FRAMES);
     while let Some(frame) = frames.join_next().await {
         assert_eq!(frame.unwrap(), result);
     }
-    assert_eq!(source.point_reads.load(Ordering::SeqCst), 1);
+    assert_eq!(source.point_reads.load(Ordering::SeqCst), FRAMES);
 }
 
 #[tokio::test]
-async fn stale_fallback_coalesces_allowed_frames_for_one_subject() {
-    concurrent_frames_share_result(Ok(false)).await;
+async fn concurrent_allowed_frames_require_independent_reads() {
+    concurrent_frames_read_independently(Ok(false)).await;
 }
 
 #[tokio::test]
-async fn stale_fallback_coalesces_denied_frames_for_one_subject() {
-    concurrent_frames_share_result(Ok(true)).await;
+async fn concurrent_denied_frames_keep_their_own_pending_reads() {
+    concurrent_frames_read_independently(Ok(true)).await;
 }
 
 #[tokio::test]
-async fn stale_fallback_coalesces_source_failures_without_allowing_frames() {
-    concurrent_frames_share_result(Err(AccountDeletionError::Unavailable)).await;
+async fn concurrent_source_failures_do_not_allow_frames() {
+    concurrent_frames_read_independently(Err(AccountDeletionError::Unavailable)).await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -163,7 +169,7 @@ async fn stale_fallback_a_fresh_allow_cannot_weaken_an_inflight_authority_refusa
 }
 
 #[tokio::test]
-async fn stale_fallback_cancelling_the_first_frame_preserves_the_shared_lookup() {
+async fn cancelling_one_frame_preserves_another_frames_independent_read() {
     let (source, gate) = fixture(Ok(true), true);
     let first = {
         let gate = gate.clone();
@@ -174,7 +180,7 @@ async fn stale_fallback_cancelling_the_first_frame_preserves_the_shared_lookup()
         let gate = gate.clone();
         tokio::spawn(async move { gate.erasing(&SubjectId::new("owner")).await })
     };
-    tokio::task::yield_now().await;
+    source.entered.notified().await;
     first.abort();
     assert!(first.await.unwrap_err().is_cancelled());
     assert_eq!(source.resources.load(Ordering::SeqCst), 1);
@@ -184,7 +190,7 @@ async fn stale_fallback_cancelling_the_first_frame_preserves_the_shared_lookup()
         .unwrap()
         .unwrap()
         .unwrap());
-    assert_eq!(source.point_reads.load(Ordering::SeqCst), 1);
+    assert_eq!(source.point_reads.load(Ordering::SeqCst), 2);
     assert_eq!(source.resources.load(Ordering::SeqCst), 0);
 }
 
@@ -249,9 +255,10 @@ async fn stale_fallback_fresh_snapshot_reconciles_a_cached_denial() {
     let (source, gate) = fixture(Ok(true), false);
     let owner = SubjectId::new("owner");
     assert!(gate.erasing(&owner).await.unwrap());
+    *source.result.write().unwrap() = Ok(false);
     gate.refresh().await.unwrap();
     assert!(!gate.erasing(&owner).await.unwrap());
-    assert_eq!(source.point_reads.load(Ordering::SeqCst), 1);
+    assert_eq!(source.point_reads.load(Ordering::SeqCst), 2);
 }
 
 #[tokio::test]
@@ -332,4 +339,24 @@ async fn stale_fallback_bounds_retained_denials_for_distinct_subjects() {
         "the bounded cache must evict completed denials"
     );
     assert!(source.point_reads.load(Ordering::SeqCst) > 257);
+}
+
+#[tokio::test]
+async fn post_acceptance_request_cannot_join_an_older_allow_read() {
+    let (source, gate) = fixture(Ok(false), true);
+    let older = {
+        let gate = gate.clone();
+        tokio::spawn(async move { gate.erasing(&SubjectId::new("owner")).await })
+    };
+    source.entered.notified().await;
+    *source.result.write().unwrap() = Ok(true);
+    source.paused.store(false, Ordering::SeqCst);
+    let newer = {
+        let gate = gate.clone();
+        tokio::spawn(async move { gate.erasing(&SubjectId::new("owner")).await })
+    };
+    tokio::task::yield_now().await;
+    source.release.add_permits(1);
+    assert!(newer.await.unwrap().unwrap());
+    older.await.unwrap().unwrap();
 }

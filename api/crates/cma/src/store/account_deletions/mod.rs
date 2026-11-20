@@ -3,6 +3,7 @@ use futures_util::TryStreamExt;
 use layer2_core::{account_deletion::*, StoreError, SubjectId};
 use mongodb::{
     bson::{doc, Document},
+    options::Hint,
     Collection, Database,
 };
 use std::{collections::BTreeSet, time::Duration};
@@ -13,6 +14,7 @@ mod records;
 mod requests;
 #[cfg(test)]
 mod snapshot_tests;
+mod standing;
 #[cfg(test)]
 mod tests;
 mod writes;
@@ -29,15 +31,22 @@ pub(crate) struct MongoAccountDeletionStore {
     events: Collection<Document>,
 }
 impl MongoAccountDeletionStore {
+    pub(crate) fn from_database(database: &Database) -> Self {
+        Self {
+            database: database.clone(),
+            records: super::durability::majority_collection(database, RECORDS),
+            events: super::durability::majority_collection(database, EVENTS),
+        }
+    }
+    pub(crate) async fn require_admission_schema(&self) -> Result<(), StoreError> {
+        indexes::verify(self).await
+    }
+    #[cfg(test)]
     pub(crate) async fn open(database: &Database) -> Result<Self, StoreError> {
         super::sandbox_mongo::require_transaction_topology(database).await?;
         super::schema::initialize_collections(database, &[RECORDS, EVENTS, "sandbox_admissions"])
             .await?;
-        let store = Self {
-            database: database.clone(),
-            records: super::durability::majority_collection(database, RECORDS),
-            events: super::durability::majority_collection(database, EVENTS),
-        };
+        let store = Self::from_database(database);
         indexes::ensure(&store).await.map_err(|error| {
             StoreError::Unavailable(format!("initialize account deletion indexes: {error}"))
         })?;
@@ -45,17 +54,28 @@ impl MongoAccountDeletionStore {
     }
     pub(crate) async fn active_hashes(&self) -> Result<BTreeSet<String>, AccountDeletionError> {
         let mut hashes = BTreeSet::new();
-        // Each disjunct has its own bounded index scan. Arrays need an explicit
-        // branch because scalar equality also matches an array element.
-        for (filter, index) in erasing_filters().into_iter().zip([
+        if self
+            .database
+            .list_collection_names()
+            .filter(doc! {"name":RECORDS})
+            .await
+            .map_err(driver)?
+            .is_empty()
+        {
+            return Ok(hashes);
+        }
+        // Arrays need a separate branch and partial index: scalar equality also
+        // matches array elements, and a general status index scans tombstones.
+        let hints = [
             "account_deletions_active_subject",
             "account_deletions_status_subject",
             "account_deletions_array_status_subject",
-        ]) {
+        ];
+        for (filter, hint) in erasing_filters().into_iter().zip(hints) {
             let mut cursor = self
                 .records
                 .find(filter)
-                .hint(mongodb::options::Hint::Name(index.into()))
+                .hint(Hint::Name(hint.into()))
                 .projection(doc! {"_id":0,"subject_hash":1,"active_subject_hash":1})
                 .await
                 .map_err(driver)?;
@@ -76,15 +96,7 @@ impl MongoAccountDeletionStore {
         Ok(hashes)
     }
     pub(crate) async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
-        self.records
-            .find_one(subject_erasing_filter(subject))
-            .hint(mongodb::options::Hint::Name(
-                "account_deletions_subject_history".into(),
-            ))
-            .projection(doc! {"_id":0,"subject_hash":1,"active_subject_hash":1,"status":1})
-            .await
-            .map(|row| row.is_some())
-            .map_err(driver)
+        standing::erasing(self, subject).await
     }
 }
 fn erasing_filters() -> [Document; 3] {
@@ -191,9 +203,6 @@ pub(crate) async fn erasing_in_session(
     database
         .collection::<Document>(RECORDS)
         .find_one(subject_erasing_filter(subject))
-        .hint(mongodb::options::Hint::Name(
-            "account_deletions_subject_history".into(),
-        ))
         .projection(doc! {"_id":1})
         .session(session)
         .await
