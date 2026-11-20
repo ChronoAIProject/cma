@@ -8,11 +8,12 @@ from staging_cd_allocate import allocate_queue
 from staging_cd_allocation_fixture import AllocationServer
 from staging_cd_allocation_io import AllocationIO
 from staging_cd_allocation_snapshot import AllocationSnapshot, SnapshotAPI
+from staging_cd_common import Refusal
 from staging_cd_compatibility import GROUP
 from staging_cd_history import DevelopHistory
 from staging_cd_receipts import annotation
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt
-from staging_cd_reservations import outcome_ref, pending_name
+from staging_cd_reservations import ReservationSuperseded, Reservations, outcome_ref, pending_name
 from staging_cd_versions import DEPLOYABLES
 
 
@@ -108,3 +109,23 @@ class TransitionOwnerTests(unittest.TestCase):
         self.assertIn("--atomic", pushes[-1])
         finals["am"] = self.finalize(successor["am"]["reservation"])
         self.assert_web_pushes_preserve_owner(successor["runtime"]["reservation"], finals)
+
+    def test_same_source_group_claim_refuses_before_building_once_the_started_peer_finalizes(self):
+        original = self.push(GROUP)
+        successor = self.push({"am"})
+        publisher = Reservations(self.server, "fixture", Path.cwd())
+        for key in sorted(GROUP - {"am"}):
+            old, new = original[key]["reservation"], successor[key]["reservation"]
+            # The group claims a fresh version of the same source the original is still building.
+            self.assertEqual((new["source"], new["previous"]), (old["source"], old["version"]))
+            self.assertTrue(publisher.require_current(new, build_started=False))
+            # Under the lane lock the original build finishes and finalizes first.
+            final = self.finalize(old)
+            for started in (False, True):
+                with self.subTest(component=key, started=started), \
+                        self.assertRaisesRegex(Refusal, "different immutable release") as error:
+                    publisher.require_current(new, build_started=started)
+                # One final per source: the claim can never finalize, so it fails rather than rebuild.
+                self.assertNotIsInstance(error.exception, ReservationSuperseded)
+            self.assertEqual([tag["receipt"] for tag in self.server.tags(key)], [final])
+            self.assertIn(pending_name(new), self.server.refs)

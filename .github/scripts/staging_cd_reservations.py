@@ -171,6 +171,11 @@ class Reservations:
         require(all((item["source"] not in history.positions or history.position(item["source"]) <= position)
                     and version_tuple(item["version"]) <= version_tuple(value["version"])
                     for item in candidates), "Publication reservation is superseded and burned")
+        # A source has one final per component. When an earlier same-source
+        # build finishes first, as a contract group's fresh claim allows, this
+        # reservation can never finalize, so refuse before building it again.
+        require(all(tag["receipt"]["source"] != value["source"] for tag in finals),
+                "This merge already has a different immutable release")
         return True
 
     def remove_after_publication(self, receipt, expected_oid):
