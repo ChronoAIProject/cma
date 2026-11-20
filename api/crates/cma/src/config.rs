@@ -421,3 +421,6 @@ use validation::{
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod graduation_tests;
