@@ -1,3 +1,6 @@
+#[path = "dispatch_restore.rs"]
+mod restore;
+
 use super::{
     bindings::{pending, verification},
     sources::{channel, issue_event, ready_dispatch_fixture},
@@ -779,49 +782,5 @@ async fn shared_agent_github_and_custom_channels_use_ordinary_routing_and_compac
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn transient_channel_restore_during_dispatch_retries_then_admits_once() {
-    let (mut f, app, _channel_id) = ready_dispatch_fixture().await;
-    block_first_dispatch(&mut f, "restore").await;
-    let (webhook, body) = pending_webhook(&f, &app, "restore-transient").await;
-    let application = f.database.uri.split("appName=").nth(1).unwrap().to_owned();
-    f.database
-        .admin
-        .database("admin")
-        .run_command(doc! {
-            "configureFailPoint":"failCommand", "mode":{"times":1},
-            "data":{"failCommands":["find"],"appName":application,"errorCode":91_i32}
-        })
-        .await
-        .unwrap();
-    let _ = timeout(Duration::from_secs(5), webhook)
-        .await
-        .expect("transient restore request settles")
-        .unwrap()
-        .unwrap();
-    let mut receipt = serde_json::Value::Null;
-    for _ in 0..30 {
-        sleep(Duration::from_secs(1)).await;
-        let response = f
-            .webhook(
-                &webhook_url(&f, &app),
-                "fixture-webhook-secret",
-                "restore-transient",
-                "issues",
-                &body,
-            )
-            .send()
-            .await
-            .unwrap();
-        if response.status().is_success() {
-            receipt = response.json().await.unwrap();
-            if receipt["task_ids"]
-                .as_array()
-                .is_some_and(|ids| !ids.is_empty())
-            {
-                break;
-            }
-        }
-    }
-    assert_eq!(receipt["task_ids"].as_array().unwrap().len(), 1);
-    wait_for_posts(&f, 1).await;
-    assert_eq!(response_posts(&f).len(), 1);
+    restore::assert_channel_restore_retry().await;
 }

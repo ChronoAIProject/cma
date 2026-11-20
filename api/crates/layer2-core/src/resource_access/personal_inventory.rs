@@ -38,6 +38,7 @@ impl ResourceAccessService {
                     AuthorizedResource {
                         snapshot,
                         decision,
+                        caller: caller.clone(),
                         binding: None,
                     },
                 ))

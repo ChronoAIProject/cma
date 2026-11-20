@@ -174,3 +174,65 @@ async fn mongo_actor_consent_outbox_survives_reopen_and_fences_competing_claims(
         .is_empty());
     client.database(&name).drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn mongo_actor_renewal_pages_follow_actor_key_without_changing_due_rows() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable replica set required");
+    let client = Client::with_uri_str(uri).await.unwrap();
+    let name = format!("cma_actor_renewal_{}", uuid::Uuid::new_v4().simple());
+    let key =
+        AuthEncryptionKey::from_base64("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=").unwrap();
+    let store = MongoAuthStore::open(&client, &name, "actor-renewal-test", &key)
+        .await
+        .unwrap();
+    let mut records = Vec::new();
+    for index in 0..3 {
+        let mut row = record();
+        row.actor.actor_id = format!("renewal-sender-{index}");
+        row.actor_key = SecretDigest::identify(
+            "event-actor-link",
+            &serde_json::to_string(&row.actor).unwrap(),
+        )
+        .as_bytes()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+        row.link_id = format!("{index:032x}");
+        row.revision = 1;
+        row.browser_consent.as_mut().unwrap().review_revision = 1;
+        records.push(row);
+    }
+    records.sort_by(|left, right| left.actor_key.cmp(&right.actor_key));
+    for (index, row) in records.iter_mut().enumerate() {
+        row.renewed_at = (30 - index * 10) as u64;
+        assert!(store.replace_actor_link(None, row.clone()).await.unwrap());
+    }
+    let page = store.due_actor_links(100, None, 2).await.unwrap();
+    let next = store
+        .due_actor_links(100, page.last().map(|row| row.actor_key.as_str()), 2)
+        .await
+        .unwrap();
+    let empty = store
+        .due_actor_links(100, next.last().map(|row| row.actor_key.as_str()), 2)
+        .await
+        .unwrap();
+    let restarted = store.due_actor_links(100, None, 100).await.unwrap();
+    let observed = page.iter().map(|row| &row.actor_key).collect::<Vec<_>>();
+    let expected = records
+        .iter()
+        .take(2)
+        .map(|row| &row.actor_key)
+        .collect::<Vec<_>>();
+    client.database(&name).drop().await.unwrap();
+    assert_eq!(observed, expected);
+    assert_eq!(
+        next.iter().map(|row| &row.actor_key).collect::<Vec<_>>(),
+        [&records[2].actor_key]
+    );
+    assert!(empty.is_empty());
+    assert_eq!(
+        serde_json::to_value(restarted).unwrap(),
+        serde_json::to_value(records).unwrap()
+    );
+}

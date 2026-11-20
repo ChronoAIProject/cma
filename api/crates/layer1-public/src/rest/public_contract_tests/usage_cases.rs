@@ -4,6 +4,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use layer2_core::sandbox::store::{Page, PageRequest, SandboxStoreError};
 use layer2_core::sandbox_usage::{Allocation, SandboxUsage, UsageEvent, UsageEventKind};
+use layer2_core::sandbox_usage_cursor::{UsageCursorPolicy, UsageCursors};
 use layer2_core::sandbox_usage_service::{SandboxUsageService, SandboxUsageStore, UsageSummary};
 use layer2_core::{Authorization, Capability, SandboxId, SubjectId};
 
@@ -137,6 +138,7 @@ pub(super) fn scenario(name: &str) -> Option<Scenario> {
             Arc::new(Store {
                 unavailable: name.ends_with("unavailable"),
             }),
+            UsageCursors::new(&[7; 32], UsageCursorPolicy::default()),
         )),
         subject,
         authorization: Authorization::new(capabilities),

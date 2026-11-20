@@ -105,6 +105,7 @@ async fn apply_inner(
     if !guarded {
         super::execution::refuse_legacy_change(store, request, session).await?;
     }
+    fence_recipients(store, request, session).await?;
     let snapshot = snapshot::read(store, &request.target(), session).await?;
     let sandbox_id = &snapshot.lineage.sandbox.id;
     let id = match &request.change {
@@ -174,6 +175,30 @@ async fn apply_inner(
         .session(&mut *session)
         .await?;
     Ok(plan.receipt)
+}
+
+async fn fence_recipients(
+    store: &MongoSandboxStore,
+    request: &ShareMutation,
+    session: &mut ClientSession,
+) -> Result<(), ReadError> {
+    let subjects: Vec<_> = match &request.change {
+        ShareChange::CreateLink {
+            audience: layer2_core::resource_access::AgentShareAudience::Users { subjects },
+            ..
+        } => subjects.iter().collect(),
+        ShareChange::RedeemLink { subject, .. } => vec![subject],
+        _ => Vec::new(),
+    };
+    let database = store.client.database(&store.sandboxes.namespace().db);
+    for subject in subjects {
+        if crate::store::account_deletions::fence_subject_in_session(&database, subject, session)
+            .await?
+        {
+            return Err(ResourceAccessStoreError::ShareRecipientUnavailable.into());
+        }
+    }
+    Ok(())
 }
 
 pub(in crate::store) async fn fence_lineage(

@@ -17,6 +17,8 @@ impl SandboxControlAuthorizer for AuthState {
                 .validate()
                 .map_err(|_| CommandAuthorizationError::Revoked)?;
             let envelope = &record.envelope;
+            self.require_actor_owner_accounts(&envelope.actor, &envelope.owner)
+                .await?;
             envelope
                 .actor_subject()
                 .map_err(|_| CommandAuthorizationError::Revoked)?;

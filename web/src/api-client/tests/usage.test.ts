@@ -45,3 +45,36 @@ it('rejects wrong sandbox identities, unsafe quantities and invalid paging', asy
   await expect(test.client.usage.sandbox('sandbox-1')).rejects.toBeInstanceOf(ProtocolError);
   expect(() => test.client.usage.sandboxes({ limit: 201 })).toThrow(ValidationError);
 });
+
+it('passes service-issued continuations unchanged across all Usage page endpoints', async () => {
+  const test = transport();
+  const token = `u1.${'a'.repeat(384)}.${'b'.repeat(43)}`;
+  for (const request of [
+    (cursor?: string) => test.client.usage.sandboxes({ cursor }),
+    (cursor?: string) => test.client.usage.adminSandboxes({ cursor, owner: 'owner-1' }),
+    (cursor?: string) => test.client.usage.events('sandbox-1', { cursor }),
+  ]) {
+    test.answer({ items: [], next: token, as_of: 4600 });
+    const first = await request();
+    expect(first.next).toBe(token);
+    test.answer({ items: [], next: null, as_of: 4600 });
+    expect((await request(first.next ?? undefined)).next).toBeNull();
+    expect(new URL(test.calls.at(-1)!.url).searchParams.get('cursor')).toBe(token);
+  }
+});
+
+it('bounds Usage cursors in UTF-8 bytes while retaining raw continuation compatibility', async () => {
+  const test = transport();
+  for (const cursor of ['sandbox-1', 'a'.repeat(4096)]) {
+    test.answer({ items: [], next: null, as_of: 4600 });
+    await test.client.usage.sandboxes({ cursor });
+    expect(new URL(test.calls.at(-1)!.url).searchParams.get('cursor')).toBe(cursor);
+  }
+  const before = test.calls.length;
+  for (const cursor of ['', 'a'.repeat(4097), '界'.repeat(1366)]) {
+    expect(() => test.client.usage.sandboxes({ cursor })).toThrow(ValidationError);
+    expect(() => test.client.usage.adminSandboxes({ cursor })).toThrow(ValidationError);
+    expect(() => test.client.usage.events('sandbox-1', { cursor })).toThrow(ValidationError);
+  }
+  expect(test.calls).toHaveLength(before);
+});

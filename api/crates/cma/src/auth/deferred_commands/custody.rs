@@ -14,6 +14,9 @@ impl AuthState {
         actor: &AgentActor,
         authority: &AgentAuthorizationRevision,
     ) -> Result<CommandCustody, CommandAuthorizationError> {
+        if let Some(subject) = actor.ordinary_subject() {
+            self.require_command_account(subject).await?;
+        }
         if let AgentActor::Api {
             subject,
             delegation_id: Some(grant_id),

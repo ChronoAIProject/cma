@@ -162,6 +162,20 @@ class CacheTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cache.seal(self.root, self.prefix)
 
+    def test_caller_bound_replaces_only_the_compressed_archive_limit(self):
+        self.bundle()
+        size = sum((self.root / f"{name}.tar.gz").stat().st_size for name in cache.MOUNTS)
+        with patch.object(cache, "MAX_ARCHIVE_BYTES", size - 1):
+            with self.assertRaisesRegex(ValueError, "compressed cache exceeds"):
+                cache.validate_bundle(self.root, self.prefix)
+            cache.validate_bundle(self.root, self.prefix, max_archive=size)
+            with self.assertRaisesRegex(ValueError, "compressed cache exceeds"):
+                cache.seal(self.root, self.prefix)
+            cache.seal(self.root, self.prefix, max_archive=size)
+        for bound in ("MAX_CONTENT_BYTES", "MAX_MEMBERS"):
+            with self.subTest(bound=bound), patch.object(cache, bound, 1), self.assertRaises(ValueError):
+                cache.validate_bundle(self.root, self.prefix, max_archive=2 * size)
+
     def test_archive_symlink_and_extra_files_are_rejected(self):
         self.bundle()
         (self.root / "unexpected").touch()

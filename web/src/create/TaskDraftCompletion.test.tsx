@@ -7,6 +7,7 @@ import { taskExperience } from '../test/taskExperience';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { AgentLifecycleFollowup } from './AgentLifecycleFollowup';
 import { lifecycleStorageKey } from './lifecycleIntent';
+import { lifecycleRecoveryKey } from './lifecycleIntentStorage';
 import { taskDraftStorageKey } from './taskDraft';
 import { TaskHome } from './TaskHome';
 
@@ -19,6 +20,10 @@ const original = {
 };
 const draftKey = taskDraftStorageKey('owner');
 const intentKey = lifecycleStorageKey('owner');
+const recoveryKey = lifecycleRecoveryKey(
+  { owner: 'owner' },
+  { agentId: 'agt_1', operationId: 'draft-operation' },
+);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -60,8 +65,16 @@ async function submit() {
     },
     expect.anything(),
   );
-  expect(JSON.parse(sessionStorage.getItem(intentKey)!).intent.agentId).toBe('agt_1');
-  expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual({ ...original, version: 2 });
+  expect(sessionStorage.getItem(intentKey)).toBeNull();
+  expect(JSON.parse(sessionStorage.getItem(recoveryKey)!).intent.agentId).toBe('agt_1');
+  expect(JSON.parse(sessionStorage.getItem(recoveryKey)!).intent.draftRevision).toBe(
+    JSON.parse(sessionStorage.getItem(draftKey)!).revision,
+  );
+  expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual({
+    ...original,
+    version: 2,
+    revision: expect.any(String),
+  });
   return {
     client,
     home,
@@ -78,7 +91,8 @@ it('clears the unchanged submitted draft only after real successful follow-up, t
   task.view.unmount();
   task.finish('succeeded');
   const conversation = render(task.followup);
-  await waitFor(() => expect(sessionStorage.getItem(intentKey)).toBeNull());
+  await waitFor(() => expect(sessionStorage.getItem(recoveryKey)).toBeNull());
+  expect(sessionStorage.getItem(intentKey)).toBeNull();
   expect(sessionStorage.getItem(draftKey)).toBeNull();
   conversation.unmount();
   render(task.home);
@@ -100,7 +114,8 @@ it.each([
   sessionStorage.setItem(draftKey, next);
   task.finish('succeeded');
   const conversation = render(task.followup);
-  await waitFor(() => expect(sessionStorage.getItem(intentKey)).toBeNull());
+  await waitFor(() => expect(sessionStorage.getItem(recoveryKey)).toBeNull());
+  expect(sessionStorage.getItem(intentKey)).toBeNull();
   expect(sessionStorage.getItem(draftKey)).toBe(next);
   conversation.unmount();
   render(task.home);
@@ -122,7 +137,8 @@ it.each([false, true])(
         {task.followup}
       </>,
     );
-    await waitFor(() => expect(sessionStorage.getItem(intentKey)).toBeNull());
+    await waitFor(() => expect(sessionStorage.getItem(recoveryKey)).toBeNull());
+    expect(sessionStorage.getItem(intentKey)).toBeNull();
     expect(screen.getByLabelText('Your task')).toHaveValue(edited ? 'Keep my next task' : '');
     if (!edited) {
       expect(screen.queryByRole('button', { name: 'Remove repository' })).not.toBeInTheDocument();
@@ -130,6 +146,7 @@ it.each([false, true])(
       fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'A fresh task' } });
       expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual({
         version: 2,
+        revision: expect.any(String),
         text: 'A fresh task',
         repositoryUrl: '',
         repositoryRef: '',
@@ -144,7 +161,11 @@ it('keeps a failed preparation draft available through Start another task and re
   task.finish('failed');
   fireEvent.click(await screen.findByRole('button', { name: 'Start another task' }));
   expect(sessionStorage.getItem(intentKey)).toBeNull();
-  expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual({ ...original, version: 2 });
+  expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual({
+    ...original,
+    version: 2,
+    revision: expect.any(String),
+  });
   expect(screen.getByLabelText('Your task')).toHaveValue(original.text);
   task.view.unmount();
   render(task.home);
@@ -183,10 +204,15 @@ it.each(['getItem', 'removeItem'] as const)(
         {task.followup}
       </>,
     );
-    await waitFor(() => expect(sessionStorage.getItem(intentKey)).toBeNull());
+    await waitFor(() => expect(sessionStorage.getItem(recoveryKey)).toBeNull());
+    expect(sessionStorage.getItem(intentKey)).toBeNull();
     expect(screen.getByText('Conversation available')).toBeVisible();
     expect(fail).toHaveBeenCalledWith(draftKey);
-    expect(JSON.parse(storage.getItem(draftKey)!)).toEqual({ ...original, version: 2 });
+    expect(JSON.parse(storage.getItem(draftKey)!)).toEqual({
+      ...original,
+      version: 2,
+      revision: expect.any(String),
+    });
   },
 );
 
@@ -194,6 +220,10 @@ it('also discards a matching task draft when the manual recovery surface clears 
   const task = await submit();
   task.view.unmount();
   task.finish('succeeded');
+  const accepted = JSON.parse(sessionStorage.getItem(recoveryKey)!);
+  delete accepted.intent.agentId;
+  sessionStorage.removeItem(recoveryKey);
+  sessionStorage.setItem(intentKey, JSON.stringify(accepted));
   render(
     <AgentLifecycleCard
       client={task.client}
@@ -203,11 +233,12 @@ it('also discards a matching task draft when the manual recovery surface clears 
     />,
   );
   await waitFor(() => expect(sessionStorage.getItem(intentKey)).toBeNull());
+  expect(sessionStorage.getItem(intentKey)).toBeNull();
   expect(sessionStorage.getItem(draftKey)).toBeNull();
 });
 
 it.each([{}, { workspace_id: 'wsp_1' }, { sandbox_id: 'sbx_1' }])(
-  'cleans only the successful scope and normalizes absent options in legacy drafts: %j',
+  'preserves legacy drafts when a successful request has no draft ownership proof: %j',
   async (scope) => {
     const body = { name: 'New task', initial_message: original.text, desktop: true, ...scope };
     const key = taskDraftStorageKey('owner', scope.workspace_id, scope.sandbox_id);
@@ -242,7 +273,39 @@ it.each([{}, { workspace_id: 'wsp_1' }, { sandbox_id: 'sbx_1' }])(
     });
     render(<AgentLifecycleFollowup client={client} viewerId="owner" agentId="agt_1" />);
     await waitFor(() => expect(sessionStorage.getItem(retained)).toBeNull());
-    expect(sessionStorage.getItem(key)).toBeNull();
+    await waitFor(() =>
+      expect(
+        sessionStorage.getItem(
+          lifecycleRecoveryKey(
+            { owner: 'owner', workspaceId: scope.workspace_id, sandboxId: scope.sandbox_id },
+            { agentId: 'agt_1', operationId: 'scope-operation' },
+          ),
+        ),
+      ).toBeNull(),
+    );
+    expect(sessionStorage.getItem(key)).toBe(saved);
     for (const other of otherKeys) expect(sessionStorage.getItem(other)).toBe(saved);
   },
 );
+
+it('preserves an unsubmitted same-body edit in the mounted editor and storage when A completes', async () => {
+  const task = await submit();
+  const originalRevision = JSON.parse(sessionStorage.getItem(draftKey)!).revision;
+  fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'Intervening edit' } });
+  fireEvent.change(screen.getByLabelText('Your task'), { target: { value: original.text } });
+  const edited = sessionStorage.getItem(draftKey);
+  expect(JSON.parse(edited!).revision).not.toBe(originalRevision);
+  task.finish('succeeded');
+  task.view.rerender(
+    <>
+      {task.home}
+      {task.followup}
+    </>,
+  );
+  await waitFor(() => expect(sessionStorage.getItem(recoveryKey)).toBeNull());
+  expect(screen.getByLabelText('Your task')).toHaveValue(original.text);
+  expect(sessionStorage.getItem(draftKey)).toBe(edited);
+  task.view.unmount();
+  render(task.home);
+  expect(screen.getByLabelText('Your task')).toHaveValue(original.text);
+});
