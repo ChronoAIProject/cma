@@ -99,11 +99,11 @@ def matches_image(proof, report, config, image):
             and proof["image_manifest"] == image)
 
 
-def certificate_evidence(report, finding, expected, checked, config, image):
+def certificate_evidence(report, finding, expected, checked, config, image, *, portable=False):
     if checked is None:
         return None
     proof = expected["nested_certificate"]
-    if (not matches_image(proof, report, config, image) or proof["finding_id"] != finding["finding_id"]
+    if (not portable and (not matches_image(proof, report, config, image) or proof["finding_id"] != finding["finding_id"])
             or proof["der_sha256s"] != checked["der_sha256s"]):
         return None
     coordinates = ("image", "layer", "entry", "member")
@@ -125,8 +125,6 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
     platform, config, image, diff_id, (outer_path, outer_sha256, nested) = occurrence
     member_id = finding.get("member")
     portable = portable_row is not None
-    if portable and member_id is not None:
-        return None
     selected = portable_row[:2] if portable else evidence.entries.get(
         (component, platform, finding["layer"], diff_id, finding["entry"], member_id))
     if selected is None:
@@ -135,10 +133,14 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
     if outer_path != expected["path"] or outer_sha256 != expected["file_sha256"]:
         return None
     path, observed_sha256 = outer_path, outer_sha256
+    member = expected["member"]
+    if (member is None) != (member_id is None):
+        return None
     if member_id is not None:
+        # The reopened member must be the regular member the detector decoded at this locator.
         candidate_member = nested.get(member_id)
-        member = expected["member"]
-        if candidate_member != ("!".join([outer_path, *member["path"]]), member["sha256"]):
+        if member["locator"] != member_id or candidate_member != ("!".join([outer_path, *member["path"]]),
+                                                                  member["sha256"]):
             return None
         path, observed_sha256 = candidate_member
     review = reviews.get((finding["rule"], finding.get("candidate_sha256"), finding.get("line")))
@@ -238,7 +240,7 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         extra["public_digest_frames"] = frame_proof
     elif explanation == CERTIFICATE_ADVISORY:
         certificate = certificate_evidence(report, finding, expected, verified.get(CERTIFICATE_ADVISORY),
-                                           config, image)
+                                           config, image, portable=portable)
         if certificate is None:
             return None
         classification = explanation
@@ -384,8 +386,9 @@ def build(archive, output, report, component, evidence, *, source=None):
         coordinate = (finding["image"], finding["layer"], finding["entry"])
         occurrence = observations.get(coordinate)
         if occurrence is not None:
+            reviewed = portable_rows.get(coordinate, {}).get(finding.get("member"))
             result = exact_match(report, finding, component, evidence, occurrence, database_checks,
-                                 vector_checks.get(coordinate, {}), portable_row=portable_rows.get(coordinate))
+                                 vector_checks.get(coordinate, {}), portable_row=reviewed)
             if result is not None:
                 rows.append(result)
     if component == arch_trust.COMPONENT and evidence.arch_trust:

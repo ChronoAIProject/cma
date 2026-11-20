@@ -13,6 +13,8 @@ class PortableOccurrences:
         self.entries = entries
         self.packages = packages
         self.source = source
+        # Each reviewed container maps its top-level row (None) and member rows by locator.
+        self.containers = defaultdict(dict)
         self.by_path = defaultdict(dict)
         self.databases = defaultdict(list)
         self.inputs = set()
@@ -31,9 +33,10 @@ class PortableOccurrences:
         self.arch = (ArchOwnership([*signed, *self.trust_rows.values()], packages)
                      if component == "runtime-omarchy" else None)
         self.mime = None
-        for (platform, path, sha256), record in entries.items():
+        for (platform, path, sha256, locator), record in entries.items():
             row, _ = record
-            self.by_path[platform, path][sha256] = record
+            self.containers[platform, path, sha256][locator] = record
+            self.by_path[platform, path][sha256] = self.containers[platform, path, sha256]
             for name in ("self_test", "distribution_config"):
                 if name in row:
                     database = row[name]["database"]
@@ -78,7 +81,7 @@ class PortableOccurrences:
         for coordinate, (platform, _, _, _, (path, sha256, _)) in observations.items():
             installed[(*coordinate[:2], path)] = sha256
             key = (platform, path, sha256)
-            if key in self.entries:
+            if key in self.containers:
                 matching[coordinate[0], key].append(coordinate)
         # Any unexplained copy makes the whole group ineligible for review.
         result = {}
@@ -86,7 +89,8 @@ class PortableOccurrences:
         arch_candidates = defaultdict(list)
         generated = []
         for (_, key), coordinates in matching.items():
-            row, reviews = self.entries[key]
+            # Rows in one container share their ownership fields and occurrence count.
+            row, _ = next(iter(self.containers[key].values()))
             if len(coordinates) != row["occurrences"]:
                 continue
             for coordinate in coordinates:
@@ -98,15 +102,17 @@ class PortableOccurrences:
                     continue
                 owner = self.owner(row, coordinate, installed, source_checks)
                 if owner is not None:
-                    result[coordinate] = (row, reviews, owner)
+                    result[coordinate] = self.reviewed(key, owner)
         if self.arch is not None:
             proved = self.arch.prove(arch_candidates)
             proved.update(self.generated_owners(generated, observations, source_checks))
             for coordinate, owner in proved.items():
                 platform, _, _, _, (path, sha256, _) = observations[coordinate]
-                row, reviews = self.entries[platform, path, sha256]
-                result[coordinate] = (row, reviews, owner)
+                result[coordinate] = self.reviewed((platform, path, sha256), owner)
         return result
+
+    def reviewed(self, key, owner):
+        return {locator: (row, reviews, owner) for locator, (row, reviews) in self.containers[key].items()}
 
     def producer(self, row):
         return self.packages[row["package_sha256"]]["authority_type"] == "pinned-upstream"

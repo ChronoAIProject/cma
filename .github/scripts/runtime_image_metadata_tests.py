@@ -2,13 +2,11 @@
 
 import hashlib
 import importlib.util
-import io
 import subprocess
 import tarfile
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
-import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -264,61 +262,16 @@ class MetadataTests(unittest.TestCase):
                     NORMALIZE.remove_documentation_examples(root)
                 self.assertEqual(path.read_bytes(), changed)
 
-    @staticmethod
-    def wheel_fixture(members, record=None):
-        rows = [[name, NORMALIZE._record_hash(data), str(len(data))] for name, data in members.items()]
-        rows.append(["fixture.dist-info/RECORD", "", ""])
-        output = io.BytesIO()
-        with zipfile.ZipFile(output, "w") as wheel:
-            for name, data in members.items():
-                wheel.writestr(zipfile.ZipInfo(name, (2026, 1, 2, 3, 4, 6)), data, zipfile.ZIP_DEFLATED)
-            wheel.writestr(zipfile.ZipInfo("fixture.dist-info/RECORD", (2026, 1, 2, 3, 4, 6)),
-                           record if record is not None else NORMALIZE._record_text(rows).encode(),
-                           zipfile.ZIP_DEFLATED)
-        return output.getvalue()
-
-    def test_bundled_wheel_rewrites_two_members_and_its_record(self):
-        example = b"    reviewed docstring example\n"
-        first = b'"""Module.\n\n' + example + b'"""\nVALUE = 1\n'
-        second = b"def call():\n    # " + example.strip() + b"\n    return 2\n"
-        second_example = second.splitlines(keepends=True)[1]
-        members = {"pkg/first.py": first, "pkg/second.py": second, "pkg/other.py": b"OTHER = 3\n"}
-        stock = self.wheel_fixture(members)
-        reviewed = ("usr/lib/python3/ensurepip/_bundled/fixture.whl", hashlib.sha256(stock).hexdigest(),
-                    "fixture.dist-info/RECORD",
-                    {"pkg/first.py": (hashlib.sha256(first).hexdigest(), hashlib.sha256(example).hexdigest()),
-                     "pkg/second.py": (hashlib.sha256(second).hexdigest(),
-                                       hashlib.sha256(second_example).hexdigest())})
-        with tempfile.TemporaryDirectory() as tmp, patch.object(NORMALIZE, "ENSUREPIP_WHEEL", reviewed):
+    def test_bundled_wheel_remains_the_signed_package_member(self):
+        # Rewriting the wheel would leave a file its pacman mtree record no longer describes.
+        stock = b"PK\x05\x06" + bytes(18) + b"synthetic package-owned wheel bytes"
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            path = root / reviewed[0]
-            path.parent.mkdir(parents=True)
-            path.write_bytes(stock)
-            path.chmod(0o644)
-            NORMALIZE.remove_ensurepip_examples(root)
-            derived = path.read_bytes()
-            self.assertEqual(path.stat().st_mode & 0o777, 0o644)
-            with zipfile.ZipFile(io.BytesIO(derived)) as wheel:
-                NORMALIZE._record_rows(wheel, "fixture.dist-info/RECORD")
-                self.assertEqual(wheel.read("pkg/first.py"), first.replace(example, b""))
-                self.assertEqual(wheel.read("pkg/second.py"), second.replace(second_example, b""))
-                self.assertEqual(wheel.read("pkg/other.py"), b"OTHER = 3\n")
-                self.assertEqual([info.filename for info in wheel.infolist()],
-                                 [*members, "fixture.dist-info/RECORD"])
-            NORMALIZE.remove_ensurepip_examples(root)
-            self.assertEqual(path.read_bytes(), derived)
-
-            # A modified member is refused whether or not its RECORD was recomputed.
-            tampered = dict(members, **{"pkg/other.py": b"OTHER = 4\n"})
-            stale_rows = [[name, NORMALIZE._record_hash(data), str(len(data))] for name, data in members.items()]
-            stale = NORMALIZE._record_text([*stale_rows, ["fixture.dist-info/RECORD", "", ""]]).encode()
-            for fixture, message in ((self.wheel_fixture(tampered, stale), "RECORD differs"),
-                                     (self.wheel_fixture(tampered), "example requires review")):
-                with self.subTest(message=message):
-                    path.write_bytes(fixture)
-                    with self.assertRaisesRegex(ValueError, message):
-                        NORMALIZE.remove_ensurepip_examples(root)
-                    self.assertEqual(path.read_bytes(), fixture)
+            wheel = root / NORMALIZE.ENSUREPIP_WHEEL
+            wheel.parent.mkdir(parents=True)
+            wheel.write_bytes(stock)
+            NORMALIZE.normalize(root)
+            self.assertEqual(wheel.read_bytes(), stock)
 
     def test_only_an_empty_object_signing_bundle_is_omitted(self):
         with tempfile.TemporaryDirectory() as tmp:

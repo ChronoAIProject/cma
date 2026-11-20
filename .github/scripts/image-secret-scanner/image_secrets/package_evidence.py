@@ -32,6 +32,9 @@ PORTABLE_SCHEMA = "cma-staging-runtime-package-evidence-v2"
 OMARCHY_PORTABLE_SCHEMA = "cma-staging-omarchy-package-evidence-v2"
 PORTABLE_SCOPES = {PORTABLE_SCHEMA: "runtime", OMARCHY_PORTABLE_SCHEMA: "runtime-omarchy"}
 PORTABLE_ENTRY_FIELDS = ENTRY_FIELDS - {"layer", "diff_id", "entry"} | {"occurrences", "ownership"}
+# The nested reader verifies only these proofs, for a member or for its container.
+NESTED_PROOFS = frozenset({"reviewed_literals", "nested_certificate"})
+CONTAINER_FIELDS = ("package_sha256", "package_member", "ownership", "occurrences")
 # Views the default runtime uses for its pinned producers; Omarchy copies the same producers.
 PRODUCER_VIEWS = frozenset({"derived_payload", "reviewed_literals", "digest_frames", "npm_help_template",
                             "nyxid_format_labels"})
@@ -81,16 +84,18 @@ def image_binding(proof, fields_without_binding, *, portable, finding_fields=())
                 and (proof["image_manifest"] is None or matches(LAYER_ID, proof["image_manifest"])))
 
 
-def validate_nested_certificate(row, package):
+def validate_nested_certificate(row, package, *, portable=False):
     proof = row["nested_certificate"]
     member = row["member"]
-    fields(proof, {"pypi_attestation_sha256", "archive_sha256", "image_config", "image_manifest",
-                   "finding_id", "der_sha256s"})
+    # A portable proof binds the stable member inventory; the receipt binds the image.
+    bound = () if portable else ("archive_sha256", "finding_id")
+    fields(proof, {"pypi_attestation_sha256", "der_sha256s", *bound,
+                   *(() if portable else ("image_config", "image_manifest"))})
     require(row["component"] == nested_certificates.COMPONENT and row["path"] == nested_certificates.WHEEL
             and member is not None and member["path"] == [nested_certificates.MEMBER]
             and package["authority_type"] == "arch-signature" and package["name"] == "python"
-            and all(valid_digest(proof[key]) for key in ("pypi_attestation_sha256", "archive_sha256", "finding_id"))
-            and all(matches(LAYER_ID, proof[key]) for key in ("image_config", "image_manifest")))
+            and all(valid_digest(proof[key]) for key in ("pypi_attestation_sha256", *bound))
+            and (portable or all(matches(LAYER_ID, proof[key]) for key in ("image_config", "image_manifest"))))
     hashes = proof["der_sha256s"]
     require(isinstance(hashes, list) and len(hashes) == nested_certificates.COUNT
             and all(valid_digest(value) for value in hashes) and hashes == sorted(set(hashes)))
@@ -160,6 +165,7 @@ class PackageEvidence:
             packages[artifact] = package
 
         entries = {}
+        containers = {}
         entry_fields = PORTABLE_ENTRY_FIELDS if portable else ENTRY_FIELDS
         for row in raw["entries"]:
             require(isinstance(row, dict))
@@ -171,14 +177,18 @@ class PackageEvidence:
             origin = row.get("derived_payload")
             # Native generated proofs are limited to the MIME index and its signed sources.
             mime_index = isinstance(origin, dict) and origin.get("kind") == "mime-index"
+            # A reviewed Arch member is reopened from its package-owned container and
+            # carries only exact public-expression, literal or certificate proofs.
+            nested = native_arch and row.get("member") is not None
             if portable:
-                unsupported = ({"nested_certificate"} if native_arch else {
+                unsupported = ((set() if nested else {"nested_certificate"}) if native_arch else {
                     "nested_certificate", "elf_nul_key_view", "distribution_config", "key_marker_view",
                     "native_json_key_view",
                 })
-                require(row["component"] == portable_component and row["member"] is None
+                require(row["component"] == portable_component and (row["member"] is None or native_arch)
                         and type(row["occurrences"]) is int and 1 <= row["occurrences"] <= 2
-                        and not unsupported.intersection(row))
+                        and not unsupported.intersection(row)
+                        and (not nested or row.keys() - entry_fields <= NESTED_PROOFS))
             else:
                 require(matches(LAYER_ID, row["diff_id"]) and ordinal(row["layer"]) and ordinal(row["entry"]))
             literals = reviewed_literals.validate(row, portable=portable) if "reviewed_literals" in row else {}
@@ -212,6 +222,8 @@ class PackageEvidence:
             # CMA's own pinned producers copy files into Omarchy outside pacman.
             # They are proved exactly like the default runtime's producer rows.
             producer = native_arch and package["authority_type"] == "pinned-upstream"
+            # Nested members are proved only through signed package ownership.
+            require(not (nested and producer))
             if native_arch and not producer:
                 owner = row["ownership"]
                 # A generated index binds its producer to the reserved build source instead of an mtree.
@@ -251,9 +263,13 @@ class PackageEvidence:
                         and isinstance(member["path"], list) and len(member["path"]) == locator.count("/") + 1)
                 for part in member["path"]:
                     normalized(part)
-            key = ((row["platform"], path, row["file_sha256"]) if portable else
+            key = ((row["platform"], path, row["file_sha256"], locator) if portable else
                    (row["component"], row["platform"], row["layer"], row["diff_id"], row["entry"], locator))
             require(key not in entries)
+            if portable:
+                # Every reviewed member of one container shares its ownership proof.
+                binding = tuple(row[field] for field in CONTAINER_FIELDS)
+                require(containers.setdefault(key[:3], binding) == binding)
             go_strings = (derived_payload.validate(row, package, portable=portable,
                                                    packages=packages if native_arch and not producer else None) if derived else None)
             if "npm_help_template" in row:
@@ -272,7 +288,7 @@ class PackageEvidence:
                 require(not key_views.keys() & validated.keys())
                 key_views.update(validated)
             if "nested_certificate" in row:
-                entries[key] = (row, validate_nested_certificate(row, package))
+                entries[key] = (row, validate_nested_certificate(row, package, portable=portable))
                 continue
             if "debian_control" in row:
                 entries[key] = (row, debian_control.validate(row, package, portable=portable))
@@ -326,11 +342,15 @@ class PackageEvidence:
             require(key_views.keys() == {match["candidate_sha256"] for match in verified.values()
                                          if match["explanation"] == KEY_MARKER_VIEW_ADVISORY})
             entries[key] = (dict(row, path=path), verified)
+        # A container with reviewed members has only proofs the nested reader rechecks.
+        nested_containers = {key[:3] for key in entries if portable and key[3] is not None}
+        require(all(row.keys() - entry_fields <= {"reviewed_literals"} for key, (row, _) in entries.items()
+                    if key[:3] in nested_containers and key[3] is None))
         arch = arch_trust_evidence.load_catalog(raw["arch_trust"], packages) if "arch_trust" in raw else None
         trust = arch_trust_evidence.load_portable(raw["trust_store"], packages) if "trust_store" in raw else None
         if trust is not None:
             # A trust-store path is never also a package row, so one physical entry has one decision.
             reviewed = set(trust["files"]) | {trust["alias"]["path"] if trust["alias"] else None}
-            require(not reviewed.intersection(path for _, path, _ in entries))
+            require(not reviewed.intersection(key[1] for key in entries))
         return cls(manifest_sha256, review_sha256, scanner_manifest_sha256, packages,
                    {} if portable else entries, arch, entries if portable else None, portable_component, trust)
