@@ -102,7 +102,8 @@ def stack_pair(data, segments, reference, address, length):
         return False
     loaded = rip_load(body[:7], virtual)
     pointer, count = body[7:12], body[12:]
-    if (loaded is None or loaded[1] != address or pointer[0] not in (0x48, 0x4C) or pointer[1] != 0x89
+    if (loaded is None or loaded[0] == 4 or loaded[1] != address
+            or pointer[0] not in (0x48, 0x4C) or pointer[1] != 0x89
             or pointer[2] & 0xC7 != 0x44 or pointer[3] != 0x24 or count[:4] != b"\x48\xc7\x44\x24"):
         return False
     register = (pointer[2] >> 3 & 7) + (8 if pointer[0] == 0x4C else 0)

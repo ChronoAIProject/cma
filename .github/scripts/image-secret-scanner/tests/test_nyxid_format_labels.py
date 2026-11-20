@@ -16,11 +16,13 @@ CALLS = (0x320, 0x350)
 SLOT = 0x4C0
 
 
-def executable(*, wrong_import=False, wrong_length=False, clobber=False):
+def executable(*, wrong_import=False, wrong_length=False, clobber=False, extra_relocation=None):
     data = bytearray(0x680)
     data[:7] = b"\x7fELF\x02\x01\x01"
     struct.pack_into("<HHIQQQIHHHHHH", data, 16, 3, 62, 1, BASE + CALLS[0], 64, 0, 0, 64, 56, 4, 0, 0, 0)
-    segments = [(1, 4, 0, 0x300), (1, 5, 0x300, 0x100), (1, 6, 0x400, 0x280), (2, 6, 0x500, 128)]
+    plt = extra_relocation is not None and extra_relocation[2]
+    segments = [(1, 4, 0, 0x300), (1, 5, 0x300, 0x100), (1, 6, 0x400, 0x280),
+                (2, 6, 0x500, 176 if plt else 128)]
     for i, (kind, flags, off, size) in enumerate(segments):
         struct.pack_into("<IIQQQQQQ", data, 64 + 56 * i, kind, flags, off, BASE + off, BASE + off, size, size, 1)
     for label, start, call in zip(LABELS, LABEL_POSITIONS, CALLS):
@@ -34,9 +36,17 @@ def executable(*, wrong_import=False, wrong_length=False, clobber=False):
     data[0x490:0x492 + len(symbol)] = b"\0" + symbol + b"\0"
     struct.pack_into("<QQq", data, 0x420, BASE + SLOT, 1 << 32 | 6, 0)
     struct.pack_into("<IBBHQQ", data, 0x450 + 24, 1, 0x12, 0, 0, 0, 0)
-    dynamic = ((5, BASE + 0x490), (6, BASE + 0x450), (7, BASE + 0x420), (8, 24),
-               (9, 24), (10, len(symbol) + 2), (11, 24), (0, 0))
-    for i, (key, value) in enumerate(dynamic):
+    size = 24
+    if extra_relocation is not None:
+        displacement, kind, _ = extra_relocation
+        struct.pack_into("<QQq", data, 0x438, BASE + SLOT + displacement, kind, 0)
+        if not plt:
+            size += 24
+    dynamic = [(5, BASE + 0x490), (6, BASE + 0x450), (7, BASE + 0x420), (8, size),
+               (9, 24), (10, len(symbol) + 2), (11, 24)]
+    if plt:
+        dynamic.extend(((2, 24), (20, 7), (23, BASE + 0x438)))
+    for i, (key, value) in enumerate([*dynamic, (0, 0)]):
         struct.pack_into("<qQ", data, 0x500 + 16 * i, key, value)
     return bytes(data)
 
@@ -95,3 +105,18 @@ class NyxidFormatLabelsTests(unittest.TestCase):
                 result = self.publish(archive, packet, f"refused-{option}", blocks=True)
                 self.assertEqual(result["package_evidence"]["entries"], [])
                 self.assertEqual(result["blocking_findings"], raw["blocking_findings"])
+
+    def test_relocation_writes_must_leave_the_import_slot_unambiguous(self):
+        controls = (("left", -4, 8, False), ("right", 4, 7, True), ("unknown", 8, 9, True))
+        for name, displacement, kind, plt in controls:
+            with self.subTest(relocation=name):
+                archive, packet, raw, _ = self.evidence(name, extra_relocation=(displacement, kind, plt))
+                result = self.publish(archive, packet, f"rejected-{name}", blocks=True)
+                self.assertEqual(result["blocking_findings"], raw["blocking_findings"])
+                self.assertEqual(result["package_evidence"]["entries"], [])
+
+        archive, packet, raw, finding = self.evidence("disjoint", extra_relocation=(8, 7, True))
+        siblings = [row for row in raw["blocking_findings"] if row["finding_id"] != finding["finding_id"]]
+        result = self.publish(archive, packet, "accepted-disjoint", blocks=bool(siblings))
+        self.assertEqual(result["blocking_findings"], siblings)
+        self.assertEqual(len(result["package_evidence"]["entries"]), 1)

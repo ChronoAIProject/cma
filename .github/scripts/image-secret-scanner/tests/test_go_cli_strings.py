@@ -18,7 +18,7 @@ INSTRUCTION = 0x320
 HEADER = 0x440
 
 
-def elf(*, wrong_length=False, extra=b"", stack=False, extra_mapping=None):
+def elf(*, wrong_length=False, extra=b"", stack=False, stack_register=0, extra_mapping=None):
     data = bytearray(0x580)
     data[:7] = b"\x7fELF\x02\x01\x01"
     struct.pack_into("<HHIQQQIHHHHHH", data, 16, 2, 62, 1, 0x400320, 64, 0, 0,
@@ -32,9 +32,10 @@ def elf(*, wrong_length=False, extra=b"", stack=False, extra_mapping=None):
     data[LITERAL:LITERAL + len(FIRST + SECOND)] = FIRST + SECOND
     data[0x220:0x220 + len(extra)] = extra
     operand = LITERAL + len(FIRST) - (INSTRUCTION + 7)
-    data[INSTRUCTION:INSTRUCTION + 7] = b"\x48\x8d\x05" + struct.pack("<i", operand)
+    data[INSTRUCTION:INSTRUCTION + 7] = b"\x48\x8d" + bytes((0x05 + 8 * stack_register,)) + struct.pack("<i", operand)
     size = struct.pack("<I", len(SECOND) - int(wrong_length))
-    suffix = b"\x48\x89\x44\x24\x18\x48\xc7\x44\x24\x20" if stack else b"\xbb"
+    suffix = (b"\x48\x89" + bytes((0x44 + 8 * stack_register,)) + b"\x24\x18\x48\xc7\x44\x24\x20"
+              if stack else b"\xbb")
     data[INSTRUCTION + 7:INSTRUCTION + 11 + len(suffix)] = suffix + size
     struct.pack_into("<QQ", data, HEADER, ADDRESS + LITERAL, len(FIRST))
     return bytes(data)
@@ -50,8 +51,9 @@ class GoCliStringsTests(unittest.TestCase):
     binding = derived.DerivedPayloadTests.binding
     publish = derived.DerivedPayloadTests.publish
 
-    def evidence(self, name, *, wrong_length=False, extra=b"", stack=False, extra_mapping=None):
-        data = elf(wrong_length=wrong_length, extra=extra, stack=stack, extra_mapping=extra_mapping)
+    def evidence(self, name, *, wrong_length=False, extra=b"", stack=False, stack_register=0, extra_mapping=None):
+        data = elf(wrong_length=wrong_length, extra=extra, stack=stack,
+                   stack_register=stack_register, extra_mapping=extra_mapping)
         source = ("cli-fixture/go.sum", b"fixture source input")
         archive, manifest, raw, _ = self.fixture(name, go_cli_strings.PATH, source, data)
         manifest["packages"][0].update(name="github-cli", authority_type="pinned-upstream")
@@ -100,6 +102,12 @@ class GoCliStringsTests(unittest.TestCase):
         result = self.publish(archive, manifest, "accepted-stack")
         self.assertEqual(result["findings"], raw["findings"])
         self.assertEqual(len(result["package_evidence"]["entries"]), 1)
+
+    def test_stack_pointer_cannot_hold_the_literal_address(self):
+        archive, manifest, raw, _ = self.evidence("rsp", stack=True, stack_register=4)
+        result = self.publish(archive, manifest, "refused-rsp", blocks=True)
+        self.assertEqual(result["package_evidence"]["entries"], [])
+        self.assertEqual(result["blocking_findings"], raw["blocking_findings"])
 
     def test_file_and_virtual_aliases_refuse_receipt_construction(self):
         overlaps = {

@@ -10,6 +10,7 @@ PLT = frozenset({2, 20, 23})
 OTHER_RELOCATIONS = frozenset({17, 18, 19, 35, 36, 37})
 RELATIVE_COUNT = 0x6FFFFFF9  # DT_RELACOUNT
 READABLE = (4, 6)
+EIGHT_BYTE_RELOCATIONS = frozenset({6, 7, 8})  # GLOB_DAT, JUMP_SLOT, RELATIVE
 
 
 def dynamic_tables(data, segments):
@@ -53,10 +54,13 @@ def has_import(data, segments, slot, symbol_name):
             return False
         for i in range(relocation, relocation + size, 24):
             offset, info, addend = struct.unpack_from("<QQq", data, i)
-            if offset == slot:
-                if i < relocation + 24 * relative:
+            kind = info & 0xFFFFFFFF
+            if kind not in EIGHT_BYTE_RELOCATIONS or offset + 8 > 2**64:
+                return False
+            if max(offset, slot) < min(offset + 8, slot + 8):
+                if offset != slot or i < relocation + 24 * relative:
                     return False
-                selected.append((info >> 32, info & 0xFFFFFFFF, addend))
+                selected.append((info >> 32, kind, addend))
                 if len(selected) > 1:
                     return False
     if len(selected) != 1:
