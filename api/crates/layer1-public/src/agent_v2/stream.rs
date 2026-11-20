@@ -246,6 +246,7 @@ impl Following {
                 .await
                 .is_err()
             {
+                self.release_failed = true;
                 return false;
             }
             if !self.live_batch_needs_validation && self.observation.is_none() {

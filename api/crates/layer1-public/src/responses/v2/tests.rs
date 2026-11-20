@@ -160,8 +160,13 @@ async fn fixture_mode(
     paged_events: bool,
     shared: bool,
 ) -> Fixture {
-    fixture_with_events_and_standing(reader, paged_events, shared,
-        Arc::new(layer2_core::account_deletion::AvailableAccounts)).await
+    fixture_with_events_and_standing(
+        reader,
+        paged_events,
+        shared,
+        Arc::new(layer2_core::account_deletion::AvailableAccounts),
+    )
+    .await
 }
 pub(crate) async fn fixture_with_standing(
     standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,

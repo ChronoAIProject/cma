@@ -21,7 +21,18 @@ pub(super) struct PublicRequest<'a> {
 
 #[async_trait::async_trait]
 pub(super) trait PublicAuthorization: Send + Sync {
-    async fn authorize(&self, request: PublicRequest<'_>) -> Result<(), StatusCode>;
+    async fn authorize(&self, request: PublicRequest<'_>) -> Result<(), PublicRefusal>;
+}
+
+#[derive(Debug)]
+pub(super) enum PublicRefusal {
+    Status(StatusCode),
+    AccountDeletionInProgress,
+}
+impl From<StatusCode> for PublicRefusal {
+    fn from(status: StatusCode) -> Self {
+        Self::Status(status)
+    }
 }
 
 pub(crate) struct PublicAccess {
@@ -48,7 +59,7 @@ impl PublicAccess {
 
 #[async_trait::async_trait]
 impl PublicAuthorization for PublicAccess {
-    async fn authorize(&self, request: PublicRequest<'_>) -> Result<(), StatusCode> {
+    async fn authorize(&self, request: PublicRequest<'_>) -> Result<(), PublicRefusal> {
         let PublicRequest {
             id,
             method,
@@ -97,7 +108,7 @@ impl PublicAuthorization for PublicAccess {
                         layer2_core::sandbox::agent_attachments::AttachmentError::Access(error) => {
                             access_error(error)
                         }
-                        _ => StatusCode::SERVICE_UNAVAILABLE,
+                        _ => StatusCode::SERVICE_UNAVAILABLE.into(),
                     })?;
             }
             Operation::Files(capability, mutation) => {
@@ -115,11 +126,11 @@ impl PublicAuthorization for PublicAccess {
                         layer2_core::sandbox::agent_filesystem::AgentFileError::Access(error) => {
                             access_error(error)
                         }
-                        _ => StatusCode::SERVICE_UNAVAILABLE,
+                        _ => StatusCode::SERVICE_UNAVAILABLE.into(),
                     })?;
             }
         }
-        caller.current().await
+        caller.current().await.map_err(Into::into)
     }
 }
 
@@ -172,11 +183,13 @@ fn operation(method: &Method, uri: &Uri) -> Result<Operation, StatusCode> {
     })
 }
 
-fn access_error(error: layer2_core::resource_access::ResourceAccessError) -> StatusCode {
+fn access_error(error: layer2_core::resource_access::ResourceAccessError) -> PublicRefusal {
     use layer2_core::resource_access::{
         AccessError, MembershipError, ResourceAccessError::*, ResourceAccessStoreError,
     };
-    match error {
+    let status = match error {
+        AccountDeletionInProgress => return PublicRefusal::AccountDeletionInProgress,
+        Store(ResourceAccessStoreError::ShareRecipientUnavailable) => StatusCode::NOT_FOUND,
         Access(AccessError::NotFound) | Store(ResourceAccessStoreError::NotFound) => {
             StatusCode::NOT_FOUND
         }
@@ -196,11 +209,25 @@ fn access_error(error: layer2_core::resource_access::ResourceAccessError) -> Sta
         | Store(ResourceAccessStoreError::Unavailable | ResourceAccessStoreError::Corrupt) => {
             StatusCode::SERVICE_UNAVAILABLE
         }
-    }
+    };
+    status.into()
 }
 
-pub(super) fn refusal(status: StatusCode) -> axum::response::Response {
+pub(super) fn refusal(error: PublicRefusal) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let status = match error {
+        PublicRefusal::Status(status) => status,
+        PublicRefusal::AccountDeletionInProgress => {
+            let mut response = layer1_public::rest::account_deletion_problem(
+                layer2_core::account_deletion::AccountDeletionError::InProgress,
+            );
+            response.headers_mut().insert(
+                axum::http::header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static("private, no-store"),
+            );
+            return response;
+        }
+    };
     let code = match status {
         StatusCode::UNAUTHORIZED => "authentication_required",
         StatusCode::FORBIDDEN => "resource_forbidden",
@@ -217,18 +244,24 @@ pub(super) fn refusal(status: StatusCode) -> axum::response::Response {
             "status":status.as_u16(), "code":code, "detail":"Current authority does not permit routing this Agent operation."}))).into_response()
 }
 
-fn read_error(error: layer2_core::sandbox::AgentReadError) -> StatusCode {
+fn read_error(error: layer2_core::sandbox::AgentReadError) -> PublicRefusal {
     use layer2_core::sandbox::AgentReadError;
-    match error {
+    let status = match error {
+        AgentReadError::Access(
+            layer2_core::resource_access::ResourceAccessError::AccountDeletionInProgress,
+        ) => return PublicRefusal::AccountDeletionInProgress,
         AgentReadError::NotFound => StatusCode::NOT_FOUND,
         AgentReadError::Forbidden => StatusCode::FORBIDDEN,
         _ => StatusCode::SERVICE_UNAVAILABLE,
-    }
+    };
+    status.into()
 }
 
 #[cfg(test)]
 mod custody_tests;
 #[cfg(test)]
 pub(crate) mod fixture;
+#[cfg(test)]
+mod standing_tests;
 #[cfg(test)]
 mod tests;

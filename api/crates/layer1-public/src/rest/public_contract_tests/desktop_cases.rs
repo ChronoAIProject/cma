@@ -36,7 +36,11 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
 }
 
 async fn fixture(name: &str) -> Fixture {
-    fixture_with_standing(name, Arc::new(layer2_core::account_deletion::AvailableAccounts)).await
+    fixture_with_standing(
+        name,
+        Arc::new(layer2_core::account_deletion::AvailableAccounts),
+    )
+    .await
 }
 async fn fixture_with_standing(
     name: &str,
@@ -83,7 +87,11 @@ async fn fixture_with_standing(
     };
     let ownership = Arc::new(ownership::Ownership::new(subject.unwrap_or("anonymous")));
     let service = DesktopService::new(
-        fixture.state.reads.with_resource_access(access).with_sessions(ownership.clone()),
+        fixture
+            .state
+            .reads
+            .with_resource_access(access)
+            .with_sessions(ownership.clone()),
         Arc::new(layer3_adapter::codex::CodexAdapter::with_backend(
             backend::DesktopBackend {
                 unavailable: name == "desktop_runtime_unavailable",
@@ -232,7 +240,9 @@ async fn desktop_websocket_disconnects_at_next_standing_recheck() {
     use crate::rest::shared_stream_tests::ChangingStanding;
     for deleting in ["owner-a", "unrelated", "outage"] {
         let standing = Arc::new(ChangingStanding::default());
-        let scenario = fixture_with_standing("desktop_ready", standing.clone()).await.scenario;
+        let scenario = fixture_with_standing("desktop_ready", standing.clone())
+            .await
+            .scenario;
         let router = scenario
             .router
             .layer(Extension(AuthenticatedSubject(SubjectId::new("owner-a"))))

@@ -19,6 +19,7 @@ mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
 mod account_deletion;
 mod admission_log;
+mod auth_mode;
 mod debug;
 mod global_admission;
 mod provider_tool_relay;
@@ -404,13 +405,6 @@ impl Config {
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
             document_storage,
         })
-    }
-
-    pub fn auth_mode_name(&self) -> &'static str {
-        match self.auth_mode {
-            AuthMode::Provider { .. } => "provider",
-            AuthMode::Trusted { .. } => "trusted",
-        }
     }
 }
 

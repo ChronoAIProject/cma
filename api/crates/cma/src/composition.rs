@@ -1,8 +1,8 @@
 //! Production control-plane service and router assembly.
 use std::sync::Arc;
 mod access;
-pub(crate) mod activity;
 mod account_deletion;
+pub(crate) mod activity;
 mod adapter;
 mod agent_manager;
 mod bindings;
@@ -31,7 +31,7 @@ use crate::{
         SandboxLifecycleComposition, SandboxLifecycleDependencies,
     },
     store::{DefaultProfileSpec, MongoStores},
-    trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
+    trigger::{TriggerComposition, TriggerCompositionDependencies},
 };
 use axum::Router;
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
@@ -50,8 +50,7 @@ impl ControlPlaneComposition {
         let documents::DocumentComposition {
             service: documents,
             maintenance: document_blob_maintenance,
-        } = documents::compose(config, &stores)?;
-        let documents = documents.with_account_standing(standing.clone());
+        } = documents::compose(config, &stores, standing.clone())?;
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
@@ -82,16 +81,7 @@ impl ControlPlaneComposition {
             credentials::authentication(config, &stores, &users, &activity, settings.clone())?
                 .with_account_standing(standing.clone())
                 .with_account_deletion_enabled(config.account_deletion_enabled);
-        let broker = Arc::new(
-            CmaServiceConnectionBroker::from_auth_config_with_callback(
-                &config.auth_mode,
-                config.nyxid_public_url.as_deref(),
-                Some(config.public_url.as_str()),
-                Arc::clone(&auth),
-            )
-            .map_err(|error| format!("service connection broker is not usable: {error}"))?
-            .with_subscriptions(subscriptions.clone()),
-        );
+        let broker = credentials::connection_broker(config, auth.clone(), subscriptions.clone())?;
         let connection_prerequisite = crate::connections::ConnectionPrerequisite::new(
             auth.clone(),
             broker.clone(),

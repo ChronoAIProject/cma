@@ -45,7 +45,7 @@ pub(super) async fn read(
                         .into_response()
                 }
             };
-            let api_commands = resource.as_ref().is_some_and(|r| {
+            let api_commands = !erasing && resource.as_ref().is_some_and(|r| {
                 r.credential.as_ref().is_some_and(|credential| {
                     use layer2_core::resource_access::CredentialSource;
                     // 中间件已核验这个凭据；只有普通 Key 可以没有过期时间。
