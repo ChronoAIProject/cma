@@ -17,7 +17,8 @@ class PortableOccurrences:
         self.inputs = set()
         self.status = {}
         self.masked_status = set()
-        self.arch = (ArchOwnership((row for row, _ in entries.values()), packages)
+        # Omarchy also carries CMA's pinned producers; only signed rows use pacman.
+        self.arch = (ArchOwnership((row for row, _ in entries.values() if not self.producer(row)), packages)
                      if component == "runtime-omarchy" else None)
         for (platform, path, sha256), record in entries.items():
             row, _ = record
@@ -71,7 +72,7 @@ class PortableOccurrences:
             if len(coordinates) != row["occurrences"]:
                 continue
             for coordinate in coordinates:
-                if self.arch is not None:
+                if self.arch is not None and not self.producer(row):
                     arch_candidates[coordinate[:2]].append((coordinate, row, self.packages[row["package_sha256"]]))
                     continue
                 owner = self.owner(row, coordinate, installed, source_checks)
@@ -83,6 +84,9 @@ class PortableOccurrences:
                 row, reviews = self.entries[platform, path, sha256]
                 result[coordinate] = (row, reviews, owner)
         return result
+
+    def producer(self, row):
+        return self.packages[row["package_sha256"]]["authority_type"] == "pinned-upstream"
 
     def owner(self, row, coordinate, installed, source_checks):
         package = self.packages[row["package_sha256"]]
