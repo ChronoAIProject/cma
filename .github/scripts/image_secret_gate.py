@@ -262,15 +262,15 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
     require(report.get("counts") == counts and all(type(value) is int for value in report["counts"].values()))
 
 
-def _verified_scan(archive, output, run_command, *, blocking_rules, component):
+def _verified_scan(archive, output, run_command, *, blocking_rules, component, source=None):
     try:
-        return _scan_archive(archive, output, run_command, blocking_rules=blocking_rules, component=component)
+        return _scan_archive(archive, output, run_command, blocking_rules=blocking_rules, component=component, source=source)
     except ScanRefusal as error:
         error.evidence = failure_evidence(output / "REPORT.json", error.outcome)
         raise
 
 
-def _scan_archive(archive, output, run_command, *, blocking_rules, component):
+def _scan_archive(archive, output, run_command, *, blocking_rules, component, source=None):
     require(blocking_rules in ("all", "credential"), "Unapproved image scan mode; publication stopped")
     require(not output.exists(), "Image secret scan output must be new; publication stopped")
     original = checksum(archive)
@@ -325,7 +325,7 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
     package_report = None
     if evidence is not None:
         try:
-            package_report = resolve_package_scan(archive, output, component, evidence, bundle)
+            package_report = resolve_package_scan(archive, output, component, evidence, bundle, source=source)
         except Exception as cause:
             raise ScanRefusal("Package evidence refused; publication stopped", "content_refused") from cause
     try:
@@ -348,7 +348,7 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component):
     return original, (report["scanner_version"], bundle)
 
 
-def resolve_package_scan(archive, output, component, evidence, bundle):
+def resolve_package_scan(archive, output, component, evidence, bundle, *, source=None):
     root = Path(__file__).resolve().parents[2]
     require(load_content_policy(root) is not None, "Package report validator has no pinned review")
     sys.path.insert(0, str(SCANNER.parent))
@@ -364,7 +364,7 @@ def resolve_package_scan(archive, output, component, evidence, bundle):
     raw, manifest, review = evidence
     policy = PackageEvidence.load(raw, manifest_sha256=manifest, review_sha256=review,
                                   scanner_manifest_sha256=bundle)
-    section = package_receipt.build(archive, output, report, component, policy)
+    section = package_receipt.build(archive, output, report, component, policy, source=source)
     assess(report, "credential", verified_package_decisions=package_receipt.decisions(section))
     report["package_evidence"] = section
     report["policy"]["package_evidence_sha256"] = package_receipt.digest(section)
@@ -378,8 +378,8 @@ def scan_archive(archive, output, run_command=run_scan, *, blocking_rules="all",
     return digest
 
 
-def verified_staging_scan(archive, output, run_command=run_scan, *, component):
-    return _verified_scan(archive, output, run_command, blocking_rules="credential", component=component)
+def verified_staging_scan(archive, output, run_command=run_scan, *, component, source=None):
+    return _verified_scan(archive, output, run_command, blocking_rules="credential", component=component, source=source)
 
 
 def scan_staging_archive(archive, output, run_command=run_scan):

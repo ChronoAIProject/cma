@@ -10,7 +10,16 @@ import zlib
 from .common import digest_bytes
 from .gate import EXECUTABLE_TEST_ADVISORY, SELF_TEST_ADVISORY, SELF_TEST_RULES, valid_digest
 from .key_material import LIMIT, binary_key_spans, decode, frame
-from .package_evidence import IDENTIFIER, LAYER_ID, fields, matches, normalized, ordinal, require
+from .package_evidence import (
+    IDENTIFIER,
+    LAYER_ID,
+    fields,
+    image_binding,
+    matches,
+    normalized,
+    ordinal,
+    require,
+)
 from .policy import PRIVATE
 
 MAX_LIBRARY_BYTES = 16 * 1024 * 1024
@@ -42,40 +51,41 @@ def classification(proof):
     return EXECUTABLE_TEST_ADVISORY if "executable" in proof else SELF_TEST_ADVISORY
 
 
-def validate_executable(row, proof):
-    fields(proof, {"archive_sha256", "image_config", "image_manifest", "finding_ids"})
-    require(matches(EXECUTABLE, row["path"]) and valid_digest(proof["archive_sha256"])
-            and matches(LAYER_ID, proof["image_config"])
-            and (proof["image_manifest"] is None or matches(LAYER_ID, proof["image_manifest"])))
+def validate_executable(row, proof, *, portable):
+    image_binding(proof, set(), portable=portable, finding_fields={"finding_ids"})
+    require(matches(EXECUTABLE, row["path"]))
+    if portable:
+        return
     identities = proof["finding_ids"]
     require(isinstance(identities, list) and bool(identities)
             and all(valid_digest(value) for value in identities) and len(set(identities)) == len(identities))
 
 
-def validate_database(row, package, db):
-    fields(db, {"path", "sha256", "layer", "diff_id", "entry", "proof_sha256", "member_checksum"})
+def validate_database(row, package, db, *, portable=False):
+    identity = {"path", "sha256", "proof_sha256", "member_checksum"}
+    fields(db, identity if portable else identity | {"layer", "diff_id", "entry"})
     require(normalized(db["path"]) in database_paths(package)
             and valid_digest(db["sha256"]) and valid_digest(db["proof_sha256"])
-            and matches(LAYER_ID, db["diff_id"]) and ordinal(db["entry"])
-            and ordinal(db["layer"]) and db["layer"] <= row["layer"])
+            and (portable or matches(LAYER_ID, db["diff_id"]) and ordinal(db["entry"])
+                 and ordinal(db["layer"]) and db["layer"] <= row["layer"]))
     if db["path"].endswith(".md5sums"):
         require(matches(re.compile(r"[a-f0-9]{32}"), db["member_checksum"]))
     else:
         require(db["member_checksum"] == row["file_sha256"])
 
 
-def validate(row, package):
+def validate(row, package, *, portable=False):
     proof = row["self_test"]
     schema = {"database", "upstream", "vectors"}
     require(isinstance(proof, dict) and row["member"] is None)
     executable = "executable" in proof
     if executable:
         fields(proof, schema | {"executable"})
-        validate_executable(row, proof["executable"])
+        validate_executable(row, proof["executable"], portable=portable)
     else:
         fields(proof, schema)
         require(matches(LIBRARY, row["path"]))
-    validate_database(row, package, proof["database"])
+    validate_database(row, package, proof["database"], portable=portable)
     upstream = proof["upstream"]
     fields(upstream, {"name", "version", "archive_sha256", "authority_sha256"})
     require(all(matches(IDENTIFIER, upstream[key]) for key in ("name", "version"))

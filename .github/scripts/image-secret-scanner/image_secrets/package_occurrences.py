@@ -176,7 +176,8 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payloads, d
                      "key_marker_view", "native_json_key_view"}.intersection(expected)
                         or "executable" in expected.get("self_test", {})):
                     return read_payload_candidate(stream, member, path, workspace, *reviewed_payload)
-            vectors = reviewed_payload if member.size <= library_vectors.MAX_LIBRARY_BYTES else None
+            vectors = (reviewed_payload if reviewed_payload is not None and "self_test" in reviewed_payload[0]
+                       and member.size <= library_vectors.MAX_LIBRARY_BYTES else None)
             databases = databases if member.size <= library_vectors.MAX_DATABASE_BYTES else ()
             if vectors is None and not databases:
                 return (path, stream_digest(stream, member.size), {}), {}, set()
@@ -194,7 +195,7 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payloads, d
             for member_path, db in databases:
                 if path == db["path"] and checksum == db["sha256"] and library_vectors.database_contains(
                         data, member_path, db["member_checksum"], debian=path.endswith(".md5sums")):
-                    verified_databases.add((db["diff_id"], path, checksum, member_path, db["member_checksum"]))
+                    verified_databases.add((db.get("diff_id"), path, checksum, member_path, db["member_checksum"]))
             return (path, checksum, {}), verified, verified_databases
         budget.reserve(member.size)
         require(member.size <= MAX_NESTED_MEMBER_BYTES)
@@ -325,9 +326,11 @@ def read_arch_trust_entry(layer, entry, expected, workspace, budget):
 
 
 def layer_occurrences(archive, name, diff_id, requested, workspace, budget, reviewed_payloads, databases,
-                      arch_entries, *, namespace=None, layer_index=None):
+                      arch_entries, *, namespace=None, layer_index=None, portable=None, platform_id=None,
+                      image_index=None):
     physical = archive.layer(name, diff_id)
     result = {}
+    portable_paths = defaultdict(list)
     try:
         with tarfile.open(physical, "r:") as layer:
             for index, member in enumerate(layer):
@@ -337,7 +340,16 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget, revi
                     # detector observation can supply a missing link or override a whiteout.
                     location = {"path": archive_path(member.name, posix_tar=True), "layer": layer_index}
                     namespace.observe(member, location, None, None)
-                if index in requested:
+                selected = (portable.select(platform_id, layer, member, budget, stream_digest,
+                                            (image_index, layer_index, index)) if portable else None)
+                if selected is not None:
+                    path, candidate, package_databases = selected
+                    portable_paths[path].append(index)
+                    payload = {None: candidate} if candidate is not None else {}
+                    found = read_entry(layer, member, {None}, workspace, budget, payload, package_databases)
+                    if found is not None:
+                        result[index] = found
+                elif index in requested:
                     if index in arch_entries:
                         found = read_arch_trust_entry(layer, member, arch_entries[index], workspace, budget)
                     else:
@@ -348,7 +360,8 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget, revi
             verify_trailer(layer, budget.max_bytes)
     finally:
         physical.unlink()
-    return result
+    ambiguous = {index for indices in portable_paths.values() if len(indices) > 1 for index in indices}
+    return {index: proof for index, proof in result.items() if index not in ambiguous}
 
 
 def requested_occurrences(report, component, evidence):
@@ -391,7 +404,8 @@ def requested_occurrences(report, component, evidence):
     return by_layer, coordinates, reviewed_payloads, databases, arch_entries
 
 
-def collect(path, workspace, report, component, evidence, *, vector_checks=None, database_checks=None):
+def collect(path, workspace, report, component, evidence, *, vector_checks=None, database_checks=None,
+            portable=None):
     wanted, coordinates, reviewed_payloads, databases, arch_entries = requested_occurrences(report, component, evidence)
     budget = Budget(IDENTITY_BUDGET, 1_000_000)
     found = {}
@@ -421,10 +435,11 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
                 require(coordinates.get((i, j)) == diff_id)
                 layer = (platform_id, j, diff_id)
                 request = wanted.get(layer, {})
-                if request or namespace is not None:
+                if request or namespace is not None or portable is not None:
                     entries = layer_occurrences(archive, name, diff_id, request, workspace, budget,
                                                 reviewed_payloads.get(layer, {}), databases.get(layer, {}),
-                                                arch_entries.get(layer, {}), namespace=namespace, layer_index=j)
+                                                arch_entries.get(layer, {}), namespace=namespace, layer_index=j,
+                                                portable=portable, platform_id=platform_id, image_index=i)
                     for index, (occurrence, verified, verified_databases) in entries.items():
                         coordinate = (i, j, index)
                         found[coordinate] = (platform_id, config, manifest, diff_id, occurrence)

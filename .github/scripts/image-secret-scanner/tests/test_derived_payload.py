@@ -129,7 +129,7 @@ class DerivedPayloadTests(unittest.TestCase):
         self.binding(row, report, finding, "repacked-wheel", wheel)["record_sha256"] = record
         return archive, manifest, report
 
-    def publish(self, archive, manifest, name, *, blocks=False, options=()):
+    def publish(self, archive, manifest, name, *, blocks=False, options=(), source=None):
         with patch.object(sys, "path", [str(SCRIPTS), *sys.path]):
             import image_secret_gate as gate
 
@@ -139,10 +139,10 @@ class DerivedPayloadTests(unittest.TestCase):
             with (patch.object(gate, "load_package_evidence", return_value=(raw, digest_bytes(raw), packages.REVIEW)),
                   patch.object(gate, "scanner_options", return_value=list(options))):
                 if not blocks:
-                    gate.verified_staging_scan(archive, output, component=component)
+                    gate.verified_staging_scan(archive, output, component=component, source=source)
                     return json.loads((output / "REPORT.json").read_bytes())
                 with self.assertRaises(gate.ScanRefusal) as refusal:
-                    gate.verified_staging_scan(archive, output, component=component)
+                    gate.verified_staging_scan(archive, output, component=component, source=source)
                 self.assertEqual(refusal.exception.outcome, "scanner_findings")
                 return refusal.exception.package_report
 

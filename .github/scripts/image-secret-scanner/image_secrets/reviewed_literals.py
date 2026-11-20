@@ -20,7 +20,7 @@ from .gate import (
 from .key_material import binary_key_spans
 from .mime_markers import marker_ranges
 from .openpgp import PRIVATE_ARMOR, secret_key_packets, secret_key_stream
-from .package_evidence import LAYER_ID, fields, matches, normalized, ordinal, require
+from .package_evidence import fields, image_binding, normalized, ordinal, require
 from .policy import PRIVATE
 
 MAX_BYTES = 512 * 1024 * 1024
@@ -43,18 +43,16 @@ def classification(rule):
     return URL_EXAMPLE_ADVISORY if rule == URL_EXAMPLE_RULE else FORMAT_MARKER_ADVISORY
 
 
-def validate(row):
+def validate(row, *, portable=False):
     proof = row["reviewed_literals"]
-    fields(proof, {"archive_sha256", "image_config", "image_manifest", "findings"})
-    require(valid_digest(proof["archive_sha256"]) and matches(LAYER_ID, proof["image_config"])
-            and (proof["image_manifest"] is None or matches(LAYER_ID, proof["image_manifest"])))
+    image_binding(proof, {"findings"}, portable=portable)
     entries = proof["findings"]
     require(isinstance(entries, list) and 0 < len(entries) <= len(RULES))
     by_rule = {}
     for entry in entries:
-        fields(entry, {"rule", "finding_id", "spans"})
+        fields(entry, {"rule", "spans"} if portable else {"rule", "finding_id", "spans"})
         rule = entry["rule"]
-        require(rule in RULES and rule not in by_rule and valid_digest(entry["finding_id"]))
+        require(rule in RULES and rule not in by_rule and (portable or valid_digest(entry["finding_id"])))
         spans = entry["spans"]
         require(isinstance(spans, list) and 0 < len(spans) <= 128)
         previous = (-1, 0)

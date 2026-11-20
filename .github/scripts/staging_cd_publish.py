@@ -64,7 +64,7 @@ def retain_package_evidence(report, directory, source, image_digest):
         stream.write(canonical(payload) + "\n")
 
 
-def publish(archive, identity, directory, registry, credential, actor, *, scanner=verified_staging_scan,
+def publish(archive, identity, directory, registry, credential, actor, *, scanner=None,
             runner=command, qualified=False, smoke=qualify_runtime, source=None, diagnostics=None, timings=None,
             reservation_check, scan_evidence=None):
     require(reservation_check() is True, "Publication reservation is not current")
@@ -85,7 +85,11 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     diagnostics.mark("scan")
     with timings.stage("scan"):
         try:
-            scanned, scanner_identity = scanner(archive, report_dir, component=identity["component"])
+            if scanner is None:
+                scanned, scanner_identity = verified_staging_scan(
+                    archive, report_dir, component=identity["component"], source=source)
+            else:
+                scanned, scanner_identity = scanner(archive, report_dir, component=identity["component"])
         except ScanRefusal as error:
             if error.package_report is not None:
                 retain_package_evidence(error.package_report, scan_evidence, identity["source"], digest)

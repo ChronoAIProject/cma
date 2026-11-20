@@ -28,6 +28,9 @@ PACKAGE_FIELDS = frozenset({"name", "version", "architecture", "artifact_sha256"
 MATCH_FIELDS = frozenset({"rule", "candidate_sha256", "line", "explanation", "proof_sha256"})
 ENTRY_FIELDS = frozenset({"component", "platform", "layer", "diff_id", "entry", "path",
                          "file_sha256", "package_sha256", "package_member", "member", "matches"})
+PORTABLE_SCHEMA = "cma-staging-runtime-package-evidence-v2"
+PORTABLE_ENTRY_FIELDS = ENTRY_FIELDS - {"layer", "diff_id", "entry"} | {"occurrences", "ownership"}
+IMAGE_FIELDS = frozenset({"archive_sha256", "image_config", "image_manifest"})
 MAX_EVIDENCE_BYTES = 16 * 1024 * 1024
 IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+:~_-]{0,199}")
 PLATFORM = re.compile(r"[a-z0-9]+/[a-z0-9_]+(?:/[a-z0-9]+)?")
@@ -57,6 +60,15 @@ def normalized(path):
 
 def ordinal(value):
     return type(value) is int and 0 <= value <= 1_000_000
+
+
+def image_binding(proof, fields_without_binding, *, portable, finding_fields=()):
+    if portable:
+        fields(proof, fields_without_binding)
+    else:
+        fields(proof, fields_without_binding | IMAGE_FIELDS | set(finding_fields))
+        require(valid_digest(proof["archive_sha256"]) and matches(LAYER_ID, proof["image_config"])
+                and (proof["image_manifest"] is None or matches(LAYER_ID, proof["image_manifest"])))
 
 
 def validate_nested_certificate(row, package):
@@ -89,6 +101,7 @@ class PackageEvidence:
     packages: dict
     entries: dict
     arch_trust: dict = None
+    portable_entries: dict = None
 
     @classmethod
     def load(cls, data, *, manifest_sha256, review_sha256, scanner_manifest_sha256):
@@ -104,6 +117,7 @@ class PackageEvidence:
             native_json_key_view,
             npm_help_template,
             nyxid_format_labels,
+            portable_ownership,
             reviewed_literals,
         )
 
@@ -113,7 +127,8 @@ class PackageEvidence:
         raw = json_bytes(data)
         expected_fields = {"schema", "scanner_manifest_sha256", "packages", "entries"}
         require(isinstance(raw, dict) and raw.keys() in (expected_fields, expected_fields | {"arch_trust"}))
-        require(raw["schema"] == "cma-staging-package-evidence-v1"
+        portable = raw["schema"] == PORTABLE_SCHEMA
+        require((raw["schema"] == "cma-staging-package-evidence-v1" or portable and "arch_trust" not in raw)
                 and raw["scanner_manifest_sha256"] == scanner_manifest_sha256
                 and isinstance(raw["packages"], list) and isinstance(raw["entries"], list))
         packages = {}
@@ -127,24 +142,32 @@ class PackageEvidence:
             packages[artifact] = package
 
         entries = {}
+        entry_fields = PORTABLE_ENTRY_FIELDS if portable else ENTRY_FIELDS
         for row in raw["entries"]:
             require(isinstance(row, dict))
             shape = row.keys() - {"derived_payload", "reviewed_literals", "key_marker_view", "native_json_key_view",
                                   "npm_help_template", "nyxid_format_labels"}
-            require(shape in (ENTRY_FIELDS, ENTRY_FIELDS | {"self_test"}, ENTRY_FIELDS | {"digest_frames"},
-                              ENTRY_FIELDS | {"nested_certificate"}, ENTRY_FIELDS | {"distribution_config"},
-                              ENTRY_FIELDS | {"debian_control"}, ENTRY_FIELDS | {"distribution_config", "self_test"}))
-            literals = reviewed_literals.validate(row) if "reviewed_literals" in row else {}
+            require(shape in (entry_fields, entry_fields | {"self_test"}, entry_fields | {"digest_frames"},
+                              entry_fields | {"nested_certificate"}, entry_fields | {"distribution_config"},
+                              entry_fields | {"debian_control"}, entry_fields | {"distribution_config", "self_test"}))
+            if portable:
+                require(row["component"] == "runtime" and row["member"] is None
+                        and type(row["occurrences"]) is int and 1 <= row["occurrences"] <= 2
+                        and not {"distribution_config", "nested_certificate", "key_marker_view",
+                                 "native_json_key_view"}.intersection(row))
+            else:
+                require(matches(LAYER_ID, row["diff_id"]) and ordinal(row["layer"]) and ordinal(row["entry"]))
+            literals = reviewed_literals.validate(row, portable=portable) if "reviewed_literals" in row else {}
             require(not literals or not {"nested_certificate", "debian_control"}.intersection(row))
             derived = "derived_payload" in row
+            require(not portable or row["occurrences"] == 1 or derived)
             require(not derived or not {"self_test", "distribution_config", "digest_frames", "debian_control"}.intersection(row))
-            require("key_marker_view" not in row or (not derived and shape == ENTRY_FIELDS))
-            require("native_json_key_view" not in row or shape == ENTRY_FIELDS)
+            require("key_marker_view" not in row or (not derived and shape == entry_fields))
+            require("native_json_key_view" not in row or shape == entry_fields)
             require(not {"npm_help_template", "nyxid_format_labels"}.intersection(row)
-                    or (not derived and literals and shape == ENTRY_FIELDS))
+                    or (not derived and literals and shape == entry_fields))
             require(row["component"] in SCOPES and matches(PLATFORM, row["platform"])
-                    and matches(LAYER_ID, row["diff_id"]) and ordinal(row["layer"])
-                    and ordinal(row["entry"]) and valid_digest(row["file_sha256"])
+                    and valid_digest(row["file_sha256"])
                     and valid_digest(row["package_sha256"]) and row["package_sha256"] in packages
                     and isinstance(row["matches"], list) and bool(row["matches"]))
             path = normalized(row["path"])
@@ -158,6 +181,21 @@ class PackageEvidence:
             for part in package_member["path"]:
                 normalized(part)
             package = packages[row["package_sha256"]]
+            if portable:
+                owner = row["ownership"]
+                require(isinstance(owner, dict))
+                needs_source = package["authority_type"] == "pinned-upstream" or derived
+                compiled = derived and row["derived_payload"].get("kind") == "compiled-executable"
+                expected_owner = {"build_inputs"} if needs_source else set()
+                fields(owner, expected_owner | ({"debian_owner"} if compiled else set()))
+                require(package["authority_type"] in {"debian-index", "pinned-upstream"}
+                        and (not needs_source or portable_ownership.valid_producer_inputs(owner["build_inputs"])))
+                if compiled:
+                    native = owner["debian_owner"]
+                    fields(native, set(portable_ownership.NATIVE_FIELDS))
+                    require(all(matches(IDENTIFIER, value) for value in native.values())
+                            and native["name"] == package["name"]
+                            and native["version"].startswith(package["version"] + "-"))
             if package["authority_type"] != "pinned-upstream" and "debian_control" not in row and not derived:
                 require(package_member["path"][-1] == path)
             member = row["member"]
@@ -169,9 +207,10 @@ class PackageEvidence:
                         and isinstance(member["path"], list) and len(member["path"]) == locator.count("/") + 1)
                 for part in member["path"]:
                     normalized(part)
-            key = (row["component"], row["platform"], row["layer"], row["diff_id"], row["entry"], locator)
+            key = ((row["platform"], path, row["file_sha256"]) if portable else
+                   (row["component"], row["platform"], row["layer"], row["diff_id"], row["entry"], locator))
             require(key not in entries)
-            go_strings = derived_payload.validate(row, package) if derived else None
+            go_strings = derived_payload.validate(row, package, portable=portable) if derived else None
             if "npm_help_template" in row:
                 npm_help_template.validate(row, package)
             if "nyxid_format_labels" in row:
@@ -184,9 +223,9 @@ class PackageEvidence:
                 entries[key] = (row, validate_nested_certificate(row, package))
                 continue
             if "debian_control" in row:
-                entries[key] = (row, debian_control.validate(row, package))
+                entries[key] = (row, debian_control.validate(row, package, portable=portable))
                 continue
-            self_test = library_vectors.validate(row, package) if "self_test" in row else None
+            self_test = library_vectors.validate(row, package, portable=portable) if "self_test" in row else None
             distribution = distribution_config.validate(row, package) if "distribution_config" in row else None
             if distribution is not None and self_test is not None:
                 require("executable" in self_test)
@@ -222,7 +261,7 @@ class PackageEvidence:
                 vector_matches = [match for (rule, _, _), match in verified.items()
                                   if rule in SELF_TEST_RULES and match["explanation"] == vector_advisory]
                 require(bool(vector_matches))
-                if "executable" in self_test:
+                if "executable" in self_test and not portable:
                     require(len(vector_matches) == len(self_test["executable"]["finding_ids"]))
             if public_frames:
                 match = verified.get((DIGEST_FRAME_RULE, None, None))
@@ -235,4 +274,5 @@ class PackageEvidence:
                                          if match["explanation"] == KEY_MARKER_VIEW_ADVISORY})
             entries[key] = (dict(row, path=path), verified)
         arch = arch_trust_evidence.load_catalog(raw["arch_trust"], packages) if "arch_trust" in raw else None
-        return cls(manifest_sha256, review_sha256, scanner_manifest_sha256, packages, entries, arch)
+        return cls(manifest_sha256, review_sha256, scanner_manifest_sha256, packages,
+                   {} if portable else entries, arch, entries if portable else None)

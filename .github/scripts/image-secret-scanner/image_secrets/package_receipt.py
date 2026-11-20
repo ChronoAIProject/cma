@@ -24,6 +24,7 @@ from .gate import (
 )
 from .package_evidence import PUBLIC_RULES, SCOPES, require
 from .package_occurrences import collect
+from .portable_occurrences import PortableOccurrences
 
 PACKAGE_MATCH_RULES = PUBLIC_RULES | SELF_TEST_RULES | reviewed_literals.RULES | GO_CLI_RULES | {
     CERTIFICATE_RULE, DISTRIBUTION_RULE,
@@ -62,10 +63,23 @@ def checked_database(finding, expected, db, database_checks):
     return database_identity in database_checks.get(coordinate, ())
 
 
-def checked_vectors(finding, expected, verified, database_checks):
+def portable_database(finding, expected, db, database_checks, diff_id):
+    identity = (None, db["path"], db["sha256"], expected["path"], db["member_checksum"])
+    entries = [entry for (image, layer, entry), checks in database_checks.items()
+               if (image, layer) == (finding["image"], finding["layer"]) and identity in checks]
+    if len(entries) != 1:
+        return None
+    return dict(db, layer=finding["layer"], diff_id=diff_id, entry=entries[0])
+
+
+def checked_vectors(finding, expected, verified, database_checks, *, portable, diff_id):
     proof = expected["self_test"]
     db = proof["database"]
-    if not checked_database(finding, expected, db, database_checks):
+    if portable:
+        db = portable_database(finding, expected, db, database_checks, diff_id)
+    elif not checked_database(finding, expected, db, database_checks):
+        return None
+    if db is None:
         return None
     spans = verified.get(finding["rule"], [])
     if finding["rule"] == "gitleaks.private-key":
@@ -102,12 +116,16 @@ def certificate_evidence(report, finding, expected, checked, config, image):
             "wheel_path": nested_certificates.WHEEL, "member_path": nested_certificates.MEMBER, **checked}
 
 
-def exact_match(report, finding, component, evidence, occurrence, database_checks, verified):
+def exact_match(report, finding, component, evidence, occurrence, database_checks, verified, *, portable_row=None):
     if finding.get("view") == "pax-xattr":
         return None
     platform, config, image, diff_id, (outer_path, outer_sha256, nested) = occurrence
     member_id = finding.get("member")
-    selected = evidence.entries.get((component, platform, finding["layer"], diff_id, finding["entry"], member_id))
+    portable = portable_row is not None
+    if portable and member_id is not None:
+        return None
+    selected = portable_row[:2] if portable else evidence.entries.get(
+        (component, platform, finding["layer"], diff_id, finding["entry"], member_id))
     if selected is None:
         return None
     expected, reviews = selected
@@ -125,34 +143,35 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         return None
     explanation = review["explanation"]
     classification = "public-material"
-    extra = {}
+    extra = {"current_owner": portable_row[2]} if portable else {}
+    finding_id = finding["finding_id"]
+    image_identity = {"archive_sha256": report["archive_sha256"], "image_config": config, "image_manifest": image}
     origin = expected.get("derived_payload")
     if origin is not None:
         physically_verified = (verified.get("derived_payload") if member_id is None
                                else member_id in verified.get("nested_derived", ()))
-        if (not physically_verified or not matches_image(origin, report, config, image)
-                or finding["finding_id"] not in origin["findings"]):
+        if (not physically_verified or not portable and (not matches_image(origin, report, config, image)
+                                                         or finding_id not in origin["findings"])):
             return None
-        extra["derived_payload"] = origin
+        extra["derived_payload"] = dict(origin, **image_identity, findings=[finding_id]) if portable else origin
     if explanation == DEBIAN_CONTROL_ADVISORY:
         control = verified.get(DEBIAN_CONTROL_ADVISORY)
-        if (control is None or not matches_image(control, report, config, image)
-                or control["finding_id"] != finding["finding_id"]):
+        if (control is None or not portable and (not matches_image(control, report, config, image)
+                                                or control["finding_id"] != finding_id)):
             return None
         classification = explanation
         observed_sha256 = control["view_sha256"]
-        extra["debian_control"] = {"installed_path": path, **control}
+        extra["debian_control"] = {"installed_path": path, **control, **image_identity, "finding_id": finding_id}
     if explanation in reviewed_literals.CLASSES:
         checks = (verified.get("reviewed_literals", {}) if member_id is None
                   else verified.get("nested_literals", {}).get(member_id, {}))
         claim = checks.get(finding["rule"])
         binding = expected["reviewed_literals"]
-        if (claim is None or claim["finding_id"] != finding["finding_id"]
-                or not matches_image(binding, report, config, image)):
+        if (claim is None or not portable and (claim["finding_id"] != finding_id
+                                              or not matches_image(binding, report, config, image))):
             return None
         classification = explanation
-        extra["reviewed_literal"] = dict({key: binding[key] for key in ("archive_sha256", "image_config", "image_manifest")},
-                                         **claim)
+        extra["reviewed_literal"] = {**claim, **image_identity, "finding_id": finding_id}
         if finding["rule"] == npm_help_template.RULE:
             for key in ("npm_help_template", "nyxid_format_labels"):
                 if key in expected:
@@ -163,7 +182,7 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
             claim = verified.get(key, {}).get(candidate)
             if claim is not None:
                 break
-        if claim is None or claim["finding_id"] != finding["finding_id"]:
+        if claim is None or claim["finding_id"] != finding_id:
             return None
         proof = expected[key]
         if not matches_image(proof, report, config, image):
@@ -172,22 +191,24 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         extra[key] = {**claim, **{field: value for field, value in proof.items() if field != "matches"}}
     if explanation == GO_CLI_ADVISORY:
         claim = verified.get("go_cli_strings", {}).get((finding["rule"], finding.get("candidate_sha256")))
-        if claim is None or claim["finding_id"] != finding["finding_id"]:
+        if claim is None or not portable and claim["finding_id"] != finding_id:
             return None
         classification = explanation
-        extra["derived_payload"] = dict(origin, strings=[claim], findings=[finding["finding_id"]])
+        extra["derived_payload"] = dict(origin, **image_identity, strings=[dict(claim, finding_id=finding_id)],
+                                        findings=[finding_id])
     raw_checksum = finding.get("file_sha256")
     aggregate = (explanation in TEST_VECTOR_ADVISORIES | reviewed_literals.CLASSES | {DIGEST_FRAME_ADVISORY}
                  and finding["rule"] != "gitleaks.private-key")
     if finding["path"] != path_digest(path) or (raw_checksum != observed_sha256 and not (aggregate and raw_checksum is None)):
         return None
     if explanation in TEST_VECTOR_ADVISORIES:
-        if explanation == EXECUTABLE_TEST_ADVISORY:
+        if explanation == EXECUTABLE_TEST_ADVISORY and not portable:
             binding = expected["self_test"]["executable"]
             if (not matches_image(binding, report, config, image)
                     or finding["finding_id"] not in binding["finding_ids"]):
                 return None
-        vector_proof = checked_vectors(finding, expected, verified, database_checks)
+        vector_proof = checked_vectors(finding, expected, verified, database_checks,
+                                       portable=portable, diff_id=diff_id)
         if vector_proof is None:
             return None
         classification = explanation
@@ -284,14 +305,17 @@ def arch_trust_decisions(report, evidence, observations, verified, packet):
     return rows
 
 
-def build(archive, output, report, component, evidence):
+def build(archive, output, report, component, evidence, *, source=None):
     require(component in SCOPES and report["policy"].get("staging_runtime_component") == component)
     require(report["archive_sha256"] == digest_file(archive))
     vector_checks = {}
     database_checks = {}
+    portable = (PortableOccurrences(evidence.portable_entries, evidence.packages, source)
+                if component == "runtime" and evidence.portable_entries else None)
     with tempfile.TemporaryDirectory(prefix="package-occurrences-", dir=output) as tmp:
         observations = collect(archive, Path(tmp), report, component, evidence,
-                               vector_checks=vector_checks, database_checks=database_checks)
+                               vector_checks=vector_checks, database_checks=database_checks, portable=portable)
+    portable_rows = portable.eligible(observations) if portable is not None else {}
     rows = []
     for finding in report["findings"]:
         if finding.get("scope") != "layer" or finding.get("rule") not in PACKAGE_MATCH_RULES:
@@ -300,7 +324,7 @@ def build(archive, output, report, component, evidence):
         occurrence = observations.get(coordinate)
         if occurrence is not None:
             result = exact_match(report, finding, component, evidence, occurrence, database_checks,
-                                 vector_checks.get(coordinate, {}))
+                                 vector_checks.get(coordinate, {}), portable_row=portable_rows.get(coordinate))
             if result is not None:
                 rows.append(result)
     if component == arch_trust.COMPONENT and evidence.arch_trust:

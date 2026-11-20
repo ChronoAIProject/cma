@@ -39,7 +39,7 @@ def validate_reference(reference):
         require(reference["address"]["size"] == 7 and reference["length"]["size"] in (5, 6))
 
 
-def validate(row, package, proof):
+def validate(row, package, proof, *, portable=False):
     require(row["platform"] == "linux/amd64" and row["path"] == PATH and row["member"] is None
             and package["name"] == "github-cli" and package["authority_type"] == "pinned-upstream"
             and row["package_member"]["path"][-1].endswith("/go.sum"))
@@ -47,10 +47,10 @@ def validate(row, package, proof):
     require(isinstance(cases, list) and 0 < len(cases) <= len(GO_CLI_RULES))
     checked = {}
     for case in cases:
-        fields(case, {"finding_id", "rule", "candidate", "parts"})
+        fields(case, {"rule", "candidate", "parts"} if portable else {"finding_id", "rule", "candidate", "parts"})
         start, end = extent(case["candidate"], 256)
         identity = case["rule"], case["candidate"]["sha256"]
-        require(valid_digest(case["finding_id"]) and case["rule"] in GO_CLI_RULES and identity not in checked
+        require((portable or valid_digest(case["finding_id"])) and case["rule"] in GO_CLI_RULES and identity not in checked
                 and isinstance(case["parts"], list) and 2 <= len(case["parts"]) <= 32)
         cursor, before = start, -1
         for part in case["parts"]:
@@ -66,7 +66,8 @@ def validate(row, package, proof):
             validate_reference(part["reference"])
         require(cursor == end)
         checked[identity] = case
-    require({item["finding_id"] for item in cases} == set(proof["findings"]) and len(cases) == len(row["matches"]))
+    require(len(cases) == len(row["matches"])
+            and (portable or {item["finding_id"] for item in cases} == set(proof["findings"])))
     return checked
 
 

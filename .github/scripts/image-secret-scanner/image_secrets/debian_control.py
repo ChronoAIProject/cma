@@ -4,7 +4,7 @@ import re
 
 from .common import digest_bytes, tar_metadata
 from .gate import DEBIAN_CONTROL_ADVISORY, DEBIAN_CONTROL_RULE, valid_digest
-from .package_evidence import LAYER_ID, MATCH_FIELDS, fields, matches, require
+from .package_evidence import MATCH_FIELDS, fields, image_binding, matches, require
 
 NAME = re.compile(r"[a-z0-9][a-z0-9+.-]{1,199}")
 ARCHITECTURE = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
@@ -12,14 +12,12 @@ CONTROL_ARCHIVES = frozenset({"control.tar.gz", "control.tar.xz", "control.tar.z
 PATH_PREFIX = b'{"path": "'
 
 
-def validate(row, package):
+def validate(row, package, *, portable=False):
     proof = row["debian_control"]
-    fields(proof, {"archive_sha256", "image_config", "image_manifest", "finding_id", "view_sha256", "span"})
+    image_binding(proof, {"view_sha256", "span"}, portable=portable, finding_fields={"finding_id"})
     require(row["component"] == "runtime" and row["member"] is None and package["authority_type"] == "debian-index"
             and matches(NAME, package["name"]) and matches(ARCHITECTURE, package["architecture"])
-            and all(valid_digest(proof[key]) for key in ("archive_sha256", "finding_id", "view_sha256"))
-            and matches(LAYER_ID, proof["image_config"])
-            and (proof["image_manifest"] is None or matches(LAYER_ID, proof["image_manifest"])))
+            and valid_digest(proof["view_sha256"]) and (portable or valid_digest(proof["finding_id"])))
     name, architecture = package["name"], package["architecture"]
     require(row["path"] in {f"var/lib/dpkg/info/{name}.triggers", f"var/lib/dpkg/info/{name}:{architecture}.triggers"})
     package_member = row["package_member"]
