@@ -122,3 +122,69 @@ async fn delayed_acquisition_cannot_replace_a_new_agent_incarnation() {
     assert_eq!(fresh.authority.token.created_at, replacement.created_at);
     db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires the disposable Mongo replica-set runner"]
+async fn concurrent_readers_reuse_one_fenced_lease_without_exhausting_retries() {
+    use futures_util::StreamExt;
+    let (db, observer, agent) = setup().await;
+    let tokens = futures_util::stream::iter(0..100)
+        .map(|_| async {
+            observer
+                .destination(&agent.id, &agent.created_at)
+                .await
+                .unwrap()
+                .authority
+                .token
+                .clone()
+        })
+        .buffer_unordered(32)
+        .collect::<Vec<_>>()
+        .await;
+    assert_eq!(tokens.len(), 100);
+    assert!(tokens.iter().all(|token| token == &tokens[0]));
+    assert_eq!(observer.leases.count_documents(doc! {}).await.unwrap(), 1);
+    assert_eq!(
+        db.collection::<Document>(crate::store::agent_ownership::OWNERS)
+            .count_documents(doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires the disposable Mongo replica-set runner"]
+async fn unknown_source_version_aborts_the_guard_and_never_inserts_an_observer() {
+    let (db, observer, agent) = setup().await;
+    let mut original = observer
+        .source
+        .agents
+        .find_one(doc! {"_id":agent.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    original.insert("document_schema_version", 99_i64);
+    observer
+        .source
+        .agents
+        .replace_one(doc! {"_id":agent.id.as_str()}, original.clone())
+        .await
+        .unwrap();
+    assert!(observer
+        .destination(&agent.id, &agent.created_at)
+        .await
+        .is_err());
+    assert_eq!(
+        observer
+            .source
+            .agents
+            .find_one(doc! {"_id":agent.id.as_str()})
+            .await
+            .unwrap(),
+        Some(original)
+    );
+    assert_eq!(observer.leases.count_documents(doc! {}).await.unwrap(), 0);
+    db.drop().await.unwrap();
+}

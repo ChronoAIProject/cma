@@ -2,7 +2,7 @@
 use super::*;
 use crate::store::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
-    DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
+    TRANSACTION_ATTEMPTS,
 };
 use mongodb::ClientSession;
 
@@ -27,7 +27,22 @@ impl MongoAgentObservation {
         created_at: &str,
         instance: &str,
     ) -> Result<Document, AgentReadError> {
-        for _ in 0..TRANSACTION_ATTEMPTS {
+        for attempt in 0..TRANSACTION_ATTEMPTS {
+            if attempt > 0 {
+                tokio::time::sleep(Duration::from_millis(10 << (attempt - 1))).await;
+                // A concurrent reader may already have committed the lease.
+                // Reusing it requires no source write or native ownership.
+                if let Some(row) = self
+                    .leases
+                    .find_one(doc! {
+                        "_id": id.as_str(), "$expr":{"$gt":["$expires_at","$$NOW"]},
+                    })
+                    .await
+                    .map_err(unavailable)?
+                {
+                    return Ok(row);
+                }
+            }
             let mut session = self
                 .source
                 .client
@@ -80,13 +95,7 @@ impl MongoAgentObservation {
             .source
             .agents
             .find_one_and_update(
-                crate::store::work_schema::for_collection(
-                    &self.source.agents,
-                    doc! {
-                        "_id": id.as_str(), "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                        "record.created_at": created_at,
-                    },
-                ),
+                doc! {"_id": id.as_str(), "record.created_at": created_at},
                 doc! {"$inc":{"resource_share_guard":1_i64}},
             )
             .session(&mut *session)
