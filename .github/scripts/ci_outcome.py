@@ -46,6 +46,8 @@ LINES = {
     "deploy-verification": "FAIL verification={code} recovery={recovery}",
     "deploy-release": "FAIL release={code} recovery=verified",
     "deploy-component": "FAIL component={component} reason={code}",
+    "deploy-controller": "FAIL: deployment input or configuration error",
+    "deploy-contract": "FAIL: AM and runtimes withheld because configured digests could not be verified",
     "deploy-clock": "FAIL: deployment not admitted; invalid or expired admission time",
     "component-result": "FAIL component-result reason={code}",
     "release-outcome": "FAIL release-outcome reason={code}",

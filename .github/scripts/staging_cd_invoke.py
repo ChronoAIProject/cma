@@ -284,8 +284,8 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     return code if code in (10, 20, 30, 40, 50) else 20
 
 
-def explain(outcome, reason, verification, recovery, release, site):
-    """Report an exit 10, 20, 30 or 40 outcome with its cause and next step.
+def explain(outcome, reason, verification, recovery, release, site, raised):
+    """Report an exit 10, 20, 30, 40 or 52 outcome with its cause and next step.
 
     No component is named: the controller's packets do not say which member of
     the release set failed, and naming the whole set would blame the others.
@@ -301,14 +301,20 @@ def explain(outcome, reason, verification, recovery, release, site):
         return report("deploy-precondition", reason, subject="deploy", site=site)
     if outcome == 30:
         return report("deploy-private", "unreported", subject="deploy")
-    if outcome == 40 and site is not None:
-        return report("deploy-precondition", "input", subject="deploy", site=site)
+    if outcome == 40:
+        # A failure raised here is an input refused before launch; a plain 40
+        # is the controller's own input or configuration refusal.
+        if raised:
+            return report("deploy-precondition", "input", subject="deploy", site=site)
+        return report("deploy-controller", "input-error", subject="deploy")
+    if outcome == CONTRACT_READ_FAILED:
+        return report("deploy-contract", "contract-read-failed", subject="deploy")
     return None
 
 
 def main():
     outcome, skipped = 40, False
-    reason, site = None, None
+    reason, site, raised = None, None, False
     verification = "unreported"
     recovery = "unreported"
     release = "unreported"
@@ -336,7 +342,7 @@ def main():
             release = token
 
     def operation(masker):
-        nonlocal outcome, reason, site
+        nonlocal outcome, reason, site, raised
         try:
             outcome = deploy(os.environ, masker, on_disabled=disabled, on_private_refusal=private_refusal,
                              on_unverified=unverified, on_rolled_back=rolled_back,
@@ -348,7 +354,7 @@ def main():
             if refusal.reason in PRECONDITIONS:
                 reason = refusal.reason
         except Exception as error:
-            site = error_site(error)
+            site, raised = error_site(error), True
             raise
         return outcome in (0, DISABLED, SUPERSEDED_BY_NEWER_FINAL)
     result = run_private(operation, None, subject="deploy", explain=False)
@@ -359,10 +365,10 @@ def main():
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
                 stream.write(f"disposition={OVERTAKEN}\n")
-    diagnostic = explain(outcome, reason, verification, recovery, release, site)
+    diagnostic = explain(outcome, reason, verification, recovery, release, site, raised)
     if skipped:
         print(RESULTS[DISABLED])
-    if outcome in (UNVERIFIED_COHORT, CONTRACT_READ_FAILED):
+    if outcome == UNVERIFIED_COHORT:
         print(RESULTS[outcome])
     if outcome == 20:
         print("::error::Staging deployment is unverified. Immediate operator intervention required.")

@@ -1096,6 +1096,30 @@
         }
       }
     },
+    "deploy-controller": {
+      "title": "Deployment input refused",
+      "effect": "Not reported here. The controller exits 40 for an input or configuration error, normally before it changes anything; an operator confirms in its log.",
+      "codes": {
+        "input-error": {
+          "title": "Controller input or configuration error",
+          "meaning": "The deployment controller rejected this release's input or its own configuration.",
+          "cause": "operator",
+          "next": "An operator reads the deployment controller's log for this run and fixes the input or configuration it names."
+        }
+      }
+    },
+    "deploy-contract": {
+      "title": "Contract group withheld",
+      "effect": "AM and runtime components were not deployed; independent components could still proceed.",
+      "codes": {
+        "contract-read-failed": {
+          "title": "Configured contract digests unreadable",
+          "meaning": "The AM and runtime digests configured in staging could not be read, so the contract group was withheld.",
+          "cause": "unknown",
+          "next": "Re-run the deployment; if it repeats, an operator checks that the deployment controller can read the staging configuration."
+        }
+      }
+    },
     "deploy-clock": {
       "effect": "Nothing. Deployment setup did not start.",
       "codes": {
