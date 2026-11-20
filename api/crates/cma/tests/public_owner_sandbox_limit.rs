@@ -4,6 +4,9 @@
 #[path = "../src/sandbox/policy.rs"]
 mod policy;
 
+#[path = "public_owner_sandbox_limit/visitor.rs"]
+mod visitor;
+
 use std::sync::{Arc, Mutex};
 
 use layer2_core::{

@@ -167,6 +167,24 @@ impl SandboxCredentialController for ManagedSandboxCredentials {
     }
 
     async fn settle_revocations(&self, sandbox: &Sandbox) -> Result<(), CredentialError> {
+        if let Some(intent) = self
+            .custody
+            .issuance(sandbox)
+            .await
+            .map_err(custody_error)?
+        {
+            if intent.sandbox_id != sandbox.id
+                || intent.owner != sandbox.owner
+                || !sandbox.credential.source.is_managed()
+            {
+                return Err(CredentialError::Security(
+                    "credential obligation changed owner or source".into(),
+                ));
+            }
+            if intent.state == IssuanceState::Unknown {
+                return Err(CredentialError::Uncertain);
+            }
+        }
         self.settle_queued(sandbox).await
     }
 }

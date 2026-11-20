@@ -15,7 +15,9 @@ from tests import test_library_vectors as vectors
 from tests import test_package_policy as packages
 
 PATH = "usr/lib/libexample.so.1"
-PREFIX = bytes.fromhex("3020300c06082a864886f70d020305000410")
+# The unlisted digest arc 2.6 keeps this synthetic frame detectable, so the
+# package proof remains the only path that can classify it.
+PREFIX = bytes.fromhex("3020300c06082a864886f70d020605000410")
 PUBLIC_DATA = bytes(range(16))
 COMPONENT = "runtime-omarchy"
 

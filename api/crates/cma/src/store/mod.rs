@@ -175,6 +175,7 @@ mod schema;
 mod schema_mongo_integration_tests;
 pub(crate) mod segment_operations;
 pub mod settings;
+pub(crate) mod settings_defaults;
 mod shared_child_capacity;
 mod suggestions;
 mod trigger_definitions;
