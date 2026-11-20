@@ -207,7 +207,8 @@ function TaskHomeContent({
             !canCreate ||
             supported !== true ||
             intent ||
-            lifecycle.pending
+            lifecycle.pending ||
+            lifecycle.blocked
           )
             return;
           setValidation(submission.issue);
@@ -280,6 +281,7 @@ function TaskHomeContent({
             capacityUnavailable ||
             checkingCapacity ||
             lifecycle.pending ||
+            lifecycle.blocked ||
             Boolean(intent) ||
             !canCreate ||
             supported !== true

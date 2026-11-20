@@ -39,11 +39,16 @@ function RetainedSetup({
   agentId,
   workspaceId,
   sandboxId,
+  operationId,
 }: Props & {
   readonly workspaceId?: string;
   readonly sandboxId?: string;
+  readonly operationId: string;
 }) {
-  const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
+  const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId, {
+    agentId,
+    operationId,
+  });
   const connections = useConnectionGate();
   const cleared = useRef(false);
   const { operation, intent, clear } = lifecycle;
@@ -57,7 +62,10 @@ function RetainedSetup({
       clear();
     }
   }, [clear, matches, operation?.status]);
-  if (!intent) return null;
+  if (!intent)
+    return lifecycle.failure ? (
+      <Alert tone="error">{lifecycleFailureMessage(lifecycle.failure, retrySetupStatus)}</Alert>
+    ) : null;
   const waiting = matches && operation?.status === 'waiting_for_connection';
   const failed = matches && operation?.status === 'failed';
   const error = lifecycleFailureMessage(lifecycle.failure, retrySetupStatus) ?? connections.error;

@@ -16,7 +16,11 @@ export function retainTaskViewer(owner?: string) {
         sessionStorage.key(index),
       );
       for (const key of keys) {
-        if (key?.startsWith('cma:task-draft:') || key?.startsWith('cma:agent-creation:'))
+        if (
+          key?.startsWith('cma:task-draft:') ||
+          key?.startsWith('cma:agent-creation:') ||
+          key?.startsWith('cma:agent-recovery:')
+        )
           sessionStorage.removeItem(key);
       }
     }
