@@ -153,8 +153,10 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         classification = explanation
         extra["reviewed_literal"] = dict({key: binding[key] for key in ("archive_sha256", "image_config", "image_manifest")},
                                          **claim)
-        if finding["rule"] == npm_help_template.RULE and "npm_help_template" in expected:
-            extra["npm_help_template"] = expected["npm_help_template"]
+        if finding["rule"] == npm_help_template.RULE:
+            for key in ("npm_help_template", "nyxid_format_labels"):
+                if key in expected:
+                    extra[key] = expected[key]
     if explanation == KEY_MARKER_VIEW_ADVISORY:
         candidate = finding.get("candidate_sha256")
         for key in ("key_marker_view", "native_json_key_view"):

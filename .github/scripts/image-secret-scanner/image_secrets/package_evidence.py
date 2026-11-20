@@ -103,6 +103,7 @@ class PackageEvidence:
             library_vectors,
             native_json_key_view,
             npm_help_template,
+            nyxid_format_labels,
             reviewed_literals,
         )
 
@@ -129,7 +130,7 @@ class PackageEvidence:
         for row in raw["entries"]:
             require(isinstance(row, dict))
             shape = row.keys() - {"derived_payload", "reviewed_literals", "key_marker_view", "native_json_key_view",
-                                  "npm_help_template"}
+                                  "npm_help_template", "nyxid_format_labels"}
             require(shape in (ENTRY_FIELDS, ENTRY_FIELDS | {"self_test"}, ENTRY_FIELDS | {"digest_frames"},
                               ENTRY_FIELDS | {"nested_certificate"}, ENTRY_FIELDS | {"distribution_config"},
                               ENTRY_FIELDS | {"debian_control"}, ENTRY_FIELDS | {"distribution_config", "self_test"}))
@@ -139,7 +140,8 @@ class PackageEvidence:
             require(not derived or not {"self_test", "distribution_config", "digest_frames", "debian_control"}.intersection(row))
             require("key_marker_view" not in row or (not derived and shape == ENTRY_FIELDS))
             require("native_json_key_view" not in row or shape == ENTRY_FIELDS)
-            require("npm_help_template" not in row or (not derived and literals and shape == ENTRY_FIELDS))
+            require(not {"npm_help_template", "nyxid_format_labels"}.intersection(row)
+                    or (not derived and literals and shape == ENTRY_FIELDS))
             require(row["component"] in SCOPES and matches(PLATFORM, row["platform"])
                     and matches(LAYER_ID, row["diff_id"]) and ordinal(row["layer"])
                     and ordinal(row["entry"]) and valid_digest(row["file_sha256"])
@@ -172,6 +174,8 @@ class PackageEvidence:
             go_strings = derived_payload.validate(row, package) if derived else None
             if "npm_help_template" in row:
                 npm_help_template.validate(row, package)
+            if "nyxid_format_labels" in row:
+                nyxid_format_labels.validate(row, package)
             key_views = key_marker_view.validate(row, package) if "key_marker_view" in row else {}
             normalized_views = native_json_key_view.validate(row, package) if "native_json_key_view" in row else {}
             require(not key_views.keys() & normalized_views.keys())

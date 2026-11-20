@@ -7,7 +7,7 @@ from .common import digest_bytes
 GO_ARGUMENT_REGISTERS = (0, 3, 1, 7, 6, 8, 9, 10, 11)
 
 
-def load_segments(data):
+def program_headers(data):
     if len(data) < 64 or data[:7] != b"\x7fELF\x02\x01\x01":
         return ()
     kind, machine = struct.unpack_from("<HH", data, 16)
@@ -16,10 +16,12 @@ def load_segments(data):
     if (kind not in (2, 3) or machine != 62 or width != 56 or not 0 < count <= 128
             or table < 64 or table + width * count > len(data)):
         return ()
+    return tuple(struct.unpack_from("<IIQQQQQ", data, table + i * width) for i in range(count))
+
+
+def load_segments(data):
     segments = []
-    for i in range(count):
-        p_type, flags, offset, address, _, file_size, memory_size = struct.unpack_from(
-            "<IIQQQQQ", data, table + i * width)
+    for p_type, flags, offset, address, _, file_size, memory_size in program_headers(data):
         if p_type != 1:
             continue
         if file_size > memory_size or offset + file_size > len(data) or address + memory_size > 2**64:
@@ -40,6 +42,15 @@ def address_of(segments, start, length, allowed):
     address = virtual + start - offset
     mappings = [entry for entry in segments if max(address, entry[2]) < min(address + length, entry[2] + entry[4])]
     return address if mappings == occupied else None
+
+
+def file_offset(segments, address, length, allowed):
+    for _, offset, virtual, size, _ in segments:
+        if virtual <= address < address + length <= virtual + size:
+            start = offset + address - virtual
+            if address_of(segments, start, length, allowed) == address:
+                return start
+    return None
 
 
 def word_pair(data, segments, reference, address, length):

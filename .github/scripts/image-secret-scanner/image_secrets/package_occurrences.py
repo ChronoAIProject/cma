@@ -261,7 +261,7 @@ def read_payload_candidate(stream, member, path, workspace, expected, reviews):
             if "digest_frames" in expected:
                 verified.update(digest_frames.verify(payload, metadata, expected["digest_frames"]))
             origin = expected.get("derived_payload")
-            if "reviewed_literals" in expected:
+            if "reviewed_literals" in expected and ("nyxid_format_labels" not in expected or member.mode & 0o111):
                 verify_literals(verified, payload, metadata, expected)
             if "key_marker_view" in expected:
                 verified["key_marker_view"] = key_marker_view.verify(payload, metadata, expected["key_marker_view"])
@@ -294,7 +294,8 @@ def verify_literals(verified, payload, metadata, expected):
     origin = expected.get("derived_payload")
     mime_index = expected["path"] if origin is not None and origin["kind"] == "mime-index" else None
     checks = reviewed_literals.verify(payload, metadata, expected["reviewed_literals"], mime_index=mime_index,
-                                      npm_template=expected.get("npm_help_template"))
+                                      npm_template=expected.get("npm_help_template"),
+                                      nyxid_labels=expected.get("nyxid_format_labels"))
     verified["reviewed_literals"] = checks
     if mime_index is not None and checks:
         verified["derived_payload"] = True
