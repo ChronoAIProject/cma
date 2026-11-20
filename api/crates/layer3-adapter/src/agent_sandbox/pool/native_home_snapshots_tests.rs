@@ -176,16 +176,17 @@ async fn source_missing_after_ready_cut_still_returns_handle() {
         "status":{"snapshotHandle":"handle"}
     }))
     .unwrap();
-    let mut state = fixture.state.lock().unwrap();
-    state.rows.insert(
-        snapshot_path(&request),
-        serde_json::to_value(snapshot).unwrap(),
-    );
-    state.rows.insert(
-        "/apis/snapshot.storage.k8s.io/v1/volumesnapshotcontents/content".into(),
-        serde_json::to_value(content).unwrap(),
-    );
-    drop(state);
+    {
+        let mut state = fixture.state.lock().unwrap();
+        state.rows.insert(
+            snapshot_path(&request),
+            serde_json::to_value(snapshot).unwrap(),
+        );
+        state.rows.insert(
+            "/apis/snapshot.storage.k8s.io/v1/volumesnapshotcontents/content".into(),
+            serde_json::to_value(content).unwrap(),
+        );
+    }
     let observed = fixture
         .client
         .observe_native_home_snapshot(&observation(true))
