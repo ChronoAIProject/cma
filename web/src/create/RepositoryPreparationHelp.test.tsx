@@ -1,3 +1,4 @@
+import { lifecycleRecoveryKey } from './lifecycleIntentStorage';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { AgentLifecycleOperationView } from '../api/client';
@@ -10,8 +11,20 @@ import {
   confirmedConnections,
   repositoryClient,
   repositoryFailure,
-  retainedRepositoryTask,
+  retainedRepositoryTask as retainLegacyRepositoryTask,
 } from './repositoryFailure.fixtures';
+
+function retainedRepositoryTask() {
+  const retained = retainLegacyRepositoryTask();
+  const intent = JSON.parse(retained.raw).intent;
+  return {
+    ...retained,
+    key: lifecycleRecoveryKey(
+      { owner: 'owner' },
+      { agentId: intent.agentId, operationId: intent.receipt.id },
+    ),
+  };
+}
 
 afterEach(() => {
   vi.restoreAllMocks();

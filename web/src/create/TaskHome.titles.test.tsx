@@ -5,6 +5,7 @@ import { agentClient } from '../test/agent';
 import { taskExperience } from '../test/taskExperience';
 import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { lifecycleStorageKey } from './lifecycleIntent';
+import { taskDraftStorageKey } from './taskDraft';
 
 afterEach(() => sessionStorage.clear());
 
@@ -31,6 +32,11 @@ it('preserves compiled template input alongside supported automatic title intent
       'Research Synthetic topic and summarize the key findings, with links to sources.',
     template: { id: 'research', version: 1, fields: { topic: 'Synthetic topic' } },
   });
+  const saved = JSON.parse(sessionStorage.getItem(lifecycleStorageKey('owner'))!);
+  const draft = JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!);
+  expect(saved.intent.body).toEqual(create.mock.calls[0]?.[0]);
+  expect(saved.intent.draftRevision).toEqual(expect.any(String));
+  expect(saved.intent.draftRevision).toBe(draft.revision);
 });
 
 it.each([{}, { workspaceId: 'workspace' }, { sandboxId: 'sandbox' }])(

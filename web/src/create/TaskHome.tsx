@@ -210,7 +210,8 @@ function TaskHomeContent({
             supported !== true ||
             titleModeSupported === undefined ||
             intent ||
-            lifecycle.pending
+            lifecycle.pending ||
+            lifecycle.blocked
           )
             return;
           setValidation(submission.issue);
@@ -223,7 +224,8 @@ function TaskHomeContent({
             target?.focus();
             return;
           }
-          if (!draft.persist()) return;
+          const draftRevision = draft.persist();
+          if (!draftRevision) return;
           if (!contextual) {
             setCheckingCapacity(true);
             const current = await capacity.ensureFresh();
@@ -238,6 +240,7 @@ function TaskHomeContent({
               { workspaceId, sandboxId },
               titleModeSupported,
             ),
+            draftRevision,
           );
         }}
       >
@@ -274,6 +277,7 @@ function TaskHomeContent({
             capacityUnavailable ||
             checkingCapacity ||
             lifecycle.pending ||
+            lifecycle.blocked ||
             Boolean(intent) ||
             !canCreate ||
             titleModeSupported === undefined ||
