@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 
+import ci_retry
 from staging_cd_common import Refusal, matches, require
 from staging_cd_history import DevelopHistory
 from staging_cd_watermark import require_current_versions
@@ -18,13 +19,15 @@ class GitHub:
     def require_current_versions(self, receipts):
         require_current_versions(receipts, runner=self.runner)
 
-    def __init__(self, token, runner=subprocess.run, *, local_tags=None):
+    def __init__(self, token, runner=subprocess.run, *, local_tags=None, retry=None):
         require(isinstance(token, str) and token and not any(c.isspace() for c in token),
                 "GitHub credential is missing or malformed")
         self.env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "LC_ALL")}
         self.env.update(GH_TOKEN=token, GH_HOST="github.com", GH_PROMPT_DISABLED="1")
         self.runner = runner
         self.local_tags = local_tags
+        # Keyword arguments for ci_retry.call: a caller's deadline, clock and sleep.
+        self.retry = dict(retry or {})
         self._history = None
 
     def history_at(self, head, *, root):
@@ -47,7 +50,7 @@ class GitHub:
         history.position(source)
         return history
 
-    def request(self, path, payload=None, *, allow_not_found=False, runner=None, method=None):
+    def request(self, path, payload=None, *, allow_not_found=False, runner=None, method=None, attempts=3):
         require(isinstance(path, str) and not path.startswith(("/", "http"))
                 and ".." not in path and "\n" not in path, "GitHub API path is invalid")
         require(method is None or method == "PATCH" and payload is not None, "GitHub mutation method is invalid")
@@ -62,18 +65,34 @@ class GitHub:
             args += ["--include", "--method", "GET"]
         if payload is not None:
             args += ["--method", method or "POST", "--input", "-"]
-        try:
-            result = (runner or self.runner)(args, input=None if payload is None else json.dumps(payload),
-                                 env=self.env, text=True, capture_output=True, timeout=60, check=False)
-        except (OSError, subprocess.SubprocessError) as error:
-            raise Refusal("GitHub API request failed") from error
+
+        def once():
+            try:
+                result = (runner or self.runner)(args, input=None if payload is None else json.dumps(payload),
+                                                 env=self.env, text=True, capture_output=True, timeout=60, check=False)
+            except (OSError, subprocess.SubprocessError) as error:
+                raise Refusal("GitHub API request failed") from error
+            return self.response(path, payload, result, allow_not_found)
+
+        if payload is not None:
+            # A write runs once. Its caller settles an uncertain outcome by reading back.
+            return once()
+        return ci_retry.call(once, name="github-read", classify=ci_retry.classify, attempts=attempts, **self.retry)
+
+    @staticmethod
+    def response(path, payload, result, allow_not_found):
         data = result.stdout
         require(len(data) <= 16 * 1024 * 1024, "GitHub API request failed")
+        # Only gh's diagnostic can tell a transport failure from a refusal.
+        diagnostic = getattr(result, "stderr", None)
         if allow_not_found:
             headers, separator, data = data.replace("\r\n", "\n").partition("\n\n")
             status = headers.split("\n", 1)[0]
-            require(separator and matches(r"HTTP/[0-9.]+ [1-5][0-9]{2}(?: [^\r\n]*)?", status),
-                    "GitHub API response is invalid")
+            if not (separator and matches(r"HTTP/[0-9.]+ [1-5][0-9]{2}(?: [^\r\n]*)?", status)):
+                if result.returncode != 0:
+                    # No HTTP response arrived at all.
+                    raise Refusal("GitHub API request failed") from ci_retry.cli_cause(diagnostic)
+                raise Refusal("GitHub API response is invalid")
             code = int(status.split(" ", 2)[1])
             if code == 404 and result.returncode == 1:
                 try:
@@ -83,9 +102,10 @@ class GitHub:
                 require(isinstance(error, dict) and error.get("status") == "404",
                         "GitHub API response is invalid")
                 raise GitHubNotFound("GitHub resource was not found")
-            require(code == 200, "GitHub API request failed")
-        require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024,
-                "GitHub API request failed")
+            if code != 200:
+                raise Refusal("GitHub API request failed") from ci_retry.status_cause(code)
+        if result.returncode != 0:
+            raise Refusal("GitHub API request failed") from ci_retry.cli_cause(diagnostic)
         try:
             value = json.loads(data)
         except (TypeError, ValueError) as error:

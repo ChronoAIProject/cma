@@ -15,14 +15,22 @@ def response(code, body="{}"):
 
 
 class AllocationIOTests(unittest.TestCase):
-    def test_transient_gets_retry_once_with_short_deadline(self):
+    def test_transient_reads_back_off_with_jitter_inside_the_allocation_deadline(self):
         for failure in (response(429), response(503), subprocess.TimeoutExpired("fixture", 5)):
-            runner = Mock(side_effect=[failure, response(200)])
-            io = AllocationIO(runner, clock=lambda: 0, sleep=Mock())
+            runner = Mock(side_effect=[failure, failure, response(200)])
+            io = AllocationIO(runner, clock=lambda: 0, sleep=Mock(), rand=lambda: 1.0)
             self.assertEqual(AllocationGitHub("fixture", io).request("pulls/1"), {})
-            self.assertEqual(runner.call_count, 2)
-            self.assertEqual([call.kwargs["timeout"] for call in runner.call_args_list], [5, 5])
-            io.sleep.assert_called_once_with(0.2)
+            self.assertEqual(runner.call_count, 3)
+            self.assertEqual([call.kwargs["timeout"] for call in runner.call_args_list], [5, 5, 5])
+            self.assertEqual([call.args[0] for call in io.sleep.call_args_list], [0.5, 1.0])
+        # A wait that would reach the deadline is never started.
+        runner = Mock(side_effect=[response(503), response(200)])
+        late = AllocationIO(runner, clock=Mock(side_effect=[0, ALLOCATION_SECONDS - 0.4, ALLOCATION_SECONDS - 0.4]),
+                            sleep=Mock(), rand=lambda: 1.0)
+        with self.assertRaisesRegex(Refusal, "Allocation read failed"):
+            AllocationGitHub("fixture", late).request("pulls/1")
+        runner.assert_called_once()
+        late.sleep.assert_not_called()
 
     def test_auth_and_missing_provenance_do_not_retry(self):
         for code in (401, 403, 404):
@@ -57,7 +65,7 @@ class AllocationIOTests(unittest.TestCase):
         io = AllocationIO(runner, clock=lambda: 0, sleep=Mock())
         with self.assertRaises(Refusal):
             io.read(["fixture"])
-        self.assertEqual(runner.call_count, 2)
+        self.assertEqual(runner.call_count, 3)
         runner.reset_mock()
         with self.assertRaisesRegex(Refusal, "settlement"):
             io.write(["fixture"])

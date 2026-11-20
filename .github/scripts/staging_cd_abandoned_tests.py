@@ -22,13 +22,18 @@ def response(code, body=None):
                                        + json.dumps(body), "private diagnostic")
 
 
+def github(runner):
+    # Transient reads repeat; a fake sleep keeps the bounded backoff instant.
+    return GitHub("fixture", runner, retry={"sleep": lambda _seconds: None})
+
+
 class AbandonedTests(unittest.TestCase):
     def reservation(self):
         return next_reservation("web", "a" * 40, "b" * 40, 1, "patch", 9, 1, [], [])
 
     def test_both_explicit_404s_are_abandoned(self):
         runner = Mock(return_value=response(404))
-        self.assertFalse(run_active(GitHub("fixture", runner), self.reservation()))
+        self.assertFalse(run_active(github(runner), self.reservation()))
         self.assertEqual(runner.call_count, 2)
         paths = [next(arg for arg in call.args[0] if arg.startswith("repos/"))
                  for call in runner.call_args_list]
@@ -41,14 +46,15 @@ class AbandonedTests(unittest.TestCase):
 
     def test_auth_server_rate_limit_and_mixed_missing_results_refuse(self):
         for code in (200, 401, 403, 429, 500, 503):
-            runner = Mock(side_effect=[response(404), response(code)])
+            runner = Mock(side_effect=[response(404), *[response(code)] * 3])
             with self.subTest(parent_code=code), self.assertRaises(Refusal):
-                run_active(GitHub("fixture", runner), self.reservation())
+                run_active(github(runner), self.reservation())
         for code in (401, 403, 429, 500, 503):
             runner = Mock(return_value=response(code))
             with self.subTest(attempt_code=code), self.assertRaises(Refusal):
-                run_active(GitHub("fixture", runner), self.reservation())
-            self.assertEqual(runner.call_count, 1)
+                run_active(github(runner), self.reservation())
+            # Throttling and server errors repeat within the bound, then still refuse.
+            self.assertEqual(runner.call_count, 3 if code in (429, 500, 503) else 1)
 
     def test_404_cannot_be_inferred_from_body_stderr_or_invalid_headers(self):
         failures = [
@@ -61,14 +67,31 @@ class AbandonedTests(unittest.TestCase):
         ]
         for result in failures:
             with self.subTest(result=result), self.assertRaises(Refusal):
-                run_active(GitHub("fixture", Mock(return_value=result)), self.reservation())
+                run_active(github(Mock(return_value=result)), self.reservation())
         for error in (OSError("private"), subprocess.TimeoutExpired("fixture", 1)):
             with self.subTest(error=type(error)), self.assertRaises(Refusal):
-                run_active(GitHub("fixture", Mock(side_effect=error)), self.reservation())
+                run_active(github(Mock(side_effect=error)), self.reservation())
+
+    def test_reads_repeat_transport_failures_but_writes_run_once(self):
+        reset = subprocess.CompletedProcess([], 1, "", "read: connection reset by peer")
+        ok = subprocess.CompletedProcess([], 0, '{"id": 9}', "")
+        runner = Mock(side_effect=[reset, subprocess.TimeoutExpired("gh", 60), ok])
+        self.assertEqual(github(runner).request("actions/runs/9"), {"id": 9})
+        self.assertEqual(runner.call_count, 3)
+        for failure in (reset, subprocess.TimeoutExpired("gh", 60), response(503)):
+            runner = Mock(side_effect=[failure, ok])
+            with self.subTest(failure=failure), self.assertRaises(Refusal):
+                github(runner).request("git/refs", {"ref": "refs/tags/fixture", "sha": "a" * 40})
+            runner.assert_called_once()
+        # A transport failure carries no HTTP response, so it is never a missing resource.
+        runner = Mock(side_effect=[reset, response(404)])
+        with self.assertRaises(GitHubNotFound):
+            github(runner).request("actions/runs/9", allow_not_found=True)
+        self.assertEqual(runner.call_count, 2)
 
     def test_404_is_not_optional_for_writes_or_default_reads(self):
         runner = Mock(return_value=response(404))
-        api = GitHub("fixture", runner)
+        api = github(runner)
         with self.assertRaises(Refusal) as caught:
             api.request("actions/runs/9")
         self.assertNotIsInstance(caught.exception, GitHubNotFound)
@@ -99,7 +122,7 @@ class AbandonedTests(unittest.TestCase):
             else:
                 raise AssertionError("Unexpected API read")
             return subprocess.CompletedProcess(args, 0, json.dumps(data), "")
-        api = GitHub("fixture", runner)
+        api = github(runner)
         api.tags = lambda: []
         api.history = lambda: DevelopHistory(queue["head"], [c["source"] for c in reversed(queue["changes"])])
         reservations = Mock()
