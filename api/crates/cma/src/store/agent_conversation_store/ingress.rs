@@ -1,11 +1,14 @@
 //! Borrowed BSON preflight; wire length and requested allocation are distinct.
 
+use crate::store::ingress_reads::layout::{BsonLayout, LayoutError};
 use layer2_core::sandbox::ingress_ownership::{
     sizing::shared_owner_bytes, AllocationPlan, IngressClass, IngressOwnershipPolicy,
     ReservationBundle,
 };
 use layer2_core::sandbox::store::{AgentMessageSnapshot, SandboxStoreError};
-use mongodb::bson::{Document, RawDocument};
+use mongodb::bson::Document;
+#[cfg(test)]
+use mongodb::bson::RawDocument;
 
 pub(super) use crate::store::ingress_reads::layout::MAX_DOCUMENT_BYTES;
 
@@ -22,6 +25,15 @@ impl SnapshotRefusal {
         match self {
             Self::Capacity => SandboxStoreError::Unavailable(String::new()),
             Self::Structure => SandboxStoreError::Corrupt(String::new()),
+        }
+    }
+}
+
+impl From<LayoutError> for SnapshotRefusal {
+    fn from(error: LayoutError) -> Self {
+        match error {
+            LayoutError::Capacity => Self::Capacity,
+            LayoutError::Structure => Self::Structure,
         }
     }
 }
@@ -55,30 +67,26 @@ pub(super) fn reserve(
 pub(super) struct SnapshotLayout {
     #[cfg(test)]
     pub(super) wire_bytes: usize,
-    raw: crate::store::ingress_reads::layout::BsonLayout,
+    raw: BsonLayout,
 }
 
 impl SnapshotLayout {
+    #[cfg(test)]
     pub(super) fn inspect(
         raw: &RawDocument,
         policy: &IngressOwnershipPolicy,
     ) -> Result<Self, SnapshotRefusal> {
-        let raw = crate::store::ingress_reads::layout::BsonLayout::inspect(
-            raw,
-            policy,
-            "conversation BSON preflight errors",
-        )
-        .map_err(|error| match error {
-            crate::store::ingress_reads::layout::LayoutError::Capacity => SnapshotRefusal::Capacity,
-            crate::store::ingress_reads::layout::LayoutError::Structure => {
-                SnapshotRefusal::Structure
-            }
-        })?;
-        Ok(Self {
+        let raw = BsonLayout::inspect(raw, policy, "conversation BSON preflight errors")
+            .map_err(SnapshotRefusal::from)?;
+        Ok(Self::from_raw(raw))
+    }
+
+    pub(super) fn from_raw(raw: BsonLayout) -> Self {
+        Self {
             #[cfg(test)]
             wire_bytes: raw.wire_bytes,
             raw,
-        })
+        }
     }
 
     pub(super) fn retained_bytes(&self) -> Result<usize, SnapshotRefusal> {

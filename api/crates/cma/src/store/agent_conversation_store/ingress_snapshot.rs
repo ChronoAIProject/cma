@@ -1,5 +1,9 @@
 //! Allocation-owned snapshot reads using the same row and original predicate.
 
+use crate::store::ingress_reads::{
+    layout::{BsonLayout, LayoutError},
+    row::{self, ConversionPlan, RowError, RowSchema},
+};
 use layer2_core::sandbox::ingress_ownership::{
     sizing::shared_owner_bytes, AdmittedError, AdmittedOperation, AllocationPlan, IngressClass,
     IngressOwnershipPolicy, IngressWorkScope, OwnedWork, SharedOwned,
@@ -103,32 +107,32 @@ pub(super) fn decode(
     raw: &mongodb::bson::RawDocument,
     policy: &IngressOwnershipPolicy,
 ) -> Result<SharedOwned<AgentMessageSnapshot>, SnapshotError> {
-    let layout = ingress::SnapshotLayout::inspect(raw, policy)?;
-    let working = IngressWorkScope::new(ingress::reserve(
-        policy,
-        IngressClass::Transformation,
-        "conversation snapshot decode",
-        &[
-            layout.decode_bytes()?,
-            shared_owner_bytes::<SandboxStoreError>(),
-        ],
-    )?);
-    let retained = ingress::reserve(
-        policy,
-        IngressClass::Data,
-        "conversation retained snapshot",
-        &[layout.retained_bytes()?],
-    )?;
-    let result = (|| {
-        let row = Document::try_from(raw)
-            .map_err(|_| SandboxStoreError::Corrupt("invalid raw conversation snapshot".into()))?;
+    row::decode::<SnapshotSchema>(raw, policy).map_err(|error| match error {
+        RowError::Refused(error) => SnapshotError::Refused(error.into()),
+        RowError::Domain(error) => SnapshotError::Owned(error),
+    })
+}
+
+struct SnapshotSchema;
+
+impl RowSchema for SnapshotSchema {
+    type Value = AgentMessageSnapshot;
+    const INVALID_RAW: &'static str = "invalid raw conversation snapshot";
+
+    fn plan(layout: BsonLayout) -> Result<ConversionPlan, LayoutError> {
+        let layout = ingress::SnapshotLayout::from_raw(layout);
+        Ok(ConversionPlan {
+            temporary_bytes: layout.decode_bytes().map_err(|_| LayoutError::Structure)?,
+            retained_bytes: layout
+                .retained_bytes()
+                .map_err(|_| LayoutError::Structure)?,
+        })
+    }
+
+    fn decode(row: Document) -> Result<Self::Value, SandboxStoreError> {
         Ok(AgentMessageSnapshot {
             agent: read_agent(&row)?,
             checkpoint: checkpoint::read(&row)?,
         })
-    })();
-    match result {
-        Ok(snapshot) => Ok(retained.initialize(|| snapshot)),
-        Err(error) => Err(SnapshotError::Owned(working.initialize_owned(|| error))),
     }
 }
