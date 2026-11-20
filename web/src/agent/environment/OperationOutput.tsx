@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef } from 'react';
 import type { ToolCall } from '../model';
-import { durationLabel, toolDuration } from '../workspaceTime';
+import { toolTimingLabel } from '../toolTiming';
 import { toolOutcome, toolOutcomeWord } from '../toolStatus';
 import { useTerminalSelection, type AgentComputerObservation } from './observation';
 
@@ -81,7 +81,7 @@ export const OperationOutput = memo(function OperationOutput({
       </header>
       <p>Recorded tool activity; this is not an interactive terminal.</p>
       {operations.map((tool) => {
-        const duration = toolDuration(tool.startedAt, tool.finishedAt);
+        const duration = toolTimingLabel(tool);
         return (
           <article
             key={tool.id}
@@ -93,7 +93,9 @@ export const OperationOutput = memo(function OperationOutput({
             <header>
               <code aria-label="Operation name">{tool.title}</code>
               <span>{toolOutcomeWord(toolOutcome(tool, activeRunId), tool.status)}</span>
-              {duration === undefined ? null : <time>{durationLabel(duration)}</time>}
+              {duration === undefined ? null : (
+                <span title="Recorded tool interval">{duration}</span>
+              )}
             </header>
             {tool.detail ? (
               <details>

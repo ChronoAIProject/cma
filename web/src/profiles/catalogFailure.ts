@@ -1,10 +1,17 @@
-import { ApiError, ProtocolError, TransportError, ValidationError } from '@cma/client';
+import {
+  ApiError,
+  CredentialError,
+  ProtocolError,
+  TransportError,
+  ValidationError,
+} from '@cma/client';
 
 export interface CatalogFailure {
   readonly kind:
     'sign_in' | 'forbidden' | 'rate_limited' | 'unavailable' | 'invalid_response' | 'invalid_query';
   readonly message: string;
   readonly retry: boolean;
+  readonly retryAfterMs?: number;
   readonly status?: number;
   readonly code?: string;
   readonly requestId?: string;
@@ -30,27 +37,33 @@ export function catalogFailure(cause: unknown): CatalogFailure {
               ? cause.status
               : undefined,
           code: cause.code !== undefined && codes.has(cause.code) ? cause.code : undefined,
+          retryAfterMs:
+            cause.retryAfterMs !== undefined &&
+            Number.isFinite(cause.retryAfterMs) &&
+            cause.retryAfterMs > 0
+              ? cause.retryAfterMs
+              : undefined,
           requestId:
             typeof cause.requestId === 'string' &&
-            /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$/.test(cause.requestId)
+            /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}$/.test(cause.requestId)
               ? cause.requestId
               : undefined,
         }
       : {};
+  if (cause instanceof CredentialError || (cause instanceof ApiError && cause.status === 401))
+    return {
+      ...diagnostics,
+      kind: 'sign_in',
+      message: 'Sign in again, then reopen this catalog.',
+      retry: false,
+    };
   if (cause instanceof ApiError) {
-    if (cause.status === 401)
-      return {
-        ...diagnostics,
-        kind: 'sign_in',
-        message: 'Sign in again, then reopen this catalog.',
-        retry: false,
-      };
     if (cause.status === 403)
       return {
         ...diagnostics,
         kind: 'forbidden',
         message:
-          'You do not have permission to read this catalog. Ask an administrator to check your catalog access.',
+          'You do not have permission to read this catalog. Reading your catalog requires permission to use your own Sandboxes or manage your own profiles.',
         retry: false,
       };
     if (cause.status === 429)
