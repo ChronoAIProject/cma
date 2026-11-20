@@ -83,20 +83,35 @@ pub(crate) struct FeatureFlags {
     pub empty_discovery: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
 }
+/// Rollout gates graduated to default-on after their rollout completed in
+/// every environment. Unset means enabled; an explicit `false` remains the
+/// emergency off-switch, and any other value keeps the strict-boolean error.
+/// No startup validation ties these gates to another setting.
+pub(super) const GRADUATED: &[&str] = &[
+    "CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED",
+    "CHRONO_COMMAND_RECONCILE_PACING_ENABLED",
+    "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED",
+    "CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED",
+    "CHRONO_V2_UI_TRANSPORT_ENABLED",
+];
+
+/// Read one strict boolean rollout gate. Unset is off unless it graduated.
+pub(super) fn flag(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+    key: &str,
+) -> Result<bool, String> {
+    match lookup(key)?.as_deref() {
+        None => Ok(GRADUATED.contains(&key)),
+        Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        _ => Err(format!("{key} must be true or false")),
+    }
+}
+
 impl FeatureFlags {
     pub(crate) fn from_lookup(
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
-        fn flag(
-            lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
-            key: &str,
-        ) -> Result<bool, String> {
-            match lookup(key)?.as_deref() {
-                None | Some("false") => Ok(false),
-                Some("true") => Ok(true),
-                _ => Err(format!("{key} must be true or false")),
-            }
-        }
         let flags = Self {
             visitor_launch_admission: flag(lookup, "CHRONO_VISITOR_LAUNCH_ADMISSION_ENABLED")?,
             usage_signed_cursors_enabled: flag(lookup, "CHRONO_USAGE_SIGNED_CURSORS_ENABLED")?,
