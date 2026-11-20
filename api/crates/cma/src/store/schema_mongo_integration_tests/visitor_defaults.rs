@@ -143,7 +143,20 @@ async fn saved_settings_and_revision_survive_all_initializers_and_flag_changes()
 async fn production_startup_injects_the_same_default_into_admin_and_sandbox_policy() {
     for enabled in [false, true] {
         let (client, name) = database().await;
-        let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+        let password = uuid::Uuid::new_v4().simple().to_string();
+        client
+            .database(&name)
+            .run_command(doc! {
+                "createUser": "visitor-defaults-runtime", "pwd": &password,
+                "roles": [{"role": "readWrite", "db": &name}, {"role": "dbAdmin", "db": &name}],
+            })
+            .await
+            .unwrap();
+        let mut uri = url::Url::parse(&std::env::var("CHRONO_TEST_MONGODB_URI").unwrap()).unwrap();
+        uri.set_username("visitor-defaults-runtime").unwrap();
+        uri.set_password(Some(&password)).unwrap();
+        uri.query_pairs_mut().append_pair("authSource", &name);
+        let uri = uri.to_string();
         let connect = |enabled| {
             let uri = uri.clone();
             let name = name.clone();
@@ -250,6 +263,11 @@ async fn production_startup_injects_the_same_default_into_admin_and_sandbox_poli
             .unwrap();
         let restarted = connect(enabled).await;
         assert_eq!(restarted.settings.read().await.unwrap(), saved);
+        client
+            .database(&name)
+            .run_command(doc! {"dropUser": "visitor-defaults-runtime"})
+            .await
+            .unwrap();
         client.database(&name).drop().await.unwrap();
     }
 }
