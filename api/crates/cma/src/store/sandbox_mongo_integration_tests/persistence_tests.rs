@@ -11,7 +11,7 @@ async fn encrypted_credential_round_trip_hides_plaintext_and_rejects_tampering()
             .await
             .unwrap();
     let expected = credential("sbx_credential", "credential-plaintext");
-    store.insert(expected.clone()).await.unwrap();
+    store.seed_retained_for_test(&expected).await;
     let raw = client
         .database(&name)
         .collection::<Document>(SANDBOX_CREDENTIALS);

@@ -17,8 +17,9 @@ pub(in crate::hosted) type PreparedUpdate =
 
 impl crate::ingress_budget::IngressOwnershipPolicy {
     /// Compose conversation storage with the consumer/transport bounds. The
-    /// caller binds attachments to its enforced process stream limit; queued
-    /// codec/source frames and other transports belong in additional_control.
+    /// attachment count is enforced by admit_attachment before transport
+    /// startup; queued codec/source frames and other transports belong in
+    /// additional_control under their separately enforced limits.
     pub fn conversation_bounds(
         total_bytes: usize,
         maximum_attachments: usize,
@@ -63,7 +64,8 @@ impl crate::ingress_budget::IngressOwnershipPolicy {
                 "largest complete transformation",
                 &[typed::maximum_working_bytes()?.max(consumer_transformation.requested_bytes())],
             )?,
-        )
+        )?
+        .with_attachment_limit(maximum_attachments)
     }
 }
 

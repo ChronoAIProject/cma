@@ -1,6 +1,7 @@
 //! Checked requested-capacity manifests, separate from wire bytes and RSS.
 
 use crate::{AdapterError, Result};
+use std::num::NonZeroUsize;
 
 pub const SIZING_VERSION: u32 = 1;
 
@@ -54,6 +55,7 @@ pub struct ClassBounds {
     total: usize,
     control: usize,
     transformation: usize,
+    maximum_attachments: Option<NonZeroUsize>,
 }
 
 impl ClassBounds {
@@ -72,6 +74,7 @@ impl ClassBounds {
             total,
             control,
             transformation,
+            maximum_attachments: None,
         })
     }
 
@@ -89,6 +92,15 @@ impl ClassBounds {
     }
     pub fn transformation_bytes(self) -> usize {
         self.transformation
+    }
+
+    pub fn maximum_attachments(self) -> Option<usize> {
+        self.maximum_attachments.map(NonZeroUsize::get)
+    }
+
+    pub(crate) fn with_attachment_limit(mut self, maximum: usize) -> Result<Self> {
+        self.maximum_attachments = Some(NonZeroUsize::new(maximum).ok_or_else(invalid)?);
+        Ok(self)
     }
 }
 

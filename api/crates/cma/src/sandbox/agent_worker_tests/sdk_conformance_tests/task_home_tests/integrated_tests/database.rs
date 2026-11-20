@@ -36,7 +36,7 @@ impl Database {
         connection
             .query_pairs_mut()
             .append_pair("authSource", database.name());
-        let stores = crate::store::MongoStores::connect(
+        let mut stores = crate::store::MongoStores::connect(
             connection.as_str(),
             database.name(),
             DEPLOYMENT_ID,
@@ -46,6 +46,7 @@ impl Database {
         )
         .await
         .unwrap();
+        stores.sandbox_model = Arc::new((*stores.sandbox_model).clone().with_renewable_work(true));
         Self {
             database,
             stores,
@@ -60,7 +61,7 @@ impl Database {
         let client = mongodb::Client::with_uri_str(&connection).await.unwrap();
         let database = client.database(context["database"].as_str().unwrap());
         let encryption = crate::store::AuthEncryptionKey::from_base64(&encoded).unwrap();
-        let stores = crate::store::MongoStores::connect(
+        let mut stores = crate::store::MongoStores::connect(
             &connection,
             database.name(),
             DEPLOYMENT_ID,
@@ -70,6 +71,7 @@ impl Database {
         )
         .await
         .unwrap();
+        stores.sandbox_model = Arc::new((*stores.sandbox_model).clone().with_renewable_work(true));
         Self {
             database,
             stores,

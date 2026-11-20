@@ -1,7 +1,6 @@
 //! Drive native reads and durable acknowledgements on one attachment lifetime.
 
 use futures_util::StreamExt as _;
-use std::sync::Arc;
 use tokio_tungstenite::tungstenite::{Error, Message};
 
 use super::ingress::{Ack, AckReceiver, BridgeSource, IncomingFrame};
@@ -12,7 +11,7 @@ use crate::hosted::update_relay::UpdateRelay;
 use crate::ConversationUpdate;
 
 pub(super) fn spawn(
-    reader: Arc<Bridge>,
+    reader: impl std::ops::Deref<Target = Bridge> + Clone + Send + Sync + 'static,
     mut source: BridgeSource,
     reader_updates: UpdateRelay,
     acknowledged: AckReceiver,

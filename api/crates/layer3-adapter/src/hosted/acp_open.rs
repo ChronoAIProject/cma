@@ -2,7 +2,7 @@
 use super::*;
 use crate::ingress_budget::diagnostic::make;
 use crate::ingress_budget::{
-    sizing, AdmittedError, AllocationPlan, IngressClass, IngressWorkScope, OwnedWork,
+    sizing, AdmittedError, AllocationPlan, IngressClass, IngressWorkScope, OwnedWork, SharedOwned,
 };
 use sha2::{Digest as _, Sha256};
 
@@ -112,18 +112,21 @@ impl Bridge {
         stream: ingress::OwnedSocket,
         expected_agent: &str,
         cwd: String,
-        (settings, subscription, policy): (
+        (settings, subscription, attachment): (
             HostedAgentOpenSettings,
             Option<crate::hosted::subscriptions::HostedSubscriptionBinding>,
-            crate::ingress_budget::IngressOwnershipPolicy,
+            crate::ingress_budget::IngressAttachment,
         ),
         resume_conversation: Option<String>,
         recovered_prompt: Option<PromptIdentity>,
         updates_tx: mpsc::Sender<ConversationUpdate>,
     ) -> Result<
-        OwnedWork<OpenedBridge<crate::ingress_budget::AdmittedConversationChannel>>,
+        OwnedWork<
+            OpenedBridge<crate::ingress_budget::AdmittedConversationChannel, SharedOwned<Bridge>>,
+        >,
         AdmittedError,
     > {
+        let policy = attachment.into_policy();
         let scope = IngressWorkScope::new(policy.admit(
             IngressClass::Data,
             AllocationPlan::checked("admitted open scope", &[sizing::shared_owner_bytes::<()>()])?,
@@ -169,7 +172,7 @@ impl Bridge {
         resume_conversation: Option<String>,
         recovered_prompt: Option<PromptIdentity>,
         updates_tx: mpsc::Sender<ConversationUpdate>,
-    ) -> crate::Result<OpenedBridge<M::Channel>> {
+    ) -> crate::Result<OpenedBridge<M::Channel, M::Handle>> {
         if settings.coordinated_ingress
             && !(settings.retained_json
                 && settings.bounded_raw_output
@@ -335,69 +338,77 @@ impl Bridge {
         };
 
         let identity_storage = ingress::identity::bridge_identity_storage(ingress.as_ref())?;
-        let bridge = Arc::new(Self {
-            ingress: ingress.clone(),
-            authority: crate::owner_protocol::current_authority(),
-            json_pools: json_pools.clone(),
-            bounded_raw_output: settings.bounded_raw_output,
-            shared_runtime_output: settings.shared_runtime_output,
-            output_json_budget,
-            permission_state,
-            agent_correlation_digest: format!("{:x}", Sha256::digest(expected_agent.as_bytes())),
-            subscription,
-            sink: Shared::new(
-                Mutex::new(sink, ingress.as_ref())?,
-                ingress.as_ref(),
-                "shared bridge sink",
-            )?,
-            pending: Shared::new(
-                Mutex::new(
-                    ingress::identity::PendingCalls::new(ingress.as_ref())?,
+        let bridge = M::own(
+            Self {
+                ingress: ingress.clone(),
+                authority: crate::owner_protocol::current_authority(),
+                json_pools: json_pools.clone(),
+                bounded_raw_output: settings.bounded_raw_output,
+                shared_runtime_output: settings.shared_runtime_output,
+                output_json_budget,
+                permission_state,
+                agent_correlation_digest: format!(
+                    "{:x}",
+                    Sha256::digest(expected_agent.as_bytes())
+                ),
+                subscription,
+                sink: Shared::new(
+                    Mutex::new(sink, ingress.as_ref())?,
+                    ingress.as_ref(),
+                    "shared bridge sink",
+                )?,
+                pending: Shared::new(
+                    Mutex::new(
+                        ingress::identity::PendingCalls::new(ingress.as_ref())?,
+                        ingress.as_ref(),
+                    )?,
+                    ingress.as_ref(),
+                    "shared pending calls",
+                )?,
+                request_namespace: uuid::Uuid::new_v4().to_string(),
+                next_id: AtomicI64::new(1),
+                recovery: Mutex::new(
+                    recovery::PromptRecovery::new(recovered_prompt, ingress.as_ref())?,
                     ingress.as_ref(),
                 )?,
-                ingress.as_ref(),
-                "shared pending calls",
-            )?,
-            request_namespace: uuid::Uuid::new_v4().to_string(),
-            next_id: AtomicI64::new(1),
-            recovery: Mutex::new(
-                recovery::PromptRecovery::new(recovered_prompt, ingress.as_ref())?,
-                ingress.as_ref(),
-            )?,
-            conversation: Mutex::new(ConversationState::default(), ingress.as_ref())?,
-            output: output_stream
-                .map(|stream| {
-                    output::ReliableOutput::new(
-                        stream,
-                        acknowledgements,
-                        settings.bounded_raw_output,
-                        json_pools,
-                        aggregate,
-                        ingress.as_ref(),
-                    )
-                    .and_then(|value| Mutex::new(value, ingress.as_ref()).map_err(Into::into))
-                })
-                .transpose()?,
-            blocked: Mutex::new(HashMap::new(), ingress.as_ref())?,
-            answered: Shared::new(
-                Mutex::new(HashMap::new(), ingress.as_ref())?,
-                ingress.as_ref(),
-                "shared permission answers",
-            )?,
-            owned_prompt_waiters: Shared::new(
-                AtomicUsize::new(0),
-                ingress.as_ref(),
-                "shared prompt waiters",
-            )?,
-            orphaned_prompt_response: AtomicBool::new(false),
-            retired: AtomicBool::new(false),
-            instructions_support: AtomicU8::new(0),
-            context_refresh: settings.context_refresh.clone(),
-            context_goal: Mutex::new(None, ingress.as_ref())?,
-            retained_history_deadline: progress::ProgressSender::new(None, ingress.as_ref())?,
-            recovering_context: AtomicU64::new(settings.recovered_context_sequence.unwrap_or(0)),
-            _identity_storage: identity_storage,
-        });
+                conversation: Mutex::new(ConversationState::default(), ingress.as_ref())?,
+                output: output_stream
+                    .map(|stream| {
+                        output::ReliableOutput::new(
+                            stream,
+                            acknowledgements,
+                            settings.bounded_raw_output,
+                            json_pools,
+                            aggregate,
+                            ingress.as_ref(),
+                        )
+                        .and_then(|value| Mutex::new(value, ingress.as_ref()).map_err(Into::into))
+                    })
+                    .transpose()?,
+                blocked: Mutex::new(HashMap::new(), ingress.as_ref())?,
+                answered: Shared::new(
+                    Mutex::new(HashMap::new(), ingress.as_ref())?,
+                    ingress.as_ref(),
+                    "shared permission answers",
+                )?,
+                owned_prompt_waiters: Shared::new(
+                    AtomicUsize::new(0),
+                    ingress.as_ref(),
+                    "shared prompt waiters",
+                )?,
+                orphaned_prompt_response: AtomicBool::new(false),
+                retired: AtomicBool::new(false),
+                instructions_support: AtomicU8::new(0),
+                context_refresh: settings.context_refresh.clone(),
+                context_goal: Mutex::new(None, ingress.as_ref())?,
+                retained_history_deadline: progress::ProgressSender::new(None, ingress.as_ref())?,
+                recovering_context: AtomicU64::new(
+                    settings.recovered_context_sequence.unwrap_or(0),
+                ),
+                _identity_storage: identity_storage,
+            },
+            ingress.as_ref(),
+        )?;
         let (updates, relay) = match &ingress {
             Some(policy) => crate::hosted::update_relay::spawn_admitted(updates_tx, policy)?,
             None => crate::hosted::update_relay::spawn(updates_tx, bounded),
@@ -408,9 +419,9 @@ impl Bridge {
         }
         let input = M::input(&bridge, &updates).await?;
 
-        let reader_task = reader::spawn(Arc::clone(&bridge), source, updates.clone(), acknowledged);
+        let reader_task = reader::spawn(bridge.clone(), source, updates.clone(), acknowledged);
         let mut opening_tasks = OpeningTasks {
-            bridge: Arc::clone(&bridge),
+            bridge: bridge.clone(),
             reader: reader_task.abort_handle(),
             relay: relay.abort_handle(),
             armed: true,

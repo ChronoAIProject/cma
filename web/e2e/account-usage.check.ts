@@ -4,6 +4,139 @@ import { LocalUsageMetrics } from './usage-metrics.fixture';
 
 const measured = process.env.CMA_E2E_MEASURED_USAGE === 'true';
 
+test('LOCAL selected Usage names survive Apply, reopen and exact URL recovery', async ({
+  page,
+  baseURL,
+}, info) => {
+  const boundary = new LocalStartup();
+  const metrics = new LocalUsageMetrics();
+  const agentName = 'Research Agent with a detailed readable title '.repeat(8).trim();
+  const agent = {
+    ...boundary.agent,
+    id: 'agt_usage',
+    owner_title: agentName,
+    sandbox: { ...boundary.agent.sandbox, id: 'sbx-1' },
+  };
+  const agentReads: URL[] = [];
+  const requests: URL[] = [];
+  page.on('request', (request) => requests.push(new URL(request.url())));
+  await boundary.route(page, baseURL!);
+  await metrics.route(page);
+  metrics.measuredVisible = measured;
+  await metrics.session(page, ['use_own_sandboxes', 'read_all_sandboxes']);
+  await page.route(/\/api\/v1\/agents(?:\?|$)/, (route) => {
+    const url = new URL(route.request().url());
+    if (url.searchParams.get('sandbox') !== 'sbx-1') return route.fallback();
+    agentReads.push(url);
+    return route.fulfill({
+      json: {
+        items: [
+          {
+            ...agent,
+            sandbox_id: agent.sandbox.id,
+            workspace_id: agent.workspace.id,
+            worktree_id: agent.worktree.id,
+          },
+        ],
+      },
+    });
+  });
+  await page.route('**/api/v1/agents/agt_usage', (route) => {
+    agentReads.push(new URL(route.request().url()));
+    return route.fulfill({ json: agent });
+  });
+  let releaseReport!: () => void;
+  const resumed = new Promise<void>((resolve) => {
+    releaseReport = resolve;
+  });
+  await page.route(/\/usage\/metrics\/reports\/[^/?]+$/, async (route) => {
+    if (metrics.pending) await resumed;
+    await route.fallback();
+  });
+  await page.goto('/agent-manager');
+  await page.getByRole('button', { name: /Account menu for/ }).click();
+  await page.getByRole('menuitem', { name: 'Usage', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Your usage' });
+  await dialog.getByRole('button', { name: 'Sandbox: All my Sandboxes', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Choose sandbox', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Research Sandbox (sbx-1)', exact: true }).click();
+  const sandboxButton = dialog.getByRole('button', {
+    name: 'Sandbox: Research Sandbox',
+    exact: true,
+  });
+  const agentButton = dialog.getByRole('button', { name: `Agent: ${agentName}`, exact: true });
+  await expect(sandboxButton).toBeVisible();
+  await expect(page).toHaveURL(/\/usage$/);
+  await dialog.getByRole('button', { name: 'Apply usage filters' }).click();
+  await dialog
+    .getByRole('button', { name: 'Agent: All Agents in this Sandbox', exact: true })
+    .click();
+  await dialog.getByRole('button', { name: 'Usage Agent', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: `${agentName} (agt_usage)`, exact: true }).click();
+  await expect(agentButton).toBeVisible();
+  expect(new URL(page.url()).searchParams.has('agent')).toBe(false);
+  metrics.pending = true;
+  await dialog.getByRole('button', { name: 'Apply usage filters' }).click();
+  await expect(dialog.getByText('Preparing usage report…')).toBeVisible();
+  await expect(agentButton).toHaveCount(0);
+  await expect(sandboxButton).toBeVisible();
+  metrics.pending = false;
+  releaseReport();
+  await expect(agentButton).toBeVisible();
+  const detailReads = () => metrics.reads.filter((url) => /\/sandboxes\/sbx-1$/.test(url.pathname));
+  expect(detailReads()).toHaveLength(0);
+  expect(agentReads).toHaveLength(1);
+  const selectionURL = page.url();
+  expect(new URL(selectionURL).searchParams.get('sandbox')).toBe('sbx-1');
+  expect(new URL(selectionURL).searchParams.get('agent')).toBe('agt_usage');
+  expect(metrics.creates.at(-1)?.input.filters).toMatchObject({
+    sandbox_id: 'sbx-1',
+    agent_id: 'agt_usage',
+  });
+  expect(selectionURL).not.toContain('Research');
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await page.goForward();
+  await expect(agentButton).toBeVisible();
+  await expect(sandboxButton).toBeVisible();
+  expect(agentReads).toHaveLength(1);
+  const inventoryReads = metrics.reads.filter((url) => url.pathname.endsWith('/sandboxes')).length;
+  await page.reload();
+  await expect(agentButton).toBeVisible();
+  await expect(sandboxButton).toBeVisible();
+  expect(detailReads()).toHaveLength(1);
+  expect(agentReads).toHaveLength(2);
+  expect(agentReads[1]!.pathname).toBe('/api/v1/agents/agt_usage');
+  // Reload reads the report's first table page; label recovery never scans inventory pages.
+  expect(metrics.reads.filter((url) => url.pathname.endsWith('/sandboxes'))).toHaveLength(
+    inventoryReads + 1,
+  );
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 900 });
+    const title = agentButton.locator('.usage-discovery-value');
+    await expect(title).toHaveAttribute('title', agentName);
+    expect(
+      await title.evaluate((node) => ({
+        truncated: node.scrollWidth > node.clientWidth,
+        overflow: getComputedStyle(node).textOverflow,
+      })),
+    ).toEqual({ truncated: true, overflow: 'ellipsis' });
+    await agentButton.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath(`selected-names-${width}.png`) });
+  }
+  expect(
+    await page.evaluate(() =>
+      Object.values(localStorage).some((value) => value.includes('Research Agent')),
+    ),
+  ).toBe(false);
+  expect(requests.filter((url) => url.pathname.includes('/admin/usage/metrics/options'))).toEqual(
+    [],
+  );
+  expect(requests.every((url) => url.origin === baseURL)).toBe(true);
+  expect(boundary.writes).toEqual([]);
+  expect(boundary.errors).toEqual([]);
+});
+
 test('LOCAL account Usage preserves the Agent, owner scope, focus and browser history', async ({
   page,
   baseURL,

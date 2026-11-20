@@ -13,6 +13,7 @@ fn class_bounds_derive_progress_floors_from_attachment_and_layout_limits() {
             empty,
         )
         .unwrap();
+        assert_eq!(bounds.maximum_attachments(), Some(attachments));
         let typed = super::typed::maximum_retained_bytes().unwrap();
         // Raw maximum plus JSON's existing wire/node formula and the generic
         // typed layout must fit together, before consumer work is added.
@@ -257,8 +258,11 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
     use crate::ConversationUpdate;
     use serde_json::json;
     let fixture = fixture();
-    let policy = fixture.policy.clone();
+    let before_attachment = fixture.root.available_bytes();
+    let attachment = fixture.policy.admit_attachment().unwrap();
+    let policy = attachment.policy().clone();
     let baseline = fixture.root.available_bytes();
+    assert!(baseline < before_attachment);
     let (to_client, incoming) = tokio::sync::mpsc::unbounded_channel();
     let (outgoing, mut from_client) = tokio::sync::mpsc::unbounded_channel::<
         crate::ingress_budget::SharedOwned<super::Message>,
@@ -325,7 +329,7 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
             Box::new(ScriptedSocket { incoming, outgoing }),
             "agent",
             "/synthetic/work".into(),
-            (settings, None, policy.clone()),
+            (settings, None, attachment),
             None,
             None,
             updates,
@@ -338,6 +342,10 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
     assert!(opened.bridge.sink.requested_bytes() > 0);
     assert!(opened.bridge.pending.requested_bytes() > 0);
     assert!(opened.bridge.answered.requested_bytes() > 0);
+    let bridge_bytes = opened.bridge.requested_bytes();
+    assert!(bridge_bytes >= size_of::<super::super::Bridge>());
+    let retained_bridge = opened.bridge.clone();
+    let retained_support = opened.channel.input().clone();
     let retained_waiter = opened.bridge.owned_prompt_waiters.clone();
     let waiter_bytes = retained_waiter.requested_bytes();
     assert!(waiter_bytes > 0);
@@ -378,16 +386,33 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
             Some(cursor)
         );
     }
-    let cancel = crate::ingress_budget::IngressWorkScope::new(
-        fixture
-            .policy
-            .admit(
-                IngressClass::Control,
-                AllocationPlan::checked("cancel fixture", &[256]).unwrap(),
+    let cancel = |policy: &crate::ingress_budget::IngressOwnershipPolicy| {
+        crate::ingress_budget::IngressWorkScope::new(
+            policy
+                .admit(
+                    IngressClass::Control,
+                    AllocationPlan::checked("cancel fixture", &[256]).unwrap(),
+                )
+                .unwrap(),
+        )
+        .initialize_owned(|| crate::ConversationInput::Cancel)
+    };
+    assert!(matches!(
+        opened
+            .channel
+            .input()
+            .send_classified(cancel(&fixture.policy))
+            .await,
+        crate::ingress_budget::AdmittedConversationSendOutcome::PreWriteFailure(
+            crate::ingress_budget::AdmittedError::Refused(
+                crate::ingress_budget::AdmissionRefusal::InvalidPlan {
+                    phase: "input ownership"
+                }
             )
-            .unwrap(),
-    )
-    .initialize_owned(|| crate::ConversationInput::Cancel);
+        )
+    ));
+    assert!(acknowledgements.try_recv().is_err());
+    let cancel = cancel(opened.channel.input().policy());
     assert!(matches!(
         opened.channel.input().send_classified(cancel).await,
         crate::ingress_budget::AdmittedConversationSendOutcome::WriteConfirmed
@@ -398,7 +423,19 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
     opened.map(super::super::tests::stop).resolve().await;
     server.abort();
     let _ = server.await;
+    drop(policy);
     drop(received);
+    assert!(fixture.root.capacity_bytes() - fixture.root.available_bytes() >= bridge_bytes);
+    drop(retained_bridge);
+    let readiness = retained_support
+        .managed_context_may_be_ready()
+        .unwrap()
+        .await
+        .unwrap();
+    assert!(!*readiness);
+    drop(readiness);
+    assert!(fixture.root.capacity_bytes() - fixture.root.available_bytes() >= bridge_bytes);
+    drop(retained_support);
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         while fixture.root.available_bytes() != baseline - retained_identity - waiter_bytes {
             tokio::task::yield_now().await;
@@ -411,5 +448,5 @@ async fn admitted_open_preserves_ready_startup_order_and_commit_before_ack() {
     assert_eq!(fixture.root.available_bytes(), baseline - retained_identity);
     assert_eq!(&**identity, "conversation");
     drop(identity);
-    assert_eq!(fixture.root.available_bytes(), baseline);
+    assert_eq!(fixture.root.available_bytes(), before_attachment);
 }

@@ -14,7 +14,7 @@ pub use layer3_adapter::ingress_budget::{
     watch::{AdmittedWatchReceiver, AdmittedWatchSender},
     AdmittedConversationChannel, AdmittedConversationInputReceiver,
     AdmittedConversationInputSender, AdmittedConversationSendOutcome,
-    AdmittedConversationSettingsSupport, IngressBudget, IngressOwnershipPolicy,
+    AdmittedConversationSettingsSupport, IngressAttachment, IngressBudget, IngressOwnershipPolicy,
 };
 
 use super::AgentMessageAssembly;

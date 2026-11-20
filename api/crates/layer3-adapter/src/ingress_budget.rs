@@ -1,11 +1,12 @@
 //! Shared admission for accounted ingress owners; this is not an RSS bound.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{atomic::AtomicUsize, Arc, OnceLock};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 const PROCESS_BYTES: usize = 128 * 1024 * 1024;
 
+mod attachment;
 pub(crate) mod custody;
 pub(crate) mod diagnostic;
 pub mod failure;
@@ -21,6 +22,7 @@ pub use crate::conversation_channel::admitted::{
     AdmittedConversationInputSender, AdmittedConversationSendOutcome,
     AdmittedConversationSettingsSupport,
 };
+pub use attachment::IngressAttachment;
 pub use failure::{AdmissionRefusal, AdmittedError};
 pub use observation::DeliveryObservation;
 pub use operation::AdmittedOperation;
@@ -32,7 +34,12 @@ pub use watch::{AdmittedWatchReceiver, AdmittedWatchSender};
 /// One allocation authority shared by adapter and durable-consumer components.
 /// Owners still enforce their independent component limits.
 #[derive(Clone)]
-pub struct IngressBudget(Arc<Semaphore>, Arc<BudgetPolicy>, Option<Arc<Semaphore>>);
+pub struct IngressBudget(
+    Arc<Semaphore>,
+    Arc<BudgetPolicy>,
+    Option<Arc<Semaphore>>,
+    Option<custody::SharedCustody<attachment::AttachmentStorage>>,
+);
 
 struct BudgetPolicy {
     capacity: usize,
@@ -44,6 +51,7 @@ struct ClassPools {
     data: Arc<Semaphore>,
     transformation: Arc<Semaphore>,
     control: Arc<Semaphore>,
+    active_attachments: AtomicUsize,
 }
 
 /// Explicit runtime-only policy. Constructing this does not enable any caller.
@@ -55,7 +63,7 @@ pub struct IngressOwnershipPolicy {
 
 impl IngressOwnershipPolicy {
     pub fn new(root: IngressBudget, bounds: ClassBounds) -> crate::Result<Self> {
-        if root.2.is_some() || bounds.total_bytes() != root.1.capacity {
+        if root.2.is_some() || root.3.is_some() || bounds.total_bytes() != root.1.capacity {
             return Err(sizing::invalid());
         }
         // Repeated attachments must share class semaphores, not just the root.
@@ -65,6 +73,7 @@ impl IngressOwnershipPolicy {
             data: Arc::new(Semaphore::new(bounds.data_bytes())),
             transformation: Arc::new(Semaphore::new(bounds.transformation_bytes())),
             control: Arc::new(Semaphore::new(bounds.control_bytes())),
+            active_attachments: AtomicUsize::new(0),
         });
         if classes.bounds != bounds {
             return Err(sizing::invalid());
@@ -93,6 +102,7 @@ impl IngressOwnershipPolicy {
             self.root.0.clone(),
             self.root.1.clone(),
             Some(ceiling.clone()),
+            self.root.3.clone(),
         )
     }
 
@@ -127,6 +137,7 @@ impl IngressBudget {
                 classes: OnceLock::new(),
             }),
             None,
+            None,
         )
     }
 
@@ -149,13 +160,18 @@ impl IngressBudget {
             None => None,
         };
         let root = self.0.clone().try_acquire_many_owned(bytes).ok()?;
-        Some(AggregateReservation { root, class })
+        Some(AggregateReservation {
+            root,
+            class,
+            attachment: self.3.clone(),
+        })
     }
 }
 
 struct AggregateReservation {
     root: OwnedSemaphorePermit,
     class: Option<OwnedSemaphorePermit>,
+    attachment: Option<custody::SharedCustody<attachment::AttachmentStorage>>,
 }
 
 impl AggregateReservation {
@@ -170,6 +186,7 @@ impl AggregateReservation {
                     .split(bytes)
                     .expect("class and root reservations match")
             }),
+            attachment: self.attachment.clone(),
         })
     }
 }
@@ -205,3 +222,7 @@ impl IngressReservation {
 #[cfg(test)]
 #[path = "ingress_budget_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ingress_budget/executor_storage_tests.rs"]
+mod executor_storage_tests;

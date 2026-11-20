@@ -23,7 +23,7 @@ pub struct AdmittedConversationInputSender {
     history: Option<AdmittedWatchReceiver<Option<tokio::time::Instant>>>,
     policy: IngressOwnershipPolicy,
     storage: IngressWorkScope,
-    settings_support: Option<Arc<dyn AdmittedConversationSettingsSupport>>,
+    settings_support: Option<support::SettingsSupport>,
 }
 
 pub struct AdmittedConversationInputReceiver {
@@ -87,6 +87,11 @@ impl std::fmt::Debug for AdmittedConversationInputSender {
 }
 
 impl AdmittedConversationInputSender {
+    /// Admit inputs with this policy so they retain the channel's attachment.
+    pub fn policy(&self) -> &IngressOwnershipPolicy {
+        &self.policy
+    }
+
     /// The receiver's driver is returned explicitly; its executor allocation
     /// belongs to the caller's separately admitted task plan.
     pub fn channel(

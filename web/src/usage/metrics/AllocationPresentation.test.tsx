@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it, vi } from 'vitest';
-import { type UsageMetricPage } from '@cma/client';
+import { type UsageMetricPage, type UsageMetricQuantity } from '@cma/client';
 import { AllocationChart, allocationComparisons } from './AllocationChart';
 import { AllocationHistory, humanDuration } from './AllocationHistory';
 import { UsageIdentity } from './UsageIdentity';
@@ -101,6 +101,120 @@ it('explains incomplete history without exposing raw seconds or implying missing
   expect(humanDuration(121779)).toBe('1d 9h');
   expect(humanDuration(15667207)).toBe('181d 8h');
   expect(humanDuration('9007199254740993')).toContain('104,249,991,374d');
+});
+
+it('distinguishes projected time from missing history in the default daily report', async () => {
+  const actor = userEvent.setup();
+  render(
+    <AllocationHistory
+      value={{
+        ...metricRow.allocated_period,
+        complete: false,
+        unknown_seconds: 0,
+        projected_tail_seconds: 173040,
+      }}
+    />,
+  );
+  expect(screen.queryByText('Some allocation history is missing')).not.toBeInTheDocument();
+  expect(screen.queryByText('What’s missing?')).not.toBeInTheDocument();
+  expect(screen.getByText('Coverage unverified')).toBeVisible();
+  await actor.click(screen.getByText('Includes time extended from last known state'));
+  expect(screen.getByText('Missing history').nextElementSibling).toHaveTextContent('None');
+  expect(screen.getByText('Extended from last known state').nextElementSibling).toHaveTextContent(
+    '2d 4m',
+  );
+  expect(screen.getByText(/Allocation history coverage is not fully verified/)).toBeVisible();
+  expect(screen.getByText(/Durations add up across Sandboxes/)).toBeVisible();
+});
+
+const quantities: {
+  kind: string;
+  zero: UsageMetricQuantity;
+  positive: UsageMetricQuantity;
+  duration: string;
+}[] = [
+  { kind: 'numbers', zero: 0, positive: 3600, duration: '1h' },
+  { kind: 'decimal strings', zero: '0', positive: '3600', duration: '1h' },
+  {
+    kind: 'large integer strings',
+    zero: '0',
+    positive: '9007199254740993',
+    duration: '104,249,991,374d 7h',
+  },
+];
+
+for (const { kind, zero, positive, duration } of quantities) {
+  it.each([
+    [false, false, false, 'Coverage unverified'],
+    [false, false, true, 'Coverage unverified'],
+    [false, true, false, 'Partial history'],
+    [false, true, true, 'Partial history'],
+    [true, false, false, 'Complete history'],
+    [true, false, true, 'Complete history'],
+    [true, true, false, 'Partial history'],
+    [true, true, true, 'Partial history'],
+  ] as const)(
+    `${kind}: complete=%s, missing=%s, projected=%s displays %s`,
+    async (complete, missing, projected, badge) => {
+      const actor = userEvent.setup();
+      const value = Object.freeze({
+        ...metricRow.allocated_period,
+        complete,
+        unknown_seconds: missing ? positive : zero,
+        projected_tail_seconds: projected ? positive : zero,
+      });
+      render(<AllocationHistory value={value} />);
+      expect(screen.getByText(badge)).toBeVisible();
+      if (badge !== 'Complete history')
+        expect(screen.queryByText('Complete history')).not.toBeInTheDocument();
+      expect(screen.queryByText('Some allocation history is missing') !== null).toBe(missing);
+      expect(screen.queryByText('Includes time extended from last known state') !== null).toBe(
+        !missing && projected,
+      );
+      await actor.click(screen.getByText(missing ? 'What’s missing?' : 'Details'));
+      expect(screen.getByText('Missing history').nextElementSibling).toHaveTextContent(
+        missing ? duration : 'None',
+      );
+      expect(
+        screen.getByText('Extended from last known state').nextElementSibling,
+      ).toHaveTextContent(projected ? duration : 'None');
+      expect(screen.queryByText(/Missing history is excluded.*does not mean zero/) !== null).toBe(
+        missing,
+      );
+      expect(screen.queryByText(/This report does not identify the reason/) !== null).toBe(
+        badge === 'Coverage unverified',
+      );
+      expect(screen.queryByText(/^The last known allocation is extended/) !== null).toBe(projected);
+      expect(value.complete).toBe(complete);
+    },
+  );
+}
+
+it('updates the summary and expanded facts together when report coverage changes', async () => {
+  const actor = userEvent.setup();
+  const view = render(<AllocationHistory value={metricRow.allocated_period} />);
+  await actor.click(screen.getByText('What’s missing?'));
+  const period = { ...metricRow.allocated_period, unknown_seconds: '0' };
+  view.rerender(<AllocationHistory value={period} />);
+  expect(screen.getByText('Coverage unverified')).toBeVisible();
+  expect(screen.getByText('Includes time extended from last known state')).toBeVisible();
+  expect(screen.getByText('Missing history').nextElementSibling).toHaveTextContent('None');
+  expect(screen.queryByText('What’s missing?')).not.toBeInTheDocument();
+  view.rerender(
+    <AllocationHistory value={{ ...period, complete: true, projected_tail_seconds: '0' }} />,
+  );
+  expect(screen.getByText('Complete history')).toBeVisible();
+  expect(screen.getByText('How allocation is calculated')).toBeVisible();
+  expect(screen.queryByText('Coverage unverified')).not.toBeInTheDocument();
+  expect(screen.queryByText(/^The last known allocation is extended/)).not.toBeInTheDocument();
+  expect(screen.getByText('Extended from last known state').nextElementSibling).toHaveTextContent(
+    'None',
+  );
+  view.rerender(<AllocationHistory value={metricRow.allocated_period} />);
+  expect(screen.getByText('Partial history')).toBeVisible();
+  expect(screen.getByText('Some allocation history is missing')).toBeVisible();
+  expect(screen.getByText('Missing history').nextElementSibling).toHaveTextContent('1h');
+  expect(screen.queryByText('Complete history')).not.toBeInTheDocument();
 });
 
 it('copies the complete identity and shows a selectable fallback when clipboard access fails', async () => {

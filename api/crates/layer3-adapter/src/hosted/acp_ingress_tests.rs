@@ -341,7 +341,7 @@ async fn admitted_open_refuses_each_missing_prerequisite_before_polling_socket()
                 Box::new(SyntheticSocket(fixture.writes.clone())),
                 "agent",
                 "/synthetic/work".into(),
-                (settings, None, fixture.policy.clone()),
+                (settings, None, fixture.policy.admit_attachment().unwrap()),
                 None,
                 None,
                 updates,

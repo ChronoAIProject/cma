@@ -54,13 +54,13 @@ async fn rpc_timeout_error_keeps_custody_after_bridge_and_operation_drop() {
 #[tokio::test]
 async fn admitted_writer_returns_owned_bridge_failure_without_runtime_effects() {
     use super::super::channel::{Admitted, Mode};
-    use std::sync::{atomic::Ordering, Arc};
+    use std::sync::atomic::Ordering;
     let root;
     let outcome = {
         let fixture = fixture();
         root = fixture.root.clone();
         fixture.bridge.recovering_context.store(1, Ordering::SeqCst);
-        let bridge = Arc::new(fixture.bridge);
+        let bridge = Admitted::own(fixture.bridge, Some(&fixture.policy)).unwrap();
         let (updates, _capture) = UpdateRelay::capture_admitted(&fixture.policy).unwrap();
         let sender = Admitted::input(&bridge, &updates).await.unwrap();
         let input = IngressWorkScope::new(
