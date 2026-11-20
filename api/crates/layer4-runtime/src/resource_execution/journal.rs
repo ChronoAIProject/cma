@@ -1,14 +1,13 @@
-use std::{
-    fs::{File, OpenOptions},
-    io::{Read, Write},
-    path::{Path, PathBuf},
-};
+use std::{ffi::CString, io::Write, path::PathBuf};
 
 use layer3_adapter::resource_execution_protocol::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 
 use super::runner::Cell;
+
+#[path = "journal_storage.rs"]
+mod storage;
 
 pub(super) const MAX_RECORDS: usize = 32;
 pub(super) const MAX_JOURNAL_BYTES: usize = 2 * 1024 * 1024;
@@ -157,10 +156,9 @@ struct Activation {
 }
 
 pub(super) struct Journal {
-    root: PathBuf,
+    storage: storage::Storage,
     expected: [u8; 32],
     activation_expected: [u8; 32],
-    _writer: File,
     #[cfg(test)]
     pub fail_after: Option<Stage>,
 }
@@ -189,33 +187,26 @@ impl Journal {
             Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() => (),
             _ => return Err(ProtocolError::Unknown),
         }
-        let activation_bytes = read(&marker, 4096)?;
+        let storage = storage::Storage::open(&root)?;
+        let activation_bytes = storage.marker()?;
         let activation: Activation =
             serde_json::from_slice(&activation_bytes).map_err(|_| ProtocolError::Unknown)?;
         if activation.version != MARKER_VERSION || &activation.assignment != assignment {
             return Err(ProtocolError::Unknown);
         }
-        let writer = open(&root.join("writer.lock"), false)?;
-        #[cfg(unix)]
-        {
-            use std::os::fd::AsRawFd;
-            if unsafe { libc::flock(writer.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
-                return Err(ProtocolError::Unavailable);
-            }
-        }
-        let bytes = read(&root.join("state.json"), MAX_JOURNAL_BYTES)?;
+        let bytes = storage.state(MAX_JOURNAL_BYTES)?;
         let snapshot: Snapshot =
             serde_json::from_slice(&bytes).map_err(|_| ProtocolError::Unknown)?;
         snapshot.validate()?;
         if snapshot.assignment != *assignment || snapshot.policy_epoch != activation.policy_epoch {
             return Err(ProtocolError::Unknown);
         }
+        storage.verify()?;
         Ok(Some((
             Self {
-                root,
+                storage,
                 expected: Sha256::digest(&bytes).into(),
                 activation_expected: Sha256::digest(&activation_bytes).into(),
-                _writer: writer,
                 #[cfg(test)]
                 fail_after: None,
             },
@@ -224,18 +215,17 @@ impl Journal {
     }
 
     pub(super) fn verify(&self) -> ProtocolResult<()> {
-        let actual: [u8; 32] =
-            Sha256::digest(read(&self.root.join("state.json"), MAX_JOURNAL_BYTES)?).into();
+        self.storage.verify()?;
+        let actual: [u8; 32] = Sha256::digest(self.storage.state(MAX_JOURNAL_BYTES)?).into();
         if actual != self.expected {
             return Err(ProtocolError::Unknown);
         }
         // Loss/corruption of the independent latch can never select legacy.
-        let marker: [u8; 32] =
-            Sha256::digest(read(&self.root.with_extension("activated"), 4096)?).into();
+        let marker: [u8; 32] = Sha256::digest(self.storage.marker()?).into();
         if marker != self.activation_expected {
             return Err(ProtocolError::Unknown);
         }
-        Ok(())
+        self.storage.verify()
     }
 
     pub(super) fn save(&mut self, snapshot: &Snapshot) -> ProtocolResult<()> {
@@ -244,27 +234,24 @@ impl Journal {
         let mut writer = Encoding(Vec::new());
         serde_json::to_writer(&mut writer, snapshot).map_err(|_| ProtocolError::Capacity)?;
         let bytes = writer.0;
-        let temporary = self
-            .root
-            .join(format!("{}.tmp", uuid::Uuid::new_v4().simple()));
+        let temporary = CString::new(format!("{}.tmp", uuid::Uuid::new_v4().simple()))
+            .map_err(|_| ProtocolError::Unknown)?;
         let result = (|| {
-            let mut file = open(&temporary, true)?;
+            let mut file = self.storage.create(&temporary)?;
             file.write_all(&bytes)
                 .map_err(|_| ProtocolError::Unavailable)?;
             self.boundary(Stage::Write)?;
             file.sync_all().map_err(|_| ProtocolError::Unavailable)?;
             self.boundary(Stage::FileSync)?;
-            std::fs::rename(&temporary, self.root.join("state.json"))
-                .map_err(|_| ProtocolError::Unavailable)?;
+            self.storage.publish(&temporary)?;
             self.boundary(Stage::Rename)?;
-            crate::fs_durability::sync_parent(&self.root.join("state.json"))
-                .map_err(|_| ProtocolError::Unavailable)?;
+            self.storage.sync()?;
             self.boundary(Stage::DirectorySync)?;
             self.expected = Sha256::digest(&bytes).into();
             Ok(())
         })();
         if result.is_err() {
-            let _ = std::fs::remove_file(temporary);
+            self.storage.remove_temporary(&temporary);
         }
         result
     }
@@ -280,7 +267,7 @@ impl Journal {
     /// R3 owns the production activation barrier. Fixtures create already
     /// activated state; the environment flag alone never creates these files.
     #[cfg(test)]
-    pub(super) fn activate_fixture(root: &Path, snapshot: &Snapshot) {
+    pub(super) fn activate_fixture(root: &std::path::Path, snapshot: &Snapshot) {
         snapshot.validate().unwrap();
         crate::fs_durability::create_dir_all(root).unwrap();
         let activation = Activation {
@@ -300,39 +287,6 @@ impl Journal {
         )
         .unwrap();
     }
-}
-
-fn open(path: &Path, create: bool) -> ProtocolResult<File> {
-    let mut options = OpenOptions::new();
-    options.read(true).write(create).create_new(create);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC);
-    }
-    let file = options.open(path).map_err(|_| ProtocolError::Unknown)?;
-    if !file
-        .metadata()
-        .map_err(|_| ProtocolError::Unknown)?
-        .is_file()
-    {
-        return Err(ProtocolError::Unknown);
-    }
-    Ok(file)
-}
-
-fn read(path: &Path, limit: usize) -> ProtocolResult<Vec<u8>> {
-    let mut bytes = Vec::new();
-    open(path, false)?
-        .take(limit as u64 + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|_| ProtocolError::Unknown)?;
-    if bytes.len() > limit {
-        return Err(ProtocolError::Capacity);
-    }
-    Ok(bytes)
 }
 
 struct Encoding(Vec<u8>);

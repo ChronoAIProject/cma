@@ -598,6 +598,8 @@ fn wait_thread(ready: impl Fn() -> bool) {
     }
 }
 
+#[path = "journal_custody_tests.rs"]
+mod journal_custody_tests;
 #[path = "race_tests.rs"]
 mod race_tests;
 #[path = "restart_tests.rs"]
