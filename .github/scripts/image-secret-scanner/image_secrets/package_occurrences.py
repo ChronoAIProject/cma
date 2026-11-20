@@ -300,7 +300,8 @@ def verify_literals(verified, payload, metadata, expected):
     checks = reviewed_literals.verify(payload, metadata, expected["reviewed_literals"], mime_index=mime_index,
                                       npm_template=expected.get("npm_help_template"),
                                       nyxid_labels=expected.get("nyxid_format_labels"),
-                                      certificates=expected.get("certificate_blocks"))
+                                      certificates=expected.get("certificate_blocks"),
+                                      pooled=expected.get("pooled_literals"))
     verified["reviewed_literals"] = checks
     if mime_index is not None and checks:
         verified["derived_payload"] = True
