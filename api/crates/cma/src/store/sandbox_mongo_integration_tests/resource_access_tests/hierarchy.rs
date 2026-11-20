@@ -66,13 +66,14 @@ async fn hierarchy_children_use_one_read_only_snapshot_and_preserve_retained_sta
                 doc! {"find": "worktrees", "filter": {"workspace_id": workspace.id.as_str()}, "sort": {"_id": 1}},
                 doc! {"find": "agents", "filter": {"workspace_id": workspace.id.as_str()}, "sort": {"_id": 1}},
                 doc! {"aggregate": "agents"},
+                doc! {"aggregate": "agents"},
             ]
         };
         let commands = trace.lock().unwrap().clone();
         assert_eq!(
             commands.len(),
             expected_reads.len() + 1,
-            "only the specified hierarchy/status reads and abort are allowed"
+            "only the specified hierarchy/status/activity reads and abort are allowed"
         );
         let first = &commands[0].1;
         assert!(command_uses_snapshot_read(first));

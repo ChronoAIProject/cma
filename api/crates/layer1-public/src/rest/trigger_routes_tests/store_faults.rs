@@ -18,6 +18,7 @@ impl Default for FaultPolicy {
             current: Mutex::new(Ok(LaunchPolicy {
                 enabled: true,
                 orchestration_paused: false,
+                visitor_launches_per_day: 5,
             })),
         }
     }
@@ -161,6 +162,7 @@ forward!(FaultTriggerStore, TriggerStore, TriggerStoreError, {
 });
 
 forward!(FaultLaunchStore, LaunchStore, LaunchStoreError, {
+    fn visitor_launches_admitted(owner: &SubjectId, utc_day: u64) -> u32;
     fn admit_launch(admission: LaunchAdmission) -> LaunchAdmissionResult;
     fn launch_by_command(
         owner: &SubjectId,
