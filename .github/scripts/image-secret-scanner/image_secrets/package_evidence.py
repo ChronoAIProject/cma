@@ -170,6 +170,9 @@ class PackageEvidence:
                     and valid_digest(row["file_sha256"])
                     and valid_digest(row["package_sha256"]) and row["package_sha256"] in packages
                     and isinstance(row["matches"], list) and bool(row["matches"]))
+            package = packages[row["package_sha256"]]
+            if portable and "debian_control" in row:
+                row = dict(row, path=debian_control.portable_path(row["path"], package))
             path = normalized(row["path"])
             package_member = row["package_member"]
             fields(package_member, {"locator", "path", "type", "sha256"})
@@ -180,7 +183,6 @@ class PackageEvidence:
                     and len(package_member["path"]) == package_member["locator"].count("/") + 1)
             for part in package_member["path"]:
                 normalized(part)
-            package = packages[row["package_sha256"]]
             if portable:
                 owner = row["ownership"]
                 require(isinstance(owner, dict))

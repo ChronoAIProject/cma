@@ -11,7 +11,9 @@ from unittest.mock import patch
 
 from image_secrets.common import digest_bytes, tar_metadata
 from image_secrets.gate import DEBIAN_CONTROL_ADVISORY, DEBIAN_CONTROL_RULE
+from image_secrets.package_evidence import PORTABLE_SCHEMA
 from image_secrets.package_occurrences import prove_package_member
+from image_secrets.portable_ownership import STATUS_PATH
 from tests import fixtures
 from tests import test_package_policy as packages
 from tests.test_runtime_archives import ar_bytes
@@ -129,3 +131,26 @@ class DebianControlTests(unittest.TestCase):
         archive, manifest, _ = self.fixture()
         manifest["packages"][0]["architecture"] = "arm64"
         self.assertIsNone(self.publish(archive, manifest, "wrong-architecture", expected_error="content_refused"))
+
+    def test_portable_trigger_path_is_derived_and_digest_checked(self):
+        archive, manifest, _ = self.fixture()
+        status = (f"Package: {NAME}\nVersion: 1\nArchitecture: amd64\nStatus: install ok installed\n").encode()
+        layer = fixtures.tar_bytes([
+            (CONTROL_PATH, CONTROL), (STATUS_PATH, status), ("etc/machine-id", b""),
+            ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id")),
+        ])
+        fixtures.oci_archive(archive, [layer])
+        manifest["schema"] = PORTABLE_SCHEMA
+        [row] = manifest["entries"]
+        for key in ("layer", "diff_id", "entry"):
+            del row[key]
+        for key in ("archive_sha256", "image_config", "image_manifest", "finding_id"):
+            del row["debian_control"][key]
+        row.update(path={"multiarch": True, "sha256": digest_bytes(CONTROL_PATH.encode())},
+                   occurrences=1, ownership={})
+        recipe = self.publish(archive, manifest, "portable-trigger")
+        [evidence] = recipe["package_evidence"]["entries"]
+        self.assertEqual(evidence["debian_control"]["installed_path"], CONTROL_PATH)
+        self.assertEqual(evidence["current_owner"]["dpkg_status"]["entry"], 1)
+        row["path"]["multiarch"] = False
+        self.assertIsNone(self.publish(archive, manifest, "wrong-path-digest", expected_error="content_refused"))

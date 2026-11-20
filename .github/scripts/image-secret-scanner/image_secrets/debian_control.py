@@ -12,6 +12,18 @@ CONTROL_ARCHIVES = frozenset({"control.tar.gz", "control.tar.xz", "control.tar.z
 PATH_PREFIX = b'{"path": "'
 
 
+def portable_path(binding, package):
+    # The installed filename is a projection of the authenticated package,
+    # including its multiarch suffix. Keep an independent exact path digest.
+    fields(binding, {"multiarch", "sha256"})
+    require(type(binding["multiarch"]) is bool and valid_digest(binding["sha256"])
+            and matches(NAME, package["name"]) and matches(ARCHITECTURE, package["architecture"]))
+    suffix = ":" + package["architecture"] if binding["multiarch"] else ""
+    path = f'var/lib/dpkg/info/{package["name"]}{suffix}.triggers'
+    require(digest_bytes(path.encode("ascii")) == binding["sha256"])
+    return path
+
+
 def validate(row, package, *, portable=False):
     proof = row["debian_control"]
     image_binding(proof, {"view_sha256", "span"}, portable=portable, finding_fields={"finding_id"})
