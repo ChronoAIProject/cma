@@ -13,6 +13,7 @@ from . import (
     derived_payload,
     digest_frames,
     distribution_config,
+    elf_nul_key_view,
     go_cli_strings,
     key_marker_view,
     library_vectors,
@@ -173,7 +174,7 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payloads, d
                 if "debian_control" in expected:
                     return read_control_candidate(stream, member, path, expected)
                 if ({"distribution_config", "digest_frames", "reviewed_literals", "derived_payload",
-                     "key_marker_view", "native_json_key_view"}.intersection(expected)
+                     "key_marker_view", "native_json_key_view", "elf_nul_key_view"}.intersection(expected)
                         or "executable" in expected.get("self_test", {})):
                     return read_payload_candidate(stream, member, path, workspace, *reviewed_payload)
             vectors = (reviewed_payload if reviewed_payload is not None and "self_test" in reviewed_payload[0]
@@ -269,6 +270,8 @@ def read_payload_candidate(stream, member, path, workspace, expected, reviews):
             if "native_json_key_view" in expected and (origin is None or verified.get("derived_payload")):
                 verified["native_json_key_view"] = native_json_key_view.verify(
                     payload, metadata, expected["native_json_key_view"])
+            if "elf_nul_key_view" in expected:
+                verified["elf_nul_key_view"] = elf_nul_key_view.verify(payload, metadata, expected["elf_nul_key_view"])
             if origin is not None and origin["kind"] == "go-cli-strings" and member.mode & 0o111:
                 checked = go_cli_strings.verify(payload, metadata, origin)
                 if checked:
@@ -377,7 +380,8 @@ def requested_occurrences(report, component, evidence):
             row, _ = record
             if any(key in row for key in ("self_test", "digest_frames", "nested_certificate",
                                           "distribution_config", "debian_control", "reviewed_literals",
-                                          "derived_payload", "key_marker_view", "native_json_key_view")):
+                                          "derived_payload", "key_marker_view", "native_json_key_view",
+                                          "elf_nul_key_view")):
                 reviewed_payloads[platform_id, layer, diff_id][entry][locator] = record
             for key in ("self_test", "distribution_config"):
                 if key in row:

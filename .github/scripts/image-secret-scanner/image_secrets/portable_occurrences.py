@@ -2,12 +2,13 @@
 
 from collections import defaultdict
 
+from .arch_package_ownership import ArchOwnership
 from .common import archive_path
 from .portable_ownership import STATUS_PATH, check_reserved_inputs, dpkg_identity, hides_status, status_entry
 
 
 class PortableOccurrences:
-    def __init__(self, entries, packages, source):
+    def __init__(self, entries, packages, source, component):
         self.entries = entries
         self.packages = packages
         self.source = source
@@ -16,20 +17,25 @@ class PortableOccurrences:
         self.inputs = set()
         self.status = {}
         self.masked_status = set()
+        self.arch = (ArchOwnership((row for row, _ in entries.values()), packages)
+                     if component == "runtime-omarchy" else None)
         for (platform, path, sha256), record in entries.items():
             row, _ = record
             self.by_path[platform, path][sha256] = record
-            if "self_test" in row:
-                database = row["self_test"]["database"]
-                self.databases[platform, database["path"]].append((path, database))
+            for name in ("self_test", "distribution_config"):
+                if name in row:
+                    database = row[name]["database"]
+                    self.databases[platform, database["path"]].append((path, database))
             if row.get("derived_payload", {}).get("kind") == "mime-index":
                 self.inputs.add((platform, row["package_member"]["path"][-1]))
 
     def select(self, platform, layer, member, budget, stream_digest, coordinate):
         path = archive_path(member.name, posix_tar=True)
-        if hides_status(path, member):
+        if self.arch is not None and platform == "linux/amd64":
+            self.arch.observe(layer, member, path, coordinate, budget)
+        elif hides_status(path, member):
             self.masked_status.add(coordinate[:2])
-        if path == STATUS_PATH:
+        if self.arch is None and path == STATUS_PATH:
             scope = coordinate[:2]
             status = status_entry(layer, member, budget) if scope not in self.status else None
             self.status[scope] = (coordinate[2], *status) if status is not None else None
@@ -59,14 +65,23 @@ class PortableOccurrences:
         # Any unexplained copy makes the whole group ineligible for review.
         result = {}
         source_checks = {}
+        arch_candidates = defaultdict(list)
         for (_, key), coordinates in matching.items():
             row, reviews = self.entries[key]
             if len(coordinates) != row["occurrences"]:
                 continue
             for coordinate in coordinates:
+                if self.arch is not None:
+                    arch_candidates[coordinate[:2]].append((coordinate, row, self.packages[row["package_sha256"]]))
+                    continue
                 owner = self.owner(row, coordinate, installed, source_checks)
                 if owner is not None:
                     result[coordinate] = (row, reviews, owner)
+        if self.arch is not None:
+            for coordinate, owner in self.arch.prove(arch_candidates).items():
+                platform, _, _, _, (path, sha256, _) = observations[coordinate]
+                row, reviews = self.entries[platform, path, sha256]
+                result[coordinate] = (row, reviews, owner)
         return result
 
     def owner(self, row, coordinate, installed, source_checks):

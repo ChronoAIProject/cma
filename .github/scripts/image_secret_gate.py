@@ -115,7 +115,7 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
     if package_section is None:
         require("package_evidence" not in report and "package_evidence_sha256" not in policy)
     else:
-        from image_secrets import nested_certificates, package_receipt, reviewed_literals
+        from image_secrets import elf_nul_key_view, native_json_key_view, nested_certificates, package_receipt, reviewed_literals
         from image_secrets.gate import (
             ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY, DEBIAN_CONTROL_ADVISORY,
             DIGEST_FRAME_ADVISORY, DISTRIBUTION_ADVISORY,
@@ -174,13 +174,28 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                             and evidence["package_member"]["type"] == "regular"
                             and evidence["package_member"]["sha256"] == source_sha256)
                 elif classification == KEY_MARKER_VIEW_ADVISORY:
-                    key_view = evidence["key_marker_view"]
-                    require(key_view["archive_sha256"] == archive_digest and key_view["original"] == key_view["detector"]
-                            and key_view["original"]["sha256"] == evidence["candidate_sha256"]
+                    views = {"key_marker_view", "native_json_key_view", "elf_nul_key_view"} & evidence.keys()
+                    require(len(views) == 1)
+                    [kind] = views
+                    key_view = evidence[kind]
+                    original, detector = (key_view[key] for key in ("original", "detector"))
+                    if kind == "native_json_key_view":
+                        require(key_view["encoding"] == native_json_key_view.ENCODING and original != detector)
+                    elif kind == "elf_nul_key_view":
+                        require(key_view["encoding"] == elf_nul_key_view.ENCODING and original != detector
+                                and all(original[key] == detector[key] for key in ("offset", "size")))
+                    else:
+                        require(original == detector)
+                    member_sha256 = evidence["outer_file_sha256"]
+                    if origin is not None:
+                        require(kind == "native_json_key_view" and origin["kind"] == "mime-index")
+                        member_sha256 = origin["input_sha256"]
+                    require(key_view["archive_sha256"] == archive_digest
+                            and detector["sha256"] == evidence["candidate_sha256"]
                             and all(key_view[key] == evidence[key] for key in ("image_config", "image_manifest", "finding_id"))
                             and evidence["package"]["authority_type"] == "arch-signature"
                             and evidence["package_member"]["type"] == "regular"
-                            and evidence["package_member"]["sha256"] == evidence["outer_file_sha256"])
+                            and evidence["package_member"]["sha256"] == member_sha256)
                 elif classification == DISTRIBUTION_ADVISORY:
                     distribution = evidence["distribution_config"]
                     require(distribution["archive_sha256"] == archive_digest
@@ -282,7 +297,7 @@ def _scan_archive(archive, output, run_command, *, blocking_rules, component, so
         packet = load_classifications(root, original) if blocking_rules == "credential" and not runtime else None
         content = load_content_policy(root) if blocking_rules == "credential" and component in {
             "web", "am", "eg"} else None
-        evidence = load_package_evidence(root) if runtime else None
+        evidence = load_package_evidence(root, component) if runtime else None
     except (PolicyRefusal, OSError, ValueError, KeyError, TypeError) as error:
         raise ScanRefusal("Image scanner or classification packet differs from the pinned review; publication stopped") from error
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -364,6 +379,7 @@ def resolve_package_scan(archive, output, component, evidence, bundle, *, source
     raw, manifest, review = evidence
     policy = PackageEvidence.load(raw, manifest_sha256=manifest, review_sha256=review,
                                   scanner_manifest_sha256=bundle)
+    require(policy.portable_component in (None, component), "Package evidence belongs to a different component")
     section = package_receipt.build(archive, output, report, component, policy, source=source)
     assess(report, "credential", verified_package_decisions=package_receipt.decisions(section))
     report["package_evidence"] = section

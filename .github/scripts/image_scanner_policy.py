@@ -8,7 +8,7 @@ from pathlib import Path
 BUNDLE = Path(".github/scripts/image-secret-scanner")
 # Exact candidate source binding, including detector policy and cache tests.
 # Adoption of changed bytes requires independent review before merge.
-MANIFEST_SHA256 = "eabea91e1c449292aecf68f8a33e343032d9758e36e89e2275fe81b09b8a2bca"
+MANIFEST_SHA256 = "bbdcedbf8fce30e8c0f54dd71346b9722aff166ad27b19daabb8d4bba32de220"
 CLASSIFICATION_DIR = Path(".github/image-secret-classifications")
 # Archive SHA256 -> (packet SHA256, SA-01 review SHA256). Add an entry only
 # from an exact SA-01 verdict; a packet's self-declared reviewer is not approval.
@@ -20,12 +20,14 @@ APPROVED_CONTENT_POLICY = (
     "08d95884a9211d1cdb4cef80a5a9f28d1d511a21f12c581b566b1d1a7d31a4f9",
 )
 PACKAGE_EVIDENCE = Path(".github/scripts/image-package-evidence.json")
+OMARCHY_PACKAGE_EVIDENCE = Path(".github/scripts/image-omarchy-package-evidence.json")
 # Independently reviewed evidence and verdict digests. Evidence gathered from
 # the candidate image cannot supply either pin.
 APPROVED_PACKAGE_EVIDENCE = (
     "a330135eef2d9f4489ce8ba651f1cf1b5b13413b0359b8235689ce4494db10cd",
     "2605f24f8f774e92398960841610f110f5812710722cfa47df9b0784eb2f28e3",
 )
+APPROVED_OMARCHY_PACKAGE_EVIDENCE = None
 # Runtime scope requires a new exact-manifest review before activation.
 CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json",
                            "image_runtime_headers.py",
@@ -67,9 +69,16 @@ def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def load_package_evidence(root):
-    path = root / PACKAGE_EVIDENCE
-    pins = APPROVED_PACKAGE_EVIDENCE
+def package_evidence_pins():
+    return {
+        "runtime": (PACKAGE_EVIDENCE, APPROVED_PACKAGE_EVIDENCE),
+        "runtime-omarchy": (OMARCHY_PACKAGE_EVIDENCE, APPROVED_OMARCHY_PACKAGE_EVIDENCE),
+    }
+
+
+def load_package_evidence(root, component="runtime"):
+    relative, pins = package_evidence_pins()[component]
+    path = root / relative
     if pins is None:
         require(not path.exists() and not path.is_symlink(), "Package evidence has no reviewed pin")
         return None
@@ -123,8 +132,9 @@ def verify_bundle(root, manifest_sha256=MANIFEST_SHA256):
 def validate(root, paths, manifest_sha256=MANIFEST_SHA256):
     frozen = verify_bundle(root, manifest_sha256)
     load_content_policy(root)
-    evidence = load_package_evidence(root)
-    require(evidence is None or PACKAGE_EVIDENCE in paths, "Reviewed package evidence must be tracked")
+    for component, (relative, _) in package_evidence_pins().items():
+        evidence = load_package_evidence(root, component)
+        require(evidence is None or relative in paths, "Reviewed package evidence must be tracked")
     require(frozen.issubset(set(paths)), "Frozen scanner files must be tracked with the publishing workflow")
     packets = {CLASSIFICATION_DIR / (digest + ".json") for digest in APPROVED_CLASSIFICATIONS}
     require(packets.issubset(set(paths)), "Reviewed classification packets must be tracked")
