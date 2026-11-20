@@ -207,7 +207,7 @@ export function AgentSurface({
   const observed = controller.progressObservation;
   const headerMenu = agentHeaderMenu(
     status,
-    permissions,
+    readOnly ? undefined : permissions,
     observed !== undefined && !observed.stale && sandboxChildrenAvailable(observed.sandbox),
     actionsBusy,
   );
