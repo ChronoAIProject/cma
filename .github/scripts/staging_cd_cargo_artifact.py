@@ -23,10 +23,13 @@ WORKFLOW = ".github/workflows/staging-cd.yml"
 COMPONENTS = {"am", "eg"}
 FILES = ("manifest.json", "registry.tar.gz", "target.tar.gz")
 MIB = 1024**2
-# Run artifacts carry larger sealed archives than the 1 GiB Actions cache path:
-# AM's compressed incremental state reached 1,015 MiB on 20 Nov 2026 and every
-# later export was withheld. The 4 GiB expanded and member bounds still apply.
+# Run artifacts carry larger sealed archives than the 1 GiB Actions cache path.
+# On 20 Nov 2026 AM's bundle was 1,015 MiB compressed and 2.56 GiB expanded in
+# about 27k files; every later export was withheld. These bounds leave about 2x
+# headroom, with the compressed bound binding first at that 2.6:1 ratio, while
+# staying within a standard runner's disk. The 200k member bound is unchanged.
 MAX_BUNDLE_BYTES = 2 * 1024**3
+MAX_EXPANDED_BYTES = 6 * 1024**3
 # The manifest is bounded to 4 KiB. Stored (uncompressed) ZIP framing for three
 # members fits in the extra MiB.
 MAX_ARTIFACT_BYTES = MAX_BUNDLE_BYTES + 4096 + MIB
@@ -34,7 +37,10 @@ CANDIDATES = 5
 # Any workflow run may upload an artifact with this name. List enough rows to
 # find the develop producers among them.
 LISTING = 50
-DEADLINE_SECONDS = 240
+# A 2 GiB download needs about 6 MiB/s within DOWNLOAD_SECONDS; the overall
+# deadline leaves room for the provenance reads before it.
+DOWNLOAD_SECONDS = 360
+DEADLINE_SECONDS = 420
 CHUNK = 8 * MIB
 
 
@@ -208,7 +214,7 @@ def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develo
                        timeout=remaining(10))
             producer = validate_producer(run, jobs, artifact, component)
             discard(download)
-            get(f"repos/{REPO}/actions/artifacts/{artifact['id']}/zip", timeout=remaining(180), output=download)
+            get(f"repos/{REPO}/actions/artifacts/{artifact['id']}/zip", timeout=remaining(DOWNLOAD_SECONDS), output=download)
             unpack(download, artifact, destination)
             return {"state": "RESTORED", **producer, "artifact_id": artifact["id"],
                     "artifact_digest": artifact["digest"]}

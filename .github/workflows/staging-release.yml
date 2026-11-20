@@ -84,7 +84,7 @@ jobs:
       # Cargo bundles travel as develop run artifacts from verified producers.
       - name: Restore compatible Cargo mounts
         if: (inputs.component == 'am' || inputs.component == 'eg') && steps.ownership.outputs.superseded != 'true'
-        timeout-minutes: 5
+        timeout-minutes: 10
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -117,7 +117,7 @@ jobs:
           retention-days: 7
       - name: Retain accepted Cargo mounts
         if: success() && github.event_name == 'push' && github.ref == 'refs/heads/develop' && steps.publication.outputs.build-cache-ready == 'true'
-        timeout-minutes: 5
+        timeout-minutes: 10
         continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
