@@ -589,8 +589,15 @@ async fn unactivated_deployment_cap_keeps_legacy_worker_admission() {
     assert!(!fence.contains_key("pending_launch_homes"));
     assert_eq!(
         admissions.count_documents(doc! {}).await.unwrap(),
-        2,
-        "only the inherited owner and global fences may exist"
+        3,
+        "only the two admitted visitors and inherited global fence may exist"
+    );
+    assert_eq!(
+        admissions
+            .count_documents(doc! {"_id":{"$in":[first.owner.as_str(), second.owner.as_str()]}})
+            .await
+            .unwrap(),
+        2
     );
     assert_eq!(
         launches
