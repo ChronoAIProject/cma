@@ -120,8 +120,18 @@ describe('Flat Agent navigation', () => {
           {
             ...workspace,
             agents: [
-              { ...agent, id: 'older', title: 'Older Agent', updatedAt: '2026-10-20T08:00:00Z' },
-              { ...agent, id: 'newest', title: 'Newest Agent', updatedAt: '2026-10-22T08:00:00Z' },
+              {
+                ...agent,
+                id: 'older',
+                title: 'Older Agent',
+                taskActivityAt: '2026-10-20T08:00:00Z',
+              },
+              {
+                ...agent,
+                id: 'newest',
+                title: 'Newest Agent',
+                taskActivityAt: '2026-10-22T08:00:00Z',
+              },
               { ...agent, id: 'gone', title: 'Deleted Agent', status: 'deleted' as const },
             ],
           },
@@ -135,7 +145,12 @@ describe('Flat Agent navigation', () => {
             id: 'wsp_other',
             name: 'Other Workspace',
             agents: [
-              { ...agent, id: 'middle', title: 'Middle Agent', updatedAt: '2026-10-21T08:00:00Z' },
+              {
+                ...agent,
+                id: 'middle',
+                title: 'Middle Agent',
+                taskActivityAt: '2026-10-21T08:00:00Z',
+              },
             ],
           },
         ],

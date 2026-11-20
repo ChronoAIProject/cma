@@ -133,7 +133,8 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, ma
         if item["component"] not in DEPLOYABLES or DEPLOYABLES[item["component"]] not in newest:
             continue
         # Only duplicate work for the very same source needs an owner lookup.
-        # Strictly older owners lose authority when the successor transaction lands.
+        # A strictly older owner that has not started building yields to the
+        # successor; one already building finishes unless a higher final lands.
         if item["source"] != newest[DEPLOYABLES[item["component"]]]:
             continue
         if new_group_source and item["component"] in GROUP and item["source"] != group_tip:

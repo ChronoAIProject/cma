@@ -182,6 +182,12 @@ def validate(documents, actions)
   uploads = steps.select { |s| s.fetch('with', {})['name'] == 'rust-tests-${{ github.sha }}' }
   require_check(uploads.length == 1 && uploads[0]['with']['retention-days'] == 1, 'event SHA archive retention differs')
   structure = documents.fetch('ci-repo').fetch('jobs').fetch('structure').fetch('steps')
+  restore = structure.select { |s| s['name'] == 'Synthetic home restore evidence regressions' }
+  require_check(restore.size == 1 && restore.first['run'] == 'node --test .github/scripts/home-backup/*.test.mjs' &&
+    !restore.first.key?('if') && !restore.first.key?('continue-on-error') && !restore.first.key?('env'),
+    'home restore evidence suites must run without credentials or optional failure')
+  node = structure.index { |s| s.fetch('uses', '').start_with?('actions/setup-node@') }
+  require_check(node && node < structure.index(restore.first), 'home restore evidence requires Node setup')
   require_check(structure.none? { |s| s.fetch('name', '').match?(/Release |Skopeo|image reconciliation|image import/i) }, 'release tooling leaked into Repo')
   serialized = JSON.generate(documents)
   require_check(!serialized.include?('continue-on-error":true,"run'), 'product gate bypass')
@@ -289,6 +295,12 @@ mutations = [
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-cache-restore' }['if'] = "github.event_name == 'push'" },
 ]
 synthetic_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic authority and observer regressions' }
+restore_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic home restore evidence regressions' }
+mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'].delete_at(restore_index) }
+[{'if' => 'false'}, {'continue-on-error' => true}, {'env' => {'CLOUDSDK_CORE_PROJECT' => 'fixture'}},
+ {'run' => 'node .github/scripts/home-backup/inventory.mjs fixture'}].each do |bypass|
+  mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][restore_index].merge!(bypass) }
+end
 %w[staging-authority deployment-observer].each do |suite|
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'].sub!(" .github/scripts/#{suite}.test.mjs", '') }
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'].sub!("#{suite}.test.mjs", "#{suite}.mjs") }

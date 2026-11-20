@@ -43,10 +43,25 @@ pub struct MongoTriggerDefinitionStore {
     pub(super) revisions: Collection<Document>,
     pub(super) profiles: Arc<MongoProfileStore>,
     pub(super) global_sandbox_limit: u16,
+    pub(super) launch_admission_policy: layer2_core::trigger_domain::LaunchAdmissionPolicy,
     pub(super) launch_data: launches::LaunchCollections,
 }
 
 impl MongoTriggerDefinitionStore {
+    pub(crate) fn with_launch_admission_policy(
+        mut self,
+        policy: layer2_core::trigger_domain::LaunchAdmissionPolicy,
+    ) -> Self {
+        self.launch_admission_policy = policy;
+        self
+    }
+
+    pub(crate) fn launch_admission_policy(
+        &self,
+    ) -> layer2_core::trigger_domain::LaunchAdmissionPolicy {
+        self.launch_admission_policy
+    }
+
     pub(crate) fn with_global_sandbox_limit(mut self, limit: u16) -> Self {
         self.global_sandbox_limit = limit;
         self
@@ -73,6 +88,7 @@ impl MongoTriggerDefinitionStore {
             profiles,
             launch_data,
             global_sandbox_limit: 0,
+            launch_admission_policy: Default::default(),
         };
         indexes::ensure(&store).await?;
         tracing::info!(

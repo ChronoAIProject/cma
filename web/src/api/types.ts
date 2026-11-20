@@ -191,6 +191,7 @@ export interface AgentRuntimeMetadata {
 }
 export interface AgentSummary {
   readonly taskStartedAt?: string;
+  readonly taskActivityAt?: string;
   readonly taskStatus?: import('@cma/client').AgentTaskStatus;
   readonly ownerTitle?: string;
   readonly runtimeMetadata?: AgentRuntimeMetadata;

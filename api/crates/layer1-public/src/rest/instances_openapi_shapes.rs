@@ -396,6 +396,10 @@ impl From<WorktreeHierarchySummary> for WorktreeView {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct OwnerAgentSummaryView {
+    /// Last confirmed task-log activity within the hierarchy snapshot. Excludes
+    /// connection maintenance; absent when task history cannot establish a time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_activity_at: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_started_at: Option<String>,
     #[schema(value_type = String)]
@@ -413,6 +417,7 @@ pub struct OwnerAgentSummaryView {
     pub profile: ProfileReferenceView,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
+    /// Last resource update, including background connection maintenance.
     pub updated_at: String,
 }
 
@@ -421,6 +426,7 @@ impl From<AgentHierarchySummary> for OwnerAgentSummaryView {
         Self {
             task_status: value.task_status,
             task_started_at: value.task_started_at,
+            task_activity_at: value.task_activity_at,
             runtime_metadata: value.runtime_metadata.map(Into::into),
             owner_title: value.owner_title,
             id: value.id.to_string(),

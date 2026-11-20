@@ -279,10 +279,19 @@ class GitPublicationTests(unittest.TestCase):
 
     def test_missing_or_superseded_reservation_refuses_before_tag_push_or_readback_retry(self):
         value = self.reservation()
+        finals = []
         for failure in ("missing", "superseded"):
             if failure == "superseded":
                 self.publisher.insert(value)
-                self.publisher.insert(self.reservation(2))
+                newer = self.git("commit-tree", self.tree, "-p", self.source, data="Later release\n")
+                self.git("push", str(self.remote), newer + ":refs/heads/develop")
+                successor = next_reservation("web", newer, self.tree, 43, "patch", 2, 1,
+                                             self.api.tags(), self.publisher.list())
+                self.publisher.insert(successor)
+                # A successor's pending reservation never fences a started build; its final does.
+                self.assertTrue(self.publisher.require_current(value, build_started=True))
+                self.assertTrue(self.publisher.finalize(self.receipt(successor), Mock(return_value=True)))
+                finals.append(self.receipt(successor))
             before = self.publisher.list()
             command = self.publisher.command
             self.publisher.command = Mock(wraps=command)
@@ -299,7 +308,7 @@ class GitPublicationTests(unittest.TestCase):
             self.publisher.command.assert_not_called()
             self.publisher.sleep.assert_not_called()
             self.assertEqual(self.publisher.list(), before)
-            self.assertEqual(self.api.tags(), [])
+            self.assertEqual([tag["receipt"] for tag in self.api.tags()], finals)
             self.publisher.command = command
 
     def test_conflicting_or_unreadable_final_is_never_retried(self):
@@ -399,7 +408,7 @@ class GitPublicationTests(unittest.TestCase):
         queue["event_source"] = older
         self.assertEqual(allocate_queue(queue, self.api, self.publisher, 11, 1), {"include": []})
         with self.assertRaisesRegex(Refusal, "superseded and burned"):
-            self.publisher.require_current(pending)
+            self.publisher.require_current(pending, build_started=True)
         with self.assertRaisesRegex(Refusal, "superseded and burned"):
             self.publisher.finalize(self.receipt(pending), registry.exists)
         self.assertEqual(self.publisher.list(), [pending])

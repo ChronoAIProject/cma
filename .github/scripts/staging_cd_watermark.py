@@ -48,11 +48,10 @@ def require_current_versions(receipts, *, runner=subprocess.run):
 
 
 def require_version_refs(expected, *, runner=subprocess.run, missing="Expected version is absent from component inventory"):
-    # A final tag can predate a newer pending reservation. Reading both from
-    # one advertisement also covers a finalizer concurrently removing pending.
+    # Every lane finishes a started build, so a successor's pending reservation
+    # never withholds a final. Only a higher final in the same advertisement does.
     require(bool(expected) and expected.keys() <= DEPLOYABLES.keys(), "Unknown release component")
-    prefixes = {f"refs/tags/{DEPLOYABLES[key]}/{suffix}": key
-                for key in expected for suffix in ("v", "pending/v")}
+    prefixes = {f"refs/tags/{DEPLOYABLES[key]}/v": key for key in expected}
     env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
     try:

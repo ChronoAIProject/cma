@@ -98,7 +98,7 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
   });
   const {before, after} = JSON.parse(result);
   assert.deepEqual(after, before);
-  assert.ok(source.includes("agent-lists) selection_filter='package(=cma) and not test(::personal_inventory::availability::) and not (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile)) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))'"));
+  assert.ok(source.includes("agent-lists) selection_filter='package(=cma) and not test(::personal_inventory::availability::) and not (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile)) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_task_status::activity::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))'"));
   assert.ok(source.includes(`"$1" == '--agent-lists'`));
   assert.ok(source.includes("agent-list-profile) selection_filter='package(=cma) and (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile))'"));
   assert.ok(source.includes(`"$1" == '--agent-list-profile'`));
@@ -151,7 +151,7 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
   });
   const {before, after} = JSON.parse(result);
   assert.deepEqual(after, before);
-  assert.ok(source.includes("request-limits) selection_filter='package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::) or test(rate_limit::control_tests::mongo::) or test(rate_limit::input_tests::mongo::))'"));
+  assert.ok(source.includes("request-limits) selection_filter='package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::) or test(rate_limit::anonymous_mongo_tests::) or test(rate_limit::control_tests::mongo::) or test(rate_limit::input_tests::mongo::))'"));
   assert.ok(source.includes(`"$1" == '--request-limits'`));
 });
 
@@ -179,5 +179,5 @@ done
     assert.equal(filters[mode].slice(filters[mode].indexOf(boundary)), corpus, mode);
     if (mode !== 'all') assert.notEqual(filters[mode], filters.all, `${mode} must select its own workload`);
   }
-  assert.equal(filters['request-limits'], 'package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::) or test(rate_limit::control_tests::mongo::) or test(rate_limit::input_tests::mongo::))' + corpus);
+  assert.equal(filters['request-limits'], 'package(=cma) and (test(store::request_limits::tests::) or test(rate_limit::lease::mongo_tests::) or test(rate_limit::anonymous_mongo_tests::) or test(rate_limit::control_tests::mongo::) or test(rate_limit::input_tests::mongo::))' + corpus);
 });

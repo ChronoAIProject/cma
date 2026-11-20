@@ -29,23 +29,27 @@ class AllocationSnapshotTests(unittest.TestCase):
         return matrix
 
     def test_one_snapshot_one_push_and_no_older_owner_read(self):
-        server, store = self.fixture(25, latency=0.001)
-        matrix = self.allocate(server, store)
-        tasks = json.loads(matrix["include"][0]["tasks"])
-        self.assertEqual(len(tasks), 1)
-        self.assertEqual(tasks[0]["reservation"]["version"], "0.10.26")
-        self.assertEqual([args[1] for args in server.commands].count("ls-remote"), 1)
-        pushes = [args for args in server.commands if args[1] == "push"]
-        self.assertEqual(len(pushes), 1)
-        self.assertEqual(len([arg for arg in pushes[0] if ":refs/tags/" in arg]), 3)
-        self.assertEqual([path for path in server.calls if path.startswith("actions/")],
-                         [])
-        self.assertFalse(any("matching-refs" in path for path in server.calls))
-        self.assertGreater(server.peak, 1)
-        self.assertLessEqual(server.peak, 8)
-        self.assertTrue(all(server.refs[name] == oid for name, oid in server.original.items()))
-        with self.assertRaises(Refusal):
-            store.load()
+        for component in sorted(DEPLOYABLES):
+            with self.subTest(component=component):
+                server, store = self.fixture(25, latency=0.001, components=(component,))
+                matrix = self.allocate(server, store)
+                tasks = json.loads(matrix["include"][0]["tasks"])
+                self.assertEqual(len(tasks), 1)
+                self.assertEqual(tasks[0]["reservation"]["version"], "0.10.26")
+                self.assertEqual([args[1] for args in server.commands].count("ls-remote"), 1)
+                pushes = [args for args in server.commands if args[1] == "push"]
+                self.assertEqual(len(pushes), 1)
+                # The reservation and its claim; a started predecessor keeps its outcome ref.
+                self.assertEqual(len([arg for arg in pushes[0] if ":refs/tags/" in arg]), 2)
+                self.assertFalse(any("cma-allocation-outcome/" in arg for arg in pushes[0]))
+                self.assertEqual([path for path in server.calls if path.startswith("actions/")],
+                                 [])
+                self.assertFalse(any("matching-refs" in path for path in server.calls))
+                self.assertGreater(server.peak, 1)
+                self.assertLessEqual(server.peak, 8)
+                self.assertTrue(all(server.refs[name] == oid for name, oid in server.original.items()))
+                with self.assertRaises(Refusal):
+                    store.load()
 
     def test_fifteen_queued_merges_reserve_only_five_distinct_latest_sources(self):
         server, store = self.fixture(14, reserved=False, components=tuple(DEPLOYABLES))

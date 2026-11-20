@@ -1,5 +1,6 @@
 //! Admit one parsed JSON tree and retain its reservation through RPC consumers.
 
+use crate::ingress_budget::diagnostic::text;
 use std::{
     borrow::Borrow,
     fmt,
@@ -7,7 +8,7 @@ use std::{
     sync::{Arc, OnceLock},
 };
 
-use crate::ingress_budget::{IngressBudget, IngressReservation};
+use crate::ingress_budget::{custody::SharedCustody, IngressBudget, IngressReservation};
 use serde_json::Value;
 use tokio::sync::Semaphore;
 
@@ -24,6 +25,7 @@ pub(super) struct JsonPools {
     trees: Arc<Semaphore>,
     scratch: Arc<Semaphore>,
     aggregate: Option<IngressBudget>,
+    scratch_aggregate: Option<IngressBudget>,
     sign_ins: Arc<Semaphore>,
     observations: Arc<Semaphore>,
 }
@@ -41,13 +43,25 @@ impl JsonPools {
             trees: Arc::new(Semaphore::new(trees)),
             scratch: Arc::new(Semaphore::new(scratch)),
             aggregate: None,
+            scratch_aggregate: None,
             sign_ins: super::sign_in_retention::process_pool(),
             observations: super::observation_retention::process_pool(),
         }
     }
 
     pub(super) fn with_aggregate(mut self, aggregate: Option<IngressBudget>) -> Self {
+        self.scratch_aggregate = aggregate.clone();
         self.aggregate = aggregate;
+        self
+    }
+
+    pub(super) fn with_ownership(
+        mut self,
+        policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> Self {
+        self.aggregate = Some(policy.budget(crate::ingress_budget::IngressClass::Data));
+        self.scratch_aggregate =
+            Some(policy.budget(crate::ingress_budget::IngressClass::Transformation));
         self
     }
 
@@ -73,7 +87,7 @@ impl JsonPools {
         // its complete allowance before running even that first parse.
         let scratch = acquire(
             &self.scratch,
-            self.aggregate.as_ref(),
+            self.scratch_aggregate.as_ref(),
             scratch_allowance(payload.len())?,
         )?;
         let shape = output_json_budget::inspect(payload).map_err(|e| e.adapter_error())?;
@@ -95,9 +109,12 @@ impl JsonPools {
         Ok(JsonFrame {
             storage: Storage::Accounted(JsonOwner {
                 value: Arc::new(value),
-                _storage: Arc::new(admission.tree),
+                _storage: SharedCustody::new(admission.tree),
             }),
             result: false,
+            prepared_update: None,
+            prepared_terminal: None,
+            delivery_storage: None,
         })
     }
 }
@@ -136,7 +153,7 @@ fn acquire(
 }
 
 fn capacity() -> AdapterError {
-    AdapterError::AtCapacity("retained JSON storage capacity exhausted".into())
+    AdapterError::AtCapacity(text("retained JSON storage capacity exhausted"))
 }
 
 #[derive(Clone)]
@@ -144,13 +161,14 @@ struct JsonOwner {
     // Each clone holds both private owners. Field order deallocates the final
     // tree Arc (including its header) before releasing the last reservation.
     value: Arc<Value>,
-    _storage: Arc<IngressReservation>,
+    _storage: SharedCustody<IngressReservation>,
 }
 
 #[derive(Clone)]
 enum Storage {
     Legacy(Value),
     Accounted(JsonOwner),
+    Admitted(crate::ingress_budget::SharedOwned<Value>),
 }
 
 /// The value is immutable and cannot be extracted separately from its owner.
@@ -158,20 +176,126 @@ enum Storage {
 pub(super) struct JsonFrame {
     storage: Storage,
     result: bool,
+    prepared_update: Option<super::acp::ingress::PreparedUpdate>,
+    prepared_terminal: Option<crate::RuntimeOutputUpdate>,
+    delivery_storage: Option<crate::ingress_budget::IngressWorkScope>,
 }
 
 impl JsonFrame {
+    /// Decode an owned source response without creating another set of local
+    /// pools. Use the same borrowed preflight and layout bound as socket JSON.
+    pub(in crate::hosted) fn decode_admitted(
+        payload: &[u8],
+        policy: &crate::ingress_budget::IngressOwnershipPolicy,
+    ) -> Result<Self, crate::ingress_budget::AdmittedError> {
+        use crate::ingress_budget::{AdmissionRefusal, AllocationPlan, IngressClass};
+        let invalid = || AdmissionRefusal::InvalidPlan {
+            phase: "admitted source JSON",
+        };
+        if payload.len() > 4 * 1024 * 1024 {
+            return Err(invalid().into());
+        }
+        let _scratch = policy.admit(
+            IngressClass::Transformation,
+            AllocationPlan::checked("source JSON scratch", &[3 * payload.len(), FIXED_ALLOWANCE])?,
+        )?;
+        let shape = output_json_budget::inspect(payload).map_err(|_| invalid())?;
+        let tree = policy.admit(
+            IngressClass::Data,
+            AllocationPlan::checked(
+                "source JSON tree",
+                &[
+                    2 * payload.len(),
+                    FIXED_ALLOWANCE,
+                    shape
+                        .nodes
+                        .checked_mul(NODE_ALLOWANCE)
+                        .ok_or_else(invalid)?,
+                ],
+            )?,
+        )?;
+        tree.try_initialize_static(|| serde_json::from_slice(payload).map_err(|_| invalid()))
+            .map(Self::admitted)
+            .map_err(Into::into)
+    }
+
+    pub(super) fn prepare(
+        params: &impl serde::Serialize,
+        policy: Option<&crate::ingress_budget::IngressOwnershipPolicy>,
+    ) -> crate::Result<Self> {
+        let storage = super::acp::ingress::identity::json_storage(policy, params)?;
+        let build = || {
+            serde_json::to_value(params).map_err(|_| {
+                crate::ingress_budget::AdmissionRefusal::InvalidPlan {
+                    phase: "outgoing JSON preparation",
+                }
+            })
+        };
+        let prepared = match storage {
+            Some(storage) => storage.try_initialize_static(build).map(Self::admitted),
+            None => build().map(Self::legacy),
+        };
+        prepared
+            .map_err(|_| AdapterError::Rejected(text("runtime parameters could not be prepared")))
+    }
+
+    pub(super) fn admitted(value: crate::ingress_budget::SharedOwned<Value>) -> Self {
+        Self {
+            storage: Storage::Admitted(value),
+            ..Self::legacy(Value::Null)
+        }
+    }
+
     pub(super) fn legacy(value: Value) -> Self {
         Self {
             storage: Storage::Legacy(value),
             result: false,
+            prepared_update: None,
+            prepared_terminal: None,
+            delivery_storage: None,
         }
+    }
+
+    pub(super) fn with_prepared_update(
+        mut self,
+        update: Option<super::acp::ingress::PreparedUpdate>,
+    ) -> Self {
+        self.prepared_update = update;
+        self
+    }
+
+    pub(super) fn prepared_update(&self) -> Option<super::acp::ingress::PreparedUpdate> {
+        self.prepared_update.clone()
+    }
+
+    pub(super) fn with_prepared_terminal(
+        mut self,
+        terminal: Option<crate::RuntimeOutputUpdate>,
+    ) -> Self {
+        self.prepared_terminal = terminal;
+        self
+    }
+
+    pub(super) fn prepared_terminal(&self) -> Option<crate::RuntimeOutputUpdate> {
+        self.prepared_terminal.clone()
+    }
+
+    pub(super) fn with_delivery_storage(
+        mut self,
+        storage: crate::ingress_budget::IngressWorkScope,
+    ) -> Self {
+        self.delivery_storage = Some(storage);
+        self
+    }
+
+    pub(super) fn delivery_storage(&self) -> Option<&crate::ingress_budget::IngressWorkScope> {
+        self.delivery_storage.as_ref()
     }
 
     /// Share only admitted storage; legacy values must not be deep-cloned here.
     pub(super) fn shared(&self) -> Option<Self> {
         match &self.storage {
-            Storage::Accounted(_) => Some(self.clone()),
+            Storage::Accounted(_) | Storage::Admitted(_) => Some(self.clone()),
             Storage::Legacy(_) => None,
         }
     }
@@ -184,6 +308,9 @@ impl JsonFrame {
             storage => Self {
                 storage,
                 result: true,
+                prepared_update: self.prepared_update,
+                prepared_terminal: self.prepared_terminal,
+                delivery_storage: self.delivery_storage,
             },
         }
     }
@@ -196,6 +323,7 @@ impl Deref for JsonFrame {
         let value = match &self.storage {
             Storage::Legacy(value) => value,
             Storage::Accounted(owner) => &owner.value,
+            Storage::Admitted(owner) => owner,
         };
         if self.result {
             value.get("result").unwrap_or(&Value::Null)
@@ -240,6 +368,9 @@ impl JsonPools {
 #[cfg(test)]
 #[path = "retained_json_allocation_tests.rs"]
 mod allocation_tests;
+#[cfg(test)]
+#[path = "retained_json_source_tests.rs"]
+mod source_tests;
 #[cfg(test)]
 #[path = "retained_json_tests.rs"]
 mod tests;
