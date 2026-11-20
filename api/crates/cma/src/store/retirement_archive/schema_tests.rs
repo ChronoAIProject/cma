@@ -58,36 +58,44 @@ async fn manifest() -> Manifest {
 
 #[tokio::test]
 async fn frozen_pre_capture_census_requires_new_evidence_namespaces_to_be_empty() {
-    let audit: Vec<_> = super::super::census_catalog::AUDIT
-        .iter()
-        .copied()
-        .filter(|(name, _)| pre_capture::COLLECTIONS.contains(name))
-        .collect();
-    let names: Vec<_> = crate::store::isolation::COLLECTIONS
-        .iter()
-        .copied()
-        .filter(|name| pre_capture::COLLECTIONS.contains(name))
-        .collect();
-    assert_eq!(names, pre_capture::COLLECTIONS);
-    assert_eq!(
-        digest(format!("archive-census-v2\n{audit:?}\n{}", names.join("\n")).as_bytes()),
-        pre_capture::SHA256
-    );
-    let current = manifest().await;
-    let mut old = current.clone();
-    old.schema_sha256 = pre_capture::SHA256.into();
-    old.database
-        .retain(|row| pre_capture::COLLECTIONS.contains(&row.collection.as_str()));
-    assert!(matches_current(&old, current.clone()).unwrap());
-    for name in crate::store::sandbox_usage_export::COLLECTIONS {
-        let mut pending = current.clone();
-        pending
-            .database
-            .iter_mut()
-            .find(|row| row.collection == *name)
-            .unwrap()
-            .documents = 1;
-        assert!(!matches_current(&old, pending).unwrap());
+    for (collections, schema) in [
+        (pre_capture::COLLECTIONS, pre_capture::SHA256),
+        (
+            pre_capture_accounts::COLLECTIONS,
+            pre_capture_accounts::SHA256,
+        ),
+    ] {
+        let audit: Vec<_> = super::super::census_catalog::AUDIT
+            .iter()
+            .copied()
+            .filter(|(name, _)| collections.contains(name))
+            .collect();
+        let names: Vec<_> = crate::store::isolation::COLLECTIONS
+            .iter()
+            .copied()
+            .filter(|name| collections.contains(name))
+            .collect();
+        assert_eq!(names, collections);
+        assert_eq!(
+            digest(format!("archive-census-v2\n{audit:?}\n{}", names.join("\n")).as_bytes()),
+            schema
+        );
+        let current = manifest().await;
+        let mut old = current.clone();
+        old.schema_sha256 = schema.into();
+        old.database
+            .retain(|row| collections.contains(&row.collection.as_str()));
+        assert!(matches_current(&old, current.clone()).unwrap());
+        for name in crate::store::sandbox_usage_export::COLLECTIONS {
+            let mut pending = current.clone();
+            pending
+                .database
+                .iter_mut()
+                .find(|row| row.collection == *name)
+                .unwrap()
+                .documents = 1;
+            assert!(!matches_current(&old, pending).unwrap());
+        }
     }
 }
 

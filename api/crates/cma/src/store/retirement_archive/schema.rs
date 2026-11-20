@@ -7,6 +7,8 @@ use std::collections::BTreeSet;
 mod legacy;
 #[path = "pre_usage_capture_census.rs"]
 mod pre_capture;
+#[path = "pre_usage_capture_account_census.rs"]
+mod pre_capture_accounts;
 
 #[cfg(test)]
 pub(super) const LEGACY_COLLECTIONS: &[&str] = legacy::COLLECTIONS;
@@ -29,6 +31,8 @@ fn collections(schema: &str) -> Result<Vec<&'static str>> {
         Ok(super::super::isolation::COLLECTIONS.to_vec())
     } else if schema == pre_capture::SHA256 {
         Ok(pre_capture::COLLECTIONS.to_vec())
+    } else if schema == pre_capture_accounts::SHA256 {
+        Ok(pre_capture_accounts::COLLECTIONS.to_vec())
     } else if schema == legacy::SHA256 {
         Ok(legacy::COLLECTIONS.to_vec())
     } else {
