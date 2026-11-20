@@ -1,11 +1,16 @@
 """Account for new pushes before leaving a reconciled release run."""
 import json
 import os
+import time
 
 from staging_cd_admission import event_identity
 from staging_cd_common import matches, require
 from staging_cd_github import GitHub
 from staging_cd_runtime import run_private
+
+# The job allows five minutes. Reads refuse cleanly after this budget instead of
+# being killed with the job; checkout and startup take well under a minute.
+RECHECK_SECONDS = 180
 
 
 def recheck(head, api):
@@ -30,7 +35,8 @@ def recheck(head, api):
 def main():
     def operation(_masker):
         event_identity(os.environ)
-        return recheck(json.loads(os.environ["CD_QUEUE"])["head"], GitHub(os.environ.get("GH_TOKEN")))
+        api = GitHub(os.environ.get("GH_TOKEN"), deadline=time.monotonic() + RECHECK_SECONDS)
+        return recheck(json.loads(os.environ["CD_QUEUE"])["head"], api)
     return run_private(operation, None)
 
 

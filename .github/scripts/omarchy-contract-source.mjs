@@ -2,9 +2,10 @@
 // The normal runtime probe and all default CI gates remain unchanged.
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
-export function prepareProbe(destination) {
-  let source = readFileSync('.github/scripts/runtime-image-probe.mjs', 'utf8');
+export function prepareProbe(destination, scripts = '.github/scripts') {
+  let source = readFileSync(join(scripts, 'runtime-image-probe.mjs'), 'utf8');
   const start = source.indexOf('  const aliasRoot = `${agentHome}/tmp/arg0`;');
   const end = source.indexOf("  complete('agent-home-helper-aliases');", start);
   assert(start > 0 && end > start);

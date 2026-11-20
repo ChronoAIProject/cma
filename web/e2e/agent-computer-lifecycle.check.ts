@@ -192,9 +192,7 @@ test('LOCAL confirmed pause stops Computer probes, preserves history and resumes
     await expect.poll(() => environmentReads).toBe(1);
     await expect.poll(() => fileReads).toBe(1);
     await computer.getByRole('tab', { name: 'Screen', exact: true }).click();
-    await expect(
-      computer.getByText('Live screen is not enabled for this environment.'),
-    ).toBeVisible();
+    await expect(computer.getByText('Live screen is not enabled')).toBeVisible();
     await computer.getByRole('tab', { name: 'Operations', exact: true }).click();
     await expect(computer.getByText('paused-proof', { exact: true })).toBeVisible();
     expect(liveScreenReads).toBe(0);

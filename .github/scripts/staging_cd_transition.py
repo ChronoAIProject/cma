@@ -50,8 +50,11 @@ def complete_group(anchor, jobs, changes, api, store, finals, pending, run_id, a
         if current:
             jobs.append({"component": component, "mode": "resume", "receipt": current[0]})
             continue
-        # A same-source peer may still be publishing in the superseded run.
-        # Claim a fresh version so this group can finish independently.
+        # A same-source peer may still be queued or building in an older run.
+        # Claim a fresh version so this group can finish if that peer fails.
+        # A queued peer yields to this claim. A started one finishes first
+        # under its lane lock; this claim then skips before building, and a
+        # later allocation resumes the peer's final for the group.
         pr = merged_pr(source, api.request)
         provenance = next((tag["receipt"]["identity"] for tag in finals if tag["target"] == source), None)
         level = provenance["bump"] if provenance else label_level(pr)
