@@ -144,3 +144,86 @@ for (const uncertain of [false, true]) {
     expect(boundary.errors).toEqual([]);
   });
 }
+
+test('LOCAL stopped Agent stays stopped across an explicit Sandbox Resume', async ({
+  page,
+  baseURL,
+}) => {
+  const boundary = new LocalStartup();
+  boundary.agent = { ...boundary.agent, status: 'stopped' };
+  boundary.workspace = {
+    ...boundary.workspace,
+    agents: [{ ...boundary.workspace.agents[0]!, status: 'stopped' }],
+  };
+  boundary.sandbox = {
+    ...boundary.sandbox,
+    status: 'paused',
+    lifecycle: { pause: { allowed: false, reason: 'not_active' }, revive: { allowed: true } },
+  };
+  await boundary.route(page, baseURL!);
+  const resumes: string[] = [];
+  await page.route(`**/api/v1/sandboxes/${boundary.sandbox.id}/revive`, async (route) => {
+    expect(route.request().method()).toBe('POST');
+    expect(route.request().headers()['idempotency-key']).toBeTruthy();
+    resumes.push(route.request().url());
+    boundary.sandbox = {
+      ...boundary.sandbox,
+      status: 'reviving',
+      lifecycle: {
+        pause: { allowed: false, reason: 'not_active' },
+        revive: { allowed: false, reason: 'not_paused' },
+        operation: {
+          purpose: 'revive',
+          phase: 'home_restore',
+          started_at: '2026-09-05T00:00:00Z',
+        },
+      },
+    };
+    await route.fulfill({ status: 202, json: boundary.sandbox });
+  });
+  for (const phase of ['paused', 'reviving', 'active'] as const) {
+    await page.goto(`/agents/${boundary.agent.id}`);
+    const sidebar = page.locator(`.tree-row[data-node-id="agent:${boundary.agent.id}"]`);
+    for (const [anchor, label] of [
+      [page.getByRole('button', { name: 'More Agent actions', exact: true }), 'Stop agent'],
+      [sidebar.getByRole('button', { name: /^Options for / }), 'Stop'],
+    ] as const) {
+      await anchor.click();
+      const stop = page.getByRole('menuitem', {
+        name: `${label} Agent is already stopped.`,
+        exact: true,
+      });
+      await expect(stop).toHaveAttribute('aria-disabled', 'true');
+      await expect(page.getByRole('menuitem', { name: /^Delete/ })).toHaveAttribute(
+        'aria-disabled',
+        String(phase !== 'active'),
+      );
+      await expect(
+        page.getByRole('menuitem', { name: 'Export history', exact: true }),
+      ).not.toHaveAttribute('aria-disabled', 'true');
+      await stop.click({ force: true });
+      await stop.press('Enter');
+      await stop.press('Space');
+      await expect(page.getByRole('dialog', { name: 'Stop Agent', exact: true })).toHaveCount(0);
+      await page.keyboard.press('Escape');
+    }
+    expect(boundary.agent.status).toBe('stopped');
+    expect(boundary.writes).toEqual([]);
+    if (phase === 'paused') {
+      await page.goto(`/sandboxes/${boundary.sandbox.id}`);
+      await page.getByRole('button', { name: 'Resume', exact: true }).click();
+      await expect(page.getByText('Resume request accepted.', { exact: true })).toBeVisible();
+      expect(resumes).toHaveLength(1);
+      expect(boundary.sandbox.status).toBe('reviving');
+    } else if (phase === 'reviving') {
+      boundary.sandbox = {
+        ...boundary.sandbox,
+        status: 'active',
+        lifecycle: { pause: { allowed: true }, revive: { allowed: false, reason: 'not_paused' } },
+      };
+    }
+  }
+  expect(resumes).toHaveLength(1);
+  expect(boundary.unexpected).toEqual([]);
+  expect(boundary.errors).toEqual([]);
+});

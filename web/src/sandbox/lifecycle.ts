@@ -57,6 +57,18 @@ export function sandboxUnavailableNotice(sandbox: SandboxSummary): string | unde
   return 'Workspaces and Agents will be available when the Sandbox finishes preparation.';
 }
 
+export function sandboxActionUnavailableReason(
+  sandbox: SandboxSummary | undefined,
+  stale = false,
+  busy = false,
+): string | undefined {
+  if (sandbox === undefined) return 'Checking Sandbox status.';
+  if (stale) return 'Sandbox status is unavailable. Check its status.';
+  if (busy) return 'A Sandbox action is in progress.';
+  if (sandbox.status === 'failed') return 'This Sandbox is unavailable. Check its status.';
+  return sandboxUnavailableNotice(sandbox);
+}
+
 export function sandboxLifecycleAction(sandbox: SandboxSummary, stale = false) {
   const resume = sandbox.status === 'paused' || sandbox.status === 'reviving';
   const eligibility = resume ? sandbox.lifecycle?.revive : sandbox.lifecycle?.pause;

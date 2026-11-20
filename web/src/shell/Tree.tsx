@@ -1,6 +1,7 @@
 import { Presence } from '../ui/Presence';
 import { useId, useState } from 'react';
 import {
+  sandboxActionUnavailableReason,
   sandboxChildrenAvailable,
   sandboxChildrenReadable,
   sandboxChildStatus,
@@ -400,6 +401,11 @@ export function Tree({
                                                     agent.status,
                                                     permissions,
                                                     runtimeAvailable,
+                                                    sandboxActionUnavailableReason(
+                                                      sandbox,
+                                                      !!refreshError,
+                                                      sandboxBusy,
+                                                    ),
                                                   )}
                                                   onNavigate={onNavigate}
                                                   onAction={(kind) =>
