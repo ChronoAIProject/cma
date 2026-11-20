@@ -1,13 +1,15 @@
 """PR artifacts are reusable only with exact source, recipe and checksum evidence."""
 import hashlib
 import json
+import subprocess
 import tempfile
 import unittest
 import zipfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from staging_cd_artifacts import qualifies, try_reuse
+import ci_retry
+from staging_cd_artifacts import download, qualifies, try_reuse
 from staging_cd_common import Refusal
 from staging_cd_receipts_tests import fixture_identity
 
@@ -64,6 +66,58 @@ class ArtifactTests(unittest.TestCase):
             self.assertIsNone(try_reuse(expected, Path(directory), api, "fixture", download, runner))
             runner.assert_not_called()
             self.assertFalse((Path(directory) / "qualified.docker.tar.gz").exists())
+
+    def test_unreachable_pr_artifact_falls_back_to_building(self):
+        transient = Refusal("GitHub API request failed")
+        transient.__cause__ = ci_retry.TransientError()
+        cases = (("api", transient), ("download", subprocess.TimeoutExpired("gh", 600)),
+                 ("download", Refusal("CI artifact checksum differs")))
+        for stage, error in cases:
+            with self.subTest(stage=stage, error=error), tempfile.TemporaryDirectory() as directory:
+                expected, _, _, api, download = self.fixture()
+                if stage == "api":
+                    api.request.side_effect = error
+                else:
+                    download = Mock(side_effect=error)
+                runner = Mock()
+                if ci_retry.classify(error) == ci_retry.TRANSIENT:
+                    self.assertIsNone(try_reuse(expected, Path(directory), api, "fixture", download, runner))
+                else:
+                    with self.assertRaisesRegex(Refusal, "checksum"):
+                        try_reuse(expected, Path(directory), api, "fixture", download, runner)
+                runner.assert_not_called()
+
+    def test_download_repeats_transport_failures_without_keeping_partial_bytes(self):
+        content = b"complete artifact"
+        artifact = {"id": 20, "size_in_bytes": len(content),
+                    "digest": "sha256:" + hashlib.sha256(content).hexdigest()}
+        def scripted(*outcomes):
+            def run(args, *, stdout, **_kwargs):
+                body, code, stderr = outcomes[run.calls]
+                run.calls += 1
+                stdout.write(body)
+                return subprocess.CompletedProcess(args, code, None, stderr)
+            run.calls = 0
+            return run
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "candidate.zip"
+            run = scripted((b"compl", 1, b"read: connection reset by peer"), (content, 0, b""))
+            with patch("staging_cd_artifacts.subprocess.run", side_effect=run):
+                download(artifact, target, "fixture", retry={"sleep": lambda _seconds: None})
+            self.assertEqual((run.calls, target.read_bytes()), (2, content))
+            target.unlink()
+            run = scripted((b"", 1, b"gh: Not Found (HTTP 404)"), (content, 0, b""))
+            with patch("staging_cd_artifacts.subprocess.run", side_effect=run), \
+                    self.assertRaisesRegex(Refusal, "download failed"):
+                download(artifact, target, "fixture", retry={"sleep": lambda _seconds: None})
+            self.assertEqual(run.calls, 1)
+            self.assertFalse(target.exists())
+            # A file the download did not create is never adopted or removed.
+            target.write_bytes(b"foreign")
+            with patch("staging_cd_artifacts.subprocess.run") as untouched, self.assertRaises(FileExistsError):
+                download(artifact, target, "fixture")
+            untouched.assert_not_called()
+            self.assertEqual(target.read_bytes(), b"foreign")
 
     def test_substituted_artifact_content_is_rejected_before_conversion(self):
         expected, _, metadata, api, download = self.fixture()
