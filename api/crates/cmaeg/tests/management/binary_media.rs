@@ -228,6 +228,7 @@ async fn compiled_binary_lists_the_attachment_tool_with_media_enabled() {
     let mut command = files.command(&address, &cma, &nyxid, &provider);
     command.env("CMAEG_MEDIA_ENABLED", "true");
     let mut child = spawn_ready(command, &address, &files.dir.join("trace.log")).await;
+    // Graduated message-effect and history gates add their tools by default.
     assert_eq!(
         listed_tools(&address).await,
         [
@@ -236,7 +237,11 @@ async fn compiled_binary_lists_the_attachment_tool_with_media_enabled() {
             "sendTyping",
             "readEventContext",
             "readEventAttachment",
-            "readFormPreparation"
+            "readFormPreparation",
+            "readMessageCapabilities",
+            "deleteMessage",
+            "setMessageReaction",
+            "readEventHistory"
         ]
     );
     let document = curl("GET", &format!("http://{address}/openapi.json"), None, 200).await;
