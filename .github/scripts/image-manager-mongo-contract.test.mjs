@@ -5,6 +5,8 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpat
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+const standingPermission = 'auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure';
+
 // Independent inventory of every invocation, including replica delivery and
 // the exact owner-key contract. Check complete arguments in source and archive mode.
 const selections = [
@@ -37,6 +39,7 @@ const selections = [
   ['package(=cma) and test(~gateway::tests::)', 'only', false],
   ['package(=cma) and test(~sender_context_tests::)', 'only', true],
   ['package(=cma) and test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors)', 'only', true],
+  [`package(=cma) and test(=${standingPermission})`, 'only', true],
 ];
 
 function fixture(reuse, scenario = 'success') {
@@ -91,7 +94,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 29);
+      assert.equal(selections.length, 30);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];

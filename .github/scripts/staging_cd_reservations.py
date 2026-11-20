@@ -9,7 +9,7 @@ from deployables import known_components
 
 from staging_cd_common import Refusal, matches, require
 from staging_cd_receipts import canonical, final_tag_oid, final_tag_text, validate_receipt
-from staging_cd_versions import BASE_VERSION, DEPLOYABLES, LEVELS, bump, version_tuple
+from staging_cd_versions import BASE_VERSION, DEPLOYABLES, FINISH_STARTED_BUILDS, LEVELS, bump, version_tuple
 
 KNOWN_DEPLOYABLES = known_components()
 FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", "bump", "run_id", "run_attempt"}
@@ -139,16 +139,24 @@ class Reservations:
         require(value in self.list(value["component"]), "Reservation push was not verified")
         return True
 
-    def require_current(self, value):
-        """Supersession is derived from immutable tags; burned refs stay intact."""
+    def require_current(self, value, *, build_started):
+        """Supersession is derived from immutable tags; burned refs stay intact.
+
+        Each caller states whether this reservation's build has started.
+        """
         validate_reservation(value)
         component = value["component"]
         pending, finals = self.list(component), self.api.tags(component)
         require(value in pending, "Publication reservation is missing")
         history = self.api.history()
         position = history.position(value["source"])
+        finishing = component in FINISH_STARTED_BUILDS
+        if finishing and build_started:
+            # The successor waits for this build instead of revoking it. A
+            # higher or later final still fails below; it never becomes a skip.
+            pending = [item for item in pending if version_tuple(item["version"]) <= version_tuple(value["version"])]
         candidates = pending + [tag["receipt"]["identity"] for tag in finals]
-        if component == "am":
+        if finishing and not build_started:
             for item in candidates:
                 if version_tuple(item["version"]) > version_tuple(value["version"]):
                     # A larger number alone still fences writes, but cannot
@@ -162,21 +170,6 @@ class Reservations:
                     and version_tuple(item["version"]) <= version_tuple(value["version"])
                     for item in candidates), "Publication reservation is superseded and burned")
         return True
-
-    def check_build_owner(self, value):
-        from staging_cd_watermark import SupersededVersions, require_version_refs
-
-        expected = {value["component"]: (pending_name(value), value["version"])}
-        try:
-            require_version_refs(expected, runner=self.api.runner)
-        except SupersededVersions:
-            # The inexpensive ref advertisement is a hint. Only the normal
-            # annotated reservation/receipt and ancestry checks prove takeover.
-            self.require_current(value)
-            try:
-                require_version_refs(expected, runner=self.api.runner)
-            except SupersededVersions:
-                raise Refusal("Higher component version lacks verified reservation ownership") from None
 
     def remove_after_publication(self, receipt, expected_oid):
         self.mark("cleanup_verify")
@@ -224,7 +217,7 @@ class Reservations:
         expected = {key: receipt["identity"][key] for key in FIELDS - {"schema"}}
         expected["schema"] = "cma-version-reservation-v1"
         self.mark("reservation_read")
-        self.require_current(expected)
+        self.require_current(expected, build_started=True)
         self.mark("tag_create")
         created = self.command("mktag", data=final_tag_text(receipt))
         require(created.returncode == 0 and matches(r"[0-9a-f]{40}", created.stdout.strip()),
@@ -233,6 +226,7 @@ class Reservations:
         self.mark("tag_push")
         # A successor and a finalizer compete for the same insert-only outcome.
         # Even takeover during the push cannot produce an obsolete final tag.
+        # In a lane that finishes started builds, only this finalizer writes it.
         result = self.command("push", "--atomic", "--porcelain", "https://github.com/ChronoAIProject/cma.git",
                               expected_oid + ":" + outcome_ref(component, expected["version"]),
                               expected_oid + ":refs/tags/" + receipt["tag"])

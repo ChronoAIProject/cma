@@ -106,7 +106,7 @@ async fn authorize(
     context: &CallerContext,
     method: &str,
     suffix: &str,
-) -> Result<(), StatusCode> {
+) -> Result<(), PublicRefusal> {
     f.policy
         .authorize(PublicRequest {
             id: &AgentId("agt-public".into()),

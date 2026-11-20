@@ -34,6 +34,8 @@ function setup(overrides: Partial<CmaWebClient> = {}) {
 const click = (name: string) => fireEvent.click(screen.getByRole('button', { name }));
 const fill = (label: string, value: string) =>
   fireEvent.change(screen.getByLabelText(label), { target: { value } });
+const draftRevision = (): string =>
+  JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!).revision;
 
 it('keeps a partial template through confirmed switching, reload and resume', async () => {
   const view = setup();
@@ -288,12 +290,16 @@ it('cleans only the confirmed submitted mode and retains other drafts for the ta
   click('Research a topic');
   fill('Topic', 'Submitted topic');
   act(() =>
-    discardSubmittedTaskDraft('owner', {
-      name: 'New task',
-      initial_message:
-        'Research Submitted topic and summarize the key findings, with links to sources.',
-      template: { id: 'research', version: 1, fields: { topic: 'Submitted topic' } },
-    }),
+    discardSubmittedTaskDraft(
+      'owner',
+      {
+        name: 'New task',
+        initial_message:
+          'Research Submitted topic and summarize the key findings, with links to sources.',
+        template: { id: 'research', version: 1, fields: { topic: 'Submitted topic' } },
+      },
+      draftRevision(),
+    ),
   );
   expect(screen.getByLabelText('Your task')).toHaveValue('Separate text');
   expect(screen.queryByRole('button', { name: 'Resume research template' })).toBeNull();
@@ -309,15 +315,72 @@ it('retains template drafts when the separate free-text task completes', () => {
   click('Write a task without a template');
   click('Switch and keep draft');
   act(() =>
-    discardSubmittedTaskDraft('owner', {
-      name: 'New task',
-      initial_message: 'Submitted free text',
-    }),
+    discardSubmittedTaskDraft(
+      'owner',
+      {
+        name: 'New task',
+        initial_message: 'Submitted free text',
+      },
+      draftRevision(),
+    ),
   );
   expect(screen.getByLabelText('Your task')).toHaveValue('');
   click('Resume document template');
   expect(screen.getByLabelText('Subject')).toHaveValue('Unsubmitted template');
 });
+
+it.each(['text', 'template'] as const)(
+  'preserves resumed %s and retained fields when an older identical task completes',
+  (mode) => {
+    setup();
+    fill('Your task', 'Same text');
+    click('Write a document');
+    fill('Subject', 'Keep this separate draft');
+    if (mode === 'template') {
+      click('Research a topic');
+      fill('Topic', 'Same topic');
+    } else {
+      click('Write a task without a template');
+      click('Switch and keep draft');
+    }
+    const revision = draftRevision();
+    click('Write a document');
+    if (mode === 'template') click('Research a topic');
+    else {
+      click('Write a task without a template');
+      click('Switch and keep draft');
+    }
+    const stored = sessionStorage.getItem(taskDraftStorageKey('owner'));
+    act(() =>
+      discardSubmittedTaskDraft(
+        'owner',
+        {
+          name: 'New task',
+          initial_message:
+            mode === 'text'
+              ? 'Same text'
+              : 'Research Same topic and summarize the key findings, with links to sources.',
+          ...(mode === 'template'
+            ? {
+                template: {
+                  id: 'research' as const,
+                  version: 1 as const,
+                  fields: { topic: 'Same topic' },
+                },
+              }
+            : {}),
+        },
+        revision,
+      ),
+    );
+    expect(sessionStorage.getItem(taskDraftStorageKey('owner'))).toBe(stored);
+    expect(screen.getByLabelText(mode === 'text' ? 'Your task' : 'Topic')).toHaveValue(
+      mode === 'text' ? 'Same text' : 'Same topic',
+    );
+    click('Write a document');
+    expect(screen.getByLabelText('Subject')).toHaveValue('Keep this separate draft');
+  },
+);
 
 it('keeps template drafts editable through full capacity without creating anything', async () => {
   const { create } = setup({

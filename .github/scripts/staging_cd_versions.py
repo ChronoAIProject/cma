@@ -7,6 +7,10 @@ from deployables import components
 from staging_cd_common import matches, require
 
 DEPLOYABLES = components()
+# These lanes finish a started build and queue only the newest reservation. A
+# queued older reservation yields before building; once a build starts, only a
+# higher final version fences it, never a successor's pending reservation.
+FINISH_STARTED_BUILDS = frozenset({"am"})
 LEVELS = {"version-upgrade:" + level: level for level in ("major", "minor", "patch")}
 BASE_VERSION = "0.10.0"
 REPOSITORY = "ChronoAIProject/cma"

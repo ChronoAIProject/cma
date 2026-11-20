@@ -190,7 +190,7 @@ it('replays the original body and key after reload without recompiling or cleari
   const original = view.create.mock.calls[0]!;
   fill('Topic', 'A later draft');
   const saved = JSON.parse(sessionStorage.getItem(lifecycleStorageKey('owner'))!) as {
-    intent: { body: { initial_message: string } };
+    intent: { body: { initial_message: string }; draftRevision: string };
   };
   saved.intent.body.initial_message = 'Original compiled bytes retained from an older build';
   sessionStorage.setItem(lifecycleStorageKey('owner'), JSON.stringify(saved));
@@ -204,7 +204,7 @@ it('replays the original body and key after reload without recompiling or cleari
     initial_message: saved.intent.body.initial_message,
   });
   expect(restored.create.mock.calls[0]![1].idempotencyKey).toBe(original[1].idempotencyKey);
-  discardSubmittedTaskDraft('owner', original[0]);
+  discardSubmittedTaskDraft('owner', original[0], saved.intent.draftRevision);
   expect(screen.getByLabelText('Topic')).toHaveValue('A later draft');
 });
 
@@ -219,7 +219,9 @@ it.each([false, true])(
     await screen.findByRole('button', { name: 'Recover original task' });
     const submitted = view.create.mock.calls[0]![0];
     if (edited) fill('Topic', ' Synthetic topic ');
-    act(() => discardSubmittedTaskDraft('owner', submitted));
+    const revision = JSON.parse(sessionStorage.getItem(lifecycleStorageKey('owner'))!).intent
+      .draftRevision;
+    act(() => discardSubmittedTaskDraft('owner', submitted, revision));
     if (edited) {
       expect(sessionStorage.getItem(taskDraftStorageKey('owner'))).not.toBeNull();
       expect(screen.getByLabelText('Topic')).toHaveValue(' Synthetic topic ');

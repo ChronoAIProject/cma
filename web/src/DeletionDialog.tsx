@@ -186,6 +186,9 @@ export function DeletionDialog({
             {observation?.stopsRuntimeUpdate
               ? `Delete "${name}" and stop the paused runtime update. This cannot be undone. Cleanup continues in the background; retained history follows the retention policy.`
               : `Delete "${name}"${target === 'Agent' ? ' and its Worktree' : ' and its contained runtime resources'}. This cannot be undone. Retained history follows the retention policy.`}
+            {target === 'Sandbox'
+              ? ' This deletes the whole Sandbox environment, including all Agents, Workspaces, and files inside it.'
+              : null}
             {target === 'Agent' ? (
               <>
                 {' '}

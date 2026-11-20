@@ -83,7 +83,7 @@ jobs:
         name: "Local browser guard mechanics"
         working-directory: "web"
         run: |
-          node --test ../.github/scripts/agent-v2-ci.test.mjs
+          node --test ../.github/scripts/agent-v2-ci.test.mjs ../.github/scripts/new-agent-request-ci.test.mjs
           npm run e2e:mechanics
       -
         name: "CSS collisions"
@@ -104,6 +104,21 @@ jobs:
         env:
           CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
         run: "npx playwright test --config e2e/desktop-conversation.config.ts"
+      -
+        name: "Local New agent request isolation"
+        id: new_agent_request
+        timeout-minutes: 5
+        env:
+          CMA_NEW_AGENT_REQUEST_EVIDENCE_DIR: "${{ runner.temp }}/cma-new-agent-request"
+        run: "node node_modules/playwright/cli.js test --config e2e/new-agent-request.config.ts"
+      -
+        name: "New agent request failure evidence"
+        if: "failure() && steps.new_agent_request.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "new-agent-request-failure"
+          path: "${{ runner.temp }}/cma-new-agent-request"
+          retention-days: 1
       -
         name: "Local Agent v2 contracts"
         id: agent_v2

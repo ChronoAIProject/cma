@@ -182,6 +182,8 @@ pub struct Page<T> {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxStoreError {
+    #[error("account deletion is in progress")]
+    AccountDeletionInProgress,
     #[error(transparent)]
     Budget(crate::budget::BudgetError),
     #[error("new work is temporarily paused; existing work continues")]

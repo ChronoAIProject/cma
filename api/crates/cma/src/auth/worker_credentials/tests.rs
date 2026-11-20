@@ -371,3 +371,24 @@ async fn worker_metrics_cover_independent_authentication_and_early_rejection() {
     assert!(text.contains("status=\"200\",consumer=\"internal\",protocol=\"rest\""));
     assert!(text.contains("status=\"401\",consumer=\"unknown\",protocol=\"rest\""));
 }
+
+struct ErasingService;
+#[async_trait::async_trait]
+impl layer2_core::account_deletion::AccountStanding for ErasingService {
+    async fn erasing(
+        &self,
+        _: &SubjectId,
+    ) -> Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        Ok(true)
+    }
+}
+#[tokio::test]
+async fn standing_gate_denies_verified_worker_before_early_return() {
+    let mut fixture = Fixture::new().await;
+    Arc::get_mut(&mut fixture.auth).unwrap().standing = Arc::new(ErasingService);
+    let response = fixture.call(Some(&fixture.provider.expected), &[]).await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let body: Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+    assert_eq!(body["code"], "account_deletion_in_progress");
+}

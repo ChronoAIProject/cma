@@ -381,3 +381,6 @@ async fn stale_caller_memberships_never_authorize_a_new_read_or_mutation() {
         ))
     ));
 }
+
+#[path = "service_tests/standing.rs"]
+mod standing;

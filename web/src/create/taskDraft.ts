@@ -11,6 +11,7 @@ import {
 import { requireTaskStorage } from './taskIdentity';
 
 interface TaskDraft {
+  readonly revision?: string;
   readonly text: string;
   readonly template?: TaskTemplate;
   readonly templates?: readonly TaskTemplate[];
@@ -19,7 +20,9 @@ interface TaskDraft {
   readonly machineIncluded: boolean;
 }
 const empty: TaskDraft = { text: '', repositoryUrl: '', repositoryRef: '', machineIncluded: false };
-const discarded = new Set<(key: string, body: AgentLifecycleCreateInput) => void>();
+const discarded = new Set<
+  (key: string, body: AgentLifecycleCreateInput, revision: string) => void
+>();
 
 export function taskDraftStorageKey(owner?: string, workspaceId?: string, sandboxId?: string) {
   return `cma:task-draft:${JSON.stringify([location.origin, owner, workspaceId ?? null, sandboxId ?? null])}`;
@@ -28,6 +31,7 @@ export function taskDraftStorageKey(owner?: string, workspaceId?: string, sandbo
 function parse(raw: string): TaskDraft {
   const value = JSON.parse(raw) as {
     version?: unknown;
+    revision?: unknown;
     text?: unknown;
     template?: unknown;
     templates?: unknown;
@@ -39,6 +43,8 @@ function parse(raw: string): TaskDraft {
   if (
     (value.version !== 1 && value.version !== 2) ||
     typeof value.text !== 'string' ||
+    (value.revision !== undefined &&
+      (typeof value.revision !== 'string' || !/^[a-zA-Z0-9-]{1,200}$/.test(value.revision))) ||
     (value.repositoryUrl !== undefined && typeof value.repositoryUrl !== 'string') ||
     (value.repositoryRef !== undefined && typeof value.repositoryRef !== 'string') ||
     (value.desktop !== undefined && typeof value.desktop !== 'boolean') ||
@@ -61,6 +67,7 @@ function parse(raw: string): TaskDraft {
     throw new Error('Invalid template drafts');
   return {
     text: value.version === 1 && template ? '' : value.text,
+    revision: value.revision as string | undefined,
     template,
     ...(templates ? { templates } : {}),
     repositoryUrl: value.repositoryUrl ?? '',
@@ -99,20 +106,24 @@ function matches(draft: TaskDraft, body: AgentLifecycleCreateInput) {
 }
 
 /** Called only when a confirmed successful creation clears its retained intent. */
-export function discardSubmittedTaskDraft(owner: string, body: AgentLifecycleCreateInput) {
-  if (body.initial_message === undefined) return;
+export function discardSubmittedTaskDraft(
+  owner: string,
+  body: AgentLifecycleCreateInput,
+  revision?: string,
+) {
+  if (body.initial_message === undefined || revision === undefined) return;
   try {
     requireTaskStorage();
     const key = taskDraftStorageKey(owner, body.workspace_id, body.sandbox_id);
     const raw = sessionStorage.getItem(key);
     if (raw === null) return;
     const draft = parse(raw);
-    if (!matches(draft, body)) return;
+    if (draft.revision !== revision || !matches(draft, body)) return;
     const remaining = remainingDraft(draft);
     if (remaining === empty) sessionStorage.removeItem(key);
     else sessionStorage.setItem(key, JSON.stringify({ version: 2, ...remaining }));
     // sessionStorage does not emit a storage event in the document that changed it.
-    for (const notify of discarded) notify(key, body);
+    for (const notify of discarded) notify(key, body, revision);
   } catch {
     // Draft cleanup must never block access to the successfully created Agent.
   }
@@ -138,8 +149,13 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
   const current = useRef(initial.draft);
   const [error, setError] = useState(initial.error);
   useEffect(() => {
-    const notify = (discardedKey: string, body: AgentLifecycleCreateInput) => {
-      if (discardedKey !== key || !matches(current.current, body)) return;
+    const notify = (discardedKey: string, body: AgentLifecycleCreateInput, revision: string) => {
+      if (
+        discardedKey !== key ||
+        current.current.revision !== revision ||
+        !matches(current.current, body)
+      )
+        return;
       const remaining = remainingDraft(current.current);
       current.current = remaining;
       setDraft(remaining);
@@ -153,7 +169,7 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
   const persist = (value: TaskDraft) => {
     if (initial.error) {
       setError(initial.error);
-      return false;
+      return undefined;
     }
     try {
       requireTaskStorage();
@@ -162,26 +178,25 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
       // A failed read must not turn a corrupt or newer draft into an empty overwrite.
       if (stored !== null) parse(stored);
       sessionStorage.setItem(key, JSON.stringify({ version: 2, ...value }));
+      current.current = value;
+      setDraft(value);
       setError(undefined);
-      return true;
+      return value.revision;
     } catch {
       setError(
         'Your task could not be saved. Copy your text and restore browser session storage before starting a task.',
       );
-      return false;
+      return undefined;
     }
   };
   const change = (value: TaskDraft) => {
-    current.current = value;
-    setDraft(value);
-    persist(value);
+    const edited = { ...value, revision: crypto.randomUUID() };
+    current.current = edited;
+    setDraft(edited);
+    persist(edited);
   };
-  const switchDraft = (value: TaskDraft) => {
-    if (!persist(value)) return false;
-    current.current = value;
-    setDraft(value);
-    return true;
-  };
+  const switchDraft = (value: TaskDraft) =>
+    Boolean(persist({ ...value, revision: crypto.randomUUID() }));
   return {
     ...draft,
     selectTemplate: (id: TaskTemplateId) => {
@@ -211,7 +226,7 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
       change({ ...current.current, repositoryUrl: url, repositoryRef: reference });
     },
     error,
-    persist: () => persist(current.current),
+    persist: () => persist({ ...current.current, revision: crypto.randomUUID() }),
     change: (text: string) => {
       change({ ...current.current, text });
     },
