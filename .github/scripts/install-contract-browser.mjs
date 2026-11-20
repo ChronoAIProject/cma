@@ -247,27 +247,53 @@ export function downloadHostPlatform(hostPlatform, known) {
     .sort((left, right) => release(right) - release(left))[0]?.[0];
 }
 
+// A cold first launch on a fresh runner can exceed the probe's launch timeout
+// or deadline while a second launch of the same binary, its pages now cached,
+// passes. In CI, 145 of 158 ubuntu-26.04 jobs passed the first probe (p95
+// 13.6s, max 18.6s); after 13 first-probe timeouts the second launch passed 8
+// times, failing only while the first probe's browser was still running.
+// Only a timeout is re-probed.
+export const probeAttempts = 2;
+
+const seconds = (started) => `${((Date.now() - started) / 1000).toFixed(1)}s`;
+
 export async function ensureBrowser(ops) {
   let repair;
   const failures = [];
   async function inspect(path) {
-    try {
-      const version = await ops.probe(path);
-      return { path, version };
-    } catch (error) {
-      ops.log(`Browser candidate rejected: ${path}: ${describe(error)}`);
-      failures.push(`${path}: ${error.message}`);
-      const libraries = ops.missing(path);
-      if (libraries.length && !repair) repair = { path, libraries };
-      return undefined;
+    for (let attempt = 1; ; attempt += 1) {
+      const started = Date.now();
+      try {
+        const version = await ops.probe(path);
+        ops.log(
+          `browser probe attempt ${attempt}/${probeAttempts} passed after ${seconds(started)}: ${path}`,
+        );
+        return { path, version };
+      } catch (error) {
+        const again = error.timedOut === true && attempt < probeAttempts;
+        ops.log(
+          `browser probe attempt ${attempt}/${probeAttempts} ${error.timedOut ? 'timed out' : 'failed'} ` +
+            `after ${seconds(started)}: ${path}: ${describe(error)}${again ? '; re-probing once' : ''}`,
+        );
+        if (again) continue;
+        failures.push(`${path}: ${error.message}`);
+        const libraries = ops.missing(path);
+        if (libraries.length && !repair) repair = { path, libraries };
+        return undefined;
+      }
     }
   }
   for (const path of [...new Set(ops.candidates)]) {
     if (!ops.exists(path)) continue;
     const browser = await inspect(path);
     if (browser) {
-      ops.log('Browser and dependencies verified; apt not needed (0 calls).');
-      return browser;
+      const source = path === ops.pinned ? 'cached' : 'installed';
+      ops.log(
+        `Selected ${source === 'cached' ? 'cached Playwright Chromium' : 'installed browser'} ${path} ` +
+          `(version ${browser.version}): it passed the launch/render probe. ` +
+          'Browser and dependencies verified; apt not needed (0 calls).',
+      );
+      return { ...browser, source };
     }
   }
   if (!repair) {
@@ -277,8 +303,12 @@ export async function ensureBrowser(ops) {
       throw new Error('Pinned Playwright browser is absent after download');
     const browser = await inspect(ops.pinned);
     if (browser) {
-      ops.log('Downloaded browser and dependencies verified; apt not needed (0 calls).');
-      return browser;
+      ops.log(
+        `Selected downloaded Playwright Chromium ${browser.path} (version ${browser.version}): ` +
+          'no installed browser passed the launch/render probe, so this run tests a different ' +
+          'browser than the runner provides. Downloaded browser and dependencies verified; apt not needed (0 calls).',
+      );
+      return { ...browser, source: 'downloaded' };
     }
   }
   if (!repair) {
@@ -294,7 +324,11 @@ export async function ensureBrowser(ops) {
   if (remaining.length)
     throw new Error(`Browser libraries still missing after apt: ${remaining.join(', ')}`);
   try {
-    return { path: repair.path, version: await ops.probe(repair.path) };
+    const version = await ops.probe(repair.path);
+    ops.log(
+      `Selected ${repair.path} (version ${version}) after installing ${packages.join(', ')}.`,
+    );
+    return { path: repair.path, version, source: 'repaired' };
   } catch (error) {
     throw new Error(
       `Browser still cannot launch/render after installing ${packages.join(', ')}: ${error.message}`,
@@ -306,13 +340,14 @@ export async function ensureBrowser(ops) {
 // The probe exits at its own deadline, before the parent's kill, so Playwright's
 // exit handler stops the browser instead of leaving it to slow the next probe.
 const probeDeadlineMs = 25_000;
+const probeTimeoutStatus = 124;
 
 async function probe(path) {
   const deadline = setTimeout(() => {
     process.stderr.write(
-      `Browser probe exceeded ${probeDeadlineMs / 1000}s; closing its browser.\n`,
+      `Browser probe exceeded ${probeDeadlineMs / 1000}s; closing its browser\n`,
     );
-    process.exit(1);
+    process.exit(probeTimeoutStatus);
   }, probeDeadlineMs);
   deadline.unref();
   const require = createRequire(join(web, 'package.json'));
@@ -369,10 +404,16 @@ export async function main() {
       const output = run(command, args, options);
       if (output) process.stdout.write(output);
     },
-    probe: async (path) =>
-      run(process.execPath, [fileURLToPath(import.meta.url), '--probe', path], {
-        timeout: probeDeadlineMs + 5_000,
-      }).trim(),
+    probe: async (path) => {
+      try {
+        return run(process.execPath, [fileURLToPath(import.meta.url), '--probe', path], {
+          timeout: probeDeadlineMs + 5_000,
+        }).trim();
+      } catch (error) {
+        error.timedOut = error.status === probeTimeoutStatus || error.code === 'ETIMEDOUT';
+        throw error;
+      }
+    },
     missing: (path) => {
       if (process.platform !== 'linux') return [];
       // Some preinstalled Chrome entry points are shell wrappers; their failed
@@ -421,8 +462,15 @@ export async function main() {
       `CMA_E2E_BROWSER_PATH=${result.path}\nCHROME_PATH=${result.path}\n`,
     );
   }
+  if (result.source === 'downloaded') {
+    console.log(
+      `::warning::Contract browser is the downloaded Playwright Chromium ${result.version}, not the ` +
+        "runner's installed browser: every installed candidate failed its probe (see this step's log).",
+    );
+  }
   console.log(
-    `Contract browser ready: ${result.path}; version ${result.version}. All contract tests remain mandatory.`,
+    `Contract browser ready: ${result.path}; version ${result.version}; source ${result.source}. ` +
+      'All contract tests remain mandatory.',
   );
   return result;
 }
@@ -433,6 +481,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     else await main();
   } catch (error) {
     console.error(`::error::${error.message}`);
-    process.exitCode = 1;
+    // A launch slower than its own timeout is the same cold-start signal as the deadline.
+    const probing = process.argv[2] === '--probe';
+    process.exitCode = probing && error.name === 'TimeoutError' ? probeTimeoutStatus : 1;
   }
 }

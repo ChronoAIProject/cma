@@ -10,6 +10,7 @@ import {
   ensureBrowser,
   missingLibraries,
   outputTail,
+  probeAttempts,
   requiredPackages,
   repairDependencies,
   runBounded,
@@ -65,8 +66,15 @@ test('usable cached browser never invokes apt or download', async () => {
     run: () => assert.fail('apt must not run'),
     download: () => assert.fail('download must not run'),
   });
-  assert.deepEqual(await ensureBrowser(ops), { path: '/cached/chrome', version: 'test-version' });
-  assert.match(ops.logs.join('\n'), /apt not needed \(0 calls\)/);
+  assert.deepEqual(await ensureBrowser(ops), {
+    path: '/cached/chrome',
+    version: 'test-version',
+    source: 'cached',
+  });
+  assert.match(
+    ops.logs.join('\n'),
+    /Selected cached Playwright Chromium.*apt not needed \(0 calls\)/,
+  );
 });
 
 test('preinstalled Chrome is used when the Playwright cache is absent', async () => {
@@ -95,9 +103,14 @@ test('absent browsers download the pinned browser without any apt', async () => 
       downloaded = true;
     },
   });
-  assert.equal((await ensureBrowser(ops)).path, '/cached/chrome');
+  const result = await ensureBrowser(ops);
+  assert.deepEqual([result.path, result.source], ['/cached/chrome', 'downloaded']);
   assert.equal(downloaded, true);
   assert.deepEqual(ops.calls, []);
+  assert.match(
+    ops.logs.at(-1),
+    /^Selected downloaded Playwright Chromium \/cached\/chrome \(version test-version\): no installed browser passed.*different browser/,
+  );
 });
 
 test('download failure is fatal; it does not skip tests or invoke apt', async () => {
@@ -453,20 +466,80 @@ test('newer Ubuntu hosts download the newest Ubuntu build the locked Playwright 
   assert.equal(downloadHostPlatform('ubuntu26.04-x64', ['debian13-x64']), undefined);
 });
 
-test('each rejected candidate is logged with its reason before a later browser is used', async () => {
+function timeout(path) {
+  return Object.assign(
+    new Error(
+      `Command failed: node install-contract-browser.mjs --probe ${path}\n` +
+        '::error::Browser probe exceeded 25s; closing its browser',
+    ),
+    { timedOut: true },
+  );
+}
+
+test('a cold-start probe timeout is re-probed once and selects the installed browser', async () => {
+  const probes = [];
+  const ops = fixture({
+    exists: (path) => path === '/installed/chrome',
+    probe: async (path) => {
+      probes.push(path);
+      if (probes.length === 1) throw timeout(path);
+      return 'Chrome 157';
+    },
+    download: () => assert.fail('a warm re-probe must avoid the download'),
+  });
+  assert.deepEqual(await ensureBrowser(ops), {
+    path: '/installed/chrome',
+    version: 'Chrome 157',
+    source: 'installed',
+  });
+  assert.deepEqual(probes, ['/installed/chrome', '/installed/chrome']);
+  assert.match(
+    ops.logs[0],
+    /^browser probe attempt 1\/2 timed out after \d+\.\ds: \/installed\/chrome: Browser probe exceeded 25s; closing its browser; re-probing once$/,
+  );
+  assert.match(
+    ops.logs[1],
+    /^browser probe attempt 2\/2 passed after \d+\.\ds: \/installed\/chrome$/,
+  );
+  assert.match(
+    ops.logs[2],
+    /^Selected installed browser \/installed\/chrome \(version Chrome 157\): it passed/,
+  );
+  assert.ok(ops.logs.every((row) => !row.startsWith('::')));
+  assert.deepEqual(ops.calls, []);
+});
+
+test('each candidate gets at most two timed-out probes before the next is tried', async () => {
+  const probes = [];
   const ops = fixture({
     probe: async (path) => {
-      if (path === '/cached/chrome')
-        throw new Error(
-          'Command failed: node install-contract-browser.mjs --probe /cached/chrome\n' +
-            '::error::Browser probe exceeded 25s; closing its browser.',
-        );
+      probes.push(path);
+      if (path === '/cached/chrome') throw timeout(path);
       return 'working';
     },
   });
   assert.equal((await ensureBrowser(ops)).path, '/installed/chrome');
-  assert.deepEqual(ops.logs.slice(0, 1), [
-    'Browser candidate rejected: /cached/chrome: Browser probe exceeded 25s; closing its browser.',
-  ]);
-  assert.ok(ops.logs.every((row) => !row.startsWith('::')));
+  assert.equal(probeAttempts, 2);
+  assert.deepEqual(probes, ['/cached/chrome', '/cached/chrome', '/installed/chrome']);
+  assert.match(
+    ops.logs[1],
+    /^browser probe attempt 2\/2 timed out after .*: \/cached\/chrome: .*closing its browser$/,
+  );
+});
+
+test('a probe failure that is not a timeout is not re-probed', async () => {
+  const probes = [];
+  const ops = fixture({
+    probe: async (path) => {
+      probes.push(path);
+      if (path === '/cached/chrome') throw new Error('protocol incompatible');
+      return 'working';
+    },
+  });
+  assert.equal((await ensureBrowser(ops)).path, '/installed/chrome');
+  assert.deepEqual(probes, ['/cached/chrome', '/installed/chrome']);
+  assert.match(
+    ops.logs[0],
+    /^browser probe attempt 1\/2 failed after .*: \/cached\/chrome: protocol incompatible$/,
+  );
 });
