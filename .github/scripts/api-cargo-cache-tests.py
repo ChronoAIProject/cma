@@ -76,6 +76,23 @@ class CacheTests(unittest.TestCase):
             with self.subTest(ref=ref), self.assertRaisesRegex(ValueError, "only develop push"):
                 cache.authority(dict(env, GITHUB_REF=ref), self.event)
 
+    def test_develop_merge_queue_entries_may_restore(self):
+        ref = "refs/heads/gh-readonly-queue/develop/pr-12-" + "b" * 40
+        env = dict(self.env, GITHUB_EVENT_NAME="merge_group", GITHUB_REF=ref)
+        event = {"repository": {"full_name": cache.REPOSITORY},
+                 "merge_group": {"base_ref": "refs/heads/develop", "head_ref": ref, "head_sha": "a" * 40}}
+        cache.authority(env, event)
+        main = "refs/heads/gh-readonly-queue/main/pr-12-" + "b" * 40
+        for changes, group in ((dict(GITHUB_REF=main), dict(head_ref=main)), ({}, dict(base_ref="refs/heads/main")),
+                               ({}, dict(head_ref=ref.replace("pr-12", "pr-13"))), ({}, dict(head_sha="c" * 40)),
+                               (dict(GITHUB_REF="refs/heads/develop"), dict(head_ref="refs/heads/develop")),
+                               (dict(GITHUB_REPOSITORY="other/project"), {})):
+            candidate = dict(event, merge_group=dict(event["merge_group"], **group))
+            with self.subTest(changes=changes, group=group), self.assertRaises(ValueError):
+                cache.authority(dict(env, **changes), candidate)
+        with self.assertRaises(ValueError):
+            cache.authority(env, dict(event, repository={"full_name": "fork/project"}))
+
     def test_fork_and_mismatched_event_authority_are_rejected(self):
         for route in (("repository", "full_name"), ("pull_request", "head", "repo", "full_name"),
                       ("pull_request", "base", "repo", "full_name"), ("pull_request", "base", "ref"), ("number",)):
