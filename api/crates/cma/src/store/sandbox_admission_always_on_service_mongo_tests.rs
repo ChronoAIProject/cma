@@ -235,13 +235,14 @@ async fn exercise(
             .unwrap();
         assert_eq!(current.profile.always_on, Some(policy));
         assert_eq!(current.revision, previous_revision + 1);
-        assert!(matches!(
-            admin_service
-                .set_always_on(&operator, &current.id, previous_revision, !policy)
-                .await,
-            Err(OperatorError::InvalidState(_))
-        ));
         assert_reopened(database, &current, &admission, &agent).await;
+        let stale = admin_service
+            .set_always_on(&operator, &current.id, previous_revision, !policy)
+            .await;
+        assert!(
+            matches!(stale, Err(OperatorError::InvalidState(_))),
+            "stale policy write returned {stale:?}"
+        );
     }
 
     let revision = current.revision;

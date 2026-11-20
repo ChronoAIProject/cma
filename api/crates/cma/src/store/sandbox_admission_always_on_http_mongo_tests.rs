@@ -22,12 +22,21 @@ async fn acknowledged_policy_post_remains_readable_on_a_second_client() {
         let (client, name) = database("policy_http").await;
         let database = client.database(&name);
         assert!(database.list_collection_names().await.unwrap().is_empty());
-        let result = AssertUnwindSafe(exercise_http(&client, &name, origin))
-            .catch_unwind()
-            .await;
-        database.drop().await.unwrap();
-        if let Err(panic) = result {
-            std::panic::resume_unwind(panic);
+        let result = tokio::time::timeout(
+            Duration::from_secs(120),
+            AssertUnwindSafe(exercise_http(&client, &name, origin)).catch_unwind(),
+        )
+        .await;
+        let cleanup =
+            tokio::time::timeout(Duration::from_secs(10), database.drop().into_future()).await;
+        assert!(
+            matches!(cleanup, Ok(Ok(()))),
+            "owned database cleanup failed"
+        );
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(panic)) => std::panic::resume_unwind(panic),
+            Err(_) => panic!("Always-on HTTP Mongo regression timed out"),
         }
     }
 }
