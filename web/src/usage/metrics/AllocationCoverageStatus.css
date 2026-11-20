@@ -1,0 +1,10 @@
+.usage-allocation-coverage {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+}
+.usage-allocation-coverage details p {
+  margin-top: 8px;
+}

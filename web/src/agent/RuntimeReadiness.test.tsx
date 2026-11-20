@@ -132,7 +132,7 @@ it('refreshes unavailable files when readiness changes and preserves an edited f
     sandbox: { ...AGENT_DETAIL.sandbox, status: 'installing' as const },
   };
   const view = render(panel(client, 'files', vi.fn(), starting));
-  await screen.findByText('File browsing is not enabled for this environment.');
+  await screen.findByText('File browsing is not available for this environment.');
   expect(fileClient.list).not.toHaveBeenCalled();
   available = true;
   view.rerender(panel(client));
@@ -201,13 +201,11 @@ it('refreshes the desktop browser after Agent readiness even when files were alr
   });
   const starting = { ...AGENT_DETAIL, status: 'starting' as const, readyAt: undefined };
   const view = render(panel(client, 'browser', vi.fn(), starting));
-  await screen.findByText('Live screen is not enabled for this environment.');
+  await screen.findByText('Live screen is not enabled');
   ready = true;
   view.rerender(panel(client, 'browser'));
   expect(await screen.findByAltText('Agent browser page')).toBeVisible();
-  expect(
-    screen.queryByText('Live screen is not enabled for this environment.'),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByText('Live screen is not enabled')).not.toBeInTheDocument();
 });
 
 it.each(['failure', 'expiry'] as const)(

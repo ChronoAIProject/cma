@@ -397,7 +397,7 @@ class StagingWorkflowTest < Minitest::Test
     'staging-release' => { 'publish' => %w[receipts], 'finalize' => %w[receipts-download] }
   }.freeze
   # Optional steps whose failure only costs time; publication decides the outcome later.
-  OPTIONAL = ['Expose cache runtime to the Buildx client', 'Check Agent Manager release ownership',
+  OPTIONAL = ['Expose cache runtime to the Buildx client', 'Check release ownership',
               'Restore compatible Cargo mounts', 'Retain accepted Cargo mounts'].freeze
 
   def test_safe_actions_repeat_once_and_only_the_repeat_can_fail_the_job
