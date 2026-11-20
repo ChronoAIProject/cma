@@ -1,5 +1,5 @@
 import { Presence } from './Presence';
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import { Button } from './Button';
 import { Modal } from './Modal';
 import { IconWarningOutline16 } from './icons';
@@ -27,7 +27,7 @@ interface RiskConfirmationProps {
   readonly open: boolean;
   readonly title: string;
   /** What will happen, in a sentence. */
-  readonly description: string;
+  readonly description: ReactNode;
   /** The sentence beside the tick, in the first person. */
   readonly acknowledgeLabel: string;
   readonly confirmLabel: string;

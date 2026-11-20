@@ -10,6 +10,7 @@ const identityMessages = new Set([
 
 export type LifecycleFailure =
   | { readonly kind: 'message'; readonly message: string }
+  | { readonly kind: 'quota'; readonly limit: number; readonly live: number }
   | { readonly kind: 'unconfirmed' | 'status-unavailable'; readonly task: boolean };
 
 export interface LifecycleFailureAction {
@@ -23,6 +24,8 @@ export function lifecycleFailure(
   phase: 'submit' | 'status',
   task: boolean,
 ): LifecycleFailure {
+  if (error instanceof AgentLifecycleCreateError && error.status === 429 && error.failure)
+    return { kind: 'quota', limit: error.failure.limit, live: error.failure.live };
   if (error instanceof Error && identityMessages.has(error.message))
     return { kind: 'message', message: error.message };
   if (error instanceof ApiError || error instanceof AgentLifecycleCreateError) {
@@ -63,6 +66,8 @@ export function lifecycleFailureMessage(
 ): string | undefined {
   if (!failure) return undefined;
   if (failure.kind === 'message') return failure.message;
+  if (failure.kind === 'quota')
+    return `The Sandbox environment limit is now reached (${failure.live}/${failure.limit}). Your draft is saved. Review capacity before starting again.`;
   if (failure.kind === 'status-unavailable')
     return `${failure.task ? 'Task' : 'Agent'} status couldn't be read. Use ${action.label} to check again.`;
   if (action.kind === 'status')
