@@ -192,7 +192,7 @@ describe('Flat Agent navigation', () => {
       'aria-disabled',
       'true',
     );
-    expect(screen.getByRole('menuitem', { name: 'Export history' })).toHaveAttribute(
+    expect(screen.getByRole('menuitem', { name: 'Export retained conversation' })).toHaveAttribute(
       'aria-disabled',
       'false',
     );

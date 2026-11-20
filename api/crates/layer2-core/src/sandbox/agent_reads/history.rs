@@ -16,7 +16,10 @@ impl AgentHistoryReading {
             .runtime
             .as_ref()
             .map(|runtime| runtime.runtime_id.as_str())
-            .ok_or_else(|| AgentReadError::Unavailable("history runtime is unavailable".into()))
+            .ok_or_else(|| {
+                tracing::warn!(parent: None, reason = "no_runtime", "Agent raw history export unavailable");
+                AgentReadError::Unavailable("history runtime is unavailable".into())
+            })
     }
 }
 

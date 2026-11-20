@@ -10,7 +10,12 @@ export function selectAgentAction(
   agentId: string,
   onAction?: (action: TreeAction) => void,
 ) {
-  if (id === 'stop_agent' || id === 'delete_agent' || id === 'export_history')
+  if (
+    id === 'stop_agent' ||
+    id === 'delete_agent' ||
+    id === 'export_history' ||
+    id === 'export_retained_conversation'
+  )
     onAction?.({ kind: id, agentId });
 }
 
@@ -50,6 +55,16 @@ export function agentHeaderMenu(
   return safe.length > 0 && destructive.length > 0
     ? [...safe, { type: 'separator', id: 'before-destructive' }, ...destructive]
     : [...safe, ...destructive];
+}
+
+export function agentHeaderActionHandler(
+  agentId: string,
+  readOnly: boolean,
+  onAction: ((action: TreeAction) => void) | undefined,
+) {
+  return onAction === undefined || readOnly
+    ? undefined
+    : (id: string) => selectAgentAction(id, agentId, onAction);
 }
 
 /** Where an owner's Agent lives, ending at the Agent itself. */
