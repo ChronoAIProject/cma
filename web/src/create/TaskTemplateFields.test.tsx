@@ -62,7 +62,8 @@ it.each(taskTemplates)(
       fill(field.label, `Synthetic ${field.key}`);
     }
     expect(start).toBeEnabled();
-    expect(screen.getByLabelText('Task preview')).toHaveAttribute('readonly');
+    expect(screen.getByRole('region', { name: 'Task preview · read-only' })).toBeVisible();
+    expect(screen.queryByRole('textbox', { name: /Task preview/ })).toBeNull();
     fireEvent.keyDown(screen.getByLabelText(definition.fields.at(-1)!.label), {
       key: 'Enter',
       ctrlKey: true,
