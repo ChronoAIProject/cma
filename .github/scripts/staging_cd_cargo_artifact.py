@@ -1,0 +1,202 @@
+"""Authenticated develop-only transport for sealed AM and EG Cargo bundles.
+
+Layer caches hold the repository's Actions cache at its storage limit, so the
+optional Cargo save was never admitted and every Rust release compiled from
+nothing. Develop Staging CD runs retain the sealed bundle as a run artifact
+instead. A later run accepts one only from a verified producer job and with an
+exact artifact digest; the existing bundle validator then decides between an
+exact restore, an incremental-only graph fallback and a cold build.
+"""
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import stat
+import subprocess
+import time
+import zipfile
+
+REPO = "ChronoAIProject/cma"
+WORKFLOW = ".github/workflows/staging-cd.yml"
+COMPONENTS = {"am", "eg"}
+FILES = ("manifest.json", "registry.tar.gz", "target.tar.gz")
+MIB = 1024**2
+# The sealed archives are bounded to 1 GiB and the manifest to 4 KiB. Stored
+# (uncompressed) ZIP framing for three members fits in the extra MiB.
+MAX_ARTIFACT_BYTES = 1024**3 + 4096 + MIB
+CANDIDATES = 5
+DEADLINE_SECONDS = 240
+CHUNK = 8 * MIB
+
+
+class Refused(ValueError):
+    """Diagnostics name a fixed reason, never remote or archive content."""
+
+
+def require(value, reason="refused"):
+    if not value:
+        raise Refused(reason)
+
+
+def artifact_name(component):
+    require(component in COMPONENTS, "component")
+    return "cma-cd-cargo-" + component
+
+
+def context(env):
+    require(env.get("GITHUB_REPOSITORY") == REPO and env.get("GITHUB_EVENT_NAME") == "push"
+            and env.get("GITHUB_REF") == "refs/heads/develop" and env.get("CD_COMPONENT") in COMPONENTS,
+            "context")
+    require(re.fullmatch(r"[0-9a-f]{40}", env.get("GITHUB_SHA", "")), "context")
+    for key in ("GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT"):
+        require(re.fullmatch(r"[1-9][0-9]*", env.get(key, "")), "context")
+    root = Path(env.get("RUNNER_TEMP", ""))
+    require(root.is_absolute() and root.is_dir() and not root.is_symlink(), "context")
+    return root / "cma-build-cache" / "accepted"
+
+
+def github(path, *, timeout, output=None):
+    require(path.startswith("repos/" + REPO + "/") and ".." not in path, "path")
+    command = ["gh", "api", "--hostname", "github.com", "--method", "GET", path]
+    if output is None:
+        result = subprocess.run(command, capture_output=True, timeout=timeout, check=False)
+        require(result.returncode == 0 and len(result.stdout) <= 4 * MIB, "read")
+        return json.loads(result.stdout)
+    with output.open("xb") as stream:
+        result = subprocess.run(command, stdout=stream, stderr=subprocess.DEVNULL, timeout=timeout, check=False)
+    require(result.returncode == 0, "download")
+    return output
+
+
+def validate_artifact(artifact, component):
+    require(isinstance(artifact, dict) and artifact.get("name") == artifact_name(component)
+            and artifact.get("expired") is False and type(artifact.get("id")) is int and artifact["id"] > 0
+            and type(artifact.get("size_in_bytes")) is int
+            and 0 < artifact["size_in_bytes"] <= MAX_ARTIFACT_BYTES
+            and isinstance(artifact.get("digest"), str)
+            and re.fullmatch(r"sha256:[a-f0-9]{64}", artifact["digest"]), "artifact")
+    origin = artifact.get("workflow_run")
+    require(isinstance(origin, dict) and type(origin.get("id")) is int and origin["id"] > 0
+            and isinstance(origin.get("head_sha"), str) and re.fullmatch(r"[0-9a-f]{40}", origin["head_sha"]),
+            "artifact")
+    return origin
+
+
+def validate_producer(run, jobs, artifact, component):
+    origin = artifact["workflow_run"]
+    require(isinstance(run, dict) and run.get("repository", {}).get("full_name") == REPO
+            and run.get("head_repository", {}).get("full_name") == REPO
+            and run.get("path") == WORKFLOW and run.get("event") == "push"
+            and run.get("head_branch") == "develop", "producer")
+    repository = run["repository"].get("id")
+    require(type(repository) is int and repository > 0 and run["head_repository"].get("id") == repository
+            and origin.get("repository_id") == repository and origin.get("head_repository_id") == repository,
+            "producer")
+    source, run_id, attempt = run.get("head_sha"), run.get("id"), run.get("run_attempt")
+    require(run_id == origin["id"] and source == origin["head_sha"]
+            and type(attempt) is int and attempt > 0, "producer")
+    require(isinstance(jobs, dict) and isinstance(jobs.get("jobs"), list)
+            and jobs.get("total_count") == len(jobs["jobs"]), "producer")
+    matches = [job for job in jobs["jobs"] if isinstance(job, dict)
+               and job.get("name") == f"Release {component} / Publish"]
+    # Only a completed, successful publication sealed and uploaded the bundle.
+    require(len(matches) == 1 and matches[0].get("status") == "completed"
+            and matches[0].get("conclusion") == "success" and matches[0].get("head_sha") == source
+            and matches[0].get("run_id") == run_id and matches[0].get("run_attempt") == attempt, "producer")
+    return {"producer_run": run_id, "producer_attempt": attempt, "producer_source": source}
+
+
+def file_digest(path):
+    value = hashlib.sha256()
+    with path.open("rb") as stream:
+        for block in iter(lambda: stream.read(CHUNK), b""):
+            value.update(block)
+    return "sha256:" + value.hexdigest()
+
+
+def unpack(archive_path, artifact, destination):
+    item = archive_path.lstat()
+    require(stat.S_ISREG(item.st_mode) and item.st_size <= MAX_ARTIFACT_BYTES, "archive")
+    require(file_digest(archive_path) == artifact["digest"], "digest")
+    with zipfile.ZipFile(archive_path) as archive:
+        members = archive.infolist()
+        require(sorted(member.filename for member in members) == sorted(FILES), "members")
+        total = 0
+        for member in members:
+            mode = (member.external_attr >> 16) & 0o170000
+            require(not member.flag_bits & 1 and mode in (0, stat.S_IFREG)
+                    and 0 < member.file_size <= MAX_ARTIFACT_BYTES, "members")
+            total += member.file_size
+        require(total <= MAX_ARTIFACT_BYTES, "members")
+        destination.mkdir(mode=0o700)
+        for member in members:
+            with archive.open(member) as source, (destination / member.filename).open("xb") as target:
+                shutil.copyfileobj(source, target, CHUNK)
+    for name in FILES:
+        written = (destination / name).lstat()
+        require(stat.S_ISREG(written.st_mode) and written.st_nlink == 1, "members")
+
+
+def discard(path):
+    if path.is_symlink() or path.is_file():
+        path.unlink()
+    elif path.exists():
+        shutil.rmtree(path)
+
+
+def restore(env, get=github, clock=time.monotonic):
+    destination = context(env)
+    component = env["CD_COMPONENT"]
+    require(not destination.exists() and not destination.is_symlink(), "destination")
+    destination.parent.mkdir(mode=0o700, exist_ok=True)
+    require(destination.parent.is_dir() and not destination.parent.is_symlink(), "destination")
+    deadline = clock() + DEADLINE_SECONDS
+
+    def remaining(cap):
+        left = deadline - clock()
+        require(left > 0, "deadline")
+        return min(cap, left)
+
+    listing = get(f"repos/{REPO}/actions/artifacts?name={artifact_name(component)}&per_page={CANDIDATES}",
+                  timeout=remaining(10))
+    require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list), "listing")
+    download = destination.parent / "artifact.zip"
+    for artifact in listing["artifacts"][:CANDIDATES]:
+        try:
+            origin = validate_artifact(artifact, component)
+            require(str(origin["id"]) != env["GITHUB_RUN_ID"], "self")
+            run = get(f"repos/{REPO}/actions/runs/{origin['id']}", timeout=remaining(10))
+            attempt = run.get("run_attempt") if isinstance(run, dict) else None
+            require(type(attempt) is int and attempt > 0, "producer")
+            jobs = get(f"repos/{REPO}/actions/runs/{origin['id']}/attempts/{attempt}/jobs?per_page=100",
+                       timeout=remaining(10))
+            producer = validate_producer(run, jobs, artifact, component)
+            discard(download)
+            get(f"repos/{REPO}/actions/artifacts/{artifact['id']}/zip", timeout=remaining(180), output=download)
+            unpack(download, artifact, destination)
+            return {"state": "RESTORED", **producer, "artifact_id": artifact["id"],
+                    "artifact_digest": artifact["digest"]}
+        except (Refused, KeyError, TypeError, OSError, json.JSONDecodeError, subprocess.SubprocessError,
+                zipfile.BadZipFile, zipfile.LargeZipFile) as error:
+            # A partly written bundle must never reach the validator.
+            discard(destination)
+            if isinstance(error, Refused) and str(error) == "deadline":
+                break
+        finally:
+            discard(download)
+    return {"state": "MISS"}
+
+
+def main():
+    try:
+        result = restore(os.environ)
+    except (Refused, KeyError, TypeError, OSError, json.JSONDecodeError, subprocess.SubprocessError):
+        result = {"state": "UNAVAILABLE"}
+    print(json.dumps({"event": "cargo-artifact", "component": os.environ.get("CD_COMPONENT"), **result},
+                     sort_keys=True), flush=True)
+
+
+if __name__ == "__main__":
+    main()
