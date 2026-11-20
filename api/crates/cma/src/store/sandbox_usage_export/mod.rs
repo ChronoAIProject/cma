@@ -1,6 +1,11 @@
 //! Retained source custody and bounded projection, independent of transport.
 mod capture;
+mod delivery;
+mod producer;
+pub(crate) use delivery::{DeliveryAttempt, DeliveryOutcome};
 mod inventory;
+mod outbox;
+pub(crate) use outbox::FrozenUsageEvent;
 mod payload;
 mod project;
 mod records;
@@ -47,6 +52,10 @@ impl CaptureStore {
             database,
             config,
         })
+    }
+
+    pub(crate) fn namespace(&self) -> &str {
+        &self.config.namespace
     }
 
     fn collection(&self, name: &str) -> Collection<Document> {
