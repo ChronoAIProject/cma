@@ -177,6 +177,9 @@ impl ExecutionAuthority {
     pub async fn validate_live(&self) -> ExecutionResult<()> {
         self.validate_current(self.snapshot())?;
         self.access
+            .validate_read_standing(&self.authorized, &self.target)
+            .await?;
+        self.access
             .validate_binding_authority(&self.authorized)
             .await?;
         self.validate_current(self.snapshot())

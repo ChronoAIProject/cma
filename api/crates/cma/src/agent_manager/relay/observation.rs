@@ -179,7 +179,7 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         );
         match commands.response_status(context, credential, &id).await {
             Ok(status) => status.receipt.agent_id,
-            Err(_) => return public_access::refusal(StatusCode::NOT_FOUND),
+            Err(_) => return public_access::refusal(StatusCode::NOT_FOUND.into()),
         }
     } else {
         match agent(&request, &bytes) {
@@ -198,7 +198,7 @@ pub(super) async fn route(relay: &Relay, request: Request, next: Next) -> Respon
         .await
     {
         Ok(value) => value,
-        Err(_) => return public_access::refusal(StatusCode::NOT_FOUND),
+        Err(_) => return public_access::refusal(StatusCode::NOT_FOUND.into()),
     };
     let Some(created) = authorized.incarnation() else {
         return http::unavailable();

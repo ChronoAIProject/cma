@@ -342,3 +342,29 @@ async fn preview_uses_directory_name_without_exposing_the_publisher_subject() {
         "trigger_service_unavailable"
     );
 }
+
+struct ErasingPublisher;
+#[async_trait]
+impl crate::account_deletion::AccountStanding for ErasingPublisher {
+    async fn erasing(
+        &self,
+        _: &SubjectId,
+    ) -> Result<bool, crate::account_deletion::AccountDeletionError> {
+        Ok(true)
+    }
+}
+#[tokio::test]
+async fn standing_gate_denies_public_trigger_preview() {
+    let seed = seed_profiles(Visibilities::default(), true).await;
+    let definitions = Arc::new(trigger_store(&seed));
+    let launches = Arc::new(InMemoryLaunchStore::new(definitions.clone()));
+    let owner = publisher(seed.owner.clone());
+    let service = TriggerService::new(definitions, launches, directory(Ok(None)));
+    let trigger = service.create(&owner, content(seed.target)).await.unwrap();
+    let public = service.publish(&owner, &trigger.id, 1).await.unwrap();
+    let service = service.with_account_standing(Arc::new(ErasingPublisher));
+    assert!(matches!(
+        service.preview(&public.public_id).await,
+        Err(TriggerServiceError::Unavailable(_))
+    ));
+}

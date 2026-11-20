@@ -239,6 +239,16 @@ impl Following {
             return false;
         }
         if frame.fragment.is_some() {
+            if self
+                .state
+                .reads
+                .validate_event_stream_standing(&self.authorization)
+                .await
+                .is_err()
+            {
+                self.release_failed = true;
+                return false;
+            }
             if !self.live_batch_needs_validation && self.observation.is_none() {
                 return true;
             }

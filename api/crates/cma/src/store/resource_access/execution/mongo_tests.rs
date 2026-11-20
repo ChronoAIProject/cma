@@ -1,6 +1,7 @@
 use super::*;
 mod fixture;
 mod races;
+mod standing;
 mod uncertainty;
 
 #[tokio::test]
