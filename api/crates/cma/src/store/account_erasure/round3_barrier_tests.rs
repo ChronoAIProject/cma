@@ -19,11 +19,9 @@ async fn deadline(unreadable: bool, configured: u64) {
         .map(i64::from)
         .or_else(|_| parameter.get_i64("transactionLifetimeLimitSeconds"))
         .unwrap() as u64;
-    let expected = if unreadable {
-        configured.max(120)
-    } else {
-        (limit * 3).div_ceil(2).saturating_add(10).max(configured)
-    };
+    let qualification =
+        TransactionDrainQualification::from_verified_limits([2; 32], limit, limit * 2).unwrap();
+    let expected = (limit * 2).max(configured);
     let mut settings = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
@@ -50,8 +48,11 @@ async fn deadline(unreadable: bool, configured: u64) {
         }],
         &mut cursor,
         Options {
+            allocation_rollups_enabled: Some(false),
+            agent_shared_observation: Some(false),
+            drain_qualification: Some(qualification),
             billing_enabled: false,
-            transaction_drain_fallback_secs: configured,
+            transaction_drain_minimum_secs: configured,
         },
         &mut batch,
     )
@@ -73,7 +74,7 @@ async fn deadline(unreadable: bool, configured: u64) {
     let deadline = cursor.drain_until.unwrap().timestamp_millis();
     assert!(
         deadline >= before.timestamp_millis() + expected as i64 * 1000,
-        "drain shorter than cleanup lifetime and configured floor"
+        "drain shorter than qualified finality and configured minimum"
     );
     assert!(deadline <= after.timestamp_millis() + expected as i64 * 1000);
     assert!(db
@@ -86,12 +87,12 @@ async fn deadline(unreadable: bool, configured: u64) {
 }
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn readable_lifetime_includes_cleanup_period_and_safety_margin() {
+async fn readable_lifetime_keeps_the_qualified_finality_bound() {
     deadline(false, 0).await;
 }
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn unreadable_lifetime_uses_conservative_configured_fallback() {
+async fn unreadable_lifetime_requires_the_explicit_qualified_bound() {
     deadline(true, 240).await;
 }
 #[tokio::test]
@@ -114,8 +115,11 @@ async fn invalid_configured_deadline_requires_cohort_intervention_without_subjec
         &mut Cursor::default(),
         "2026-11-14T00:00:00Z",
         Options {
+            allocation_rollups_enabled: Some(false),
+            agent_shared_observation: Some(false),
+            drain_qualification: Some(TransactionDrainQualification::fixture()),
             billing_enabled: false,
-            transaction_drain_fallback_secs: u64::MAX,
+            transaction_drain_minimum_secs: u64::MAX,
         },
     )
     .await;
@@ -157,8 +161,9 @@ async fn invalid_worker_clock_is_retryable_without_attributing_the_first_cohort_
         Options {
             allocation_rollups_enabled: Some(false),
             agent_shared_observation: Some(false),
+            drain_qualification: Some(TransactionDrainQualification::fixture()),
             billing_enabled: false,
-            transaction_drain_fallback_secs: 120,
+            transaction_drain_minimum_secs: 120,
         },
     )
     .await;
@@ -202,8 +207,11 @@ async fn server_clock_command_failure_is_retryable_and_a_fresh_attempt_succeeds(
     }];
     let mut cursor = Cursor::default();
     let options = Options {
+        allocation_rollups_enabled: Some(false),
+        agent_shared_observation: Some(false),
+        drain_qualification: Some(TransactionDrainQualification::fixture()),
         billing_enabled: false,
-        transaction_drain_fallback_secs: 120,
+        transaction_drain_minimum_secs: 120,
     };
     let result =
         super::barrier::ready(&db, &targets, &mut cursor, options, &mut Batch::default()).await;
@@ -221,6 +229,58 @@ async fn server_clock_command_failure_is_retryable_and_a_fresh_attempt_succeeds(
         super::barrier::ready(&db, &targets, &mut cursor, options, &mut Batch::default())
             .await
             .unwrap()
+    );
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a failpoint-enabled replica set"]
+async fn lifetime_command_failure_is_retryable_without_installing_a_fence() {
+    let seed = seeded("drain_lifetime_outage").await;
+    let mut settings =
+        ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap())
+            .await
+            .unwrap();
+    settings.app_name = Some(seed.database.clone());
+    let db = Client::with_options(settings)
+        .unwrap()
+        .database(&seed.database);
+    db.run_command(doc! {"ping":1}).await.unwrap();
+    let admin = seed.client.database("admin");
+    admin.run_command(doc! {"configureFailPoint":"failCommand","mode":{"times":1},"data":{"failCommands":["getParameter"],"appName":&seed.database,"errorCode":1}}).await.unwrap();
+    let mut cursor = Cursor::default();
+    let result = super::barrier::ready(
+        &db,
+        &[Target {
+            subject: &seed.owner,
+            inventory: &ErasureInventory::default(),
+        }],
+        &mut cursor,
+        Options {
+            billing_enabled: false,
+            allocation_rollups_enabled: Some(false),
+            agent_shared_observation: Some(false),
+            transaction_drain_minimum_secs: 120,
+            drain_qualification: Some(TransactionDrainQualification::fixture()),
+        },
+        &mut Batch::default(),
+    )
+    .await;
+    admin
+        .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
+        .await
+        .unwrap();
+    assert!(
+        matches!(result, Err(Error::Store(_))),
+        "outage must remain retryable: {result:?}"
+    );
+    assert!(cursor.drain_until.is_none());
+    assert_eq!(
+        db.collection::<Document>("agent_profiles")
+            .count_documents(doc! {"account_erasure_fenced":true})
+            .await
+            .unwrap(),
+        0
     );
     db.drop().await.unwrap();
 }

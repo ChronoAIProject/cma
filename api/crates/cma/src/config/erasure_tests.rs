@@ -6,6 +6,7 @@ fn record_erasure_uses_the_configured_delivery_and_optional_store_modes() {
     let mut config = configured(&[]).unwrap();
     let options = Options::from_config(&config);
     assert!(!config.account_deletion_enabled);
+    assert!(options.drain_qualification.is_none());
     assert!(!options.billing_enabled);
     assert_eq!(options.allocation_rollups_enabled, Some(false));
     assert_eq!(options.agent_shared_observation, Some(false));
@@ -21,4 +22,5 @@ fn record_erasure_uses_the_configured_delivery_and_optional_store_modes() {
     assert_eq!(options.allocation_rollups_enabled, Some(true));
     assert_eq!(options.agent_shared_observation, Some(true));
     assert!(!config.account_deletion_enabled);
+    assert!(options.drain_qualification.is_none());
 }

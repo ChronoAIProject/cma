@@ -137,8 +137,11 @@ async fn continuation(organization: bool, finish_erasure: bool) {
             }],
             &mut cursor,
             Options {
+                allocation_rollups_enabled: Some(false),
+                agent_shared_observation: Some(false),
+                drain_qualification: Some(TransactionDrainQualification::fixture()),
                 billing_enabled: false,
-                transaction_drain_fallback_secs: 120
+                transaction_drain_minimum_secs: 120
             },
             &mut batch
         )
@@ -317,6 +320,7 @@ async fn continuation(organization: bool, finish_erasure: bool) {
     assert_eq!(
         store
             .schedule_inactivity_pause(SandboxInactivityPauseRequest {
+                expected_policy_revision: None,
                 sandbox_id: parent.id.clone(),
                 requested_at: "2026-11-14T01:00:00Z".into(),
                 pause_after_seconds: 900,
@@ -331,6 +335,7 @@ async fn continuation(organization: bool, finish_erasure: bool) {
     // and must still reach its retained aggregate's transactional fence.
     assert!(store
         .schedule_inactivity_pause(SandboxInactivityPauseRequest {
+            expected_policy_revision: None,
             sandbox_id: parent.id,
             requested_at: "2026-11-14T01:00:00Z".into(),
             pause_after_seconds: 900,

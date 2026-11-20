@@ -153,6 +153,7 @@ async fn referenced_profiles_survive_anonymized_and_unreferenced_profiles_are_re
         .unwrap()
         .is_none());
     let request = SandboxInactivityPauseRequest {
+        expected_policy_revision: None,
         sandbox_id: sandbox.id.clone(),
         requested_at: "2026-11-14T01:00:00Z".into(),
         pause_after_seconds: 900,

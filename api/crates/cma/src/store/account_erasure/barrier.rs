@@ -1,20 +1,14 @@
 //! A majority erasure barrier drains older snapshots before reference discovery.
-use super::{Batch, CohortBlock, Cursor, Error, Options, Target};
+use super::drain_qualification::{
+    invalid as invalid_drain, MAX_DRAIN_SECONDS, MAX_LIFETIME_SECONDS,
+};
+use super::{Batch, CohortBlock, Cursor, Error, Options, Target, TransactionDrainQualification};
 use crate::store::durability::majority_collection;
 use mongodb::{
     bson::{doc, DateTime, Document},
+    error::ErrorKind,
     Database,
 };
-
-const MAX_LIFETIME_SECONDS: u64 = 3_600;
-const MAX_DRAIN_SECONDS: u64 = 86_400;
-
-fn invalid_drain(parameter: &'static str, maximum_seconds: u64) -> Error {
-    Error::cohort(CohortBlock::InvalidTransactionDrain {
-        parameter,
-        maximum_seconds,
-    })
-}
 
 const CATALOGUES: &[&str] = &[
     "agent_profiles",
@@ -24,6 +18,37 @@ const CATALOGUES: &[&str] = &[
     "trigger_definition_revisions",
 ];
 
+pub(super) fn validate(options: Options) -> Result<TransactionDrainQualification, Error> {
+    if options.transaction_drain_minimum_secs > MAX_DRAIN_SECONDS {
+        return Err(invalid_drain(
+            "CHRONO_ACCOUNT_ERASURE_TRANSACTION_DRAIN_SECONDS",
+            MAX_DRAIN_SECONDS,
+        ));
+    }
+    options
+        .drain_qualification
+        .ok_or_else(|| Error::cohort(CohortBlock::TransactionDrainQualificationRequired))
+}
+
+async fn observed_lifetime(db: &Database) -> Result<Option<u64>, Error> {
+    match db
+        .client()
+        .database("admin")
+        .run_command(doc! {"getParameter":1,"transactionLifetimeLimitSeconds":1})
+        .await
+    {
+        Ok(row) => integer(&row, "transactionLifetimeLimitSeconds")
+            .map(Some)
+            .ok_or_else(|| invalid_drain("transactionLifetimeLimitSeconds", MAX_LIFETIME_SECONDS)),
+        // A qualified bound can support least-privilege credentials. Other
+        // command and transport failures do not establish permission absence.
+        Err(error) if matches!(error.kind.as_ref(), ErrorKind::Command(command) if command.code == 13) => {
+            Ok(None)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
 pub(super) async fn ready(
     db: &Database,
     targets: &[Target<'_>],
@@ -31,36 +56,22 @@ pub(super) async fn ready(
     options: Options,
     batch: &mut Batch,
 ) -> Result<bool, Error> {
-    if options.transaction_drain_fallback_secs > MAX_DRAIN_SECONDS {
-        return Err(invalid_drain(
-            "CHRONO_ACCOUNT_ERASURE_TRANSACTION_DRAIN_SECONDS",
-            MAX_DRAIN_SECONDS,
-        ));
-    }
+    let qualification = validate(options)?;
+    let seconds = qualification.seconds(
+        observed_lifetime(db).await?,
+        options.transaction_drain_minimum_secs,
+    )?;
     if cursor.drain_complete {
         return Ok(true);
     }
     if cursor.drain_until.is_none() {
         install(db, targets).await?;
-        // Read the server clock *after* every majority acknowledgement. This
-        // deadline is safe across worker restarts, hosts and local clock skew.
+        // Start the qualified window after every fence is majority-acknowledged.
+        // Its external qualification must include clock uncertainty.
         let server = db.run_command(doc! {"hello":1}).await?;
         let now = *server
             .get_datetime("localTime")
             .map_err(|_| Error::Store("server clock is unavailable".into()))?;
-        let parameter = db
-            .client()
-            .database("admin")
-            .run_command(doc! {"getParameter":1,"transactionLifetimeLimitSeconds":1})
-            .await;
-        let lifetime =
-            match parameter {
-                Ok(row) => Some(integer(&row, "transactionLifetimeLimitSeconds").ok_or_else(
-                    || invalid_drain("transactionLifetimeLimitSeconds", MAX_LIFETIME_SECONDS),
-                )?),
-                Err(_) => None,
-            };
-        let seconds = drain_seconds(lifetime, options.transaction_drain_fallback_secs)?;
         #[cfg(test)]
         let seconds = cursor.test_drain_seconds.unwrap_or(seconds);
         let millis = i64::try_from(seconds)
@@ -109,52 +120,4 @@ async fn install(db: &Database, targets: &[Target<'_>]) -> Result<u64, Error> {
         }, doc! {"$set":{"account_erasure_fenced":true},"$currentDate":{"account_erasure_fenced_at":true}}).await?.modified_count;
     }
     Ok(modified)
-}
-
-fn drain_seconds(lifetime: Option<u64>, fallback: u64) -> Result<u64, Error> {
-    if lifetime.is_some_and(|seconds| seconds == 0 || seconds > MAX_LIFETIME_SECONDS) {
-        return Err(invalid_drain(
-            "transactionLifetimeLimitSeconds",
-            MAX_LIFETIME_SECONDS,
-        ));
-    }
-    if fallback > MAX_DRAIN_SECONDS {
-        return Err(invalid_drain(
-            "CHRONO_ACCOUNT_ERASURE_TRANSACTION_DRAIN_SECONDS",
-            MAX_DRAIN_SECONDS,
-        ));
-    }
-    // Expired transactions can survive until the periodic cleanup task runs.
-    // Ten extra seconds cover cleanup scheduling and acknowledgement jitter;
-    // the operator's configured floor always applies, including readable hosts.
-    Ok(lifetime
-        .map(|seconds| {
-            seconds
-                .saturating_add(seconds.div_ceil(2))
-                .saturating_add(10)
-                .max(fallback)
-        })
-        .unwrap_or(fallback.max(120)))
-}
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn cleanup_lifetime_and_configured_floor_both_apply() {
-        assert_eq!(super::drain_seconds(Some(60), 0).unwrap(), 100);
-        assert_eq!(super::drain_seconds(Some(61), 0).unwrap(), 102);
-        assert_eq!(super::drain_seconds(Some(60), 120).unwrap(), 120);
-        assert_eq!(super::drain_seconds(Some(300), 120).unwrap(), 460);
-        assert_eq!(super::drain_seconds(Some(60), 240).unwrap(), 240);
-        assert_eq!(super::drain_seconds(None, 120).unwrap(), 120);
-        assert_eq!(super::drain_seconds(None, 240).unwrap(), 240);
-        assert_eq!(super::drain_seconds(None, 0).unwrap(), 120);
-        assert!(matches!(
-            super::drain_seconds(Some(u64::MAX), 120),
-            Err(super::Error::CohortBlocked(_))
-        ));
-        assert!(super::drain_seconds(Some(0), 120).is_err());
-        assert!(super::drain_seconds(Some(3600), 86400).is_ok());
-        assert!(super::drain_seconds(Some(3601), 120).is_err());
-        assert!(super::drain_seconds(None, u64::MAX).is_err());
-    }
 }

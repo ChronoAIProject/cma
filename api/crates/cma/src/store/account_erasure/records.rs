@@ -34,6 +34,7 @@ pub(crate) async fn erase_records(
     {
         return Err(Error::Store("erasure cohort is invalid".into()));
     }
+    super::barrier::validate(options)?;
     let operations = progress::operations();
     progress::prepare(cursor, cohort, options, &operations);
     cursor.capacity_subject = None;

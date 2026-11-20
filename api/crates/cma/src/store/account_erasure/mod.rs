@@ -11,6 +11,7 @@ mod barrier;
 mod batches;
 pub(crate) mod catalog;
 mod context;
+mod drain_qualification;
 mod guards;
 mod identity_activity;
 mod identity_refs;
@@ -23,6 +24,7 @@ mod records;
 mod references;
 mod scan;
 mod selectors;
+pub(crate) use drain_qualification::TransactionDrainQualification;
 use layer2_core::{
     account_deletion::{ErasureBlock, ErasureInventory},
     SubjectId,
@@ -38,7 +40,8 @@ pub(crate) struct Options {
     /// Only an explicitly disabled deployment can omit an absent projection.
     pub allocation_rollups_enabled: Option<bool>,
     pub agent_shared_observation: Option<bool>,
-    pub transaction_drain_fallback_secs: u64,
+    pub transaction_drain_minimum_secs: u64,
+    pub drain_qualification: Option<TransactionDrainQualification>,
 }
 impl Options {
     pub fn from_config(config: &crate::config::Config) -> Self {
@@ -46,7 +49,8 @@ impl Options {
             billing_enabled: config.usage_billing.is_some(),
             allocation_rollups_enabled: Some(config.usage_metrics.views.allocation_rollups_enabled),
             agent_shared_observation: Some(config.features.agent_shared_observation),
-            transaction_drain_fallback_secs: config.account_erasure_transaction_drain_seconds,
+            transaction_drain_minimum_secs: config.account_erasure_transaction_drain_seconds,
+            drain_qualification: None,
         }
     }
 }
@@ -66,10 +70,11 @@ pub(crate) async fn erase_records(
         cursor,
         now,
         Options {
+            drain_qualification: Some(TransactionDrainQualification::fixture()),
             billing_enabled: false,
             allocation_rollups_enabled: Some(false),
             agent_shared_observation: Some(false),
-            transaction_drain_fallback_secs: 120,
+            transaction_drain_minimum_secs: 120,
         },
     )
     .await
@@ -89,6 +94,7 @@ pub(crate) enum CohortBlock {
         collection: &'static str,
         operation: &'static str,
     },
+    TransactionDrainQualificationRequired,
     InvalidTransactionDrain {
         parameter: &'static str,
         maximum_seconds: u64,
@@ -205,13 +211,15 @@ mod catalog_fixture_tests;
 #[cfg(test)]
 mod draft_admission_tests;
 #[cfg(test)]
+mod drain_authority_tests;
+#[cfg(test)]
 mod history_tests;
+#[cfg(test)]
+mod identity_pending_tests;
 #[cfg(test)]
 mod observer_tests;
 #[cfg(test)]
 pub(crate) mod optional_authority_tests;
-#[cfg(test)]
-mod identity_pending_tests;
 #[cfg(test)]
 mod organization_tests;
 #[cfg(test)]
