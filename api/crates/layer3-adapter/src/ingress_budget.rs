@@ -1,5 +1,8 @@
 //! Shared admission for accounted ingress owners; this is not an RSS bound.
 
+mod custody;
+pub(crate) use custody::SharedCustody;
+
 use std::sync::{Arc, OnceLock};
 
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};

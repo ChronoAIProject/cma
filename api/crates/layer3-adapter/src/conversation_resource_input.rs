@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tokio::sync::Semaphore;
 
-use crate::ingress_budget::{IngressBudget, IngressReservation};
+use crate::ingress_budget::{IngressBudget, IngressReservation, SharedCustody};
 use crate::resource_execution_protocol::{
     Digest, ExecutionOperation, ExecutionTicketV1, ProtocolError, ProtocolResult,
     MAX_MESSAGE_BYTES, PROTOCOL_VERSION,
@@ -22,7 +22,7 @@ const VALIDATION_BYTES: usize = 4096;
 
 /// Immutable semantic input. Its byte and parsed-shape custody follows clones.
 #[derive(Clone)]
-pub struct ResourceInput(Arc<Storage>);
+pub struct ResourceInput(SharedCustody<Storage>);
 
 struct Storage {
     bytes: Vec<u8>,
@@ -260,7 +260,7 @@ impl ResourceInput {
         hash.update(b"cma-resource-input-v1\0");
         hash.update(&bytes);
         let digest = Digest::new(&format!("{:x}", hash.finalize()))?;
-        Ok(Self(Arc::new(Storage {
+        Ok(Self(SharedCustody::new(Storage {
             bytes,
             operation,
             digest,
@@ -302,7 +302,7 @@ impl ResourceInput {
             .0
             .budget
             .reserve(count.written.saturating_mul(4) + 4096)?;
-        Ok(ResourceDispatch(Arc::new(DispatchStorage {
+        Ok(ResourceDispatch(SharedCustody::new(DispatchStorage {
             input: self,
             ticket,
             _custody: custody,
@@ -312,7 +312,7 @@ impl ResourceInput {
 
 /// Input cannot be replaced after its ticket has been checked.
 #[derive(Clone)]
-pub struct ResourceDispatch(Arc<DispatchStorage>);
+pub struct ResourceDispatch(SharedCustody<DispatchStorage>);
 
 struct DispatchStorage {
     input: ResourceInput,
@@ -417,3 +417,7 @@ mod custody_tests {
         assert_eq!(budget.component.available_permits(), 65536);
     }
 }
+
+#[cfg(test)]
+#[path = "conversation_resource_input_deallocation_tests.rs"]
+mod deallocation_tests;
