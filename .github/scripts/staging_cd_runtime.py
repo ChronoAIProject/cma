@@ -62,7 +62,9 @@ def private_result(operation, summary_path, output):
     result = "FAIL"
     streams = (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__)
     # Library and subprocess diagnostics may contain private response fields.
-    # Only GitHub masking commands can bypass this output boundary.
+    # Only GitHub masking commands, and ci_retry's fixed-field RETRY lines
+    # (an operation name and numbers, written to the stdout descriptor it
+    # duplicated at import), can bypass this output boundary.
     with open(os.devnull, "w", encoding="utf-8") as sink, \
             silence_descriptor(1, sink), silence_descriptor(2, sink), \
             contextlib.redirect_stdout(sink), contextlib.redirect_stderr(sink):

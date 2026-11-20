@@ -3,13 +3,15 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
+import ci_retry
 from image_secret_gate import ScanRefusal, checksum, verified_staging_scan
 from staging_cd_admission import event_identity
 from staging_cd_artifacts import try_reuse
 from staging_cd_build import build, command, identity, inspect, snapshot
-from staging_cd_common import matches, require
+from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHub
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_resolve import output as step_output
@@ -64,10 +66,53 @@ def retain_package_evidence(report, directory, source, image_digest):
         stream.write(canonical(payload) + "\n")
 
 
+# Every copy attempt shares the original single copy's bound, so a repeat never
+# extends the publish step beyond what one copy could already take.
+COPY_SECONDS = 1800
+
+
+def push(archive, repository, version, digest, auth, registry, runner, reservation_check, retry):
+    """Copy the scanned bytes to their reserved, immutable tag.
+
+    A transport failure leaves the outcome uncertain. The tag is read back
+    first: our digest means the copy landed; another digest refuses; only a
+    proven absence permits one repeat, after authority is re-read, inside the
+    copy budget.
+    """
+    clock = retry.get("clock", time.monotonic)
+    deadline = clock() + COPY_SECONDS
+
+    def copy():
+        # Qualification can take minutes; re-read authority at each write boundary.
+        require(reservation_check() is True, "Publication reservation is not current")
+        timeout = ci_retry.attempt_timeout(COPY_SECONDS, deadline, clock)
+        require(timeout is not None, "Registry copy budget expired")
+        runner(["skopeo", "copy", "--preserve-digests", "--authfile", str(auth),
+                "oci-archive:" + str(archive), "docker://" + repository + ":" + version], timeout=timeout)
+
+    def readback():
+        remote = registry.manifest(repository, version, absent=True)
+        if remote is None:
+            return ci_retry.ABSENT
+        return ci_retry.COMMITTED if remote[0] == digest else ci_retry.CONFLICT
+
+    try:
+        # Registry reads already repeat transient failures, so the readback runs once per settlement.
+        ci_retry.call(lambda: ci_retry.call_write(copy, readback, name="registry-copy", classify=ci_retry.classify,
+                                                  readback_attempts=1, **retry),
+                      name="registry-copy", classify=ci_retry.classify, attempts=2,
+                      **ci_retry.bounded(retry, deadline))
+    except ci_retry.WriteConflict as error:
+        raise Refusal("Registry digest differs from the scanned archive") from error
+    except ci_retry.WriteUncertain as error:
+        raise Refusal("Registry publication outcome is uncertain") from error
+
+
 def publish(archive, identity, directory, registry, credential, actor, *, scanner=None,
             runner=command, qualified=False, smoke=qualify_runtime, source=None, diagnostics=None, timings=None,
-            reservation_check, scan_evidence=None):
+            reservation_check, scan_evidence=None, retry=None):
     require(reservation_check() is True, "Publication reservation is not current")
+    retry = dict(retry or {})
     timings = timings or Timings()
     diagnostics = diagnostics or PublicationDiagnostics()
     require(identity["component"] not in GROUP or source is not None,
@@ -122,15 +167,14 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     try:
         diagnostics.mark("registry_login")
         with timings.stage("login"):
-            runner(["skopeo", "login", "--authfile", str(auth), "--username", actor, "--password-stdin", "ghcr.io"],
-                   data=credential.encode(), timeout=60)
+            # Login only authenticates this runner; repeating it after a transport failure is safe.
+            ci_retry.call(lambda: runner(["skopeo", "login", "--authfile", str(auth), "--username", actor,
+                                          "--password-stdin", "ghcr.io"], data=credential.encode(), timeout=60),
+                          name="registry-login", classify=ci_retry.classify, **retry)
             auth.chmod(0o600)
-        # Qualification can take minutes; re-read authority at the write boundary.
-        require(reservation_check() is True, "Publication reservation is not current")
         diagnostics.mark("registry_copy")
         with timings.stage("push"):
-            runner(["skopeo", "copy", "--preserve-digests", "--authfile", str(auth),
-                    "oci-archive:" + str(archive), "docker://" + repository + ":" + identity["version"]], timeout=1800)
+            push(archive, repository, identity["version"], digest, auth, registry, runner, reservation_check, retry)
     finally:
         auth.unlink(missing_ok=True)
     diagnostics.mark("archive_check")
