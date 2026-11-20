@@ -89,27 +89,33 @@ class ComponentReportTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     summarize(dict(env, **{"CD_FINALIZED_" + suffix: "success"}))
 
-    def test_same_source_skip_is_handled_only_when_a_newer_run_will_deploy(self):
+    def same_source_skip(self, c):
+        """The contract run whose claim on c's source skipped because an older run finalized it."""
+        suffix = c.upper().replace("-", "_")
         lanes = {"am": "contract", "runtime": "contract", "runtime-omarchy": "contract", "web": "web"}
+        # Develop has advanced past this run, which a newer run covering it does not change.
+        return dict(self.lanes(lanes), **{"CD_DISPOSITION_" + suffix: "source_already_final",
+                                          "CD_FINALIZED_" + suffix: "", "CD_DEVELOP_ADVANCED": "true",
+                                          "CD_PROMOTE_CONTRACT": '{"result":"skipped","outputs":{}}'})
+
+    def test_same_source_skip_always_fails_with_its_next_step(self):
         for c in sorted(GROUP):
-            for advanced, handled in (("true", True), ("false", False), (None, False)):
-                with self.subTest(component=c, advanced=advanced):
-                    suffix = c.upper().replace("-", "_")
-                    env = dict(self.lanes(lanes), **{"CD_DISPOSITION_" + suffix: "source_already_final",
-                                                     "CD_FINALIZED_" + suffix: "",
-                                                     "CD_PROMOTE_CONTRACT": '{"result":"skipped","outputs":{}}'})
-                    if advanced is not None:
-                        env["CD_DEVELOP_ADVANCED"] = advanced
-                    rows, verified = summarize(env)
-                    self.assertIn(f"| {c} | source_already_final | skipped | skipped | unreported |", rows)
-                    resume = (f"{c}: an older run finalized this source. The next push resumes this group's "
-                              "final; re-run or push to deploy.")
-                    # At the develop head no newer run deploys this group, so the skip is a failure.
-                    self.assertIs(verified, None if handled else False)
-                    self.assertEqual(resume in rows, not handled)
-                    # A newer reservation's skip stays handled even at the head.
-                    env["CD_DISPOSITION_" + suffix] = "reservation_superseded"
-                    self.assertIsNone(summarize(env)[1])
+            with self.subTest(component=c):
+                env = self.same_source_skip(c)
+                rows, verified = summarize(env)
+                # No run is known to deploy this group, at the head or behind it.
+                self.assertIs(verified, False)
+                self.assertIn(f"| {c} | source_already_final | skipped | skipped | unreported |", rows)
+                self.assertIn(f"{c}: an older run finalized this source. The next push resumes this group's "
+                              "final; re-run or push to deploy.", rows)
+                with tempfile.TemporaryDirectory() as tmp:
+                    output = Path(tmp, "outputs")
+                    with patch.dict(os.environ, dict(env, GITHUB_OUTPUT=str(output)), clear=True):
+                        self.assertEqual(main(), 1)
+                    self.assertFalse(output.exists())
+                # A newer reservation's skip stays handled.
+                env["CD_DISPOSITION_" + c.upper().replace("-", "_")] = "reservation_superseded"
+                self.assertIsNone(summarize(env)[1])
         with self.assertRaises(ValueError):
             summarize(dict(self.env(), CD_DISPOSITION_AM="source_finalized"))
 

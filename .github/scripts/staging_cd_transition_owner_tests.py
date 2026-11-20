@@ -7,6 +7,8 @@ from unittest.mock import patch
 
 import staging_cd_release_ownership as ownership
 from staging_cd_allocate import allocate_queue
+from staging_cd_component_report import summarize
+import staging_cd_component_report_tests as report_fixtures
 from staging_cd_allocation_fixture import AllocationServer
 from staging_cd_allocation_io import AllocationIO
 from staging_cd_allocation_snapshot import AllocationSnapshot, SnapshotAPI
@@ -152,3 +154,28 @@ class TransitionOwnerTests(unittest.TestCase):
                 for key in GROUP:
                     self.assertEqual(resumed[key], {"component": key, "mode": "resume", "receipt": finals[key]})
                 self.assertEqual(resumed["web"]["mode"], "publish")
+
+    def test_same_source_skip_stays_red_when_a_newer_push_plans_around_it(self):
+        for pushed in sorted(GROUP):
+            with self.subTest(pushed=pushed):
+                self.setUp()
+                original = self.push(GROUP)
+                successor = self.push({pushed})
+                skipped = sorted(GROUP - {pushed})
+                for key in skipped:
+                    self.finalize(original[key]["reservation"])
+                    self.assertFalse(self.owned(successor[key]))
+                self.finalize(successor[pushed]["reservation"])
+                # Run 802 is still running when the next push allocates: its burned
+                # same-source claims look like an active owner, so it plans only web.
+                self.completed.add(801)
+                self.assertEqual(self.push({"web"}).keys(), {"web"})
+                # So the skipping run must stay red: nothing else will deploy its group.
+                report = report_fixtures.ComponentReportTests()
+                env = report.same_source_skip(skipped[0])
+                env.update({"CD_DISPOSITION_" + skipped[1].upper().replace("-", "_"): "source_already_final",
+                            "CD_FINALIZED_" + skipped[1].upper().replace("-", "_"): ""})
+                rows, verified = summarize(env)
+                self.assertIs(verified, False)
+                for key in skipped:
+                    self.assertIn(f"| {key} | source_already_final | skipped | skipped | unreported |", rows)

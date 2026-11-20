@@ -255,12 +255,7 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal '${{ jobs.publish.outputs.disposition }}', trigger.dig('workflow_call', 'outputs', 'disposition', 'value')
     # Any skip disposition, including an older run's same-source final, skips finalize.
     assert_includes release.dig('jobs', 'finalize', 'if'), "needs.publish.outputs.disposition == ''"
-    steps = workflow('staging-cd').dig('jobs', 'recheck', 'steps')
-    recheck = steps.find { |step| step['name'] == 'Verify newer merges have a reconciliation run' }
-    assert_equal 'recheck', recheck['id']
-    report = steps.last.fetch('env')
-    assert_operator steps.index(recheck), :<, steps.index(steps.last)
-    assert_equal '${{ steps.recheck.outputs.advanced }}', report['CD_DEVELOP_ADVANCED']
+    report = workflow('staging-cd').dig('jobs', 'recheck', 'steps').last.fetch('env')
     refute report.key?('CD_AM_DISPOSITION')
     %w[web am eg runtime runtime_omarchy].each do |key|
       assert_equal "${{ needs.release_#{key}.outputs.disposition }}", report["CD_DISPOSITION_#{key.upcase}"]

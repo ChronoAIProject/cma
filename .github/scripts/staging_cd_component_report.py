@@ -10,9 +10,9 @@ from staging_cd_set import document
 from staging_cd_targets import TARGETS
 
 CONCLUSIONS = {"success", "failure", "skipped", "cancelled"}
-# A newer reservation's skip is always handled: that newer run deploys. When an
-# older run finalized the same source first, no newer run owns the deployment,
-# so the skip is handled only once develop has advanced past this run.
+# A newer reservation's skip is handled: that newer run deploys. When an older
+# run finalized the same source first, no run is known to own the deployment
+# (a newer run may have planned around this one), so that skip always fails.
 DISPOSITIONS = frozenset({"reservation_superseded", "source_already_final"})
 
 
@@ -44,7 +44,6 @@ def summarize(env):
             require(c in lanes and not env.get("CD_FINALIZED_" + c.upper().replace("-", "_")),
                     "Superseded publication conflicts with finalization evidence")
             superseded[c] = disposition
-    advanced = env.get("CD_DEVELOP_ADVANCED") == "true"
     passed = env["CD_INFRASTRUCTURE_RESULT"] == "success"
     lines = ["| Component | Publish + finalize | Admit | Deploy job | Controller outcome |",
              "|---|---|---|---|---|"]
@@ -92,8 +91,7 @@ def summarize(env):
                        and state == "controller-verified")
     for c, disposition in sorted(superseded.items()):
         lines.append(f"{c} publication skipped: {disposition}. This run has no verified {c} release.")
-        if disposition == "source_already_final" and not advanced:
-            # This run is the develop head, so its contract group stays undeployed.
+        if disposition == "source_already_final":
             lines.append(f"{c}: an older run finalized this source. The next push resumes this group's "
                          "final; re-run or push to deploy.")
             passed = False

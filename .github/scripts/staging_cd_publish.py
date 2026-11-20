@@ -188,8 +188,8 @@ def main():
                 try:
                     reservations.require_current(reservation, build_started=False)
                 except SourceAlreadyFinal:
-                    # An older run published this source, so no newer run deploys it;
-                    # the report decides from the develop head whether that is handled.
+                    # An older run published this source and no run is known to deploy
+                    # this group, so the report fails this skip instead of handling it.
                     skip["disposition"] = "source_already_final"
                     raise
                 with tempfile.TemporaryDirectory(prefix="cma-publication-", dir=env["RUNNER_TEMP"]) as temp:
