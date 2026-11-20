@@ -7,6 +7,12 @@ on:
 permissions:
   contents: read
 
+# Package tools repeat transient network failures before failing a step.
+env:
+  CARGO_NET_RETRY: '10'
+  PIP_RETRIES: '10'
+  RUSTUP_MAX_RETRIES: '10'
+
 jobs:
   plan:
     if: github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'
@@ -128,8 +134,20 @@ jobs:
         with:
           path: ${{ runner.temp }}/cma-public-tool-cache
           key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
+      # Minting a token is safe to repeat. Only the repeat may fail the job.
       - name: Create restricted infrastructure reader token
         id: infra-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - name: Retry restricted infrastructure reader token
+        id: infra-token-retry
+        if: steps.infra-token.outcome == 'failure'
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
         with:
           app-id: ${{ vars.CMA_INFRA_APP_ID }}
@@ -140,7 +158,7 @@ jobs:
       - name: Resolve infrastructure revision once for this release
         id: private
         env:
-          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
+          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
           CD_INFRA_REF: main
         run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
   release_web:

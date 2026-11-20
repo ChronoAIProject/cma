@@ -48,9 +48,15 @@ def fetch_checkout(root, source, revision, inputs):
 class DeployCheckoutTests(unittest.TestCase):
     def test_workflow_checkout_passes_the_real_guard_without_credentials(self):
         steps = yaml.safe_load(WORKFLOW.read_text())["jobs"]["deploy"]["steps"]
-        inputs, = (step["with"] for step in steps
-                   if step.get("uses", "").startswith("actions/checkout@")
-                   and "repository" in step.get("with", {}))
+        checkouts = [step for step in steps if step.get("uses", "").startswith("actions/checkout@")
+                     and "repository" in step.get("with", {})]
+        # A transient failure repeats the identical checkout once; only the repeat can fail the job.
+        first, retry = checkouts
+        self.assertEqual(first["with"], retry["with"])
+        self.assertIs(first["continue-on-error"], True)
+        self.assertEqual(retry["if"], f"steps.{first['id']}.outcome == 'failure'")
+        self.assertNotIn("continue-on-error", retry)
+        inputs = first["with"]
         self.assertEqual(str(inputs["persist-credentials"]).lower(), "false")
         self.assertEqual(inputs["ref"], "${{ steps.private.outputs.revision }}")
         coordinate = next(step for step in steps if step.get("id") == "coordinate")

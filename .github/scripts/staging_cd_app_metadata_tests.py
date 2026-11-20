@@ -50,7 +50,8 @@ class AppMetadataTests(unittest.TestCase):
         checkout_index = next(i for i, step in enumerate(steps) if step.get("with", {}).get("repository"))
         self.assertLess(steps.index(prepare), checkout_index)
         self.assertEqual(prepare["run"], "python3 -B .github/scripts/staging_cd_checkout.py prepare-app")
-        self.assertEqual(prepare["env"]["CD_INFRA_TOKEN"], "${{ steps.infra-token.outputs.token }}")
+        self.assertEqual(prepare["env"]["CD_INFRA_TOKEN"],
+                         "${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}")
 
         repo_patch = patch.object(metadata, "REPOSITORY", "Example/xy")
         repo_patch.start()

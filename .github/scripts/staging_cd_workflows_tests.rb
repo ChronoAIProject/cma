@@ -388,6 +388,76 @@ class StagingWorkflowTest < Minitest::Test
                     '"$RUNNER_TEMP/staging-cd-tests/bin/python" -B .github/scripts/image-secret-gate-tests.py'
   end
 
+  # Safe-to-repeat third-party steps: workflow => job => ids of the optional first attempt.
+  REPEATED = {
+    'redeploy-staging' => { 'resolve' => %w[infra-token] },
+    'staging-cd' => { 'infrastructure' => %w[infra-token] },
+    'staging-deploy' => { 'deploy' => %w[infra-token infra-checkout], 'report' => %w[evidence] },
+    'staging-release' => { 'publish' => %w[receipts], 'finalize' => %w[receipts-download] }
+  }.freeze
+  # Optional steps whose failure only costs time; publication decides the outcome later.
+  OPTIONAL = ['Expose cache runtime to the Buildx client', 'Check Agent Manager release ownership',
+              'Restore compatible Cargo mounts', 'Retain accepted Cargo mounts'].freeze
+
+  def test_safe_actions_repeat_once_and_only_the_repeat_can_fail_the_job
+    optional = []
+    REPEATED.each do |name, jobs|
+      jobs.each do |job_id, ids|
+        steps = workflow(name)['jobs'].fetch(job_id)['steps']
+        ids.each do |id|
+          index = steps.index { |step| step['id'] == id }
+          first, repeat = steps[index], steps[index + 1]
+          optional << first
+          assert_equal true, first['continue-on-error'], "#{name}/#{id}"
+          assert_equal first['uses'], repeat['uses']
+          assert_equal first['with'], repeat['with']
+          refute repeat.key?('continue-on-error'), "#{name}/#{id}: the repeat must be able to fail the job"
+          condition = "steps.#{id}.outcome == 'failure'"
+          assert_equal first.key?('if') ? "#{first['if']} && #{condition}" : condition, repeat['if']
+          if first['uses'].start_with?('actions/upload-artifact@')
+            assert_equal true, first['with']['overwrite'], 'a repeat replaces a partial first upload'
+          end
+        end
+      end
+    end
+    assert_equal 7, optional.size
+    # A job is never repeated or made optional, and no other step may hide its failure.
+    REPEATED.each_key do |name|
+      workflow(name)['jobs'].each do |job_id, job|
+        refute job.key?('continue-on-error'), "#{name}/#{job_id}"
+        refute job.key?('strategy'), "#{name}/#{job_id}"
+        job.fetch('steps', []).select { |step| step['continue-on-error'] }.each do |step|
+          assert(optional.include?(step) || OPTIONAL.include?(step['name']), "#{name}/#{job_id}: #{step['name']}")
+        end
+      end
+    end
+    # Consumers accept the output of whichever attempt succeeded.
+    %w[redeploy-staging staging-cd staging-deploy].each do |name|
+      text = File.read(File.join(ROOT, 'workflows', name + '.yml'))
+      uses = text.scan(/steps\.infra-token\.outputs\.token[^}]*/)
+      refute_empty uses
+      uses.each { |use| assert_equal 'steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token ', use }
+    end
+    assert_equal '${{ steps.receipts.outputs.artifact-id || steps.receipts-retry.outputs.artifact-id }}',
+                 workflow('staging-release').dig('jobs', 'publish', 'outputs', 'artifact')
+  end
+
+  def test_package_and_download_tools_repeat_transient_network_failures
+    env = workflow('staging-cd').fetch('env')
+    %w[CARGO_NET_RETRY PIP_RETRIES RUSTUP_MAX_RETRIES].each { |key| assert_operator env.fetch(key).to_i, :>=, 3 }
+    transport = File.read(File.join(__dir__, 'staging_cd_transport.sh'))
+    assert_equal 2, transport.scan('sudo apt-get -o Acquire::Retries=5 ').size
+    refute_match(/apt-get (?!-o Acquire::Retries)/, transport)
+    gitleaks = workflow('ci-repo')['jobs']['secrets']['steps'].find { |step| step['name'] == 'gitleaks' }['run']
+    [File.read(File.join(__dir__, 'install-image-gitleaks.sh')), gitleaks].each do |script|
+      assert_equal 1, script.scan(/\bcurl\b/).size
+      %w[--fail --location --retry --retry-all-errors].each { |flag| assert_includes script, " #{flag} " }
+      assert_includes script, '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
+      # Only the pinned bytes are ever unpacked.
+      assert_operator script.index('sha256sum --check --status'), :<, script.index(/\btar /)
+    end
+  end
+
   def test_selection_cache_has_only_a_develop_push_writer_after_successful_selection
     document = workflow('staging-cd')
     trigger = document.fetch('on', document[true])

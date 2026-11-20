@@ -30,7 +30,7 @@ jobs:
       actions: read
       packages: write
     outputs:
-      artifact: ${{ steps.receipts.outputs.artifact-id }}
+      artifact: ${{ steps.receipts.outputs.artifact-id || steps.receipts-retry.outputs.artifact-id }}
       disposition: ${{ steps.publication.outputs.disposition }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
@@ -127,9 +127,12 @@ jobs:
           retention-days: 2
           compression-level: 0
           overwrite: true
+      # Without these receipts finalization cannot run and a pushed version is
+      # burned. The upload is safe to repeat; only the repeat may fail the job.
       - name: Retain only public publication receipts
         id: receipts
         if: always()
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: staging-receipts-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.component }}
@@ -138,6 +141,19 @@ jobs:
             ${{ runner.temp }}/public-receipts/runtime-cleanup.json
           if-no-files-found: ignore
           retention-days: 90
+          overwrite: true
+      - name: Retry retaining only public publication receipts
+        id: receipts-retry
+        if: always() && steps.receipts.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: staging-receipts-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.component }}
+          path: |
+            ${{ runner.temp }}/public-receipts/receipts.json
+            ${{ runner.temp }}/public-receipts/runtime-cleanup.json
+          if-no-files-found: ignore
+          retention-days: 90
+          overwrite: true
       - name: Retain verified package decisions
         if: always() && (inputs.component == 'runtime' || inputs.component == 'runtime-omarchy')
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -163,7 +179,16 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      # Downloading the exact receipt artifact is safe to repeat; only the repeat may fail the job.
+      - id: receipts-download
+        continue-on-error: true
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ needs.publish.outputs.artifact }}
+          path: ${{ runner.temp }}/public-receipts
+          merge-multiple: true
+      - if: steps.receipts-download.outcome == 'failure'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
           artifact-ids: ${{ needs.publish.outputs.artifact }}
           path: ${{ runner.temp }}/public-receipts
