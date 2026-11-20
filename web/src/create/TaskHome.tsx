@@ -1,8 +1,11 @@
+import { useSandboxCapacity } from '../sandbox/useSandboxCapacity';
+import { SandboxCapacityPanel } from '../sandbox/SandboxCapacityPanel';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { AppRoute } from '../routing/routes';
 import { Button } from '../ui/Button';
 import { taskSubmission, submitTaskOnShortcut } from './taskSubmission';
+import { useTaskCreationSupport } from './useTaskCreationSupport';
 import { TaskTemplateFields, useTaskTemplateSupport } from './TaskTemplateFields';
 import type { TemplateIssue } from './taskTemplateModel';
 import { useLifecycleIntent } from './lifecycleIntent';
@@ -67,6 +70,15 @@ function TaskHomeContent({
 }: TaskHomeProps & { readonly onRefresh: () => void }) {
   const policy = useTaskExperience(client, viewerId);
   const titleModeSupported = useTaskTitleModeSupport(client);
+  const capacity = useSandboxCapacity(client, viewerId);
+  const [checkingCapacity, setCheckingCapacity] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const [manual, setManual] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const titleId = useId();
@@ -76,38 +88,10 @@ function TaskHomeContent({
   const [validation, setValidation] = useState<TemplateIssue>();
   const templateSupported = useTaskTemplateSupport(client);
   const form = useRef<HTMLFormElement>(null);
-  const [repositorySupported, setRepositorySupported] = useState<boolean | undefined>(() =>
-    client.readTaskRepositorySupport ? undefined : false,
-  );
-  useEffect(() => {
-    const abort = new AbortController();
-    void client.readTaskRepositorySupport?.({ signal: abort.signal }).then(
-      (value) => {
-        if (!abort.signal.aborted) setRepositorySupported(value);
-      },
-      () => {
-        if (!abort.signal.aborted) setRepositorySupported(false);
-      },
-    );
-    return () => abort.abort();
-  }, [client]);
-  const [supported, setSupported] = useState<boolean | undefined>(() =>
-    client.readTaskCreationSupport ? undefined : false,
-  );
-  useEffect(() => {
-    const abort = new AbortController();
-    if (!client.readTaskCreationSupport) return;
-    void client.readTaskCreationSupport({ signal: abort.signal }).then(
-      (value) => {
-        if (!abort.signal.aborted) setSupported(value);
-      },
-      () => {
-        if (!abort.signal.aborted) setSupported(false);
-      },
-    );
-    return () => abort.abort();
-  }, [client]);
+  const { supported, repositorySupported } = useTaskCreationSupport(client);
   const contextual = Boolean(workspaceId || sandboxId);
+  const capacityUnavailable =
+    !contextual && (!capacity.value || Boolean(capacity.error) || capacity.value.available === 0);
   const canCreate = Boolean(viewerId && (workspaceId || sandboxId || canCreateSandbox));
   const machineIncludedAvailable = Boolean(
     viewerId && !workspaceId && !sandboxId && canCreateSandbox,
@@ -115,6 +99,8 @@ function TaskHomeContent({
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
   const connections = useConnectionGate(Boolean(viewerId), client);
   const { intent, operation } = lifecycle;
+  const quotaFailed =
+    operation?.status === 'failed' && operation.failure?.code === 'sandbox_limit_reached';
   const failure = lifecycleFailureMessage(
     lifecycle.failure,
     intent?.receipt ? retryTaskStatus : lifecycle.connection ? continueTask : recoverTask,
@@ -210,11 +196,12 @@ function TaskHomeContent({
           Creating in {workspaceId ? `Workspace ${workspaceId}` : `Sandbox ${sandboxId}`}
         </p>
       ) : null}
+      {!contextual ? <SandboxCapacityPanel client={client} capacity={capacity} /> : null}
       <form
         ref={form}
         noValidate
         onKeyDown={submitTaskOnShortcut}
-        onSubmit={(event) => {
+        onSubmit={async (event) => {
           event.preventDefault();
           if (
             !policy.task_home_admission ||
@@ -236,6 +223,13 @@ function TaskHomeContent({
             return;
           }
           if (!draft.persist()) return;
+          if (!contextual) {
+            setCheckingCapacity(true);
+            const current = await capacity.ensureFresh();
+            if (!mounted.current) return;
+            setCheckingCapacity(false);
+            if (!current || current.available === 0) return;
+          }
           setRecovering(false);
           void lifecycle.submit(
             taskCreateRequest(
@@ -276,6 +270,8 @@ function TaskHomeContent({
           errorId={errorId}
           disabled={
             !policy.task_home_admission ||
+            capacityUnavailable ||
+            checkingCapacity ||
             lifecycle.pending ||
             Boolean(intent) ||
             !canCreate ||
@@ -432,8 +428,15 @@ function TaskHomeContent({
           presentation="task"
         />
       ) : null}
+      {quotaFailed ? (
+        <p role="alert">
+          The Sandbox environment limit is now reached. Your task draft is saved. Manage
+          environments and check capacity before starting again.
+        </p>
+      ) : null}
       {intent?.receipt && operation?.status === 'failed' ? (
         <Button
+          disabled={quotaFailed && capacityUnavailable}
           variant="outline"
           placement="task-home__action"
           onClick={() => {

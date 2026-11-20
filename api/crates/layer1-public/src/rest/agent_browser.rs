@@ -1,4 +1,5 @@
 use super::*;
+use crate::rest::{problem_document, problem_response, ProblemDocument};
 use layer2_core::sandbox::agent_environment::{
     BrowserObservationView, BrowserSelection, BrowserState,
 };
@@ -98,14 +99,15 @@ impl From<BrowserObservationView> for BrowserView {
 
 #[utoipa::path(get, path = "/api/v1/agents/{id}/browser", tag = "agents",
     params(("id" = String, Path), ("runtime_incarnation" = String, Query), ("observer" = Option<String>, Query), ("context_id" = Option<String>, Query)),
-    responses((status = 200, body = BrowserView)))]
+    responses((status = 200, body = BrowserView),
+        (status = 409, description = "browser_runtime_conflict: refresh the Agent environment before retrying; file_runtime_not_ready or file_runtime_unsupported", body = ProblemDocument, content_type = "application/problem+json")))]
 pub(super) async fn read(
     State(service): State<Arc<AgentFileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
     Query(query): Query<BrowserQuery>,
-) -> Result<Json<BrowserView>, FileProblem> {
+) -> Result<Json<BrowserView>, BrowserProblem> {
     Ok(Json(
         service
             .browser_observation(
@@ -127,14 +129,16 @@ pub(super) async fn read(
 }
 
 #[utoipa::path(put, path = "/api/v1/agents/{id}/browser", tag = "agents",
-    params(("id" = String, Path)), request_body = BrowserEnablement, responses((status = 200, body = BrowserView)))]
+    params(("id" = String, Path)), request_body = BrowserEnablement,
+    responses((status = 200, body = BrowserView),
+        (status = 409, description = "browser_runtime_conflict: refresh the Agent environment before retrying; file_runtime_not_ready or file_runtime_unsupported", body = ProblemDocument, content_type = "application/problem+json")))]
 pub(super) async fn configure(
     State(service): State<Arc<AgentFileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
     Json(input): Json<BrowserEnablement>,
-) -> Result<Json<BrowserView>, FileProblem> {
+) -> Result<Json<BrowserView>, BrowserProblem> {
     Ok(Json(
         service
             .browser_observation(
@@ -157,14 +161,15 @@ pub(super) async fn configure(
 
 #[utoipa::path(delete, path = "/api/v1/agents/{id}/browser", tag = "agents",
     params(("id" = String, Path), ("runtime_incarnation" = String, Query), ("observer" = String, Query)),
-    responses((status = 200, body = BrowserView)))]
+    responses((status = 200, body = BrowserView),
+        (status = 409, description = "browser_runtime_conflict: refresh the Agent environment before retrying; file_runtime_not_ready or file_runtime_unsupported", body = ProblemDocument, content_type = "application/problem+json")))]
 pub(super) async fn release(
     State(service): State<Arc<AgentFileService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
     Query(query): Query<BrowserQuery>,
-) -> Result<Json<BrowserView>, FileProblem> {
+) -> Result<Json<BrowserView>, BrowserProblem> {
     Ok(Json(
         service
             .browser_observation(
@@ -183,4 +188,61 @@ pub(super) async fn release(
             .await?
             .into(),
     ))
+}
+
+pub(super) struct BrowserProblem(AgentFileError);
+
+impl From<AgentFileError> for BrowserProblem {
+    fn from(error: AgentFileError) -> Self {
+        Self(error)
+    }
+}
+
+impl IntoResponse for BrowserProblem {
+    fn into_response(self) -> Response {
+        match self.0 {
+            AgentFileError::Conflict => problem_response(
+                StatusCode::CONFLICT,
+                problem_document(
+                    StatusCode::CONFLICT,
+                    "browser_runtime_conflict",
+                    "The browser environment changed. Refresh the Agent environment, then retry with its current runtime incarnation.",
+                    "browser_runtime_conflict",
+                ),
+            ),
+            error => FileProblem::from(error).into_response(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+    use serde_json::Value;
+
+    #[tokio::test]
+    async fn browser_problem_preserves_runtime_capacity_status_and_retry_headers() {
+        use axum::response::IntoResponse;
+        use layer2_core::sandbox::{agent_filesystem::AgentFileError, RuntimeCapacityError};
+        for (capacity, code) in [
+            (
+                RuntimeCapacityError::Request,
+                "runtime_request_capacity_exhausted",
+            ),
+            (
+                RuntimeCapacityError::Stream,
+                "runtime_stream_capacity_exhausted",
+            ),
+        ] {
+            let response =
+                BrowserProblem::from(AgentFileError::RuntimeCapacity(capacity)).into_response();
+            assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(response.headers()["retry-after"], "1");
+            let body: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap())
+                    .unwrap();
+            assert_eq!(body["code"], code);
+        }
+    }
 }

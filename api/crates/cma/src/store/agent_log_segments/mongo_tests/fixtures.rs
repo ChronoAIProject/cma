@@ -78,7 +78,7 @@ pub(super) async fn segmented(
     segmented_with_width(store, closed, 2, 2).await
 }
 
-pub(super) async fn segmented_with_width(
+pub(in crate::store) async fn segmented_with_width(
     store: &MongoSandboxStore,
     closed: i64,
     width: i64,
@@ -114,16 +114,22 @@ pub(in crate::store) async fn install(
     closed: i64,
     width: i64,
 ) -> (Agent, Vec<AgentLogEntry>) {
+    crate::store::migrations::agent_log_source_keys::prepare_for_test(
+        &store.client.database(&store.agent_log.namespace().db),
+    )
+    .await;
     store
         .agents
         .insert_one(crate::store::agents::agent_document(&agent).unwrap())
         .await
         .unwrap();
-    store
-        .agent_log
-        .insert_many(entries.iter().map(|e| log_document(e).unwrap()))
-        .await
-        .unwrap();
+    if !entries.is_empty() {
+        store
+            .agent_log
+            .insert_many(entries.iter().map(|e| log_document(e).unwrap()))
+            .await
+            .unwrap();
+    }
     let raw: Vec<RawDocumentBuf> = store
         .agent_log
         .clone_with_type()

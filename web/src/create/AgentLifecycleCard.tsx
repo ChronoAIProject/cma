@@ -1,3 +1,5 @@
+import { useSandboxCapacity } from '../sandbox/useSandboxCapacity';
+import { SandboxCapacityPanel } from '../sandbox/SandboxCapacityPanel';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AgentLifecycleCreateInput,
@@ -57,6 +59,19 @@ function AgentLifecycleForm({
   // The action that opened this dialog fixes its destination. The global action
   // always provisions a new Sandbox; contextual actions keep their exact parent.
   const lifecycle = useLifecycleIntent(client, viewerId, workspaceId, sandboxId);
+  const capacity = useSandboxCapacity(client, viewerId);
+  const newEnvironment = !workspaceId && !sandboxId;
+  const [checkingCapacity, setCheckingCapacity] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  const capacityUnavailable =
+    newEnvironment &&
+    (!capacity.value || Boolean(capacity.error) || capacity.value.available === 0);
   const { pending, operation, connection: connectionRequest } = lifecycle;
   const createdReceipt = lifecycle.intent?.receipt;
   const failure = lifecycleFailureMessage(
@@ -131,7 +146,7 @@ function AgentLifecycleForm({
     if (machineIncludedAvailable && machineIncluded)
       void import('@novnc/novnc').catch(() => undefined);
   }, [machineIncludedAvailable, machineIncluded]);
-  const submit = () => {
+  const submit = async () => {
     if (!canCreate) return;
     if (!repositoryValid) {
       setRepositoryError(true);
@@ -145,6 +160,13 @@ function AgentLifecycleForm({
       ...(sandboxId === undefined ? {} : { sandbox_id: sandboxId }),
       ...(repositoryUrl === '' ? {} : { repository: { url: repositoryUrl } }),
     };
+    if (newEnvironment) {
+      setCheckingCapacity(true);
+      const current = await capacity.ensureFresh();
+      if (!mounted.current) return;
+      setCheckingCapacity(false);
+      if (!current || current.available === 0) return;
+    }
     void lifecycle.submit(input);
   };
   const form = (
@@ -279,7 +301,12 @@ function AgentLifecycleForm({
               </Button>
               <Button
                 variant="primary"
-                disabled={pending || lifecycle.blocked || (!lifecycle.intent && !canCreate)}
+                disabled={
+                  pending ||
+                  checkingCapacity ||
+                  lifecycle.blocked ||
+                  (!lifecycle.intent && (!canCreate || capacityUnavailable))
+                }
                 onClick={lifecycle.intent ? () => void lifecycle.submit() : submit}
               >
                 {pending
@@ -292,6 +319,7 @@ function AgentLifecycleForm({
           )
         }
       >
+        {newEnvironment ? <SandboxCapacityPanel client={client} capacity={capacity} /> : null}
         {createdReceipt !== undefined ? (
           <AgentProvisioningProgress receipt={createdReceipt} operation={operation} />
         ) : null}

@@ -3,6 +3,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { TaskHome } from './TaskHome';
 import { agentClient } from '../test/agent';
 import { taskExperience } from '../test/taskExperience';
+import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { lifecycleStorageKey } from './lifecycleIntent';
 
 afterEach(() => sessionStorage.clear());
@@ -121,7 +122,7 @@ it('waits for capability discovery before capturing a new request', async () => 
 });
 
 it.each([undefined, 'named', 'automatic'] as const)(
-  'replays the retained %s title intent unchanged despite changed support',
+  'replays the retained %s title intent unchanged despite changed support and full capacity',
   async (title_mode) => {
     const body = {
       name: 'New task',
@@ -139,6 +140,12 @@ it.each([undefined, 'named', 'automatic'] as const)(
           taskExperience: taskExperience('owner'),
           readTaskCreationSupport: async () => true,
           readTaskTitleModeSupport: async () => title_mode !== 'automatic',
+          readSandboxCapacity: async () => ({
+            ...AVAILABLE_CAPACITY,
+            live: 10,
+            available: 0,
+            counts_by_status: { active: 10 },
+          }),
           createAgentLifecycle: create,
         })}
         viewerId="owner"
@@ -146,6 +153,7 @@ it.each([undefined, 'named', 'automatic'] as const)(
         onCreated={vi.fn()}
       />,
     );
+    await screen.findByText('10/10 Sandbox environments used');
     fireEvent.click(await screen.findByRole('button', { name: 'Recover original task' }));
     await waitFor(() => expect(create).toHaveBeenCalledOnce());
     expect(create.mock.calls[0]?.[0]).toEqual(body);
