@@ -14,6 +14,7 @@ import {
   IconShareOutline16,
 } from '../ui/icons';
 import './AgentHeader.css';
+import { SETUP_ENVIRONMENT_NOTICE } from './setupEnvironment';
 
 export const AGENT_DETAILS = 'agent-details';
 
@@ -34,6 +35,7 @@ export function AgentHeader({
   onFilesOpenChange,
   onShare,
   onViewDeletionStatus,
+  onReviewEnvironment,
 }: {
   readonly title: string;
   readonly status: AgentStatus;
@@ -55,6 +57,7 @@ export function AgentHeader({
   readonly onShare?: () => void;
   readonly progress?: ReactNode;
   readonly onViewDeletionStatus?: () => void;
+  readonly onReviewEnvironment?: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const sidebar = useContext(SidebarContext);
@@ -73,6 +76,9 @@ export function AgentHeader({
     ),
     action('update-skills', 'Update skills', 'Only the task owner can update its skills.'),
     action('export_history', 'Export history', 'History export is unavailable with this access.'),
+    ...(onReviewEnvironment
+      ? [{ id: 'view_environment', label: 'Review environment', reason: SETUP_ENVIRONMENT_NOTICE }]
+      : []),
     {
       id: 'deletion-status',
       label: 'View deletion status',
@@ -157,6 +163,7 @@ export function AgentHeader({
           onSelect={(id) => {
             setOpen(false);
             if (id === 'deletion-status') onViewDeletionStatus?.();
+            else if (id === 'view_environment') onReviewEnvironment?.();
             else if (id === 'stop_agent' || id === 'delete_agent' || id === 'export_history')
               onMoreAction?.(id);
             else onMenuSelect?.(id);

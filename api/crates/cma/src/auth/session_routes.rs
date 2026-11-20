@@ -9,21 +9,26 @@ use axum::{
     Extension, Json,
 };
 use layer1_public::{AuthenticatedCaller, AuthenticatedResourceCaller};
-use layer2_core::{Authorization, Capability};
+use layer2_core::{account_deletion::OwnerSessionAuthority, Authorization, Capability};
 
-use super::{entitlements, profile::Profile, AuthState, AUTH_COOKIE};
+use super::{profile::Profile, AuthState, AUTH_COOKIE};
 
 pub(super) async fn read(
     State(auth): State<Arc<AuthState>>,
     caller: Option<AuthenticatedCaller>,
     profile: Option<Extension<Profile>>,
     resource: Option<AuthenticatedResourceCaller>,
+    authority: Option<Extension<OwnerSessionAuthority>>,
     headers: HeaderMap,
 ) -> Response {
     // Middleware already verified this request. A second resolution repeats
     // provider IO without adding a new authorization boundary.
     match caller {
         Some(AuthenticatedCaller(caller)) => {
+            let erasing = match auth.standing.erasing(&caller.subject).await {
+                Ok(erasing) => erasing,
+                Err(_) => return super::account_standing::unavailable(),
+            };
             let usage_reporting = match auth.usage_reporting().await {
                 Ok(settings) => settings,
                 Err(_) => {
@@ -40,7 +45,7 @@ pub(super) async fn read(
                         .into_response()
                 }
             };
-            let api_commands = resource.as_ref().is_some_and(|r| {
+            let api_commands = !erasing && resource.as_ref().is_some_and(|r| {
                 r.credential.as_ref().is_some_and(|credential| {
                     use layer2_core::resource_access::CredentialSource;
                     // 中间件已核验这个凭据；只有普通 Key 可以没有过期时间。
@@ -58,16 +63,18 @@ pub(super) async fn read(
                 "api_commands": api_commands,
                 "usage_reporting": usage_reporting,
                 "subject": caller.subject.as_str(),
-                "capabilities": entitlements::reported(&caller.authorization),
+                "capabilities": auth.session_entitlements(&caller, authority.as_ref().map(|Extension(authority)| authority)),
                 "visitor": is_visitor(&caller.authorization),
             });
-            let profile = profile
-                .map(|Extension(profile)| profile)
-                .unwrap_or_default();
-            if let (Some(map), Ok(serde_json::Value::Object(profile))) =
-                (body.as_object_mut(), serde_json::to_value(profile))
-            {
-                map.extend(profile);
+            if !erasing {
+                let profile = profile
+                    .map(|Extension(profile)| profile)
+                    .unwrap_or_default();
+                if let (Some(map), Ok(serde_json::Value::Object(profile))) =
+                    (body.as_object_mut(), serde_json::to_value(profile))
+                {
+                    map.extend(profile);
+                }
             }
             Json(body).into_response()
         }

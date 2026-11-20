@@ -102,6 +102,35 @@ class AllocationGitTests(unittest.TestCase):
         with self.assertRaisesRegex(Refusal, "Final version is absent"):
             f.api.require_current_versions({"web": old_receipt})
 
+    def test_am_allocation_during_final_push_leaves_the_started_final_and_its_cleanup(self):
+        f = self.fixture
+        first = next_reservation("am", f.source, f.tree, 42, "patch", 1, 1, [], [])
+        f.publisher.insert(first)
+        newer = f.git("commit-tree", f.tree, "-p", f.source, data="Second merge\n")
+        f.git("push", str(f.remote), newer + ":refs/heads/develop")
+        self.store.load()
+        successor = next_reservation("am", newer, f.tree, 43, "patch", 2, 1, [], [first])
+        self.store.insert(successor)
+        old_receipt = f.receipt(first)
+        runner = f.publisher.runner
+        def allocate_during_push(args, **kwargs):
+            if args[1] == "push" and args[-1].endswith(":refs/tags/" + old_receipt["tag"]):
+                self.store.commit()
+            return runner(args, **kwargs)
+        f.publisher.runner = allocate_during_push
+        f.publisher.sleep = lambda _seconds: None
+        self.assertTrue(f.publisher.finalize(old_receipt, lambda *_: True))
+        self.assertEqual(self.store.list(), [first, successor])
+        self.assertEqual([tag["receipt"] for tag in f.api.tags("am")], [old_receipt])
+        self.assertEqual(f.publisher.list("am"), [successor])
+        # Only the successor's final, never its pending reservation, withholds the old release.
+        f.api.require_current_versions({"am": old_receipt})
+        f.publisher.runner = runner
+        self.assertTrue(f.publisher.finalize(f.receipt(successor), lambda *_: True))
+        self.assertEqual(f.publisher.list("am"), [])
+        with self.assertRaisesRegex(Refusal, "superseded"):
+            f.api.require_current_versions({"am": old_receipt})
+
     def test_finalize_wins_outcome_then_allocator_replans_from_verified_final(self):
         f = self.fixture
         first = f.reservation()

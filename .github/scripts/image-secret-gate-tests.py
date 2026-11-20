@@ -38,6 +38,24 @@ class GateTests(unittest.TestCase):
         self.output.mkdir()
         (self.output / "REPORT.json").write_text(json.dumps(report))
 
+    def detector_receipt(self):
+        from runtime_image_hygiene import readers
+
+        archive_type, budget_type, _ = readers()
+        scanner = gate.SCANNER.parent
+        files = [gate.SCANNER, scanner / "scan_image_secrets.py"]
+        files += sorted((scanner / "image_secrets").glob("*.py"))
+        with archive_type(self.archive, self.root, budget_type(1024 * 1024, 100)) as archive:
+            kind, images = archive.images()
+        inventory = {"archive_format": kind, "images": [], "layers": []}
+        for index, image in enumerate(images):
+            inventory["images"].append({"index": index, "config_digest": image["config_digest"],
+                                        "manifest": image["manifest"], "layers": len(image["layers"])})
+            inventory["layers"].extend({"image": index, "index": layer, "diff_id": digest}
+                                       for layer, digest in enumerate(image["diff_ids"]))
+        self.receipt(blocking_rules="credential", input_kind="archive", inventory=inventory,
+                     scanner_files={str(path.relative_to(scanner)): gate.checksum(path) for path in files})
+
     def test_exact_archive_and_empty_exception_policy(self):
         def scan(*args):
             self.assertEqual(args[:3], ("bash", str(gate.SCANNER), str(self.archive)))
@@ -146,7 +164,7 @@ class GateTests(unittest.TestCase):
                 self.assertEqual("--staging-runtime-component" in args, runtime)
                 if runtime:
                     self.assertEqual(args[args.index("--staging-runtime-component") + 1], component)
-                self.receipt(blocking_rules="credential")
+                self.detector_receipt()
                 path = self.output / "REPORT.json"
                 report = json.loads(path.read_bytes())
                 if runtime:
@@ -155,11 +173,49 @@ class GateTests(unittest.TestCase):
             gate.scan_archive(self.archive, self.output, scanner, blocking_rules="credential", component=component)
             path = self.output / "REPORT.json"
             report = json.loads(path.read_bytes())
+            section = report.get("package_evidence")
+            self.assertEqual(section is not None, runtime)
+            if runtime:
+                self.assertEqual(section["component"], component)
+                self.assertEqual(section["archive_sha256"], gate.checksum(self.archive))
+            gate.validate_receipt(report, gate.checksum(self.archive), "credential", None,
+                                  component=component, package_section=section)
             report["policy"]["staging_runtime_component"] = "runtime-omarchy" if component == "runtime" else "runtime"
             with self.assertRaises(gate.ScanRefusal):
-                gate.validate_receipt(report, gate.checksum(self.archive), "credential", None, component=component)
+                gate.validate_receipt(report, gate.checksum(self.archive), "credential", None,
+                                      component=component, package_section=section)
             path.unlink()
             self.output.rmdir()
+
+    def test_runtime_package_evidence_rejects_missing_or_changed_detector_binding(self):
+        from runtime_image_hygiene_tests import docker_image, final_entries, layer
+
+        docker_image(self.archive, [layer(final_entries())])
+        for component in ("runtime", "runtime-omarchy"):
+            for field in ("input_kind", "scanner_files", "inventory"):
+                for changed in (False, True):
+                    self.output = self.root / f"{component}-{field}-{changed}"
+                    def scanner(*_args):
+                        self.detector_receipt()
+                        path = self.output / "REPORT.json"
+                        report = json.loads(path.read_bytes())
+                        report["policy"]["staging_runtime_component"] = component
+                        if not changed:
+                            report.pop(field)
+                        elif field == "input_kind":
+                            report[field] = "image"
+                        elif field == "scanner_files":
+                            report[field]["scan_image_secrets.py"] = "0" * 64
+                        else:
+                            report[field]["layers"][0]["diff_id"] = "sha256:" + "0" * 64
+                        path.write_text(json.dumps(report))
+                    with self.subTest(component=component, field=field, changed=changed), \
+                         self.assertRaises(gate.ScanRefusal) as caught:
+                        gate.scan_archive(self.archive, self.output, scanner,
+                                          blocking_rules="credential", component=component)
+                    self.assertEqual(caught.exception.outcome, "content_refused")
+                    report = json.loads((self.output / "REPORT.json").read_bytes())
+                    self.assertNotIn("package_evidence", report)
 
     def test_advisory_partition_and_counts_cannot_omit_or_duplicate_findings(self):
         entropy = {"finding_id": "a" * 64, "rule": "gitleaks.image-high-entropy"}

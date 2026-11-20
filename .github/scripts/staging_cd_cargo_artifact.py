@@ -23,9 +23,13 @@ WORKFLOW = ".github/workflows/staging-cd.yml"
 COMPONENTS = {"am", "eg"}
 FILES = ("manifest.json", "registry.tar.gz", "target.tar.gz")
 MIB = 1024**2
-# The sealed archives are bounded to 1 GiB and the manifest to 4 KiB. Stored
-# (uncompressed) ZIP framing for three members fits in the extra MiB.
-MAX_ARTIFACT_BYTES = 1024**3 + 4096 + MIB
+# Run artifacts carry larger sealed archives than the 1 GiB Actions cache path:
+# AM's compressed incremental state reached 1,015 MiB on 20 Nov 2026 and every
+# later export was withheld. The 4 GiB expanded and member bounds still apply.
+MAX_BUNDLE_BYTES = 2 * 1024**3
+# The manifest is bounded to 4 KiB. Stored (uncompressed) ZIP framing for three
+# members fits in the extra MiB.
+MAX_ARTIFACT_BYTES = MAX_BUNDLE_BYTES + 4096 + MIB
 CANDIDATES = 5
 # Any workflow run may upload an artifact with this name. List enough rows to
 # find the develop producers among them.

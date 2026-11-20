@@ -113,3 +113,11 @@ fn protected_legacy_errors_keep_the_exact_phase_and_special_mapping() {
         guarded
     );
 }
+
+#[test]
+fn access_revoked_survives_protected_setup_diagnostics() {
+    assert_eq!(
+        protected_setup_failure(AdapterError::AccessRevoked, "current_authority"),
+        AdapterError::AccessRevoked,
+    );
+}
