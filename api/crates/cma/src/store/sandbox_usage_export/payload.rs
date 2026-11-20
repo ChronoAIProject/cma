@@ -117,6 +117,14 @@ pub(super) fn fact_value(
             "allocated usage binding evidence missing".into(),
         ));
     }
+    let runtime_binding = resource
+        .runtime_id
+        .as_deref()
+        .zip(resource.runtime_generation);
+    let home_binding = resource
+        .home_id
+        .as_deref()
+        .zip(resource.home_generation.as_deref());
     let coverage = |seconds| -> Result<Value, SandboxStoreError> {
         Ok(
             json!({"covered_binding_ms":ms(seconds)?,"expected_binding_ms":ms(seconds)?,
@@ -126,9 +134,10 @@ pub(super) fn fact_value(
     Ok(
         json!({"fact_id":id,"evidence_revision":"1","bucket_start_ms":ms(fact.bucket_start)?,
         "start_ms":ms(fact.started_at)?,"end_ms":ms(fact.ended_at)?,
-        "resource":{"runtime_id":resource.runtime_id,
-            "runtime_generation":resource.runtime_generation.map(|v|v.to_string()),
-            "home_id":resource.home_id,"home_generation":resource.home_generation},
+        "resource":{"runtime_id":runtime_binding.map(|(id, _)|id),
+            "runtime_generation":runtime_binding.map(|(_, generation)|generation.to_string()),
+            "home_id":home_binding.map(|(id, _)|id),
+            "home_generation":home_binding.map(|(_, generation)|generation)},
         "allocation":{"cpu_millis":allocation.cpu_millis.to_string(),
             "memory_mib":allocation.memory_mib.to_string(),"disk_gib":allocation.disk_gib.to_string()},
         "quantities":{"sandbox_cpu_millis_seconds":fact.quantity.cpu_millis_seconds.to_string(),

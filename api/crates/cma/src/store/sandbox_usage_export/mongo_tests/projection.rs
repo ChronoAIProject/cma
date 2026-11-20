@@ -93,6 +93,10 @@ async fn source_projection_retries_keep_exact_frozen_bytes_and_stream_epoch() {
         payload["previous_event_digest"].as_str(),
         first.get_str("digest").ok()
     );
+    let events = fixture.wire_events().await;
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0]["kind"], "stream_open");
+    assert_eq!(events[1]["facts"], serde_json::json!([]));
     fixture.db.drop().await.unwrap();
 }
 
@@ -238,6 +242,19 @@ async fn bounded_long_projection_survives_source_deletion_restart_and_two_replic
         .await
         .unwrap();
     assert_eq!(rows.len(), 4);
+    let events = fixture.wire_events().await;
+    assert_eq!(events.len(), 4);
+    let facts: Vec<_> = events
+        .iter()
+        .filter_map(|event| event["facts"].as_array())
+        .flatten()
+        .collect();
+    assert_eq!(facts.len(), 121);
+    assert!(facts
+        .iter()
+        .all(|fact| fact["resource"]["home_id"].is_null()
+            && fact["resource"]["home_generation"].is_null()
+            && fact["resource"]["runtime_generation"] == "1"));
     assert_eq!(
         rows.iter()
             .map(|row| row.get_i64("part").unwrap())

@@ -436,6 +436,7 @@ dependencies = [
  "http-body-util",
  "httpdate",
  "ipnet",
+ "jsonschema",
  "kube",
  "layer1-public",
  "layer2-core",
