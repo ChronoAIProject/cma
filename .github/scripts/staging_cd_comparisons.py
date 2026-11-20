@@ -22,7 +22,7 @@ def batch_selection(root, revisions, metrics=None):
             "PATH", "HOME", "LANG", "LC_ALL", "RUSTUP_HOME", "CARGO_HOME", "CD_SELECTOR_CACHE")}
         result = subprocess.run([sys.executable, "-B", str(selector), str(root), str(batch)],
                                 env=child_env, capture_output=True, text=True,
-                                timeout=1500, check=False)
+                                timeout=2400, check=False)
     require(result.returncode == 0 and len(result.stdout) <= 8 * 1024 * 1024,
             "Shared batch selector failed closed")
     values = json.loads(result.stdout)
