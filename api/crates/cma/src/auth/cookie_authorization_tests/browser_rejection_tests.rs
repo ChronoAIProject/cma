@@ -200,7 +200,7 @@ async fn explicit_browser_credential_refusal_is_401_without_destroying_retained_
 }
 
 #[tokio::test]
-async fn browser_provider_outages_remain_503_with_specific_session_identity_error() {
+async fn browser_provider_outages_preserve_classified_identity_errors_for_reads() {
     for (stage, status) in [
         ("discovery", StatusCode::SERVICE_UNAVAILABLE),
         ("userinfo", StatusCode::TOO_MANY_REQUESTS),
@@ -217,10 +217,10 @@ async fn browser_provider_outages_remain_503_with_specific_session_identity_erro
         };
         reply.write().await.status = status;
         for (method, path) in routes() {
-            let (actual, body) = browser.request(method, path).await;
+            let (actual, body) = browser.request(method.clone(), path).await;
             assert_eq!(actual, StatusCode::SERVICE_UNAVAILABLE, "{stage}: {path}");
             let expected = if status == StatusCode::TOO_MANY_REQUESTS
-                || (path == "/auth/session" && status == StatusCode::SERVICE_UNAVAILABLE)
+                || (method == Method::GET && status == StatusCode::SERVICE_UNAVAILABLE)
             {
                 "identity_unavailable"
             } else {

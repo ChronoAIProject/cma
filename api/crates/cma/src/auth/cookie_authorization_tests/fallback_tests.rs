@@ -60,7 +60,8 @@ async fn prior_success_cannot_authorize_session_api_or_background_during_outage(
     for path in ["/api/v1/admin/settings", "/api/v1/agents"] {
         let (status, body) = call(&app, &login, path).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-        assert_eq!(body["code"], "store_failed");
+        assert_eq!(body["code"], "identity_unavailable");
+        assert_eq!(body["retryable"], true);
     }
     assert_unavailable(fixture.request(state.clone()).await);
     fixture.control.userinfo.write().await.status = StatusCode::OK;
