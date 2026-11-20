@@ -176,6 +176,10 @@ pub struct SandboxLifecycleState {
     pub home: Option<Box<super::SandboxHome>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_recovery: Option<Box<super::SandboxHomeRecovery>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub home_restore: Option<Box<super::SandboxHomeRestore>>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub superseded_homes: Vec<super::SandboxSupersededHome>,
     #[serde(default)]
     pub runtime_generation_high_water: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -225,6 +229,8 @@ impl Default for SandboxLifecycleState {
             interruption: None,
             home: None,
             home_recovery: None,
+            home_restore: None,
+            superseded_homes: Vec::new(),
             runtime_generation_high_water: 0,
             runtime_provision: None,
             failed_provision: None,
@@ -246,6 +252,7 @@ impl Default for SandboxLifecycleState {
 
 impl SandboxLifecycleState {
     pub fn validate(&self, sandbox: &Sandbox) -> Result<(), SandboxModelError> {
+        self.validate_home_restore(sandbox)?;
         sandbox.validate_retirement_archive()?;
         sandbox.validate_suspended_runtime()?;
         if let Some(failed) = &self.failed_provision {
