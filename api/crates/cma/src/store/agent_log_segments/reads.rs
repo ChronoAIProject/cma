@@ -95,6 +95,13 @@ pub(in crate::store) async fn read_head(
     if head.active_ordinal == 0 && head.last_seq > 0 {
         validate_unsealed_creation(store, &agent, session, snapshot).await?;
     }
+    super::source_keys::prove(
+        &store.client.database(&store.agent_log.namespace().db),
+        &head,
+        session,
+        snapshot,
+    )
+    .await?;
     Ok(head)
 }
 
@@ -228,29 +235,14 @@ where
         return Err(SandboxStoreError::SequenceConflict.into());
     }
     let end = after + (through - after).min(i64::from(range.limit));
-    // Every page, including an empty one, rejects rows outside the captured
-    // global sequence bounds. Probe both ends through the sequence index:
-    // a restored/corrupt prefix must not disappear from a sealed-page read.
-    // Later committed appends cannot race this snapshot's check.
-    let find = store
-        .agent_log
-        .find_one(doc! {"agent_id":&head.agent_id,"$or":[
-            {"seq":{"$lt":1_i64}},{"seq":{"$gt":head.last_seq}},
-        ]})
-        .projection(doc! {"_id":1});
-    let find = if snapshot {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
-    };
-    if find
-        .session(&mut *session)
-        .await
-        .map_err(TransactionLogError::Driver)?
-        .is_some()
-    {
-        return Err(SandboxStoreError::SequenceConflict.into());
-    }
+    // A retained head can outlive source writes in the same transaction.
+    super::source_keys::prove(
+        &store.client.database(&store.agent_log.namespace().db),
+        head,
+        session,
+        snapshot,
+    )
+    .await?;
     let mut next = after + 1;
     while next <= end && next < head.active_start_seq {
         let seal = containing(store, head, next, session, snapshot).await?;

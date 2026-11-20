@@ -117,9 +117,10 @@ impl Meter {
                         stats.docs += 1;
                         let bytes = row.as_document().unwrap().to_vec().unwrap().len() as u64;
                         stats.bytes += bytes;
-                        if cursor
-                            .get_str("ns")
-                            .is_ok_and(|ns| ns.ends_with(".agent_log"))
+                        if matches!(event.command_name.as_str(), "find" | "getMore")
+                            && cursor
+                                .get_str("ns")
+                                .is_ok_and(|ns| ns.ends_with(".agent_log"))
                         {
                             stats.history_bytes += bytes;
                         }

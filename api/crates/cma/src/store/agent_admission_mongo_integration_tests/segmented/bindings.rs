@@ -78,6 +78,8 @@ async fn legacy_reuse_binding_remains_replayable_after_adoption() {
     assert_eq!(binding.get_i64("document_schema_version").unwrap(), 1);
     assert!(!binding.contains_key("log_publication"));
     schema::migrate(&client.database(&database)).await.unwrap();
+    crate::store::migrations::agent_log_source_keys::prepare_for_test(&client.database(&database))
+        .await;
     gate(&store, &creation.agent.id, 0, true).await;
     append(&store, &creation.agent.id, "adopt-after-legacy-reuse").await;
     gate(&store, &creation.agent.id, 1, false).await;

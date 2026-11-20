@@ -1,5 +1,14 @@
 import { createContext } from 'react';
 import type { Cma } from '@cma/client';
+import {
+  classifyCharacter,
+  classifyPrecedingCharacter,
+  isCjk,
+  isCjkOrIvs,
+  isNonCjkPunctuation,
+  isSpaceOrPunctuation,
+  isUnicodeWhitespace,
+} from 'micromark-extension-cjk-friendly-util';
 
 export interface AnswerDeliveryAccess {
   readonly agentId: string;
@@ -96,16 +105,27 @@ function emphasisDelimiterState(content: string, delimiter: '*' | '_') {
   let open: number | undefined;
   for (let index = 0; index <= content.length - 2; index += 1) {
     if (content.slice(index, index + 2) !== token) continue;
-    const left = content[index - 1] ?? ' ';
-    const right = content[index + 2] ?? ' ';
-    const leftPunctuation = /[\p{P}\p{S}]/u.test(left);
-    const rightPunctuation = /[\p{P}\p{S}]/u.test(right);
+    const preceding = Array.from(content.slice(Math.max(0, index - 4), index));
+    const previous = preceding.at(-1)?.codePointAt(0) ?? null;
+    const before = classifyPrecedingCharacter(
+      classifyCharacter(previous),
+      () => preceding.at(-2)?.codePointAt(0) ?? null,
+      previous,
+    );
+    const after = classifyCharacter(content.codePointAt(index + 2) ?? null);
+    const leftPunctuation = isNonCjkPunctuation(before);
+    const rightPunctuation = isNonCjkPunctuation(after);
+    const leftBoundary =
+      leftPunctuation || isUnicodeWhitespace(before) || /[*_]/.test(preceding.at(-1) ?? '');
+    const rightBoundary =
+      rightPunctuation || isUnicodeWhitespace(after) || /[*_]/.test(content[index + 2] ?? '');
     const leftFlanking =
-      !/\s/u.test(right) && (!rightPunctuation || /\s/u.test(left) || leftPunctuation);
-    const rightFlanking =
-      !/\s/u.test(left) && (!leftPunctuation || /\s/u.test(right) || rightPunctuation);
-    const canOpen = leftFlanking && (delimiter === '*' || !rightFlanking || leftPunctuation);
-    const canClose = rightFlanking && (delimiter === '*' || !leftFlanking || rightPunctuation);
+      !rightBoundary || (rightPunctuation && (leftBoundary || isCjkOrIvs(before)));
+    const rightFlanking = !leftBoundary || (leftPunctuation && (rightBoundary || isCjk(after)));
+    const canOpen =
+      leftFlanking && (delimiter === '*' || !rightFlanking || isSpaceOrPunctuation(before));
+    const canClose =
+      rightFlanking && (delimiter === '*' || !leftFlanking || isSpaceOrPunctuation(after));
     if (canClose && open !== undefined) open = undefined;
     else if (canOpen) open = index;
     index += 1;

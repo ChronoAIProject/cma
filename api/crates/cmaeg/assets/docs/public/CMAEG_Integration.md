@@ -128,15 +128,44 @@ connection lifetime. Channel deletion or failed revalidation closes the stream.
 
 | Your system | What to implement |
 | --- | --- |
-| A CMA user connecting a Telegram Bot | Use CMA's Bot settings and an Event Worker Profile revision. CMA coordinates the channel, credentials and provider binding. |
+| A CMA user connecting a messaging channel | Complete an Event Gateway connection, then create a consumer with inline Agent settings. Follow [Create a CMA consumer](#create-a-cma-consumer). |
 | A backend sending business events to an agent | Create a custom channel, sign CloudEvents, then consume streamed results or a result webhook. |
 | An agent using event reply tools | Connect native MCP with the channel's agent key; use the event reference supplied with the turn. |
 | A new downstream agent execution provider | Implement the binding, conversation, Responses and context endpoints below; arrange operator registration of your provider. |
 
-An **EventWorkerProfile** is the complete worker configuration: model, permissions,
-instructions, skills, tools and optional environment. It is distinct from CMA's
-narrower Agent Profile. The v1 JSON field remains `profile`. The gateway validates
-its common shape, while the provider reports which fields it honours or refuses.
+An **EventWorkerProfile** is the complete provider-neutral worker configuration:
+model, permissions, instructions, skills, tools and optional environment. The v1
+JSON field remains `profile`. The gateway validates its common shape, while the
+provider reports which fields it honours or refuses. This API configuration does
+not require a saved CMA Profile revision.
+
+## Create a CMA consumer
+
+Sign in to CMA with an account that can create consumers. Use the connection
+types and setup actions offered by your Event Gateway. Telegram availability
+depends on the gateway's supported connections and enabled setup capabilities.
+
+1. Open **Event Gateway** and complete your channel connection setup. The
+   connection must be ready before you can select it for a new consumer.
+2. Open **Consumers**, then **New consumer**. Enter a **Consumer name** and select
+   the ready **Event Gateway connection**. If the list is empty, select
+   **Open Event Gateway** to finish setup, then **Refresh Event Gateway connections**.
+3. Continue to **Configure the Agent inline**. Choose a **Runtime image** and,
+   optionally, a **GitHub repository workspace**. Set **Model**, **Reasoning effort**,
+   **Permission level**, **System prompt**, **Skills**, and **Agent key scope**.
+   Connect any selected services in NyxID so the Agent can use them.
+4. Continue to **Choose message rules**. Choose who can talk to the consumer,
+   whether to send the Agent's final answer automatically, and an acknowledgement
+   delay. Group replies are visible to the group.
+5. Check **Review and create**, then select **Create consumer**. If creation is
+   unconfirmed, use **Recover creation** to reconcile the same request. Wait for
+   the consumer's setup to complete before testing messages and replies.
+
+CMA's Profile authoring pages are retired. New consumers use the connection and
+inline settings above. Saved Profile definitions and revisions remain readable
+for compatibility with existing consumers and recovery of historical creation
+requests. You do not need to create an Agent, Workspace, Sandbox, or Event Worker
+Profile revision to follow this guide.
 
 ## Authentication by operation
 
