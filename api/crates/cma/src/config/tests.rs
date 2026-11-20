@@ -1,5 +1,7 @@
 use super::home;
 include!("../config_tests.rs");
+#[path = "erasure_tests.rs"]
+mod erasure;
 #[path = "machine_pool_tests.rs"]
 mod machine_pools;
 #[path = "../config_native_tests.rs"]
