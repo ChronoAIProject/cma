@@ -1,4 +1,5 @@
 """Release checks re-read live refs but each immutable tag object at most once."""
+import collections
 import contextlib
 import io
 import json
@@ -20,8 +21,10 @@ from staging_cd_common import Refusal
 from staging_cd_github import GitHub
 from staging_cd_receipts import annotation, canonical
 from staging_cd_receipts_tests import fixture_receipt
-from staging_cd_reservations import (ReservationSuperseded, claim_ref, next_reservation, pending_name,
-                                     validate_reservation)
+from staging_cd_release_calls_tests import serve
+from staging_cd_release_tags import REMOTE, LocalTags
+from staging_cd_reservations import (ReservationSuperseded, Reservations, claim_ref, next_reservation,
+                                     pending_name, validate_reservation)
 
 
 class Stop(Exception):
@@ -115,6 +118,9 @@ class BurnedReservationPruningTests(unittest.TestCase):
     def refs(self, prefix):
         return set(self.fixture.git("for-each-ref", "--format=%(refname)", prefix, remote=True).split())
 
+    def refs_oids(self, prefix):
+        return self.fixture.git("for-each-ref", "--format=%(objectname)", prefix, remote=True).split()
+
     def lane(self):
         f, (s0, s1, s2, s3) = self.fixture, self.sources
         burned = [self.reserve("0.10.1", "0.10.0", s0, 1), self.reserve("0.10.2", "0.10.1", s1, 2, claim=False)]
@@ -128,14 +134,37 @@ class BurnedReservationPruningTests(unittest.TestCase):
         queued = self.reserve("0.11.1", "0.11.0", s3, 6)
         return burned, settled, own, current, queued
 
+    def checkout_client(self):
+        """The production client: live refs from the remote's API, objects from the checkout."""
+        f, calls, objects = self.fixture, collections.Counter(), []
+        def local(args, **kwargs):
+            if args[-1] == "--batch":
+                objects.extend(kwargs["input"].decode().split())
+            return f.runner(args, **kwargs)
+        def api(args, **kwargs):
+            if args[0] != "gh":
+                return f.runner(args, **kwargs)
+            return serve(lambda *command, data=None: f.git(*command, remote=True, data=data), args, calls)
+        client = GitHub("fixture", api, local_tags=LocalTags(f.work, remote=REMOTE, runner=local))
+        client.history = f.api.history
+        return client, calls, objects
+
     def test_finalized_lane_prunes_only_reservations_its_finals_fence_and_their_unbacked_claims(self):
         f = self.fixture
         burned, settled, own, current, queued = self.lane()
         receipt = f.receipt(current)
-        self.assertTrue(f.publisher.finalize(receipt, lambda *_: True))
+        before = set(self.refs_oids("refs/tags/cma-web/"))
+        api, calls, objects = self.checkout_client()
+        publisher = Reservations(api, "fixture", f.work, f.publisher.runner)
+        self.assertTrue(publisher.finalize(receipt, lambda *_: True))
         claims = self.refs("refs/tags/cma-allocation/")
         self.pushes.clear()
-        self.assertEqual(f.publisher.prune_burned(receipt), 4)
+        self.assertEqual(publisher.prune_burned(receipt), 4)
+        # Every annotation came from the checkout, each read once, however often its ref was listed.
+        self.assertNotIn("api git/tags/<oid>", calls)
+        self.assertGreater(calls["api git/matching-refs/tags/cma-web/pending/v"], 1)
+        self.assertEqual(len(objects), len(set(objects)))
+        self.assertEqual(set(objects), before | set(self.refs_oids("refs/tags/cma-web/")))
         # Burned versions above every final and the current run's reservations remain.
         self.assertEqual(f.publisher.list("web"), [own, queued])
         removed = {claim_ref(value) for value in burned if value["version"] != "0.10.2"}

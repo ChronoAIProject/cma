@@ -29,6 +29,26 @@ FINALS, BURNED = 32, 83
 RUN_ID = 9000
 
 
+def serve(bare, args, calls):
+    """GitHub's REST answers for the refs and tag objects of a bare remote, counted by path."""
+    path = args[-1].removeprefix("repos/ChronoAIProject/cma/")
+    calls["api " + ("git/tags/<oid>" if path.startswith("git/tags/") else path)] += 1
+    if path == "git/ref/heads/develop":
+        value = {"ref": "refs/heads/develop", "object": {"type": "commit", "sha": bare("rev-parse", "refs/heads/develop")}}
+    elif path.startswith("git/matching-refs/"):
+        prefix = "refs/" + path.removeprefix("git/matching-refs/")
+        rows = bare("for-each-ref", "--format=%(refname) %(objectname) %(objecttype)").splitlines()
+        value = [{"ref": ref, "object": {"sha": oid, "type": kind}}
+                 for ref, oid, kind in map(str.split, rows) if ref.startswith(prefix)]
+    else:
+        oid = path.removeprefix("git/tags/")
+        header, message = bare("cat-file", "tag", oid).split("\n\n", 1)
+        fields = dict(line.split(" ", 1) for line in header.splitlines())
+        value = {"sha": oid, "tag": fields["tag"], "message": message + "\n",
+                 "object": {"type": fields["type"], "sha": fields["object"]}}
+    return subprocess.CompletedProcess(args, 0, "HTTP/2 200 OK\n\n" + json.dumps(value), "")
+
+
 class Lane:
     """A bare remote with AM's tags and a full clone acting as the job checkout."""
 
@@ -100,25 +120,7 @@ class Lane:
         return subprocess.run(args, **kwargs)
 
     def api(self, args, **kwargs):
-        if args[0] != "gh":
-            return self.run(args, **kwargs)
-        path = args[-1].removeprefix("repos/ChronoAIProject/cma/")
-        self.calls["api " + ("git/tags/<oid>" if path.startswith("git/tags/") else path)] += 1
-        if path == "git/ref/heads/develop":
-            value = {"ref": "refs/heads/develop",
-                     "object": {"type": "commit", "sha": self.bare("rev-parse", "refs/heads/develop")}}
-        elif path.startswith("git/matching-refs/"):
-            prefix = "refs/" + path.removeprefix("git/matching-refs/")
-            rows = self.bare("for-each-ref", "--format=%(refname) %(objectname) %(objecttype)").splitlines()
-            value = [{"ref": ref, "object": {"sha": oid, "type": kind}}
-                     for ref, oid, kind in map(str.split, rows) if ref.startswith(prefix)]
-        else:
-            oid = path.removeprefix("git/tags/")
-            header, message = self.bare("cat-file", "tag", oid).split("\n\n", 1)
-            fields = dict(line.split(" ", 1) for line in header.splitlines())
-            value = {"sha": oid, "tag": fields["tag"], "message": message + "\n",
-                     "object": {"type": fields["type"], "sha": fields["object"]}}
-        return subprocess.CompletedProcess(args, 0, "HTTP/2 200 OK\n\n" + json.dumps(value), "")
+        return self.run(args, **kwargs) if args[0] != "gh" else serve(self.bare, args, self.calls)
 
     def github(self, token, **kwargs):
         return GitHub(token, runner=self.api, **kwargs)
