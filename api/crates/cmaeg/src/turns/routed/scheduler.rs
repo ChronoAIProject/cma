@@ -20,10 +20,16 @@ pub trait TargetExecutor: Send + Sync {
 }
 
 pub trait RecoverySource: Send + Sync {
+    fn start_measurement(&self) -> Option<crate::telemetry::provider_start::Measurement> {
+        None
+    }
     fn page<'a>(&'a self, after: Option<&'a str>)
         -> BoxFuture<'a, Result<RecoveryPage, ScanError>>;
 }
 impl RecoverySource for PlanStore {
+    fn start_measurement(&self) -> Option<crate::telemetry::provider_start::Measurement> {
+        self.start_measurement.clone()
+    }
     fn page<'a>(
         &'a self,
         after: Option<&'a str>,
@@ -164,6 +170,13 @@ impl Scheduler {
         if !config.valid() {
             return Err("invalid routed scheduler bounds");
         }
+        let executor: Arc<dyn TargetExecutor> = match source.start_measurement() {
+            Some(measurement) => Arc::new(super::measured_executor::MeasuredExecutor {
+                executor,
+                measurement,
+            }),
+            None => executor,
+        };
         let (sender, receiver) = mpsc::channel(config.queue_capacity);
         let handle = ScheduleHandle {
             sender: sender.clone(),
