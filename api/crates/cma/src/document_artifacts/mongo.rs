@@ -155,7 +155,7 @@ fn encode(record: &StoredDocument) -> Result<Document, DocumentError> {
         "record": data},
     )
 }
-fn decode(value: &Document) -> Result<StoredDocument, DocumentError> {
+pub(crate) fn decode(value: &Document) -> Result<StoredDocument, DocumentError> {
     let data = value.get("record").ok_or(DocumentError::Corrupt)?.clone();
     let record: StoredDocument =
         mongodb::bson::deserialize_from_bson(data).map_err(|_| DocumentError::Corrupt)?;
