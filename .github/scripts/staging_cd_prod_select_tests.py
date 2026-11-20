@@ -214,16 +214,25 @@ class EntryTests(unittest.TestCase):
                 patch("staging_cd_github.GitHub"), patch("staging_cd_registry.Registry"), \
                 patch("staging_cd_policy.switches", return_value={"web": True}) as switches, \
                 patch("staging_cd_clock.timestamp", return_value="2026-11-20T00:00:00Z"):
-            with patch.object(select, "plan", return_value=(value, RELEASED)):
+            with patch.object(select, "plan", return_value=(value, RELEASED)) as planner:
                 self.assertEqual(select.main(), 0)
                 self.assertEqual(switches.call_args.args[0], Path("/private/prod/chrono-cd/scripts/deploy_set.py"))
+                self.assertEqual(planner.call_args.args[3], {"web": True})
                 self.assertEqual((outputs["released"], outputs["mode"]), (RELEASED, "release"))
                 self.assertNotIn("started_at", outputs)
                 self.assertEqual(json.loads(outputs["release_set"]), value)
                 outputs.clear()
                 select.os.environ["CD_RELEASE_SET"] = json.dumps(value)
+                switches.reset_mock()
                 self.assertEqual(select.main(), 0)
                 self.assertEqual(outputs["started_at"], "2026-11-20T00:00:00Z")
+                # After approval the components come from the approved set, not the private config.
+                switches.assert_not_called()
+                self.assertEqual(planner.call_args.args[3], {"am": False, "eg": False, "web": False})
+                select.os.environ["CD_RELEASE_SET"] = json.dumps({"schema": "x", "receipts": {"web": {}, "runtime": {}}})
+                with self.assertRaises(Refusal):
+                    select.main()
+                self.assertEqual(planner.call_args.args[3], {"am": True, "eg": False, "web": True})
                 select.os.environ["CD_RELEASE_SET"] = json.dumps(dict(value, receipts={"web": {}}))
                 with self.assertRaisesRegex(Refusal, "no longer matches"):
                     select.main()

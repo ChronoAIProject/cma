@@ -167,26 +167,35 @@ def main():
     The deploy job passes the approved set as CD_RELEASE_SET. A production deploy
     waits for a human approval, so its admission clock starts when this
     re-selection reproduces the identical set, not when the run was created.
+    The re-selection covers exactly the approved components; the controller
+    invocation then applies production's deploy switches as the final word.
     """
     from staging_cd_clock import timestamp
     from staging_cd_github import GitHub
-    from staging_cd_policy import switches
     from staging_cd_receipts import canonical
     from staging_cd_registry import Registry
     from staging_cd_resolve import output
     from staging_cd_runtime import run_private
     from staging_cd_set import document
+    from staging_cd_targets import RUNTIME_TARGETS
     from staging_cd_versions import DEPLOYABLES
 
     env = os.environ
 
     def operation(_masker):
-        script = Path(env["CD_PRIVATE_CONTROLLER"]) / "scripts" / "deploy_set.py"
+        approved = env.get("CD_RELEASE_SET")
+        if approved is None:
+            from staging_cd_policy import switches  # PyYAML is installed only in the resolve job
+
+            policy = switches(Path(env["CD_PRIVATE_CONTROLLER"]) / "scripts" / "deploy_set.py")
+        else:
+            components = set(document(approved)["receipts"])
+            policy = {"am": "am" in components or bool(components & RUNTIME_TARGETS),
+                      "eg": "eg" in components, "web": "web" in components}
         api, registry = GitHub(env.get("GH_TOKEN")), Registry()
-        value, released = plan(env, api, registry, switches(script), root=Path.cwd(),
+        value, released = plan(env, api, registry, policy, root=Path.cwd(),
                                download=gh_download(env["GH_TOKEN"]), deployables=DEPLOYABLES)
         output(env, "released", released)
-        approved = env.get("CD_RELEASE_SET")
         if approved is not None:
             require(value is not None and canonical(value) == canonical(document(approved)),
                     "The approved production release set no longer matches its selection")
