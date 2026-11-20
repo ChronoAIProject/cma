@@ -174,6 +174,7 @@ def main():
         api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(env.get("CD_COMPONENT"), Path.cwd()))
         for mode, value in tasks:
             cache = None
+            built = False
             diagnostics.mark("validate")
             if mode == "resume":
                 diagnostics.mark("resume")
@@ -216,6 +217,7 @@ def main():
                                     guard["check_owner"] = check_owner
                                 archive, release = build(root, reservation, directory, source=source, cache=cache,
                                                          progress=progress, **guard)
+                                built = True
                         require(release["component"] == reservation["component"], "Built release component differs")
                         try:
                             receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
@@ -230,11 +232,11 @@ def main():
                                 canonical(error.receipt) + "\n", encoding="utf-8")
                             raise
                 except ReservationSuperseded:
-                    # A newer develop merge stops this AM build before publication, but
-                    # its compiler state is still develop history. Retain it: with merges
-                    # landing faster than a build from the morning seed, no AM build ever
-                    # finished, so none ever refreshed the bundle the next one restores.
-                    if cache is not None:
+                    # A newer develop merge can supersede this AM publication after its
+                    # build completed. The trimmed compiler state is still develop history,
+                    # so retain it for the next build. A build stopped earlier is never
+                    # retained: its mounts hold untrimmed or partly written Cargo state.
+                    if cache is not None and built:
                         retain(cache)
                     raise
             receipts.append(receipt)
