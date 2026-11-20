@@ -176,6 +176,12 @@ def validate(documents, actions)
   ['Image normalization budgets', 'Gateway socket latency budget', 'Enforce the production budgets (one retry)'].each do |name|
     require_check(timing.find { |s| s['name'] == name }&.fetch('if') == "inputs.track == 'eg'", 'Gateway timing ownership differs')
   end
+  allocator_selector = 'package(=cma) and binary(=allocator_cli) and test(=actual_api_allocator_completes_without_configuration)'
+  allocator = timing.select { |s| s.fetch('run', '').include?(allocator_selector) }
+  require_check(allocator.length == 1 && allocator[0]['if'] == "inputs.track == 'am'" &&
+    allocator[0]['run'] == "bash ../.github/scripts/backend-nextest.sh run -E '#{allocator_selector}' --test-threads 1 --success-output final" &&
+    !allocator[0].key?('continue-on-error'), 'API allocator must run exactly once in required sequential AM timing steps')
+  require_check(rust.fetch('timing').fetch('env')['CMA_NEXTEST_REUSE'] == '1', 'Allocator must use the shared Rust archive')
   steps = documents.values.flat_map { |doc| doc.fetch('jobs').values.flat_map { |job| job.fetch('steps', []) } }
   archives = steps.select { |s| s.fetch('run', '').include?('cargo nextest archive') }
   require_check(archives.length == 1 && archives[0]['run'].include?('--workspace --locked'), 'one locked workspace archive required')
@@ -241,6 +247,10 @@ actions = Dir.glob(File.join(root, '.github/actions/**/action.{yml,yaml}')).to_h
 end
 validate(documents, actions)
 mutations = [
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].reject! { |s| s['name'] == 'API allocator qualification' } },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'] << d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }.dup },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['continue-on-error'] = true },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['run'].sub!('--test-threads 1', '--test-threads 2') },
   ->(d) { d['ci-repo']['jobs']['structure']['steps'].reject! { |s| s['name'] == 'Synthetic authority and observer regressions' } },
   ->(d) { d['ci-repo']['jobs']['structure']['if'] = 'false' },
   ->(d) { d['ci-repo']['jobs']['structure']['continue-on-error'] = true },
