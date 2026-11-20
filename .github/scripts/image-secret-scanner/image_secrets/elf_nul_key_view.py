@@ -4,7 +4,7 @@ import mmap
 import re
 import time
 
-from . import elf_constants, key_marker_view, reviewed_literals
+from . import elf_constants, elf_marker_gap, key_marker_view, reviewed_literals
 from .binary_view import TEXT_BYTES
 from .common import digest_bytes
 from .gate import valid_digest
@@ -50,6 +50,8 @@ QT6_NETWORK_LABELS = {
 
 def validate(row, package, *, portable=False):
     proof = row["elf_nul_key_view"]
+    if isinstance(proof, dict) and "marker_gap" in proof:
+        return elf_marker_gap.validate(row, package, ENCODING, portable=portable)
     diagnostic, labels = "middle_diagnostic" in proof, "middle_labels" in proof
     optional = {"middle_diagnostic"} if diagnostic else {"middle_labels"} if labels else set()
     image_binding(proof, {"encoding", "matches"} | optional, portable=portable)
@@ -145,6 +147,9 @@ def verify(path, metadata, proof):
             return {}
         deadline = time.monotonic() + MAX_CHECK_SECONDS
         rendered = data[:].translate(TEXT_BYTES)
+        if proof.get("marker_gap") == elf_marker_gap.MODE:
+            verified = elf_marker_gap.verify(data, rendered, metadata, proof)
+            return verified if time.monotonic() < deadline else {}
         [item] = proof["matches"]
         diagnostic = proof.get("middle_diagnostic") == DIAGNOSTIC
         labels = proof.get("middle_labels") == LABELS
