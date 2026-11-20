@@ -11,6 +11,7 @@ is read only when a failure is explained. A damaged catalogue therefore never
 breaks an importer, changes a parsed line or alters an exit status: reporting
 falls back to the plain machine line, and the catalogue tests fail CI instead.
 """
+import ast
 import functools
 import json
 import os
@@ -64,7 +65,8 @@ def check_catalogue(value):
                 and item["cause"] in CAUSES and all(isinstance(item[key], str) for key in ("title", "meaning", "next")))
     families = value.get("families") if isinstance(value, dict) else None
     if not (isinstance(families, dict) and complete(value.get("uncatalogued"))
-            and isinstance(value.get("causes"), dict) and set(value["causes"]) == set(CAUSES)):
+            and isinstance(value.get("causes"), dict) and set(value["causes"]) == set(CAUSES)
+            and isinstance(value.get("change_checks"), dict)):
         raise ValueError("failure catalogue shape is invalid")
     for spec in families.values():
         table = families.get(spec.get("codes_from"), {}).get("codes") if isinstance(spec, dict) else None
@@ -177,6 +179,47 @@ def error_site(error):
     return site
 
 
+@functools.lru_cache(maxsize=64)
+def refusal_messages(path):
+    """Map each line of a public script to the literal message of the refusal call spanning it."""
+    tree = ast.parse((ROOT / path).read_text(encoding="utf-8"))
+    found = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = node.func.id if isinstance(node.func, ast.Name) else getattr(node.func, "attr", "")
+        index = 1 if name == "require" else 0 if name.endswith("Refusal") else None
+        if index is None or len(node.args) <= index:
+            continue
+        message = node.args[index]
+        if isinstance(message, ast.Constant) and isinstance(message.value, str):
+            for line in range(node.lineno, node.end_lineno + 1):
+                # The innermost call wins where calls nest across lines.
+                if line not in found or found[line][0] <= node.lineno:
+                    found[line] = (node.lineno, message.value)
+    return {line: message for line, (_, message) in found.items()}
+
+
+def site_cause(site):
+    """Return the cause recorded for a known check at site, or None.
+
+    Only checks listed in the catalogue's change_checks table, by file and exact
+    literal message, attribute a failure to the change under test. The message
+    is used for that lookup alone and is never printed.
+    """
+    if not (isinstance(site, str) and SITE.fullmatch(site)):
+        return None
+    path, line = site.rsplit(":", 1)
+    checks = catalogue()["change_checks"].get(path)
+    if not checks:
+        return None
+    try:
+        message = refusal_messages(path).get(int(line))
+    except (OSError, SyntaxError, ValueError):
+        return None
+    return "change" if message in checks else None
+
+
 def escape_data(text):
     return text.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
 
@@ -207,11 +250,13 @@ def render(family, code, *, subject, stage=None, site=None, component=None, pr=N
 
     line = machine_line(family, values)
     stage_entry = codes(spec.get("stages")).get(values.get("stage"))
-    cause = found["cause"]
-    if cause == "unknown" and stage_entry is not None:
-        cause = stage_entry["cause"]
+    # A family may fix the cause (an unverified deployment needs an operator
+    # first). Otherwise a generic code is refined only by a known check.
+    cause = spec.get("cause") or found["cause"]
+    if cause == "unknown":
+        cause = site_cause(values.get("site")) or cause
     line += " cause=" + cause
-    next_step = found["next"]
+    next_step = spec["next"].format(next=found["next"]) if spec.get("next") else found["next"]
 
     details, where = [found["meaning"]], []
     if stage_entry is not None:

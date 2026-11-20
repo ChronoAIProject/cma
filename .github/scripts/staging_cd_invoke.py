@@ -284,30 +284,25 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     return code if code in (10, 20, 30, 40, 50) else 20
 
 
-def release_components(env):
-    """Name the components this invocation was asked to deploy, if readable."""
-    try:
-        return sorted(validate_set(document(env.get("CD_RELEASE_SET")))["receipts"])
-    except (ValueError, TypeError, KeyError):
-        return None
+def explain(outcome, reason, verification, recovery, release, site):
+    """Report an exit 10, 20, 30 or 40 outcome with its cause and next step.
 
-
-def explain(outcome, reason, verification, recovery, release, site, components):
-    """Report an exit 10, 20, 30 or 40 outcome with its cause and next step."""
-    fields = {"subject": "deploy", "component": components}
+    No component is named: the controller's packets do not say which member of
+    the release set failed, and naming the whole set would blame the others.
+    """
     if outcome == 20:
-        return report("deploy-verification", verification, recovery=recovery, **fields)
+        return report("deploy-verification", verification, subject="deploy", recovery=recovery)
     if outcome == 10:
         # Exit 10 alone certifies the rollback; only the release token is reported.
-        return report("deploy-release", release, **fields)
+        return report("deploy-release", release, subject="deploy")
     if reason is not None and reason.startswith("private-"):
-        return report("deploy-private", reason[len("private-"):], **fields)
+        return report("deploy-private", reason[len("private-"):], subject="deploy")
     if reason is not None:
-        return report("deploy-precondition", reason, site=site, **fields)
+        return report("deploy-precondition", reason, subject="deploy", site=site)
     if outcome == 30:
-        return report("deploy-private", "unreported", **fields)
+        return report("deploy-private", "unreported", subject="deploy")
     if outcome == 40 and site is not None:
-        return report("deploy-precondition", "input", site=site, **fields)
+        return report("deploy-precondition", "input", subject="deploy", site=site)
     return None
 
 
@@ -364,8 +359,7 @@ def main():
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
                 stream.write(f"disposition={OVERTAKEN}\n")
-    components = release_components(os.environ)
-    diagnostic = explain(outcome, reason, verification, recovery, release, site, components)
+    diagnostic = explain(outcome, reason, verification, recovery, release, site)
     if skipped:
         print(RESULTS[DISABLED])
     if outcome in (UNVERIFIED_COHORT, CONTRACT_READ_FAILED):

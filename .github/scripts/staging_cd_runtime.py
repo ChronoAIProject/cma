@@ -4,6 +4,7 @@ import io
 import os
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 
 from ci_outcome import error_site, field, report
@@ -11,7 +12,8 @@ from staging_cd_common import Refusal
 
 SKIPPED = object()
 # Failure kinds, explained by the "step" catalogue family.
-KINDS = frozenset({"refused", "timeout", "os-error", "error", "declined"})
+KINDS = frozenset({"refused", "timeout", "network", "http-server", "http-denied", "http-client", "os-error",
+                   "error", "declined"})
 
 
 def mask_tree(value, emit):
@@ -46,11 +48,22 @@ def silence_descriptor(descriptor, sink):
 
 
 def failure_kind(error):
-    """Classify an exception by type only; its text may carry private data."""
+    """Classify an exception by type and status only; its text may carry private data.
+
+    Only explicit signals mean "retry may help": a timeout, a failed connection
+    or an HTTP 5xx or 429. Other OS errors, such as a missing file, and other
+    HTTP 4xx responses are not presumed transient.
+    """
     if isinstance(error, Refusal):
         return "refused"
     if isinstance(error, (subprocess.TimeoutExpired, TimeoutError)):
         return "timeout"
+    if isinstance(error, urllib.error.HTTPError):
+        if error.code in (401, 403):
+            return "http-denied"
+        return "http-server" if error.code == 429 or 500 <= error.code < 600 else "http-client"
+    if isinstance(error, (urllib.error.URLError, ConnectionError)):
+        return "network"
     if isinstance(error, OSError):
         return "os-error"
     return "error"

@@ -164,14 +164,16 @@ class InvokeTests(unittest.TestCase):
                 public = [line for line in output.getvalue().splitlines() if not line.startswith("::add-mask::")]
                 self.assertEqual(legacy("\n".join(public) + "\n").splitlines(), ["FAIL deploy", expected])
                 explained = public[1]
-                self.assertTrue(explained.startswith(expected + " component=web "), explained)
+                # No component is named: the packet does not say which member failed.
+                self.assertTrue(explained.startswith(expected + " "), explained)
+                self.assertNotIn("component=", explained)
                 self.assertIn(explained, summary.read_text().splitlines())
                 self.assertIn(" | Next step |", summary.read_text())
                 if stage == "mode":
                     # The precondition names its own check, not the wrapper that admitted it.
                     source = Path(invoke.__file__).read_text().splitlines()
                     line = next(n for n, text in enumerate(source, 1) if '"Deployment mode is invalid")' in text) - 1
-                    self.assertEqual(explained, f"{expected} component=web at=staging_cd_invoke.py:{line} cause=change")
+                    self.assertEqual(explained, f"{expected} at=staging_cd_invoke.py:{line} cause=change")
                     self.assertTrue(public[2].startswith(f"::error file=.github/scripts/staging_cd_invoke.py,line={line},"))
                 if stage.startswith("controller"):
                     self.assertIn("What changed: Nothing.", public[2])
@@ -212,7 +214,7 @@ class InvokeTests(unittest.TestCase):
                 self.assertEqual(invoke.main(), 40)
         public = [line for line in output.getvalue().splitlines() if not line.startswith("::add-mask::")]
         self.assertEqual(legacy("\n".join(public) + "\n").splitlines(), ["FAIL deploy", "FAIL precondition=input"])
-        self.assertRegex(public[1], r"\AFAIL precondition=input component=web at=staging_cd_admission\.py:\d+ cause=")
+        self.assertRegex(public[1], r"\AFAIL precondition=input at=staging_cd_admission\.py:\d+ cause=unknown\Z")
         self.assertIn("What changed: Nothing.", public[2])
         self.assertNotIn("private-detail", output.getvalue())
 
@@ -345,7 +347,7 @@ class InvokeTests(unittest.TestCase):
                                       + " recovery=unreported", text)
                     else:
                         self.assertNotIn("FAIL verification=", text)
-                        self.assertIn(f"FAIL release={expected} recovery=verified component=web", text)
+                        self.assertIn(f"FAIL release={expected} recovery=verified cause=", text)
                 if expected is not None:
                     self.assertEqual(legacy("\n".join(public) + "\n").splitlines(),
                                      ["FAIL deploy", f"FAIL release={expected} recovery=verified"])

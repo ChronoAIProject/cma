@@ -157,6 +157,28 @@ class CatalogueTests(unittest.TestCase):
                     self.assertRegex(code, r"\A[A-Za-z][A-Za-z0-9_-]{0,47}\Z")
         self.assertEqual(ci_outcome.COMPONENTS, __import__("staging_cd_targets").TARGETS)
 
+    def test_step_kinds_match_failure_kind_and_the_catalogue(self):
+        import staging_cd_runtime as runtime
+        returned = set()
+        for node in ast.walk(ast.parse(inspect.getsource(runtime.failure_kind))):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and not node.value.startswith("Classify"):
+                returned.add(node.value)
+        self.assertEqual(returned | {"declined"}, set(runtime.KINDS))
+        self.assertEqual(set(codes("step")), set(runtime.KINDS))
+
+    def test_change_checks_name_existing_literal_checks_of_source_the_change_controls(self):
+        # Reservation, receipt and identity checks never blame the change.
+        checks = catalogue()["change_checks"]
+        self.assertEqual(set(checks), {"staging_cd_build.py", "staging_cd_contract.py"})
+        for module, messages in checks.items():
+            found = list(ci_outcome.refusal_messages(module).values())
+            for message in messages:
+                with self.subTest(module=module, message=message):
+                    self.assertIn(message, found)
+        listed = {message for messages in checks.values() for message in messages}
+        for module in ("staging_cd_reservations.py", "staging_cd_receipts.py", "staging_cd_common.py"):
+            self.assertFalse(set(ci_outcome.refusal_messages(module).values()) & listed, module)
+
     def test_catalogue_names_no_url_or_host_other_than_this_repository(self):
         text = CATALOGUE_PATH.read_text(encoding="utf-8")
         for url in re.findall(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s\"]*", text):
@@ -170,25 +192,49 @@ class CatalogueTests(unittest.TestCase):
 
 class RenderTests(unittest.TestCase):
     def test_existing_machine_line_is_kept_and_validated_fields_are_appended(self):
+        dockerfile = line_of("staging_cd_build.py", 'require(value.get("dockerfile_sha256")')
         line, annotation, row = render("publication", "validation_refused", subject="publication", stage="build",
-                                       site="staging_cd_build.py:58", component="am")
+                                       site=f"staging_cd_build.py:{dockerfile}", component="am")
         self.assertEqual(line, "FAIL publication stage=build reason=validation_refused component=am"
-                               " at=staging_cd_build.py:58 cause=change")
-        self.assertTrue(annotation.startswith("::error file=.github/scripts/staging_cd_build.py,line=58,"
+                               f" at=staging_cd_build.py:{dockerfile} cause=change")
+        self.assertTrue(annotation.startswith(f"::error file=.github/scripts/staging_cd_build.py,line={dockerfile},"
                                               "title=publication%3A Input check refused::"))
         self.assertIn("Next step: Open the reported line", annotation)
         self.assertIn("At this stage: Build the same Dockerfile", annotation)
         self.assertEqual(row.count(" | "), 4)
         line, _, _ = render("allocation", "VERSION_LABEL_REQUIRED", subject="allocation")
         self.assertEqual(line, "FAIL allocation VERSION_LABEL_REQUIRED cause=change")
-        line, annotation, _ = render("deploy-verification", "pod-restarts", subject="deploy",
-                                     component=["web", "am"], recovery="unreported")
-        self.assertEqual(line, "FAIL verification=pod-restarts recovery=unreported component=am,web cause=change")
+        line, annotation, _ = render("deploy-release", "pod-restarts", subject="deploy")
+        self.assertEqual(line, "FAIL release=pod-restarts recovery=verified cause=change")
+        self.assertIn("restored and verified the previous release", annotation)
+
+    def test_a_refusal_blames_the_change_only_at_a_listed_check(self):
+        reservation = line_of("staging_cd_reservations.py", "def validate_reservation", 1)
+        recipe = line_of("staging_cd_build.py", '"Unknown or retired image component")')
+        for site, cause in ((None, "unknown"), (f"staging_cd_reservations.py:{reservation}", "unknown"),
+                            (f"staging_cd_build.py:{recipe}", "unknown"),
+                            (f"staging_cd_build.py:{line_of('staging_cd_build.py', 'Shared build arguments are invalid') - 1}",
+                             "change"),
+                            (f"staging_cd_contract.py:{line_of('staging_cd_contract.py', 'declarations disagree') - 1}",
+                             "change")):
+            with self.subTest(site=site):
+                # The build stage alone never makes a generic refusal the change's fault.
+                line, _, _ = render("publication", "validation_refused", subject="publication", stage="build", site=site)
+                self.assertTrue(line.endswith(" cause=" + cause), line)
+        for family, code in (("publication", "io_failed"), ("finalize", "io_failed"), ("step", "os-error"),
+                             ("step", "http-client"), ("deploy-private", "image-identity")):
+            self.assertTrue(render(family, code, subject="fixture")[0].endswith(" cause=unknown"), (family, code))
+
+    def test_unverified_deployment_is_operator_first_and_names_no_component(self):
+        line, annotation, row = render("deploy-verification", "pod-restarts", subject="deploy", recovery="unreported")
+        self.assertEqual(line, "FAIL verification=pod-restarts recovery=unreported cause=operator")
         self.assertIn("What changed: Staging may have changed", annotation)
         self.assertIn("title=deploy%3A Deployment unverified%3A Pods restarted", annotation)
-        line, annotation, _ = render("deploy-release", "pod-restarts", subject="deploy", component="web")
-        self.assertEqual(line, "FAIL release=pod-restarts recovery=verified component=web cause=change")
-        self.assertIn("restored and verified the previous release", annotation)
+        self.assertIn("Next step: An operator reconciles staging first. Then: Check the released components'", annotation)
+        self.assertIn("if this change caused it", annotation)
+        self.assertIn("| operator | An operator reconciles staging first.", row)
+        for code in ("rollout-timeout", "status-pods", "serving", "write-timeout"):
+            self.assertTrue(render("deploy-verification", code, subject="deploy")[0].endswith(" cause=operator"))
 
     def test_values_outside_enums_and_patterns_print_as_unknown(self):
         hostile = PRIVATE + " x::error::y%0A\n|"
@@ -212,7 +258,8 @@ class RenderTests(unittest.TestCase):
                 self.assertNotIn("/etc/", text)
                 self.assertIn("?", outputs[0])
                 self.assertTrue(all("\n" not in part and "\r" not in part for part in outputs))
-        for family, code in (("publication", PRIVATE), (PRIVATE, "build_failed"), (None, None)):
+        for family, code in (("publication", PRIVATE), (PRIVATE, "build_failed"), (None, None),
+                             ("publication-stage", "build")):
             with self.subTest(family=family, code=code):
                 outputs = render(family, code, subject="publication")
                 self.assertNotIn(PRIVATE, public_texts(outputs))
@@ -394,18 +441,17 @@ class DiagnosticReportTests(unittest.TestCase):
     def test_publication_reports_stage_component_and_reservation_check(self):
         from staging_cd_publication_diagnostics import run_publication
         from staging_cd_reservations import validate_reservation
-        line_of = next(number for number, text in enumerate(
-            Path(__file__).with_name("staging_cd_reservations.py").read_text().splitlines(), 1)
-            if "def validate_reservation" in text) + 1
+        site = line_of("staging_cd_reservations.py", "def validate_reservation", 1)
 
         def operation(_masker, diagnostics):
             diagnostics.mark("build")
             validate_reservation({"schema": PRIVATE})
         first, line, annotation = self.explained(lambda: run_publication(operation, component="am"))
         self.assertEqual(first, "FAIL publication")
+        # A reservation refusal is never blamed on the change, whatever the stage.
         self.assertEqual(line, "FAIL publication stage=build reason=validation_refused component=am"
-                               f" at=staging_cd_reservations.py:{line_of} cause=change")
-        self.assertTrue(annotation.startswith(f"::error file=.github/scripts/staging_cd_reservations.py,line={line_of},"))
+                               f" at=staging_cd_reservations.py:{site} cause=unknown")
+        self.assertTrue(annotation.startswith(f"::error file=.github/scripts/staging_cd_reservations.py,line={site},"))
         self.assertIn("Stage build: builds the component image", annotation)
 
     def test_finalization_reports_stage_component_and_check(self):

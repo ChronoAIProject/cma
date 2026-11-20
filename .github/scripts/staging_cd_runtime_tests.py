@@ -84,6 +84,29 @@ class PrivateRuntimeTests(unittest.TestCase):
             self.assertEqual(summary.read_text().count('| fixture-step |'), 5)
         self.assertTrue(issubclass(Refusal, ValueError))
 
+    def test_only_explicit_signals_are_called_transient(self):
+        import urllib.error
+        from staging_cd_runtime import failure_kind
+
+        def http(code):
+            return urllib.error.HTTPError('https://fixture.invalid', code, 'fixture-detail', {}, None)
+        cases = ((subprocess.TimeoutExpired(['fixture'], 1), 'timeout', 'transient'),
+                 (TimeoutError(), 'timeout', 'transient'),
+                 (ConnectionResetError(), 'network', 'transient'),
+                 (urllib.error.URLError('fixture-detail'), 'network', 'transient'),
+                 (http(503), 'http-server', 'transient'), (http(429), 'http-server', 'transient'),
+                 (http(403), 'http-denied', 'operator'), (http(401), 'http-denied', 'operator'),
+                 (http(404), 'http-client', 'unknown'), (http(422), 'http-client', 'unknown'),
+                 (FileNotFoundError('fixture-detail'), 'os-error', 'unknown'),
+                 (PermissionError(), 'os-error', 'unknown'), (KeyError('x'), 'error', 'unknown'))
+        for error, kind, cause in cases:
+            with self.subTest(error=type(error).__name__, kind=kind):
+                self.assertEqual(failure_kind(error), kind)
+                with patch.dict(os.environ, {}, clear=True), contextlib.redirect_stdout(io.StringIO()) as output:
+                    run_private(lambda _masker, error=error: (_ for _ in ()).throw(error), None, subject='fixture-step')
+                self.assertRegex(output.getvalue().splitlines()[0], rf'reason={kind}( at=\S+)? cause={cause}\Z')
+                self.assertNotIn('fixture-detail', output.getvalue())
+
     def test_native_and_child_output_cannot_escape_private_boundary(self):
         program = '\nimport os\nimport subprocess\nimport sys\nfrom staging_cd_runtime import run_private\n\ndef operation(masker):\n    masker(\'fixture-mask\')\n    sys.__stdout__.write(\'private buffered stdout\')\n    sys.__stderr__.write(\'private buffered stderr\')\n    os.write(1, b\'private native stdout\\n\')\n    os.write(2, b\'private native stderr\\n\')\n    subprocess.run([sys.executable, \'-c\',\n        "import os; os.write(1, b\'private child stdout\'); os.write(2, b\'private child stderr\')"], check=True)\n    if sys.argv[2] == \'fail\':\n        raise ValueError(\'private failure\')\n    return True\n\nresult = run_private(operation, sys.argv[1], subject=\'fixture-step\', explain=False)\nprint(\'restored stdout\')\nprint(\'restored stderr\', file=sys.stderr)\nraise SystemExit(result)\n'
         with tempfile.TemporaryDirectory() as directory:

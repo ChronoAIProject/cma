@@ -12,6 +12,22 @@
     "cause": "unknown",
     "next": "Add the code to ci_outcomes.json (staging_cd_outcome_tests.py should have required it), then read the step's source at the reported check."
   },
+  "change_checks": {
+    "staging_cd_build.py": [
+      "Shared build recipe is unsupported",
+      "Shared build arguments are invalid",
+      "Build context does not exclude required credential paths",
+      "Dockerfile-specific context exclusions require review",
+      "Dockerfile differs from the shared deployables registry",
+      "Native image must use its expected unprivileged numeric user"
+    ],
+    "staging_cd_contract.py": [
+      "Runtime compatibility declaration is oversized",
+      "Runtime compatibility declaration has duplicate fields",
+      "Runtime compatibility declaration is invalid",
+      "AM requirements and runtime image declarations disagree"
+    ]
+  },
   "families": {
     "step": {
       "codes": {
@@ -27,11 +43,35 @@
           "cause": "transient",
           "next": "Re-run the failed jobs. If it repeats, the reported line shows which bound to investigate."
         },
-        "os-error": {
-          "title": "System or network call failed",
-          "meaning": "A file, process or network operation failed; its error text is withheld because it can contain sensitive data.",
+        "network": {
+          "title": "Network connection failed",
+          "meaning": "A connection to a remote service failed before it answered.",
           "cause": "transient",
-          "next": "Re-run the failed jobs. If it repeats, check the service or file used at the reported line."
+          "next": "Re-run the failed jobs; if it repeats, check the service used at the reported line."
+        },
+        "http-server": {
+          "title": "Remote service unavailable",
+          "meaning": "A remote service answered with a server error or asked the client to slow down.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; if it repeats, check the service's status."
+        },
+        "http-denied": {
+          "title": "Remote access denied",
+          "meaning": "A remote service refused the job's credential with HTTP 401 or 403.",
+          "cause": "operator",
+          "next": "Check the token or credential used at the reported line and its permissions."
+        },
+        "http-client": {
+          "title": "Remote request refused",
+          "meaning": "A remote service refused the request with an HTTP client error, for example because the resource is absent.",
+          "cause": "unknown",
+          "next": "Check what the reported line requests; a re-run alone rarely helps."
+        },
+        "os-error": {
+          "title": "System call failed",
+          "meaning": "A file or process operation failed; its error text is withheld because it can contain sensitive data.",
+          "cause": "unknown",
+          "next": "Check the file or process used at the reported line; re-run if it depends on runner state."
         },
         "error": {
           "title": "Unexpected error",
@@ -65,7 +105,7 @@
         "command_failed": {
           "title": "Image tool failed",
           "meaning": "An image or registry command other than the build exited unsuccessfully.",
-          "cause": "transient",
+          "cause": "unknown",
           "next": "Re-run the failed jobs. If it repeats at the same stage, run that stage's tool locally against the built image."
         },
         "build_timeout": {
@@ -89,8 +129,8 @@
         "registry_read_failed": {
           "title": "Registry read failed",
           "meaning": "A registry read returned an error other than access denied.",
-          "cause": "transient",
-          "next": "Re-run the failed jobs; if it persists, check the registry's availability."
+          "cause": "unknown",
+          "next": "Re-run the failed jobs; if it repeats, check the registry's availability and the tag this stage reads."
         },
         "validation_refused": {
           "title": "Input check refused",
@@ -101,8 +141,8 @@
         "io_failed": {
           "title": "File or process error",
           "meaning": "A local file, directory or process operation failed on the runner.",
-          "cause": "transient",
-          "next": "Re-run the failed jobs; repeated failures point to runner disk space or the path used at the reported line."
+          "cause": "unknown",
+          "next": "Check the file or path used at the reported line; re-run if it depends on runner disk space."
         },
         "unexpected_error": {
           "title": "Unexpected error",
@@ -326,8 +366,8 @@
         "github_read_failed": {
           "title": "GitHub read failed",
           "meaning": "A GitHub API read failed.",
-          "cause": "transient",
-          "next": "Re-run the failed jobs; check GitHub's status if it repeats."
+          "cause": "unknown",
+          "next": "Re-run the failed jobs; if it repeats, check GitHub's status and the workflow token's permissions."
         },
         "history_unverified": {
           "title": "Develop history unverified",
@@ -344,8 +384,8 @@
         "registry_read_failed": {
           "title": "Registry read failed",
           "meaning": "A registry read returned an error other than access denied.",
-          "cause": "transient",
-          "next": "Re-run the failed jobs."
+          "cause": "unknown",
+          "next": "Re-run the failed jobs; if it repeats, check the registry's availability and the tag this stage reads."
         },
         "registry_denied": {
           "title": "Registry access denied",
@@ -368,8 +408,8 @@
         "io_failed": {
           "title": "File or process error",
           "meaning": "A local file, directory or process operation failed on the runner.",
-          "cause": "transient",
-          "next": "Re-run the failed jobs."
+          "cause": "unknown",
+          "next": "Check the file or path used at the reported line; re-run if it depends on runner disk space."
         },
         "unexpected_error": {
           "title": "Unexpected error",
@@ -550,8 +590,8 @@
         "GITHUB_READ_FAILED": {
           "title": "GitHub read failed",
           "meaning": "A GitHub API read failed.",
-          "cause": "transient",
-          "next": "Re-run the failed jobs; check GitHub's status if it repeats."
+          "cause": "unknown",
+          "next": "Re-run the failed jobs; if it repeats, check GitHub's status and the workflow token's permissions."
         },
         "GITHUB_RESPONSE_INVALID": {
           "title": "GitHub response invalid",
@@ -774,10 +814,10 @@
           "next": "No action while a newer release deploys; otherwise compare the released and deployed versions."
         },
         "image-identity": {
-          "title": "Image identity refused",
-          "meaning": "The controller could not verify the image's identity labels or digest.",
-          "cause": "change",
-          "next": "Check the identity labels that the image build records."
+          "title": "Image identity unverified",
+          "meaning": "The controller could not verify the image's identity, which includes failing to read it from the registry.",
+          "cause": "unknown",
+          "next": "Re-run the deployment; if it repeats, an operator checks registry access and the image's identity labels."
         },
         "baseline": {
           "title": "Deployed baseline differs",
@@ -879,7 +919,7 @@
           "title": "Replica counts differ",
           "meaning": "Ready or updated replica counts did not reach their expected values.",
           "cause": "change",
-          "next": "Check the component's staging pods for failing readiness probes, fix the cause and push."
+          "next": "Check the released components' staging pods for failing readiness probes; if this change caused it, fix it and push."
         },
         "status-inventory": {
           "title": "Deployed inventory differs",
@@ -891,13 +931,13 @@
           "title": "Pods not ready",
           "meaning": "Pods of the new release were not running and ready.",
           "cause": "change",
-          "next": "Check the component's staging pod events and logs, fix the cause and push."
+          "next": "Check the released components' staging pod events and logs; if this change caused it, fix it and push."
         },
         "pod-restarts": {
           "title": "Pods restarted",
           "meaning": "Pods of the new release restarted during verification, usually from a crash or a failing liveness probe.",
           "cause": "change",
-          "next": "Read the component's staging pod logs for the crash, fix it and push."
+          "next": "Check the released components' staging pod logs for the crash; if this change caused it, fix it and push."
         },
         "rollout-ownership": {
           "title": "Rollout ownership unproven",
@@ -909,13 +949,13 @@
           "title": "Rollout timed out",
           "meaning": "The rollout did not complete within its budget.",
           "cause": "change",
-          "next": "Check the component's staging pods for slow startup or readiness, fix the cause and push."
+          "next": "Check the released components' staging pods for slow startup or readiness; if this change caused it, fix it and push."
         },
         "rollout-failed": {
           "title": "Rollout failed",
           "meaning": "The deployment service reported the rollout as failed.",
           "cause": "change",
-          "next": "Check the component's staging pod events, fix the cause and push."
+          "next": "Check the released components' staging pod events; if this change caused it, fix it and push."
         },
         "image-digest": {
           "title": "Running digest differs",
@@ -981,19 +1021,19 @@
           "title": "Service not serving",
           "meaning": "The new release did not serve requests successfully.",
           "cause": "change",
-          "next": "Check the component's health endpoint and logs in staging, fix the cause and push."
+          "next": "Check the released components' health endpoints and logs in staging; if this change caused it, fix it and push."
         },
         "acceptance": {
           "title": "Acceptance check failed",
           "meaning": "The post-deployment acceptance check failed.",
           "cause": "change",
-          "next": "Reproduce the acceptance check against this release, fix the cause and push."
+          "next": "Reproduce the acceptance check against this release; if this change caused it, fix it and push."
         },
         "startup-observation": {
           "title": "Startup not observed",
           "meaning": "The controller could not observe the new release starting.",
           "cause": "unknown",
-          "next": "Check the component's staging pod logs for startup errors."
+          "next": "Check the released components' staging pod logs for startup errors."
         },
         "startup-schema": {
           "title": "Startup evidence invalid",
@@ -1031,7 +1071,9 @@
           "cause": "operator",
           "next": "Add the controller's new reason to VERIFICATION_REASONS in staging_cd_refusal.py and to this catalogue."
         }
-      }
+      },
+      "cause": "operator",
+      "next": "An operator reconciles staging first. Then: {next}"
     },
     "deploy-release": {
       "title": "Release rolled back",
