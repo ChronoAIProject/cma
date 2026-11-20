@@ -1,14 +1,10 @@
 """Prepare the installed Omarchy desktop for its runtime image layer."""
 
-import base64
-import csv
 import hashlib
-import io
 import re
 import shutil
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
 
 # Documentation lines whose placeholder credentials match the image scanner's
@@ -38,23 +34,9 @@ DOCUMENTATION_EXAMPLES = (
         3,
     ),
 )
-# The bundled pip wheel keeps every module; two docstring example lines are
-# omitted and the wheel's RECORD is rewritten for exactly those two members.
-ENSUREPIP_WHEEL = (
-    "usr/lib/python3.14/ensurepip/_bundled/pip-26.2.1-py3-none-any.whl",
-    "71138adf1f4ca900cdb7d289c21b7494329f2332b6d85f0e1c42108c0384ed3e",
-    "pip-26.2.1.dist-info/RECORD",
-    {
-        "pip/_vendor/urllib3/contrib/socks.py": (
-            "ad2ba495f85ae3ebeda3ef2a48b8523e67f996644f218baa740c4a7bd6e0d910",
-            "f7b3b1c57a87bf2f29547e2ac0649901fe9037ed80dcb841607534eb11a6ed8e",
-        ),
-        "pip/_vendor/urllib3/util/url.py": (
-            "3c40d0332a6276e75ed2701972d2cb8852bd7a937e2cf9d21fb2a938b2f0a87d",
-            "533915fbfa29d8e147d57d840599206f269088e585e079145dcc3e0f822da23d",
-        ),
-    },
-)
+# Python's bundled ensurepip wheel is never rewritten: it stays the signed
+# package member its pacman mtree records, and the image gate reviews its members.
+ENSUREPIP_WHEEL = "usr/lib/python3.14/ensurepip/_bundled/pip-26.2.1-py3-none-any.whl"
 OBJECT_SIGNING_BUNDLE = "etc/ca-certificates/extracted/objsign-ca-bundle.pem"
 
 PORTAL_DESCRIPTIONS = (
@@ -137,73 +119,6 @@ def remove_documentation_examples(root):
         path.write_bytes(updated)
 
 
-def _record_hash(data):
-    return "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b"=").decode()
-
-
-def _record_rows(wheel, record_name):
-    """Return the RECORD rows after verifying they describe every member exactly."""
-    text = wheel.read(record_name).decode("utf-8")
-    rows = list(csv.reader(io.StringIO(text)))
-    if _record_text(rows) != text:
-        raise ValueError("Bundled pip wheel RECORD is not in its canonical form")
-    names = [info.filename for info in wheel.infolist()]
-    listed = {row[0]: row[1:] for row in rows}
-    if len(listed) != len(rows) or len(set(names)) != len(names) or set(listed) != set(names):
-        raise ValueError("Bundled pip wheel RECORD does not list exactly its members")
-    for name in names:
-        expected = ["", ""] if name == record_name else None
-        if expected is None:
-            data = wheel.read(name)
-            expected = [_record_hash(data), str(len(data))]
-        if listed[name] != expected:
-            raise ValueError("Bundled pip wheel RECORD differs from its members")
-    return rows
-
-
-def _record_text(rows):
-    output = io.StringIO()
-    csv.writer(output, lineterminator="\n").writerows(rows)
-    return output.getvalue()
-
-
-def remove_ensurepip_examples(root):
-    relative, reviewed, record_name, members = ENSUREPIP_WHEEL
-    path = _package_file(root, relative, "bundled pip wheel")
-    if not path.exists():
-        return
-    original = path.read_bytes()
-    with zipfile.ZipFile(io.BytesIO(original)) as wheel:
-        rows = _record_rows(wheel, record_name)
-        contents = {}
-        for name, (member_digest, line_digest) in members.items():
-            data = wheel.read(name)
-            updated, removed = _without_lines(data, {line_digest})
-            if removed:
-                if removed != 1 or hashlib.sha256(data).hexdigest() != member_digest:
-                    raise ValueError("Bundled pip wheel example requires review")
-                contents[name] = updated
-        if not contents:
-            return
-        if len(contents) != len(members) or hashlib.sha256(original).hexdigest() != reviewed:
-            raise ValueError("Bundled pip wheel example requires review")
-        contents[record_name] = _record_text(
-            [[row[0], _record_hash(contents[row[0]]), str(len(contents[row[0]]))]
-             if row[0] in contents else row for row in rows]).encode("utf-8")
-        derived = io.BytesIO()
-        with zipfile.ZipFile(derived, "w") as output:
-            for info in wheel.infolist():
-                member = zipfile.ZipInfo(info.filename, info.date_time)
-                for attribute in ("compress_type", "external_attr", "create_system", "create_version",
-                                  "extract_version", "flag_bits"):
-                    setattr(member, attribute, getattr(info, attribute))
-                data = contents.get(info.filename)
-                output.writestr(member, wheel.read(info) if data is None else data)
-    with zipfile.ZipFile(io.BytesIO(derived.getvalue())) as check:
-        _record_rows(check, record_name)
-    path.write_bytes(derived.getvalue())
-
-
 def remove_empty_object_signing_bundle(root):
     # Mozilla's store grants no object-signing trust, so p11-kit extracts an
     # empty bundle. update-ca-trust recreates it whenever trust changes.
@@ -268,7 +183,6 @@ def normalize(root):
     remove_packaging_files(root)
     remove_portal_descriptions(root)
     remove_documentation_examples(root)
-    remove_ensurepip_examples(root)
     remove_empty_object_signing_bundle(root)
 
 
