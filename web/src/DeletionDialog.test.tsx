@@ -173,10 +173,10 @@ it('retains the same command key after an uncertain response and never automatic
   ]);
 });
 
-it('does not declare success on read failures or a missing resource', async () => {
+it.each([401, 403, 404])('does not declare success on a %s read failure', async (status) => {
   const client = agentClient({
     readSandbox: async () => {
-      throw new ApiError(404, 'Not found', 'not_found');
+      throw new ApiError(status, 'Unavailable', 'unavailable');
     },
   });
   render(
