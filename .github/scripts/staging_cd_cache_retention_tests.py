@@ -237,14 +237,18 @@ class Contracts(unittest.TestCase):
         with self.assertRaises(ValueError):
             pages(lambda n: fetch(n) if n == 1 else {"total_count": 102, "items": []}, "items")
 
-    def test_only_qualified_publication_with_positive_budget_grant_can_save(self):
+    def test_only_qualified_develop_publication_can_save(self):
         steps = yaml.safe_load((ROOT / ".github/workflows/staging-release.yml").read_text())["jobs"]["publish"]["steps"]
         ids = [s["name"] for s in steps if "name" in s]
         self.assertLess(ids.index("Build once, scan every layer, and publish exact bytes"),
-                        ids.index("Check repository headroom before Cargo rollover"))
+                        ids.index("Retain accepted Cargo mounts"))
+        self.assertNotIn("Check repository headroom before Cargo rollover", ids)
         save = next(s for s in steps if s.get("name") == "Retain accepted Cargo mounts")
-        self.assertIn("steps.cargo-headroom.outcome == 'success'", save["if"])
-        self.assertIn("steps.cargo-headroom.outputs.allowed == 'true'", save["if"])
+        for condition in ("success()", "github.event_name == 'push'", "github.ref == 'refs/heads/develop'",
+                          "steps.publication.outputs.build-cache-ready == 'true'"):
+            self.assertIn(condition, save["if"])
+        self.assertTrue(save["uses"].startswith("actions/upload-artifact@"))
+        self.assertFalse(any(str(s.get("uses", "")).startswith("actions/cache/save@") for s in steps))
 
     def test_legacy_rerun_window_requires_an_old_default_branch_completion_trigger(self):
         api = Actions("fixture", 99)
@@ -266,9 +270,8 @@ class Contracts(unittest.TestCase):
         self.assertEqual(lock, {"group": "cma-develop-cache-sweep", "queue": "max", "cancel-in-progress": False})
         cd = load("staging-cd")
         self.assertNotIn("concurrency", cd)
-        self.assertEqual(cd["jobs"]["cargo_budget"]["needs"], "allocate")
-        for job in cd["jobs"].values():
-            self.assertNotIn("cargo_budget", job.get("needs", []))
+        # Cargo bundles travel as run artifacts; no job reserves Actions cache bytes.
+        self.assertNotIn("cargo_budget", cd["jobs"])
         for name, job in (("ci-images", "images"), ("ci-omarchy", "omarchy"), ("migration-harness", "contracts")):
             gate = load(name)["jobs"][job]["concurrency"]
             self.assertNotIn(lock["group"], gate["group"])
