@@ -2,6 +2,7 @@ mod conversation;
 mod desktop;
 mod desktop_control;
 mod ownership;
+mod resource_execution;
 mod upload;
 use conversation::conversation;
 use upload::TemporaryUpload;
@@ -40,6 +41,7 @@ pub(crate) fn router(supervisor: Arc<Supervisor>) -> Router {
             "/runtime/control",
             post(control).layer(DefaultBodyLimit::max(CONTROL_BODY_BYTES)),
         )
+        .merge(resource_execution::router())
         .route("/runtime/agents/{agent_id}/conversation", get(conversation))
         .route(
             "/runtime/agents/{agent_id}/manager-ownership/challenge",

@@ -50,6 +50,7 @@ mod pool_bootstrap;
 mod publication_qualification;
 mod repository_snapshot;
 mod resource_cgroup;
+mod resource_execution;
 mod resource_network;
 mod resources;
 mod restore_bootstrap;

@@ -72,6 +72,7 @@ fn source_config(request: &HomeSnapshotExportRequest) -> Result<RuntimeConfig> {
         machine_included: false,
         capacity_recovery_enabled: false,
         legacy_journal_recovery_enabled: false,
+        resource_execution_fencing_enabled: false,
     })
 }
 
