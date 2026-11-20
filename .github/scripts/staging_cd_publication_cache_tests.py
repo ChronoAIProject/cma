@@ -252,6 +252,49 @@ class CacheTests(unittest.TestCase):
         cache.export_mounts.assert_not_called()
         self.assertFalse(Path(env['CD_RECEIPTS_PATH']).exists())
 
+    def test_superseded_am_build_retains_cargo_state_without_publishing(self):
+        import staging_cd_publish as publication
+        from staging_cd_receipts_tests import fixture_identity
+        from staging_cd_reservations import ReservationSuperseded
+        release = fixture_identity(component='am')
+        reservation = {key: value for key, value in release.items() if key != 'build'}
+        reservation['schema'] = 'cma-version-reservation-v1'
+        outputs = self.root / 'outputs'
+        env = dict(self.env, CD_COMPONENT='am', GITHUB_RUN_ID='100', CD_BUILD_CACHE='enabled',
+                   GH_TOKEN='synthetic', GITHUB_ACTOR='synthetic', GITHUB_OUTPUT=str(outputs),
+                   CD_RECEIPTS_PATH=str(self.root / 'receipts.json'),
+                   CD_TASKS=json.dumps([{'component': 'am', 'mode': 'publish', 'reservation': reservation}]))
+        for accepted in (True, False):
+            with self.subTest(accepted=accepted):
+                outputs.write_text('')
+                cache = Mock(restore_result='hit')
+                cache.export_mounts.return_value = accepted
+                cache.key.archive_key.return_value = 'synthetic-key'
+                stdout = io.StringIO()
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(patch.dict(os.environ, env, clear=True))
+                    for name in ('event_identity', 'GitHub', 'snapshot', 'Registry'):
+                        stack.enter_context(patch.object(publication, name))
+                    authority = stack.enter_context(patch.object(publication, 'Reservations')).return_value
+                    authority.require_current.return_value = True
+                    for name, value in [('BuildCache', cache), ('identity', (release, {}, {})), ('try_reuse', None)]:
+                        stack.enter_context(patch.object(publication, name, return_value=value))
+                    build = stack.enter_context(patch.object(publication, 'build',
+                                                             side_effect=ReservationSuperseded()))
+                    publish = stack.enter_context(patch.object(publication, 'publish'))
+                    stack.enter_context(contextlib.redirect_stdout(stdout))
+                    self.assertEqual(publication.main(), 0)
+                build.assert_called_once()
+                publish.assert_not_called()
+                cache.export_mounts.assert_called_once_with()
+                self.assertFalse(Path(env['CD_RECEIPTS_PATH']).exists())
+                written = outputs.read_text()
+                self.assertIn('disposition=reservation_superseded', written)
+                self.assertIn('build-cache-ready=' + ('true' if accepted else 'false'), written)
+                self.assertEqual('build-cache-key=synthetic-key' in written, accepted)
+                self.assertIn('reason=reservation_superseded', stdout.getvalue())
+                self.assertIn('"result": "accepted"' if accepted else '"result": "withheld"', stdout.getvalue())
+
     def test_build_receives_cache_runtime_without_changing_image_arguments(self):
         from staging_cd_build import build
         from staging_cd_build_tests import BuildTests

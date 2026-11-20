@@ -15,7 +15,7 @@ from staging_cd_release_tags import local_tag_reader
 from staging_cd_resolve import output as step_output
 from staging_cd_receipts import canonical, published_receipt, validate_receipt
 from staging_cd_registry import Registry
-from staging_cd_reservations import Reservations, validate_reservation
+from staging_cd_reservations import Reservations, ReservationSuperseded, validate_reservation
 from staging_cd_publication_diagnostics import PublicationDiagnostics, run_publication
 from staging_cd_versions import DEPLOYABLES
 from staging_cd_timing import Timings
@@ -153,6 +153,16 @@ def main():
     build_metrics = []
     cache_metrics = []
     def operation(_masker, diagnostics):
+        def retain(cache):
+            diagnostics.mark("cache_export")
+            with timings.stage("cache-export"):
+                accepted = cache.export_mounts()
+            cache_metrics.append({"operation": "export", "result": "accepted" if accepted else "withheld"})
+            with Path(env["GITHUB_OUTPUT"]).open("a") as status:
+                if accepted:
+                    status.write("build-cache-key=" + cache.key.archive_key(env) + "\n")
+                status.write("build-cache-ready=" + ("true" if accepted else "false") + "\n")
+
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Image publication only accepts develop pushes")
         diagnostics.mark("validate")
@@ -173,51 +183,60 @@ def main():
                 reservation = value
                 reservations = Reservations(api, env.get("GH_TOKEN"), root)
                 reservations.require_current(reservation)
-                with tempfile.TemporaryDirectory(prefix="cma-publication-", dir=env["RUNNER_TEMP"]) as temp:
-                    directory = Path(temp)
-                    source = directory / "source"
-                    diagnostics.mark("snapshot")
-                    with timings.stage("source"):
-                        snapshot(root, reservation["source"], source)
-                        diagnostics.mark("validate")
-                        release, _, _ = identity(reservation, source)
-                    diagnostics.mark("reuse")
-                    with timings.stage("reuse"):
-                        archive = try_reuse(release, directory, api, env.get("GH_TOKEN"))
-                    qualified = archive is not None
-                    if archive is None:
-                        if env.get("CD_BUILD_CACHE") == "enabled":
-                            diagnostics.mark("cache_restore")
-                            cache = BuildCache(root, env, source, reservation["component"])
-                            with timings.stage("cache-restore"):
-                                cache.restore()
-                            cache_metrics.append({"operation": "restore", "result": cache.restore_result})
-                        diagnostics.mark("build")
-                        with timings.stage("build"):
-                            progress: dict = {}
-                            build_metrics.append(progress)
-                            guard = {}
-                            if reservation["component"] == "am":
-                                def check_owner(probe):
-                                    credential = env.get("GH_TOKEN")
-                                    lookup = GitHub(credential, runner=probe)
-                                    Reservations(lookup, credential, root).check_build_owner(reservation)
-                                guard["check_owner"] = check_owner
-                            archive, release = build(root, reservation, directory, source=source, cache=cache,
-                                                     progress=progress, **guard)
-                    require(release["component"] == reservation["component"], "Built release component differs")
-                    try:
-                        receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
-                                          env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
-                                          diagnostics=diagnostics, timings=timings,
-                                          scan_evidence=output.parent / "package-policy",
-                                          reservation_check=lambda: reservations.require_current(reservation))
-                    except CleanupIncomplete as error:
-                        # Preserve only fixed-schema cleanup status and the
-                        # synthetic campaign ID, never raw helper/daemon output.
-                        output.with_name("runtime-cleanup.json").write_text(
-                            canonical(error.receipt) + "\n", encoding="utf-8")
-                        raise
+                try:
+                    with tempfile.TemporaryDirectory(prefix="cma-publication-", dir=env["RUNNER_TEMP"]) as temp:
+                        directory = Path(temp)
+                        source = directory / "source"
+                        diagnostics.mark("snapshot")
+                        with timings.stage("source"):
+                            snapshot(root, reservation["source"], source)
+                            diagnostics.mark("validate")
+                            release, _, _ = identity(reservation, source)
+                        diagnostics.mark("reuse")
+                        with timings.stage("reuse"):
+                            archive = try_reuse(release, directory, api, env.get("GH_TOKEN"))
+                        qualified = archive is not None
+                        if archive is None:
+                            if env.get("CD_BUILD_CACHE") == "enabled":
+                                diagnostics.mark("cache_restore")
+                                cache = BuildCache(root, env, source, reservation["component"])
+                                with timings.stage("cache-restore"):
+                                    cache.restore()
+                                cache_metrics.append({"operation": "restore", "result": cache.restore_result})
+                            diagnostics.mark("build")
+                            with timings.stage("build"):
+                                progress: dict = {}
+                                build_metrics.append(progress)
+                                guard = {}
+                                if reservation["component"] == "am":
+                                    def check_owner(probe):
+                                        credential = env.get("GH_TOKEN")
+                                        lookup = GitHub(credential, runner=probe)
+                                        Reservations(lookup, credential, root).check_build_owner(reservation)
+                                    guard["check_owner"] = check_owner
+                                archive, release = build(root, reservation, directory, source=source, cache=cache,
+                                                         progress=progress, **guard)
+                        require(release["component"] == reservation["component"], "Built release component differs")
+                        try:
+                            receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
+                                              env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
+                                              diagnostics=diagnostics, timings=timings,
+                                              scan_evidence=output.parent / "package-policy",
+                                              reservation_check=lambda: reservations.require_current(reservation))
+                        except CleanupIncomplete as error:
+                            # Preserve only fixed-schema cleanup status and the
+                            # synthetic campaign ID, never raw helper/daemon output.
+                            output.with_name("runtime-cleanup.json").write_text(
+                                canonical(error.receipt) + "\n", encoding="utf-8")
+                            raise
+                except ReservationSuperseded:
+                    # A newer develop merge stops this AM build before publication, but
+                    # its compiler state is still develop history. Retain it: with merges
+                    # landing faster than a build from the morning seed, no AM build ever
+                    # finished, so none ever refreshed the bundle the next one restores.
+                    if cache is not None:
+                        retain(cache)
+                    raise
             receipts.append(receipt)
             # Publication receipts keep their existing schema; verified package
             # decisions are retained separately from raw scan directory and image bytes.
@@ -226,14 +245,7 @@ def main():
             # Persist successful publication before optional cache work. A later
             # cache timeout must not lose the receipt for an immutable pushed tag.
             if cache is not None:
-                diagnostics.mark("cache_export")
-                with timings.stage("cache-export"):
-                    accepted = cache.export_mounts()
-                cache_metrics.append({"operation": "export", "result": "accepted" if accepted else "withheld"})
-                with Path(env["GITHUB_OUTPUT"]).open("a") as status:
-                    if accepted:
-                        status.write("build-cache-key=" + cache.key.archive_key(env) + "\n")
-                    status.write("build-cache-ready=" + ("true" if accepted else "false") + "\n")
+                retain(cache)
         return True
     def superseded():
         require(env.get("CD_COMPONENT") == "am", "Unexpected superseded component")
