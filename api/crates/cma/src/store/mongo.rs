@@ -74,8 +74,13 @@ impl MongoStores {
         );
         if writes_enabled {
             self.registration_capacity = Arc::new(
-                super::MongoRegistrationCapacityStore::open(&self.client, &self.database, true)
-                    .await?,
+                super::MongoRegistrationCapacityStore::open_with_defaults(
+                    &self.client,
+                    &self.database,
+                    true,
+                    self.initial_settings,
+                )
+                .await?,
             );
         }
         Ok(self)
@@ -240,7 +245,8 @@ impl MongoStores {
         );
         let trigger_definitions = Arc::new(
             MongoTriggerDefinitionStore::open(&client, database, Arc::clone(&sandbox_profiles))
-                .await?,
+                .await?
+                .with_initial_settings(startup.initial_settings),
         );
         let auth = Arc::new(
             MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
@@ -284,8 +290,15 @@ impl MongoStores {
             )
             .await?,
         );
-        let registration_capacity =
-            Arc::new(super::MongoRegistrationCapacityStore::open(&client, database, false).await?);
+        let registration_capacity = Arc::new(
+            super::MongoRegistrationCapacityStore::open_with_defaults(
+                &client,
+                database,
+                false,
+                startup.initial_settings,
+            )
+            .await?,
+        );
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let agent_lifecycle =
             Arc::new(super::MongoAgentLifecycleStore::open(&client.database(database)).await?);

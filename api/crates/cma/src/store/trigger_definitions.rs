@@ -37,6 +37,7 @@ pub(super) const MUTATION_ATTEMPTS: usize = 8;
 
 #[derive(Clone)]
 pub struct MongoTriggerDefinitionStore {
+    pub(super) initial_settings: super::settings_defaults::InitialSettings,
     pub(super) empty_discovery: super::empty_discovery::Policy,
     pub(super) client: Client,
     pub(super) definitions: Collection<Document>,
@@ -48,6 +49,14 @@ pub struct MongoTriggerDefinitionStore {
 }
 
 impl MongoTriggerDefinitionStore {
+    pub(crate) fn with_initial_settings(
+        mut self,
+        initial: super::settings_defaults::InitialSettings,
+    ) -> Self {
+        self.initial_settings = initial;
+        self
+    }
+
     pub(crate) fn with_launch_admission_policy(
         mut self,
         policy: layer2_core::trigger_domain::LaunchAdmissionPolicy,
@@ -81,6 +90,7 @@ impl MongoTriggerDefinitionStore {
         .await?;
         let launch_data = launches::LaunchCollections::open(&database).await?;
         let store = Self {
+            initial_settings: Default::default(),
             empty_discovery: Default::default(),
             client: client.clone(),
             definitions: majority_collection(&database, TRIGGER_DEFINITIONS),

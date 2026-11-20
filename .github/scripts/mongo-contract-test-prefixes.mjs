@@ -103,6 +103,7 @@ export const requiredPrefixes = [
   'sandbox::agent_worker_tests::connection_failure_tests::capacity_cleanup_tests::',
   'store::admission_ceilings::mongo_tests::',
   'store::registration_capacity::mongo_tests::',
+  'store::settings_barrier::mongo_tests::',
   'auth::registration::mongo_tests::',
   'store::sandbox_admission_mongo_integration_tests::ceilings::',
   'store::sandbox_admission_mongo_integration_tests::pending_home_ceilings::',

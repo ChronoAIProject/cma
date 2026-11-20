@@ -88,6 +88,7 @@ async fn apply<F>(
     session: &mut mongodb::ClientSession,
     observe: &F,
     wait_for_prepared_lease: bool,
+    retrying: bool,
 ) -> Result<AdmissionReceipt, AdmissionError>
 where
     F: Fn() -> String + Sync,
@@ -129,22 +130,61 @@ where
             SandboxStoreError::AccountDeletionInProgress,
         ));
     }
+    if retrying
+        && admission.admission_cause() == layer2_core::admission::AdmissionCause::Fresh
+        && super::launch_home_capacity::precheck_fresh_home(
+            &store.budget_settings,
+            &store.sandbox_admissions,
+            &store.sandboxes,
+            store.global_sandbox_limit,
+            &admission.sandbox.owner,
+            session,
+        )
+        .await
+        .map_err(AdmissionError::Driver)?
+        .is_some()
+    {
+        return Err(AdmissionError::Domain(
+            SandboxStoreError::GlobalCapacityReached,
+        ));
+    }
+    let protected =
+        super::settings_barrier::acquire(&store.budget_settings, store.initial_settings, session)
+            .await
+            .map_err(|error| match error {
+                super::settings_barrier::Error::Driver(error) if is_duplicate_key(&error) => {
+                    AdmissionError::Retry(error)
+                }
+                super::settings_barrier::Error::Driver(error) => AdmissionError::Driver(error),
+                super::settings_barrier::Error::Unreadable => AdmissionError::Domain(
+                    SandboxStoreError::Budget(layer2_core::budget::BudgetError::Unavailable),
+                ),
+            })?;
+    let live_limit = admission.live_limit.min(
+        admission
+            .limit_class
+            .current_limit(protected.settings())
+            .map_err(AdmissionError::Domain)?,
+    );
     let live = store
         .sandboxes
         .count_documents(doc! { "owner": owner, "retired_at": Bson::Null })
         .session(&mut *session)
         .await
         .map_err(AdmissionError::Driver)?;
-    if live >= u64::from(admission.live_limit) {
+    if live >= u64::from(live_limit) {
         return Err(AdmissionError::Domain(SandboxStoreError::LimitReached {
-            limit: admission.live_limit,
+            limit: live_limit,
             live: u16::try_from(live).unwrap_or(u16::MAX),
         }));
     }
-    let ceilings = super::budget::require_open_with_ceilings(
-        store,
+    let ceilings = super::budget::require_open_protected(
+        &store.budget_settings,
+        &store.model_budget,
+        &protected,
         super::budget::now_seconds(),
         admission.admission_cause(),
+        store.platform_counter_shards,
         session,
     )
     .await?;

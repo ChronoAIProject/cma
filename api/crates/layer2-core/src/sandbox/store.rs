@@ -125,7 +125,7 @@ pub use agent_work_validation::{
 mod sandbox_admission;
 pub use sandbox_admission::{
     allocated_sandbox_name, valid_admission_fingerprint, SandboxAdmission, SandboxAdmissionName,
-    SandboxAdmissionReplay, SandboxAdmissionResult, SandboxAdmissionStore,
+    SandboxAdmissionReplay, SandboxAdmissionResult, SandboxAdmissionStore, SandboxLimitClass,
 };
 mod lifecycle_command;
 pub use lifecycle_command::*;
