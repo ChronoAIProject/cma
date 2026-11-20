@@ -69,10 +69,10 @@ it('retains an uncertain edit while switching channels and retries the original 
   await act(async () => {
     render(<EventGateway session={session} denied={vi.fn()} />);
   });
-  const channels = within(screen.getByRole('region', { name: 'Channels' }));
+  const channels = () => within(screen.getByRole('region', { name: 'Channels' }));
   const details = (name: string) => within(screen.getByRole('region', { name: `${name} details` }));
   async function openSettings(name: string) {
-    fireEvent.click(channels.getByRole('button', { name: new RegExp(`^${name}`) }));
+    fireEvent.click(channels().getByRole('button', { name: new RegExp(`^${name}`) }));
     const map = within(details(name).getByRole('region', { name: 'Delivery map' }));
     fireEvent.click(await map.findByRole('button', { name: new RegExp(`^Channel: ${name}`) }));
     return within(screen.getByRole('dialog', { name: 'Channel settings' }));
@@ -86,12 +86,10 @@ it('retains an uncertain edit while switching channels and retries the original 
   // The first request may have committed before its response was lost.
   // Refreshing its new version must preserve the original idempotent retry.
   fireEvent.click(alphaSettings.getByRole('button', { name: 'Close' }));
-  await clickAndSettle(channels.getByRole('button', { name: 'Refresh channels' }));
+  await clickAndSettle(channels().getByRole('button', { name: 'Refresh channels' }));
   expect(details('Renamed Alpha').getByRole('heading', { name: 'Renamed Alpha' })).toBeVisible();
   const betaSettings = await openSettings('Beta');
-  expect(
-    betaSettings.queryByRole('button', { name: 'Retry same request' }),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Retry same request' })).not.toBeInTheDocument();
   fireEvent.click(betaSettings.getByRole('button', { name: 'Close' }));
   const resumedSettings = await openSettings('Renamed Alpha');
   await clickAndSettle(resumedSettings.getByRole('button', { name: 'Retry same request' }));
