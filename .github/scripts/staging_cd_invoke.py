@@ -10,7 +10,7 @@ from pathlib import Path
 from staging_cd_admission import event_identity
 from staging_cd_applied import configured_group
 from staging_cd_checkout import checkout_path
-from staging_cd_clock import elapsed, remaining, TOTAL_SECONDS, TERMINATION_GRACE_SECONDS
+from staging_cd_clock import (CONTROLLER_TOTAL_ENV, TERMINATION_GRACE_SECONDS, controller_seconds, elapsed, remaining)
 from staging_cd_common import Refusal, matches, require
 from staging_cd_policy import selected as deploy_selection
 from staging_cd_process import ProcessTimeout, run as run_process
@@ -91,19 +91,21 @@ def private_script(env, run_command=subprocess.run):
 
 
 def execute(script, release_file, mode, started, env, *, timeout=None):
-    # SIGTERM at T+600 gives the controller up to 15 seconds to terminate/reap
-    # the independent helper process groups it owns. This is no new rollout time.
-    left = remaining(started, TOTAL_SECONDS)
+    # Reserve the same absolute clock for the child. Older controllers ignore
+    # this timing input and retain their shorter deadline.
+    limit = controller_seconds(mode)
+    child_env = {**env, CONTROLLER_TOTAL_ENV: str(limit)}
+    left = remaining(started, limit)
     wait = min(left, timeout) if timeout is not None else left
     args = [sys.executable, "-B", str(script), "--release-set", str(release_file),
             "--mode", mode, "--started-at", started]
     try:
-        code = run_process(args, env, wait, cwd=script.parents[2], grace_seconds=TERMINATION_GRACE_SECONDS)
+        code = run_process(args, child_env, wait, cwd=script.parents[2], grace_seconds=TERMINATION_GRACE_SECONDS)
     except ProcessTimeout as error:
         return 30 if error.returncode == 30 else 20
     except (subprocess.TimeoutExpired, KeyboardInterrupt):
         return 20
-    if elapsed(started) > TOTAL_SECONDS and code != 30:
+    if elapsed(started) > limit and code != 30:
         return 20
     if mode == "bootstrap" and code == 10:
         return 20
@@ -158,6 +160,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
                 "Deployment mode is invalid")
         require(mode != "bootstrap" or set(value["receipts"]) == {"am", "eg", "web"},
                 "Bootstrap requires all components")
+    limit = controller_seconds(mode)
     credentials = {key: env.get(key) for key in ("CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET")}
     for credential in credentials.values():
         masker(credential)
@@ -205,7 +208,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
             code = runner(script, path, mode, started, child_env)
             if code == 20 and on_unverified is not None:
                 verification = read_verification(path.with_name("verification-code"), request)
-            if code != 30 and elapsed(started) > TOTAL_SECONDS:
+            if code != 30 and elapsed(started) > limit:
                 # execute() also maps a late successful child to 20. Its code-0
                 # result cannot certify success and is not a malformed result.
                 if on_unverified is not None:
@@ -221,7 +224,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
                 private_reason = read_refusal(path.with_name("refusal-code"), request)
         except Exception:  # noqa: BLE001 - a launched controller may have mutated.
             code = 20
-    if elapsed(started) > TOTAL_SECONDS and code != 30:
+    if elapsed(started) > limit and code != 30:
         if on_unverified is not None:
             on_unverified(*(verification or ("phase-budget", "unreported")))
         return 20
