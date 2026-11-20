@@ -9,9 +9,9 @@ use std::time::Duration;
 // Outlast the release settle window plus drain, scheduling and image pull:
 // with 120 s each, a promotion onto a full node pool always gave up exactly
 // when older capacity first became eligible to drain, so every runtime
-// promotion restarted the Agent Manager once. The total stays inside the
-// default 300 s startup probe budget.
-const STARTUP_WARMUP_LIMIT: Duration = Duration::from_secs(super::RELEASE_SETTLE.as_secs() + 150);
+// promotion restarted the Agent Manager once. The 240 s total leaves time for
+// socket bind and sandbox initialization inside the default 300 s startup probe.
+const STARTUP_WARMUP_LIMIT: Duration = Duration::from_secs(super::RELEASE_SETTLE.as_secs() + 120);
 
 impl NativeWarmPools {
     /// Release preparation should prewarm this plan before the Recreate rollout.
@@ -20,14 +20,12 @@ impl NativeWarmPools {
     pub async fn await_default_ready(&self) -> Result<(), WarmPoolError> {
         // The supervisor that retires superseded pools starts only after this
         // gate, yet on a full node pool the new default schedules only once
-        // their spare capacity drains. Run the same lease-fenced reconciliation
-        // batches while waiting, so a starting pod frees the room it needs.
+        // their spare capacity drains. Retire superseded targets while waiting,
+        // so a starting pod frees the room it needs.
         let drain = async {
             loop {
-                for _ in 0..20 {
-                    if !matches!(self.reconcile_one().await, Ok(true)) {
-                        break;
-                    }
+                if self.retire_superseded().await.is_err() {
+                    tracing::warn!("superseded native pool retirement during startup will retry");
                 }
                 tokio::time::sleep(Duration::from_secs(5)).await;
             }
@@ -36,6 +34,28 @@ impl NativeWarmPools {
             result = self.await_default_plans_ready() => result,
             _ = drain => unreachable!("superseded pool draining never completes"),
         }
+    }
+
+    /// Claims only retiring or superseded targets, never a current plan: the
+    /// generic reconciler's unbound path would configure a freshly inserted
+    /// default at zero replicas and empty a pool that release preparation
+    /// prewarmed, which `step` deliberately adopts instead.
+    async fn retire_superseded(&self) -> Result<(), WarmPoolError> {
+        let Some(provider) = self.adapter.native_pools() else {
+            return Ok(());
+        };
+        for target in self.store.list().await? {
+            if target.retired || (!target.retiring && self.current_plan(&target)?) {
+                continue;
+            }
+            // Plans are immutable and retirement only advances, so a claimed
+            // superseded target is still superseded. A target an earlier pod
+            // marked retiring and deferred is resumed, not skipped.
+            if let Some(claimed) = self.store.claim_retirement(&target.id).await? {
+                self.retire_claimed(provider, claimed).await?;
+            }
+        }
+        Ok(())
     }
 
     async fn await_default_plans_ready(&self) -> Result<(), WarmPoolError> {

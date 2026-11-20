@@ -124,6 +124,11 @@ pub(crate) trait PoolTargetStore: Send + Sync {
     async fn claim_target(&self, _id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
         Err(WarmPoolError::Unavailable)
     }
+    /// Lease one target by id for retirement, including one already marked
+    /// retiring by an earlier deferred attempt. Never claims a retired target.
+    async fn claim_retirement(&self, _id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
+        Err(WarmPoolError::Unavailable)
+    }
     async fn bind(
         &self,
         target: &PoolTarget,
