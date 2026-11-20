@@ -56,14 +56,14 @@ pub(super) async fn bounds(
 #[utoipa::path(get, path = "/api/v1/profile-authoring/services", tag = "profile authoring",
     responses((status = 200, body = [AuthoringServiceView]),
     (status = 401, description = "not_authenticated", body = super::ProblemDocument, content_type = "application/problem+json"),
-    (status = 403, description = "forbidden", body = super::ProblemDocument, content_type = "application/problem+json"),
+    (status = 403, description = "Requires UseOwnSandboxes or ManageOwnProfiles for the caller’s own catalog", body = super::ProblemDocument, content_type = "application/problem+json"),
     (status = 503, description = "profile_services_unavailable", body = super::ProblemDocument, content_type = "application/problem+json")))]
 pub(super) async fn services(
     State(service): State<Arc<ProfileAuthoringService>>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     credential: Option<Extension<DelegatedCredential>>,
 ) -> Result<Json<Vec<AuthoringServiceView>>, AuthoringProblem> {
-    service.authorize(&caller)?;
+    service.authorize_catalog(&caller)?;
     let credential =
         credential.map(|Extension(value)| AuthoringCredential::new(value.into_value()));
     Ok(Json(
@@ -81,7 +81,7 @@ pub(super) async fn services(
     responses((status = 200, body = AuthoringSkillPage),
     (status = 400, description = "invalid_profile_authoring_query", body = super::ProblemDocument, content_type = "application/problem+json"),
     (status = 401, description = "not_authenticated", body = super::ProblemDocument, content_type = "application/problem+json"),
-    (status = 403, description = "forbidden", body = super::ProblemDocument, content_type = "application/problem+json"),
+    (status = 403, description = "Requires UseOwnSandboxes or ManageOwnProfiles for the caller’s own catalog", body = super::ProblemDocument, content_type = "application/problem+json"),
     (status = 503, description = "profile_skills_unavailable", body = super::ProblemDocument, content_type = "application/problem+json")))]
 pub(super) async fn skills(
     State(service): State<Arc<ProfileAuthoringService>>,
@@ -89,7 +89,7 @@ pub(super) async fn skills(
     credential: Option<Extension<DelegatedCredential>>,
     query: Result<Query<SkillCatalogParameters>, QueryRejection>,
 ) -> Result<Json<AuthoringSkillPage>, AuthoringProblem> {
-    service.authorize(&caller)?;
+    service.authorize_catalog(&caller)?;
     let credential =
         credential.map(|Extension(value)| AuthoringCredential::new(value.into_value()));
     let Query(query) = query.map_err(|_| ProfileAuthoringError::InvalidQuery)?;

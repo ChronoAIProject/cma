@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalUsageMetrics } from './usage-metrics.fixture';
 import { LocalUsageFilterOptions } from './usage-filter-options.fixture';
-import { metricRow } from '../src/usage/metrics/fixtures.test-support';
+import { asOf, metricRow } from '../src/usage/metrics/fixtures.test-support';
 
 for (const admin of [false, true]) {
   test(`LOCAL allocated sorting keeps API pagination and partial history for admin=${admin}`, async ({
@@ -413,3 +413,74 @@ for (const admin of [false, true]) {
     }
   }
 }
+
+test('LOCAL Usage count copy follows applied searches through one, zero and multiple results', async ({
+  page,
+  baseURL,
+}) => {
+  const boundary = new LocalStartup();
+  const metrics = new LocalUsageMetrics();
+  const rows = [
+    { ...metricRow, status: 'paused' as const },
+    { ...metricRow, sandbox_id: 'sbx-build', name: 'Build Sandbox', status: 'paused' as const },
+  ];
+  const matching = (search = '') =>
+    rows.filter((row) => row.name.toLowerCase().includes(search.toLowerCase()));
+  metrics.summaryCount = (query) => matching(query.filters?.search).length;
+  metrics.runningCount = () => 0;
+  await boundary.route(page, baseURL!);
+  await metrics.route(page);
+  await metrics.session(page);
+  await page.route('**/api/v1/usage/metrics/reports/*/sandboxes**', async (route) => {
+    const url = new URL(route.request().url());
+    const id = url.pathname.split('/reports/')[1]!.split('/')[0]!;
+    const report = metrics.reports.get(id)!;
+    expect(route.request().method()).toBe('GET');
+    expect(url.searchParams.get('limit')).toBe('50');
+    expect(url.searchParams.has('cursor')).toBe(false);
+    metrics.reads.push(url);
+    await route.fulfill({
+      json: {
+        report_id: id,
+        as_of: asOf,
+        items: matching(report.query.filters.search),
+        total_count: report.summary!.sandbox_count,
+        next: null,
+      },
+    });
+  });
+  await page.goto('/usage');
+  const surface = page.getByRole('dialog', { name: 'Your usage' });
+  const search = surface.getByRole('searchbox', { name: 'Usage Sandbox search' });
+  const chart = surface.getByRole('region', { name: 'Allocation comparison chart' });
+  await expect(surface.getByText('2 Sandboxes · 0 running', { exact: true })).toBeVisible();
+  for (const [query, count, label] of [
+    ['Research', 1, '1 Sandbox'],
+    ['', 2, '2 Sandboxes'],
+    ['empty', 0, '0 Sandboxes'],
+    ['Research', 1, '1 Sandbox'],
+  ] as const) {
+    await search.fill(query);
+    await surface.getByRole('button', { name: 'Apply usage filters' }).click();
+    await expect(surface.getByText(`${label} · 0 running`, { exact: true })).toBeVisible();
+    await expect(
+      surface.getByText(`${label} · 50 per page · page 1`, { exact: true }),
+    ).toBeVisible();
+    await expect(surface.getByRole('heading', { name: 'Sandboxes', exact: true })).toBeVisible();
+    if (count === 0) {
+      await expect(chart).toHaveCount(0);
+      await expect(surface.getByText('No Sandboxes match this selection.')).toBeVisible();
+    } else {
+      await expect(
+        chart.getByText(`${count} of ${label} on this page.`, { exact: true }),
+      ).toBeVisible();
+      await expect(chart.locator('.recharts-bar-rectangle')).toHaveCount(count);
+    }
+    await expect(surface.getByRole('button', { name: 'Next usage page' })).toBeDisabled();
+    expect(new URL(page.url()).searchParams.get('search') ?? '').toBe(query);
+  }
+  expect(metrics.creates.every(({ admin, input }) => !admin && !input.filters?.owner)).toBe(true);
+  expect(metrics.reads.filter((url) => url.pathname.endsWith('/series'))).toHaveLength(0);
+  expect(boundary.writes).toEqual([]);
+  expect(boundary.errors).toEqual([]);
+});
