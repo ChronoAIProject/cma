@@ -30,7 +30,8 @@ jobs:
       actions: read
       packages: write
     outputs:
-      artifact: ${{ steps.receipts.outputs.artifact-id || steps.receipts-retry.outputs.artifact-id }}
+      # A repeat overwrites the first attempt's artifact, so its id is the live one.
+      artifact: ${{ steps.receipts-retry.outputs.artifact-id || steps.receipts.outputs.artifact-id }}
       disposition: ${{ steps.publication.outputs.disposition }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09

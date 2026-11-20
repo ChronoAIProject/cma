@@ -438,7 +438,8 @@ class StagingWorkflowTest < Minitest::Test
       refute_empty uses
       uses.each { |use| assert_equal 'steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token ', use }
     end
-    assert_equal '${{ steps.receipts.outputs.artifact-id || steps.receipts-retry.outputs.artifact-id }}',
+    # An overwriting repeat replaces the first attempt's artifact, so its id wins.
+    assert_equal '${{ steps.receipts-retry.outputs.artifact-id || steps.receipts.outputs.artifact-id }}',
                  workflow('staging-release').dig('jobs', 'publish', 'outputs', 'artifact')
   end
 
