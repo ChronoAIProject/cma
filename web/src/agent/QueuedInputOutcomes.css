@@ -23,3 +23,8 @@
 .queued-input-outcomes__list [role='status'] {
   color: var(--dsw-alias-label-secondary);
 }
+.queued-input-outcomes__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

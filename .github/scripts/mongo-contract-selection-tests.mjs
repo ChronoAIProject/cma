@@ -118,7 +118,7 @@ for selection in all ordinary agent-lists agent-list-contracts agent-list-profil
   printf 'MODE %s\\n' "$selection"
   nextest_contracts list
  done
-`], {encoding: 'utf8'});
+`], {encoding: 'utf8', env: {...process.env, script_directory: fileURLToPath(new URL('.', import.meta.url))}});
   const modes = Object.fromEntries(captured.split('MODE ').filter(Boolean).map(block => {
     const [name, ...args] = block.trim().split('\n');
     return [name, args[args.indexOf('-E') + 1]];
@@ -168,7 +168,7 @@ for selection in ${modes.join(' ')}; do
   printf 'MODE %s\\n' "$selection"
   nextest_contracts list
 done
-`], {encoding: 'utf8'});
+`], {encoding: 'utf8', env: {...process.env, script_directory: fileURLToPath(new URL('.', import.meta.url))}});
   const filters = Object.fromEntries(captured.split('MODE ').filter(Boolean).map(block => {
     const [name, ...args] = block.trim().split('\n');
     return [name, args[args.indexOf('-E') + 1]];

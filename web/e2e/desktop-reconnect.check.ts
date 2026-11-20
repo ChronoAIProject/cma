@@ -12,6 +12,8 @@ for (const status of [429, 409]) {
     let discovery = 0;
     try {
       await page.setViewportSize({ width: 1600, height: 1000 });
+      // Keep decorative animation frames out of virtual retry time.
+      await page.emulateMedia({ reducedMotion: 'reduce' });
       const anchor = Date.now();
       await page.clock.install({ time: anchor - 60_000 });
       await page.clock.pauseAt(anchor);
@@ -46,6 +48,9 @@ for (const status of [429, 409]) {
         }),
       );
       await page.goto('/agents/agt_contract');
+      expect(
+        await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches),
+      ).toBe(true);
       await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
       const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
       await expect(desktop.getByRole('status')).toContainText('Reconnecting');
@@ -83,6 +88,8 @@ for (const status of [404, 503]) {
     let available = false;
     try {
       await page.setViewportSize({ width: status === 404 ? 390 : 1600, height: 1000 });
+      // Keep decorative animation frames out of virtual retry time.
+      await page.emulateMedia({ reducedMotion: 'reduce' });
       const anchor = Date.now();
       await page.clock.install({ time: anchor - 60_000 });
       await page.clock.pauseAt(anchor);
@@ -116,6 +123,9 @@ for (const status of [404, 503]) {
         }),
       );
       await page.goto('/agents/agt_contract');
+      expect(
+        await page.evaluate(() => matchMedia('(prefers-reduced-motion: reduce)').matches),
+      ).toBe(true);
       await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
       const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
       await expect.poll(() => discovery).toBe(1);
