@@ -130,6 +130,11 @@ test("all retained homes covered passes inventory only", () => {
   assert.equal(report.status, "PASS");
   assert.equal(report.restore_status, "NOT_RUN");
   assert.equal(report.qualification_status, "NOT_RUN");
+  assert.equal(report.catalog_export_status, "BLOCKED");
+  assert.equal(report.home_restore_status, "NOT_RUN");
+  assert.equal(report.full_dr_status, "NOT_RUN");
+  assert.equal(report.capture_cadence_scope, "latest_current_home_pair");
+  assert.equal(report.historical_cadence_status, "NOT_RUN");
   assert.equal(report.failure_domain_status, "NOT_RUN");
   assert.equal(report.cmek_recovery_status, "NOT_RUN");
   assert.equal(report.homes[0].capture_gap_seconds, 1800);
@@ -175,10 +180,23 @@ test("malformed, duplicate and future observations refuse without raw input in e
     (x) => x.home_backups.push(x.home_backups[0]),
     (x) => x.cloud.snapshots.push(x.cloud.snapshots[0]),
     (x) => delete x.sandboxes[0].record,
+    (x) => x.sandboxes[0].owner = "",
+    (x) => x.cloud.observed_at = "2026-11-16T00:54:59Z",
     (x) => x.now = "bad",
     (x) => x.cloud.observed_at = "2026-11-17T00:00:00Z",
     (x) => x.mode = "cloud",
   ]) { const input = fixture(); mutate(input); assert.throws(() => coverage(input)); }
+});
+
+test("missing catalog rows cannot hide a retained home with no scheduled capture", () => {
+  const input = fixture();
+  input.home_backups = [];
+  const report = coverage(input);
+  assert.equal(report.retained_homes, 2);
+  assert.equal(report.backed_homes, 0);
+  assert.equal(report.status, "FAIL");
+  assert.equal(report.catalog_export_status, "BLOCKED");
+  assert.ok(report.homes.every((home) => home.reasons.includes("catalog_missing")));
 });
 
 test("empty inventory never proves 100 percent coverage", () => {

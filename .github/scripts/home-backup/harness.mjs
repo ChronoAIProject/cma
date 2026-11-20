@@ -38,8 +38,10 @@ export async function runHarness(output, run = cargo) {
   const start = new Date().toISOString();
   const sha = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
   const dirty = spawnSync("git", ["status", "--porcelain"], { cwd: root, encoding: "utf8" });
-  const provenance = { source_sha: sha.status === 0 ? sha.stdout.trim() : null,
-    dirty_tree: dirty.status === 0 ? dirty.stdout.length > 0 : null,
+  requireThat(sha.status === 0 && /^[a-f0-9]{40}$/.test(sha.stdout.trim()) && dirty.status === 0,
+    "source_provenance_unavailable");
+  const provenance = { source_sha: sha.stdout.trim(),
+    dirty_tree: dirty.stdout.length > 0,
     image_digests: null };
   // If the parent is cancelled, retain the start receipt and streamed logs.
   write(join(output, "started.json"), JSON.stringify({ mode: "synthetic", start,
@@ -52,7 +54,7 @@ export async function runHarness(output, run = cargo) {
       ["sealed", ["test", "--locked", "-p", "cmaeg-core", "--test", "restore_evidence",
         "restore_evidence_sealed", "--", "--exact", "--nocapture"]],
     ]) {
-      const env = { ...process.env, HOME_BACKUP_EVIDENCE_KEYS: encoded.join(","),
+      const env = { ...process.env, CARGO_INCREMENTAL: "0", HOME_BACKUP_EVIDENCE_KEYS: encoded.join(","),
         HOME_BACKUP_EVIDENCE_SENTINEL: sentinel, HOME_BACKUP_EVIDENCE_PHASE: phase,
         HOME_BACKUP_EVIDENCE_ARTIFACTS: records };
       const log = `${phase}-${name}.log`;

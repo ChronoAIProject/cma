@@ -154,6 +154,8 @@ export function coverage(input) {
   const excluded = unmatched.filter((s) => attributed(s, ["seed", "unrelated"]));
   const unknown = unmatched.filter((s) => !attributed(s, ["cma-home-backup", "seed", "unrelated"])).map((s) => hash(s.handle));
   return { mode: input.mode, status: !homes.length ? "NOT_RUN" : backed === homes.length ? "PASS" : "FAIL",
+    catalog_export_status: "BLOCKED", capture_cadence_scope: "latest_current_home_pair",
+    historical_cadence_status: "NOT_RUN", home_restore_status: "NOT_RUN", full_dr_status: "NOT_RUN",
     restore_status: "NOT_RUN", qualification_status: "NOT_RUN", failure_domain_status: "NOT_RUN",
     cmek_recovery_status: "NOT_RUN", retained_homes: homes.length, backed_homes: backed,
     coverage: homes.length ? backed / homes.length : null, homes,
