@@ -105,7 +105,7 @@
     {"path": "tests/test_pooled_literals.py", "sha256": "87bc3cf0f1ac51ecbe3f11778c7b881912c3b69e0e6fa4e673ef19110c77ce86", "bytes": 8820, "lines": 158, "mode": "0o644"},
     {"path": "tests/test_portable_arch_trust.py", "sha256": "9cff533655ec4eb9b10cb86dbfbc6af47bd5275b4a2ba7e479235cd7eb1fb5e2", "bytes": 16072, "lines": 264, "mode": "0o644"},
     {"path": "tests/test_portable_mime_index.py", "sha256": "f2d08d6a90631de1426c9bf2b31ef791224ade849c3770c2206f6fbd69eddc5a", "bytes": 19648, "lines": 315, "mode": "0o644"},
-    {"path": "tests/test_portable_nested_members.py", "sha256": "624c64b1facb6df21d1df4cc48191b1a1884ca723450806d25562811eb8a7793", "bytes": 12160, "lines": 213, "mode": "0o644"},
+    {"path": "tests/test_portable_nested_members.py", "sha256": "81eb69f37d29bafbd7baebfa923157f2d6603c39c381e843c83a5768e5f5f664", "bytes": 12532, "lines": 218, "mode": "0o644"},
     {"path": "tests/test_portable_package_evidence.py", "sha256": "995592309d85d46547e5c022117f339bb87480341b192cfc1b06a83643e4371c", "bytes": 8778, "lines": 159, "mode": "0o644"},
     {"path": "tests/test_review_regressions.py", "sha256": "1a2e0e7312b71b7e9a7c3c49b9a9e093c4b86dd72c5102d039d61c91130d972c", "bytes": 8062, "lines": 199, "mode": "0o644"},
     {"path": "tests/test_reviewed_literals.py", "sha256": "8bbe46e364b9361f24484aa51fe4db27f9557035749d04e003d02988646eb4eb", "bytes": 17330, "lines": 286, "mode": "0o644"},

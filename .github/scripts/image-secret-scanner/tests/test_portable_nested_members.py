@@ -190,6 +190,11 @@ class PortableNestedMemberTests(unittest.TestCase):
             self.policy(dict(manifest, entries=[frames]))
             with self.assertRaises(ScanError):
                 self.policy(dict(manifest, entries=[*manifest["entries"], frames]))
+            # A member row may carry only the proofs the nested reader rechecks,
+            # even when the other proof's own validator would accept it.
+            member_frames = dict(manifest["entries"][0], digest_frames={}, matches=frames["matches"])
+            with self.assertRaises(ScanError):
+                self.policy(dict(manifest, entries=[member_frames]))
         # A CMA producer copy is proved by reserved inputs, never as a package-owned container.
         producer = copy.deepcopy(manifest)
         producer["packages"][0]["authority_type"] = "pinned-upstream"
