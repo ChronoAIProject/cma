@@ -41,6 +41,7 @@ export function useDesktopConnection(
   inputAllowed: boolean,
   runtimeReady: boolean,
   preparation?: DesktopPreparationScope,
+  runtimeVersion?: string,
 ) {
   const discovery = useCmaClient().resourceViews?.agents;
   const backoff = useRef({ agentId, failures: 0, at: 0 });
@@ -50,13 +51,14 @@ export function useDesktopConnection(
   const input = useRef<ReturnType<typeof desktopInput>>(undefined);
   const [phase, setPhase] = useState<DesktopPhase>(runtimeReady ? 'connecting' : 'waiting');
   const [error, setError] = useState('');
-  const [generation, setGeneration] = useState({ agentId, attempt, runtimeReady });
+  const [generation, setGeneration] = useState({ agentId, attempt, runtimeReady, runtimeVersion });
   if (
     generation.agentId !== agentId ||
     generation.attempt !== attempt ||
-    generation.runtimeReady !== runtimeReady
+    generation.runtimeReady !== runtimeReady ||
+    generation.runtimeVersion !== runtimeVersion
   ) {
-    setGeneration({ agentId, attempt, runtimeReady });
+    setGeneration({ agentId, attempt, runtimeReady, runtimeVersion });
     setPhase(runtimeReady ? 'connecting' : 'waiting');
     setError('');
   }
@@ -222,7 +224,7 @@ export function useDesktopConnection(
       release();
       document.removeEventListener('visibilitychange', visibility);
     };
-  }, [agentId, attempt, context, discovery, owner, runtimeReady]);
+  }, [agentId, attempt, context, discovery, owner, runtimeReady, runtimeVersion]);
 
   return { screen, phase, error };
 }

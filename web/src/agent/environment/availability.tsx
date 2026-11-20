@@ -10,8 +10,12 @@ export function useAgentEnvironment(
   agentId: string,
   active: boolean,
   subject?: string,
+  runtimeVersion?: string,
 ) {
-  const scope = useMemo(() => ({ client, agentId, subject }), [client, agentId, subject]);
+  const scope = useMemo(
+    () => ({ client, agentId, subject, runtimeVersion }),
+    [client, agentId, subject, runtimeVersion],
+  );
   const read = useMemo(
     () =>
       !active || !scope.client?.environment

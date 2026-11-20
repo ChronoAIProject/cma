@@ -32,6 +32,7 @@ import { AgentSandboxStatus } from './AgentSandboxStatus';
 import { agentOriginEntries, useAgentSource } from './source';
 import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
 import { QueuedMessages } from './QueuedMessages';
+import { QueuedInputOutcomes } from './QueuedInputOutcomes';
 import { agentAttachmentUploader } from './attachmentUpload';
 import { AgentAccessRequests } from './AccessRequestDialog';
 import type { CmaWebClient } from '../api/client';
@@ -385,6 +386,13 @@ export function AgentSurface({
           </OwnerMessageStream>
         </div>
         <div className="agent-surface__input">
+          {controller.queuedInputs ? (
+            <QueuedInputOutcomes
+              items={messageQueue.outcomes}
+              onRefresh={controller.queuedInputs.refresh}
+              error={controller.queuedInputs.error}
+            />
+          ) : null}
           {controller.queuedInputs === undefined ? null : (
             <QueuedMessages
               items={messageQueue.items}
@@ -396,14 +404,6 @@ export function AgentSurface({
               user={user}
             />
           )}
-          {controller.queuedInputs?.error ? (
-            <p className="queued-messages__error" role="status">
-              {controller.queuedInputs.error}{' '}
-              <Button size="sm" onClick={controller.queuedInputs.refresh}>
-                Refresh queue
-              </Button>
-            </p>
-          ) : null}
           <Composer
             editorRef={editing.editorRef}
             suggestionScope={

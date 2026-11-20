@@ -7,6 +7,7 @@ import { AgentSurface } from './AgentSurface';
 import { useAgentController } from './controller';
 import { accepted, binding, harness, json, queuedPage } from './transport/controller.fixture';
 import { agentClient } from '../test/agent';
+import { status } from './transport/queuedReconciliation.fixture';
 
 const connected: ConnectionReport = {
   owner: 'alice',
@@ -248,8 +249,8 @@ it('retains two separately accepted identical messages until their own command a
   expect(screen.getAllByText('Sent')).toHaveLength(1);
   view.unmount();
   render(<Agent />);
-  // The last accepted request remains visible from its exact journal receipt after reload.
-  expect(await screen.findByText('Sent')).toBeInTheDocument();
+  // The last accepted request stays visible while its current status is unavailable.
+  await screen.findAllByText('Message status could not be confirmed. Refresh status.');
   expect(h.post).toHaveBeenCalledTimes(2);
   const next = deferred<Response>();
   h.post.mockReturnValueOnce(next.promise);
@@ -396,4 +397,31 @@ it('keeps a legacy ambiguous submission unconfirmed with its draft intact and no
   expect(screen.queryByText('Not sent')).not.toBeInTheDocument();
   expect(field).toHaveValue('Legacy input\nwith a second line');
   expect(runAgent).toHaveBeenCalledOnce();
+});
+
+it('replaces a discovered then absent admitted message with its expiry explanation through the real controller', async () => {
+  const { h } = await setup();
+  h.listQueued.mockImplementation(async () => json(queuedPage('Immediate local message')));
+  click();
+  await screen.findByText('Sent');
+  await waitFor(() => expect(h.listQueued.mock.calls.length).toBeGreaterThan(1));
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  h.listQueued.mockImplementation(async () =>
+    json({ object: 'cma.agent.queued_inputs', agent_id: 'agt_1', data: [], next_after: null }),
+  );
+  const originalFetch = h.fetch.getMockImplementation()!;
+  h.fetch.mockImplementation((url, init) =>
+    String(url).endsWith('/commands/cmd_1')
+      ? Promise.resolve(json(status(1, 'expired')))
+      : originalFetch(url, init),
+  );
+  fireEvent(window, new Event('focus'));
+  await screen.findByText(
+    'Message expired before it started. Submit it again if still needed.',
+    {},
+    { timeout: 3000 },
+  );
+  expect(bubbles('Immediate local message')).toHaveLength(1);
+  expect(screen.queryByText('Sent')).not.toBeInTheDocument();
+  expect(h.post).toHaveBeenCalledOnce();
 });
