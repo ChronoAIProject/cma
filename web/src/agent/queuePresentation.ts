@@ -49,20 +49,20 @@ export function queuePresentation(
         item.commandId !== active &&
         !delivered.has(item.commandId)),
   );
-  const normal = new Set(
-    rows
-      .filter((item) => !item.needsRecovery && ordinary.has(item.commandId))
-      .map((item) => item.commandId),
+  const outcomes = (queue?.outcomes ?? []).filter(
+    (outcome) =>
+      !items.some((item) => item.commandId === outcome.commandId) &&
+      !recovering.has(outcome.commandId) &&
+      ((outcome.terminal && outcome.kind !== 'completed') ||
+        (!delivered.has(outcome.commandId) &&
+          (outcome.commandId !== active || outcome.input === undefined) &&
+          !ordinary.has(outcome.commandId))),
   );
+  const represented = new Set([...items, ...outcomes].map((entry) => entry.commandId));
   const visible = messages
     .filter((message) => {
       const id = command(message);
-      return (
-        id === undefined ||
-        !queue?.managedCommandIds.has(id) ||
-        normal.has(id) ||
-        (id === active && !recovering.has(id))
-      );
+      return id === undefined || (!represented.has(id) && !delivered.has(id));
     })
     .map((message) =>
       command(message) !== undefined && command(message) === active
@@ -70,9 +70,13 @@ export function queuePresentation(
         : message,
     );
   // A restored queue entry can start before its durable user-message frame arrives.
-  const starting = rows.find((item) => item.commandId === active && !item.needsRecovery);
+  const starting = [...rows, ...(queue?.outcomes ?? [])].find(
+    (item) =>
+      item.commandId === active && item.input !== undefined && !recovering.has(item.commandId),
+  );
   if (
     starting &&
+    !represented.has(starting.commandId) &&
     (pendingOrdinary === undefined ||
       pendingOrdinary.queueBeforeSend!.includes(starting.commandId)) &&
     !delivered.has(active) &&
@@ -80,10 +84,10 @@ export function queuePresentation(
   )
     visible.push({
       id: `starting:${starting.commandId}`,
-      content: starting.input,
+      content: starting.input!,
       state: 'accepted',
       queued: false,
       receipt: { commandId: starting.commandId, responseId: starting.responseId },
     });
-  return { items, messages: visible };
+  return { items, messages: visible, outcomes };
 }

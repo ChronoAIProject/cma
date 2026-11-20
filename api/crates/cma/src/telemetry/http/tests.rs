@@ -127,6 +127,10 @@ async fn frame_wrapper_preserves_trailers() {
         route: "/frames".into(),
         method: "GET",
         sse: false,
+        contract_observed: false,
+        contract: None,
+        consumer: "unknown",
+        protocol: "other",
         started: Instant::now(),
         finished: false,
     };
@@ -215,7 +219,8 @@ async fn trusted_auth_attribution_reaches_outer_metrics_and_forged_headers_do_no
     let app = Router::new()
         .route(
             "/api/v2/responses/{id}",
-            get(|| async { "ok" }).layer(axum::middleware::from_fn(verified)),
+            get(|| async { ([(header::CONTENT_TYPE, "text/event-stream")], Body::empty()) })
+                .layer(axum::middleware::from_fn(verified)),
         )
         .route(
             "/api/v1/defaults",
@@ -237,6 +242,53 @@ async fn trusted_auth_attribution_reaches_outer_metrics_and_forged_headers_do_no
     let text = handle.render();
     assert!(text.contains("route=\"/api/v2/responses/{id}\",method=\"GET\",status=\"200\",consumer=\"nyxid\",protocol=\"responses\""));
     assert!(text.contains("route=\"/api/v1/defaults\",method=\"GET\",status=\"401\",consumer=\"unknown\",protocol=\"rest\""));
+    assert!(text.contains("cma_sse_contract_opened_total{stream_kind=\"unclassified_stream\",consumer=\"nyxid\",protocol=\"responses\"} 1"));
+    assert!(text.contains("cma_sse_contract_closed_total{stream_kind=\"unclassified_stream\",consumer=\"nyxid\",protocol=\"responses\",reason=\"unclassified_stream\"} 1"));
     assert!(!text.contains("consumer=\"internal\""));
     assert!(!text.contains("private-id"));
 }
+
+#[tokio::test]
+async fn established_sse_has_one_contract_open_and_close() {
+    use axum::response::{sse::Event, Sse};
+    let recorder = recorder();
+    let handle = recorder.handle();
+    let _recording = metrics::set_default_local_recorder(&recorder);
+    let app = Router::new()
+        .route(
+            "/api/v1/responses",
+            get(|| async {
+                Sse::new(stream::iter([Ok::<_, std::convert::Infallible>(
+                    Event::default().event("response.completed").data("{}"),
+                )]))
+            }),
+        )
+        .layer(axum::middleware::from_fn(observe));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .uri("/api/v1/responses")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(response.into_body(), 1024)
+        .await
+        .unwrap();
+    assert!(std::str::from_utf8(&bytes)
+        .unwrap()
+        .contains("response.completed"));
+    let text = handle.render();
+    assert!(
+        text.contains("cma_sse_contract_opened_total{stream_kind=\"unclassified_stream\",consumer=\"unknown\",protocol=\"responses\"} 1"),
+        "missing established SSE denominator: {text}"
+    );
+    assert!(
+        text.contains("cma_sse_contract_closed_total{stream_kind=\"unclassified_stream\",consumer=\"unknown\",protocol=\"responses\",reason=\"unclassified_stream\"} 1"),
+        "missing semantic close: {text}"
+    );
+}
+
+#[path = "contract_tests.rs"]
+mod contract_tests;

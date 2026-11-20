@@ -99,6 +99,9 @@ for (const theme of ['light', 'dark']) {
     await expect(
       page.getByRole('button', { name: 'Owner: Alex Chen', exact: true }),
     ).toHaveAttribute('title', 'Alex Chen');
+    // Cache-reuse assertions below need a committed initial report. Applying
+    // during its status read can cancel that read and require one on return.
+    await displayedReport(initialReport.id);
     const ownerReport = await apply();
     expect(ownerReport.input.filters?.owner).toBe(filterOwners[0]!.value);
     await page.screenshot({

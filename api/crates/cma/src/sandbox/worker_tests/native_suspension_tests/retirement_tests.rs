@@ -1,6 +1,6 @@
 use super::*;
 
-async fn failed_revive() -> (Fixture, Sandbox, layer2_core::sandbox::Agent, SystemTime) {
+pub(super) async fn failed_revive() -> (Fixture, Sandbox, layer2_core::sandbox::Agent, SystemTime) {
     let mut fixture = Fixture::new().await;
     let created = fixture.harness.create().await;
     let mut now = start_time(&created);

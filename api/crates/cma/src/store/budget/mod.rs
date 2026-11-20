@@ -86,8 +86,9 @@ async fn save<T: Serialize>(
 /// not contend on implicit collection creation or the singleton's first insert.
 pub(super) async fn initialize_settings(
     store: &MongoSandboxStore,
+    initial_settings: super::settings_defaults::InitialSettings,
 ) -> Result<(), layer2_core::StoreError> {
-    let settings = mongodb::bson::serialize_to_bson(&layer2_core::PlatformSettings::default())
+    let settings = mongodb::bson::serialize_to_bson(&initial_settings.platform())
         .map_err(|_| layer2_core::StoreError::Malformed("default budget settings".into()))?;
     store
         .budget_settings
