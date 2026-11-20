@@ -9,10 +9,12 @@ import tarfile
 import unittest
 from unittest.mock import patch
 
-from image_secrets import key_marker_view, native_json_key_view
+from image_secrets import derived_payload, key_marker_view, native_json_key_view, package_receipt
 from image_secrets.common import digest_bytes
-from image_secrets.gate import KEY_MARKER_VIEW_ADVISORY, KEY_MARKER_VIEW_RULE
+from image_secrets.gate import FORMAT_MARKER_ADVISORY, KEY_MARKER_VIEW_ADVISORY, KEY_MARKER_VIEW_RULE
+from image_secrets.package_evidence import OMARCHY_PORTABLE_SCHEMA
 from tests import fixtures
+from tests import test_derived_payload as derived_tests
 from tests import test_key_marker_view as key_tests
 from tests import test_package_policy as packages
 
@@ -57,6 +59,8 @@ class NativeJSONKeyViewTests(unittest.TestCase):
     detector_scan = packages.PackageTests.detector_scan
     manifest = packages.PackageTests.manifest
     refused = key_tests.KeyMarkerViewTests.refused
+    publish = derived_tests.DerivedPayloadTests.publish
+    binding = derived_tests.DerivedPayloadTests.binding
 
     def setUp(self):
         packages.PackageTests.setUp(self)
@@ -76,31 +80,39 @@ class NativeJSONKeyViewTests(unittest.TestCase):
         environment.start()
         self.addCleanup(environment.stop)
 
-    def archive_fixture(self, contents):
-        layer = fixtures.tar_bytes([(FILE, contents), ("etc/machine-id", b""),
+    def archive_fixture(self, contents, path=FILE):
+        layer = fixtures.tar_bytes([(path, contents), ("etc/machine-id", b""),
                                     ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))])
         archive = self.root / "native-records.tar"
         fixtures.docker_archive(archive, [layer])
         return archive, layer
 
-    def fixture(self, *, suffix=SUFFIX, middle=MIDDLE):
+    def fixture(self, *, suffix=SUFFIX, middle=MIDDLE, prefix=PREFIX, path=FILE):
         chunks = (key_tests.BEGIN, middle, key_tests.END)
         original = b"".join(chunks)
         normalized = native_json_key_view.render(original)
-        contents = PREFIX + original + suffix
-        archive, layer = self.archive_fixture(contents)
+        contents = prefix + original + suffix
+        archive, layer = self.archive_fixture(contents, path)
         report = self.detector_scan(archive, key_marker_view.SCOPE)
         [image] = report["inventory"]["images"]
         candidates = [row for row in report["blocking_findings"] if row["rule"] == KEY_MARKER_VIEW_RULE
                       and row["candidate_sha256"] == digest_bytes(normalized)]
         self.assertTrue(candidates, "the fixture detector must report the exact rendered marker")
         finding = min(candidates, key=lambda row: row["line"])
-        evidence = self.manifest(fixtures.tar_bytes([(FILE, contents)]), layer, file=FILE, component=key_marker_view.SCOPE)
-        evidence["packages"][0].update(name="file", authority_type="arch-signature", architecture="x86_64")
+        generated = path != FILE
+        source_path = derived_payload.MIME_SOURCE if generated else path
+        source = b"<mime-test-catalog/>\n" if generated else contents
+        evidence = self.manifest(fixtures.tar_bytes([(source_path, source)]), layer, file=source_path,
+                                 component=key_marker_view.SCOPE)
+        evidence["packages"][0].update(name="shared-mime-info" if generated else "file",
+                                       authority_type="arch-signature", architecture="x86_64")
         [entry] = evidence["entries"]
+        entry["path"] = path
+        if generated:
+            self.binding(entry, report, finding, "mime-index", contents)
         proof = {"finding_id": finding["finding_id"],
-                 "original": {"offset": len(PREFIX), "size": len(original), "sha256": digest_bytes(original)},
-                 "detector": {"offset": len(native_json_key_view.render(PREFIX)), "size": len(normalized),
+                 "original": {"offset": len(prefix), "size": len(original), "sha256": digest_bytes(original)},
+                 "detector": {"offset": len(native_json_key_view.render(prefix)), "size": len(normalized),
                               "sha256": digest_bytes(normalized)},
                  "parts": [{"kind": kind, "size": len(chunk), "sha256": digest_bytes(chunk),
                             "source": "fixtures/magic", "line": line, "proof_sha256": digest_bytes(chunk)}
@@ -137,6 +149,116 @@ class NativeJSONKeyViewTests(unittest.TestCase):
         self.assertEqual(receipt["native_json_key_view"]["original"], proof["original"])
         self.assertEqual(receipt["native_json_key_view"]["detector"], proof["detector"])
         self.assertEqual([item["rule"] for item in cold["blocking_findings"]], ["content.private-key-header"])
+
+    def complete_catalog(self, manifest, raw, prefix, text, *, view="native_json_key_view"):
+        [row] = manifest["entries"]
+        [marker] = [item for item in raw["blocking_findings"] if item["rule"] == "content.private-key-header"]
+        binding = row[view]
+        row["reviewed_literals"] = {key: binding[key] for key in ("archive_sha256", "image_config", "image_manifest")}
+        row["reviewed_literals"]["findings"] = [{
+            "rule": marker["rule"], "finding_id": marker["finding_id"],
+            "spans": [{"offset": len(prefix), "size": len(key_tests.BEGIN), "sha256": digest_bytes(key_tests.BEGIN),
+                       "context": {"offset": 0, "size": len(text), "sha256": digest_bytes(text)},
+                       "source": {"path": "fixtures/magic", "line": 1, "sha256": digest_bytes(text)}}],
+        }]
+        row["matches"].append({"rule": marker["rule"], "candidate_sha256": None, "line": None,
+                               "explanation": FORMAT_MARKER_ADVISORY, "proof_sha256": digest_bytes(text)})
+        if "derived_payload" in row:
+            row["derived_payload"]["findings"].append(marker["finding_id"])
+
+    def test_final_gate_verifies_native_view_when_every_finding_is_resolved(self):
+        archive, manifest, raw, _ = self.fixture()
+        text = PREFIX + key_tests.BEGIN + MIDDLE + key_tests.END + SUFFIX
+        self.complete_catalog(manifest, raw, PREFIX, text)
+        verified = self.publish(archive, manifest, "native-publish")
+        self.assertEqual(verified["findings"], raw["findings"])
+        self.assertEqual(verified["blocking_findings"], [])
+        self.assertEqual({row["classification"] for row in verified["package_evidence"]["entries"]},
+                         {KEY_MARKER_VIEW_ADVISORY, FORMAT_MARKER_ADVISORY})
+        section = verified["package_evidence"]
+        [checked] = [row for row in section["entries"] if "native_json_key_view" in row]
+        checked["key_marker_view"] = copy.deepcopy(checked["native_json_key_view"])
+        verified["policy"]["package_evidence_sha256"] = package_receipt.digest(section)
+        with patch.object(sys, "path", [str(key_tests.SCRIPTS), *sys.path]):
+            import image_secret_gate as gate
+
+            with self.assertRaises(gate.ScanRefusal):
+                gate.validate_receipt(
+                    verified, verified["archive_sha256"], "credential", None,
+                    component=key_marker_view.SCOPE, package_section=section)
+
+    def test_final_gate_verifies_generated_mime_input_and_output_separately(self):
+        path = "usr/share/mime/magic"
+        suffix = b'"/>\n'
+        label = b'\xff<end="' + b"." * 100
+        size = len(label) + len(key_tests.END) + len(suffix) - 1
+        primary = derived_tests.mime_magic(b"application/pkcs8", key_tests.BEGIN)
+        prefix = primary[:-len(key_tests.BEGIN) - 1]
+        middle = b"\n>0=" + size.to_bytes(2, "big") + label
+        text = prefix + key_tests.BEGIN + middle + key_tests.END + suffix
+        archive, manifest, raw, _ = self.fixture(path=path, prefix=prefix, middle=middle, suffix=suffix)
+        self.complete_catalog(manifest, raw, prefix, text)
+        verified = self.publish(archive, manifest, "generated-publish")
+        [result] = [row for row in verified["package_evidence"]["entries"]
+                    if row["classification"] == KEY_MARKER_VIEW_ADVISORY]
+        self.assertNotEqual(result["package_member"]["sha256"], result["outer_file_sha256"])
+        self.assertEqual(result["package_member"]["sha256"], result["derived_payload"]["input_sha256"])
+        self.assertEqual(result["outer_file_sha256"], result["derived_payload"]["output_sha256"])
+        for field in ("input_sha256", "output_sha256"):
+            changed = copy.deepcopy(manifest)
+            [row] = changed["entries"]
+            row["derived_payload"][field] = digest_bytes(field.encode())
+            self.assertIsNone(self.refused(archive, changed, "changed-" + field, classification="content_refused"))
+
+    def test_portable_native_markers_use_current_pacman_owner_and_layer(self):
+        cases = (
+            ("key_marker_view", key_tests.PREFIX, key_tests.RECORDS, key_tests.SUFFIX,
+             key_tests.KeyMarkerViewTests.fixture),
+            ("native_json_key_view", PREFIX, MIDDLE, SUFFIX, NativeJSONKeyViewTests.fixture),
+        )
+        for view, prefix, middle, suffix, fixture in cases:
+            with self.subTest(view=view):
+                archive, catalog, raw, _ = fixture(self)
+                contents = prefix + key_tests.BEGIN + middle + key_tests.END + suffix
+                self.complete_catalog(catalog, raw, prefix, contents, view=view)
+                [row] = catalog["entries"]
+                [package] = catalog["packages"]
+                name, version = package["name"], package["version"]
+                path = row["path"]
+                mtree = f"#mtree\n./{path} type=file sha256digest={digest_bytes(contents)}\n".encode()
+                catalog["schema"] = OMARCHY_PORTABLE_SCHEMA
+                row.update(occurrences=1, ownership={"mtree_sha256": digest_bytes(mtree)})
+                for field in ("layer", "diff_id", "entry"):
+                    del row[field]
+                for field in (view, "reviewed_literals"):
+                    proof = row[field]
+                    for key in ("archive_sha256", "image_config", "image_manifest"):
+                        del proof[key]
+                    for entry in proof["findings" if field == "reviewed_literals" else "matches"]:
+                        del entry["finding_id"]
+
+                def repack(installed_version):
+                    root = "var/lib/pacman/local"
+                    label = f"{root}/{name}-{installed_version}"
+                    desc = f"%NAME%\n{name}\n\n%VERSION%\n{installed_version}\n\n%ARCH%\nx86_64\n".encode()
+                    entries = [(f"{root}/ALPM_DB_VERSION", b"9\n"), (f"{label}/desc", desc),
+                               (f"{label}/files", f"%FILES%\n{path}\n".encode()), (f"{label}/mtree", mtree),
+                               ("etc/machine-id", b""), ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id")),
+                               (path, contents)]
+                    fixtures.oci_archive(archive, [fixtures.tar_bytes([("padding", b"ordinary")]),
+                                                   fixtures.tar_bytes(entries)])
+
+                repack(version)
+                result = self.publish(archive, catalog, view)
+                self.assertNotEqual(result["archive_sha256"], raw["archive_sha256"])
+                [receipt] = [entry for entry in result["package_evidence"]["entries"] if view in entry]
+                self.assertEqual(receipt["layer"], 1)
+                self.assertEqual(receipt[view]["archive_sha256"], result["archive_sha256"])
+                self.assertEqual(receipt[view]["finding_id"], receipt["finding_id"])
+                repack("2.0" if version != "2.0" else "3.0")
+                denied = self.refused(archive, catalog, view + "-different-owner")
+                self.assertEqual(denied["package_evidence"]["entries"], [])
+                self.assertEqual(len(denied["blocking_findings"]), 2)
 
     def test_changed_or_uncovered_ranges_keep_each_raw_finding(self):
         archive, evidence, raw, _ = self.fixture()

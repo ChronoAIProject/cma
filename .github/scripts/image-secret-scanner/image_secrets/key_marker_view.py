@@ -8,7 +8,7 @@ from .common import digest_bytes
 from .gate import KEY_MARKER_VIEW_ADVISORY, KEY_MARKER_VIEW_RULE, valid_digest
 from .key_material import binary_key_spans
 from .openpgp import secret_key_stream
-from .package_evidence import LAYER_ID, fields, matches, normalized, ordinal, require
+from .package_evidence import fields, image_binding, normalized, ordinal, require
 
 SCOPE = "runtime-omarchy"
 PATHS = {"file": "usr/share/file/misc/magic.mgc",
@@ -21,22 +21,21 @@ FRAME = {"begin": re.compile(MARKER_TYPE.replace(b"{}", b"BEGIN"), re.I),
 POSSIBLE_ARMOR = re.compile(rb"[A-Za-z0-9+/=_-]+")
 
 
-def validate(row, package):
+def validate(row, package, *, portable=False):
     proof = row["key_marker_view"]
-    fields(proof, {"archive_sha256", "image_config", "image_manifest", "matches"})
+    image_binding(proof, {"matches"}, portable=portable)
     require(row["component"] == SCOPE and row["member"] is None and package["authority_type"] == "arch-signature"
-            and row["path"] == PATHS.get(package["name"])
-            and valid_digest(proof["archive_sha256"]) and matches(LAYER_ID, proof["image_config"])
-            and (proof["image_manifest"] is None or matches(LAYER_ID, proof["image_manifest"])))
-    return validate_matches(proof["matches"])
+            and row["path"] == PATHS.get(package["name"]))
+    return validate_matches(proof["matches"], portable=portable)
 
 
-def validate_matches(entries, *, normalize=False, max_parts=128):
+def validate_matches(entries, *, normalize=False, max_parts=128, portable=False):
     require(isinstance(entries, list) and 0 < len(entries) <= 8)
     candidates = {}
     for item in entries:
-        fields(item, {"finding_id", "original", "detector", "parts"})
-        require(valid_digest(item["finding_id"]))
+        span_fields = {"original", "detector", "parts"}
+        fields(item, span_fields if portable else span_fields | {"finding_id"})
+        require(portable or valid_digest(item["finding_id"]))
         original, detector = item["original"], item["detector"]
         for span in (original, detector):
             fields(span, {"offset", "size", "sha256"})

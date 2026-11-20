@@ -3,18 +3,19 @@
 from . import library_vectors
 from .common import digest_bytes
 from .gate import DISTRIBUTION_ADVISORY, DISTRIBUTION_RULE, valid_digest
-from .package_evidence import LAYER_ID, fields, matches, normalized, ordinal, require
+from .package_evidence import fields, image_binding, matches, normalized, ordinal, require
 
 
-def validate(row, package):
+def validate(row, package, *, portable=False):
     proof = row["distribution_config"]
-    fields(proof, {"archive_sha256", "image_config", "image_manifest", "finding_id", "database",
-                   "source", "span", "provenance_sha256"})
+    image_binding(proof, {"database", "source", "span", "provenance_sha256"}, portable=portable,
+                  finding_fields={"finding_id"})
     require(row["member"] is None and matches(library_vectors.EXECUTABLE, row["path"])
-            and all(valid_digest(proof[k]) for k in ("archive_sha256", "finding_id", "provenance_sha256"))
-            and matches(LAYER_ID, proof["image_config"])
-            and (proof["image_manifest"] is None or matches(LAYER_ID, proof["image_manifest"])))
-    library_vectors.validate_database(row, package, proof["database"])
+            and valid_digest(proof["provenance_sha256"]) and (portable or valid_digest(proof["finding_id"])))
+    library_vectors.validate_database(row, package, proof["database"], portable=portable)
+    if portable:
+        require(package["authority_type"] == "arch-signature"
+                and proof["database"]["sha256"] == row["ownership"]["mtree_sha256"])
     source = proof["source"]
     fields(source, {"path", "definition_line", "build_argument_line", "published_sha256", "build_recipe_sha256"})
     require(normalized(source["path"]) == source["path"]

@@ -72,13 +72,16 @@ def portable_database(finding, expected, db, database_checks, diff_id):
     return dict(db, layer=finding["layer"], diff_id=diff_id, entry=entries[0])
 
 
+def occurrence_database(finding, expected, db, database_checks, *, portable, diff_id):
+    if portable:
+        return portable_database(finding, expected, db, database_checks, diff_id)
+    return db if checked_database(finding, expected, db, database_checks) else None
+
+
 def checked_vectors(finding, expected, verified, database_checks, *, portable, diff_id):
     proof = expected["self_test"]
-    db = proof["database"]
-    if portable:
-        db = portable_database(finding, expected, db, database_checks, diff_id)
-    elif not checked_database(finding, expected, db, database_checks):
-        return None
+    db = occurrence_database(finding, expected, proof["database"], database_checks,
+                             portable=portable, diff_id=diff_id)
     if db is None:
         return None
     spans = verified.get(finding["rule"], [])
@@ -178,17 +181,18 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
                     extra[key] = expected[key]
     if explanation == KEY_MARKER_VIEW_ADVISORY:
         candidate = finding.get("candidate_sha256")
-        for key in ("key_marker_view", "native_json_key_view"):
+        for key in ("key_marker_view", "native_json_key_view", "elf_nul_key_view"):
             claim = verified.get(key, {}).get(candidate)
             if claim is not None:
                 break
-        if claim is None or claim["finding_id"] != finding_id:
+        if claim is None or not portable and claim["finding_id"] != finding_id:
             return None
         proof = expected[key]
-        if not matches_image(proof, report, config, image):
+        if not portable and not matches_image(proof, report, config, image):
             return None
         classification = explanation
-        extra[key] = {**claim, **{field: value for field, value in proof.items() if field != "matches"}}
+        extra[key] = {**claim, **{field: value for field, value in proof.items() if field != "matches"},
+                      **image_identity, "finding_id": finding_id}
     if explanation == GO_CLI_ADVISORY:
         claim = verified.get("go_cli_strings", {}).get((finding["rule"], finding.get("candidate_sha256")))
         if claim is None or not portable and claim["finding_id"] != finding_id:
@@ -216,12 +220,16 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         extra[proof_key] = vector_proof
     elif explanation == DISTRIBUTION_ADVISORY:
         distribution = expected["distribution_config"]
-        if (not verified.get(DISTRIBUTION_ADVISORY) or not matches_image(distribution, report, config, image)
-                or distribution["finding_id"] != finding["finding_id"]
-                or not checked_database(finding, expected, distribution["database"], database_checks)):
+        if (not verified.get(DISTRIBUTION_ADVISORY) or not portable
+                and (not matches_image(distribution, report, config, image) or distribution["finding_id"] != finding_id)):
+            return None
+        db = occurrence_database(finding, expected, distribution["database"], database_checks,
+                                 portable=portable, diff_id=diff_id)
+        if db is None:
             return None
         classification = explanation
-        extra["distribution_config"] = {"public_path": outer_path, **distribution}
+        extra["distribution_config"] = {**distribution, **image_identity, "public_path": outer_path,
+                                        "finding_id": finding_id, "database": db}
     elif explanation == DIGEST_FRAME_ADVISORY:
         frame_proof = verified.get(DIGEST_FRAME_ADVISORY)
         if frame_proof is None:
@@ -310,8 +318,8 @@ def build(archive, output, report, component, evidence, *, source=None):
     require(report["archive_sha256"] == digest_file(archive))
     vector_checks = {}
     database_checks = {}
-    portable = (PortableOccurrences(evidence.portable_entries, evidence.packages, source)
-                if component == "runtime" and evidence.portable_entries else None)
+    portable = (PortableOccurrences(evidence.portable_entries, evidence.packages, source, component)
+                if component == evidence.portable_component and evidence.portable_entries else None)
     with tempfile.TemporaryDirectory(prefix="package-occurrences-", dir=output) as tmp:
         observations = collect(archive, Path(tmp), report, component, evidence,
                                vector_checks=vector_checks, database_checks=database_checks, portable=portable)
