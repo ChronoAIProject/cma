@@ -4,7 +4,7 @@ import subprocess
 
 from staging_cd_common import Refusal, matches, require
 from staging_cd_compatibility import GROUP
-from staging_cd_versions import DEPLOYABLES, FINISH_STARTED_BUILDS, REPOSITORY, version_tuple
+from staging_cd_versions import DEPLOYABLES, REPOSITORY, version_tuple
 
 
 SUPERSEDED = "Automatic deployment version has been superseded"
@@ -48,12 +48,10 @@ def require_current_versions(receipts, *, runner=subprocess.run):
 
 
 def require_version_refs(expected, *, runner=subprocess.run, missing="Expected version is absent from component inventory"):
-    # A final tag can predate a newer pending reservation. Reading both from
-    # one advertisement also covers a finalizer concurrently removing pending.
-    # A lane that finishes started builds is fenced only by a higher final.
+    # Every lane finishes a started build, so a successor's pending reservation
+    # never withholds a final. Only a higher final in the same advertisement does.
     require(bool(expected) and expected.keys() <= DEPLOYABLES.keys(), "Unknown release component")
-    prefixes = {f"refs/tags/{DEPLOYABLES[key]}/{suffix}": key for key in expected
-                for suffix in (("v",) if key in FINISH_STARTED_BUILDS else ("v", "pending/v"))}
+    prefixes = {f"refs/tags/{DEPLOYABLES[key]}/v": key for key in expected}
     env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
     env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
     try:

@@ -68,6 +68,7 @@ it.each([
       memory_gib_hours: value,
       disk_gib_hours: value,
       complete: index === 1,
+      unknown_seconds: index === 1 ? 0 : 3600,
     },
   }));
   api.sandboxes.mockResolvedValue({
@@ -98,7 +99,7 @@ it.each([
       .getAllByRole('button', { name: /Subtotal/ })
       .map((b) => b.textContent),
   ).toEqual(supplied.map((row) => row.name));
-  expect(within(table).getAllByText('Partial history')).toHaveLength(2);
+  expect(within(table).getAllByText('Missing intervals confirmed')).toHaveLength(2);
   await actor.click(screen.getByRole('button', { name: 'Next usage page' }));
   await waitFor(() =>
     expect(api.sandboxes).toHaveBeenLastCalledWith(

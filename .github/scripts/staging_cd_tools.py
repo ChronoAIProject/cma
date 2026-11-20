@@ -9,6 +9,7 @@ import tarfile
 import urllib.request
 from pathlib import Path
 
+import ci_retry
 from staging_cd_cache import cached, warm, wheels
 from staging_cd_clock import remaining
 from staging_cd_checkout import checkout_path
@@ -47,10 +48,13 @@ def environment(env):
             "PATH": str(root / "bin") + os.pathsep + env["PATH"]}
 
 
-def download(url, digest):
-    with urllib.request.urlopen(url, timeout=60) as response:
-        require(response.status == 200, "Deployment tool download failed")
-        data = response.read(128 * 1024 * 1024 + 1)
+def download(url, digest, *, retry=None):
+    def fetch():
+        with urllib.request.urlopen(url, timeout=60) as response:
+            require(response.status == 200, "Deployment tool download failed")
+            return response.read(128 * 1024 * 1024 + 1)
+    # A pinned release download is an idempotent read; the checksum below stays the authority.
+    data = ci_retry.call(fetch, name="tool-download", classify=ci_retry.classify, **(retry or {}))
     require(len(data) <= 128 * 1024 * 1024 and hashlib.sha256(data).hexdigest() == digest,
             "Deployment tool checksum differs")
     return data

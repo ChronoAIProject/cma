@@ -88,7 +88,7 @@ it.each(['unsupported', 'not_enabled'] as const)(
       screen.getByText(
         state === 'unsupported'
           ? 'Live screen is not supported by this environment.'
-          : 'Live screen is not enabled for this environment.',
+          : 'Live screen is not enabled',
       ),
     ).toBeVisible();
     expect(f.browser.configure).not.toHaveBeenCalled();

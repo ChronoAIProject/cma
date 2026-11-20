@@ -30,6 +30,12 @@
   text-overflow: ellipsis;
 }
 
+.badge[data-wrap='true'] {
+  height: auto;
+  min-height: 22px;
+  white-space: normal;
+}
+
 .badge[data-tone='warning'] {
   color: var(--dsw-alias-state-warn-label);
 }

@@ -14,6 +14,7 @@ export default defineConfig({
     'parked-update-deletion.check.ts',
     'agent-stop-deletion.check.ts',
     'agent-setup-exit.check.ts',
+    'computer-guidance.check.ts',
   ],
   workers: 1,
   retries: 0,

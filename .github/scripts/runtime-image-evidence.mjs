@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFileSync, writeFileSync, lstatSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { readFileSync, writeFileSync, lstatSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { checks as legacyChecks, diagnosticStages, toolVersionPattern } from './runtime-image-probe.mjs';
 import { bootstrapChecks, bootstrapStages, validateBootstrapProof } from './runtime-bootstrap-probe.mjs';
+import { prepareProbe } from './omarchy-contract-source.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 export const source = 'https://github.com/ChronoAIProject/cma';
@@ -21,6 +23,22 @@ export function pins(dockerfile) {
     const matches = [...dockerfile.matchAll(new RegExp(`^ARG ${name}=([^\\s]+)$`, 'gm'))];
     assert.equal(matches.length, 1);
     result[name] = matches[0][1];
+  }
+  return result;
+}
+
+// The Omarchy desktop image ships the desktop Codex build. Its contract uses the
+// same probes, with only these three Dockerfile pins taken from DESKTOP_* arguments.
+export const profiles = ['default', 'omarchy'];
+export function profilePins(dockerfile, profile = 'default') {
+  assert.ok(profiles.includes(profile));
+  const result = pins(dockerfile);
+  if (profile === 'omarchy') {
+    for (const name of ['CODEX_VERSION', 'CODEX_NATIVE_SHA256_AMD64', 'CODEX_LAUNCHER_SHA256']) {
+      const matches = [...dockerfile.matchAll(new RegExp(`^ARG DESKTOP_${name}=([^\\s]+)$`, 'gm'))];
+      assert.equal(matches.length, 1);
+      result[name] = matches[0][1];
+    }
   }
   return result;
 }
@@ -107,11 +125,12 @@ export function safeFailureStage(stage, error) {
   return match && diagnosticStages.includes(match[1]) ? `probe:${match[1]}` : 'probe';
 }
 
-export function campaign(imageRef, commit, output, command = docker) {
+export function campaign(imageRef, commit, output, command = docker, profile = process.env.CMA_RUNTIME_EVIDENCE_PROFILE || 'default') {
+  assert.ok(profiles.includes(profile));
   assert.match(commit, revision);
   assert.ok(imageRef && !imageRef.startsWith('-'));
   assert.ok(resolve(output) === output && !lstatSync(dirname(output)).isSymbolicLink());
-  const expected = pins(readFileSync(process.env.CMA_RUNTIME_EVIDENCE_DOCKERFILE || resolve(root, 'api/crates/layer4-runtime/Dockerfile'), 'utf8'));
+  const expected = profilePins(readFileSync(process.env.CMA_RUNTIME_EVIDENCE_DOCKERFILE || resolve(root, 'api/crates/layer4-runtime/Dockerfile'), 'utf8'), profile);
   const sourceReference = imageRef.includes('@') ? imageRef : null;
   const evidence = { schema: evidenceSchema, scope: 'local-contract-3-no-provider-or-model', commit, image: null, sourceReference, result: 'inconclusive', cleanup: null, proof: null };
   writeFileSync(output, `${JSON.stringify(evidence)}\n`, { mode: 0o600, flag: 'wx' });
@@ -119,6 +138,10 @@ export function campaign(imageRef, commit, output, command = docker) {
   assert.match(identity, /^cma-runtime-ci-[0-9a-f-]{36}$/);
   const label = `dev.chrono.cma.evidence=${identity}`;
   let stage = 'image-admission';
+  const scripts = resolve(root, '.github/scripts');
+  const mount = (path, name) => ['--mount', `type=bind,source=${path},target=/opt/${name},readonly`];
+  const omarchy = profile === 'omarchy';
+  let prepared = null;
   try {
     const image = JSON.parse(command(['image', 'inspect', imageRef]))[0];
     validateImage(image, commit);
@@ -127,18 +150,33 @@ export function campaign(imageRef, commit, output, command = docker) {
       assert.ok(image.RepoDigests.includes(sourceReference));
     }
     evidence.image = { Id: image.Id, RepoDigests: sourceReference ? [sourceReference] : [], Os: image.Os, Architecture: image.Architecture, Config: { User: image.Config.User, Labels: Object.fromEntries(['org.opencontainers.image.revision', 'org.opencontainers.image.source', 'dev.chrono.cma.runtime-contract', 'dev.chrono.cma.runtime-bootstrap', 'dev.chrono.cma.home-layout'].map((key) => [key, image.Config.Labels[key]])) } };
+    if (omarchy) {
+      // Same measured Codex helper adaptation as CI's Omarchy contract, in a private copy.
+      stage = 'probe-preparation';
+      prepared = join(mkdtempSync(join(tmpdir(), 'cma-omarchy-probe-')), 'runtime-image-probe.mjs');
+      prepareProbe(prepared, scripts);
+    }
     stage = 'volume-create';
     command(['volume', 'create', '--label', label, identity]);
     stage = 'container-create';
-    command(['create', '--name', identity, '--label', label, '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges=true', '--pids-limit', '128', '--memory', '1g', '--cpus', '2', '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777', '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700', '--mount', `type=volume,source=${identity},target=/home/cma`, '--mount', `type=bind,source=${resolve(root, '.github/scripts/runtime-image-probe.mjs')},target=/opt/runtime-image-probe.mjs,readonly`, '--mount', `type=bind,source=${resolve(root, '.github/scripts/runtime-github-probe.mjs')},target=/opt/runtime-github-probe.mjs,readonly`, '--mount', `type=bind,source=${resolve(root, '.github/scripts/runtime-bootstrap-probe.mjs')},target=/opt/runtime-bootstrap-probe.mjs,readonly`, '--env', `CHRONO_SANDBOX_ID=${identity}`, '--env', 'CHRONO_SANDBOX_REACHES=chrono-llm-public,ornn-api', '--env', 'CHRONO_PLATFORM_BASE_URL=http://127.0.0.1:9192', image.Id]);
+    command(['create', '--name', identity, '--label', label, '--network', 'none', '--read-only', '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges=true', '--pids-limit', '128', '--memory', '1g', '--cpus', '2', '--tmpfs', '/tmp:rw,nosuid,nodev,size=536870912,mode=1777', '--tmpfs', '/var/lib/cma-runtime:rw,nosuid,nodev,size=67108864,uid=10001,gid=10001,mode=700', '--mount', `type=volume,source=${identity},target=/home/cma`, ...mount(prepared ?? join(scripts, 'runtime-image-probe.mjs'), 'runtime-image-probe.mjs'), ...mount(join(scripts, 'runtime-github-probe.mjs'), 'runtime-github-probe.mjs'), ...mount(join(scripts, 'runtime-bootstrap-probe.mjs'), 'runtime-bootstrap-probe.mjs'), ...(omarchy ? ['omarchy-codex-aliases.mjs', 'omarchy-keyring-probe.py', 'omarchy-chromium-config-probe.py'].flatMap((name) => mount(join(scripts, name), name)) : []), '--env', `CHRONO_SANDBOX_ID=${identity}`, '--env', 'CHRONO_SANDBOX_REACHES=chrono-llm-public,ornn-api', '--env', 'CHRONO_PLATFORM_BASE_URL=http://127.0.0.1:9192', image.Id]);
     stage = 'container-start';
     command(['start', identity]);
     stage = 'probe';
     const legacy = JSON.parse(command(['exec', identity, 'node', '/opt/runtime-image-probe.mjs']));
+    if (omarchy) {
+      stage = 'omarchy-keyring';
+      command(['exec', identity, '/usr/bin/python', '-I', '/opt/omarchy-keyring-probe.py']);
+      assert.equal(resolve(command(['exec', '--user', '0', identity, '/usr/local/bin/pacman-conf', 'GPGDir']).trim()), '/etc/pacman.d/gnupg');
+    }
     stage = 'proof-validation';
     validateProbeChecks(legacy, expected, legacyChecks);
     stage = 'bootstrap-probe';
     const bootstrap = JSON.parse(command(['exec', identity, 'node', '/opt/runtime-bootstrap-probe.mjs']));
+    if (omarchy) {
+      stage = 'omarchy-chromium';
+      command(['exec', identity, '/usr/bin/python', '-I', '/opt/omarchy-chromium-config-probe.py']);
+    }
     stage = 'proof-validation';
     evidence.proof = combineProofs(legacy, bootstrap, expected);
     evidence.result = 'pass';
@@ -161,6 +199,7 @@ export function campaign(imageRef, commit, output, command = docker) {
       assert.equal(command(['volume', 'ls', '--quiet', '--filter', `label=${label}`]), '');
       evidence.cleanup = { containers: 0, volumes: 0 };
     } catch { evidence.result = 'fail'; process.stderr.write('Runtime image campaign failed at cleanup; raw diagnostics withheld\n'); }
+    if (prepared) rmSync(dirname(prepared), { recursive: true, force: true });
     writeFileSync(output, `${JSON.stringify(evidence)}\n`, { mode: 0o600 });
   }
   validateEvidence(evidence, commit, evidence.image?.Id, expected, sourceReference);
@@ -172,7 +211,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     assert.ok(['run', 'verify'].includes(mode) && output && process.argv.length === 6);
     if (mode === 'run') campaign(imageRef, commit, output);
     // The verify CLI uses the same explicit v1/v2 dispatch as library readers.
-    else validateEvidence(JSON.parse(readFileSync(output, 'utf8')), commit, inspect(imageRef).Id, pins(readFileSync(process.env.CMA_RUNTIME_EVIDENCE_DOCKERFILE || resolve(root, 'api/crates/layer4-runtime/Dockerfile'), 'utf8')), imageRef.includes('@') ? imageRef : null);
+    else validateEvidence(JSON.parse(readFileSync(output, 'utf8')), commit, inspect(imageRef).Id, profilePins(readFileSync(process.env.CMA_RUNTIME_EVIDENCE_DOCKERFILE || resolve(root, 'api/crates/layer4-runtime/Dockerfile'), 'utf8'), process.env.CMA_RUNTIME_EVIDENCE_PROFILE || 'default'), imageRef.includes('@') ? imageRef : null);
     process.stdout.write('Runtime image contract and exact cleanup passed\n');
   } catch { process.stderr.write('Runtime image evidence is not passing; raw diagnostics withheld\n'); process.exitCode = 1; }
 }
