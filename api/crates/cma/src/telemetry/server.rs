@@ -14,11 +14,12 @@ impl Server {
     pub(crate) async fn start(
         address: SocketAddr,
         handle: PrometheusHandle,
+        cohorts: super::task_cohort::Cache,
     ) -> Result<Self, String> {
         let listener = tokio::net::TcpListener::bind(address)
             .await
             .map_err(|error| format!("cannot bind metrics listener {address}: {error}"))?;
-        let router = router(handle.clone());
+        let router = router(handle.clone(), cohorts);
         tracing::info!(address = %listener.local_addr().map_err(|error| error.to_string())?, "CMA metrics listening");
         // build_recorder does not spawn upkeep. Drain raw histogram samples
         // even if no collector scrapes us or the listener later fails.
@@ -54,14 +55,14 @@ impl Drop for Server {
     }
 }
 
-fn router(handle: PrometheusHandle) -> Router {
+fn router(handle: PrometheusHandle, cohorts: super::task_cohort::Cache) -> Router {
     Router::new()
         .route("/metrics", get(scrape))
-        .with_state(handle)
+        .with_state((handle, cohorts))
 }
 
 async fn scrape(
-    State(handle): State<PrometheusHandle>,
+    State((handle, cohorts)): State<(PrometheusHandle, super::task_cohort::Cache)>,
 ) -> ([(header::HeaderName, &'static str); 2], String) {
     (
         [
@@ -71,7 +72,7 @@ async fn scrape(
             ),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        handle.render(),
+        handle.render() + &cohorts.render(),
     )
 }
 
@@ -87,9 +88,13 @@ mod tests {
     #[tokio::test]
     async fn dropping_server_stops_listener_and_scrape_independent_upkeep() {
         let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
-        let server = Server::start("127.0.0.1:0".parse().unwrap(), recorder.handle())
-            .await
-            .unwrap();
+        let server = Server::start(
+            "127.0.0.1:0".parse().unwrap(),
+            recorder.handle(),
+            Default::default(),
+        )
+        .await
+        .unwrap();
         let listener = server.listener.abort_handle();
         let upkeep = server.upkeep.abort_handle();
         let runtime = server.runtime.abort_handle();
@@ -115,7 +120,13 @@ mod tests {
     #[tokio::test]
     async fn scrape_router_has_only_metrics_and_does_not_cache() {
         let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
-        let app = router(recorder.handle());
+        let cache = super::super::task_cohort::Cache::default();
+        cache.initialize(&["previous_day"]);
+        cache.update(
+            "previous_day",
+            Ok("cma_task_cohort_accepted_tasks{window=\"previous_day\"} 2\n".into()),
+        );
+        let app = router(recorder.handle(), cache);
         let response = app
             .clone()
             .oneshot(
@@ -132,6 +143,11 @@ mod tests {
             .to_str()
             .unwrap()
             .starts_with("text/plain"));
+        use http_body_util::BodyExt;
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert!(std::str::from_utf8(&body)
+            .unwrap()
+            .contains("cma_task_cohort_accepted_tasks{window=\"previous_day\"} 2"));
         assert_eq!(
             app.oneshot(
                 Request::builder()

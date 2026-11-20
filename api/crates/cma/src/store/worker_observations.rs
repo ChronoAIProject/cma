@@ -6,16 +6,22 @@ use mongodb::{
 };
 use std::time::Duration;
 
+mod cohort;
 mod parked;
 
-pub(crate) struct Observations(Database, bool);
+pub(crate) struct Observations(Database, bool, Option<crate::telemetry::task_cohort::Cache>);
 impl Observations {
     pub(super) fn new(database: Database) -> Self {
-        Self(database, false)
+        Self(database, false, None)
     }
 
     pub(crate) fn with_work_retry_policy(mut self, enabled: bool) -> Self {
         self.1 = enabled;
+        self
+    }
+
+    pub(crate) fn with_task_cohorts(mut self, cache: crate::telemetry::task_cohort::Cache) -> Self {
+        self.2 = Some(cache);
         self
     }
 
@@ -29,6 +35,11 @@ impl Observations {
         initialize("native_warm_pools", "due");
         tokio::spawn(async move {
             let mut parked = self.1.then(|| parked::ParkedObserver::new(self.0.clone()));
+            let cohorts = self
+                .2
+                .as_ref()
+                .map(|cache| cohort::Observer::new(self.0.clone(), cache.clone()));
+            let mut next_cohort = tokio::time::Instant::now();
             let mut tick = tokio::time::interval(Duration::from_secs(30));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
@@ -51,6 +62,15 @@ impl Observations {
                             sampled(spec.worker, spec.state, true);
                         }
                         _ => sampled(spec.worker, spec.state, false),
+                    }
+                }
+                if let Some(cohorts) = &cohorts {
+                    if tokio::time::Instant::now() >= next_cohort {
+                        tokio::select! {
+                            _ = crate::shutdown::signalled(shutdown.clone()) => return,
+                            _ = cohorts.sample() => {}
+                        }
+                        next_cohort = tokio::time::Instant::now() + Duration::from_secs(60);
                     }
                 }
                 if let Some(parked) = parked.as_mut() {
