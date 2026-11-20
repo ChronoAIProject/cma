@@ -240,9 +240,8 @@ async fn desktop_websocket_disconnects_at_next_standing_recheck() {
     use crate::rest::shared_stream_tests::ChangingStanding;
     for deleting in ["owner-a", "unrelated", "outage"] {
         let standing = Arc::new(ChangingStanding::default());
-        let scenario = fixture_with_standing("desktop_ready", standing.clone())
-            .await
-            .scenario;
+        let fixture = fixture_with_standing("desktop_ready", standing.clone()).await;
+        let scenario = fixture.scenario;
         let router = scenario
             .router
             .layer(Extension(AuthenticatedSubject(SubjectId::new("owner-a"))))
@@ -266,8 +265,15 @@ async fn desktop_websocket_disconnects_at_next_standing_recheck() {
         );
         *standing.0.lock().unwrap() = Some(deleting);
         tokio::time::pause();
-        tokio::time::advance(std::time::Duration::from_secs(31)).await;
+        // Let protected ownership renew while crossing the public recheck interval.
+        // A single jump would instead expire every account's receiver lease.
+        for _ in 0..31 {
+            tokio::time::advance(std::time::Duration::from_secs(1)).await;
+            tokio::task::yield_now().await;
+        }
+        tokio::time::resume();
         if deleting == "unrelated" {
+            assert!(fixture.ownership.state.lock().unwrap().writes > 1);
             socket.send(Message::Binary(vec![1, 2, 3])).await.unwrap();
             assert_eq!(
                 socket.next().await.unwrap().unwrap(),
@@ -279,7 +285,6 @@ async fn desktop_websocket_disconnects_at_next_standing_recheck() {
                 Message::Close(_)
             ));
         }
-        tokio::time::resume();
         let _ = socket.close(None).await;
     }
 }
