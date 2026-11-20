@@ -33,9 +33,11 @@ def summarize_revision(root, revision, fallback, cache, context):
 
 
 def workers():
-    # Each summary extracts and analyzes one immutable snapshot. They are
-    # independent, so a cold policy can use every runner core.
-    return max(1, min(8, os.cpu_count() or 1))
+    # Parallel summaries failed on hosted runners after 7-12 minutes (runs
+    # 44680314976 and later), most likely concurrent `cargo metadata --locked`
+    # calls contending for Cargo's package cache lock within their 120 s limit.
+    # Stay sequential inside the larger budget until that path is qualified.
+    return 1
 
 
 def summarize_many(root, revisions, fallback, cache, context, parallel=None):
