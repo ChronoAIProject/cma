@@ -141,12 +141,10 @@ ARG RUNTIME_DESKTOP=0
 RUN --mount=type=bind,source=api/crates/layer4-runtime/image/install-os.sh,target=/tmp/install-os.sh,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-id.py,target=/tmp/normalize-machine-id.py,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-binutils-notices.py,target=/tmp/normalize-binutils-notices.py,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/remove-vendor-examples.py,target=/tmp/remove-vendor-examples.py,readonly \
     --mount=type=bind,from=openssl-cli-build,source=/out,target=/tmp/cma-openssl,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/install-debian-openssl-cli.sh,target=/tmp/install-openssl-cli.sh,readonly \
-    sh /tmp/install-os.sh \
-    && sh /tmp/install-openssl-cli.sh /tmp/cma-openssl /usr/bin/openssl \
-    && python3 -B /tmp/normalize-binutils-notices.py \
-    && python3 -B /tmp/normalize-machine-id.py \
+    sh /tmp/install-os.sh install \
     && groupadd --gid 10001 cma \
     && useradd --no-log-init --create-home --uid 10001 --gid 10001 --shell /bin/bash cma
 FROM runtime-system AS runtime-tools
@@ -192,7 +190,9 @@ ARG TAR_VERSION=7.5.21
 ARG UNDICI_VERSION=6.29.1
 RUN --mount=type=bind,source=api/crates/layer4-runtime/image/npm,target=/tmp/cma-image-inputs/npm,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/install-npm.sh,target=/tmp/install-npm.sh,readonly \
-    sh /tmp/install-npm.sh
+    --mount=type=bind,source=api/crates/layer4-runtime/image/remove-vendor-examples.py,target=/tmp/remove-vendor-examples.py,readonly \
+    sh /tmp/install-npm.sh \
+    && python3 -B /tmp/remove-vendor-examples.py npm
 # Install only the supported provider and its ACP bridge. Their package
 # metadata, launcher, bridge source, and architecture-specific native binary
 # are all checked against the reviewed pinned artifacts.
@@ -341,18 +341,13 @@ FROM runtime-system AS runtime-refreshed
 # builds vary this value so cached packages cannot hide a new security update;
 # unchanged tool bytes remain reusable even when the OS branch is rebuilt.
 ARG OS_SECURITY_REFRESH=local
-RUN --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-id.py,target=/tmp/normalize-machine-id.py,readonly \
+RUN --mount=type=bind,source=api/crates/layer4-runtime/image/install-os.sh,target=/tmp/install-os.sh,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-id.py,target=/tmp/normalize-machine-id.py,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-binutils-notices.py,target=/tmp/normalize-binutils-notices.py,readonly \
+    --mount=type=bind,source=api/crates/layer4-runtime/image/remove-vendor-examples.py,target=/tmp/remove-vendor-examples.py,readonly \
     --mount=type=bind,from=openssl-cli-build,source=/out,target=/tmp/cma-openssl,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/install-debian-openssl-cli.sh,target=/tmp/install-openssl-cli.sh,readonly \
-    test -n "${OS_SECURITY_REFRESH}" \
-    && apt-get update \
-    && apt-get upgrade -y \
-    && sh /tmp/install-openssl-cli.sh /tmp/cma-openssl /usr/bin/openssl \
-    && test ! -e /etc/chromium.d/apikeys \
-    && python3 -B /tmp/normalize-binutils-notices.py \
-    && python3 -B /tmp/normalize-machine-id.py \
-    && rm -rf /var/lib/apt/lists/* /var/log/apt/* /var/log/dpkg.log /var/log/alternatives.log /var/cache/ldconfig/aux-cache
+    sh /tmp/install-os.sh refresh
 
 # Apply after the last security refresh so apt cannot overwrite the fix. A
 # newer Debian package requires reviewing and repinning its source first.
