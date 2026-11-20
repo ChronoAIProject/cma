@@ -25,15 +25,25 @@ async fn baseline_registers_zero_allocation_owners_with_atomic_restartable_curso
         .unwrap();
     let capture = fixture.capture();
     sources.sort();
-    fixture.db.collection::<Document>(CAPTURES).insert_one(doc! {
-        "_id":&sources[0],"document_schema_version":1_i64,
-        "stream_id":"conflicting-source-fixture","revision":3_i64,
-    }).await.unwrap();
+    fixture
+        .db
+        .collection::<Document>(CAPTURES)
+        .insert_one(doc! {
+            "_id":&sources[0],"document_schema_version":1_i64,
+            "stream_id":"conflicting-source-fixture","revision":3_i64,
+        })
+        .await
+        .unwrap();
     assert!(capture.baseline(&fixture.store, MINUTE, 1).await.is_err());
     assert_eq!(fixture.count(INVENTORY).await, 0);
     assert_eq!(fixture.count(CAPTURES).await, 1);
     assert_eq!(fixture.count(STREAMS).await, 0);
-    fixture.db.collection::<Document>(CAPTURES).delete_one(doc! {"_id":&sources[0]}).await.unwrap();
+    fixture
+        .db
+        .collection::<Document>(CAPTURES)
+        .delete_one(doc! {"_id":&sources[0]})
+        .await
+        .unwrap();
     capture.baseline(&fixture.store, MINUTE, 1).await.unwrap();
     let first = fixture
         .db
