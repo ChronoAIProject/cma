@@ -8,6 +8,14 @@ use crate::store::sandbox_usage_export::FrozenUsageEvent;
 pub(crate) use contract::{Cursor, Receipt};
 pub(crate) use worker::UsageExporter;
 
+#[cfg(test)]
+pub(crate) fn http_for_test(
+    base: reqwest::Url,
+    tokens: std::sync::Arc<dyn crate::producer_token::ProducerTokenProvider>,
+) -> std::sync::Arc<dyn UsageTransport> {
+    std::sync::Arc::new(nyxid::NyxIdUsageTransport::with_tokens(base, tokens).unwrap())
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum TransportError {
     Unavailable,

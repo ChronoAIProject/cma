@@ -41,7 +41,7 @@ impl NyxIdUsageTransport {
         Self::with_tokens(config.base_url.clone(), tokens)
     }
 
-    fn with_tokens(
+    pub(super) fn with_tokens(
         base: reqwest::Url,
         tokens: Arc<dyn ProducerTokenProvider>,
     ) -> Result<Self, String> {
