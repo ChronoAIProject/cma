@@ -51,13 +51,14 @@ export function TextField({
   { readOnly: true; onChange?: never } | { readOnly?: false; onChange: (value: string) => void }
 )) {
   const id = useId();
+  const description = [required ? 'Required.' : undefined, hint].filter(Boolean).join(' ');
   return (
     <div className="channel-value-field">
       <label htmlFor={id}>{label}</label>
       {multiline ? (
         <textarea
           id={id}
-          aria-describedby={hint ? `${id}-hint` : undefined}
+          aria-describedby={description ? `${id}-hint` : undefined}
           value={text(value)}
           onChange={onChange ? (e) => onChange(e.target.value) : undefined}
           readOnly={readOnly}
@@ -68,7 +69,7 @@ export function TextField({
       ) : (
         <Input
           id={id}
-          aria-describedby={hint ? `${id}-hint` : undefined}
+          aria-describedby={description ? `${id}-hint` : undefined}
           value={text(value)}
           onChange={onChange ? (e) => onChange(e.target.value) : undefined}
           readOnly={readOnly}
@@ -77,9 +78,9 @@ export function TextField({
           required={required}
         />
       )}
-      {hint ? (
+      {description ? (
         <p id={`${id}-hint`} className="channel-field-hint">
-          {hint}
+          {description}
         </p>
       ) : null}
     </div>
@@ -175,17 +176,20 @@ export function StringList({
   value,
   onChange,
   max = 64,
+  requiredItems = false,
 }: {
   label: string;
   value: readonly string[];
   onChange: (v: string[]) => void;
   max?: number;
+  requiredItems?: boolean;
 }) {
   return (
     <Section title={label}>
       {value.map((item, index) => (
         <div className="channel-form-row" key={index}>
           <TextField
+            required={requiredItems}
             label={`${label} ${index + 1}`}
             value={item}
             onChange={(next) => onChange(value.map((v, i) => (i === index ? next : v)))}

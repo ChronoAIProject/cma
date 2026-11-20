@@ -1,3 +1,4 @@
+import { revealInvalidField } from './channelForm/AdvancedFields';
 import { useState } from 'react';
 import { Button } from '../ui/Button';
 import { segment, ServiceError, serviceRequest, type Denied } from './client';
@@ -251,6 +252,7 @@ export function ChannelEditor({
       {!additional ? (
         <form
           className="service-form"
+          onInvalidCapture={(event) => revealInvalidField(event.target as HTMLElement)}
           onSubmit={(e) => {
             e.preventDefault();
             submit('channel');
