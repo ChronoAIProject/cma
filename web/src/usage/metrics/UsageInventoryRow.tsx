@@ -4,6 +4,7 @@ import { StatusBadge } from '../../ui/Badge';
 import { Button } from '../../ui/Button';
 import { TableCell } from '../../ui/Table';
 import { UsageIdentity } from './UsageIdentity';
+import { AllocationCoverageStatus } from './AllocationCoverageStatus';
 import { displayQuantity, metricTime, metricValue, type Metric } from './model';
 
 export function UsageInventoryRow({
@@ -61,10 +62,8 @@ export function UsageInventoryRow({
               </>
             )}
           </details>
-          {!row.allocated_period.complete && (
-            <span className="usage-inventory-partial">Partial history</span>
-          )}
         </div>
+        <AllocationCoverageStatus value={row.allocated_period} />
         {actions && <div className="usage-metric-actions">{actions(row)}</div>}
       </TableCell>
       {(['cpu', 'memory', 'disk'] as const).map((metric) => (
