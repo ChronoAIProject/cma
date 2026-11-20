@@ -1,9 +1,22 @@
-use super::super::schema::{PRE_BACKUP_COLLECTIONS, PRE_BACKUP_SHA256};
+use super::super::schema::{
+    PRE_BACKUP_ACCOUNT_COLLECTIONS, PRE_BACKUP_ACCOUNT_SHA256, PRE_BACKUP_COLLECTIONS,
+    PRE_BACKUP_SHA256,
+};
 use super::*;
 
 #[tokio::test]
 #[ignore = "requires a disposable MongoDB replica set"]
 async fn pre_backup_archive_readback_preserves_owned_backup_debt_in_current_census() {
+    historical_archive_readback(PRE_BACKUP_SHA256, PRE_BACKUP_COLLECTIONS).await;
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable MongoDB replica set"]
+async fn account_pre_backup_archive_readback_preserves_owned_backup_debt_in_current_census() {
+    historical_archive_readback(PRE_BACKUP_ACCOUNT_SHA256, PRE_BACKUP_ACCOUNT_COLLECTIONS).await;
+}
+
+async fn historical_archive_readback(schema_sha256: &str, collections: &[&str]) {
     let (temp, store, request, bytes) = fixture().await;
     store.admit(&request, &bytes).await.unwrap();
     let custody = Custody::default();
@@ -11,10 +24,10 @@ async fn pre_backup_archive_readback_preserves_owned_backup_debt_in_current_cens
         .await
         .unwrap();
     let mut previous = current.clone();
-    previous.schema_sha256 = PRE_BACKUP_SHA256.into();
+    previous.schema_sha256 = schema_sha256.into();
     previous
         .database
-        .retain(|row| PRE_BACKUP_COLLECTIONS.contains(&row.collection.as_str()));
+        .retain(|row| collections.contains(&row.collection.as_str()));
     let receipt = custody
         .retain(
             &request.operation_id,

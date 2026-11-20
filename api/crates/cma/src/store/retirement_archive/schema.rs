@@ -7,11 +7,17 @@ use std::collections::BTreeSet;
 mod legacy;
 #[path = "pre_backup_census.rs"]
 mod pre_backup;
+#[path = "pre_backup_account_census.rs"]
+mod pre_backup_accounts;
 
 #[cfg(test)]
 pub(super) const PRE_BACKUP_COLLECTIONS: &[&str] = pre_backup::COLLECTIONS;
 #[cfg(test)]
 pub(super) const PRE_BACKUP_SHA256: &str = pre_backup::SHA256;
+#[cfg(test)]
+pub(super) const PRE_BACKUP_ACCOUNT_COLLECTIONS: &[&str] = pre_backup_accounts::COLLECTIONS;
+#[cfg(test)]
+pub(super) const PRE_BACKUP_ACCOUNT_SHA256: &str = pre_backup_accounts::SHA256;
 
 #[cfg(test)]
 pub(super) const LEGACY_COLLECTIONS: &[&str] = legacy::COLLECTIONS;
@@ -34,6 +40,8 @@ fn collections(schema: &str) -> Result<&'static [&'static str]> {
         Ok(super::super::isolation::COLLECTIONS)
     } else if schema == pre_backup::SHA256 {
         Ok(pre_backup::COLLECTIONS)
+    } else if schema == pre_backup_accounts::SHA256 {
+        Ok(pre_backup_accounts::COLLECTIONS)
     } else if schema == legacy::SHA256 {
         Ok(legacy::COLLECTIONS)
     } else {
