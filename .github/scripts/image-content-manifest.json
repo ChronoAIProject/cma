@@ -1,13 +1,14 @@
 {
-  "schema": "cma-image-content-source-v1",
   "files": {
-    "image-content-policy.json": "20e3c48fd76e838c77d03b3567c471483313893c650dde9e265699d66fe98e0e",
+    "image-content-policy.json": "85c7ebc1707e77eb4711d768b4c64a4279d44b59098d24c97871b2b2e5500949",
     "image-content-vendor/BABEL-LICENSE": "2e97627cb278aa7556fb9e8817368302301a595b6c7582512b8d74c57b773652",
     "image-content-vendor/PROVENANCE.json": "bb7d68cdb634b11bd9ae9534f88fa1e9e708bc4444f4ee96c00bd99cef8816c7",
     "image-content-vendor/babel-parser-7.29.3.cjs": "201724d1415df7749087d9d6e88af50f2bcafe2eb68dfbe9347f49d3361ff426",
     "image_bundle_contexts.py": "8621898b9455aaa4de04e2a2d0e6d05ac8139b6bb8ce6b4f00ee024f4b365c26",
     "image_bundle_syntax.cjs": "05c3b245583a1dd1f7ac08e5bcad34233ae1c8ab16bdd22c5b6d8d1ca0dddc7a",
-    "image_content_identity.py": "ed92ddc8c7af3e43f8ccb3155b0575a8d67c174ac2142c5e08c911547d9d3e16",
-    "image_content_policy.py": "96bc4db9c781a1776857b95a062ccc73f72206846671f9277ec540c4d0e90702"
-  }
+    "image_content_identity.py": "eb840bb2198106e6c1f47f1ef28d70a35759bff247cc69d20bbf62f820d21cef",
+    "image_content_policy.py": "9cec64176d126657f3c2b2e57c863576c2b2711f348d1753c06abf5ccad5e96c",
+    "image_runtime_headers.py": "f22bf9c438907e6b90473005d5cadc0bcb20235f54bbba925217ca9764535e1e"
+  },
+  "schema": "cma-image-content-source-v1"
 }

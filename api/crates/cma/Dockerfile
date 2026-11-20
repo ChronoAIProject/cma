@@ -100,7 +100,7 @@ RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,shar
     cargo chef cook --release --locked --bin cma --recipe-path /recipe.json
 
 FROM rust:1.96.1-alpine AS build
-RUN apk add --no-cache musl-dev
+RUN apk add --no-cache binutils musl-dev
 WORKDIR /build
 COPY api/ ./
 ARG TARGETARCH
@@ -152,6 +152,9 @@ done
 # incremental data without exceeding the shared 1 GiB transfer limit.
 rm -rf target/release/incremental/layer3_adapter-*
 CACHE_TRIM
+# Strip only the shipped ELF, leaving Cargo cache artifacts intact.
+RUN --network=none strip --strip-all /out/cma
+
 # Exercise the actual API's mimalloc before the runtime can copy its ELF.
 # Static musl/linker metadata does not establish bounded allocator retention.
 RUN --network=none /out/cma --allocator-self-test

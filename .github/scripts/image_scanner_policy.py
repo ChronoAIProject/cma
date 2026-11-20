@@ -8,7 +8,7 @@ from pathlib import Path
 BUNDLE = Path(".github/scripts/image-secret-scanner")
 # Exact candidate source binding, including detector policy and cache tests.
 # Adoption of changed bytes requires independent review before merge.
-MANIFEST_SHA256 = "0d9e8ed1bd80b7e055107023fe73ce7c5cebb241c91667c07157d39c775b8aa3"
+MANIFEST_SHA256 = "61861609136340969ec648836cb35cb5edd1988addf8e94d6725f262841d5258"
 CLASSIFICATION_DIR = Path(".github/image-secret-classifications")
 # Archive SHA256 -> (packet SHA256, SA-01 review SHA256). Add an entry only
 # from an exact SA-01 verdict; a packet's self-declared reviewer is not approval.
@@ -16,10 +16,19 @@ APPROVED_CLASSIFICATIONS: dict[str, tuple[str, str]] = {}
 # (content manifest SHA256, authentic SA-01 review SHA256). Remains disabled
 # until the exact catalog and resolver have received that independent verdict.
 APPROVED_CONTENT_POLICY = (
-    "ab1fd8a5739d11d1bcfab6c9b621f1b13609a27624bb94606965afe982015e4a",
-    "fb42543cad6cf16769ce7b09ec5cc2fa6f7583821920f139f1c6e8699c0ac9b5",
+    "7ac9546ab794e16152d024e8593497347399dd906e3986744b8917e3b5eb87cb",
+    "21bd0a107965dd588fab2bcb0c9ac6839efd967e8f2355f21d688a73dff03ca9",
 )
+PACKAGE_EVIDENCE = Path(".github/scripts/image-package-evidence.json")
+# Independently reviewed evidence and verdict digests. Evidence gathered from
+# the candidate image cannot supply either pin.
+APPROVED_PACKAGE_EVIDENCE = (
+    "8c998334d178665048911fcf21179f2cbe0e03a18178ac0e9d178ded12e214b8",
+    "c2125fe26e55fb046864dc97005c26061d443408ef7e96d948b2152c564ea064",
+)
+# Runtime scope requires a new exact-manifest review before activation.
 CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json",
+                           "image_runtime_headers.py",
                            "image_bundle_contexts.py", "image_bundle_syntax.cjs",
                            "image-content-vendor/babel-parser-7.29.3.cjs", "image-content-vendor/BABEL-LICENSE",
                            "image-content-vendor/PROVENANCE.json"})
@@ -56,6 +65,22 @@ def require(condition, message):
 
 def sha256(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load_package_evidence(root):
+    path = root / PACKAGE_EVIDENCE
+    pins = APPROVED_PACKAGE_EVIDENCE
+    if pins is None:
+        require(not path.exists() and not path.is_symlink(), "Package evidence has no reviewed pin")
+        return None
+    require(len(pins) == 2 and all(isinstance(pin, str) and re.fullmatch(r"[a-f0-9]{64}", pin)
+                                  for pin in pins), "Invalid package evidence pin")
+    require(not path.is_symlink() and path.is_file(), "Package evidence must be a regular file")
+    with path.open("rb") as stream:
+        raw = stream.read(16 * 1024 * 1024 + 1)
+    require(len(raw) <= 16 * 1024 * 1024 and hashlib.sha256(raw).hexdigest() == pins[0],
+            "Package evidence differs from the pinned review")
+    return raw, *pins
 
 
 def load_classifications(root, archive_digest):
@@ -98,6 +123,8 @@ def verify_bundle(root, manifest_sha256=MANIFEST_SHA256):
 def validate(root, paths, manifest_sha256=MANIFEST_SHA256):
     frozen = verify_bundle(root, manifest_sha256)
     load_content_policy(root)
+    evidence = load_package_evidence(root)
+    require(evidence is None or PACKAGE_EVIDENCE in paths, "Reviewed package evidence must be tracked")
     require(frozen.issubset(set(paths)), "Frozen scanner files must be tracked with the publishing workflow")
     packets = {CLASSIFICATION_DIR / (digest + ".json") for digest in APPROVED_CLASSIFICATIONS}
     require(packets.issubset(set(paths)), "Reviewed classification packets must be tracked")

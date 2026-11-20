@@ -2,12 +2,18 @@
 set -euo pipefail
 
 # The Ubuntu runner image ships Skopeo. The web archive requires digest-preserving
-# copies. An absent or incompatible installation follows the normal package path.
+# copies. The scanner also needs libarchive's ar decoder and the zstd CLI.
+# Check their actual runtime interfaces so a missing bsdtar CLI alone never
+# triggers a package installation on the web fast path.
 if [[ ${CD_COMPONENT:?} == web ]] && skopeo --version >/dev/null 2>&1 \
-    && help=$(skopeo copy --help) && [[ $help == *--preserve-digests* ]]; then
+    && help=$(skopeo copy --help) && [[ $help == *--preserve-digests* ]] \
+    && zstd --version >/dev/null 2>&1 \
+    && python3 -c 'import ctypes, ctypes.util, sys
+name = ctypes.util.find_library("archive")
+sys.exit(0 if name and hasattr(ctypes.CDLL(name), "archive_read_support_format_ar") else 1)' >/dev/null 2>&1; then
   echo 'Using runner-provided Skopeo for web publication'
   exit 0
 fi
 
 sudo apt-get update -qq
-sudo apt-get install -y -qq skopeo
+sudo apt-get install -y -qq skopeo libarchive-tools zstd

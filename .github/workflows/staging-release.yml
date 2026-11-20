@@ -131,6 +131,14 @@ jobs:
             ${{ runner.temp }}/public-receipts/runtime-cleanup.json
           if-no-files-found: ignore
           retention-days: 90
+      - name: Retain verified package decisions
+        if: always() && (inputs.component == 'runtime' || inputs.component == 'runtime-omarchy')
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: staging-package-decisions-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.component }}
+          path: ${{ runner.temp }}/public-receipts/package-policy/*.json
+          if-no-files-found: ignore
+          retention-days: 90
   finalize:
     name: Finalize
     needs: publish
