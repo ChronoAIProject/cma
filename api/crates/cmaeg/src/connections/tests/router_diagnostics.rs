@@ -105,6 +105,14 @@ async fn actual_connection_router_correlates_concurrent_page_and_get_failures() 
                 response.headers()["content-type"],
                 "application/problem+json"
             );
+            let document: Value = serde_json::from_str(&crate::openapi::snapshot()).unwrap();
+            let media = response.headers()["content-type"].to_str().unwrap();
+            let spec_path = route.strip_prefix("/v1").unwrap();
+            assert_eq!(
+                document["paths"][spec_path]["get"]["responses"]["default"]["content"][media]
+                    ["schema"]["$ref"],
+                "#/components/schemas/Problem"
+            );
             assert_eq!(response.headers()["cmaeg-protocol-version"], "1");
             let id = response.headers().get("x-request-id").cloned();
             assert_eq!(
