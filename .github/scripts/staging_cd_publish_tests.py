@@ -14,7 +14,7 @@ from image_secret_gate import ScanRefusal, checksum
 from staging_cd_common import Refusal
 from staging_cd_finalize import finalize
 from staging_cd_publication_diagnostics import ImageCommandRefusal
-from staging_cd_publish import publish
+from staging_cd_publish import COPY_SECONDS, publish
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt, fixture_runtime_receipt
 
 
@@ -164,26 +164,29 @@ class PublicationTests(unittest.TestCase):
                 publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=runner)
             runner.assert_not_called()
 
-    def publish_with(self, directory, copies, readbacks, *, login=()):
+    def publish_with(self, directory, copies, readbacks, *, login=(), checks=None, retry=None):
         """Publish with scripted login/copy outcomes and tag readbacks between preflight and verify."""
         archive, digest, registry, scanner, _ = self.fixture(directory)
-        tags = {"ours": (digest, {}), "other": ("sha256:" + "e" * 64, {}), None: None}
+        tags = {"ours": (digest, {}), "other": ("sha256:" + "e" * 64, {}), None: None,
+                "unreadable": Refusal("Registry request failed")}
         registry.manifest.side_effect = [None, *[tags[item] for item in readbacks], (digest, {})]
         outcomes = {"login": list(login), "copy": list(copies)}
         def run(args, **kwargs):
             pending = outcomes[args[1]]
             outcome = pending.pop(0) if pending else None
+            if callable(outcome):
+                outcome = outcome(kwargs)
             if isinstance(outcome, BaseException):
                 raise outcome
             if args[1] == "login":
                 Path(args[3]).write_text("fixture")
             return b""
-        runner, checks = Mock(side_effect=run), Mock(return_value=True)
+        runner, checks = Mock(side_effect=run), checks or Mock(return_value=True)
         with patch("staging_cd_publish.inspect", return_value=digest):
             try:
                 result = publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor",
                                  reservation_check=checks, scanner=scanner, runner=runner,
-                                 retry={"sleep": lambda _seconds: None})
+                                 retry=retry or {"sleep": lambda _seconds: None})
             except Exception as error:  # noqa: BLE001 - each case asserts the exact failure type.
                 result = error
         self.assertFalse((Path(directory) / "registry-auth.json").exists())
@@ -217,6 +220,28 @@ class PublicationTests(unittest.TestCase):
                 self.assertEqual(checks.call_count, check_count)
                 # Preflight, one readback per uncertain copy, then verification after success.
                 self.assertEqual(registry.manifest.call_count, 1 + len(readbacks) + (expected is dict))
+
+    def test_copy_attempts_share_the_single_copy_budget(self):
+        now = [0.0]
+        def slow(seconds):
+            def outcome(kwargs):
+                now[0] += seconds
+                return subprocess.TimeoutExpired("skopeo", kwargs["timeout"])
+            return outcome
+        retry = {"clock": lambda: now[0], "sleep": lambda seconds: now.__setitem__(0, now[0] + seconds),
+                 "rand": lambda: 1.0}
+        for first, repeated in ((1700, True), (COPY_SECONDS, False)):
+            with self.subTest(first=first), tempfile.TemporaryDirectory() as directory:
+                now[0] = 0.0
+                result, runner, _, _ = self.publish_with(directory, [slow(first)], [None], retry=retry)
+                timeouts = [call.kwargs["timeout"] for call in runner.call_args_list if call.args[0][1] == "copy"]
+                if repeated:
+                    # The repeat gets only what the first copy and the wait left.
+                    self.assertIsInstance(result, dict)
+                    self.assertEqual(timeouts, [COPY_SECONDS, COPY_SECONDS - first - 1.0])
+                else:
+                    self.assertIsInstance(result, subprocess.TimeoutExpired)
+                    self.assertEqual(timeouts, [COPY_SECONDS])
 
     def test_partial_publication_finalizes_only_successful_receipts(self):
         receipt = fixture_receipt()

@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 import ci_retry
@@ -65,18 +66,29 @@ def retain_package_evidence(report, directory, source, image_digest):
         stream.write(canonical(payload) + "\n")
 
 
+# Every copy attempt shares the original single copy's bound, so a repeat never
+# extends the publish step beyond what one copy could already take.
+COPY_SECONDS = 1800
+
+
 def push(archive, repository, version, digest, auth, registry, runner, reservation_check, retry):
     """Copy the scanned bytes to their reserved, immutable tag.
 
     A transport failure leaves the outcome uncertain. The tag is read back
     first: our digest means the copy landed; another digest refuses; only a
-    proven absence permits one repeat, after authority is re-read.
+    proven absence permits one repeat, after authority is re-read, inside the
+    copy budget.
     """
+    clock = retry.get("clock", time.monotonic)
+    deadline = clock() + COPY_SECONDS
+
     def copy():
         # Qualification can take minutes; re-read authority at each write boundary.
         require(reservation_check() is True, "Publication reservation is not current")
+        timeout = ci_retry.attempt_timeout(COPY_SECONDS, deadline, clock)
+        require(timeout is not None, "Registry copy budget expired")
         runner(["skopeo", "copy", "--preserve-digests", "--authfile", str(auth),
-                "oci-archive:" + str(archive), "docker://" + repository + ":" + version], timeout=1800)
+                "oci-archive:" + str(archive), "docker://" + repository + ":" + version], timeout=timeout)
 
     def readback():
         remote = registry.manifest(repository, version, absent=True)
@@ -88,7 +100,8 @@ def push(archive, repository, version, digest, auth, registry, runner, reservati
         # Registry reads already repeat transient failures, so the readback runs once per settlement.
         ci_retry.call(lambda: ci_retry.call_write(copy, readback, name="registry-copy", classify=ci_retry.classify,
                                                   readback_attempts=1, **retry),
-                      name="registry-copy", classify=ci_retry.classify, attempts=2, **retry)
+                      name="registry-copy", classify=ci_retry.classify, attempts=2,
+                      **ci_retry.bounded(retry, deadline))
     except ci_retry.WriteConflict as error:
         raise Refusal("Registry digest differs from the scanned archive") from error
     except ci_retry.WriteUncertain as error:

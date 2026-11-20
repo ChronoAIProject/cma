@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import ci_retry
-from staging_cd_artifacts import download, qualifies, try_reuse
+from staging_cd_artifacts import REUSE_SECONDS, download, qualifies, try_reuse
 from staging_cd_common import Refusal
 from staging_cd_receipts_tests import fixture_identity
 
@@ -29,7 +29,7 @@ class ArtifactTests(unittest.TestCase):
         artifact = {"id": 20, "name": "ci-native-image-web-" + "a" * 40 + "-10-1", "expired": False}
         api.request.side_effect = [{"merged": True, "merge_commit_sha": expected["source"], "head": {"sha": "f" * 40}},
                                    {"workflow_runs": [run]}, {"total_count": 1, "artifacts": [artifact]}]
-        def download(_artifact, destination, _token):
+        def download(_artifact, destination, _token, **_options):
             with zipfile.ZipFile(destination, "w") as output:
                 output.writestr("metadata.json", json.dumps(metadata))
                 output.writestr(metadata["archive"], image)
@@ -86,6 +86,50 @@ class ArtifactTests(unittest.TestCase):
                     with self.assertRaisesRegex(Refusal, "checksum"):
                         try_reuse(expected, Path(directory), api, "fixture", download, runner)
                 runner.assert_not_called()
+
+    def test_reuse_reads_and_download_share_one_budget(self):
+        expected, _, _, api, download = self.fixture()
+        seen = []
+        def recording(artifact, destination, token, *, deadline):
+            seen.append(deadline)
+            download(artifact, destination, token)
+        with tempfile.TemporaryDirectory() as directory, patch("staging_cd_artifacts.inspect"):
+            try_reuse(expected, Path(directory), api, "fixture", recording, Mock(), clock=lambda: 1000.0)
+        deadline = 1000.0 + REUSE_SECONDS
+        self.assertEqual([call.kwargs["deadline"] for call in api.request.call_args_list], [deadline] * 3)
+        self.assertEqual(seen, [deadline])
+        # Once the budget is spent the probe stops reading and the release builds.
+        expected, _, _, api, _ = self.fixture()
+        spent = Refusal("GitHub read budget expired")
+        spent.__cause__ = ci_retry.TransientError()
+        api.request.side_effect = spent
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertIsNone(try_reuse(expected, Path(directory), api, "fixture", Mock(), Mock()))
+
+    def test_download_attempts_are_shortened_to_the_shared_budget(self):
+        content = b"complete artifact"
+        artifact = {"id": 20, "size_in_bytes": len(content),
+                    "digest": "sha256:" + hashlib.sha256(content).hexdigest()}
+        now, timeouts = [0.0], []
+        def run(args, *, stdout, timeout, **_kwargs):
+            timeouts.append(timeout)
+            now[0] += 500
+            raise subprocess.TimeoutExpired(args, timeout)
+        policy = {"clock": lambda: now[0], "sleep": lambda seconds: now.__setitem__(0, now[0] + seconds),
+                  "rand": lambda: 1.0}
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("staging_cd_artifacts.subprocess.run", side_effect=run), \
+                self.assertRaises(subprocess.TimeoutExpired) as raised:
+            download(artifact, Path(directory) / "candidate.zip", "fixture", deadline=800.0, retry=policy)
+        # 600 s at most, then only what remains after the wait; never 3 x 600 s.
+        self.assertEqual(timeouts, [600, 299.0])
+        self.assertEqual(ci_retry.classify(raised.exception), ci_retry.TRANSIENT)
+        with tempfile.TemporaryDirectory() as directory, \
+                patch("staging_cd_artifacts.subprocess.run") as untouched, \
+                self.assertRaisesRegex(Refusal, "budget expired") as raised:
+            download(artifact, Path(directory) / "candidate.zip", "fixture", deadline=now[0], retry=policy)
+        untouched.assert_not_called()
+        self.assertEqual(ci_retry.classify(raised.exception), ci_retry.TRANSIENT)
 
     def test_download_repeats_transport_failures_without_keeping_partial_bytes(self):
         content = b"complete artifact"
