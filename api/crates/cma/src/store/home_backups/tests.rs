@@ -4,6 +4,8 @@ use std::time::{Duration, SystemTime};
 
 #[path = "discovery_tests.rs"]
 mod discovery_tests;
+#[path = "startup_tests.rs"]
+mod startup_tests;
 
 fn schedule() -> HomeBackupSchedule {
     HomeBackupSchedule {
