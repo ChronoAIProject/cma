@@ -30,7 +30,7 @@ function verify(job, suite) {
     /failure\(\) && steps\.new_agent_request\.outcome == 'failure'/,
   );
   for (const contract of [
-    /testMatch: 'new-agent-request\.check\.ts'/,
+    /testMatch: \['new-agent-request\.check\.ts', 'task-draft-ownership\.check\.ts'\]/,
     /projects: browserProjects\(\)/,
     /workers: 1/,
     /retries: 0/,

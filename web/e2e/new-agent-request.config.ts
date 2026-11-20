@@ -20,7 +20,7 @@ if (
 export default defineConfig({
   projects: browserProjects(),
   testDir: '.',
-  testMatch: 'new-agent-request.check.ts',
+  testMatch: ['new-agent-request.check.ts', 'task-draft-ownership.check.ts'],
   workers: 1,
   retries: 0,
   forbidOnly: true,

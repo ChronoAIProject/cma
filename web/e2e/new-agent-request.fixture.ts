@@ -5,6 +5,7 @@ export async function newAgentRequestFixture(
   page: Page,
   baseURL: string,
   status: 'active' | 'provisioning',
+  initial?: 'legacy-task' | 'fresh',
 ) {
   const fixture = new LocalStartup();
   fixture.agent = {
@@ -35,6 +36,7 @@ export async function newAgentRequestFixture(
       },
     }),
   );
+  let complete = false;
   let delay = false;
   let held = false;
   let release!: () => void;
@@ -51,7 +53,7 @@ export async function newAgentRequestFixture(
       await route.fulfill({
         json: {
           id: 'old-operation',
-          status: 'running',
+          status: complete ? 'succeeded' : 'running',
           phase: 'sandbox_runtime',
           agent_id: fixture.agent.id,
           events: [
@@ -74,7 +76,13 @@ export async function newAgentRequestFixture(
       body: route.request().postDataJSON(),
       key: route.request().headers()['idempotency-key'],
     });
-    await route.fulfill({ status: 202, json: { id: 'new-operation', status: 'queued' } });
+    await route.fulfill({
+      status: 202,
+      json: {
+        id: initial === 'fresh' && creates.length === 1 ? 'old-operation' : 'new-operation',
+        status: 'queued',
+      },
+    });
   });
   await page.route(`${baseURL}/api/agent-manager/v1/agent-lifecycle/new-operation`, (route) =>
     route.fulfill({
@@ -82,27 +90,34 @@ export async function newAgentRequestFixture(
     }),
   );
   await page.addInitScript(
-    ({ agentId }) => {
+    ({ agentId, initial }) => {
       if (sessionStorage.getItem('fixture-seeded')) return;
       sessionStorage.setItem('fixture-seeded', 'true');
+      if (initial === 'fresh') return;
       sessionStorage.setItem(
         `cma:agent-creation:${JSON.stringify([location.origin, 'local-owner'])}`,
         JSON.stringify({
           version: 1,
           intent: {
             key: 'retained-old-request',
-            body: { name: 'Old Agent' },
+            body:
+              initial === 'legacy-task'
+                ? { name: 'New task', initial_message: 'hello' }
+                : { name: 'Old Agent' },
             receipt: { id: 'old-operation', status: 'running' },
             agentId,
           },
         }),
       );
     },
-    { agentId: fixture.agent.id },
+    { agentId: fixture.agent.id, initial },
   );
   return {
     fixture,
     creates,
+    complete: () => {
+      complete = true;
+    },
     delay: () => {
       delay = true;
     },

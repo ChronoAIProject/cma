@@ -3,6 +3,7 @@ import { parseTaskTemplate } from './taskTemplateModel';
 import { requireTaskStorage } from './taskIdentity';
 
 export interface Intent {
+  readonly draftRevision?: string;
   readonly key: string;
   readonly body: AgentLifecycleCreateInput;
   readonly receipt?: AgentLifecycleCreateReceipt;
@@ -34,6 +35,9 @@ function parse(raw: string, { workspaceId, sandboxId }: IntentScope): Intent {
   if (
     saved.version !== 1 ||
     !intent ||
+    (intent.draftRevision !== undefined &&
+      (typeof intent.draftRevision !== 'string' ||
+        !/^[a-zA-Z0-9-]{1,200}$/.test(intent.draftRevision))) ||
     typeof intent.key !== 'string' ||
     !/^[a-zA-Z0-9-]{1,200}$/.test(intent.key) ||
     typeof intent.body?.name !== 'string' ||

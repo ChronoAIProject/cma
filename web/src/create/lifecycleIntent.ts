@@ -145,7 +145,7 @@ export function useLifecycleIntent(
       if (timer !== undefined) clearTimeout(timer);
     };
   }, [client, receipt, pollVersion, owner, scope]);
-  const submit = async (body?: AgentLifecycleCreateInput) => {
+  const submit = async (body?: AgentLifecycleCreateInput, draftRevision?: string) => {
     if (
       live.current !== generation ||
       active.current ||
@@ -154,7 +154,11 @@ export function useLifecycleIntent(
     )
       return;
     if (body && current.current) return;
-    const intent = current.current ?? (body ? { key: crypto.randomUUID(), body } : undefined);
+    const intent =
+      current.current ??
+      (body
+        ? { key: crypto.randomUUID(), body, ...(draftRevision ? { draftRevision } : {}) }
+        : undefined);
     if (!intent || !retain(current.current, intent)) return;
     const abort = new AbortController();
     active.current = abort;
@@ -219,7 +223,7 @@ export function useLifecycleIntent(
         operation.agent_id &&
         (intent.agentId === undefined || intent.agentId === operation.agent_id)
       )
-        discardSubmittedTaskDraft(owner, intent.body);
+        discardSubmittedTaskDraft(owner, intent.body, intent.draftRevision);
       return true;
     },
     bindAgent: (agentId: string) => {

@@ -221,7 +221,8 @@ function TaskHomeContent({
             target?.focus();
             return;
           }
-          if (!draft.persist()) return;
+          const draftRevision = draft.persist();
+          if (!draftRevision) return;
           if (!contextual) {
             setCheckingCapacity(true);
             const current = await capacity.ensureFresh();
@@ -230,22 +231,25 @@ function TaskHomeContent({
             if (!current || current.available === 0) return;
           }
           setRecovering(false);
-          void lifecycle.submit({
-            name: 'New task',
-            initial_message: submission.text,
-            ...(draft.template ? { template: draft.template } : {}),
-            ...(draft.machineIncluded ? { machine_included: true } : {}),
-            ...(!workspaceId && !sandboxId && draft.repositoryUrl
-              ? {
-                  repository: {
-                    url: draft.repositoryUrl,
-                    ...(draft.repositoryRef ? { ref: draft.repositoryRef } : {}),
-                  },
-                }
-              : {}),
-            ...(workspaceId ? { workspace_id: workspaceId } : {}),
-            ...(sandboxId ? { sandbox_id: sandboxId } : {}),
-          });
+          void lifecycle.submit(
+            {
+              name: 'New task',
+              initial_message: submission.text,
+              ...(draft.template ? { template: draft.template } : {}),
+              ...(draft.machineIncluded ? { machine_included: true } : {}),
+              ...(!workspaceId && !sandboxId && draft.repositoryUrl
+                ? {
+                    repository: {
+                      url: draft.repositoryUrl,
+                      ...(draft.repositoryRef ? { ref: draft.repositoryRef } : {}),
+                    },
+                  }
+                : {}),
+              ...(workspaceId ? { workspace_id: workspaceId } : {}),
+              ...(sandboxId ? { sandbox_id: sandboxId } : {}),
+            },
+            draftRevision,
+          );
         }}
       >
         {draft.template ? (
