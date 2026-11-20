@@ -57,6 +57,14 @@ impl ProviderHostedControlTransport {
             }
         };
         Ok(Self {
+            resource_http: reqwest::Client::builder()
+                .connect_timeout(Duration::from_secs(2))
+                .redirect(reqwest::redirect::Policy::none())
+                .retry(reqwest::retry::never())
+                .build()
+                .map_err(|_| {
+                    AdapterError::Unavailable("resource control client could not be built".into())
+                })?,
             desktop_http: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(3))
                 .redirect(reqwest::redirect::Policy::none())

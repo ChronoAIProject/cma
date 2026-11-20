@@ -39,6 +39,7 @@ pub struct ProviderHostedControlTransport {
     owner_router: Option<Arc<crate::owner_control::OwnerControlRoute>>,
     http: reqwest::Client,
     desktop_http: reqwest::Client,
+    resource_http: reqwest::Client,
     archive_factory: Option<Arc<dyn CheckpointArchiveStoreFactory>>,
     state: Arc<Mutex<TransportState>>,
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
@@ -476,3 +477,6 @@ mod binding;
 
 #[path = "provider_capacity_proof.rs"]
 mod capacity_proof;
+
+#[path = "provider_resource_execution.rs"]
+mod resource_execution;

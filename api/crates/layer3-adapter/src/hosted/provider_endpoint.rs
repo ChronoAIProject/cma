@@ -127,6 +127,13 @@ impl RuntimeEndpoint {
         self.with_path(&["runtime", "control"], false)
     }
 
+    pub(super) fn resource_execution(&self, agent: &str, action: &str) -> crate::Result<Url> {
+        self.with_path(
+            &["runtime", "resource-execution", "v1", agent, action],
+            false,
+        )
+    }
+
     pub(super) fn ownership(&self, agent: &str, action: &str) -> crate::Result<Url> {
         self.with_path(
             &["runtime", "agents", agent, "manager-ownership", action],

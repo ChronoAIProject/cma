@@ -2,6 +2,14 @@ use super::*;
 
 #[async_trait::async_trait]
 impl super::super::HostedControlTransport for super::ProviderHostedControlTransport {
+    async fn resource_execution(
+        &self,
+        handle: &RuntimeHandle,
+        agent: &AgentSlot,
+    ) -> crate::Result<Option<Arc<dyn crate::ResourceConversationTransport>>> {
+        self.bind_resource_execution(handle, agent).await
+    }
+
     fn desktop_ownership(&self) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
         Some(self)
     }

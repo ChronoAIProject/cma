@@ -18,6 +18,9 @@ pub enum ResourceSendOutcome {
 /// remains unsupported unless the implementation has an immutable input binding.
 #[async_trait::async_trait]
 pub trait ResourceConversationTransport: RuntimeExecutionControl {
+    fn receiver(&self) -> Option<&crate::resource_execution_protocol::ReceiverKey> {
+        None
+    }
     async fn send_resource(&self, input: &ResourceDispatch) -> ResourceSendOutcome;
 }
 

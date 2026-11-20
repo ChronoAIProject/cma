@@ -18,6 +18,8 @@ pub(super) const HTTP_IDLE_TTL: Duration = Duration::from_secs(60);
 pub(super) enum NativeHttpLane {
     Control,
     Ownership,
+    ResourceData,
+    ResourceControl,
 }
 
 pub(super) struct AbortOnDrop(pub tokio::task::JoinHandle<()>);
