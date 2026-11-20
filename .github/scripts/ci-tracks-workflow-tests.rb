@@ -85,14 +85,33 @@ def check_component_cache_writers(documents)
   end
 end
 
+# Only the read-only CI workflow may run on merge-queue refs: publication and
+# deployment authority stays with develop pushes and explicit dispatches.
+def check_merge_group_triggers(workflows)
+  queued = workflows.select do |_name, workflow|
+    events = workflow.fetch('on', workflow[true])
+    events.is_a?(Hash) && events.key?('merge_group')
+  end
+  require_check(queued.keys == ['ci'], 'only CI may run on merge groups')
+  ci = queued.fetch('ci')
+  require_check(ci['permissions'] == {'contents' => 'read'} &&
+    ci.fetch('jobs').values.all? { |job| job.fetch('permissions', {}).values.all? { |grant| grant == 'read' } },
+    'merge-group CI must remain read-only')
+end
+
 def validate(documents, actions)
   require_runtime_inventory(documents)
   check_component_cache_writers(documents)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
-  require_check(events.keys.sort == %w[pull_request push], 'CI must cover PRs and develop pushes')
+  require_check(events.keys.sort == %w[merge_group pull_request push], 'CI must cover PRs, develop pushes and merge groups')
   require_check(events['push'] == {'branches' => ['develop']}, 'CI push must cover develop without path filters')
+  # Without a branch or path filter every queue entry creates the required
+  # checks; a non-develop queue is refused by the selector, not left pending.
+  require_check(events['merge_group'] == {'types' => ['checks_requested']}, 'CI must report on every merge group')
   require_check(ci['permissions'] == {'contents' => 'read'}, 'CI permissions must remain read-only')
+  # Queue entries run on refs/heads/gh-readonly-queue/develop/pr-N-SHA: their
+  # own ref, so a PR (refs/pull/N/merge) or develop push run never cancels one.
   require_check(ci['concurrency'] == {'group' => 'ci-${{ github.workflow }}-${{ github.ref }}',
     'cancel-in-progress' => true}, 'CI concurrency must remain per ref')
   pr = events.fetch('pull_request')
@@ -240,7 +259,30 @@ actions = Dir.glob(File.join(root, '.github/actions/**/action.{yml,yaml}')).to_h
   ["./#{File.dirname(file).delete_prefix(root + '/')}", YAML.load_file(file)]
 end
 validate(documents, actions)
+workflows = Dir.glob(File.join(root, '.github/workflows/*.{yml,yaml}')).to_h do |file|
+  [File.basename(file, File.extname(file)), YAML.load_file(file)]
+end
+check_merge_group_triggers(workflows)
+[->(w) { w['staging-cd'][true]['merge_group'] = nil },
+ ->(w) { w['ci-omarchy'][true]['merge_group'] = {'types' => ['checks_requested']} },
+ ->(w) { w['ci'][true].delete('merge_group') },
+ ->(w) { w['ci']['permissions'] = 'write-all' },
+ ->(w) { w['ci']['jobs']['version-label']['permissions']['pull-requests'] = 'write' }].each do |mutate|
+  copy = Marshal.load(Marshal.dump(workflows))
+  mutate.call(copy)
+  begin
+    check_merge_group_triggers(copy)
+  rescue RuntimeError
+    next
+  end
+  abort 'merge-group trigger regression accepted'
+end
 mutations = [
+  ->(d) { d['ci'][true].delete('merge_group') },
+  ->(d) { d['ci'][true]['merge_group']['types'] = ['destroyed'] },
+  ->(d) { d['ci'][true]['merge_group']['branches'] = ['main'] },
+  ->(d) { d['ci'][true]['merge_group']['paths'] = ['web/**'] },
+  ->(d) { d['ci']['concurrency']['group'] = 'ci-${{ github.workflow }}-${{ github.event.merge_group.base_ref || github.ref }}' },
   ->(d) { d['ci-repo']['jobs']['structure']['steps'].reject! { |s| s['name'] == 'Synthetic authority and observer regressions' } },
   ->(d) { d['ci-repo']['jobs']['structure']['if'] = 'false' },
   ->(d) { d['ci-repo']['jobs']['structure']['continue-on-error'] = true },
