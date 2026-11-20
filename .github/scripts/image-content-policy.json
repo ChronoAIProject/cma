@@ -24,6 +24,26 @@
       "syntax": "comparison-fragment-v1",
       "classification": "public-material",
       "reason": "Reviewed comparison code and terminal static-member call; every occurrence requires whole-bundle syntax proof"
+    },
+    {
+      "component": "web",
+      "asset_prefix": "usr/share/nginx/html/assets/",
+      "chunk": "RichDocumentEditor",
+      "rule": "gitleaks.image-secret-assignment",
+      "candidate_sha256": "78682087d48673bc7e6aa60653fbbc6a475d05986032ac65010efff96b9b172a",
+      "syntax": "comparison-fragment-v1",
+      "classification": "public-material",
+      "reason": "Reviewed URL equality chain (password, host, pathname and hash member comparisons) after the minifier renamed its trailing identifier; every occurrence requires whole-bundle syntax proof"
+    },
+    {
+      "component": "web",
+      "asset_prefix": "usr/share/nginx/current/assets/",
+      "chunk": "RichDocumentEditor",
+      "rule": "gitleaks.image-secret-assignment",
+      "candidate_sha256": "78682087d48673bc7e6aa60653fbbc6a475d05986032ac65010efff96b9b172a",
+      "syntax": "comparison-fragment-v1",
+      "classification": "public-material",
+      "reason": "Reviewed URL equality chain (password, host, pathname and hash member comparisons) after the minifier renamed its trailing identifier; every occurrence requires whole-bundle syntax proof"
     }
   ],
   "entries": [

@@ -1,7 +1,7 @@
 {
   "schema": "cma-image-content-source-v1",
   "files": {
-    "image-content-policy.json": "e44ede6a59e21ad13437234b34a8afb8fc8a6e1c22a657d5fdae50290e5c877a",
+    "image-content-policy.json": "20e3c48fd76e838c77d03b3567c471483313893c650dde9e265699d66fe98e0e",
     "image-content-vendor/BABEL-LICENSE": "2e97627cb278aa7556fb9e8817368302301a595b6c7582512b8d74c57b773652",
     "image-content-vendor/PROVENANCE.json": "bb7d68cdb634b11bd9ae9534f88fa1e9e708bc4444f4ee96c00bd99cef8816c7",
     "image-content-vendor/babel-parser-7.29.3.cjs": "201724d1415df7749087d9d6e88af50f2bcafe2eb68dfbe9347f49d3361ff426",

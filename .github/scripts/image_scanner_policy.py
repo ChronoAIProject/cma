@@ -16,8 +16,8 @@ APPROVED_CLASSIFICATIONS: dict[str, tuple[str, str]] = {}
 # (content manifest SHA256, authentic SA-01 review SHA256). Remains disabled
 # until the exact catalog and resolver have received that independent verdict.
 APPROVED_CONTENT_POLICY = (
-    "cd7edd5131c7fefc07c5a0d54822fb3c52aa637455953ab27778e62b3491a879",
-    "fbfe98f0369985df2be4ae337395828d2f1dcf407201cc133d4c13b967c5f0f6",
+    "ab1fd8a5739d11d1bcfab6c9b621f1b13609a27624bb94606965afe982015e4a",
+    "fb42543cad6cf16769ce7b09ec5cc2fa6f7583821920f139f1c6e8699c0ac9b5",
 )
 CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json",
                            "image_bundle_contexts.py", "image_bundle_syntax.cjs",
