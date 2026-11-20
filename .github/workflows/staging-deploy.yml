@@ -30,6 +30,8 @@ on:
         value: ${{ jobs.deploy.outputs.status }}
       component_result:
         value: ${{ jobs.deploy.outputs.component_result }}
+      disposition:
+        value: ${{ jobs.deploy.outputs.disposition }}
 
 permissions:
   contents: read
@@ -48,6 +50,7 @@ jobs:
     outputs:
       status: ${{ job.status }}
       component_result: ${{ steps.coordinate.outputs.component_result }}
+      disposition: ${{ steps.release.outputs.disposition || steps.coordinate.outputs.disposition }}
     env:
       CD_STARTED_AT: ${{ inputs.started_at }}
       CD_DEPLOY_MODE: ${{ inputs.mode }}
@@ -69,17 +72,22 @@ jobs:
           CD_RESOLVE_MODE: verify
           CD_RELEASE_SET: ${{ inputs.release_set }}
         run: python3 -B .github/scripts/staging_cd_resolve.py
+      # A set every member of which a newer final overtook deploys nothing:
+      # the newer finals' runs own the deployment, so the remaining steps skip.
       - name: Restore public tool download cache
+        if: steps.release.outputs.disposition == ''
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
         timeout-minutes: 1
         with:
           path: ${{ runner.temp }}/cma-public-tool-cache
           key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
       - name: Prepare isolated deployment tools
+        if: steps.release.outputs.disposition == ''
         run: python3 -B .github/scripts/staging_cd_tools.py install
       # Minting a token is safe to repeat. Only the repeat may fail the job.
       - name: Create restricted infrastructure reader token
         id: infra-token
+        if: steps.release.outputs.disposition == ''
         continue-on-error: true
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
         with:
@@ -90,7 +98,7 @@ jobs:
           permission-contents: read
       - name: Retry restricted infrastructure reader token
         id: infra-token-retry
-        if: steps.infra-token.outcome == 'failure'
+        if: steps.release.outputs.disposition == '' && steps.infra-token.outcome == 'failure'
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
         with:
           app-id: ${{ vars.CMA_INFRA_APP_ID }}
@@ -100,6 +108,7 @@ jobs:
           permission-contents: read
       - name: Resolve infrastructure commit and mask private metadata
         id: private
+        if: steps.release.outputs.disposition == ''
         env:
           CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
           CD_INFRA_REF: ${{ inputs.infra_ref }}
@@ -107,6 +116,7 @@ jobs:
       # A checkout into the same path is safe to repeat; only the repeat may fail the job.
       - name: Check out resolved infrastructure commit
         id: infra-checkout
+        if: steps.release.outputs.disposition == ''
         continue-on-error: true
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
@@ -117,7 +127,7 @@ jobs:
           persist-credentials: false
           show-progress: false
       - name: Retry resolved infrastructure checkout
-        if: steps.infra-checkout.outcome == 'failure'
+        if: steps.release.outputs.disposition == '' && steps.infra-checkout.outcome == 'failure'
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: ChronoAIProject/cma-infra
@@ -127,9 +137,11 @@ jobs:
           persist-credentials: false
           show-progress: false
       - name: Install reviewed private controller requirements
+        if: steps.release.outputs.disposition == ''
         run: python3 -B .github/scripts/staging_cd_tools.py requirements
       - name: Coordinate the immutable deployment set
         id: coordinate
+        if: steps.release.outputs.disposition == ''
         env:
           CD_RELEASE_SET: ${{ steps.release.outputs.release_set }}
           CD_INFRA_REF: ${{ steps.private.outputs.revision }}

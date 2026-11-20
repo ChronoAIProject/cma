@@ -2,15 +2,20 @@ import { Button } from '../ui/Button';
 import { UserMessage } from './UserMessage';
 import { queuedOutcomeText, type QueuedInputOutcome } from './transport/queuedCommandOutcomes';
 import './QueuedInputOutcomes.css';
+import { ExpiredMessageActions } from './ExpiredMessageActions';
 
 export function QueuedInputOutcomes({
   items,
   onRefresh,
   error,
+  onRestore,
+  restoreDisabled,
 }: {
   readonly error?: string;
   readonly items: readonly QueuedInputOutcome[];
   readonly onRefresh: () => void;
+  readonly onRestore?: (text: string) => void;
+  readonly restoreDisabled?: boolean;
 }) {
   return (
     <>
@@ -26,6 +31,13 @@ export function QueuedInputOutcomes({
                     <p>Previously submitted message</p>
                   )}
                   <p role="status">{queuedOutcomeText[item.kind]}</p>
+                  {item.kind === 'expired' && item.terminal ? (
+                    <ExpiredMessageActions
+                      input={item.input}
+                      onRestore={onRestore}
+                      disabled={restoreDisabled}
+                    />
+                  ) : null}
                 </article>
               </li>
             ))}
