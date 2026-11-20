@@ -55,7 +55,7 @@ class NotAdmitted(Refusal):
     """A public precondition stopped the invocation before the controller ran."""
 
     def __init__(self, reason, code):
-        super().__init__(reason)
+        super().__init__("Deployment precondition was not admitted")
         self.reason = reason
         self.code = code
 

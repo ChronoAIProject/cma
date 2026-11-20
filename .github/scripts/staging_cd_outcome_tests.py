@@ -1,5 +1,7 @@
 """Every public failure code explains itself, and nothing private reaches the explanation."""
+import ast
 import contextlib
+import inspect
 import io
 import json
 import re
@@ -220,6 +222,85 @@ class ReportTests(unittest.TestCase):
         error = ValueError()
         error.site = "../" + PRIVATE + ".py:1"
         self.assertIsNone(ci_outcome.error_site(error))
+
+
+def refusal_calls():
+    """Yield (module, line, message node, module constants) for each refusal message."""
+    sources = sorted(path for path in Path(__file__).parent.glob("*.py")
+                     if not path.name.endswith(("_tests.py", "-tests.py", "_fixture.py", "_fixtures.py")))
+    trees = {path: ast.parse(path.read_text(encoding="utf-8")) for path in sources}
+    users = {path: tree for path, tree in trees.items() if path.name == "staging_cd_common.py"
+             or any(isinstance(node, ast.ImportFrom) and node.module == "staging_cd_common" for node in ast.walk(tree))}
+    classes = [node for tree in users.values() for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+    refusals, grew = {"Refusal"}, True
+    while grew:
+        found = {node.name for node in classes if any(isinstance(base, ast.Name) and base.id in refusals
+                                                      for base in node.bases)}
+        grew, refusals = not found <= refusals, refusals | found
+    # Subclasses with their own constructor are checked where they call the
+    # base constructor; every other refusal class is checked at each call.
+    custom = {node.name for node in classes if node.name in refusals - {"Refusal"}
+              and any(isinstance(item, ast.FunctionDef) and item.name == "__init__" for item in node.body)}
+    for path, tree in users.items():
+        constants = {target.id: node.value for node in tree.body if isinstance(node, ast.Assign)
+                     for target in node.targets if isinstance(target, ast.Name)}
+        # require() itself forwards its caller's message; its callers are checked.
+        forwarding = {id(inner) for node in tree.body if isinstance(node, ast.FunctionDef)
+                      and path.name == "staging_cd_common.py" and node.name == "require" for inner in ast.walk(node)}
+        for node in ast.walk(tree):
+            if id(node) in forwarding:
+                continue
+            if isinstance(node, ast.ClassDef) and node.name in custom:
+                for call in ast.walk(node):
+                    if isinstance(call, ast.Call) and isinstance(call.func, ast.Attribute) \
+                            and call.func.attr == "__init__":
+                        yield path.name, call.lineno, call.args[0] if len(call.args) == 1 else None, constants
+            elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
+                if node.func.id == "require":
+                    yield path.name, node.lineno, node.args[1] if len(node.args) == 2 else None, constants
+                elif node.func.id in refusals - custom:
+                    yield path.name, node.lineno, node.args[0] if len(node.args) == 1 else None, constants
+
+
+class RefusalSiteTests(unittest.TestCase):
+    def test_refusal_names_the_checking_line_and_never_its_message(self):
+        from staging_cd_common import Refusal, require
+        from staging_cd_publication_diagnostics import ImageCommandRefusal
+        from staging_cd_reservations import ReservationSuperseded
+        here = Path(__file__).name
+        cases = (
+            (lambda: require(False, PRIVATE), inspect.currentframe().f_lineno),
+            (lambda: (_ for _ in ()).throw(Refusal(PRIVATE)), inspect.currentframe().f_lineno),
+            (lambda: (_ for _ in ()).throw(ReservationSuperseded()), inspect.currentframe().f_lineno),
+            (lambda: (_ for _ in ()).throw(ImageCommandRefusal(["docker"], b"")), inspect.currentframe().f_lineno),
+        )
+        for raise_it, line in cases:
+            with self.subTest(line=line), self.assertRaises(Refusal) as raised:
+                raise_it()
+            self.assertEqual(raised.exception.site, f"{here}:{line}")
+            self.assertEqual(ci_outcome.error_site(raised.exception), f"{here}:{line}")
+            self.assertNotIn(PRIVATE, raised.exception.site)
+
+    def test_a_check_in_another_module_names_that_module_and_line(self):
+        from staging_cd_clock import elapsed
+        from staging_cd_common import Refusal
+        source = Path(__file__).with_name("staging_cd_clock.py").read_text().splitlines()
+        line = next(number for number, text in enumerate(source, 1) if "Deployment admission timestamp is malformed" in text)
+        with self.assertRaises(Refusal) as raised:
+            elapsed(PRIVATE)
+        self.assertIn(raised.exception.site, {f"staging_cd_clock.py:{line}", f"staging_cd_clock.py:{line - 1}"})
+
+    def test_every_require_and_refusal_message_is_a_string_literal(self):
+        # A literal message keeps each refusal a fixed, reviewable condition:
+        # the reported module.py:LINE then identifies it without printing it.
+        offenders, checked = [], 0
+        for module, line, message, constants in refusal_calls():
+            checked += 1
+            value = constants.get(message.id) if isinstance(message, ast.Name) else message
+            if not (isinstance(value, ast.Constant) and isinstance(value.value, str)):
+                offenders.append(f"{module}:{line}")
+        self.assertGreater(checked, 400)
+        self.assertEqual(offenders, [])
 
 
 if __name__ == "__main__":
