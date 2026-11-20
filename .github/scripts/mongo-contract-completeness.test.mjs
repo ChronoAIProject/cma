@@ -50,6 +50,10 @@ test('metadata completeness catches omitted task-home and newly introduced modul
     'agent_lifecycle::workspace::tests::quota::quota_preflight_preserves_replay_and_existing_targets_without_preparation',
     'agent_lifecycle::workspace::tests::quota::worker_quota_failure_metadata_is_gated_and_survives_restart',
     'agent_lifecycle::workspace::tests::title_tests::contextual_title_modes_preserve_exact_admission_and_persist_title_authority',
+    'agent_lifecycle::workspace::tests::title_tests::admission::explicit_title_modes_require_admission_policy_with_or_without_initial_message',
+    'agent_lifecycle::workspace::tests::title_tests::admission::admitted_title_modes_replay_exactly_after_policy_is_withdrawn',
+    'agent_lifecycle::workspace::tests::bootstrap::title_tests::bootstrap_title_mode_survives_admission_and_recovery',
+    'agent_lifecycle::workspace::tests::bootstrap::title_tests::explicit_new_task_rename_fences_a_late_generated_title',
     `${child}_another_contract`,
   ]) {
     const metadata = inventory();

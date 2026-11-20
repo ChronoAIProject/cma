@@ -1,3 +1,6 @@
+#[path = "agent_lifecycle_title_admission_tests.rs"]
+mod admission;
+
 use super::*;
 use layer2_core::sandbox::store::{
     AgentLogStore, AgentStore, InMemorySandboxStore, WorkspaceStore,
