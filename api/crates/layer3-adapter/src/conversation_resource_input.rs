@@ -16,6 +16,9 @@ use crate::{ContentBlock, ConversationInput, PermissionDecision, PermissionLocat
 
 const INPUT_BYTES: usize = MAX_MESSAGE_BYTES / 2;
 const INPUT_POOL_BYTES: usize = 32 * 1024 * 1024;
+// Covers the bounded identity copy/validator and serialization diagnostics,
+// before the encoding size is known and its separate allowance is acquired.
+const VALIDATION_BYTES: usize = 4096;
 
 /// Immutable semantic input. Its byte and parsed-shape custody follows clones.
 #[derive(Clone)]
@@ -27,6 +30,11 @@ struct Storage {
     digest: Digest,
     prompt_id: Option<String>,
     budget: Budget,
+    _custody: IngressReservation,
+}
+
+struct EncodingWork {
+    bytes: Vec<u8>,
     _custody: IngressReservation,
 }
 
@@ -171,11 +179,12 @@ impl ResourceInput {
     }
 
     fn admit_with(input: ConversationInput, budget: Budget) -> ProtocolResult<Self> {
+        let _validation = budget.reserve(VALIDATION_BYTES)?;
         let input = InputV1 {
             protocol: PROTOCOL_VERSION,
             input: input.try_into()?,
         };
-        // Count without allocating a serialization buffer or copying caller data.
+        // Counting and conversion diagnostics retain the validation allowance.
         let mut count = LimitedWriter {
             bytes: None,
             written: 0,
@@ -187,7 +196,13 @@ impl ResourceInput {
             written: 0,
         };
         serde_json::to_writer(&mut encoded, &input).map_err(|_| ProtocolError::Capacity)?;
-        Self::normalize(encoded.bytes.expect("encoding writer"), scratch, budget)
+        Self::normalize(
+            EncodingWork {
+                bytes: encoded.bytes.expect("encoding writer"),
+                _custody: scratch,
+            },
+            budget,
+        )
     }
 
     /// Decode only bounded semantic input; raw ACP frames are not accepted.
@@ -198,24 +213,27 @@ impl ResourceInput {
         }
         let budget = Budget::process();
         let scratch = budget.reserve(bytes.len().saturating_mul(4) + 4096)?;
-        let input = Self::normalize(bytes.to_vec(), scratch, budget)?;
+        let input = Self::normalize(
+            EncodingWork {
+                bytes: bytes.to_vec(),
+                _custody: scratch,
+            },
+            budget,
+        )?;
         if input.bytes() != bytes {
             return Err(ProtocolError::EvidenceMismatch);
         }
         Ok(input)
     }
 
-    fn normalize(
-        bytes: Vec<u8>,
-        _scratch: IngressReservation,
-        budget: Budget,
-    ) -> ProtocolResult<Self> {
-        let shape = crate::hosted::output_json_budget::inspect(&bytes)
+    fn normalize(work: EncodingWork, budget: Budget) -> ProtocolResult<Self> {
+        let shape = crate::hosted::output_json_budget::inspect(&work.bytes)
             .map_err(|_| ProtocolError::InvalidIdentity)?;
-        let custody = budget
-            .reserve(bytes.len().saturating_mul(8) + shape.nodes.saturating_mul(2048) + 4096)?;
+        let custody = budget.reserve(
+            work.bytes.len().saturating_mul(8) + shape.nodes.saturating_mul(2048) + 4096,
+        )?;
         let decoded: InputV1 =
-            serde_json::from_slice(&bytes).map_err(|_| ProtocolError::InvalidIdentity)?;
+            serde_json::from_slice(&work.bytes).map_err(|_| ProtocolError::InvalidIdentity)?;
         if decoded.protocol != PROTOCOL_VERSION {
             return Err(ProtocolError::Unsupported);
         }
@@ -233,7 +251,7 @@ impl ResourceInput {
             serde_json::to_value(decoded).map_err(|_| ProtocolError::InvalidIdentity)?;
         value.sort_all_objects();
         let mut encoded = LimitedWriter {
-            bytes: Some(Vec::with_capacity(bytes.len())),
+            bytes: Some(Vec::with_capacity(work.bytes.len())),
             written: 0,
         };
         serde_json::to_writer(&mut encoded, &value).map_err(|_| ProtocolError::Capacity)?;
@@ -263,6 +281,7 @@ impl ResourceInput {
     }
 
     pub fn bind(self, ticket: ExecutionTicketV1) -> ProtocolResult<ResourceDispatch> {
+        let _validation = self.0.budget.reserve(VALIDATION_BYTES)?;
         ticket.validate()?;
         if ticket.operation != self.operation()
             || ticket.input_digest != *self.digest()
@@ -360,6 +379,10 @@ impl Write for LimitedWriter {
         Ok(())
     }
 }
+
+#[cfg(test)]
+#[path = "conversation_resource_input_allocation_tests.rs"]
+mod allocation_tests;
 
 #[cfg(test)]
 mod custody_tests {

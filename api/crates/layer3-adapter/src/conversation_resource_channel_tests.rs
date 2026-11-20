@@ -11,7 +11,7 @@ fn input(text: &str) -> ResourceInput {
     .unwrap()
 }
 
-fn ticket(input: &ResourceInput) -> ExecutionTicketV1 {
+pub(super) fn ticket(input: &ResourceInput) -> ExecutionTicketV1 {
     let id = |value| OpaqueId::new(value).unwrap();
     let digest = |value: char| Digest::new(&value.to_string().repeat(64)).unwrap();
     let generation = |value| Generation::new(value).unwrap();
