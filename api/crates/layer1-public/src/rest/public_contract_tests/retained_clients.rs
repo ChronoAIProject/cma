@@ -5,6 +5,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 use super::{replay_corpus, Corpus};
+mod agent_list_privacy;
 mod desktop_privacy;
 mod desktop_privacy_tests;
 mod lifecycle_results;
@@ -40,6 +41,7 @@ fn corpora() -> Vec<Corpus> {
     let mut corpora = Vec::new();
     let mut privacy_additions = 0;
     let mut lifecycle_additions = 0;
+    let mut agent_list_privacy_additions = 0;
     for release in manifest.releases {
         let expected = match release.name.as_str() {
             "previous" => "93d4a199a3d36d47f5a89f9117d2bc735900bf4c",
@@ -74,6 +76,8 @@ fn corpora() -> Vec<Corpus> {
                 desktop_privacy::apply(&release.source_commit, &fixture.file, &mut corpus);
             lifecycle_additions +=
                 lifecycle_results::apply(&release.source_commit, &fixture.file, &mut corpus);
+            agent_list_privacy_additions +=
+                agent_list_privacy::apply(&release.source_commit, &fixture.file, &mut corpus);
             corpora.push(corpus);
         }
     }
@@ -86,6 +90,7 @@ fn corpora() -> Vec<Corpus> {
     );
     assert_eq!(privacy_additions, 12);
     assert_eq!(lifecycle_additions, 4);
+    assert_eq!(agent_list_privacy_additions, 8);
     corpora
 }
 
