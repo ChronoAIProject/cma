@@ -4,6 +4,8 @@ export function check(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`TC-117 ${message}`);
 }
 export const blocked = {
+  authority:
+    'BLOCKED: TC-117 requires authority cleanup acknowledgment and candidate before/after binding integration before remote execution',
   instances: 'BLOCKED: TC-117 requires CMA_E2E_INSTANCE_ORIGINS with two distinct serving origins',
   utc: 'BLOCKED: TC-117 UTC campaign must start in the 30 seconds before real UTC midnight',
   utcWindow: 'BLOCKED: TC-117 pre/post-midnight operations exceeded the real UTC 30-second window',
@@ -11,6 +13,10 @@ export const blocked = {
   separation:
     'BLOCKED: TC-117 independent egress networks and offered load must exceed the fleet burst and rate without being masked by old network buckets',
 } as const;
+export function requireCampaignAuthority(): void {
+  // The authority integration must replace this guard; selecting a config is not authorization.
+  throw new Error(blocked.authority);
+}
 export function requireInstances(origins: string[]): [string, string] {
   if (origins.length !== 2 || new Set(origins).size !== 2) throw new Error(blocked.instances);
   return origins as [string, string];

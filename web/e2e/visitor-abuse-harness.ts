@@ -2,11 +2,12 @@ import { test as base } from '@playwright/test';
 import { settings } from './environment';
 import { tc117Fixture } from './visitor-abuse-environment';
 import { TC117Client } from './visitor-abuse-client';
-import { blocked, check } from './visitor-abuse-model';
+import { blocked, check, requireCampaignAuthority } from './visitor-abuse-model';
 
 export const test = base.extend<{ abuse: TC117Client }>({
   abuse: async ({ playwright }, runTest, info) => {
     void playwright;
+    requireCampaignAuthority();
     const client = await TC117Client.open(settings(), tc117Fixture());
     let cleanupFailed = false;
     try {

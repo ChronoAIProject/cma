@@ -6,6 +6,7 @@ import { tc117Fixture, type Visitor } from './visitor-abuse-environment';
 import { TC117Client } from './visitor-abuse-client';
 import { validatePrerequisites } from './visitor-abuse-scenarios';
 import { prepareEvidenceDirectory } from './security';
+import { requireCampaignAuthority } from './visitor-abuse-model';
 
 export function assertFirstAttempt(
   config: Pick<FullConfig, 'projects'>,
@@ -58,6 +59,7 @@ export function selectedVisitors(
 
 export default async function preflight(config: FullConfig) {
   assertFirstAttempt(config);
+  requireCampaignAuthority();
   const settingsValue = settings();
   const fixture = tc117Fixture();
   const complete = prepareEvidenceDirectory(
