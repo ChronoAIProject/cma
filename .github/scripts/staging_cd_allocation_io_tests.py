@@ -4,7 +4,8 @@ import subprocess
 import unittest
 from unittest.mock import Mock
 
-from staging_cd_allocation_io import ALLOCATION_SECONDS, AllocationGitHub, AllocationIO, parallel_read
+from staging_cd_allocation_io import (ALLOCATION_SECONDS, PUSH_RESERVE_SECONDS, AllocationGitHub, AllocationIO,
+                                      parallel_read)
 from staging_cd_allocation_snapshot import AllocationSnapshot
 from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
@@ -23,14 +24,27 @@ class AllocationIOTests(unittest.TestCase):
             self.assertEqual(runner.call_count, 3)
             self.assertEqual([call.kwargs["timeout"] for call in runner.call_args_list], [5, 5, 5])
             self.assertEqual([call.args[0] for call in io.sleep.call_args_list], [0.5, 1.0])
-        # A wait that would reach the deadline is never started.
-        runner = Mock(side_effect=[response(503), response(200)])
-        late = AllocationIO(runner, clock=Mock(side_effect=[0, ALLOCATION_SECONDS - 0.4, ALLOCATION_SECONDS - 0.4]),
-                            sleep=Mock(), rand=lambda: 1.0)
-        with self.assertRaisesRegex(Refusal, "Allocation read failed"):
-            AllocationGitHub("fixture", late).request("pulls/1")
+        # A repeat that would reach the push reserve is never started, so a slow
+        # read fails while the reservation push can still run.
+        for now, repeats in ((ALLOCATION_SECONDS - PUSH_RESERVE_SECONDS - 0.6, True),
+                             (ALLOCATION_SECONDS - PUSH_RESERVE_SECONDS - 0.4, False),
+                             (ALLOCATION_SECONDS - 0.4, False)):
+            with self.subTest(now=now):
+                runner = Mock(side_effect=[response(503), response(200)])
+                late = AllocationIO(runner, clock=Mock(side_effect=[0, *[now] * 4]), sleep=Mock(), rand=lambda: 1.0)
+                if repeats:
+                    self.assertEqual(AllocationGitHub("fixture", late).request("pulls/1"), {})
+                    self.assertEqual(runner.call_count, 2)
+                    continue
+                with self.assertRaisesRegex(Refusal, "Allocation read failed"):
+                    AllocationGitHub("fixture", late).request("pulls/1")
+                runner.assert_called_once()
+                late.sleep.assert_not_called()
+        # The reserve is exactly what a push still requires when it starts.
+        runner = Mock(return_value=Mock(returncode=0, stdout=""))
+        AllocationIO(runner, clock=Mock(side_effect=[0, ALLOCATION_SECONDS - PUSH_RESERVE_SECONDS])).write(
+            ["git", "push", "fixture"])
         runner.assert_called_once()
-        late.sleep.assert_not_called()
 
     def test_auth_and_missing_provenance_do_not_retry(self):
         for code in (401, 403, 404):

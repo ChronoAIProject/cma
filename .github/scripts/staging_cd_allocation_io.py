@@ -35,6 +35,10 @@ class UncertainPush(Refusal):
 # Inventory reads grow with every published tag. At 30 s, hosted runs reached
 # the reservation push with less than the 7 s it requires and failed.
 ALLOCATION_SECONDS = 120
+# A complete ref advertisement and parallel owner readbacks need time after the
+# single remote write, and a push never starts in the final second.
+PUSH_SETTLEMENT_SECONDS = 6
+PUSH_RESERVE_SECONDS = PUSH_SETTLEMENT_SECONDS + 1
 
 
 class AllocationIO:
@@ -45,9 +49,9 @@ class AllocationIO:
 
     @property
     def retry(self):
-        # Reads share one short budget with the reservation push, so waits stay
-        # sub-second and never start once they would reach the deadline.
-        return {"base": 0.5, "cap": 2.0, "deadline": self.deadline, "clock": self.clock,
+        # Reads share one short budget with the reservation push. Waits stay
+        # sub-second, and no repeat may eat into the time the push reserves.
+        return {"base": 0.5, "cap": 2.0, "deadline": self.deadline - PUSH_RESERVE_SECONDS, "clock": self.clock,
                 "sleep": self.sleep, "rand": self.rand}
 
     def remaining(self):
@@ -73,10 +77,9 @@ class AllocationIO:
 
     def write(self, args, **kwargs):
         push = args[:2] == ["git", "push"]
-        # A complete ref advertisement and parallel owner readbacks need time
-        # after the single remote write. Never start a push in the final second.
-        available = self.remaining() - (6 if push else 0)
-        require(available >= 1 if push else available > 0, "Allocation deadline exceeded")
+        available = self.remaining() - (PUSH_SETTLEMENT_SECONDS if push else 0)
+        require(available >= PUSH_RESERVE_SECONDS - PUSH_SETTLEMENT_SECONDS if push else available > 0,
+                "Allocation deadline exceeded")
         kwargs["timeout"] = min(10, available)
         try:
             return self.runner(args, **kwargs)
