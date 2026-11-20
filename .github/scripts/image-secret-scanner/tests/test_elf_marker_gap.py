@@ -16,6 +16,7 @@ from tests import test_derived_payload as derived_tests
 from tests import test_key_marker_view as key_tests
 from tests import test_package_policy as packages
 from tests.test_elf_nul_key_view import OFFSET, elf
+from tests.test_pooled_literals import POOLED, pool
 
 PATH = "usr/lib/libfixture-gap.so.1"
 SOURCE = ("src/fixture-labels.c", "a" * 64)
@@ -27,6 +28,9 @@ INTERIOR = b"\0".join((
 ))
 TERMINATOR = b"-----END " + b"PRIVATE KEY-----"
 PLANTED = base64.b64encode(b"public fixture text, not a key; " * 2)[:64]
+BUILD = b"/usr/src/debug/fixture/fixture/"
+BUILD_PATHS = BUILD + b"common/rfb/SSecurityVncAuthentication.cxx\0" + BUILD + b"common/rdr/BufferedInputStream.h\0"
+NEEDLE = b"Proc-" + b"Type:"
 
 
 class MarkerGapTests(unittest.TestCase):
@@ -168,6 +172,78 @@ class MarkerGapTests(unittest.TestCase):
         self.assertIn("content.binary-private-key", {row["rule"] for row in refused["blocking_findings"]})
         self.assertNotIn(KEY_MARKER_VIEW_ADVISORY,
                          {row["classification"] for row in refused["package_evidence"]["entries"]})
+
+    def excepted(self, pin, **exception):
+        return dict(pin, matches=(dict(pin["matches"][0], **exception),))
+
+    def outcome(self, archive, manifest, pin, name):
+        with self.pinned(pin):
+            report = self.publish(archive, manifest, name, blocks=True)
+        return {item["rule"] for item in report["blocking_findings"]}
+
+    def test_pinned_build_paths_mask_only_their_exact_strings(self):
+        archive, manifest, raw, pin = self.fixture(interior=INTERIOR + BUILD_PATHS)
+        self.assertIn(KEY_MARKER_VIEW_RULE, self.outcome(archive, manifest, pin, "strict-paths"))
+        with self.pinned(self.excepted(pin, build_paths={"prefix": BUILD, "count": 2})):
+            clean = self.publish(archive, manifest, "build-paths")
+        self.assertEqual(clean["findings"], raw["findings"])
+        self.assertEqual(clean["blocking_findings"], [])
+        for name, (interior, paths) in {
+            "wrong-count": (INTERIOR + BUILD_PATHS, {"prefix": BUILD, "count": 3}),
+            "other-prefix": (INTERIOR + BUILD_PATHS, {"prefix": b"/usr/src/debug/other/other/", "count": 2}),
+            "armor-in-path": (INTERIOR + BUILD_PATHS + BUILD + b"A" * 40 + b"+B.cxx\0", {"prefix": BUILD, "count": 2}),
+            "base64-beside-paths": (INTERIOR + BUILD_PATHS + PLANTED + b"\0", {"prefix": BUILD, "count": 2}),
+        }.items():
+            with self.subTest(name=name):
+                archive, manifest, _, pin = self.fixture(interior=interior)
+                self.assertIn(KEY_MARKER_VIEW_RULE,
+                              self.outcome(archive, manifest, self.excepted(pin, build_paths=paths), name))
+
+    def field(self, interior, offset_shift=0):
+        archive, manifest, raw, pin = self.fixture(interior=interior)
+        at = OFFSET + 1 + len(key_tests.BEGIN) + 1 + interior.index(NEEDLE) + offset_shift
+        field = elf_marker_gap.label(at, len(NEEDLE), SOURCE, 3, digest_bytes(NEEDLE))
+        return archive, manifest, raw, pin, field
+
+    def test_pinned_field_name_masks_only_a_bare_needle(self):
+        archive, manifest, raw, pin, field = self.field(INTERIOR + NEEDLE + b"\0")
+        self.assertIn(KEY_MARKER_VIEW_RULE, self.outcome(archive, manifest, pin, "strict-field"))
+        with self.pinned(self.excepted(pin, field_names=(field,))):
+            clean = self.publish(archive, manifest, "field-name")
+        self.assertEqual(clean["blocking_findings"], [])
+        for name, (interior, shift) in {
+            "field-with-value": (INTERIOR + NEEDLE + b" 4,ENCRYPTED\0", 0),
+            "moved-field": (INTERIOR + NEEDLE + b"\0", 1),
+            "second-field": (INTERIOR + NEEDLE + b"\0DEK-" + b"Info:\0", 0),
+        }.items():
+            with self.subTest(name=name):
+                archive, manifest, _, pin, field = self.field(interior, shift)
+                self.assertIn(KEY_MARKER_VIEW_RULE,
+                              self.outcome(archive, manifest, self.excepted(pin, field_names=(field,)), name))
+
+    def pooled(self, misalign=0):
+        base = OFFSET + 1 + len(key_tests.BEGIN) + 1 + len(INTERIOR)
+        interior = INTERIOR + b"\0" * ((-base) % 16 + misalign)
+        archive, manifest, raw, pin = self.fixture(interior=interior, terminator=POOLED,
+                                                   after=pool()[len(POOLED):] + b"\0" * 16)
+        start = pin["matches"][0]["terminator"]["offset"]
+        context = {"offset": start, "size": len(pool()), "sha256": digest_bytes(pool())}
+        return archive, manifest, raw, pin, context
+
+    def test_pinned_pool_may_terminate_only_its_exact_span(self):
+        archive, manifest, raw, pin, context = self.pooled()
+        self.assertIn(KEY_MARKER_VIEW_RULE, self.outcome(archive, manifest, pin, "strict-pool"))
+        cleared = self.outcome(archive, manifest, self.excepted(pin, terminator_pool=context), "pooled-terminator")
+        # The pooled label is also a second content marker, which this row leaves to its own proof.
+        self.assertNotIn(KEY_MARKER_VIEW_RULE, cleared)
+        for name, (options, change) in {
+            "changed-pool": ({}, {"sha256": digest_bytes(b"other pool")}),
+            "misaligned-pool": ({"misalign": 1}, {}),
+        }.items():
+            with self.subTest(name=name):
+                archive, manifest, _, pin, context = self.pooled(**options)
+                self.assertIn(KEY_MARKER_VIEW_RULE, self.outcome(
+                    archive, manifest, self.excepted(pin, terminator_pool=dict(context, **change)), name))
 
     def test_reviewed_rows_pin_complete_label_extents(self):
         for (name, path), pin in elf_marker_gap.PINS.items():
