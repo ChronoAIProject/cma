@@ -43,11 +43,12 @@ def final_tag(value):
 
 
 class SupersededPublicationTests(unittest.TestCase):
-    def exercise(self, version, boundary, directory, *, successor="pending", component="am",
-                 pending_after_build=False):
+    def exercise(self, version, boundary, directory, *, successor="pending", component="am", pending_at=None):
         held = reservation(version, "a" * 40, 100, component)
         later = reservation(version + 1, "b" * 40, 101, component)
         newest = reservation(version + 2, "c" * 40, 102, component)
+        # A contract group's earlier claim on the same source, finalized by its own build.
+        peer = reservation(version - 1, held["source"], 99, component)
         pending, trace = [held], []
         api = Mock()
         history = DevelopHistory(newest["source"], [newest["source"], later["source"], held["source"]])
@@ -61,20 +62,22 @@ class SupersededPublicationTests(unittest.TestCase):
         registry.manifest.side_effect = [None, (digest, {})]
 
         def arrive(point):
-            # The successor is either a queued reservation or an already finalized release.
+            # The successor is a queued reservation, a finalized newer release,
+            # or the final of a same-source peer. A newer pending reservation
+            # may also arrive, at its own earlier point.
             if boundary == point:
                 if successor == "pending":
                     pending.append(later)
                 else:
-                    api.tags.return_value = [final_tag(later)]
+                    api.tags.return_value = [final_tag(later if successor == "final" else peer)]
+            if pending_at == point:
+                pending.append(newest)
 
         arrive("before-build")
 
         def build(_root, _reservation, dest, **_kwargs):
             trace.append("build")
             arrive("after-build")
-            if pending_after_build:
-                pending.append(newest)
             archive = dest / "image.oci.tar"
             archive.write_bytes(b"synthetic image")
             return archive, release
@@ -129,7 +132,7 @@ class SupersededPublicationTests(unittest.TestCase):
 
     def test_started_build_finishes_past_pending_successor_and_queued_build_yields(self):
         for component, (version, successor, boundary, steps) in ((component, case) for component in LANES for case in [
-            (5, "pending", "before-build", []), (6, "final", "before-build", []),
+            (5, "pending", "before-build", []), (6, "final", "before-build", []), (11, "peer", "before-build", []),
             (7, "pending", "after-build", PUBLISHED), (8, "pending", "before-copy", PUBLISHED),
             (9, "pending", "after-verify", PUBLISHED), (10, "pending", "unchanged", PUBLISHED),
         ]):
@@ -150,15 +153,21 @@ class SupersededPublicationTests(unittest.TestCase):
                     published, = json.loads(receipt.read_text())
                     self.assertEqual(published["identity"]["version"], f"0.13.{version}")
 
-    def test_higher_final_after_build_starts_fails_without_receipt_or_skip(self):
-        for component, (version, boundary, steps) in ((component, case) for component in LANES for case in [
-            (5, "after-build", ["build"]), (6, "before-copy", ["build", "scan", "login"]),
-            (7, "after-verify", PUBLISHED),
-        ]):
-            with self.subTest(component=component, boundary=boundary), tempfile.TemporaryDirectory() as directory:
-                # A newer pending reservation arrives first and is passed; only the final stops the build.
-                code, log, trace, output, receipt = self.exercise(version, boundary, directory, successor="final",
-                                                                  component=component, pending_after_build=True)
+    def test_a_final_after_build_starts_fails_without_receipt_or_skip(self):
+        for component, (version, successor, pending_at, boundary, steps) in (
+                (component, case) for component in LANES for case in [
+                    (5, "final", None, "after-build", ["build"]),
+                    (6, "final", "after-build", "before-copy", ["build", "scan", "login"]),
+                    (7, "final", "after-build", "after-verify", PUBLISHED),
+                    (8, "final", "before-copy", "after-verify", PUBLISHED),
+                    (9, "peer", "after-build", "before-copy", ["build", "scan", "login"]),
+                ]):
+            with self.subTest(component=component, successor=successor, pending_at=pending_at, boundary=boundary), \
+                    tempfile.TemporaryDirectory() as directory:
+                # A newer pending reservation that arrives first is passed at its
+                # check; only the final arriving at a later check stops the build.
+                code, log, trace, output, receipt = self.exercise(version, boundary, directory, successor=successor,
+                                                                  component=component, pending_at=pending_at)
                 self.assertEqual(code, 1)
                 self.assertEqual(trace, steps)
                 self.assertIn("FAIL publication", log)
