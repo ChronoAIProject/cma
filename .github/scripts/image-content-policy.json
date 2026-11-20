@@ -44,6 +44,26 @@
       "syntax": "comparison-fragment-v1",
       "classification": "public-material",
       "reason": "Reviewed URL equality chain (password, host, pathname and hash member comparisons) after the minifier renamed its trailing identifier; every occurrence requires whole-bundle syntax proof"
+    },
+    {
+      "component": "web",
+      "asset_prefix": "usr/share/nginx/html/assets/",
+      "chunk": "RichDocumentEditor",
+      "rule": "gitleaks.image-secret-assignment",
+      "candidate_sha256": "b89840e7c503e7dceef996c321e9955645446275735686ecea12315eb486a6b9",
+      "syntax": "comparison-fragment-v1",
+      "classification": "public-material",
+      "reason": "Reviewed URL equality chain (password, host, pathname and hash member comparisons) after the minifier renamed its trailing identifier again; every occurrence requires whole-bundle syntax proof"
+    },
+    {
+      "component": "web",
+      "asset_prefix": "usr/share/nginx/current/assets/",
+      "chunk": "RichDocumentEditor",
+      "rule": "gitleaks.image-secret-assignment",
+      "candidate_sha256": "b89840e7c503e7dceef996c321e9955645446275735686ecea12315eb486a6b9",
+      "syntax": "comparison-fragment-v1",
+      "classification": "public-material",
+      "reason": "Reviewed URL equality chain (password, host, pathname and hash member comparisons) after the minifier renamed its trailing identifier again; every occurrence requires whole-bundle syntax proof"
     }
   ],
   "entries": [
@@ -220,10 +240,15 @@
     {"candidate_sha256": "ef1f431428fc67826b5fc53f7610fc013e8625fb8fff4165dbea0226e542a8bd", "classification": "public-material", "component": "web", "file_sha256": "de332067c65ed8e994202e8e082f608bd9f65d47554406a91832296b42672a49", "path": "usr/share/nginx/html/assets/rfb-CxsXsMUX.js", "reason": "Public Web Crypto API member used as code/callee at every occurrence; not a credential literal; outside current Ornn scoped matcher", "rule": "gitleaks.image-secret-assignment", "scope": "layer"},
     {"candidate_sha256": "b3f25d66bc8f04be91d112dfc49cd93320ed609a6739734e19fbce2cc66eda59", "classification": "public-material", "component": "web", "file_sha256": "d83908fd9d68d99deba46b64a182ba358a9ff9d7c15435b95bb11bf5da2449b1", "path": "usr/share/nginx/current/assets/RichDocumentEditor-DvmQnNQT.js", "reason": "Detector begins inside a JavaScript equality operator and captures identifier/member comparisons; no string/comment/credential literal; exact-file scope only", "rule": "gitleaks.image-secret-assignment", "scope": "layer"},
     {"candidate_sha256": "ef1f431428fc67826b5fc53f7610fc013e8625fb8fff4165dbea0226e542a8bd", "classification": "public-material", "component": "web", "file_sha256": "de332067c65ed8e994202e8e082f608bd9f65d47554406a91832296b42672a49", "path": "usr/share/nginx/current/assets/rfb-CxsXsMUX.js", "reason": "Public Web Crypto API member used as code/callee at every occurrence; not a credential literal; outside current Ornn scoped matcher", "rule": "gitleaks.image-secret-assignment", "scope": "layer"},
+    {"candidate_sha256": "714293ae5f982469f7f2ef46eaaa565bb16627ee3b4d59f730f1d94892211c19", "classification": "public-material", "component": "web", "file_sha256": "4b6b3d10233d93415275feceaa6122504cdeeb6282210d827d2f6d592bac5cd5", "path": "sbin/apk", "reason": "Alpine apk-tools 3.0.6-r0 self-upgrade re-exec token constant (APK_PREUPGRADE_TOKEN set by the aports repo-hash-sha1.patch) in its environment strings; package-owned file matching the apk database checksum; not a credential", "rule": "gitleaks.generic-api-key", "scope": "layer"},
+    {"candidate_sha256": "714293ae5f982469f7f2ef46eaaa565bb16627ee3b4d59f730f1d94892211c19", "classification": "public-material", "component": "web", "file_sha256": "c4f4a939ce7dfe9ea4fe21bf88d70a980ed3e5ba34389c10ca7f0cbfec8b88e5", "path": "sbin/apk", "reason": "Alpine apk-tools 3.0.9-r0 self-upgrade re-exec token constant (APK_PREUPGRADE_TOKEN set by the aports repo-hash-sha1.patch) in its environment strings; bytes equal the signed Alpine package; not a credential", "rule": "gitleaks.generic-api-key", "scope": "layer"},
     {"classification": "public-material", "component": "am", "file_sha256": "5961c0a3c65459931c023e0075c09733f09aea4ca439cb85bc4a08bb4f3f568b", "path": "etc/ssl/cert.pem", "reason": "Complete public X.509 PEM payload; each decoded DER certificate round-trips exactly", "rule": "path.key-or-certificate", "scope": "layer"},
     {"classification": "public-material", "component": "am", "file_sha256": "5961c0a3c65459931c023e0075c09733f09aea4ca439cb85bc4a08bb4f3f568b", "path": "etc/ssl1.1/cert.pem", "reason": "Complete public X.509 PEM payload; each decoded DER certificate round-trips exactly", "rule": "path.key-or-certificate", "scope": "layer"},
     {"candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59", "classification": "public-material", "component": "am", "file_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3", "path": "etc/ssl/openssl.cnf", "reason": "OpenSSL default private-key file reference, exact public upstream candidate and file identity", "rule": "gitleaks.image-secret-assignment", "scope": "layer"},
     {"candidate_sha256": "4f9340fc244221a369e42a29db1fcc44581ee19c02c14556b4c96efaf6c12d59", "classification": "public-material", "component": "am", "file_sha256": "a65a2cb9f4ee8ffdc7ef4f0ac600c0bdafb95b7b1ab457188ac610a62f5ad6b3", "path": "etc/ssl/openssl.cnf.dist", "reason": "OpenSSL default private-key file reference, exact public upstream candidate and file identity", "rule": "gitleaks.image-secret-assignment", "scope": "layer"},
+    {"candidate_sha256": "1ab68f0500ddb8b9e428efad96b568e801c65983de8535898b9c971bc35178e0", "classification": "public-material", "component": "am", "file_sha256": "cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40", "path": "usr/local/bin/codex-native", "reason": "Rust panic location (credentials.rs line number) adjacent to a static string in the sha256-pinned Codex 0.147.0 musl binary; not a credential", "rule": "gitleaks.generic-api-key", "scope": "layer"},
+    {"candidate_sha256": "1416de99a7e76d2901e075b8539b88cfc35f665d08725e76a14f337bddfaa0fb", "classification": "public-material", "component": "am", "file_sha256": "797bb06a4e8606411b3aa2f363005e43d0b845ca8abe4d4afef6a0e7cdf2f37b", "path": "usr/local/bin/gitleaks", "reason": "Go error format verb after a password label, adjacent to a symbol name, in the reproducible CMA rebuild of Gitleaks 8.30.1; not a credential", "rule": "gitleaks.image-secret-assignment", "scope": "layer"},
+    {"candidate_sha256": "522e9347612951b131245a2959b343538f901b0c06ecf47f537f215d49d11b4f", "classification": "public-material", "component": "am", "file_sha256": "797bb06a4e8606411b3aa2f363005e43d0b845ca8abe4d4afef6a0e7cdf2f37b", "path": "usr/local/bin/gitleaks", "reason": "Literal regex of the Gitleaks 8.30.1 default Bedrock short-lived key rule (pinned upstream config/gitleaks.toml), base64 of the public service hostname, embedded in the scanner binary; not a key", "rule": "gitleaks.aws-amazon-bedrock-api-key-short-lived", "scope": "layer"},
     {"classification": "public-material", "component": "am", "file_sha256": "04846f73d9d0421c60076fd02bad7f0a81a3f11a028d653b0de53290e41dcead", "path": "etc/ssl/certs/ca-cert-ACCVRAIZ1.pem", "reason": "Complete public X.509 PEM payload; each decoded DER certificate round-trips exactly", "rule": "path.key-or-certificate", "scope": "layer"},
     {"classification": "public-material", "component": "am", "file_sha256": "aa18ea4c9a8441a461bb436a1c90beb994ac841980b8fd62c72de9a62ddf8ae3", "path": "etc/ssl/certs/ca-cert-AC_RAIZ_FNMT-RCM.pem", "reason": "Complete public X.509 PEM payload; each decoded DER certificate round-trips exactly", "rule": "path.key-or-certificate", "scope": "layer"},
     {"classification": "public-material", "component": "am", "file_sha256": "8e3f237813d3f3e2f5767bc2a694a7557f84bb79fd60ef1adc25afd0c1fc5ef6", "path": "etc/ssl/certs/ca-cert-AC_RAIZ_FNMT-RCM_SERVIDORES_SEGUROS.pem", "reason": "Complete public X.509 PEM payload; each decoded DER certificate round-trips exactly", "rule": "path.key-or-certificate", "scope": "layer"},
