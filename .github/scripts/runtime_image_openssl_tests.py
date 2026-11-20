@@ -42,16 +42,19 @@ class OpenSSLTests(unittest.TestCase):
 
     def test_applies_replacement_in_each_shipped_debian_package_layer(self):
         recipe = (RUNTIME / "Dockerfile").read_text()
-        for stage, action in (("runtime-system", "sh /tmp/install-os.sh"), ("runtime-refreshed", "apt-get upgrade -y")):
+        installer = (RUNTIME / "image/install-os.sh").read_text()
+        replacement = installer.index("sh /tmp/install-openssl-cli.sh /tmp/cma-openssl /usr/bin/openssl")
+        self.assertLess(installer.index("apt-get upgrade -y"), replacement)
+        self.assertLess(installer.rindex("apt-get install -y"), replacement)
+        for stage, mode in (("runtime-system", "install"), ("runtime-refreshed", "refresh")):
             with self.subTest(stage=stage):
                 body = recipe.split(f" AS {stage}\n", 1)[1].split("\nFROM ", 1)[0]
                 commands = [line for line in body.replace("\\\n", " ").splitlines()
-                            if line.startswith("RUN ") and action in line]
+                            if line.startswith("RUN ") and f"sh /tmp/install-os.sh {mode}" in line]
                 self.assertEqual(len(commands), 1)
                 step = commands[0]
                 self.assertIn("--mount=type=bind,from=openssl-cli-build,source=/out", step)
-                self.assertGreater(step.index("sh /tmp/install-openssl-cli.sh /tmp/cma-openssl /usr/bin/openssl"),
-                                   step.index(action))
+                self.assertIn("source=api/crates/layer4-runtime/image/install-debian-openssl-cli.sh,", step)
 
     def test_arch_replaces_the_cli_only_when_package_version_matches(self):
         for installed in ("3.6.5-1", "3.6.5-2"):
