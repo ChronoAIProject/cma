@@ -1,10 +1,17 @@
-import { ApiError, ProtocolError, TransportError, ValidationError } from '@cma/client';
+import {
+  ApiError,
+  CredentialError,
+  ProtocolError,
+  TransportError,
+  ValidationError,
+} from '@cma/client';
 import { expect, it } from 'vitest';
 import { catalogFailure } from './catalogFailure';
 
 const injected = '<html>synthetic-private-body</html>';
 it.each([
   [new ApiError(401, injected), 'sign_in', false],
+  [new CredentialError(injected), 'sign_in', false],
   [new ApiError(403, injected), 'forbidden', false],
   [new ApiError(429, injected), 'rate_limited', true],
   [new ApiError(503, injected), 'unavailable', true],
@@ -45,4 +52,28 @@ it('only exposes bounded, allowlisted diagnostic fields', () => {
     message: 'The catalog is temporarily unavailable. Try again.',
     retry: true,
   });
+});
+
+it('allows only known codes and bounded correlation IDs, never raw details or extensions', () => {
+  const error = new ApiError(
+    503,
+    '<html>private</html>',
+    'profile_services_unavailable',
+    'catalog-request:01',
+    2000,
+    { detail: 'private', token: 'private' },
+  );
+  expect(catalogFailure(error)).toMatchObject({
+    status: 503,
+    code: 'profile_services_unavailable',
+    requestId: 'catalog-request:01',
+    retryAfterMs: 2000,
+  });
+  for (const requestId of ['', '<html>private</html>', 'private\nheader', 'a'.repeat(65)]) {
+    const result = catalogFailure(new ApiError(503, 'private', 'private', requestId, NaN));
+    expect(result.requestId).toBeUndefined();
+    expect(result.code).toBeUndefined();
+    expect(result.retryAfterMs).toBeUndefined();
+    expect(JSON.stringify(result)).not.toContain('private');
+  }
 });

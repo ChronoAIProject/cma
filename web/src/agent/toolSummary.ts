@@ -1,5 +1,5 @@
 import type { ToolCall } from './model';
-import { durationLabel, toolDuration } from './workspaceTime';
+import { toolGroupTimingLabel } from './toolTiming';
 import { screenOperation } from './screenOperations';
 import { reportedFileChanges } from './fileChanges';
 export function toolCategory(
@@ -27,21 +27,17 @@ export function summarizeTools(tools: readonly ToolCall[]): {
   added?: number;
   removed?: number;
   duration?: string;
+  durationTitle?: string;
   countsUnavailable?: boolean;
 } {
   if (!tools.length) return { label: '' };
   const screens = tools.map(screenOperation);
   if (screens.every((step) => step !== undefined)) {
     const app = screens.every((step) => step.application === 'Browser') ? 'Browser' : 'Desktop';
-    const duration = toolDuration(tools[0]?.startedAt, tools.at(-1)?.finishedAt);
     return {
       label: `Checked it in ${app} · ${tools.length} step${tools.length === 1 ? '' : 's'}`,
-      duration:
-        duration === undefined
-          ? undefined
-          : duration % 1000 === 0
-            ? `${duration / 1000}s`
-            : durationLabel(duration),
+      duration: toolGroupTimingLabel(tools, true),
+      durationTitle: 'Recorded interval from the first step to the last step',
     };
   }
   const count = (category: ReturnType<typeof toolCategory>) =>
@@ -94,15 +90,13 @@ export function summarizeTools(tools: readonly ToolCall[]): {
     }
   }
   for (const tool of count('other')) parts.push(tool.title.trim() || 'Tool operation');
-  const durations = tools.map((tool) => toolDuration(tool.startedAt, tool.finishedAt));
   return {
     label: parts.join(' · '),
     countsUnavailable,
     added,
     removed,
-    duration: durations.every((value) => value !== undefined)
-      ? durationLabel(durations.reduce((sum, value) => sum + value, 0))
-      : undefined,
+    duration: toolGroupTimingLabel(tools, false),
+    durationTitle: 'Sum of recorded tool intervals',
   };
 }
 export function toolGroupSummary(tools: readonly ToolCall[]): string {

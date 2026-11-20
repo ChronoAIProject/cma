@@ -125,14 +125,15 @@ it('retains an uncertain create across navigation and removes a freshly created 
   await act(async () => {
     render(<EventGateway session={session} denied={vi.fn()} />);
   });
-  const openExisting = () => {
-    const channels = within(screen.getByRole('region', { name: 'Channels' }));
-    fireEvent.click(channels.getByRole('button', { name: /^Existing/ }));
-  };
+  const channels = within(screen.getByRole('region', { name: 'Channels' }));
+  const existingChannel = channels.getByRole('button', { name: /^Existing/ });
+  const openExisting = () => fireEvent.click(existingChannel);
   openExisting();
   expect(screen.getByRole('heading', { name: 'Existing' })).toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
+  const newChannel = screen.getByRole('button', { name: 'New channel' });
+  fireEvent.click(newChannel);
   const form = screen.getByRole('button', { name: 'Create channel' }).closest('form')!;
+  const editor = within(form.parentElement!);
   fireEvent.change(within(form).getByLabelText('Channel name'), {
     target: { value: 'Created' },
   });
@@ -149,12 +150,14 @@ it('retains an uncertain create across navigation and removes a freshly created 
     target: { value: 'fixture-route' },
   });
   await clickAndSettle(within(form).getByRole('button', { name: 'Create channel' }));
-  expect(screen.getByRole('button', { name: 'Retry same request' })).toBeVisible();
+  expect(editor.getByRole('button', { name: 'Retry same request' })).toBeVisible();
   openExisting();
   expect(form).not.toBeVisible();
-  fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
+  expect(screen.getByRole('heading', { name: 'Existing' })).toBeVisible();
+  fireEvent.click(newChannel);
+  expect(form).toBeVisible();
   expect(within(form).getByLabelText('Channel name')).toBeDisabled();
-  await clickAndSettle(screen.getByRole('button', { name: 'Retry same request' }));
+  await clickAndSettle(editor.getByRole('button', { name: 'Retry same request' }));
   const details = within(screen.getByRole('region', { name: 'Created details' }));
   expect(details.getByRole('heading', { name: 'Created' })).toBeVisible();
   const requests = fetcher.mock.calls.filter(([, init]) => init?.method === 'POST');
@@ -169,11 +172,7 @@ it('retains an uncertain create across navigation and removes a freshly created 
   await clickAndSettle(settings.getByRole('button', { name: 'Confirm delete' }));
   expect(screen.queryByRole('heading', { name: 'Created' })).not.toBeInTheDocument();
   expect(screen.getByRole('region', { name: 'Channel workspace' })).toBeVisible();
-  expect(
-    within(screen.getByRole('region', { name: 'Channels' })).queryByRole('button', {
-      name: /^Created/,
-    }),
-  ).not.toBeInTheDocument();
+  expect(channels.queryByRole('button', { name: /^Created/ })).not.toBeInTheDocument();
   expect(fetcher.mock.calls.filter(([, init]) => init?.method === 'DELETE')).toEqual([
     [
       '/api/event-gateway/v1/channels/Created-channel?expected_version=2',

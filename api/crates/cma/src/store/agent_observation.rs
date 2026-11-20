@@ -430,7 +430,12 @@ impl AgentObservationStore for MongoAgentObservation {
     ) -> Result<Vec<AgentObservationRefresh>, AgentReadError> {
         tokio::time::timeout(Duration::from_secs(2), self.refresh_inner(tokens))
             .await
-            .map_err(|_| unavailable("observation timed out"))?
+            .map_err(|_| {
+                tracing::warn!(target: "cma.agent_observation",
+                    reason = "mongo_refresh_timeout", agents = tokens.len(),
+                    "Agent observation refresh exceeded its Mongo deadline");
+                unavailable("observation timed out")
+            })?
     }
 }
 

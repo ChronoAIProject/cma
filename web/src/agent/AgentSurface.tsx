@@ -446,6 +446,15 @@ export function AgentSurface({
             queueWhileStarting={state.v2 !== undefined}
             starting={starting}
             controlsUnavailable={controller.controlsUnavailable || !controlReady}
+            responseControls={
+              accessUncertain
+                ? 'checking-access'
+                : readOnly
+                  ? 'denied'
+                  : !controlReady
+                    ? 'checking'
+                    : controller.responseControls
+            }
             requestPending={
               controller.pendingMessage !== undefined || controller.pendingControl === true
             }

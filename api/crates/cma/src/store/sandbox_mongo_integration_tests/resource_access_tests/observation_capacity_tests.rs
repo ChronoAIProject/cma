@@ -1,7 +1,7 @@
 use super::*;
 use layer2_core::sandbox::agent_observation::observation_scope;
 
-async fn available(replicas: &[Server], expected: &[usize]) {
+pub(super) async fn available(replicas: &[Server], expected: &[usize]) {
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             if replicas

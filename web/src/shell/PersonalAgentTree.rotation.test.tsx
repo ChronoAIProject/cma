@@ -108,8 +108,8 @@ describe('Agent navigation during environment updates', () => {
       const row = within(group).getByRole('treeitem');
       expect(row).toHaveTextContent('Runtime update failed');
       expect(row).toHaveAccessibleName(/Runtime update failed/);
-      if (status === 'ready') expect(row).toHaveTextContent('Completed');
-      else expect(row).not.toHaveTextContent('Completed');
+      if (status === 'ready') expect(row).toHaveTextContent('Turn ended');
+      else expect(row).not.toHaveTextContent('Turn ended');
       expect(screen.queryByRole('group', { name: 'Active' })).not.toBeInTheDocument();
       expect(screen.queryByText('Preparing')).not.toBeInTheDocument();
       expect(container.querySelector('.task-running')).toBeNull();
@@ -147,7 +147,7 @@ describe('Agent navigation during environment updates', () => {
         'treeitem',
       );
       expect(row).toHaveTextContent('Updating environment');
-      expect(row).toHaveTextContent('Completed');
+      expect(row).toHaveTextContent('Turn ended');
       expect(screen.queryByText('Runtime update failed')).not.toBeInTheDocument();
     },
   );
@@ -162,7 +162,7 @@ describe('Agent navigation during environment updates', () => {
       }),
     );
     expect(screen.getByRole('group', { name: 'Earlier' })).toBeInTheDocument();
-    expect(screen.getByRole('treeitem')).toHaveAccessibleName(/Completed/);
+    expect(screen.getByRole('treeitem')).toHaveAccessibleName(/Turn ended/);
     expect(screen.queryByText('Runtime update failed')).not.toBeInTheDocument();
   });
 

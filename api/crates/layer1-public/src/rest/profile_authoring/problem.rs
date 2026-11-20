@@ -22,6 +22,11 @@ impl IntoResponse for AuthoringProblem {
                 "forbidden",
                 "This caller is not allowed to manage profiles.",
             ),
+            ProfileAuthoringError::CatalogForbidden => (
+                StatusCode::FORBIDDEN,
+                "forbidden",
+                "Reading your catalog requires permission to use your own Sandboxes or manage your own profiles.",
+            ),
             ProfileAuthoringError::InvalidQuery => (
                 StatusCode::BAD_REQUEST,
                 "invalid_profile_authoring_query",

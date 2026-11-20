@@ -2,6 +2,7 @@ import { memo, useContext } from 'react';
 import Markdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import remarkCjkFriendly from 'remark-cjk-friendly/parseOnly';
+import { navigateAppPath } from '../routing/navigationGuard';
 import { MessageMedia } from './MessageMedia';
 import {
   MessageMediaContext,
@@ -42,8 +43,7 @@ const components: Components = {
             if (event.button || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey)
               return;
             event.preventDefault();
-            window.history.pushState(null, '', documentHref);
-            window.dispatchEvent(new PopStateEvent('popstate'));
+            navigateAppPath(documentHref);
           }}
         >
           {children}
