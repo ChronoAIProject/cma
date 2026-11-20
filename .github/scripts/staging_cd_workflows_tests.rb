@@ -480,6 +480,20 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal({ 'GH_TOKEN' => '${{ github.token }}' }, job['steps'].last['env'])
   end
 
+  def test_catch_up_reads_the_allocation_job_by_its_exact_display_name
+    source = File.read(File.join(__dir__, 'staging_cd_catch_up.py'))
+    names = source.scan(/^ALLOCATION_JOB = "([^"]+)"$/).flatten
+    assert_equal 1, names.size
+    assert_includes source, 'job.get("name") == ALLOCATION_JOB'
+    # A job without a name displays its id. Renaming either side would make
+    # every head look unallocated, so catch-up would silently never re-run.
+    jobs = workflow('staging-cd')['jobs']
+    matching = jobs.select { |id, job| job.fetch('name', id) == names.first }
+    assert_equal ['allocate'], matching.keys
+    assert_includes matching['allocate']['steps'].map { |step| step['run'] },
+                    'python3 -B .github/scripts/staging_cd_allocate.py'
+  end
+
   def test_package_and_download_tools_repeat_transient_network_failures
     env = workflow('staging-cd').fetch('env')
     %w[CARGO_NET_RETRY PIP_RETRIES RUSTUP_MAX_RETRIES].each { |key| assert_operator env.fetch(key).to_i, :>=, 3 }

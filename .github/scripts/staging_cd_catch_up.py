@@ -7,7 +7,9 @@ this check re-runs the develop head's own push run once when no Staging CD run
 is active, that run's allocation completed, and some lane's newest version is
 an unfinalized reservation of an earlier run. A re-run attempt is the same
 develop push event, so every push-only authority, cache and admission check
-applies unchanged and staging-cd.yml gains no trigger.
+applies unchanged and staging-cd.yml gains no trigger. Like any allocation
+it also retries the head's own failed lanes, though those alone never
+trigger a re-run.
 """
 import json
 import os
@@ -27,6 +29,8 @@ CHECK = ".github/workflows/staging-cd-catch-up.yml"
 DEVELOP = "refs/heads/develop"
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
 BOT = "github-actions[bot]"
+# The display name of staging-cd.yml's allocation job; a workflow test pins it.
+ALLOCATION_JOB = "allocate"
 # One automatic re-run per develop head; never re-run a head this many times.
 ATTEMPTS = 5
 SECONDS = 150
@@ -120,7 +124,8 @@ def left_behind(api, refs, head_run):
 
     Versions only grow, so a lane's newest version is its latest attempt. A
     finalized one is current. One the head's run made itself failed at the
-    newest opportunity and waits for the next push, as any failure does. A
+    newest opportunity; it never triggers a re-run by itself, so it waits for
+    the next push or is retried by a re-run another lane triggered. A
     same-source group claim that yielded to its finalized peer is current.
     Every other unfinalized newest reservation predates the head's allocation,
     which would have retried it unless its owner was still running then.
@@ -149,7 +154,7 @@ def left_behind(api, refs, head_run):
 def allocated(api, run):
     jobs = api.request(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100")
     require(isinstance(jobs, dict) and isinstance(jobs.get("jobs"), list), "Head run jobs could not be read")
-    rows = [job for job in jobs["jobs"] if isinstance(job, dict) and job.get("name") == "allocate"]
+    rows = [job for job in jobs["jobs"] if isinstance(job, dict) and job.get("name") == ALLOCATION_JOB]
     return len(rows) == 1 and rows[0].get("status") == "completed" and rows[0].get("conclusion") == "success"
 
 

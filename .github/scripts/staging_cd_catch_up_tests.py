@@ -86,7 +86,7 @@ class CatchUpTests(unittest.TestCase):
             develop.finalize(task)
         develop.complete(801)
         self.assertEqual(decide(develop), ("nothing-behind", None, []))
-        # A failure in the head's own run is retried by the next push, not re-run.
+        # A failure in the head's own run alone never triggers a re-run.
         develop.push({"web"})
         develop.complete(802)
         self.assertEqual(decide(develop), ("nothing-behind", None, []))
