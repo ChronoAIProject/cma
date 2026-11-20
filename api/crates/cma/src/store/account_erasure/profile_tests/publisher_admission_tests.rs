@@ -89,6 +89,7 @@ impl Fixture {
             Arc::new(LaunchPolicy {
                 enabled: true,
                 orchestration_paused: false,
+                visitor_launches_per_day: 5,
             }),
             Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         );

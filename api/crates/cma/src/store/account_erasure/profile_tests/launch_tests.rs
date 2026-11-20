@@ -102,6 +102,7 @@ async fn accepted_foreign_trigger_launch_creates_resources_after_profile_owner_e
         Arc::new(LaunchPolicy {
             enabled: true,
             orchestration_paused: false,
+            visitor_launches_per_day: 5,
         }),
         Arc::new(FixedSandboxCredentialPrerequisite::Ready),
     );
@@ -448,6 +449,7 @@ async fn anonymized_profile_pins_admit_foreign_launches_and_missing_revisions_ar
         Arc::new(LaunchPolicy {
             enabled: true,
             orchestration_paused: false,
+            visitor_launches_per_day: 5,
         }),
         Arc::new(layer2_core::sandbox::FixedSandboxCredentialPrerequisite::Ready),
     );
