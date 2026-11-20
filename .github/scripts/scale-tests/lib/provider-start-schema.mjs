@@ -14,19 +14,21 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const stampFields = ['offered_ns', 'commit_lower_ns', 'admission_confirmed_ns', 'executor_started_ns',
   'first_post_ns', 'accepted_ns', 'accepted_attempt_post_ns', 'completed_ns', 'expired_before_start_ns'];
 
-function sample(row, window, ids) {
-  fields(row, ['sample', ...stampFields, 'candidate_admitted_at_seconds', 'admitted', 'target_count',
+function sample(row, window, ids, version) {
+  const stamps = version === 2 ? [...stampFields, 'expired_after_post_ns'] : stampFields;
+  fields(row, ['sample', ...stamps, 'candidate_admitted_at_seconds', 'admitted', 'target_count',
     'post_attempts', 'cancellations', 'unknown']);
   count(row.sample);
   check(!ids.has(row.sample), 'duplicate_provider_start_sample');
   ids.add(row.sample);
-  for (const key of stampFields) {
+  for (const key of stamps) {
     if (row[key] !== null) check(count(row[key]) <= window, 'provider_start_stamp_outside_window');
   }
   if (row.candidate_admitted_at_seconds !== null) count(row.candidate_admitted_at_seconds);
   boolean(row.admitted); count(row.target_count); count(row.post_attempts); count(row.cancellations);
   check(row.unknown === null || ['retained_or_uncertain_admission', 'single_target_required',
-    'dispatch_refused_or_failed'].includes(row.unknown), 'provider_start_unknown_reason_invalid');
+    'dispatch_refused_or_failed'].includes(row.unknown)
+    || (version === 2 && row.unknown === 'first_post_observation_missing'), 'provider_start_unknown_reason_invalid');
   check((row.first_post_ns !== null) === (row.post_attempts > 0), 'provider_start_post_count_mismatch');
   check(row.accepted_attempt_post_ns === null || (row.accepted_ns !== null && row.first_post_ns !== null),
     'provider_start_accepting_attempt_invalid');
@@ -44,13 +46,21 @@ function sample(row, window, ids) {
   ordered('accepted_ns', 'completed_ns');
   ordered('admission_confirmed_ns', 'expired_before_start_ns');
   check(row.expired_before_start_ns === null || row.first_post_ns === null, 'provider_start_expiry_after_post');
+  check(row.expired_before_start_ns === null || (row.admitted && row.commit_lower_ns !== null
+    && row.admission_confirmed_ns !== null && row.unknown === null && row.accepted_ns === null
+    && row.completed_ns === null), 'provider_start_expiry_without_original_observation');
+  if (version === 2) {
+    ordered('first_post_ns', 'expired_after_post_ns');
+    check(row.expired_after_post_ns === null || (row.first_post_ns !== null && row.expired_before_start_ns === null
+      && row.accepted_ns === null && row.completed_ns === null), 'provider_start_expiry_after_post_invalid');
+  }
 }
 
 function measurement(m) {
   fields(m, ['schema_version', 'measurement_enabled', 'clock', 'clock_resolution_ns', 'process', 'window_ns',
     'capacity', 'overflow', 'window_exceeded', 'active_executors', 'peak_executors', 'executor_attempts',
     'executor_busy_ns', 'samples']);
-  check(m.schema_version === 1 && m.clock === 'process_monotonic_ns', 'provider_start_clock_or_version_invalid');
+  check([1, 2].includes(m.schema_version) && m.clock === 'process_monotonic_ns', 'provider_start_clock_or_version_invalid');
   check(typeof m.process === 'string' && /^[a-f0-9-]{36}$/.test(m.process), 'provider_start_process_missing');
   for (const key of ['measurement_enabled', 'overflow', 'window_exceeded']) boolean(m[key]);
   for (const key of ['window_ns', 'clock_resolution_ns', 'capacity', 'active_executors', 'peak_executors',
@@ -61,7 +71,7 @@ function measurement(m) {
   check(m.active_executors <= m.peak_executors && m.peak_executors <= m.executor_attempts
     && m.executor_busy_ns <= m.window_ns * m.peak_executors, 'provider_start_occupancy_invalid');
   const ids = new Set();
-  for (const row of m.samples) sample(row, m.window_ns, ids);
+  for (const row of m.samples) sample(row, m.window_ns, ids, m.schema_version);
   check(m.samples.filter((s) => s.executor_started_ns !== null).length <= m.executor_attempts,
     'provider_start_executor_count_mismatch');
 }

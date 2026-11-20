@@ -293,7 +293,7 @@ impl Journal {
         )
         .await?;
         if let Some(measurement) = &self.start_measurement {
-            measurement.terminal(&lease.state.root, false);
+            measurement.completed(&lease.state.root);
         }
         Ok(())
     }

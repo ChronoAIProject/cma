@@ -39,6 +39,69 @@ export function fixture(mode = 'burst') {
 }
 const first = (e) => e.payload.cohorts[0];
 const mutate = (edit) => { const e = fixture(); edit(first(e), e); return bind(e); };
+const versionTwo = (e) => {
+  for (const row of e.payload.cohorts) {
+    row.measurement.schema_version = 2;
+    for (const sample of row.measurement.samples) sample.expired_after_post_ns = null;
+  }
+  return e;
+};
+
+test('version two distinguishes expiry after a refused POST without changing original denominators', () => {
+  assert.equal(reduceProviderStart(bind(versionTwo(fixture()))).status, 'PASS');
+  const e = versionTwo(fixture());
+  const s = first(e).measurement.samples[0];
+  s.accepted_ns = s.accepted_attempt_post_ns = s.completed_ns = null;
+  s.expired_after_post_ns = 11e9;
+  const report = reduceProviderStart(bind(e));
+  const c = report.cohorts[0];
+  assert.equal(report.status, 'FAIL');
+  assert.deepEqual(c.counts, { offered: 100, admitted: 100, executor_started: 100, first_started: 100,
+    accepted: 99, completed: 99, expired_before_start: 0, expired_after_post: 1, post_attempts: 100 });
+  assert.equal(c.lag_ms.upper.max_ms, 9);
+  assert.equal(c.oldest_unstarted_ms, null);
+  assert.ok(c.reasons.includes('expired_after_post'));
+  assert.ok(!c.reasons.includes('http_acceptance_unknown'));
+});
+
+test('expiry with missing original observation stays BLOCKED without inventing either expiry class', () => {
+  for (const knownAdmission of [false, true]) {
+  const e = versionTwo(fixture());
+  const r = first(e), s = r.measurement.samples[0];
+  if (!knownAdmission) s.commit_lower_ns = s.admission_confirmed_ns = null;
+  s.first_post_ns = null;
+  s.accepted_ns = s.accepted_attempt_post_ns = s.completed_ns = null;
+  s.post_attempts = 0; r.actual_posts--;
+  s.unknown = knownAdmission ? 'first_post_observation_missing' : 'retained_or_uncertain_admission';
+  const c = reduceProviderStart(bind(e)).cohorts[0];
+  assert.equal(c.status, 'BLOCKED');
+  assert.equal(c.counts.expired_before_start, 0);
+  assert.equal(c.counts.expired_after_post, 0);
+  assert.ok(c.reasons.includes(s.unknown));
+  }
+});
+
+test('both schema versions reject contradictory expiry and version two requires exact fields', () => {
+  for (const version of [1, 2]) {
+    const e = version === 1 ? fixture() : versionTwo(fixture());
+    first(e).measurement.samples[0].expired_before_start_ns = 11e9;
+    assert.throws(() => reduceProviderStart(bind(e)), /provider_start_expiry_after_post/);
+  }
+  for (const edit of [
+    (s) => { s.accepted_ns = 12e6; },
+    (s) => { s.completed_ns = 12e9; },
+    (s) => { s.first_post_ns = null; s.post_attempts = 0; },
+    (s) => { s.expired_after_post_ns = 1; },
+    (s) => { delete s.expired_after_post_ns; },
+    (s) => { s.expiry = 'unrecognized'; },
+  ]) {
+    const e = versionTwo(fixture()), s = first(e).measurement.samples[0];
+    s.accepted_ns = s.accepted_attempt_post_ns = s.completed_ns = null;
+    s.expired_after_post_ns = 11e9;
+    edit(s);
+    assert.throws(() => reduceProviderStart(bind(e)));
+  }
+});
 
 test('separates cohorts, socket lag, acceptance and terminal; local PASS leaves canary BLOCKED', () => {
   const report = reduceProviderStart(fixture());

@@ -7,6 +7,7 @@ use std::{
 };
 
 mod qualification;
+mod retry_expiry;
 
 fn request() -> crate::ingress::launch::LaunchRequest {
     fixture::request(
