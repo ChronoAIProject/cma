@@ -178,3 +178,7 @@ async fn legacy_ack(receiver: &mut Option<AckReceiver>) -> Option<Ack> {
 #[cfg(test)]
 #[path = "acp_reader_control_tests.rs"]
 mod control_tests;
+
+#[cfg(test)]
+#[path = "acp_reader_progress_tests.rs"]
+mod progress_tests;
