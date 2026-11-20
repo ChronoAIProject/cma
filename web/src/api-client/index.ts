@@ -162,3 +162,5 @@ export type * from './agents/retained-output.js';
 
 export type { SandboxCapacity } from './instances/capacity.js';
 export { agentLifecycleFailure } from './agents/lifecycle.js';
+
+export * from './account-deletion.js';
