@@ -36,5 +36,6 @@ pub(super) fn find(config: &RuntimeConfig, operation: &Operation) -> Result<Opti
         ));
     }
     ensure_exact(&record, operation)?;
+    io::sync_terminal(&path, &record)?;
     Ok(Some(record))
 }
