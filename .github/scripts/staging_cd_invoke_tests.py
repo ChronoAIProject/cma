@@ -173,7 +173,7 @@ class InvokeTests(unittest.TestCase):
                     # The precondition names its own check, not the wrapper that admitted it.
                     source = Path(invoke.__file__).read_text().splitlines()
                     line = next(n for n, text in enumerate(source, 1) if '"Deployment mode is invalid")' in text) - 1
-                    self.assertEqual(explained, f"{expected} at=staging_cd_invoke.py:{line} cause=change")
+                    self.assertEqual(explained, f"{expected} at=staging_cd_invoke.py:{line} cause=operator")
                     self.assertTrue(public[2].startswith(f"::error file=.github/scripts/staging_cd_invoke.py,line={line},"))
                 if stage.startswith("controller"):
                     self.assertIn("What changed: Nothing.", public[2])

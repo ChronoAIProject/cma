@@ -14,9 +14,16 @@ from staging_cd_runtime import SKIPPED, run_private
 STAGES = frozenset({"validate", "resume", "snapshot", "reuse", "build", "registry_preflight",
                     "inspect", "scan", "runtime_smoke", "archive_check", "registry_login", "registry_copy",
                     "registry_verify", "receipt", "cache_restore", "cache_export"})
+# Fixed refusal messages with their own reason; any other refusal is validation_refused.
+REFUSAL_REASONS = {
+    "Reservation owner differs": "reservation_owner_mismatch",
+    "Registry digest differs from the scanned archive": "registry_digest_conflict",
+    "Registry publication outcome is uncertain": "registry_write_uncertain",
+    "Registry copy budget expired": "command_timeout",
+}
 REASONS = frozenset({"registry_denied", "build_failed", "command_failed", "build_timeout", "command_timeout",
                      "scan_refused", "registry_read_failed", "validation_refused", "io_failed", "unexpected_error",
-                     "reservation_owner_mismatch", "reservation_superseded"})
+                     "reservation_superseded", *REFUSAL_REASONS.values()})
 
 
 class ImageCommandRefusal(Refusal):
@@ -62,9 +69,7 @@ class PublicationDiagnostics:
         if self.stage.startswith("registry_") and isinstance(cause, urllib.error.HTTPError):
             return "registry_denied" if cause.code in (401, 403) else "registry_read_failed"
         if isinstance(error, Refusal):
-            if str(error) == "Reservation owner differs":
-                return "reservation_owner_mismatch"
-            return "validation_refused"
+            return REFUSAL_REASONS.get(str(error), "validation_refused")
         if isinstance(error, OSError):
             return "io_failed"
         return "unexpected_error"

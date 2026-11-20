@@ -284,7 +284,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     return code if code in (10, 20, 30, 40, 50) else 20
 
 
-def explain(outcome, reason, verification, recovery, release, site, raised):
+def explain(outcome, reason, private, verification, recovery, release, site, raised):
     """Report an exit 10, 20, 30, 40 or 52 outcome with its cause and next step.
 
     No component is named: the controller's packets do not say which member of
@@ -295,8 +295,8 @@ def explain(outcome, reason, verification, recovery, release, site, raised):
     if outcome == 10:
         # Exit 10 alone certifies the rollback; only the release token is reported.
         return report("deploy-release", release, subject="deploy")
-    if reason is not None and reason.startswith("private-"):
-        return report("deploy-private", reason[len("private-"):], subject="deploy")
+    if private is not None:
+        return report("deploy-private", private, subject="deploy")
     if reason is not None:
         return report("deploy-precondition", reason, subject="deploy", site=site)
     if outcome == 30:
@@ -314,7 +314,7 @@ def explain(outcome, reason, verification, recovery, release, site, raised):
 
 def main():
     outcome, skipped = 40, False
-    reason, site, raised = None, None, False
+    reason, private, site, raised = None, None, None, False
     verification = "unreported"
     recovery = "unreported"
     release = "unreported"
@@ -327,9 +327,9 @@ def main():
         nonlocal skipped
         skipped = True
     def private_refusal(token):
-        nonlocal reason
+        nonlocal private
         if token in REPORTED_PRIVATE:
-            reason = "private-" + token
+            private = token
 
     def unverified(first, second):
         nonlocal verification, recovery
@@ -365,7 +365,7 @@ def main():
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
                 stream.write(f"disposition={OVERTAKEN}\n")
-    diagnostic = explain(outcome, reason, verification, recovery, release, site, raised)
+    diagnostic = explain(outcome, reason, private, verification, recovery, release, site, raised)
     if skipped:
         print(RESULTS[DISABLED])
     if outcome == UNVERIFIED_COHORT:

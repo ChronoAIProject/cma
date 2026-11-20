@@ -42,7 +42,6 @@ def line_of(module, text, offset=0):
 
 def guarded_vocabularies():
     """Codes that reach report() through a variable, by the vocabulary that guards them."""
-    import staging_cd_allocate as allocate
     import staging_cd_build_cache as build_cache
     import staging_cd_component_admission as admission
     import staging_cd_finalize_diagnostics as finalize
@@ -55,7 +54,6 @@ def guarded_vocabularies():
     return {
         ("staging_cd_publication_diagnostics.py", "publication"): set(publication.REASONS),
         ("staging_cd_finalize_diagnostics.py", "finalize"): set(finalize.REASONS.values()) | finalize.FALLBACK_REASONS,
-        ("staging_cd_allocate.py", "allocation"): set(allocate.REFUSAL_CODES.values()) | allocate.FALLBACK_CODES,
         ("staging_cd_invoke.py", "deploy-verification"): set(refusal.VERIFICATION_REASONS) | {refusal.UNRECOGNIZED},
         ("staging_cd_invoke.py", "deploy-release"): set(refusal.VERIFICATION_REASONS) | {refusal.UNRECOGNIZED},
         ("staging_cd_invoke.py", "deploy-private"): set(refusal.REASONS) | {refusal.UNRECOGNIZED},
@@ -82,12 +80,14 @@ def explained_vocabularies():
 
 
 def reporter_calls(sources):
-    """Yield (module, line, family, codes, dynamic) for every report() call.
+    """Yield (module, line, family, codes, kind) for every report() call.
 
-    A code is followed through literals, module constants, assignments in the
-    enclosing function (including tuple unpacking and conditional expressions)
-    and the literal returns of module functions it calls. Anything else is
-    dynamic and must be guarded by a vocabulary the catalogue covers.
+    A code is followed through literals, module constants, lookups in a module
+    constant dict, assignments in the enclosing function (including tuple
+    unpacking and conditional expressions) and the literal returns of module
+    functions it calls. kind is None when every code is a literal, "variable"
+    when a code is a parameter, attribute or keyed item that a named vocabulary
+    must guard, and "derived" when a code is computed, which is never allowed.
     """
     for module, source in sources.items():
         tree = ast.parse(source)
@@ -103,19 +103,28 @@ def reporter_calls(sources):
                 for inner in ast.walk(function):
                     enclosing.setdefault(id(inner), function)  # Outermost function wins.
 
+        def merge(*results):
+            found, kinds = set(), {kind for _, kind in results} - {None}
+            for codes_found, _ in results:
+                found |= codes_found
+            return found, "derived" if "derived" in kinds else ("variable" if kinds else None)
+
         def values(node, scope, seen=frozenset()):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
-                return {node.value}, False
+                return {node.value}, None
             if isinstance(node, ast.IfExp):
-                body, orelse = values(node.body, scope, seen), values(node.orelse, scope, seen)
-                return body[0] | orelse[0], body[1] or orelse[1]
+                return merge(values(node.body, scope, seen), values(node.orelse, scope, seen))
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in functions:
-                found, dynamic = set(), False
-                for item in ast.walk(functions[node.func.id]):
-                    if isinstance(item, ast.Return) and item.value is not None:
-                        more = values(item.value, functions[node.func.id], seen)
-                        found, dynamic = found | more[0], dynamic or more[1]
-                return found, dynamic
+                returns = [item.value for item in ast.walk(functions[node.func.id])
+                           if isinstance(item, ast.Return) and item.value is not None]
+                return merge(*(values(value, functions[node.func.id], seen) for value in returns))
+            if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get"
+                    and isinstance(node.func.value, ast.Name)
+                    and isinstance(constants.get(node.func.value.id), ast.Dict) and len(node.args) == 2):
+                table = constants[node.func.value.id]
+                return merge(*(values(value, scope, seen) for value in table.values), values(node.args[1], scope, seen))
+            if isinstance(node, ast.Attribute) or (isinstance(node, ast.Subscript) and isinstance(node.slice, ast.Constant)):
+                return set(), "variable"
             if isinstance(node, ast.Name) and node.id not in seen:
                 assigned = []
                 for item in ast.walk(scope) if scope is not None else ():
@@ -130,13 +139,9 @@ def reporter_calls(sources):
                 if not assigned and node.id in constants:
                     assigned = [constants[node.id]]
                 if not assigned:
-                    return set(), True  # A parameter or loop variable.
-                found, dynamic = set(), False
-                for value in assigned:
-                    more = values(value, scope, seen | {node.id})
-                    found, dynamic = found | more[0], dynamic or more[1]
-                return found, dynamic
-            return set(), True
+                    return set(), "variable"  # A parameter or loop variable.
+                return merge(*(values(value, scope, seen | {node.id}) for value in assigned))
+            return set(), "derived"
 
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -148,8 +153,8 @@ def reporter_calls(sources):
                 continue
             family = node.args[0] if node.args else None
             family = family.value if isinstance(family, ast.Constant) and isinstance(family.value, str) else None
-            found, dynamic = values(node.args[1], enclosing.get(id(node))) if len(node.args) > 1 else (set(), True)
-            yield module, node.lineno, family, found, dynamic
+            found, kind = values(node.args[1], enclosing.get(id(node))) if len(node.args) > 1 else (set(), "derived")
+            yield module, node.lineno, family, found, kind
 
 
 def public_texts(outputs):
@@ -183,18 +188,25 @@ def legacy(text):
 
 class CatalogueTests(unittest.TestCase):
     def test_every_reported_code_is_catalogued_and_every_catalogued_code_is_emitted(self):
-        guarded, emitted, problems = guarded_vocabularies(), {}, []
-        for module, line, family, found, dynamic in reporter_calls(script_sources()):
+        import staging_cd_allocate as allocate
+        guarded, emitted, problems, used = guarded_vocabularies(), {}, [], set()
+        for module, line, family, found, kind in reporter_calls(script_sources()):
             if family not in ci_outcome.LINES or family not in families():
                 problems.append(f"{module}:{line} reports an unknown or non-literal family {family!r}")
                 continue
             missing = found - codes(family).keys()
             if missing:
                 problems.append(f"{module}:{line} reports uncatalogued {family} codes {sorted(missing)}")
-            if dynamic and (module, family) not in guarded:
-                problems.append(f"{module}:{line} reports an unguarded {family} code")
+            if kind == "derived":
+                problems.append(f"{module}:{line} reports a computed {family} code")
+            elif kind == "variable":
+                used.add((module, family))
+                if (module, family) not in guarded:
+                    problems.append(f"{module}:{line} reports an unguarded {family} code")
             emitted.setdefault(family, set()).update(found)
         self.assertEqual(problems, [])
+        self.assertEqual(used, set(guarded), "every guarded vocabulary must still guard a variable code")
+        self.assertLessEqual(set(allocate.REFUSAL_CODES.values()) | allocate.FALLBACK_CODES, emitted["allocation"])
         for (module, family), vocabulary in guarded.items():
             emitted.setdefault(family, set()).update(vocabulary)
         for family, vocabulary in explained_vocabularies().items():
@@ -205,23 +217,34 @@ class CatalogueTests(unittest.TestCase):
             with self.subTest(family=family):
                 self.assertEqual(set(codes(family)), emitted[family], f"{family} catalogue differs from its producers")
 
-    def test_reporter_check_fails_for_a_renamed_or_unguarded_code(self):
+    def test_reporter_check_fails_for_a_renamed_unguarded_or_computed_code(self):
         source = '''
 from ci_outcome import report
 CODE = "deployment-not-accepted"
-def explained(flag, token):
+TABLE = {"Fixed message": "evidence-invalid"}
+def explained(flag, token, metrics, error):
     outcome = "evidence-invalid" if flag else "deployment-unaccepted"
     report("release-outcome", outcome, subject="x")
     report("release-outcome", CODE, subject="x")
     report("admission", token, subject="x")
     report(FAMILY, "evidence-invalid", subject="x")
+    report("release-outcome", TABLE.get(str(error), "publication-failed"), subject="x")
+    report("cache-withheld", metrics["reason"], subject="x")
+    report("cache-withheld", metrics["reason"] + "x", subject="x")
+    report("cache-withheld", f"{token}", subject="x")
+    report("deploy-private", token[len("private-"):], subject="x")
 '''
         calls = list(reporter_calls({"fixture.py": source}))
-        self.assertEqual([(family, found, dynamic) for _, _, family, found, dynamic in calls], [
-            ("release-outcome", {"evidence-invalid", "deployment-unaccepted"}, False),
-            ("release-outcome", {"deployment-not-accepted"}, False),
-            ("admission", set(), True),
-            (None, {"evidence-invalid"}, False)])
+        self.assertEqual([(family, found, kind) for _, _, family, found, kind in calls], [
+            ("release-outcome", {"evidence-invalid", "deployment-unaccepted"}, None),
+            ("release-outcome", {"deployment-not-accepted"}, None),
+            ("admission", set(), "variable"),
+            (None, {"evidence-invalid"}, None),
+            ("release-outcome", {"evidence-invalid", "publication-failed"}, None),
+            ("cache-withheld", set(), "variable"),
+            ("cache-withheld", set(), "derived"),
+            ("cache-withheld", set(), "derived"),
+            ("deploy-private", set(), "derived")])
         self.assertEqual(calls[0][3] - codes("release-outcome").keys(), {"deployment-unaccepted"})
 
     def test_step_kinds_match_failure_kind_and_the_catalogue(self):
@@ -336,7 +359,8 @@ class RenderTests(unittest.TestCase):
                 line, _, _ = render("publication", "validation_refused", subject="publication", stage="build", site=site)
                 self.assertTrue(line.endswith(" cause=" + cause), line)
         for family, code in (("publication", "io_failed"), ("finalize", "io_failed"), ("step", "os-error"),
-                             ("step", "http-client"), ("deploy-private", "image-identity")):
+                             ("step", "http-client"), ("deploy-private", "image-identity"),
+                             ("deploy-private", "compatibility"), ("deploy-release", "rollout-timeout")):
             self.assertTrue(render(family, code, subject="fixture")[0].endswith(" cause=unknown"), (family, code))
 
     def test_unverified_deployment_is_operator_first_and_names_no_component(self):
@@ -347,6 +371,7 @@ class RenderTests(unittest.TestCase):
         self.assertIn("Next step: An operator reconciles staging first. Then: Check the released components'", annotation)
         self.assertIn("if this change caused it", annotation)
         self.assertIn("| operator | An operator reconciles staging first.", row)
+        self.assertTrue(render("deploy-precondition", "mode", subject="deploy")[0].endswith(" cause=operator"))
         for code in ("rollout-timeout", "status-pods", "serving", "write-timeout"):
             self.assertTrue(render("deploy-verification", code, subject="deploy")[0].endswith(" cause=operator"))
 
@@ -419,6 +444,49 @@ class ReportTests(unittest.TestCase):
             self.assertEqual(text.count(ci_outcome.HEADER), 2)
             self.assertIn("|\n\nAdmission-to-result seconds: 1.00\n\n" + ci_outcome.HEADER, text)
             self.assertTrue(text.endswith(" |\n\n"))
+
+    def test_a_crlf_or_multibyte_summary_keeps_its_bytes_and_one_table(self):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary"
+            before = "Revision: fixture \u00e9\r\nSeconds: 1.00\r\n".encode("utf-8")
+            summary.write_bytes(before)
+            env = {"GITHUB_STEP_SUMMARY": str(summary)}
+            for code in ("READ_FAILED", "DEADLINE_EXCEEDED", "WRITE_UNCERTAIN"):
+                report("allocation", code, subject="allocation", stream=io.StringIO(), env=env)
+            data = summary.read_bytes()
+        self.assertTrue(data.startswith(before + b"\n" + ci_outcome.HEADER.encode() + b"\n"))
+        rows = data[len(before):].decode("utf-8").split("\n")
+        self.assertEqual([row.split(" | ")[1].split(":")[0] for row in rows[3:6]],
+                         ["READ_FAILED", "DEADLINE_EXCEEDED", "WRITE_UNCERTAIN"])
+        self.assertEqual(rows[6:], ["", ""])
+
+    def test_retry_lines_cross_the_boundary_with_fixed_fields_only(self):
+        program = (
+            "import ci_retry\n"
+            "from staging_cd_runtime import run_private\n"
+            "calls = []\n"
+            "def flaky():\n"
+            "    calls.append(1)\n"
+            "    if len(calls) < 2:\n"
+            "        raise ConnectionResetError('hidden-detail')\n"
+            "    return True\n"
+            "def read(_m):\n"
+            "    return ci_retry.call(flaky, name='fixture-read', classify=ci_retry.classify, sleep=lambda _s: None,\n"
+            "                         rand=lambda: 0.0)\n"
+            "def exhausted(_m):\n"
+            "    return ci_retry.call(lambda: (_ for _ in ()).throw(ConnectionResetError('hidden-detail')),\n"
+            "                         name='fixture-read', classify=ci_retry.classify, attempts=2,\n"
+            "                         sleep=lambda _s: None, rand=lambda: 0.0)\n"
+            "raise SystemExit(run_private(read, None, subject='fixture-step') * 10\n"
+            "                 + run_private(exhausted, None, subject='fixture-step'))\n")
+        result = subprocess.run([sys.executable, "-B", "-c", program], cwd=SCRIPTS, capture_output=True, text=True,
+                                env={"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1"}, check=False)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        lines = result.stdout.splitlines()
+        self.assertEqual(lines[:3], ["RETRY op=fixture-read attempt=2/3 wait=0.0s", "PASS fixture-step",
+                                     "RETRY op=fixture-read attempt=2/2 wait=0.0s"])
+        self.assertEqual(legacy(result.stdout).splitlines()[3], "FAIL fixture-step reason=network")
+        self.assertNotIn("hidden-detail", result.stdout + result.stderr)
 
     def test_report_never_raises_and_still_prints_the_machine_line(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -522,6 +590,12 @@ def refusal_calls(sources):
     # base constructor; every other refusal class is checked at each call.
     custom = {node.name for node in classes if node.name in refusals - {"Refusal"}
               and any(isinstance(item, ast.FunctionDef) and item.name == "__init__" for item in node.body)}
+    grew = True
+    while grew:
+        inherited = {node.name for node in classes if any(
+            (isinstance(base, ast.Name) and base.id in custom) or (isinstance(base, ast.Attribute) and base.attr in custom)
+            for base in node.bases)}
+        grew, custom = not inherited <= custom, custom | inherited
     for module, tree in users.items():
         constants = {target.id: node.value for node in tree.body if isinstance(node, ast.Assign)
                      for target in node.targets if isinstance(target, ast.Name)}
@@ -601,6 +675,22 @@ class DiagnosticReportTests(unittest.TestCase):
         self.assertTrue(annotation.startswith(f"::error file=.github/scripts/staging_cd_reservations.py,line={site},"))
         self.assertIn("Stage build: builds the component image", annotation)
 
+    def test_registry_copy_readback_refusals_name_their_outcome(self):
+        from staging_cd_common import Refusal
+        from staging_cd_publication_diagnostics import run_publication
+        for message, reason, cause in (
+                ("Registry digest differs from the scanned archive", "registry_digest_conflict", "operator"),
+                ("Registry publication outcome is uncertain", "registry_write_uncertain", "unknown"),
+                ("Registry copy budget expired", "command_timeout", "transient")):
+            with self.subTest(reason=reason):
+                def operation(_masker, diagnostics, message=message):
+                    diagnostics.mark("registry_copy")
+                    raise Refusal(message)
+                _, line, annotation = self.explained(lambda: run_publication(operation, component="eg"))
+                self.assertRegex(line, rf"\AFAIL publication stage=registry_copy reason={reason} component=eg"
+                                       rf" at=staging_cd_outcome_tests\.py:\d+ cause={cause}\Z")
+                self.assertIn("Next step: ", annotation)
+
     def test_finalization_reports_stage_component_and_check(self):
         from staging_cd_common import require
         from staging_cd_finalize_diagnostics import run_finalization
@@ -670,7 +760,7 @@ class FixedCodeReportTests(unittest.TestCase):
         # A refused input without any public frame is still explained, without a check.
         output = io.StringIO()
         with unittest.mock.patch.dict("os.environ", {}, clear=True), contextlib.redirect_stdout(output):
-            invoke.explain(40, None, "unreported", "unreported", "unreported", None, True)
+            invoke.explain(40, None, None, "unreported", "unreported", "unreported", None, True)
         self.assertEqual(output.getvalue().splitlines()[0], "FAIL precondition=input cause=unknown")
 
     def test_redeploy_outcome_explains_each_component_and_the_run(self):

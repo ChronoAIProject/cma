@@ -313,24 +313,26 @@ def summarize(path, row):
     """
     target = Path(path)
     try:
-        text = target.read_text(encoding="utf-8")
+        data = target.read_bytes()
     except FileNotFoundError:
-        text = ""
-    lines = text.split("\n")
-    if text.endswith("\n\n"):
+        data = b""
+    # Bytes throughout: a position counted in decoded or newline-translated
+    # text would land elsewhere in a file with CRLF or multibyte content.
+    lines = data.split(b"\n")
+    if data.endswith(b"\n\n"):
         table = []
         for line in reversed(lines[:-2]):
-            if not line.startswith("|"):
+            if not line.startswith(b"|"):
                 break
             table.insert(0, line)
-        if table[:2] == [HEADER, RULE]:
+        if table[:2] == [HEADER.encode(), RULE.encode()]:
             with target.open("r+b") as stream:
-                stream.seek(len(text.encode("utf-8")) - 1)
+                stream.seek(len(data) - 1)
                 stream.write((row + "\n\n").encode("utf-8"))
             return
-    prefix = "" if not text else ("\n" if text.endswith("\n") else "\n\n")
-    with target.open("a", encoding="utf-8") as stream:
-        stream.write(prefix + HEADER + "\n" + RULE + "\n" + row + "\n\n")
+    prefix = b"" if not data else (b"\n" if data.endswith(b"\n") else b"\n\n")
+    with target.open("ab") as stream:
+        stream.write(prefix + (HEADER + "\n" + RULE + "\n" + row + "\n\n").encode("utf-8"))
 
 
 def report(family, code, *, subject, stage=None, site=None, component=None, pr=None, sha=None,

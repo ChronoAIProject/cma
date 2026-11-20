@@ -6,8 +6,6 @@ from staging_cd_component_admission import validate_failures
 from staging_cd_receipts import canonical
 from staging_cd_set import document, validate_set
 
-# Run-level failures, explained by the release-outcome catalogue family.
-OUTCOMES = frozenset({"evidence-invalid", "deployment-not-accepted", "publication-failed"})
 SUBJECT = "redeploy-outcome"
 
 

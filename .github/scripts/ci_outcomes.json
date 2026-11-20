@@ -161,6 +161,18 @@
           "meaning": "A newer develop source took this component's version reservation, so this publication stopped.",
           "cause": "transient",
           "next": "No action: the newer run publishes this component."
+        },
+        "registry_digest_conflict": {
+          "title": "Registry tag holds another digest",
+          "meaning": "The reserved registry tag holds a digest other than the scanned archive, so this publication refused to claim it.",
+          "cause": "operator",
+          "next": "An operator inspects who wrote the reserved tag before any retry; tags are never overwritten."
+        },
+        "registry_write_uncertain": {
+          "title": "Registry copy outcome uncertain",
+          "meaning": "The copy to the registry failed in transport and its tag could not be read back to settle the outcome.",
+          "cause": "unknown",
+          "next": "Read the reserved tag in the registry: if it holds the scanned digest the copy landed; otherwise push again for a new version."
         }
       }
     },
@@ -726,8 +738,8 @@
         "mode": {
           "title": "Deployment mode invalid",
           "meaning": "The mode is not release or bootstrap, an automatic run asked for bootstrap, or bootstrap lacked a component.",
-          "cause": "change",
-          "next": "Check the dispatch inputs or the workflow's deployment mode."
+          "cause": "operator",
+          "next": "Check the dispatch inputs or the workflow's deployment mode, then dispatch again."
         },
         "checkout": {
           "title": "Infrastructure checkout invalid",
@@ -802,10 +814,10 @@
           "next": "Re-run the deployment; if it repeats, an operator must check the staging deployment state."
         },
         "compatibility": {
-          "title": "Compatibility refused",
-          "meaning": "The controller found the release incompatible with the deployed components.",
-          "cause": "change",
-          "next": "Check the contract compatibility of the components in this release."
+          "title": "Compatibility unverified",
+          "meaning": "The controller's compatibility checks failed, which includes reading or promoting the runtime compatibility state.",
+          "cause": "unknown",
+          "next": "Re-run the deployment; if it repeats, an operator checks the runtime promotion and compatibility state."
         },
         "image-version": {
           "title": "Image version refused",
@@ -948,7 +960,7 @@
         "rollout-timeout": {
           "title": "Rollout timed out",
           "meaning": "The rollout did not complete within its budget.",
-          "cause": "change",
+          "cause": "unknown",
           "next": "Check the released components' staging pods for slow startup or readiness; if this change caused it, fix it and push."
         },
         "rollout-failed": {
