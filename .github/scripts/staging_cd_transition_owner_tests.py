@@ -13,7 +13,7 @@ from staging_cd_history import DevelopHistory
 from staging_cd_receipts import annotation
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt
 from staging_cd_reservations import outcome_ref, pending_name
-from staging_cd_versions import DEPLOYABLES, FINISH_STARTED_BUILDS
+from staging_cd_versions import DEPLOYABLES
 
 
 class TransitionOwnerTests(unittest.TestCase):
@@ -101,12 +101,8 @@ class TransitionOwnerTests(unittest.TestCase):
             new = successor[key]["reservation"]
             self.assertEqual(new["previous"], old["version"])
             self.assertEqual(new["source"], self.server.sources[1] if key == "am" else old["source"])
-            outcome = outcome_ref(key, old["version"]).removeprefix("refs/tags/")
-            if key in FINISH_STARTED_BUILDS:
-                # A started AM build may still finish; only its finalizer writes the outcome.
-                self.assertNotIn(outcome, self.server.refs)
-            else:
-                self.assertEqual(self.server.refs[outcome], self.server.refs[pending_name(new)])
+            # A started build in any lane may still finish; only its finalizer writes the outcome.
+            self.assertNotIn(outcome_ref(key, old["version"]).removeprefix("refs/tags/"), self.server.refs)
         pushes = [args for args in self.server.commands if args[1] == "push"]
         self.assertEqual(len(pushes), 2)
         self.assertIn("--atomic", pushes[-1])
