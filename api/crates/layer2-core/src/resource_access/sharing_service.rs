@@ -161,6 +161,15 @@ impl ResourceAccessService {
                 return Err(MembershipError::InvalidEvidence.into());
             }
         }
+        if let ShareChange::CreateLink {
+            audience: AgentShareAudience::Users { subjects },
+            ..
+        } = &request.change
+        {
+            for subject in subjects {
+                self.require_recipient_available(subject).await?;
+            }
+        }
         Ok(self.store.mutate_share(request).await?)
     }
 }

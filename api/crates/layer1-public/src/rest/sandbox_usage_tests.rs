@@ -5,10 +5,14 @@ use axum::{
     http::Request,
 };
 use layer2_core::sandbox::store::Page;
+use layer2_core::sandbox_usage_cursor::{UsageCursorPolicy, UsageCursors};
 use layer2_core::sandbox_usage_service::{SandboxUsageStore, UsageSummary};
 use layer2_core::{Authorization, Capability};
 use std::sync::Mutex;
 use tower::ServiceExt;
+
+#[path = "sandbox_usage_tests/continuation.rs"]
+mod continuation;
 
 #[derive(Default)]
 struct Store(
@@ -61,7 +65,10 @@ fn retained_terminal_rows_project_stopped_compute_without_discarding_disk_or_tot
 }
 
 pub(crate) fn router() -> Router {
-    sandbox_usage_router(SandboxUsageService::new(Arc::new(Store::default())))
+    sandbox_usage_router(SandboxUsageService::new(
+        Arc::new(Store::default()),
+        UsageCursors::new(&[7; 32], UsageCursorPolicy::default()),
+    ))
 }
 #[async_trait]
 impl SandboxUsageStore for Store {
@@ -135,6 +142,15 @@ impl SandboxUsageStore for Store {
 }
 
 async fn call(path: &str, capabilities: Option<&[Capability]>, store: Arc<Store>) -> Response {
+    call_with_policy(path, capabilities, store, UsageCursorPolicy::Strict).await
+}
+
+async fn call_with_policy(
+    path: &str,
+    capabilities: Option<&[Capability]>,
+    store: Arc<Store>,
+    policy: UsageCursorPolicy,
+) -> Response {
     let mut request = Request::builder().uri(path).body(Body::empty()).unwrap();
     if let Some(capabilities) = capabilities {
         request
@@ -144,10 +160,13 @@ async fn call(path: &str, capabilities: Option<&[Capability]>, store: Arc<Store>
             .extensions_mut()
             .insert(Authorization::new(capabilities.iter().copied()));
     }
-    let response = sandbox_usage_router(SandboxUsageService::new(store))
-        .oneshot(request)
-        .await
-        .unwrap();
+    let response = sandbox_usage_router(SandboxUsageService::new(
+        store,
+        UsageCursors::new(&[7; 32], policy),
+    ))
+    .oneshot(request)
+    .await
+    .unwrap();
     assert_eq!(
         response.headers()[header::CACHE_CONTROL],
         "private, no-store"
@@ -251,6 +270,28 @@ async fn admin_filter_and_pagination_are_validated_at_the_http_boundary() {
     assert_eq!(store.0.lock().unwrap().len(), 2);
 }
 
+#[tokio::test]
+async fn fabricated_usage_continuations_are_typed_refusals_before_list_reads() {
+    let store = Arc::new(Store::default());
+    for cursor in ["invalid", "zzz"] {
+        let response = call(
+            &format!("/api/v1/usage/sandboxes?cursor={cursor}"),
+            Some(&[Capability::UseOwnSandboxes]),
+            store.clone(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/problem+json"
+        );
+        let body: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+        assert_eq!(body["code"], "invalid_query");
+    }
+    assert!(store.0.lock().unwrap().is_empty());
+}
+
 async fn invalid_query(response: Response) {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert_eq!(
@@ -305,17 +346,18 @@ async fn pagination_query_refusals_are_fixed_problems_before_store_reads() {
 
 #[tokio::test]
 async fn usage_pagination_preserves_boundaries_default_and_cursor() {
-    for path in [
-        "/api/v1/usage/sandboxes",
-        "/api/v1/admin/usage/sandboxes",
-        "/api/v1/usage/sandboxes/known/events",
+    for (path, cursor) in [
+        ("/api/v1/usage/sandboxes", "retained-cursor"),
+        ("/api/v1/admin/usage/sandboxes", "retained-cursor"),
+        ("/api/v1/usage/sandboxes/known/events", "17"),
     ] {
         let store = Arc::new(Store::default());
         for (query, limit) in [("", 50), ("limit=1&", 1), ("limit=200&", 200)] {
-            let response = call(
-                &format!("{path}?{query}cursor=retained-cursor"),
+            let response = call_with_policy(
+                &format!("{path}?{query}cursor={cursor}"),
                 Some(&[Capability::UseOwnSandboxes, Capability::ReadAllSandboxes]),
                 store.clone(),
+                UsageCursorPolicy::ReaderOnly,
             )
             .await;
             assert_eq!(response.status(), StatusCode::OK);
@@ -323,7 +365,7 @@ async fn usage_pagination_preserves_boundaries_default_and_cursor() {
                 store.1.lock().unwrap().last(),
                 Some(&PageRequest {
                     limit,
-                    cursor: Some("retained-cursor".into()),
+                    cursor: Some(cursor.into()),
                 })
             );
         }

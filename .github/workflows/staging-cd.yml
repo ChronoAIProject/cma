@@ -160,6 +160,13 @@ jobs:
     name: Release am
     needs: allocate
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['am'] != ''
+    # One AM release at a time. Newer pushes queue behind the running build
+    # instead of each starting one; a queued job that a newer reservation
+    # already owns skips in seconds, so the newest source always builds next.
+    concurrency:
+      group: cma-staging-am-release
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-release.yml
     permissions:
       contents: write

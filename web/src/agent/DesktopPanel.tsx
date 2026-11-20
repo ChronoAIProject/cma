@@ -49,7 +49,7 @@ export function DesktopPanel({
     error?: string;
   }>();
   const [takeoverError, setTakeoverError] = useState<string>();
-  const { screen, phase, error } = useDesktopConnection(
+  const { screen, phase, error, stop } = useDesktopConnection(
     agentId,
     attempt + reconnectRevision,
     control && !running && !controlUnavailable,
@@ -149,7 +149,9 @@ export function DesktopPanel({
                         ? 'You control'
                         : 'Watching'
                     : phase === 'error'
-                      ? 'Unavailable'
+                      ? stop === 'exhausted'
+                        ? 'Disconnected'
+                        : 'Unavailable'
                       : phase === 'waiting'
                         ? 'Waiting'
                         : 'Connecting'}

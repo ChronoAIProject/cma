@@ -13,6 +13,7 @@ from . import (
     derived_payload,
     digest_frames,
     distribution_config,
+    elf_nul_key_view,
     go_cli_strings,
     key_marker_view,
     library_vectors,
@@ -173,7 +174,7 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payloads, d
                 if "debian_control" in expected:
                     return read_control_candidate(stream, member, path, expected)
                 if ({"distribution_config", "digest_frames", "reviewed_literals", "derived_payload",
-                     "key_marker_view", "native_json_key_view"}.intersection(expected)
+                     "key_marker_view", "native_json_key_view", "elf_nul_key_view"}.intersection(expected)
                         or "executable" in expected.get("self_test", {})):
                     return read_payload_candidate(stream, member, path, workspace, *reviewed_payload)
             vectors = (reviewed_payload if reviewed_payload is not None and "self_test" in reviewed_payload[0]
@@ -264,11 +265,15 @@ def read_payload_candidate(stream, member, path, workspace, expected, reviews):
             origin = expected.get("derived_payload")
             if "reviewed_literals" in expected and ("nyxid_format_labels" not in expected or member.mode & 0o111):
                 verify_literals(verified, payload, metadata, expected)
-            if "key_marker_view" in expected:
-                verified["key_marker_view"] = key_marker_view.verify(payload, metadata, expected["key_marker_view"])
+            if "key_marker_view" in expected and (origin is None or verified.get("derived_payload")):
+                verified["key_marker_view"] = key_marker_view.verify(
+                    payload, metadata, expected["key_marker_view"],
+                    mime_index=None if origin is None else expected["path"])
             if "native_json_key_view" in expected and (origin is None or verified.get("derived_payload")):
                 verified["native_json_key_view"] = native_json_key_view.verify(
                     payload, metadata, expected["native_json_key_view"])
+            if "elf_nul_key_view" in expected:
+                verified["elf_nul_key_view"] = elf_nul_key_view.verify(payload, metadata, expected["elf_nul_key_view"])
             if origin is not None and origin["kind"] == "go-cli-strings" and member.mode & 0o111:
                 checked = go_cli_strings.verify(payload, metadata, origin)
                 if checked:
@@ -296,7 +301,9 @@ def verify_literals(verified, payload, metadata, expected):
     mime_index = expected["path"] if origin is not None and origin["kind"] == "mime-index" else None
     checks = reviewed_literals.verify(payload, metadata, expected["reviewed_literals"], mime_index=mime_index,
                                       npm_template=expected.get("npm_help_template"),
-                                      nyxid_labels=expected.get("nyxid_format_labels"))
+                                      nyxid_labels=expected.get("nyxid_format_labels"),
+                                      certificates=expected.get("certificate_blocks"),
+                                      pooled=expected.get("pooled_literals"))
     verified["reviewed_literals"] = checks
     if mime_index is not None and checks:
         verified["derived_payload"] = True
@@ -327,7 +334,7 @@ def read_arch_trust_entry(layer, entry, expected, workspace, budget):
 
 def layer_occurrences(archive, name, diff_id, requested, workspace, budget, reviewed_payloads, databases,
                       arch_entries, *, namespace=None, layer_index=None, portable=None, platform_id=None,
-                      image_index=None):
+                      image_index=None, trust_paths=None):
     physical = archive.layer(name, diff_id)
     result = {}
     portable_paths = defaultdict(list)
@@ -335,18 +342,23 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget, revi
         with tarfile.open(physical, "r:") as layer:
             for index, member in enumerate(layer):
                 budget.entry()
+                path = archive_path(member.name, posix_tar=True) if namespace is not None or trust_paths else None
                 if namespace is not None:
                     # The namespace is derived from the digest-verified archive. No
                     # detector observation can supply a missing link or override a whiteout.
-                    location = {"path": archive_path(member.name, posix_tar=True), "layer": layer_index}
-                    namespace.observe(member, location, None, None)
+                    namespace.observe(member, {"path": path, "layer": layer_index}, None, None)
                 selected = (portable.select(platform_id, layer, member, budget, stream_digest,
                                             (image_index, layer_index, index)) if portable else None)
                 if selected is not None:
                     path, candidate, package_databases = selected
                     portable_paths[path].append(index)
-                    payload = {None: candidate} if candidate is not None else {}
-                    found = read_entry(layer, member, {None}, workspace, budget, payload, package_databases)
+                    # Reopen every occurrence and each reviewed member as the detector decoded it.
+                    payload = candidate or {}
+                    found = read_entry(layer, member, {None, *payload}, workspace, budget, payload, package_databases)
+                    if found is not None:
+                        result[index] = found
+                elif trust_paths and path in trust_paths:
+                    found = read_arch_trust_entry(layer, member, trust_paths[path], workspace, budget)
                     if found is not None:
                         result[index] = found
                 elif index in requested:
@@ -377,7 +389,8 @@ def requested_occurrences(report, component, evidence):
             row, _ = record
             if any(key in row for key in ("self_test", "digest_frames", "nested_certificate",
                                           "distribution_config", "debian_control", "reviewed_literals",
-                                          "derived_payload", "key_marker_view", "native_json_key_view")):
+                                          "derived_payload", "key_marker_view", "native_json_key_view",
+                                          "elf_nul_key_view")):
                 reviewed_payloads[platform_id, layer, diff_id][entry][locator] = record
             for key in ("self_test", "distribution_config"):
                 if key in row:
@@ -424,6 +437,7 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
             platform_id = platform(image)
             namespace = None
             alias = None
+            trust_paths = None
             if (component == arch_trust.COMPONENT and platform_id == arch_trust.PLATFORM
                     and evidence.arch_trust and image["diff_ids"]):
                 packet = evidence.arch_trust.get(image["diff_ids"][arch_trust.LAYER])
@@ -431,6 +445,10 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
                     alias = packet["alias"]
                     if alias is not None:
                         namespace = TrustStore()
+            elif (component == arch_trust.COMPONENT and platform_id == arch_trust.PLATFORM
+                  and evidence.portable_trust):
+                trust_paths = arch_trust.portable_entries(evidence.portable_trust)
+                namespace = TrustStore(tracked=trust_paths)
             for j, (name, diff_id) in enumerate(zip(image["layers"], image["diff_ids"])):
                 require(coordinates.get((i, j)) == diff_id)
                 layer = (platform_id, j, diff_id)
@@ -439,7 +457,8 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
                     entries = layer_occurrences(archive, name, diff_id, request, workspace, budget,
                                                 reviewed_payloads.get(layer, {}), databases.get(layer, {}),
                                                 arch_entries.get(layer, {}), namespace=namespace, layer_index=j,
-                                                portable=portable, platform_id=platform_id, image_index=i)
+                                                portable=portable, platform_id=platform_id, image_index=i,
+                                                trust_paths=trust_paths if j == arch_trust.LAYER else None)
                     for index, (occurrence, verified, verified_databases) in entries.items():
                         coordinate = (i, j, index)
                         found[coordinate] = (platform_id, config, manifest, diff_id, occurrence)
@@ -447,7 +466,12 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
                             vector_checks[coordinate] = verified
                         if database_checks is not None and verified_databases:
                             database_checks[coordinate] = verified_databases
-            if (namespace is not None and vector_checks is not None
+            if namespace is not None and vector_checks is not None and trust_paths is not None:
+                for coordinate, checks in vector_checks.items():
+                    check = checks.get(ARCH_CERTIFICATE_ADVISORY)
+                    if coordinate[:2] == (i, arch_trust.LAYER) and check is not None:
+                        check["namespace_verified"] = arch_trust.resolves(namespace, found[coordinate][4][0])
+            elif (namespace is not None and vector_checks is not None
                     and namespace.direct_alias(arch_trust.ALIAS, arch_trust.TLS, arch_trust.LAYER)):
                 check = vector_checks.get((i, arch_trust.LAYER, alias["entry"]), {}).get(ARCH_CERTIFICATE_ADVISORY)
                 if check is not None:

@@ -2,6 +2,7 @@ use super::*;
 use crate::store::sandbox_mongo_integration_tests::work_lease_deadline;
 
 mod authority_tests;
+mod credential_purge_tests;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]

@@ -8,7 +8,7 @@ import re
 import time
 from itertools import zip_longest
 
-from . import credential_url, java_class, npm_help_template, nyxid_format_labels
+from . import certificate_blocks, credential_url, java_class, npm_help_template, nyxid_format_labels, pooled_literals
 from .common import digest_bytes
 from .gate import (
     FORMAT_MARKER_ADVISORY,
@@ -101,7 +101,7 @@ def isolated_marker(data, start, end):
             or (suffix in (b'"', b"'", b"`") and prefix == suffix))
 
 
-def encoded_material_absent(data):
+def encoded_material_absent(data, excluded=()):
     limit = time.monotonic() + ENCODED_SCAN_SECONDS
     # An explicit MIME transfer can have multipart and folded boundaries.
     # Token decoding cannot establish complete coverage of that representation.
@@ -116,6 +116,9 @@ def encoded_material_absent(data):
             if (number > MAX_ENCODED_TOKENS or size > MAX_ENCODED_TOKEN_BYTES
                     or consumed > MAX_ENCODED_TOTAL_BYTES or time.monotonic() >= limit):
                 return False
+            # Only a token wholly inside a re-proved public certificate block is skipped.
+            if any(left <= candidate.start() and candidate.end() <= right for left, right in excluded):
+                continue
             encoded = candidate[0] if pattern is ENCODED else b"".join(candidate[0].split())
             try:
                 decoded = base64.b64decode(encoded + b"=" * (-len(encoded) % 4), altchars=b"-_", validate=True)
@@ -147,7 +150,8 @@ def exact_spans(data, entry, marker_ranges=None):
     return True
 
 
-def verify(path, metadata, proof, *, mime_index=None, class_member=False, npm_template=None, nyxid_labels=None):
+def verify(path, metadata, proof, *, mime_index=None, class_member=False, npm_template=None, nyxid_labels=None,
+           certificates=None, pooled=None):
     if not 0 < path.stat().st_size <= MAX_BYTES:
         return {}
     with path.open("rb") as stream, mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ) as data:
@@ -156,12 +160,19 @@ def verify(path, metadata, proof, *, mime_index=None, class_member=False, npm_te
             boundaries = npm_help_template.marker_range(data, npm_template)
         if nyxid_labels is not None:
             boundaries = nyxid_format_labels.marker_ranges(data, nyxid_labels)
+        if pooled is not None:
+            boundaries = pooled_literals.marker_ranges(data, pooled)
         markers = any(entry["rule"] in FORMAT_MARKER_RULES for entry in proof["findings"])
         if markers and class_member:
             boundaries = java_class.utf8_spans(data)
+        excluded = ()
+        if certificates is not None:
+            excluded = certificate_blocks.excluded_ranges(data, certificates)
+            if excluded is None:
+                return {}
         private = markers and (next(binary_key_spans(data), None) is not None
                                or (data[0] & 0x80 and secret_key_stream(path))
-                               or not encoded_material_absent(data))
+                               or not encoded_material_absent(data, excluded))
         return {entry["rule"]: entry for entry in proof["findings"]
                 if not (private and entry["rule"] in FORMAT_MARKER_RULES)
                 and next(occurrences(metadata, entry["rule"]), None) is None and exact_spans(data, entry, boundaries)}

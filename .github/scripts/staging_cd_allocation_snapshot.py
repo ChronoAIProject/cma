@@ -6,7 +6,7 @@ from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical, parse_annotation
 from staging_cd_reservations import Reservations, outcome_ref, pending_name, validate_reservation
-from staging_cd_versions import DEPLOYABLES, version_tuple
+from staging_cd_versions import DEPLOYABLES, FINISH_STARTED_BUILDS, version_tuple
 
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
 
@@ -165,6 +165,7 @@ class AllocationSnapshot(Reservations):
         refs, objects = {}, []
         # A finalizer may still own the previous pending version. Whichever
         # transaction first inserts its outcome decides whether it can finalize.
+        # A lane that finishes started builds leaves the outcome to its finalizer.
         pending_versions = {(item["component"], item["version"]): item for item in self.pending}
         for tag in self.finals:
             identity = tag["receipt"]["identity"]
@@ -180,7 +181,7 @@ class AllocationSnapshot(Reservations):
             name, oid = pending_name(value), result.stdout.strip()
             refs["refs/tags/" + name] = refs[claim_ref(value)] = oid
             predecessor = pending_versions.get((value["component"], value["previous"]))
-            if predecessor is not None:
+            if predecessor is not None and value["component"] not in FINISH_STARTED_BUILDS:
                 ref = outcome_ref(value["component"], value["previous"])
                 refs[ref] = oid
                 contested[ref] = predecessor
