@@ -213,7 +213,54 @@ impl MongoSandboxStore {
         initialize_collections(&database, SANDBOX_COLLECTIONS).await?;
         let checkpoint_objects =
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
-        let store = Self {
+        let bindings = super::bindings::BindingCollections::open(&database, observer).await?;
+        let store = Self::handles(client, name, checkpoint_objects, bindings);
+        super::budget::initialize_settings(&store, initial_settings).await?;
+        super::sandboxes::ensure_indexes(&store.sandboxes).await?;
+        super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;
+        super::sandbox_usage::ensure_indexes(&store).await?;
+        super::sandbox_billing::ensure_indexes(&store.sandbox_billing).await?;
+        super::workspaces::ensure_indexes(&store.workspaces).await?;
+        super::worktrees::ensure_indexes(&store.worktrees).await?;
+        super::agents::ensure_indexes(&store.agents).await?;
+        super::agent_access_requests::ensure_indexes(&store).await?;
+        store
+            .agent_access_tools
+            .create_index(
+                mongodb::IndexModel::builder()
+                    .keys(doc! {"agent_id": 1, "record.conversation": 1})
+                    .build(),
+            )
+            .await
+            .map_err(|error| unavailable("Agent access tool index", error))?;
+        super::trigger_first_messages::ensure_indexes(&store).await?;
+        super::agent_log::ensure_indexes(&store.agent_log).await?;
+        super::agent_task_status::ensure_indexes(&store.agent_log).await?;
+        super::suggestions::ensure_indexes(&store.suggestions).await?;
+        super::agent_channel_usage::ensure_indexes(&store.channel_usage_events).await?;
+        super::agent_commands::ensure_indexes(&store.agent_commands).await?;
+        super::sandbox_controls::ensure_indexes(&store.sandbox_controls).await?;
+        super::agent_commands::audit::ensure_indexes(&store.command_authorization_audits).await?;
+        super::resource_access::ensure_indexes(&store).await?;
+        super::resource_access::ensure_artifact_indexes(&store.agent_artifacts).await?;
+        super::sandbox_events::ensure_indexes(&store.sandbox_events).await?;
+        super::checkpoints::ensure_indexes(&store.checkpoints).await?;
+        super::warm_sandboxes::ensure_indexes(&store.warm_sandboxes).await?;
+        super::native_prepared::ensure_indexes(&store.native_prepared).await?;
+        tracing::info!(database = name, "sandbox-model Mongo store ready");
+        Ok(store.with_title_effect_custody(false))
+    }
+
+    // Collection handles only. Kept separate so read-only audits never invoke
+    // serving initialization, settings writes, index DDL or effect workers.
+    fn handles(
+        client: &Client,
+        name: &str,
+        checkpoint_objects: MongoCheckpointObjectStore,
+        bindings: super::bindings::BindingCollections,
+    ) -> Self {
+        let database = client.database(name);
+        Self {
             empty_discovery: Default::default(),
             agent_connection_observations: None,
             segment_logs: super::agent_log_segments::SegmentCollections::new(&database),
@@ -242,7 +289,7 @@ impl MongoSandboxStore {
             sandbox_batched_reads: false,
             bounded_response_reads: false,
             writer_policy: Default::default(),
-            bindings: super::bindings::BindingCollections::open(&database, observer).await?,
+            bindings,
             client: client.clone(),
             checkpoint_objects,
             sandboxes: majority_collection(&database, SANDBOXES),
@@ -315,41 +362,21 @@ impl MongoSandboxStore {
             access_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_admitted: std::sync::Arc::new(tokio::sync::Notify::new()),
             agent_parent_ready: std::sync::Arc::new(tokio::sync::Notify::new()),
-        };
-        super::budget::initialize_settings(&store, initial_settings).await?;
-        super::sandboxes::ensure_indexes(&store.sandboxes).await?;
-        super::sandbox_sessions::ensure_indexes(&store.sandbox_sessions).await?;
-        super::sandbox_usage::ensure_indexes(&store).await?;
-        super::sandbox_billing::ensure_indexes(&store.sandbox_billing).await?;
-        super::workspaces::ensure_indexes(&store.workspaces).await?;
-        super::worktrees::ensure_indexes(&store.worktrees).await?;
-        super::agents::ensure_indexes(&store.agents).await?;
-        super::agent_access_requests::ensure_indexes(&store).await?;
-        store
-            .agent_access_tools
-            .create_index(
-                mongodb::IndexModel::builder()
-                    .keys(doc! {"agent_id": 1, "record.conversation": 1})
-                    .build(),
-            )
-            .await
-            .map_err(|error| unavailable("Agent access tool index", error))?;
-        super::trigger_first_messages::ensure_indexes(&store).await?;
-        super::agent_log::ensure_indexes(&store.agent_log).await?;
-        super::agent_task_status::ensure_indexes(&store.agent_log).await?;
-        super::suggestions::ensure_indexes(&store.suggestions).await?;
-        super::agent_channel_usage::ensure_indexes(&store.channel_usage_events).await?;
-        super::agent_commands::ensure_indexes(&store.agent_commands).await?;
-        super::sandbox_controls::ensure_indexes(&store.sandbox_controls).await?;
-        super::agent_commands::audit::ensure_indexes(&store.command_authorization_audits).await?;
-        super::resource_access::ensure_indexes(&store).await?;
-        super::resource_access::ensure_artifact_indexes(&store.agent_artifacts).await?;
-        super::sandbox_events::ensure_indexes(&store.sandbox_events).await?;
-        super::checkpoints::ensure_indexes(&store.checkpoints).await?;
-        super::warm_sandboxes::ensure_indexes(&store.warm_sandboxes).await?;
-        super::native_prepared::ensure_indexes(&store.native_prepared).await?;
-        tracing::info!(database = name, "sandbox-model Mongo store ready");
-        Ok(store.with_title_effect_custody(false))
+        }
+    }
+
+    pub(in crate::store) fn audit_handles(client: &Client, name: &str) -> Self {
+        let database = client.database(name);
+        Self::handles(
+            client,
+            name,
+            MongoCheckpointObjectStore::handles(
+                client,
+                name,
+                std::sync::Arc::new(super::checkpoint_storage::RetiredCheckpointStorage),
+            ),
+            super::bindings::BindingCollections::handles(&database, Default::default()),
+        )
     }
 }
 

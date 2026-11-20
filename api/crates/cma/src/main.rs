@@ -123,6 +123,25 @@ async fn run() {
         }
         return;
     }
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == "--task-audit")
+    {
+        if arguments.len() != 3 {
+            eprintln!("usage: cma --task-audit PRIVATE_SELECTION PRIVATE_NEW_FILE");
+            std::process::exit(2);
+        }
+        if let Err(error) = store::task_audit::command(
+            std::path::Path::new(&arguments[1]),
+            std::path::Path::new(&arguments[2]),
+        )
+        .await
+        {
+            eprintln!("task audit refused: {error}");
+            std::process::exit(2);
+        }
+        return;
+    }
     if arguments.len() == 3 && arguments[0] == "--ledger-census" {
         if let Err(error) = store::ledger_census::command(
             std::path::Path::new(&arguments[1]),
@@ -206,7 +225,7 @@ async fn run() {
         return;
     }
     if !arguments.is_empty() && arguments != ["--agent-manager-drain"] {
-        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE | --allocator-self-test]");
+        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE | --task-audit PRIVATE_SELECTION PRIVATE_NEW_FILE | --allocator-self-test]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {

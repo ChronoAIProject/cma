@@ -1,7 +1,8 @@
 //! The explicit manifest registry is also the migrator's reader floor.
 use super::{
     activity_indexes, activity_page_index, agent_log_segments, agent_log_source_keys,
-    agent_owner_index, binding_indexes, collection_indexes, opening_index, Result,
+    agent_owner_index, binding_indexes, collection_indexes, command_cohort_index, opening_index,
+    Result,
 };
 use mongodb::bson::{doc, Document};
 
@@ -15,10 +16,11 @@ pub(super) enum Step {
     AgentLogSegments,
     AgentLogSourceKeys,
     BindingIndexes,
+    CommandCohort,
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 8] = [
+    pub(super) const ALL: [Self; 9] = [
         Self::Activity,
         Self::ActivityPage,
         Self::LedgerCollection,
@@ -27,6 +29,7 @@ impl Step {
         Self::AgentLogSegments,
         Self::AgentLogSourceKeys,
         Self::BindingIndexes,
+        Self::CommandCohort,
     ];
     pub(super) fn parse(id: &str) -> Result<Self> {
         Self::ALL
@@ -36,6 +39,7 @@ impl Step {
     }
     pub(super) fn id(self) -> &'static str {
         match self {
+            Self::CommandCohort => command_cohort_index::ID,
             Self::BindingIndexes => binding_indexes::ID,
             Self::Activity => activity_indexes::ID,
             Self::ActivityPage => activity_page_index::ID,
@@ -48,6 +52,7 @@ impl Step {
     }
     pub(super) fn checksum(self) -> String {
         match self {
+            Self::CommandCohort => command_cohort_index::checksum(),
             Self::BindingIndexes => binding_indexes::checksum(),
             Self::Activity => activity_indexes::checksum(),
             Self::ActivityPage => activity_page_index::checksum(),
@@ -63,6 +68,7 @@ impl Step {
     }
     pub(super) fn max_changes(self) -> i64 {
         match self {
+            Self::CommandCohort => 1,
             Self::BindingIndexes => 11,
             Self::Activity => 2,
             Self::ActivityPage => 1,
@@ -77,6 +83,7 @@ impl Step {
             Self::Activity | Self::ActivityPage => &["activity"],
             Self::LedgerCollection => &collection_indexes::COLLECTIONS,
             Self::AgentOpening => &opening_index::COLLECTIONS,
+            Self::CommandCohort => &["agent_commands"],
             Self::AgentOwnerPage => &["agents"],
             Self::AgentLogSourceKeys => &["agent_log"],
             Self::AgentLogSegments => crate::store::agent_log_segments::COLLECTIONS,
@@ -91,7 +98,8 @@ impl Step {
             | Self::AgentOpening
             | Self::AgentOwnerPage
             | Self::AgentLogSourceKeys
-            | Self::BindingIndexes => "created_indexes",
+            | Self::BindingIndexes
+            | Self::CommandCohort => "created_indexes",
         }
     }
     pub(super) async fn inspect(
@@ -99,6 +107,11 @@ impl Step {
         database: &mongodb::Database,
     ) -> Result<Vec<(&'static str, Document)>> {
         match self {
+            Self::CommandCohort => Ok(command_cohort_index::inspect(database)
+                .await?
+                .into_iter()
+                .map(|index| ("agent_commands", index))
+                .collect()),
             Self::BindingIndexes => binding_indexes::inspect(database).await,
             Self::Activity => Ok(activity_indexes::inspect(database)
                 .await?
@@ -132,6 +145,9 @@ impl Step {
         index: Document,
     ) -> Result<bool> {
         match self {
+            Self::CommandCohort if collection == "agent_commands" => {
+                command_cohort_index::create(database, index).await
+            }
             Self::BindingIndexes => binding_indexes::create(database, collection, index).await,
             Self::Activity if collection == "activity" => {
                 activity_indexes::create(database, index).await

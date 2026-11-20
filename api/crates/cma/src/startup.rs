@@ -26,7 +26,10 @@ pub(crate) async fn serve() -> Result<(), String> {
         return agent_manager::relay::prestop(&config).await;
     }
     let recorder = telemetry::install()?;
-    let _metrics_server = telemetry::server::Server::start(config.metrics_bind, recorder).await?;
+    let task_cohorts = telemetry::task_cohort::Cache::default();
+    let _metrics_server =
+        telemetry::server::Server::start(config.metrics_bind, recorder, task_cohorts.clone())
+            .await?;
     let composition = observe(
         "composition",
         ControlPlaneComposition::build(&config),
@@ -113,7 +116,12 @@ pub(crate) async fn serve() -> Result<(), String> {
         shutdown.subscribe(),
         composition.workers.get("sandbox_commands"),
     ));
-    shutdown.push(composition.worker_observations.spawn(shutdown.subscribe()));
+    shutdown.push(
+        composition
+            .worker_observations
+            .with_task_cohorts(task_cohorts)
+            .spawn(shutdown.subscribe()),
+    );
     shutdown.push(
         composition
             .native_warm_pools

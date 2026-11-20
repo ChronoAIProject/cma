@@ -6,16 +6,35 @@ use mongodb::{
 };
 use std::time::Duration;
 
+mod cohort;
 mod parked;
 
-pub(crate) struct Observations(Database, bool);
+pub(crate) struct Observations(
+    Database,
+    bool,
+    Option<crate::telemetry::task_cohort::Cache>,
+    Option<crate::config::task_audit::Selection>,
+);
 impl Observations {
     pub(super) fn new(database: Database) -> Self {
-        Self(database, false)
+        Self(database, false, None, None)
     }
 
     pub(crate) fn with_work_retry_policy(mut self, enabled: bool) -> Self {
         self.1 = enabled;
+        self
+    }
+
+    pub(crate) fn with_task_cohorts(mut self, cache: crate::telemetry::task_cohort::Cache) -> Self {
+        self.2 = Some(cache);
+        self
+    }
+
+    pub(crate) fn with_task_audit(
+        mut self,
+        selection: Option<crate::config::task_audit::Selection>,
+    ) -> Self {
+        self.3 = selection;
         self
     }
 
@@ -29,6 +48,24 @@ impl Observations {
         initialize("native_warm_pools", "due");
         tokio::spawn(async move {
             let mut parked = self.1.then(|| parked::ParkedObserver::new(self.0.clone()));
+            let cohorts = self
+                .2
+                .as_ref()
+                .filter(|_| self.3.is_none())
+                .map(|cache| cohort::Observer::new(self.0.clone(), cache.clone()));
+            let audit = self
+                .2
+                .as_ref()
+                .zip(self.3.as_ref())
+                .map(|(cache, selection)| {
+                    cache.initialize(&["release"]);
+                    (cache.clone(), selection.clone())
+                });
+            let audit_store = super::sandbox_mongo::MongoSandboxStore::audit_handles(
+                self.0.client(),
+                self.0.name(),
+            );
+            let mut next_cohort = tokio::time::Instant::now();
             let mut tick = tokio::time::interval(Duration::from_secs(30));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
@@ -52,6 +89,26 @@ impl Observations {
                         }
                         _ => sampled(spec.worker, spec.state, false),
                     }
+                }
+                if (cohorts.is_some() || audit.is_some())
+                    && tokio::time::Instant::now() >= next_cohort
+                {
+                    // An explicit release selection replaces relative presets;
+                    // it never scans pre-cutoff cohorts for the new-task audit.
+                    if let Some(cohorts) = &cohorts {
+                        tokio::select! {
+                            _ = crate::shutdown::signalled(shutdown.clone()) => return,
+                            _ = cohorts.sample() => {}
+                        }
+                    }
+                    if let Some((cache, selection)) = &audit {
+                        let result = tokio::select! {
+                            _ = crate::shutdown::signalled(shutdown.clone()) => return,
+                            result = super::task_audit::observe(&audit_store, selection) => result
+                        };
+                        cache.update("release", result.map(|report| report.metrics()));
+                    }
+                    next_cohort = tokio::time::Instant::now() + Duration::from_secs(60);
                 }
                 if let Some(parked) = parked.as_mut() {
                     tokio::select! {

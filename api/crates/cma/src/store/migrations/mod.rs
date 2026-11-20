@@ -11,6 +11,7 @@ pub(in crate::store) mod agent_log_source_keys;
 mod agent_owner_index;
 mod binding_indexes;
 mod collection_indexes;
+pub(in crate::store) mod command_cohort_index;
 mod index_inventory;
 mod index_plan;
 mod index_toolkit;
@@ -25,6 +26,18 @@ mod tests;
 type Result<T> = std::result::Result<T, &'static str>;
 const DEADLINE: Duration = Duration::from_secs(45);
 const IO: Duration = Duration::from_secs(5);
+
+/// Qualify the reviewed access path without applying a migration. A hinted
+/// query alone can return an empty result for a nonexistent collection.
+pub(in crate::store) async fn require_command_cohort_index(
+    database: &mongodb::Database,
+) -> Result<()> {
+    if command_cohort_index::inspect(database).await?.is_empty() {
+        Ok(())
+    } else {
+        Err("Command cohort index is missing")
+    }
+}
 
 pub(crate) fn is_command(arguments: &[String]) -> bool {
     if index_toolkit::is_command(arguments) {

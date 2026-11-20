@@ -300,6 +300,33 @@ impl CommandEvidence {
         Ok(())
     }
 
+    /// Inspect only evidence that has been validated through this Agent snapshot.
+    /// Does not infer a terminal from elapsed time, runtime loss or Agent state,
+    /// and never changes the command or lane. A deferred source attempt is not
+    /// the logical message's terminal and requires separate retry assessment.
+    pub fn verified_status(
+        &self,
+        command: &AdmittedAgentCommand,
+        agent: &Agent,
+    ) -> Result<AgentResponseStatus, CommandLedgerError> {
+        command.validate()?;
+        if agent.id != self.dispatch.claim.agent_id
+            || agent.conversation.last_seq != self.cursor
+            || !self.fence_seen
+            || !self.turn_seen
+            || command.work.dispatch.as_ref() != Some(&self.dispatch)
+            || command
+                .work
+                .observation
+                .as_ref()
+                .is_some_and(|observation| observation.event_cursor > self.cursor)
+            || self.has_source_deferred()
+        {
+            return Err(CommandLedgerError::Corrupt);
+        }
+        Ok(self.status)
+    }
+
     /// Apply only after the snapshot's entire log was validated. Clear exactly
     /// this command's lease; a newer command may already own the Agent lane.
     pub fn apply(
