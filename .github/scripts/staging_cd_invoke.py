@@ -150,7 +150,7 @@ def controller_receipts(receipts, transition, script, directory, started, env, c
 
 def deploy(env, masker, script_reader=private_script, runner=execute,
            tool_reader=tool_environment, policy_reader=deploy_selection, on_disabled=lambda: None,
-           on_private_refusal=None, on_unverified=None):
+           on_private_refusal=None, on_unverified=None, on_rolled_back=None):
     event_identity(env)
     value = validate_set(document(env.get("CD_RELEASE_SET")))
     mode, started = env.get("CD_DEPLOY_MODE"), env.get("CD_STARTED_AT")
@@ -181,7 +181,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     child_env = {key: env[key] for key in (*IDENTITY_KEYS, *PROCESS_KEYS) if key in env}
     child_env.update(tool_reader(env))
     child_env.update(credentials)
-    if on_private_refusal is not None or on_unverified is not None:
+    if on_private_refusal is not None or on_unverified is not None or on_rolled_back is not None:
         child_env["CD_REPORT_REFUSAL"] = "1"
     # A set has independent source SHAs; the file is the sole source authority.
     # App tokens, registry credentials, keys and Actions command files stay out.
@@ -190,6 +190,7 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     private_reason = None
     group_outcome = 0
     verification = None
+    rollback = None
     with tempfile.TemporaryDirectory(prefix="cma-release-set-", dir=env["RUNNER_TEMP"]) as directory:
         path = Path(directory) / "release-set.json"
         with precondition("authority"):
@@ -208,6 +209,10 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
             code = runner(script, path, mode, started, child_env)
             if code == 20 and on_unverified is not None:
                 verification = read_verification(path.with_name("verification-code"), request)
+            if code == 10 and on_rolled_back is not None:
+                # Newer controllers bind the forward failure to the same packet.
+                # Older ones write none; the recovery token is never used here.
+                rollback = read_verification(path.with_name("verification-code"), request)
             if code != 30 and elapsed(started) > limit:
                 # execute() also maps a late successful child to 20. Its code-0
                 # result cannot certify success and is not a malformed result.
@@ -241,6 +246,8 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
         on_unverified(*verification)
     if private_reason is not None:
         on_private_refusal(private_reason)
+    if code == 10 and on_rolled_back is not None:
+        on_rolled_back(rollback[0] if rollback is not None else "unreported")
     if code == 0:
         return group_outcome
     return code if code in (10, 20, 30, 40, 50) else 20
@@ -251,6 +258,7 @@ def main():
     reason = None
     verification = "unreported"
     recovery = "unreported"
+    release = "unreported"
     try:
         entry_elapsed = elapsed(os.environ.get("CD_STARTED_AT"))
     except (ValueError, TypeError, OverflowError):
@@ -268,11 +276,16 @@ def main():
         if first in VERIFICATION_REASONS and second in VERIFICATION_REASONS:
             verification, recovery = first, second
 
+    def rolled_back(token):
+        nonlocal release
+        if token in VERIFICATION_REASONS:
+            release = token
+
     def operation(masker):
         nonlocal outcome, reason
         try:
-            outcome = deploy(os.environ, masker, on_disabled=disabled,
-                             on_private_refusal=private_refusal, on_unverified=unverified)
+            outcome = deploy(os.environ, masker, on_disabled=disabled, on_private_refusal=private_refusal,
+                             on_unverified=unverified, on_rolled_back=rolled_back)
         except NotAdmitted as refusal:
             outcome = refusal.code
             if refusal.reason in PRECONDITIONS:
@@ -282,6 +295,9 @@ def main():
     diagnostic = None
     if outcome == 20:
         diagnostic = f"FAIL verification={verification} recovery={recovery}"
+    elif outcome == 10:
+        # Exit 10 alone certifies the rollback; only the release token is reported.
+        diagnostic = f"FAIL release={release} recovery=verified"
     elif reason is not None:
         diagnostic = "FAIL precondition=" + reason
     elif outcome == 30:

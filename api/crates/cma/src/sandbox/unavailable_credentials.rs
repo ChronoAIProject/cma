@@ -12,6 +12,10 @@ pub(crate) struct UnavailableSandboxCredentials;
 
 #[async_trait::async_trait]
 impl SandboxCredentialController for UnavailableSandboxCredentials {
+    async fn settle_revocations(&self, _sandbox: &Sandbox) -> Result<(), CredentialError> {
+        Err(unavailable())
+    }
+
     async fn issue(
         &self,
         _sandbox: &Sandbox,

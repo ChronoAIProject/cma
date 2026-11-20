@@ -6,6 +6,7 @@ import { Button } from '../ui/Button';
 import { lifecycleScopeForAgent, useLifecycleIntent } from './lifecycleIntent';
 import { lifecycleFailureMessage } from './lifecycleFailure';
 import { AgentProvisioningProgress } from './AgentProvisioningProgress';
+import { RepositoryPreparationHelp } from './RepositoryPreparationHelp';
 import './AgentLifecycleCard.css';
 import './AgentLifecycleFollowup.css';
 
@@ -96,6 +97,12 @@ function RetainedSetup({
           {operation.error ?? 'Agent setup could not finish. Your conversation is still available.'}
         </Alert>
       ) : null}
+      <RepositoryPreparationHelp
+        client={client}
+        viewerId={viewerId}
+        intent={intent}
+        operation={operation}
+      />
       {error ? (
         <Alert
           tone="error"

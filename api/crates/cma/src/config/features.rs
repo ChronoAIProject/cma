@@ -10,6 +10,7 @@ mod resource_list_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub visitor_two_sandbox_defaults: bool,
     pub admin_runtime_inventory: bool,
     pub ownership_retry_hints_enabled: bool,
     pub agent_model_discovery_cache: bool,
@@ -94,6 +95,10 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            visitor_two_sandbox_defaults: flag(
+                lookup,
+                "CHRONO_VISITOR_TWO_SANDBOX_DEFAULTS_ENABLED",
+            )?,
             admin_runtime_inventory: flag(lookup, "CHRONO_ADMIN_RUNTIME_INVENTORY_ENABLED")?,
             ownership_retry_hints_enabled: flag(
                 lookup,
@@ -334,3 +339,7 @@ mod observation_tests;
 #[cfg(test)]
 #[path = "features/ownership_retry_hint_tests.rs"]
 mod ownership_retry_hint_tests;
+
+#[cfg(test)]
+#[path = "features/visitor_defaults_tests.rs"]
+mod visitor_defaults_tests;
