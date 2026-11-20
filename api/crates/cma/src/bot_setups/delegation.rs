@@ -233,6 +233,11 @@ fn no_store(mut response: Response) -> Response {
 }
 fn problem(error: BotError) -> Response {
     let status = match &error {
+        BotError::AccountDeletionInProgress => {
+            return no_store(layer1_public::rest::account_deletion_problem(
+                layer2_core::account_deletion::AccountDeletionError::InProgress,
+            ))
+        }
         BotError::Forbidden => StatusCode::FORBIDDEN,
         BotError::NotFound => StatusCode::NOT_FOUND,
         BotError::Conflict => StatusCode::CONFLICT,
