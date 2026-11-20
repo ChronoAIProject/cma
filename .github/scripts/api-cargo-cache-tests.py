@@ -252,6 +252,41 @@ class CacheTests(unittest.TestCase):
         self.assertIn('id=cma-api-target-${TARGETARCH},target=/build/target,sharing=locked', definition)
         self.assertEqual(cache.MOUNTS["target"], "cma-api-target-amd64")
 
+    def test_cache_trim_keeps_the_newest_completed_session_of_every_crate(self):
+        # Each recipe cleans every workspace crate before building, so a crate
+        # whose incremental state the trim drops is compiled from scratch.
+        crates = ("cma-0", "cmaeg-0", "layer1_public-0", "layer2_core-0", "layer3_adapter-0",
+                  "cma_service_auth-0", "build_script_build-0")
+        for recipe in ("api/crates/cma/Dockerfile", "api/crates/cmaeg/Dockerfile"):
+            with self.subTest(recipe=recipe):
+                definition = (cache.ROOT / recipe).read_text()
+                script = definition.split("<<'CACHE_TRIM'\n", 1)[1].split("\nCACHE_TRIM\n", 1)[0]
+                work = self.root / Path(recipe).parent.name
+                release = work / "target/release"
+                for name in ("cma", "deps/libdependency.rlib", ".fingerprint/dependency/lib",
+                             "build/layer3-adapter-0/out/runtime_versions.rs"):
+                    (release / name).parent.mkdir(parents=True, exist_ok=True)
+                    (release / name).write_bytes(b"final or dependency output")
+                (work / "target/.rustc_info.json").write_text("{}")
+                incremental = release / "incremental"
+                for crate in crates:
+                    # Glob order differs from age, so only modification times select.
+                    for stamp, session in ((1000, "s-z-preceding"), (2000, "s-a-newest")):
+                        products = incremental / crate / session / "work-products.bin"
+                        products.parent.mkdir(parents=True)
+                        products.write_bytes(b"compiler session")
+                        os.utime(products, (stamp, stamp))
+                    (incremental / crate / "s-a-newest.lock").write_bytes(b"")
+                    (incremental / crate / "s-m-interrupted-working").mkdir()
+                subprocess.run(["sh", "-c", script], cwd=work, check=True)
+                self.assertEqual([path.name for path in release.iterdir()], ["incremental"])
+                self.assertEqual(sorted(path.name for path in incremental.iterdir()), sorted(crates))
+                for crate in crates:
+                    self.assertEqual(sorted(path.name for path in (incremental / crate).iterdir()),
+                                     ["s-a-newest", "s-a-newest.lock"], crate)
+                    self.assertTrue((incremental / crate / "s-a-newest/work-products.bin").is_file(), crate)
+                self.assertTrue((work / "target/.rustc_info.json").is_file())
+
     def test_transfer_always_executes_and_uses_only_expected_mount_ids(self):
         nonces = []
         for operation in ("inject", "extract"):
