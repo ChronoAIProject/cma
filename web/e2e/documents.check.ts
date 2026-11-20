@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import './documents.autolink';
 import { LocalDocuments, documentId } from './documents.fixture';
 for (const width of [1600, 390]) {
   for (const theme of ['light', 'dark']) {

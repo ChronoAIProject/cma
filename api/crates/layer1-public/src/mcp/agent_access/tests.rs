@@ -12,6 +12,8 @@ use std::sync::{
 };
 use tower::ServiceExt;
 
+#[path = "availability_tests.rs"]
+mod availability_tests;
 #[path = "deliverable_tests.rs"]
 mod deliverable_tests;
 #[path = "document_tests.rs"]
