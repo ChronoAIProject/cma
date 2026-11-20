@@ -1,11 +1,12 @@
 import { rateLimitDelay } from './readRetry';
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ApiError } from '@cma/client';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { AgentV2Session } from './client';
 import type { QueuedInputIntent } from './queuedInputJournal';
 import { sendQueuedInputIntent } from './queuedInputs';
 import { recoverQueuedCancellation } from './queuedCancellation';
 import { observeRead } from './readObserver';
+import { QueuedCommandTracker } from './queuedCommandTracker';
+import type { QueuedInputOutcome } from './queuedCommandOutcomes';
 
 export interface QueuedInputRow {
   readonly responseId: string;
@@ -18,6 +19,7 @@ export interface QueuedInputRow {
 }
 export interface QueuedInputsControl {
   readonly items: readonly QueuedInputRow[];
+  readonly outcomes: readonly QueuedInputOutcome[];
   readonly managedCommandIds: ReadonlySet<string>;
   readonly error?: string;
   readonly edit: (item: QueuedInputRow, input: string) => Promise<void>;
@@ -34,51 +36,48 @@ export function useQueuedInputs(
   onIdentityChange: (error: unknown) => boolean,
   requestRevision = 0,
 ): QueuedInputsControl {
+  const tracker = useMemo(
+    () => (session && enabled ? new QueuedCommandTracker(session) : undefined),
+    [session, enabled],
+  );
   const [stored, setStored] = useState<{
-    session: AgentV2Session;
-    items: readonly QueuedInputRow[];
-    error?: string;
+    tracker: QueuedCommandTracker;
+    view: ReturnType<QueuedCommandTracker['snapshot']>;
   }>();
   const [operations, setOperations] = useState<{
-    session?: AgentV2Session;
+    tracker?: QueuedCommandTracker;
     busy: ReadonlySet<string>;
     errors: ReadonlyMap<string, string>;
-    managed: ReadonlySet<string>;
-  }>({ session, busy: new Set(), errors: new Map(), managed: new Set() });
+  }>({ tracker, busy: new Set(), errors: new Map() });
   const actions = useRef(new Map<string, AbortController>());
   const errors = useRef(new Map<string, string>());
-  const generation = useRef(0);
-  const managed = useRef(new Set<string>());
   const active = useRef(activeTurn);
   useLayoutEffect(() => {
     active.current = activeTurn;
   }, [activeTurn]);
   const schedule = useRef<ReturnType<typeof observeRead> | undefined>(undefined);
-  const refresh = useCallback(() => schedule.current?.refresh(), []);
+  const refresh = useCallback(() => {
+    tracker?.refresh();
+    schedule.current?.refresh();
+  }, [tracker]);
   const observed = useRef({ session, eventRevision, activeTurn, requestRevision });
-  const current = stored?.session === session ? stored : undefined;
+  const current = stored?.tracker === tracker ? stored?.view : undefined;
   const bump = useCallback(
     () =>
       setOperations({
-        session,
+        tracker,
         busy: new Set(actions.current.keys()),
         errors: new Map(errors.current),
-        managed: new Set(managed.current),
       }),
-    [session],
+    [tracker],
   );
-  const local = operations.session === session ? operations : undefined;
+  const local = operations.tracker === tracker ? operations : undefined;
+  const publish = useCallback(() => {
+    if (tracker) setStored({ tracker, view: tracker.snapshot() });
+  }, [tracker]);
 
   useEffect(() => {
     errors.current.clear();
-    managed.current.clear();
-    if (session) {
-      try {
-        for (const id of session.journal.queuedInputs.managedCommands()) managed.current.add(id);
-      } catch {
-        /* The ordinary read below reports storage recovery errors. */
-      }
-    }
     bump();
     const pending = actions.current;
     return () => {
@@ -88,81 +87,31 @@ export function useQueuedInputs(
   }, [session, enabled, bump]);
 
   useEffect(() => {
-    if (!session || !enabled) return;
-    let retry = 1000;
+    if (!tracker || !enabled) return;
     let failures = 0;
     const observer = observeRead(async (signal) => {
-      const observedGeneration = generation.current;
+      let changed = false;
+      const identityChanged = (error: unknown) => {
+        changed = changed || onIdentityChange(error);
+        if (changed) setStored(undefined);
+        return changed;
+      };
       try {
-        await session.authorize(signal);
-        const page = await session.responses.listQueuedInputs(session.journal.agentId, {
-          signal,
-        });
-        await session.authorize(signal);
-        if (observedGeneration !== generation.current) {
-          observer.refresh();
-          return { cooldown: 2000 };
-        }
-        const items = page.data.map((item): QueuedInputRow => ({
-          responseId: item.response.receipt.response_id!,
-          commandId: item.response.receipt.command_id,
-          revision: item.command_revision,
-          input: item.text,
-          busy: !item.editable,
-        }));
-        for (const item of items) managed.current.add(item.commandId);
-        session.journal.queuedInputs.remember(items.map((item) => item.commandId));
-        const last = session.journal.read();
-        const accepted = [
-          last?.state === 'accepted' ? last.receipt : undefined,
-          session.journal.interruption.read()?.receipt ?? undefined,
-        ].filter((receipt) => receipt !== undefined);
-        for (const receipt of accepted) {
-          if (managed.current.has(receipt.commandId)) continue;
-          try {
-            const status = await session.responses.readCommand(receipt.commandId, {
-              signal,
-            });
-            await session.authorize(signal);
-            if (
-              status.receipt.agent_id === session.journal.agentId &&
-              status.receipt.response_id === receipt.responseId &&
-              (status.delivery !== null ||
-                ['completed', 'cancelled', 'failed'].includes(status.status))
-            ) {
-              managed.current.add(receipt.commandId);
-              session.journal.queuedInputs.remember([receipt.commandId]);
-            }
-          } catch (error) {
-            if (signal.aborted || onIdentityChange(error)) return;
-            throw error;
-          }
-        }
-        if (observedGeneration !== generation.current) {
-          observer.refresh();
-          return { cooldown: 2000 };
-        }
-        setStored({ session, items });
-        bump();
+        const result = await tracker.observe(signal, active.current, identityChanged);
+        if (signal.aborted || changed) return;
+        publish();
         failures = 0;
-        retry = 2000;
-        return {
-          next: items.length > 0 ? retry : active.current ? 10000 : undefined,
-          cooldown: retry,
-        };
+        return result;
       } catch (error) {
-        if (signal.aborted || onIdentityChange(error)) return;
-        // An older serving instance may lack discovery during a rolling deploy.
-        // Retry slowly even without new events, and recover on focus/refresh.
-        if (error instanceof ApiError && error.status === 404)
-          return { next: 30000, cooldown: 2000 };
-        setStored((previous) => ({
-          session,
-          items: previous?.session === session ? previous.items : [],
-          error: 'The message queue could not be refreshed. Your messages are retained.',
-        }));
-        retry = Math.min(retry * 2, 10000);
-        const next = rateLimitDelay(error, retry, ++failures);
+        if (signal.aborted || changed || identityChanged(error)) return;
+        const next = rateLimitDelay(error, Math.min(2000 * 2 ** ++failures, 10000), failures);
+        setStored({
+          tracker,
+          view: {
+            ...tracker.snapshot(),
+            error: 'The message queue could not be refreshed. Your messages are retained.',
+          },
+        });
         return { next, cooldown: next, failed: true };
       }
     });
@@ -171,7 +120,7 @@ export function useQueuedInputs(
       observer.dispose();
       if (schedule.current === observer) schedule.current = undefined;
     };
-  }, [session, enabled, onIdentityChange, bump]);
+  }, [tracker, enabled, onIdentityChange, publish]);
 
   useEffect(() => {
     const previous = observed.current;
@@ -205,8 +154,8 @@ export function useQueuedInputs(
         },
       ];
     }
-  } catch (error) {
-    storageError = error instanceof Error ? error.message : 'Queue recovery is unavailable.';
+  } catch {
+    storageError = 'Queue recovery is unavailable. Refresh status.';
   }
   const items = [...(current?.items ?? [])];
   for (const intent of intents)
@@ -223,12 +172,11 @@ export function useQueuedInputs(
     kind: 'edit' | 'remove' | 'recover',
     text?: string,
   ) => {
-    if (!session || !enabled || actions.current.has(item.responseId) || storageError)
+    if (!session || !tracker || !enabled || actions.current.has(item.responseId) || storageError)
       throw new Error('This queued message cannot be changed right now.');
     const request = new AbortController();
     actions.current.set(item.responseId, request);
-    generation.current += 1;
-    managed.current.add(item.commandId);
+    tracker.beginMutation(item);
     errors.current.delete(item.responseId);
     bump();
     try {
@@ -240,16 +188,10 @@ export function useQueuedInputs(
         legacy?.commandId === null &&
         legacy.responseId === item.responseId
       ) {
-        await recoverQueuedCancellation(session, request.signal);
-        generation.current += 1;
-        setStored((state) =>
-          state?.session === session
-            ? {
-                ...state,
-                items: state.items.filter((entry) => entry.responseId !== item.responseId),
-              }
-            : state,
-        );
+        const result = await recoverQueuedCancellation(session, request.signal);
+        request.signal.throwIfAborted();
+        tracker.finishMutation(item, result ? { response: result } : undefined);
+        publish();
         return;
       }
       const previous = session.journal.queuedInputs
@@ -270,24 +212,12 @@ export function useQueuedInputs(
               ...(kind === 'edit' ? { text } : {}),
             });
       if (!intent) throw new Error('There is no pending request for this message.');
-      await sendQueuedInputIntent(session, intent, request.signal);
-      generation.current += 1;
-      setStored((state) =>
-        state?.session !== session
-          ? state
-          : {
-              ...state,
-              items:
-                intent.action === 'remove'
-                  ? state.items.filter((entry) => entry.responseId !== item.responseId)
-                  : state.items.map((entry) =>
-                      entry.responseId === item.responseId
-                        ? { ...entry, input: intent.text!, busy: true }
-                        : entry,
-                    ),
-            },
-      );
+      const result = await sendQueuedInputIntent(session, intent, request.signal);
+      request.signal.throwIfAborted();
+      tracker.finishMutation(item, result);
+      publish();
     } catch (error) {
+      if (!request.signal.aborted) tracker.finishMutation(item);
       if (!request.signal.aborted && !onIdentityChange(error))
         errors.current.set(
           item.responseId,
@@ -303,7 +233,8 @@ export function useQueuedInputs(
     }
   };
   return {
-    managedCommandIds: local?.managed ?? new Set(),
+    managedCommandIds: enabled ? (current?.managedCommandIds ?? new Set()) : new Set(),
+    outcomes: enabled ? (current?.outcomes ?? []) : [],
     items: enabled
       ? items.map((item) => ({
           ...item,
@@ -312,7 +243,7 @@ export function useQueuedInputs(
           error: local?.errors.get(item.responseId),
         }))
       : [],
-    error: storageError ?? current?.error,
+    error: enabled ? (storageError ?? current?.error) : undefined,
     edit: (item, input) => mutate(item, 'edit', input),
     remove: (item) => mutate(item, 'remove'),
     recover: (item) => mutate(item, 'recover'),

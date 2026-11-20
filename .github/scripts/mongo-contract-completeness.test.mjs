@@ -217,3 +217,33 @@ test('usage hotfix keeps reader and startup contracts while assigning only the e
   cases[`${matrix}_another_contract`] = caseMetadata(false);
   assert.equal(check(metadata, exclusions).status, 1);
 });
+
+const resourceExecutionPrefix = 'store::resource_access::execution::mongo_tests::';
+test('resource execution selection includes root and nested contracts without omissions', () => {
+  assert.equal(requiredPrefixes.filter(prefix => prefix === resourceExecutionPrefix).length, 1);
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const line = source.split('\n').find(value => value.trimStart().startsWith('-E '));
+  const included = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
+  assert.equal(included.filter(prefix => prefix === resourceExecutionPrefix).length, 1);
+  assert.ok(!line.includes(`not test(${resourceExecutionPrefix})`));
+  const names = [
+    'ticket_continuation_and_release_write_conflict_with_freeze',
+    'races::registration_before_freeze_is_retained_until_every_exact_ack',
+    'uncertainty::ambiguous_commits_preserve_frozen_members_and_replay_the_exact_final_receipt',
+  ].map(name => resourceExecutionPrefix + name);
+  const metadata = inventory();
+  const cases = metadata['rust-suites']['cma::bin/cma'].testcases;
+  for (const name of names) cases[name] = caseMetadata(true);
+  const selected = check(metadata);
+  assert.equal(selected.status, 0, selected.stderr);
+  const missingSuite = structuredClone(metadata);
+  delete missingSuite['rust-suites']['cma::bin/cma'];
+  assert.equal(check(missingSuite).status, 1);
+  for (const omitted of [names, ...names.map(name => [name])]) {
+    for (const name of omitted) cases[name] = caseMetadata(false);
+    const result = check(metadata);
+    assert.equal(result.status, 1);
+    for (const name of omitted) assert.ok(result.stderr.includes(name), result.stderr);
+    for (const name of omitted) cases[name] = caseMetadata(true);
+  }
+});
