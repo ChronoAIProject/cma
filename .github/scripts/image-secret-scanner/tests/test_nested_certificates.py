@@ -17,8 +17,10 @@ from pathlib import Path
 from unittest.mock import patch
 
 from image_secrets import nested_certificates
-from image_secrets.common import digest_bytes, digest_file
+from image_secrets.arch_package_ownership import ROOT, VERSION
+from image_secrets.common import ScanError, digest_bytes, digest_file
 from image_secrets.gate import CERTIFICATE_ADVISORY, CERTIFICATE_RULE
+from image_secrets.package_evidence import OMARCHY_PORTABLE_SCHEMA
 from tests import fixtures
 from tests import test_package_policy as packages
 
@@ -185,3 +187,46 @@ class NestedCertificateTests(unittest.TestCase):
                 if name == "decoded":
                     self.assertTrue(any(item["rule"] == rule and item.get("view") == "x509-der"
                                         for item in report["blocking_findings"]))
+
+    def portable(self, *, bundle=None, ders=None, database=True):
+        archive, manifest, _ = self.fixture(bundle=bundle, ders=ders)
+        manifest["schema"] = OMARCHY_PORTABLE_SCHEMA
+        manifest["packages"][0]["version"] = "3.14.8-1"
+        [row] = manifest["entries"]
+        for field in ("layer", "diff_id", "entry"):
+            del row[field]
+        for field in ("archive_sha256", "image_config", "image_manifest", "finding_id"):
+            del row["nested_certificate"][field]
+        wheel = wheel_bytes(self.bundle if bundle is None else bundle)
+        record = f"#mtree\n./{WHEEL} type=file sha256digest={digest_bytes(wheel)}\n".encode()
+        row.update(occurrences=1, ownership={"mtree_sha256": digest_bytes(record)})
+        directory = f"{ROOT}/python-3.14.8-1"
+        owner = [(VERSION, b"9\n"), (f"{directory}/desc", b"%NAME%\npython\n\n%VERSION%\n3.14.8-1\n\n%ARCH%\nx86_64\n"),
+                 (f"{directory}/files", f"%FILES%\n{WHEEL}\n".encode()), (f"{directory}/mtree", record)]
+        layer = fixtures.tar_bytes([(WHEEL, wheel), ("etc/machine-id", b""),
+                                    ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id")),
+                                    *(owner if database else ())])
+        fixtures.oci_archive(archive, [layer], compress=False)
+        return archive, manifest
+
+    def test_portable_member_keeps_the_exact_inventory_and_arch_ownership(self):
+        archive, manifest = self.portable()
+        [decision] = self.gate_scan(archive, manifest, "portable")["package_evidence"]["entries"]
+        self.assertEqual((decision["classification"], decision["member"]), (CERTIFICATE_ADVISORY, "0"))
+        self.assertEqual(decision["nested_certificate"]["der_sha256s"],
+                         manifest["entries"][0]["nested_certificate"]["der_sha256s"])
+        self.assertEqual(set(decision["current_owner"]["pacman"]), {"desc", "files", "mtree"})
+        url = b"https://fixture-user:fixture-password@example.invalid/resource"
+        for name, options in (("unowned", {"database": False}), ("comment", {"bundle": b"# " + url + b"\n" + self.bundle})):
+            with self.subTest(name=name):
+                archive, manifest = self.portable(**options)
+                report = self.gate_scan(archive, manifest, name, block=True)
+                self.assertEqual(report["package_evidence"]["entries"], [])
+                self.assertIn(CERTIFICATE_RULE, {item["rule"] for item in report["blocking_findings"]})
+        for count in (nested_certificates.COUNT - 1, nested_certificates.COUNT + 1):
+            with self.subTest(count=count):
+                changed = copy.deepcopy(manifest)
+                hashes = sorted(digest_bytes(der) for der in [*self.ders, self.private_der])[:count]
+                changed["entries"][0]["nested_certificate"]["der_sha256s"] = hashes
+                with self.assertRaises(ScanError):
+                    self.policy(changed)

@@ -1,5 +1,12 @@
 import { useEffect, useMemo } from 'react';
-import { TASK_GROUPS, taskGroup, taskTime, taskColor, runningTaskTime } from './taskGroups';
+import {
+  TASK_GROUPS,
+  taskGroup,
+  taskTime,
+  taskColor,
+  runningTaskTime,
+  taskActivityOrder,
+} from './taskGroups';
 import { useTaskClock } from './useTaskClock';
 import type { TreeProps } from './Tree';
 import { TreeRow } from './TreeRow';
@@ -16,11 +23,6 @@ import { setupEnvironmentRoute, SETUP_ENVIRONMENT_NOTICE } from '../agent/setupE
 interface AgentCard {
   readonly sandbox: SandboxDetail;
   readonly agent: AgentSummary;
-}
-
-function updated(agent: Pick<AgentSummary, 'updatedAt'>): number {
-  const at = Date.parse(agent.updatedAt);
-  return Number.isFinite(at) ? at : 0;
 }
 
 /** Flat navigation keeps each Agent's parent only for status and action eligibility. */
@@ -42,7 +44,11 @@ function agentCards(
         )
         .map((agent) => ({ sandbox, agent })),
     )
-    .sort((a, b) => updated(b.agent) - updated(a.agent) || a.agent.id.localeCompare(b.agent.id));
+    .sort(
+      (a, b) =>
+        taskActivityOrder(b.agent) - taskActivityOrder(a.agent) ||
+        a.agent.id.localeCompare(b.agent.id),
+    );
 }
 
 /** Agent view uses the same authorized hierarchy and parent lifecycle barriers. */
@@ -111,7 +117,7 @@ export function PersonalAgentTree({
       {TASK_GROUPS.map((heading) => {
         const rows = cards.filter(
           ({ presentation, agent }) =>
-            (presentation.group ?? taskGroup(presentation.status, agent.updatedAt, now)) ===
+            (presentation.group ?? taskGroup(presentation.status, agent.taskActivityAt, now)) ===
             heading,
         );
         if (!rows.length) return null;
@@ -134,7 +140,7 @@ export function PersonalAgentTree({
                   ? ''
                   : showRunningTime
                     ? runningTaskTime(agent.taskStartedAt, now)
-                    : taskTime(agent.updatedAt, now);
+                    : taskTime(agent.taskActivityAt, now);
               return (
                 <TreeRow
                   key={agent.id}
@@ -175,8 +181,12 @@ export function PersonalAgentTree({
                           <span aria-hidden="true" className="task-running__dot" />
                           {runningTaskTime(agent.taskStartedAt, now)}
                         </span>
+                      ) : !Number.isFinite(taskActivityOrder(agent)) ? (
+                        <span>Task time unavailable</span>
                       ) : (
-                        <time dateTime={agent.updatedAt}>{taskTime(agent.updatedAt, now)}</time>
+                        <time dateTime={agent.taskActivityAt}>
+                          {taskTime(agent.taskActivityAt, now)}
+                        </time>
                       )}
                     </>
                   }

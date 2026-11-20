@@ -162,6 +162,33 @@ class CacheTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cache.seal(self.root, self.prefix)
 
+    def test_caller_bound_replaces_only_the_compressed_archive_limit(self):
+        self.bundle()
+        size = sum((self.root / f"{name}.tar.gz").stat().st_size for name in cache.MOUNTS)
+        with patch.object(cache, "MAX_ARCHIVE_BYTES", size - 1):
+            with self.assertRaisesRegex(ValueError, "compressed cache exceeds"):
+                cache.validate_bundle(self.root, self.prefix)
+            cache.validate_bundle(self.root, self.prefix, max_archive=size)
+            with self.assertRaisesRegex(ValueError, "compressed cache exceeds"):
+                cache.seal(self.root, self.prefix)
+            cache.seal(self.root, self.prefix, max_archive=size)
+        for bound in ("MAX_CONTENT_BYTES", "MAX_MEMBERS"):
+            with self.subTest(bound=bound), patch.object(cache, bound, 1), self.assertRaises(ValueError):
+                cache.validate_bundle(self.root, self.prefix, max_archive=2 * size)
+        # The expanded bound is also the caller's to choose; the default stays 4 GiB.
+        with patch.object(cache, "MAX_CONTENT_BYTES", 1):
+            cache.validate_bundle(self.root, self.prefix, max_archive=2 * size, max_content=10 ** 9)
+        with self.assertRaisesRegex(ValueError, "expanded cache exceeds"):
+            cache.validate_bundle(self.root, self.prefix, max_content=1)
+        self.assertIn(f"-gt {4 * 1024 ** 2} ]", cache.dockerfile("extract"))
+        self.assertIn(f"-gt {6 * 1024 ** 2} ]", cache.dockerfile("extract", 6 * 1024 ** 3))
+        with patch.object(cache.subprocess, "run") as run:
+            cache.transfer("inject", self.root)
+            self.assertEqual(run.call_args.kwargs["timeout"], 150)
+            cache.transfer("extract", self.root, timeout=360, max_content=6 * 1024 ** 3)
+            self.assertEqual(run.call_args.kwargs["timeout"], 360)
+            self.assertIn(f"-gt {6 * 1024 ** 2} ]", run.call_args.kwargs["input"])
+
     def test_archive_symlink_and_extra_files_are_rejected(self):
         self.bundle()
         (self.root / "unexpected").touch()
