@@ -30,6 +30,7 @@ mod revision;
 mod service_connection_service;
 pub mod store;
 mod trigger_service;
+mod visitor_allowance;
 mod worker_effects;
 
 use serde::{Deserialize, Serialize};
@@ -94,6 +95,7 @@ pub use store::{
     TriggerStoreError,
 };
 pub use trigger_service::{TriggerService, TriggerServiceError, TriggerStatistics};
+pub use visitor_allowance::visitor_launch_day;
 pub use worker_effects::{
     LaunchEffectKind, LaunchEffectRecord, LaunchEffectState, LaunchWorkLease, LaunchWorkState,
     LaunchWorkStep, MAX_LAUNCH_RETRY_DELAY_SECONDS, MAX_LAUNCH_WORK_ATTEMPTS,

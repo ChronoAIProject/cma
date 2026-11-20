@@ -1,12 +1,12 @@
 //! Daily visitor quota commits with Launch admission, including replay recovery.
 use super::{admission::AttemptError, LaunchCollections};
 use layer2_core::{
-    trigger_domain::{Launch, LaunchAuthorityClass, LaunchStoreError},
-    PlatformSettings, StoreError,
+    trigger_domain::{visitor_launch_day, Launch, LaunchAuthorityClass, LaunchStoreError},
+    PlatformSettings, StoreError, SubjectId,
 };
 use mongodb::{
     bson::{doc, DateTime},
-    options::IndexOptions,
+    options::{IndexOptions, ReadPreference, SelectionCriteria},
     ClientSession, IndexModel,
 };
 use std::time::{Duration, UNIX_EPOCH};
@@ -24,6 +24,27 @@ pub(super) async fn ensure_indexes(data: &LaunchCollections) -> Result<(), Store
         .await
         .map_err(|error| StoreError::Unavailable(format!("visitor quota index: {error}")))?;
     Ok(())
+}
+
+pub(super) async fn admitted(
+    data: &LaunchCollections,
+    owner: &SubjectId,
+    day: u64,
+) -> Result<u32, LaunchStoreError> {
+    let Some(row) = data
+        .visitor_days
+        .find_one(doc! { "_id": format!("{day}:{}", owner.as_str()) })
+        .selection_criteria(SelectionCriteria::ReadPreference(ReadPreference::Primary))
+        .await
+        .map_err(super::unavailable)?
+    else {
+        return Ok(0);
+    };
+    crate::store::sandbox_mongo::require_version(&row).map_err(super::corrupt)?;
+    let used = row
+        .get_i64("used")
+        .map_err(|error| super::corrupt(error.to_string()))?;
+    u32::try_from(used).map_err(|error| super::corrupt(error.to_string()))
 }
 
 pub(super) async fn admit(
@@ -59,9 +80,8 @@ pub(super) async fn admit(
     let limit = settings.limits.visitor_max_launches_per_day;
     let timestamp = layer2_core::seconds_from_rfc3339(&launch.created_at)
         .ok_or_else(|| Domain(LaunchStoreError::Corrupt("invalid Launch time".into())))?;
-    let day = timestamp / 86_400;
+    let (day, reset_at) = visitor_launch_day(timestamp);
     let start = UNIX_EPOCH + Duration::from_secs(day * 86_400);
-    let reset_at = start + Duration::from_secs(86_400);
     let key = format!("{day}:{}", launch.owner.as_str());
     let previous = data
         .visitor_days

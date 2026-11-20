@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::profiles::{SandboxProfileStore, WorkspaceProfileStore};
@@ -8,10 +7,11 @@ use crate::sandbox::{SandboxCredentialPrerequisite, SandboxCredentialPrerequisit
 use crate::{now_rfc3339, Caller, Capability, LaunchId, SubjectId};
 
 use super::launch_service_support::{
-    append_resolution_events, connection_error, create_result, request_fingerprint,
+    append_resolution_events, command_hash, connection_error, create_result, request_fingerprint,
     require_launcher, store_error, trigger_error, validate_create_request,
     validate_requirement_identity,
 };
+pub use super::launch_service_support::{LaunchPolicy, LaunchPolicySource};
 use super::launch_trust::LaunchTrustManifest;
 use super::{
     ExistingAgentChoice, Launch, LaunchAdmission, LaunchAuthorityClass, LaunchConfirmation,
@@ -55,24 +55,6 @@ pub struct LaunchCreateResult {
 impl LaunchCreateResult {
     pub const fn accepted(&self) -> bool {
         !matches!(self.launch.state, LaunchState::Draft)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LaunchPolicy {
-    pub enabled: bool,
-    pub orchestration_paused: bool,
-}
-
-#[async_trait]
-pub trait LaunchPolicySource: Send + Sync {
-    async fn current_launch_policy(&self) -> Result<LaunchPolicy, LaunchServiceError>;
-}
-
-#[async_trait]
-impl LaunchPolicySource for LaunchPolicy {
-    async fn current_launch_policy(&self) -> Result<LaunchPolicy, LaunchServiceError> {
-        Ok(*self)
     }
 }
 
@@ -253,8 +235,7 @@ impl LaunchService {
     ) -> Result<LaunchCreateResult, LaunchServiceError> {
         require_launcher(caller)?;
         validate_create_request(&request)?;
-        let command_key_hash =
-            super::launch_service_support::command_hash(&request.idempotency_key);
+        let command_key_hash = command_hash(&request.idempotency_key);
         let command_fingerprint = request_fingerprint(public_id, &request)?;
         if let Some(replay) = self
             .replayed_command(
@@ -268,10 +249,18 @@ impl LaunchService {
             return Ok(replay);
         }
         let result = async {
-            if !self.policy.current_launch_policy().await?.enabled {
+            let policy = self.policy.current_launch_policy().await?;
+            if !policy.enabled {
                 return Err(LaunchServiceError::Disabled);
             }
             let trigger = self.public_trigger(public_id).await?;
+            super::visitor_allowance::refuse_exhausted_visitor(
+                self.launches.as_ref(),
+                caller,
+                policy.visitor_launches_per_day,
+                crate::seconds_from_rfc3339(&now_rfc3339()).unwrap_or_default(),
+            )
+            .await?;
             let profiles = self
                 .profile_reader
                 .read_trigger_profiles(&trigger.revision.content.target)

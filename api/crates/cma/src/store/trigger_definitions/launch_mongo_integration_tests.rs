@@ -30,6 +30,7 @@ mod initiation;
 #[path = "launch_observation_mongo_tests.rs"]
 mod observation_tests;
 mod platform_spend;
+mod visitor_contention;
 mod visitor_quota;
 
 fn digest(byte: char) -> String {
