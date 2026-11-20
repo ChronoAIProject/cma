@@ -23,7 +23,7 @@ async fn disabled_startup(retained: bool) {
     ];
     if retained {
         for (collection, row) in &rows {
-            db.collection(*collection)
+            db.collection(collection)
                 .insert_one(row.clone())
                 .await
                 .unwrap();
@@ -68,13 +68,13 @@ async fn disabled_startup(retained: bool) {
     let mut unchanged = true;
     for (collection, row) in &rows {
         unchanged &= if retained {
-            db.collection::<Document>(*collection)
+            db.collection::<Document>(collection)
                 .find_one(doc! {})
                 .await
                 .unwrap()
                 == Some(row.clone())
                 && db
-                    .collection::<Document>(*collection)
+                    .collection::<Document>(collection)
                     .list_indexes()
                     .await
                     .unwrap()
