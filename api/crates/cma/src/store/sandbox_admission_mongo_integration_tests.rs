@@ -21,6 +21,9 @@ const LATER: &str = "2026-09-05T00:01:00Z";
 
 mod visitor_limit;
 
+#[path = "sandbox_admission_always_on_service_mongo_tests.rs"]
+mod always_on_service;
+
 #[path = "warm_sandboxes/mongo_integration_tests.rs"]
 mod warmup;
 
