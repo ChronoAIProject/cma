@@ -229,7 +229,10 @@ def main():
                 diagnostics.mark("cache_export")
                 with timings.stage("cache-export"):
                     accepted = cache.export_mounts()
-                cache_metrics.append({"operation": "export", "result": "accepted" if accepted else "withheld"})
+                metric = {"operation": "export", "result": "accepted" if accepted else "withheld"}
+                if not accepted and isinstance(cache.export_reason, str):
+                    metric["reason"] = cache.export_reason
+                cache_metrics.append(metric)
                 with Path(env["GITHUB_OUTPUT"]).open("a") as status:
                     if accepted:
                         status.write("build-cache-key=" + cache.key.archive_key(env) + "\n")
