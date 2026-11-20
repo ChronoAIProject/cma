@@ -3,7 +3,7 @@
 use layer2_core::admission::{
     AdmissionCeilingsRead, AdmissionCeilingsState, AdmissionCeilingsStore,
 };
-use layer2_core::{PlatformSettings, StoreError, SubjectId};
+use layer2_core::{StoreError, SubjectId};
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::{Client, ClientSession, Collection};
 
@@ -22,6 +22,7 @@ mod history;
 mod mongo_tests;
 
 pub struct MongoAdmissionCeilingsStore {
+    initial_settings: super::settings_defaults::InitialSettings,
     client: Client,
     settings: Collection<Document>,
     activity: Collection<ActivityDoc>,
@@ -31,10 +32,20 @@ pub struct MongoAdmissionCeilingsStore {
 }
 
 impl MongoAdmissionCeilingsStore {
+    #[cfg(test)]
     pub(super) async fn open(
         client: &Client,
         database: &str,
         deployment_limit: u16,
+    ) -> Result<Self, StoreError> {
+        Self::open_with_defaults(client, database, deployment_limit, Default::default()).await
+    }
+
+    pub(super) async fn open_with_defaults(
+        client: &Client,
+        database: &str,
+        deployment_limit: u16,
+        initial_settings: super::settings_defaults::InitialSettings,
     ) -> Result<Self, StoreError> {
         let database = client.database(database);
         require_transaction_topology(&database).await?;
@@ -44,6 +55,7 @@ impl MongoAdmissionCeilingsStore {
                 client,
                 database.name(),
             ),
+            initial_settings,
             client: client.clone(),
             database: database.clone(),
             deployment_limit,
@@ -119,8 +131,8 @@ impl MongoAdmissionCeilingsStore {
                 )));
             }
         } else {
-            let settings =
-                mongodb::bson::serialize_to_bson(&PlatformSettings::default()).map_err(|_| {
+            let settings = mongodb::bson::serialize_to_bson(&self.initial_settings.platform())
+                .map_err(|_| {
                     ApplyError::Domain(StoreError::Malformed("serialize default settings".into()))
                 })?;
             self.settings

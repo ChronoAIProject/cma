@@ -43,6 +43,9 @@ impl ProfileWorkspaceProvisioner for EmptyChildren {
 pub(super) struct ScanObserver {
     inner: Arc<ManagedSandboxCredentials>,
     pub scans: std::sync::atomic::AtomicUsize,
+    pub hold_at: std::sync::atomic::AtomicUsize,
+    pub entered: tokio::sync::Notify,
+    pub resume: tokio::sync::Notify,
 }
 #[async_trait::async_trait]
 impl SandboxCredentialController for ScanObserver {
@@ -64,7 +67,11 @@ impl SandboxCredentialController for ScanObserver {
     async fn custodied(&self, id: &SandboxId) -> Result<Vec<CredentialMaterial>, CredentialError> {
         let rows = self.inner.custodied(id).await?;
         assert!(rows.is_empty());
-        self.scans.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let count = self.scans.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        if self.hold_at.load(std::sync::atomic::Ordering::SeqCst) == count {
+            self.entered.notify_one();
+            self.resume.notified().await;
+        }
         Ok(rows)
     }
     async fn forget(&self, id: &SandboxId, generation: u64) -> Result<(), CredentialError> {
@@ -78,8 +85,14 @@ impl SandboxCredentialController for ScanObserver {
     }
 }
 
-pub(super) async fn retire(f: &Fixture) -> (Arc<SandboxWorker>, Arc<ScanObserver>) {
-    let store = Arc::new(peer(&f.name).await);
+pub(super) async fn begin(f: &Fixture) -> (Arc<SandboxWorker>, Arc<ScanObserver>) {
+    begin_with_store(f, Arc::new(peer(&f.name).await)).await
+}
+
+pub(super) async fn begin_with_store(
+    f: &Fixture,
+    store: Arc<MongoSandboxStore>,
+) -> (Arc<SandboxWorker>, Arc<ScanObserver>) {
     let registry = Arc::new(LiveAgentRegistry::default());
     let spec = CodexSandboxSpec::default();
     let image = spec.deployment.image.uri.clone();
@@ -87,6 +100,9 @@ pub(super) async fn retire(f: &Fixture) -> (Arc<SandboxWorker>, Arc<ScanObserver
     let credentials = Arc::new(ScanObserver {
         inner: f.controller.clone(),
         scans: Default::default(),
+        hold_at: Default::default(),
+        entered: Default::default(),
+        resume: Default::default(),
     });
     let policy = SandboxPolicy {
         retention_grace: Duration::ZERO,
@@ -117,8 +133,13 @@ pub(super) async fn retire(f: &Fixture) -> (Arc<SandboxWorker>, Arc<ScanObserver
     );
     let retiring = service.delete(&owner, &f.claim.id).await.unwrap();
     assert_eq!(retiring.status, SandboxStatus::Retiring);
+    (worker, credentials)
+}
+
+pub(super) async fn retire(f: &Fixture) -> (Arc<SandboxWorker>, Arc<ScanObserver>) {
+    let (worker, credentials) = begin(f).await;
     for _ in 0..12 {
-        let row = store.get_sandbox(&f.claim.id).await.unwrap().unwrap();
+        let row = f.store.get_sandbox(&f.claim.id).await.unwrap().unwrap();
         if row.status == SandboxStatus::Retired {
             assert_eq!(row.work.step, SandboxWorkStep::WaitForPurge);
             return (worker, credentials);
