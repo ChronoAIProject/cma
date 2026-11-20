@@ -38,6 +38,9 @@ pub use conversation_observation::{
     ConversationUsage,
 };
 mod conversation_channel;
+pub use conversation_channel::resource::{
+    ResourceConversationTransport, ResourceDispatch, ResourceInput, ResourceSendOutcome,
+};
 mod error;
 mod home_finality;
 mod home_snapshot;
