@@ -116,25 +116,25 @@ fn repository() -> RepositoryRequest {
 }
 
 #[tokio::test]
-async fn authoring_requires_management_before_validation_or_source_reads() {
+async fn authoring_requires_permission_before_validation_or_source_reads() {
     let source = Source::default();
     let calls = source.calls.clone();
     let service = service(source);
     let mut caller = owner();
-    caller.authorization = Authorization::new([Capability::UseOwnSandboxes]);
+    caller.authorization = Authorization::none();
     assert_eq!(
         service.bounds(&caller),
         Err(ProfileAuthoringError::Forbidden)
     );
     assert_eq!(
         service.services(&caller, None).await,
-        Err(ProfileAuthoringError::Forbidden)
+        Err(ProfileAuthoringError::CatalogForbidden)
     );
     let mut invalid = query();
     invalid.limit = 0;
     assert_eq!(
         service.skills(&caller, invalid, None).await,
-        Err(ProfileAuthoringError::Forbidden)
+        Err(ProfileAuthoringError::CatalogForbidden)
     );
     assert_eq!(
         service
@@ -200,11 +200,11 @@ async fn transient_lookup_authority_is_redacted_and_forwarded_only_after_authori
     forbidden.authorization = Authorization::none();
     assert_eq!(
         service.services(&forbidden, Some(&credential)).await,
-        Err(ProfileAuthoringError::Forbidden)
+        Err(ProfileAuthoringError::CatalogForbidden)
     );
     assert_eq!(
         service.skills(&forbidden, query(), Some(&credential)).await,
-        Err(ProfileAuthoringError::Forbidden)
+        Err(ProfileAuthoringError::CatalogForbidden)
     );
     assert!(calls.lock().unwrap().is_empty());
     service.services(&owner(), Some(&credential)).await.unwrap();

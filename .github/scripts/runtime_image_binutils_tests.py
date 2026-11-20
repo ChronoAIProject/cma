@@ -56,12 +56,15 @@ class BinutilsNoticeTests(unittest.TestCase):
 
     def test_both_package_installations_correct_the_notice_in_the_same_layer(self):
         instructions = (RUNTIME / "Dockerfile").read_text().replace("\\\n", "").splitlines()
-        for package_step in ("sh /tmp/install-os.sh", "apt-get upgrade -y"):
+        installer = (RUNTIME / "image/install-os.sh").read_text()
+        cleanup = installer.index("python3 -B /tmp/normalize-binutils-notices.py")
+        self.assertLess(installer.index("apt-get upgrade -y"), cleanup)
+        self.assertLess(installer.rindex("apt-get install -y"), cleanup)
+        for package_step in ("sh /tmp/install-os.sh install", "sh /tmp/install-os.sh refresh"):
             with self.subTest(package_step=package_step):
                 [run] = [line for line in instructions if line.startswith("RUN ") and package_step in line
                          and "normalize-machine-id.py" in line]
                 self.assertIn("source=api/crates/layer4-runtime/image/normalize-binutils-notices.py,", run)
-                self.assertIn("python3 -B /tmp/normalize-binutils-notices.py", run.split(package_step, 1)[1])
 
 
 if __name__ == "__main__":

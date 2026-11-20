@@ -93,6 +93,7 @@ async fn segmented_reuse_source_work_stays_bounded_across_a_thousand_segments() 
             "reuse segments={closed} source={measured:?} wire={trace:?} sample_us={}",
             elapsed.as_micros()
         );
+        assert_eq!(trace.index_inventories, 2);
         assert_eq!(trace.source_rows as u64, measured[2]);
         assert_eq!(trace.source_bytes as u64, measured[3]);
         assert!(trace.commands <= 60 && trace.max_source_batch <= 64);

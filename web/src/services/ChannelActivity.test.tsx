@@ -51,6 +51,69 @@ const snapshot = (state: 'queued' | 'produced' = 'queued'): ActivityPage => ({
   ],
 });
 
+it.each(['lark', 'telegram'])(
+  'explains an unreported provider Agent on a completed %s delivery',
+  (platform) => {
+    vi.stubGlobal('EventSource', Feed);
+    render(<ChannelActivity owner="owner" channelId="channel" active />);
+    const page = snapshot('produced');
+    page.items[0]!.source = { type: 'nyxid_relay', platform };
+    const consumer = page.items[0]!.consumers[0]!;
+    consumer.state = 'completed';
+    consumer.conversation_id = 'gateway-conversation';
+    consumer.response_id = 'response-one';
+    consumer.deliveries = [
+      {
+        step: 'answer',
+        destination: 'origin',
+        outcome: 'confirmed',
+        observed_at: '2026-10-27T00:00:04Z',
+        confirmed_at: '2026-10-27T00:00:04Z',
+        platform_message_id: null,
+        recipients: [{ kind: `${platform}_chat`, id: 'recipient-one', thread_id: null }],
+      },
+    ];
+    for (const agentId of [undefined, null]) {
+      consumer.agent_id = agentId;
+      act(() => Feed.instances[0]!.snapshot(page));
+      const identity = screen.getByText('Provider Agent', { selector: 'dt' }).parentElement!;
+      expect(within(identity).getByText('Provider Agent identity was not reported')).toBeVisible();
+      expect(screen.queryByText('Produced by')).not.toBeInTheDocument();
+      expect(screen.getByText('Agent completed')).toBeVisible();
+      expect(screen.getByText('Delivery confirmed')).toBeVisible();
+      expect(screen.getByText('Response produced', { selector: 'dt' })).toBeVisible();
+      expect(screen.getByText('gateway-conversation')).toBeVisible();
+      expect(screen.getByText('event-one')).toBeVisible();
+    }
+  },
+);
+
+it.each(['lark', 'telegram'])(
+  'keeps the reported %s provider Agent through reset and reconnect snapshots',
+  async (platform) => {
+    vi.stubGlobal('EventSource', Feed);
+    render(<ChannelActivity owner="owner" channelId="channel" active />);
+    const page = snapshot('produced');
+    page.items[0]!.source = { type: 'nyxid_relay', platform };
+    page.items[0]!.consumers[0]!.agent_id = 'agt_provider';
+    act(() => Feed.instances[0]!.snapshot(page));
+    const identity = () =>
+      within(screen.getByText('Provider Agent', { selector: 'dt' }).parentElement!);
+    expect(identity().getByText('agt_provider')).toBeVisible();
+    expect(screen.queryByText('Provider Agent identity was not reported')).not.toBeInTheDocument();
+    act(() => Feed.instances[0]!.snapshot(page, 'reset'));
+    expect(identity().getByText('agt_provider')).toBeVisible();
+    act(() => {
+      Feed.instances[0]!.readyState = Feed.CLOSED;
+      Feed.instances[0]!.onerror?.();
+    });
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Reconnect activity' }));
+    act(() => Feed.instances[1]!.snapshot(page));
+    expect(identity().getByText('agt_provider')).toBeVisible();
+    expect(Feed.instances[0]!.closed).toBe(true);
+  },
+);
+
 it('shows the recorded refusal reason without claiming a chat reply', () => {
   vi.stubGlobal('EventSource', Feed);
   render(<ChannelActivity owner="owner" channelId="channel" active />);

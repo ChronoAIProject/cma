@@ -1,3 +1,4 @@
+import type { ResponseControlAvailability } from './controlReadiness';
 import type { AgentSummary } from '../api/types';
 import type { AnswerContext } from '@cma/client';
 import type { LegacySuggestionRecord } from './transport/legacySuggestionJournal';
@@ -35,6 +36,7 @@ export interface AgentController {
   readonly pendingControl?: boolean;
   readonly controlNotice?: string;
   readonly controlsUnavailable?: boolean;
+  readonly responseControls?: ResponseControlAvailability;
   readonly controlBaselineReady?: boolean;
   readonly recoverPending?: () => Promise<void>;
   readonly state: AgentResourceState;

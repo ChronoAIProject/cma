@@ -14,3 +14,18 @@ export function controlBaselineReady(
     return state.conversation.agentCursor !== undefined;
   return !state.historyLoading && !state.historyUnavailable;
 }
+
+export type ResponseControlAvailability =
+  'available' | 'checking' | 'checking-access' | 'unbound' | 'denied';
+
+export function responseControlAvailability(
+  state: AgentResourceState,
+  agentId: string | undefined,
+  suspended = false,
+): ResponseControlAvailability {
+  if (suspended) return 'checking-access';
+  if (!controlBaselineReady(state, agentId) || state.status !== 'ready') return 'checking';
+  if (state.v2 !== undefined && state.conversation.responseBinding === undefined)
+    return state.historyLoading || state.historyUnavailable ? 'checking' : 'unbound';
+  return 'available';
+}

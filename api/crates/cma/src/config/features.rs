@@ -12,6 +12,7 @@ mod segmentation_tests;
 pub(crate) struct FeatureFlags {
     pub usage_signed_cursors_enabled: bool,
     pub usage_strict_cursors_enabled: bool,
+    pub admin_runtime_inventory: bool,
     pub ownership_retry_hints_enabled: bool,
     pub agent_model_discovery_cache: bool,
     pub agent_environment_async: bool,
@@ -97,6 +98,7 @@ impl FeatureFlags {
         let flags = Self {
             usage_signed_cursors_enabled: flag(lookup, "CHRONO_USAGE_SIGNED_CURSORS_ENABLED")?,
             usage_strict_cursors_enabled: flag(lookup, "CHRONO_USAGE_STRICT_CURSORS_ENABLED")?,
+            admin_runtime_inventory: flag(lookup, "CHRONO_ADMIN_RUNTIME_INVENTORY_ENABLED")?,
             ownership_retry_hints_enabled: flag(
                 lookup,
                 "CHRONO_AGENT_OWNERSHIP_RETRY_HINT_ENABLED",
