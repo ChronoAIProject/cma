@@ -269,7 +269,11 @@ export function AgentSurface({
               ? undefined
               : (id) =>
                   onAgentAction({
-                    kind: id as 'stop_agent' | 'delete_agent' | 'export_history',
+                    kind: id as
+                      | 'stop_agent'
+                      | 'delete_agent'
+                      | 'export_history'
+                      | 'export_retained_conversation',
                     agentId,
                   })
           }

@@ -72,7 +72,16 @@ export function AgentHeader({
       'Only the task owner can update its system prompt.',
     ),
     action('update-skills', 'Update skills', 'Only the task owner can update its skills.'),
-    action('export_history', 'Export history', 'History export is unavailable with this access.'),
+    action(
+      'export_retained_conversation',
+      'Export retained conversation',
+      'Conversation export is unavailable with this access.',
+    ),
+    action(
+      'export_history',
+      'Export raw history',
+      'History export is unavailable with this access.',
+    ),
     {
       id: 'deletion-status',
       label: 'View deletion status',
@@ -157,7 +166,12 @@ export function AgentHeader({
           onSelect={(id) => {
             setOpen(false);
             if (id === 'deletion-status') onViewDeletionStatus?.();
-            else if (id === 'stop_agent' || id === 'delete_agent' || id === 'export_history')
+            else if (
+              id === 'stop_agent' ||
+              id === 'delete_agent' ||
+              id === 'export_history' ||
+              id === 'export_retained_conversation'
+            )
               onMoreAction?.(id);
             else onMenuSelect?.(id);
           }}

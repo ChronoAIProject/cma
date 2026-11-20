@@ -26,6 +26,7 @@ export default defineConfig({
     'agent-v2-queued.check.ts',
     'agent-v2-composer.check.ts',
     'agent-terminal-recovery.check.ts',
+    'agent-history-export.check.ts',
   ],
   workers: 1,
   retries: 0,

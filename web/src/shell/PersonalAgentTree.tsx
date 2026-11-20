@@ -196,7 +196,11 @@ export function PersonalAgentTree({
                     kind === 'view_environment'
                       ? onNavigate({ kind: 'sandbox', sandboxId: sandbox.id })
                       : onAction({
-                          kind: kind as 'stop_agent' | 'delete_agent' | 'export_history',
+                          kind: kind as
+                            | 'stop_agent'
+                            | 'delete_agent'
+                            | 'export_history'
+                            | 'export_retained_conversation',
                           agentId: agent.id,
                         })
                   }

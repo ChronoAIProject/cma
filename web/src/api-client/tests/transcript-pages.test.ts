@@ -48,6 +48,23 @@ function scripted(values: readonly unknown[], failure = -1) {
 }
 
 describe('transcript continuation', () => {
+  it('bounds export pagination and byte accumulation without publishing partial history', async () => {
+    const limited = scripted(pages);
+    await expect(limited.client.agents.transcript('agent', { maxPages: 1 })).rejects.toThrow(
+      'export page limit',
+    );
+    expect(limited.calls).toHaveLength(2);
+    const oversized = scripted(pages);
+    await expect(oversized.client.agents.transcript('agent', { maxBytes: 1 })).rejects.toThrow(
+      'export size limit',
+    );
+    expect(oversized.calls).toHaveLength(2);
+    const complete = transport();
+    complete.answer({ agent_id: 'agent', through_seq: 80, turns: [] });
+    await expect(complete.client.agents.transcript('agent', { maxBytes: 1 })).rejects.toThrow(
+      'export size limit',
+    );
+  });
   it('hydrates long turns and empty source pages without duplicate messages', async () => {
     const test = scripted(pages);
     expect(await test.client.agents.transcript('agent')).toEqual({

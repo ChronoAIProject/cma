@@ -55,13 +55,14 @@ it('offers Stop, Export and Delete from the header, with the reason Delete is un
       name: 'Delete task Stop this Agent before deleting it and its Worktree.',
     }),
   ).toHaveAttribute('aria-disabled', 'true');
-  expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeEnabled();
+  expect(screen.getByRole('menuitem', { name: 'Export raw history' })).toBeEnabled();
   const rows = screen.getAllByRole('menuitem');
   for (const [index, label] of [
     'Rename',
     'Update system prompt',
     'Update skills',
-    'Export history',
+    'Export retained conversation',
+    'Export raw history',
     'View deletion status',
     'Stop agent',
     'Delete task',
@@ -121,7 +122,7 @@ it('offers only the Details toggle and creation origin to a reader without actio
     />,
   );
   await userEvent.setup().click(screen.getByRole('button', { name: 'More Agent actions' }));
-  expect(screen.getAllByRole('menuitem')).toHaveLength(6);
+  expect(screen.getAllByRole('menuitem')).toHaveLength(7);
   for (const item of screen.getAllByRole('menuitem'))
     expect(item).toHaveAttribute('aria-disabled', 'true');
   expect(screen.getByRole('button', { name: 'Show Agent details' })).toBeEnabled();

@@ -55,7 +55,8 @@ export type TreeAction =
   | { readonly kind: 'remove_workspace'; readonly workspaceId: string }
   | { readonly kind: 'stop_agent'; readonly agentId: string }
   | { readonly kind: 'delete_agent'; readonly agentId: string }
-  | { readonly kind: 'export_history'; readonly agentId: string };
+  | { readonly kind: 'export_history'; readonly agentId: string }
+  | { readonly kind: 'export_retained_conversation'; readonly agentId: string };
 
 export interface TreeProps {
   readonly currentTask?: CurrentTask;
@@ -407,7 +408,8 @@ export function Tree({
                                                       kind: kind as
                                                         | 'stop_agent'
                                                         | 'delete_agent'
-                                                        | 'export_history',
+                                                        | 'export_history'
+                                                        | 'export_retained_conversation',
                                                       agentId: agent.id,
                                                     })
                                                   }
