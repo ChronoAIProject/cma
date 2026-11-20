@@ -8,6 +8,9 @@ use super::ingress::{SnapshotLayout, SnapshotRefusal};
 
 mod fixture;
 mod ownership;
+mod read_port_custody;
+mod read_port_races;
+mod read_ports;
 mod snapshot_error_tests;
 mod snapshot_operation_tests;
 mod snapshot_pressure;

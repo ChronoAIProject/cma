@@ -48,13 +48,42 @@ where
     S: RowSchema,
     F: std::future::Future<Output = Result<Option<RawDocumentBuf>, SandboxStoreError>>,
 {
+    load_with_error::<S, _, _>(policy, read_plan, initialize)
+        .await
+        .map_err(|error| match error {
+            ReadError::Source(error) => RowError::Domain(error),
+            ReadError::Row(error) => error,
+        })
+}
+
+#[derive(Debug)]
+pub(crate) enum ReadError<E> {
+    Source(OwnedWork<E>),
+    Row(RowError),
+}
+
+impl<E> From<LayoutError> for ReadError<E> {
+    fn from(error: LayoutError) -> Self {
+        Self::Row(error.into())
+    }
+}
+
+pub(crate) async fn load_with_error<S, F, E>(
+    policy: &IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+    initialize: impl FnOnce() -> F,
+) -> Result<Option<SharedOwned<S::Value>>, ReadError<E>>
+where
+    S: RowSchema,
+    F: std::future::Future<Output = Result<Option<RawDocumentBuf>, E>>,
+{
     let mut read_storage = policy
         .admit(IngressClass::Transformation, read_plan)
         .map_err(|_| LayoutError::Capacity)?;
     let raw = match initialize().await {
         Ok(raw) => raw,
         Err(error) => {
-            return Err(RowError::Domain(
+            return Err(ReadError::Source(
                 IngressWorkScope::new(read_storage).initialize_owned(|| error),
             ));
         }
@@ -77,7 +106,7 @@ where
     let raw = RawDocumentBuf::from_bytes(bytes).map_err(|_| LayoutError::Structure)?;
     let raw = raw_storage.initialize(|| raw);
     drop(read_storage);
-    decode::<S>(&raw, policy).map(Some)
+    decode::<S>(&raw, policy).map(Some).map_err(ReadError::Row)
 }
 
 pub(crate) fn decode<S: RowSchema>(

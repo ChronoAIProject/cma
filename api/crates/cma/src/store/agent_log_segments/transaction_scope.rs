@@ -8,6 +8,7 @@ use uuid::Uuid;
 
 use crate::store::sandbox_mongo::start_transaction;
 
+mod ingress;
 mod page;
 
 pub(in crate::store) struct TransactionScope<'session> {
