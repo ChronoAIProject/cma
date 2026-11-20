@@ -2,7 +2,8 @@
 
 The lane mirrors the measured develop state: one current reservation, 83
 burned reservations below the newest final, and a complete job checkout.
-A disposable bare remote stands in for GitHub; every API read is counted.
+A disposable bare remote stands in for GitHub, for the API and for every
+Git transport, including the local tag reader's fetch; every read is counted.
 """
 import collections
 import contextlib
@@ -20,7 +21,7 @@ import staging_cd_release_ownership
 from staging_cd_github import GitHub
 from staging_cd_receipts import canonical, final_tag_text
 from staging_cd_receipts_tests import fixture_receipt
-from staging_cd_release_tags import local_tag_reader
+from staging_cd_release_tags import LocalTags
 from staging_cd_reservations import Reservations, claim_ref, pending_name, validate_reservation
 
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
@@ -39,31 +40,43 @@ class Lane:
         self.calls = collections.Counter()
         self.git("init", "--quiet", "--bare", str(self.remote), cwd=root)
         self.tree = self.bare("mktree", data="")
-        count = finals + burned
+        self.count = finals + burned
         # Finals take the newest versions below the current one, as on develop.
-        final_versions = set(range(count - finals + 1, count + 1))
-        sources, refs = [], []
-        for index in range(1, count + 2):
-            parent = ["-p", sources[-1]] if sources else []
-            sources.append(self.bare("commit-tree", self.tree, *parent, data=f"Merge {index}\n"))
-            identity = {"component": "am", "version": f"0.10.{index}", "previous": f"0.10.{index - 1}",
-                        "source": sources[-1], "tree": self.tree, "pr": index, "bump": "patch",
-                        "run_id": RUN_ID if index == count + 1 else 1000 + index, "run_attempt": 1}
+        final_versions = set(range(self.count - finals + 1, self.count + 1))
+        self.sources, refs = [], []
+        for index in range(1, self.count + 2):
+            identity = self.identity(index, RUN_ID if index == self.count + 1 else 1000 + index)
             if index in final_versions:
                 receipt = fixture_receipt(**identity)
                 refs.append(("refs/tags/" + receipt["tag"], self.bare("mktag", data=final_tag_text(receipt))))
                 continue
-            value = validate_reservation(dict(identity, schema="cma-version-reservation-v1"))
-            oid = self.bare("mktag", data=f"object {value['source']}\ntype commit\ntag {pending_name(value)}\n"
-                                          "tagger Fixture <fixture@example.invalid> 0 +0000\n\n"
-                                          + canonical(value) + "\n")
-            refs += [("refs/tags/" + pending_name(value), oid), (claim_ref(value), oid)]
-            self.current = value
-        refs.append(("refs/heads/develop", sources[-1]))
+            self.current = self.reservation(identity, refs)
+        refs.append(("refs/heads/develop", self.sources[-1]))
         self.bare("update-ref", "--stdin", data="".join(f"create {ref} {oid}\n" for ref, oid in refs))
         # A complete checkout, like actions/checkout with fetch-depth 0, holds every tag object.
         self.git("clone", "--quiet", str(self.remote), str(self.checkout), cwd=root)
         self.receipt = fixture_receipt(**{key: value for key, value in self.current.items() if key != "schema"})
+
+    def identity(self, index, run_id):
+        parent = ["-p", self.sources[-1]] if self.sources else []
+        self.sources.append(self.bare("commit-tree", self.tree, *parent, data=f"Merge {index}\n"))
+        return {"component": "am", "version": f"0.10.{index}", "previous": f"0.10.{index - 1}",
+                "source": self.sources[-1], "tree": self.tree, "pr": index, "bump": "patch",
+                "run_id": run_id, "run_attempt": 1}
+
+    def reservation(self, identity, refs):
+        value = validate_reservation(dict(identity, schema="cma-version-reservation-v1"))
+        oid = self.bare("mktag", data=f"object {value['source']}\ntype commit\ntag {pending_name(value)}\n"
+                                      "tagger Fixture <fixture@example.invalid> 0 +0000\n\n" + canonical(value) + "\n")
+        refs += [("refs/tags/" + pending_name(value), oid), (claim_ref(value), oid)]
+        return value
+
+    def arrive(self):
+        """A newer merge's allocation lands while this release builds, after its checkout."""
+        refs = []
+        self.newer = self.reservation(self.identity(self.count + 2, RUN_ID + 1), refs)
+        self.bare("update-ref", "--stdin", data="".join(f"create {ref} {oid}\n" for ref, oid in refs)
+                  + f"update refs/heads/develop {self.sources[-1]}\n")
 
     def git(self, *args, cwd=None, data=None):
         return subprocess.run(["git", *args], cwd=cwd or self.checkout, env=self.env, input=data, text=True,
@@ -82,7 +95,9 @@ class Lane:
             self.calls["git push"] += 1
         elif args[0] == "git" and REMOTE in args:
             self.calls["git " + next(arg for arg in args if arg in ("fetch", "ls-remote"))] += 1
-        return subprocess.run([str(self.remote) if arg == REMOTE else arg for arg in args], **kwargs)
+        args = [str(self.remote) if arg == REMOTE else arg for arg in args]
+        assert not any("github.com" in str(arg) for arg in args), "A fixture reached for github.com"
+        return subprocess.run(args, **kwargs)
 
     def api(self, args, **kwargs):
         if args[0] != "gh":
@@ -111,6 +126,10 @@ class Lane:
     def reservations(self, api, token, root, **kwargs):
         return Reservations(api, token, root, self.run, **kwargs)
 
+    def reader(self, root, *, deadline=None):
+        # The production reader, fetching from the bare remote instead of github.com.
+        return LocalTags(root, remote=REMOTE, runner=self.run, deadline=deadline)
+
     def measure(self, operation):
         # Each job runs from its checkout, where develop ancestry is fetched.
         self.calls.clear()
@@ -125,14 +144,20 @@ class Lane:
     def ownership(self):
         env = {"CD_COMPONENT": "am", "CD_TASKS": self.tasks(), "GH_TOKEN": "fixture",
                "GITHUB_RUN_ID": str(RUN_ID), "GITHUB_RUN_ATTEMPT": "1"}
-        with patch.object(staging_cd_release_ownership, "event_identity"):
-            assert staging_cd_release_ownership.owned(env, self.checkout, github=self.github) is True
+        with patch.object(staging_cd_release_ownership, "event_identity"), \
+                patch.object(staging_cd_release_ownership, "local_tag_reader", side_effect=self.reader):
+            assert staging_cd_release_ownership.owned(env, self.checkout, github=self.github,
+                                                      reservations=self.reservations) is True
 
-    def publication(self, local_tags):
+    def publication(self):
         # The pre-build check, then the three checks around the registry push.
-        store = Reservations(self.github("fixture", local_tags=local_tags), "fixture", self.checkout, self.run)
-        for started in (False, True, True, True):
-            assert store.require_current(self.current, build_started=started) is True
+        api = self.github("fixture", local_tags=self.reader(self.checkout))
+        store = Reservations(api, "fixture", self.checkout, self.run)
+        assert store.require_current(self.current, build_started=False) is True
+        # A newer reservation, absent from the checkout, is fetched once by exact ref.
+        self.arrive()
+        for _ in range(3):
+            assert store.require_current(self.current, build_started=True) is True
 
     def finalization(self):
         receipts, output = self.root / "receipts.json", self.root / "output"
@@ -145,6 +170,7 @@ class Lane:
                 patch.object(staging_cd_finalize, "GitHub", side_effect=self.github), \
                 patch.object(staging_cd_finalize, "Registry", return_value=Mock(exists=lambda *_: True)), \
                 patch.object(staging_cd_finalize, "Reservations", side_effect=self.reservations), \
+                patch.object(staging_cd_finalize, "local_tag_reader", side_effect=self.reader), \
                 contextlib.redirect_stdout(stdout):
             status = staging_cd_finalize.main()
         assert status == 0, stdout.getvalue()
@@ -158,6 +184,10 @@ def api_calls(counts):
     return sum(count for key, count in counts.items() if key.startswith("api "))
 
 
+PENDING, FINAL = ("api git/matching-refs/tags/cma-agent-manager/" + suffix for suffix in ("pending/v", "v"))
+DEVELOP = "api git/ref/heads/develop"
+
+
 class ReleaseCallCountTests(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory()
@@ -167,29 +197,29 @@ class ReleaseCallCountTests(unittest.TestCase):
     def test_am_release_reads_a_constant_number_of_api_calls_and_no_annotation(self):
         lane = self.lane
         ownership = lane.measure(lane.ownership)
-        publication = lane.measure(lambda: lane.publication(local_tag_reader(lane.checkout)))
+        publication = lane.measure(lane.publication)
         report = []
         finalization = lane.measure(lambda: report.append(lane.finalization()))
-        for counts in (ownership, publication, finalization):
-            self.assertNotIn("api git/tags/<oid>", counts)
-        # Develop ancestry once per process; both live inventories at every check.
-        self.assertEqual(api_calls(ownership), 3)
-        self.assertEqual(api_calls(publication), 9)
-        self.assertLessEqual(api_calls(finalization), 12)
-        self.assertEqual(finalization["git push"], 3)
+        # Develop ancestry once per process; both live inventories at every check; no annotation
+        # through the API. Publication fetches the newer reservation's object once.
+        self.assertEqual(ownership, {PENDING: 1, FINAL: 1, DEVELOP: 1, "git fetch": 1})
+        self.assertEqual(publication, {PENDING: 4, FINAL: 4, DEVELOP: 1, "git fetch": 2})
+        self.assertEqual(finalization, {PENDING: 3, FINAL: 4, DEVELOP: 1, "git fetch": 1, "git ls-remote": 3,
+                                        "git push": 3})
+        self.assertEqual([api_calls(counts) for counts in (ownership, publication, finalization)], [3, 9, 8])
         self.assertIn("PRUNE finalize component=am result=complete removed=83\n", report[0])
         # Every burned reservation below the new final left with its claim; the next release reads less.
-        # The new final itself backs its own reservation's claim, as before.
-        self.assertEqual(lane.bare("for-each-ref", "refs/tags/cma-agent-manager/pending/"), "")
-        self.assertEqual(lane.bare("for-each-ref", "--format=%(refname)", "refs/tags/cma-allocation/am/"),
-                         claim_ref(lane.current))
+        # The new final backs its own reservation's claim; the newer reservation keeps its own.
+        self.assertEqual(lane.bare("for-each-ref", "--format=%(refname)", "refs/tags/cma-agent-manager/pending/"),
+                         "refs/tags/" + pending_name(lane.newer))
+        self.assertEqual(lane.bare("for-each-ref", "--format=%(refname)", "refs/tags/cma-allocation/am/").split(),
+                         [claim_ref(lane.current), claim_ref(lane.newer)])
         self.assertEqual(len(lane.bare("for-each-ref", "refs/tags/cma-agent-manager/v*").splitlines()), FINALS + 1)
 
     def test_counts_do_not_grow_with_the_number_of_tags(self):
         with tempfile.TemporaryDirectory() as directory:
             small = Lane(Path(directory), finals=2, burned=3)
-            counts = [lane.measure(lambda lane=lane: lane.publication(local_tag_reader(lane.checkout)))
-                      for lane in (small, self.lane)]
+            counts = [lane.measure(lane.publication) for lane in (small, self.lane)]
         self.assertEqual(counts[0], counts[1])
 
 
