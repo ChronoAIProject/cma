@@ -31,6 +31,7 @@ function tree(
   }));
   return (
     <PersonalAgentTree
+      viewerId="owner"
       active
       items={items}
       statusFilter="all"

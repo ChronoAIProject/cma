@@ -37,7 +37,7 @@ async function button() {
 }
 
 it('keeps the submitted task, repository and original key across connection checks and reopening', async () => {
-  const retained = retainedRepositoryTask();
+  const retained = retainedRepositoryTask('owner', false);
   const client = repositoryClient();
   const check = vi.spyOn(connectionClient, 'check').mockResolvedValue(confirmedConnections);
   const view = render(home(client));
@@ -111,7 +111,7 @@ it('checks the retained Workspace only after reading and verifying its Sandbox o
 });
 
 it('allows an explicit resource-read retry without changing or resending the task', async () => {
-  const retained = retainedRepositoryTask();
+  const retained = retainedRepositoryTask('owner', false);
   const readAgent = vi
     .fn()
     .mockRejectedValueOnce(new Error('private read diagnostic'))
@@ -129,7 +129,7 @@ it('allows an explicit resource-read retry without changing or resending the tas
 });
 
 it('discards target verification when the viewer changes', async () => {
-  const retained = retainedRepositoryTask();
+  const retained = retainedRepositoryTask('owner', false);
   let resolve!: (value: typeof AGENT_DETAIL) => void;
   const readAgent = vi.fn(
     () =>
@@ -153,7 +153,7 @@ it('discards target verification when the viewer changes', async () => {
 });
 
 it('cancels the wizard and ignores its late verification result', async () => {
-  const retained = retainedRepositoryTask();
+  const retained = retainedRepositoryTask('owner', false);
   const client = repositoryClient();
   const missing = {
     ...confirmedConnections,
@@ -190,7 +190,7 @@ it('cancels the wizard and ignores its late verification result', async () => {
 });
 
 it('completes an owner-bound sign-in handoff without retrying the failed operation', async () => {
-  const retained = retainedRepositoryTask();
+  const retained = retainedRepositoryTask('owner', false);
   const client = repositoryClient();
   const popup = {
     closed: false,

@@ -130,6 +130,11 @@ pub mod home_backup;
 mod home_native;
 pub use home_native::SandboxNativePool;
 mod home_recovery;
+mod home_restore;
+pub use home_restore::{
+    SandboxHomeRestore, SandboxHomeRestoreAttestation, SandboxHomeRestoreEvidence,
+    SandboxHomeRestoreEvidenceKind, SandboxHomeRestoreReceipt, SandboxSupersededHome,
+};
 mod idle_evidence;
 mod inactivity;
 pub use idle_evidence::agentless_idle_with_children;
