@@ -11,7 +11,7 @@ from staging_cd_common import Refusal
 from staging_cd_receipts import annotation, final_tag_text
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt
 from staging_cd_github import GitHub
-from staging_cd_release_tags import MAX_TAG, LocalTags, local_tag_reader, read_local_tag
+from staging_cd_release_tags import MAX_TAG, REMOTE, LocalTags, local_tag_reader, read_local_tag
 from staging_cd_reservations import Reservations, next_reservation, pending_name
 from staging_cd_versions import DEPLOYABLES
 
@@ -31,9 +31,9 @@ class ReleaseTagTests(unittest.TestCase):
         self.api = GitHub("fixture", local_tags=LocalTags(self.root))
         self.store = Reservations(self.api, "fixture", self.root)
 
-    def git(self, *args, data=None):
+    def git(self, *args, data=None, check=True):
         return subprocess.run(["git", *args], cwd=self.root, input=data, capture_output=True,
-                              check=True, timeout=5, text=True).stdout.strip()
+                              check=check, timeout=5, text=True).stdout.strip()
 
     def pending(self, owner, component="web", earlier=()):
         value = next_reservation(component, self.commit, self.tree, 1, "patch", owner, 1, [], list(earlier))
@@ -161,6 +161,91 @@ class ReleaseTagTests(unittest.TestCase):
         oid = ref["object"]["sha"]
         self.git("replace", oid, replacement["object"]["sha"])
         self.assertEqual(json.loads(read_local_tag(oid, self.root)["message"]), first)
+
+    def remote(self):
+        """A bare remote holding develop, whose tag objects the checkout lacks."""
+        remote = self.root / "remote.git"
+        subprocess.run(["git", "init", "--quiet", "--bare", str(remote)], check=True, timeout=5)
+        self.git("push", "--quiet", str(remote), self.commit + ":refs/heads/develop")
+        calls = []
+        def runner(args, **kwargs):
+            calls.append(args)
+            return subprocess.run([str(remote) if arg == REMOTE else arg for arg in args], **kwargs)
+        def publish(row, oid=None):
+            # Write the object into the remote only, then forget it locally.
+            data = self.git("cat-file", "tag", row["object"]["sha"])
+            created = subprocess.run(["git", "--git-dir", str(remote), "mktag"], input=data + "\n", text=True,
+                                     capture_output=True, check=True, timeout=5).stdout.strip()
+            self.assertEqual(created, row["object"]["sha"])
+            if row.get("ref"):
+                subprocess.run(["git", "--git-dir", str(remote), "update-ref", row["ref"], oid or created],
+                               check=True, timeout=5)
+        return remote, calls, runner, publish
+
+    def forget(self, *oids):
+        for oid in oids:
+            path = self.root / ".git" / "objects" / oid[:2] / oid[2:]
+            path.unlink()
+
+    def test_absent_objects_are_fetched_once_by_exact_ref_without_refs_tags_or_replacements(self):
+        remote, calls, runner, publish = self.remote()
+        value, row = self.pending(1)
+        later, unrelated = self.pending(2, earlier=[value])
+        _, forged = self.pending(3, earlier=[value, later])
+        for item in (row, unrelated, dict(forged, ref=None)):
+            publish(item)
+        # The remote replaces the reservation and carries a tag the fetch could follow.
+        subprocess.run(["git", "--git-dir", str(remote), "update-ref",
+                        "refs/replace/" + row["object"]["sha"], forged["object"]["sha"]], check=True, timeout=5)
+        self.forget(*(item["object"]["sha"] for item in (row, unrelated, forged)))
+        api = GitHub("fixture", local_tags=LocalTags(self.root, remote=REMOTE, runner=runner))
+        store = Reservations(api, "fixture", self.root)
+        with patch.object(api, "runner", return_value=Mock(returncode=0, stdout=json.dumps([row]))) as github:
+            self.assertEqual(store.list("web"), [value])
+            self.assertEqual(store.list("web"), [value])
+        self.assertEqual(github.call_count, 2)
+        self.assertTrue(all(c.args[0][-1].endswith("/matching-refs/tags/cma-web/pending/v") for c in github.call_args_list))
+        fetches = [args for args in calls if "fetch" in args]
+        self.assertEqual(len(fetches), 1)
+        self.assertEqual(fetches[0][-2:], [REMOTE, row["ref"]])
+        for option in ("--no-tags", "--no-write-fetch-head", "--no-recurse-submodules", "credential.helper="):
+            self.assertIn(option, fetches[0])
+        self.assertEqual(self.git("for-each-ref"), "")
+        self.assertFalse((self.root / ".git" / "FETCH_HEAD").exists())
+        for item in (unrelated, forged):
+            self.assertNotEqual(self.git("cat-file", "-t", item["object"]["sha"], check=False), "tag")
+
+    def test_moved_unfetchable_unsafe_and_shallow_refs_defer_to_the_api(self):
+        remote, calls, runner, publish = self.remote()
+        value, row = self.pending(1)
+        _, moved = self.pending(2)
+        publish(row)
+        publish(dict(moved, ref=row["ref"].replace("v0.10.1", "v0.10.2")))
+        self.forget(row["object"]["sha"], moved["object"]["sha"])
+        absent = "b" * 40
+        cases = {
+            # The ref now names another object: the fetched one cannot answer for the old ID.
+            "moved": ({"ref": row["ref"].replace("v0.10.1", "v0.10.2"), "object": {"type": "tag", "sha": absent}}, 1),
+            "deleted": ({"ref": "refs/tags/cma-web/pending/v9.9.9", "object": {"type": "tag", "sha": absent}}, 1),
+            "refspec": ({"ref": row["ref"] + ":refs/heads/develop", "object": {"type": "tag", "sha": absent}}, 0),
+            "option": ({"ref": "--upload-pack=touch", "object": {"type": "tag", "sha": absent}}, 0),
+            "replace": ({"ref": "refs/replace/" + absent, "object": {"type": "tag", "sha": absent}}, 0),
+        }
+        for name, (item, expected) in cases.items():
+            with self.subTest(case=name):
+                calls.clear()
+                api = GitHub("fixture", local_tags=LocalTags(self.root, remote=REMOTE, runner=runner))
+                api.preload_tags([item])
+                self.assertEqual(len([args for args in calls if "fetch" in args]), expected)
+                with patch.object(api, "runner", return_value=Mock(returncode=0, stdout=json.dumps({"sha": absent}))) as github:
+                    self.assertEqual(api.request("git/tags/" + absent), {"sha": absent})
+                github.assert_called_once()
+        (self.root / ".git" / "shallow").write_text(self.commit + "\n")
+        calls.clear()
+        api = GitHub("fixture", local_tags=LocalTags(self.root, remote=REMOTE, runner=runner))
+        api.preload_tags([row])
+        self.assertEqual([args for args in calls if "fetch" in args], [])
+        self.assertNotIn(row["object"]["sha"], api._tags)
 
 
 if __name__ == "__main__":

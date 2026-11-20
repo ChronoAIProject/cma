@@ -9,9 +9,15 @@ import subprocess
 
 from staging_cd_common import require
 from staging_cd_receipts import git_tag_oid
+from staging_cd_versions import REPOSITORY
 
 OID = r"[0-9a-f]{40}"
 MAX_TAG = 64 * 1024
+# Only final and pending release refs may be named on a fetch command line.
+RELEASE_REF = r"refs/tags/[a-z0-9-]+(?:/pending)?/v[0-9]+\.[0-9]+\.[0-9]+"
+# One exact-ref fetch per inventory. Any further absent objects use the API.
+MAX_FETCH_REFS = 256
+REMOTE = f"https://github.com/{REPOSITORY}.git"
 
 
 def decode_tag(oid, raw):
@@ -32,11 +38,12 @@ class LocalTags:
     """Verified annotated tag objects from a job's complete checkout.
 
     The full checkout usually has every object. Tags written by another job
-    may postdate it; in that case the remote API stays authoritative.
+    may postdate it; with a remote, one bounded fetch names exactly those refs.
+    In every other case the remote API stays authoritative.
     """
 
-    def __init__(self, root, *, runner=None):
-        self.root, self.runner = root, runner
+    def __init__(self, root, *, remote=None, runner=None):
+        self.root, self.remote, self.runner = root, remote, runner
         self.env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
         self.env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0",
                         GIT_NO_REPLACE_OBJECTS="1")
@@ -86,8 +93,34 @@ class LocalTags:
         return found, absent
 
     def load(self, refs):
-        """Read every object one live inventory names in two local Git calls."""
-        return self.read(refs.values())[0]
+        """Read the objects one live inventory names, fetching absent ones once by exact ref."""
+        found, absent = self.read(refs.values())
+        absent = set(absent)
+        wanted = sorted(ref for ref, oid in refs.items()
+                        if oid in absent and isinstance(ref, str) and re.fullmatch(RELEASE_REF, ref))
+        if wanted and self.remote is not None and self.fetch(wanted[:MAX_FETCH_REFS]):
+            # Content addressing authenticates each object against the live ref's ID.
+            # A ref that moved after the inventory read leaves its object absent.
+            found.update(self.read(refs[ref] for ref in wanted[:MAX_FETCH_REFS])[0])
+        return found
+
+    def fetch(self, refs):
+        """Copy exactly these tag refs' objects into the object store, never a ref.
+
+        Without tag following, FETCH_HEAD, replacement objects, credentials or
+        maintenance. Failure is not authority: the API reads what is still absent.
+        """
+        try:
+            if self.run(["rev-parse", "--is-shallow-repository"], timeout=10).strip() != b"false":
+                # A shallow checkout would download whole release histories.
+                return False
+            self.run(["-c", "credential.helper=", "-c", "http.extraHeader=", "-c", "gc.auto=0",
+                      "-c", "maintenance.auto=false", "-c", "fetch.writeCommitGraph=false",
+                      "fetch", "--quiet", "--no-tags", "--no-write-fetch-head", "--no-recurse-submodules",
+                      self.remote, *refs], timeout=60)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        return True
 
 
 def read_local_tag(oid, root):
@@ -97,4 +130,4 @@ def read_local_tag(oid, root):
 
 def local_tag_reader(root):
     """Every release lane reads tag objects from its checkout after a live ref read."""
-    return LocalTags(root)
+    return LocalTags(root, remote=REMOTE)
