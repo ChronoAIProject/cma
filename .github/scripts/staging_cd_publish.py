@@ -17,7 +17,7 @@ from staging_cd_receipts import canonical, published_receipt, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_reservations import Reservations, validate_reservation
 from staging_cd_publication_diagnostics import PublicationDiagnostics, run_publication
-from staging_cd_versions import DEPLOYABLES
+from staging_cd_versions import DEPLOYABLES, FINISH_STARTED_BUILDS
 from staging_cd_timing import Timings
 from staging_cd_build_cache import BuildCache
 from staging_cd_runtime_smoke import CleanupIncomplete, qualify as qualify_runtime
@@ -141,10 +141,22 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
         require(remote is not None and remote[0] == digest and registry.exists(repository, digest),
                 "Registry digest differs from the scanned archive")
     # A copy already in flight may finish writing its own burned version.
-    # It cannot hand a receipt to finalization after a successor takes over.
+    # It cannot hand a receipt to finalization after a successor takes over,
+    # or, in a lane that finishes started builds, after a higher final.
     require(reservation_check() is True, "Publication reservation is not current")
     diagnostics.mark("receipt")
     return receipt
+
+
+def emit_cache_metrics(component, cache_metrics, stream):
+    for metrics in cache_metrics:
+        print(json.dumps({"event": "publication-cache", **metrics}, sort_keys=True), file=stream, flush=True)
+        oversize = metrics.get("result") == "withheld" and metrics.get("reason", "").startswith("oversize")
+        if metrics.get("operation") == "export" and (oversize or metrics.get("headroom") == "low"):
+            # Fixed text only: surface the bound before builds quietly slow down.
+            print(f"::warning title=Cargo cache bound::{component} Cargo bundle is "
+                  + ("over" if oversize else "above 75% of") + " its bound in staging_cd_cargo_artifact.py",
+                  file=stream, flush=True)
 
 
 def main():
@@ -172,7 +184,8 @@ def main():
             else:
                 reservation = value
                 reservations = Reservations(api, env.get("GH_TOKEN"), root)
-                reservations.require_current(reservation)
+                # A queued older reservation yields here, before any build work.
+                reservations.require_current(reservation, build_started=False)
                 with tempfile.TemporaryDirectory(prefix="cma-publication-", dir=env["RUNNER_TEMP"]) as temp:
                     directory = Path(temp)
                     source = directory / "source"
@@ -196,22 +209,16 @@ def main():
                         with timings.stage("build"):
                             progress: dict = {}
                             build_metrics.append(progress)
-                            guard = {}
-                            if reservation["component"] == "am":
-                                def check_owner(probe):
-                                    credential = env.get("GH_TOKEN")
-                                    lookup = GitHub(credential, runner=probe)
-                                    Reservations(lookup, credential, root).check_build_owner(reservation)
-                                guard["check_owner"] = check_owner
                             archive, release = build(root, reservation, directory, source=source, cache=cache,
-                                                     progress=progress, **guard)
+                                                     progress=progress)
                     require(release["component"] == reservation["component"], "Built release component differs")
                     try:
                         receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
                                           env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
                                           diagnostics=diagnostics, timings=timings,
                                           scan_evidence=output.parent / "package-policy",
-                                          reservation_check=lambda: reservations.require_current(reservation))
+                                          reservation_check=lambda: reservations.require_current(
+                                              reservation, build_started=True))
                     except CleanupIncomplete as error:
                         # Preserve only fixed-schema cleanup status and the
                         # synthetic campaign ID, never raw helper/daemon output.
@@ -225,18 +232,23 @@ def main():
             output.write_text(canonical(receipts) + "\n", encoding="utf-8")
             # Persist successful publication before optional cache work. A later
             # cache timeout must not lose the receipt for an immutable pushed tag.
-            if cache is not None and cache.restore_result != "hit":
+            if cache is not None:
                 diagnostics.mark("cache_export")
                 with timings.stage("cache-export"):
                     accepted = cache.export_mounts()
-                cache_metrics.append({"operation": "export", "result": "accepted" if accepted else "withheld"})
+                metric = {"operation": "export", "result": "accepted" if accepted else "withheld"}
+                if not accepted and isinstance(cache.export_reason, str):
+                    metric["reason"] = cache.export_reason
+                if accepted and cache.export_headroom == "low":
+                    metric["headroom"] = "low"
+                cache_metrics.append(metric)
                 with Path(env["GITHUB_OUTPUT"]).open("a") as status:
                     if accepted:
                         status.write("build-cache-key=" + cache.key.archive_key(env) + "\n")
                     status.write("build-cache-ready=" + ("true" if accepted else "false") + "\n")
         return True
     def superseded():
-        require(env.get("CD_COMPONENT") == "am", "Unexpected superseded component")
+        require(env.get("CD_COMPONENT") in FINISH_STARTED_BUILDS, "Unexpected superseded component")
         step_output(env, "disposition", "reservation_superseded")
 
     result = run_publication(operation, on_superseded=superseded)
@@ -249,8 +261,7 @@ def main():
         for metrics in build_metrics:
             value = metrics or {"complete": False, "reason": "progress-unavailable"}
             print(json.dumps({"event": "publication-build", **value}, sort_keys=True), flush=True)
-        for metrics in cache_metrics:
-            print(json.dumps({"event": "publication-cache", **metrics}, sort_keys=True), flush=True)
+        emit_cache_metrics(component, cache_metrics, sys.stdout)
     return result
 
 

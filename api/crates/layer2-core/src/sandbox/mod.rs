@@ -123,12 +123,18 @@ mod first_message_dispatch;
 mod first_message_service;
 pub use failed_provision::SandboxFailedRuntimeProvision;
 mod hierarchy;
+pub mod task_activity;
 mod task_status;
 pub use task_status::AgentTaskStatus;
 mod home;
 mod home_native;
 pub use home_native::SandboxNativePool;
 mod home_recovery;
+mod home_restore;
+pub use home_restore::{
+    SandboxHomeRestore, SandboxHomeRestoreAttestation, SandboxHomeRestoreEvidence,
+    SandboxHomeRestoreEvidenceKind, SandboxHomeRestoreReceipt, SandboxSupersededHome,
+};
 mod idle_evidence;
 mod inactivity;
 pub use idle_evidence::agentless_idle_with_children;

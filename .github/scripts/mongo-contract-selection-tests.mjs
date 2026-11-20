@@ -98,7 +98,7 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
   });
   const {before, after} = JSON.parse(result);
   assert.deepEqual(after, before);
-  assert.ok(source.includes("agent-lists) selection_filter='package(=cma) and not test(::personal_inventory::availability::) and not (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile)) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))'"));
+  assert.ok(source.includes("agent-lists) selection_filter='package(=cma) and not test(::personal_inventory::availability::) and not (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile)) and (test(::resource_access_tests::personal_inventory::) or test(::resource_access_tests::inventory::) or test(::resource_access_tests::provenance::) or test(::agent_task_status::batch::tests::) or test(::agent_task_status::activity::tests::) or test(::agent_admission::mongo_integration_tests::channel_usage::) or test(::agent_admission::mongo_integration_tests::provenance_inventory::))'"));
   assert.ok(source.includes(`"$1" == '--agent-lists'`));
   assert.ok(source.includes("agent-list-profile) selection_filter='package(=cma) and (test(::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile))'"));
   assert.ok(source.includes(`"$1" == '--agent-list-profile'`));
@@ -172,7 +172,7 @@ done
     const [name, ...args] = block.trim().split('\n');
     return [name, args[args.indexOf('-E') + 1]];
   }));
-  const boundary = ' & not test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors)';
+  const boundary = ' & not test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure)';
   const corpus = filters.all.slice(filters.all.indexOf(boundary));
   assert.ok(filters.all.includes(boundary));
   for (const mode of modes) {

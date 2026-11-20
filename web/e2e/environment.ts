@@ -139,7 +139,7 @@ export function outsideRepository(value: unknown, name: string): string {
     throw new Error(`E2E ${name} must be an absolute path outside the repository`);
   return path;
 }
-function privateFile(value: unknown, name: string): string {
+export function privateFile(value: unknown, name: string): string {
   const path = outsideRepository(value, name);
   let stat;
   try {

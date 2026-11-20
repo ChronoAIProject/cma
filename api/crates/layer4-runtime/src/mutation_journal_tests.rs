@@ -8,6 +8,11 @@ use layer3_adapter::{
 
 use super::*;
 
+#[path = "mutation_journal_durability_tests.rs"]
+pub(super) mod durability;
+#[path = "mutation_journal_promotion_tests.rs"]
+mod promotion;
+
 fn config(name: &str) -> RuntimeConfig {
     let home = std::env::temp_dir().join(format!(
         "cma-mutation-journal-{}-{name}",

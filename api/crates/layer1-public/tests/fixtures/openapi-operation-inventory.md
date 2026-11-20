@@ -1,5 +1,12 @@
 <!-- openapi-operations:start -->
 
+### Account deletion
+
+| Operation | Behavior |
+|---|---|
+| `GET /api/v1/account/deletion` | Read the authenticated owner's deletion status, including when new requests are disabled. |
+| `POST /api/v1/account/deletion` | Request deletion with explicit confirmation and `Idempotency-Key`; return 202 with a durable receipt. Replays remain available when new requests are disabled. |
+
 ### Event Worker Profiles
 
 These owner-scoped resources compose three published CMA profile revisions into

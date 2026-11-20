@@ -13,6 +13,7 @@ export default defineConfig({
     'deletion-progress.check.ts',
     'parked-update-deletion.check.ts',
     'agent-stop-deletion.check.ts',
+    'agent-setup-exit.check.ts',
   ],
   workers: 1,
   retries: 0,

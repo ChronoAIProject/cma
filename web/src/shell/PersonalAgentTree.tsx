@@ -1,5 +1,12 @@
 import { useEffect, useMemo } from 'react';
-import { TASK_GROUPS, taskGroup, taskTime, taskColor, runningTaskTime } from './taskGroups';
+import {
+  TASK_GROUPS,
+  taskGroup,
+  taskTime,
+  taskColor,
+  runningTaskTime,
+  taskActivityOrder,
+} from './taskGroups';
 import { useTaskClock } from './useTaskClock';
 import type { TreeProps } from './Tree';
 import { TreeRow } from './TreeRow';
@@ -11,15 +18,11 @@ import { IconDataOutline16 } from '../ui/icons';
 import { sandboxChildrenAvailable, sandboxChildStatus } from '../sandbox/lifecycle';
 import { taskTitle } from './taskTitle';
 import type { AgentSummary, SandboxDetail } from '../api/types';
+import { setupEnvironmentRoute, SETUP_ENVIRONMENT_NOTICE } from '../agent/setupEnvironment';
 
 interface AgentCard {
   readonly sandbox: SandboxDetail;
   readonly agent: AgentSummary;
-}
-
-function updated(agent: Pick<AgentSummary, 'updatedAt'>): number {
-  const at = Date.parse(agent.updatedAt);
-  return Number.isFinite(at) ? at : 0;
 }
 
 /** Flat navigation keeps each Agent's parent only for status and action eligibility. */
@@ -41,12 +44,17 @@ function agentCards(
         )
         .map((agent) => ({ sandbox, agent })),
     )
-    .sort((a, b) => updated(b.agent) - updated(a.agent) || a.agent.id.localeCompare(b.agent.id));
+    .sort(
+      (a, b) =>
+        taskActivityOrder(b.agent) - taskActivityOrder(a.agent) ||
+        a.agent.id.localeCompare(b.agent.id),
+    );
 }
 
 /** Agent view uses the same authorized hierarchy and parent lifecycle barriers. */
 export function PersonalAgentTree({
   currentTask,
+  viewerId,
   active,
   items,
   statusFilter,
@@ -61,6 +69,7 @@ export function PersonalAgentTree({
 }: Pick<
   TreeProps,
   | 'currentTask'
+  | 'viewerId'
   | 'items'
   | 'active'
   | 'statusFilter'
@@ -108,7 +117,7 @@ export function PersonalAgentTree({
       {TASK_GROUPS.map((heading) => {
         const rows = cards.filter(
           ({ presentation, agent }) =>
-            (presentation.group ?? taskGroup(presentation.status, agent.updatedAt, now)) ===
+            (presentation.group ?? taskGroup(presentation.status, agent.taskActivityAt, now)) ===
             heading,
         );
         if (!rows.length) return null;
@@ -116,6 +125,13 @@ export function PersonalAgentTree({
           <div role="group" aria-label={heading} key={heading}>
             <h3 className="task-group__heading">{heading}</h3>
             {rows.map(({ sandbox, agent, presentation }) => {
+              const setupRoute = setupEnvironmentRoute(
+                agent.status,
+                agent.sandboxId,
+                viewerId,
+                permissions.deleteSandbox,
+                { sandbox, stale: refreshError !== undefined },
+              );
               const { status, label, parentNotice, showRunningTime } = presentation;
               const environmentNotice =
                 parentNotice !== undefined || presentation.group === 'Status unavailable';
@@ -124,7 +140,7 @@ export function PersonalAgentTree({
                   ? ''
                   : showRunningTime
                     ? runningTaskTime(agent.taskStartedAt, now)
-                    : taskTime(agent.updatedAt, now);
+                    : taskTime(agent.taskActivityAt, now);
               return (
                 <TreeRow
                   key={agent.id}
@@ -165,8 +181,12 @@ export function PersonalAgentTree({
                           <span aria-hidden="true" className="task-running__dot" />
                           {runningTaskTime(agent.taskStartedAt, now)}
                         </span>
+                      ) : !Number.isFinite(taskActivityOrder(agent)) ? (
+                        <span>Task time unavailable</span>
                       ) : (
-                        <time dateTime={agent.updatedAt}>{taskTime(agent.updatedAt, now)}</time>
+                        <time dateTime={agent.taskActivityAt}>
+                          {taskTime(agent.taskActivityAt, now)}
+                        </time>
                       )}
                     </>
                   }
@@ -179,11 +199,12 @@ export function PersonalAgentTree({
                         !refreshError &&
                         sandboxChildrenAvailable(sandbox),
                     ),
-                    ...(environmentNotice
+                    ...(setupRoute || environmentNotice
                       ? [
                           {
                             id: 'view_environment',
-                            label: 'View environment',
+                            label: setupRoute ? 'Review environment' : 'View environment',
+                            reason: setupRoute ? SETUP_ENVIRONMENT_NOTICE : undefined,
                             icon: <IconDataOutline16 />,
                           },
                         ]

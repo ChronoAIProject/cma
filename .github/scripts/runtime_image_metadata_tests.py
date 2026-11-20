@@ -239,6 +239,57 @@ class MetadataTests(unittest.TestCase):
                 self.assertTrue(generated.exists())
                 self.assertEqual(desc.read_text(), value)
 
+    def test_documentation_examples_leave_only_reviewed_lines(self):
+        retained = b"first retained line\n"
+        example = b"reviewed example line\n"
+        original = retained + example + b"second retained line\n" + example
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            path = root / "usr/share/doc/fixture.txt"
+            path.parent.mkdir(parents=True)
+            path.write_bytes(original)
+            reviewed = (("usr/share/doc/fixture.txt", hashlib.sha256(original).hexdigest(),
+                         (hashlib.sha256(example).hexdigest(),), 2),)
+            with patch.object(NORMALIZE, "DOCUMENTATION_EXAMPLES", reviewed):
+                NORMALIZE.remove_documentation_examples(root)
+                self.assertEqual(path.read_bytes(), retained + b"second retained line\n")
+                NORMALIZE.remove_documentation_examples(root)
+                self.assertEqual(path.read_bytes(), retained + b"second retained line\n")
+                # A changed upstream file carrying the example needs a new review.
+                changed = original + b"unreviewed upstream addition\n"
+                path.write_bytes(changed)
+                with self.assertRaisesRegex(ValueError, "Documentation example source requires review"):
+                    NORMALIZE.remove_documentation_examples(root)
+                self.assertEqual(path.read_bytes(), changed)
+
+    def test_bundled_wheel_remains_the_signed_package_member(self):
+        # Rewriting the wheel would leave a file its pacman mtree record no longer describes.
+        stock = b"PK\x05\x06" + bytes(18) + b"synthetic package-owned wheel bytes"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wheel = root / NORMALIZE.ENSUREPIP_WHEEL
+            wheel.parent.mkdir(parents=True)
+            wheel.write_bytes(stock)
+            NORMALIZE.normalize(root)
+            self.assertEqual(wheel.read_bytes(), stock)
+
+    def test_only_an_empty_object_signing_bundle_is_omitted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = root / NORMALIZE.OBJECT_SIGNING_BUNDLE
+            tls = bundle.with_name("tls-ca-bundle.pem")
+            bundle.parent.mkdir(parents=True)
+            bundle.write_bytes(b"")
+            tls.write_bytes(b"synthetic public trust bundle")
+            NORMALIZE.remove_empty_object_signing_bundle(root)
+            self.assertFalse(bundle.exists())
+            self.assertEqual(tls.read_bytes(), b"synthetic public trust bundle")
+            NORMALIZE.remove_empty_object_signing_bundle(root)
+            bundle.write_bytes(b"synthetic object-signing anchor")
+            with self.assertRaisesRegex(ValueError, "not empty"):
+                NORMALIZE.remove_empty_object_signing_bundle(root)
+            self.assertTrue(bundle.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

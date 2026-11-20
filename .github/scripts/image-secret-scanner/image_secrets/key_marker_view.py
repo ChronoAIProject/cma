@@ -5,10 +5,12 @@ import re
 
 from . import reviewed_literals
 from .common import digest_bytes
+from .derived_payload import MIME_TARGETS
 from .gate import KEY_MARKER_VIEW_ADVISORY, KEY_MARKER_VIEW_RULE, valid_digest
 from .key_material import binary_key_spans
+from .mime_markers import marker_ranges
 from .openpgp import secret_key_stream
-from .package_evidence import LAYER_ID, fields, matches, normalized, ordinal, require
+from .package_evidence import fields, image_binding, normalized, ordinal, require
 
 SCOPE = "runtime-omarchy"
 PATHS = {"file": "usr/share/file/misc/magic.mgc",
@@ -21,22 +23,25 @@ FRAME = {"begin": re.compile(MARKER_TYPE.replace(b"{}", b"BEGIN"), re.I),
 POSSIBLE_ARMOR = re.compile(rb"[A-Za-z0-9+/=_-]+")
 
 
-def validate(row, package):
+def validate(row, package, *, portable=False):
     proof = row["key_marker_view"]
-    fields(proof, {"archive_sha256", "image_config", "image_manifest", "matches"})
+    image_binding(proof, {"matches"}, portable=portable)
+    origin = row.get("derived_payload")
+    # A generated MIME index is accepted only with its reproduced-index proof.
+    generated = (isinstance(origin, dict) and origin.get("kind") == "mime-index"
+                 and package["name"] == "shared-mime-info" and row["path"] in MIME_TARGETS)
     require(row["component"] == SCOPE and row["member"] is None and package["authority_type"] == "arch-signature"
-            and row["path"] == PATHS.get(package["name"])
-            and valid_digest(proof["archive_sha256"]) and matches(LAYER_ID, proof["image_config"])
-            and (proof["image_manifest"] is None or matches(LAYER_ID, proof["image_manifest"])))
-    return validate_matches(proof["matches"])
+            and (generated or origin is None and row["path"] == PATHS.get(package["name"])))
+    return validate_matches(proof["matches"], portable=portable)
 
 
-def validate_matches(entries, *, normalize=False, max_parts=128):
+def validate_matches(entries, *, normalize=False, max_parts=128, portable=False):
     require(isinstance(entries, list) and 0 < len(entries) <= 8)
     candidates = {}
     for item in entries:
-        fields(item, {"finding_id", "original", "detector", "parts"})
-        require(valid_digest(item["finding_id"]))
+        span_fields = {"original", "detector", "parts"}
+        fields(item, span_fields if portable else span_fields | {"finding_id"})
+        require(portable or valid_digest(item["finding_id"]))
         original, detector = item["original"], item["detector"]
         for span in (original, detector):
             fields(span, {"offset", "size", "sha256"})
@@ -64,9 +69,13 @@ def acceptable_match(match, candidates):
             and valid_digest(match["candidate_sha256"]) and match["candidate_sha256"] in candidates)
 
 
-def verified_span(data, metadata, item, *, end_label=None):
+def verified_span(data, metadata, item, *, end_label=None, records=None):
     start, end = reviewed_literals.extent(item["original"])
     if end > len(data):
+        return False
+    # In a generated index both frames must be complete published discriminator records.
+    if records is not None and ((start, start + item["parts"][0]["size"]) not in records
+                                or (end - item["parts"][-1]["size"], end) not in records):
         return False
     candidate = data[start:end]
     if (digest_bytes(candidate) != item["original"]["sha256"] or data.find(candidate) != start
@@ -100,13 +109,14 @@ def public_subject(data, path):
             and not (data[0] & 0x80 and secret_key_stream(path)) and reviewed_literals.encoded_material_absent(data))
 
 
-def verify(path, metadata, proof):
+def verify(path, metadata, proof, *, mime_index=None):
     if not 0 < path.stat().st_size <= reviewed_literals.MAX_BYTES:
         return {}
     with path.open("rb") as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
-        # This policy covers the two native data formats. An ELF-rendered,
+        # This policy covers the native data formats. An ELF-rendered,
         # decoded, normalized, or metadata candidate needs a different proof.
         if not public_subject(data, path):
             return {}
+        records = None if mime_index is None else marker_ranges(data, mime_index)
         return {item["original"]["sha256"]: item for item in proof["matches"]
-                if verified_span(data, metadata, item)}
+                if verified_span(data, metadata, item, records=records)}

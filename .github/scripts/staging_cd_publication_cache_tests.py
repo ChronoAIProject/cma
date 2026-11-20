@@ -97,6 +97,66 @@ class CacheTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             prepare(ROOT, dict(env, CD_TASKS=json.dumps([task])))
 
+    def test_staging_bundles_use_the_artifact_bound_and_report_why_exports_are_withheld(self):
+        import staging_cd_build_cache as module
+        import staging_cd_cargo_artifact as transport
+        self.assertEqual(transport.MAX_BUNDLE_BYTES, 2 * 1024 ** 3)
+        self.assertEqual(transport.MAX_EXPANDED_BYTES, 6 * 1024 ** 3)
+        self.assertEqual(transport.MAX_ARTIFACT_BYTES, transport.MAX_BUNDLE_BYTES + 4096 + 1024 ** 2)
+        self.assertEqual((transport.DOWNLOAD_SECONDS, transport.DEADLINE_SECONDS, module.TRANSFER_SECONDS),
+                         (360, 420, 360))
+        cache = self.cache()
+        self.populate(cache.accepted)
+        tool = bridge()
+        tool.seal(cache.accepted, cache.key.prefix)
+        size = sum((cache.accepted / f"{name}.tar.gz").stat().st_size for name in ("registry", "target"))
+        # Larger than the Actions cache bound, within the artifact bound.
+        with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool), \
+                patch.object(tool, 'MAX_ARCHIVE_BYTES', size - 1):
+            with patch.object(module, 'MAX_BUNDLE_BYTES', size):
+                self.assertTrue(cache.restore())
+                self.assertEqual(cache.restore_result, "hit")
+                transfer.side_effect = lambda op, directory, **kwargs: self.populate(directory)
+                self.assertTrue(cache.export_mounts())
+                self.assertIsNone(cache.export_reason)
+                self.assertEqual(cache.export_headroom, "low")
+                for call in transfer.call_args_list:
+                    self.assertEqual((call.kwargs["timeout"], call.kwargs["max_content"]),
+                                     (module.TRANSFER_SECONDS, module.MAX_EXPANDED_BYTES))
+            with patch.object(module, 'MAX_BUNDLE_BYTES', 100 * size):
+                self.assertTrue(cache.export_mounts())
+                self.assertEqual(cache.export_headroom, "ok")
+            with patch.object(module, 'MAX_BUNDLE_BYTES', size - 1):
+                self.assertFalse(cache.export_mounts())
+                self.assertEqual(cache.export_reason, "oversize-compressed")
+            self.assertEqual(tool.validate_bundle(cache.accepted, cache.key.prefix, max_archive=size)["prefix"],
+                             cache.key.prefix)
+            transfer.side_effect = subprocess.TimeoutExpired("buildx", 150)
+            self.assertFalse(cache.export_mounts())
+            self.assertEqual(cache.export_reason, "transfer-failed")
+            transfer.side_effect = lambda op, directory, **kwargs: (self.populate(directory),
+                                                                    (directory / 'oversize').touch())
+            self.assertFalse(cache.export_mounts())
+            self.assertEqual(cache.export_reason, "oversize-expanded")
+        self.assertEqual(module.withheld_reason(ValueError("unexpected cache files")), "invalid")
+        from staging_cd_publish import emit_cache_metrics
+        for metric, warning in (({"operation": "export", "result": "accepted"}, None),
+                                ({"operation": "export", "result": "accepted", "headroom": "low"}, "above 75% of"),
+                                ({"operation": "export", "result": "withheld", "reason": "oversize-compressed"}, "over"),
+                                ({"operation": "export", "result": "withheld", "reason": "transfer-failed"}, None),
+                                ({"operation": "restore", "result": "hit"}, None)):
+            with self.subTest(metric=metric):
+                stream = io.StringIO()
+                emit_cache_metrics("am", [metric], stream)
+                lines = stream.getvalue().splitlines()
+                self.assertEqual(json.loads(lines[0]), {"event": "publication-cache", **metric})
+                if warning is None:
+                    self.assertEqual(len(lines), 1)
+                else:
+                    self.assertEqual(lines[1], "::warning title=Cargo cache bound::am Cargo bundle is "
+                                     f"{warning} its bound in staging_cd_cargo_artifact.py")
+        self.assertEqual(module.withheld_reason(OSError("disk")), "invalid")
+
     def test_validated_mounts_restore_and_corrupt_content_builds_cold(self):
         cache = self.cache()
         self.assertFalse(cache.restore())
@@ -105,11 +165,16 @@ class CacheTests(unittest.TestCase):
         tool.seal(cache.accepted, cache.key.prefix)
         with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
             self.assertTrue(cache.restore())
-            transfer.assert_called_once_with('inject', cache.accepted, namespace=cache.namespace)
+            transfer.assert_called_once_with('inject', cache.accepted, namespace=cache.namespace,
+                                             timeout=360, max_content=6 * 1024 ** 3)
+            # A hit now refreshes the bundle; an empty extraction is withheld and
+            # leaves the accepted bundle untouched.
             self.assertFalse(cache.export_mounts())
+            self.assertEqual(transfer.call_args.args[0], 'extract')
+            self.assertEqual(tool.validate_bundle(cache.accepted, cache.key.prefix)["prefix"], cache.key.prefix)
             (cache.accepted / 'target.tar.gz').write_bytes(b'changed')
             self.assertFalse(self.cache().restore())
-            self.assertEqual(transfer.call_count, 1)
+            self.assertEqual(transfer.call_count, 2)
 
     def test_partial_restore_seeds_current_graph_only_after_qualification(self):
         cache = self.cache()
@@ -120,14 +185,18 @@ class CacheTests(unittest.TestCase):
         with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
             self.assertTrue(cache.restore())
             self.assertEqual(cache.restore_result, "partial")
-            transfer.assert_called_once_with("inject-target", cache.accepted, namespace=cache.namespace)
+            transfer.assert_called_once_with("inject-target", cache.accepted, namespace=cache.namespace,
+                                             timeout=360, max_content=6 * 1024 ** 3)
             transfer.side_effect = lambda op, directory, **kwargs: self.populate(directory)
             self.assertTrue(cache.export_mounts())
             self.assertEqual(tool.validate_bundle(cache.accepted, cache.key.prefix)["prefix"], cache.key.prefix)
             transfer.side_effect = None
             self.assertTrue(cache.restore())
             self.assertEqual(cache.restore_result, "hit")
-            self.assertFalse(cache.export_mounts())
+            # An exact hit still exports the newer compiler state for the next build.
+            transfer.side_effect = lambda op, directory, **kwargs: self.populate(directory)
+            self.assertTrue(cache.export_mounts())
+            self.assertEqual(tool.validate_bundle(cache.accepted, cache.key.prefix)["prefix"], cache.key.prefix)
 
     def test_family_miss_and_failed_transfer_use_clean_build_namespaces(self):
         first = self.cache()

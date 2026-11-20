@@ -32,6 +32,7 @@ mod observation_tests;
 #[path = "launch_mongo_integration_tests/pending_home_reconciliation_tests.rs"]
 mod pending_home_reconciliation;
 mod platform_spend;
+mod visitor_contention;
 mod visitor_quota;
 
 fn digest(byte: char) -> String {
@@ -740,3 +741,6 @@ async fn ready_admission_handoffs_indexes_and_corruption_are_strict() {
     ));
     database.drop().await.unwrap();
 }
+
+#[path = "launch_deletion_mongo_tests.rs"]
+mod account_deletion;

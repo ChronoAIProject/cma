@@ -172,3 +172,38 @@ async fn live_assembly_is_utf8_bounded_and_reasoning_remains_ephemeral() {
     open.message_delta("more");
     assert_eq!(open.pending.len(), count);
 }
+
+#[tokio::test]
+async fn responses_v1_buffered_frames_recheck_deleting_recipient_and_owner() {
+    use crate::rest::shared_stream_tests::{fixture_with_standing, ChangingStanding};
+    use futures_util::StreamExt;
+    use layer2_core::sandbox::store::AgentStore;
+    for deleting in ["recipient", "owner-a", "unrelated", "outage"] {
+        let standing = std::sync::Arc::new(ChangingStanding::default());
+        let f = fixture_with_standing(standing.clone()).await;
+        let context = crate::rest::shared_stream_tests::stream_context("recipient");
+        let agent = f
+            .store
+            .get_agent(&layer2_core::AgentId("agt_shared_stream".into()))
+            .await
+            .unwrap()
+            .unwrap();
+        let held = f
+            .state
+            .reads
+            .authorize_event_stream(&context, Some("request-credential"), &agent.id)
+            .await
+            .unwrap();
+        let response =
+            super::super::open_inner(f.state, context.caller, agent, 3, None, Some(held), false);
+        let mut body = response.into_body().into_data_stream();
+        assert!(body.next().await.unwrap().is_ok());
+        *standing.0.lock().unwrap() = Some(deleting);
+        let next = body.next().await;
+        if deleting == "unrelated" {
+            assert!(next.unwrap().is_ok());
+        } else {
+            assert!(next.is_none(), "a buffered frame escaped after {deleting}");
+        }
+    }
+}
