@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Canonical attribution for a deleted person; it never establishes authority.
+pub const DELETED_ACCOUNT_SUBJECT: &str = "deleted-account";
+
 macro_rules! string_id {
     ($name:ident, $description:literal) => {
         #[doc = $description]
@@ -112,6 +115,17 @@ generated_id!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deleted_account_subject_keeps_the_persisted_wire_value() {
+        assert_eq!(DELETED_ACCOUNT_SUBJECT, "deleted-account");
+        let subject = SubjectId::new(crate::DELETED_ACCOUNT_SUBJECT);
+        assert_eq!(subject.as_str(), DELETED_ACCOUNT_SUBJECT);
+        assert_eq!(
+            serde_json::to_string(&subject).unwrap(),
+            "\"deleted-account\""
+        );
+    }
 
     #[test]
     fn identifiers_keep_their_type_and_wire_value() {
