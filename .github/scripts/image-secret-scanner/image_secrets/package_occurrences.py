@@ -299,7 +299,8 @@ def verify_literals(verified, payload, metadata, expected):
     mime_index = expected["path"] if origin is not None and origin["kind"] == "mime-index" else None
     checks = reviewed_literals.verify(payload, metadata, expected["reviewed_literals"], mime_index=mime_index,
                                       npm_template=expected.get("npm_help_template"),
-                                      nyxid_labels=expected.get("nyxid_format_labels"))
+                                      nyxid_labels=expected.get("nyxid_format_labels"),
+                                      certificates=expected.get("certificate_blocks"))
     verified["reviewed_literals"] = checks
     if mime_index is not None and checks:
         verified["derived_payload"] = True
