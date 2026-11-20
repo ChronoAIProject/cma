@@ -114,7 +114,17 @@ async fn adopted_command_unknown_settlement_reopens_without_replaying_runtime_in
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn task_audit_checks_segmented_terminal_in_one_read_only_snapshot() {
-    let (client, name, store, current, mut command) = working("v2_task_audit").await;
+    let (client, name, store, current, admitted) = working("v2_task_audit").await;
+    // The fixture returns the original queued admission, while its persisted
+    // receipt has already acquired a dispatch fence. Preserve that real state.
+    let row = store
+        .agent_commands
+        .find_one(doc! {"_id":admitted.receipt.envelope.command_id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    let mut command = crate::store::agent_commands::read_command(&row).unwrap();
+    assert!(command.work.dispatch.is_some());
     store
         .agent_commands
         .create_index(
