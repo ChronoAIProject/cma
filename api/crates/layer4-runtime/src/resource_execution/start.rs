@@ -119,11 +119,29 @@ impl Receiver {
                 .permit()
                 .await
                 .map_err(|_| ProtocolError::AudienceMismatch)?;
-            let now = self.clock.tick_ms()?;
-            gate.enter(now, dispatch.ticket().basis.family().is_some(), |entry| {
-                self.runner.enter(&cell, entry)
-            })?;
-            drop(permit);
+            let receiver = self.clone();
+            let entry_gate = gate.clone();
+            let entry_cell = cell.clone();
+            let shared = dispatch.ticket().basis.family().is_some();
+            tokio::task::spawn_blocking(move || {
+                // Preparation and owner admission may suspend. Revalidate the
+                // retained journal afterward, outside the short release gate.
+                let _state = receiver.state()?;
+                if permit
+                    .deadline()
+                    .is_some_and(|until| until <= tokio::time::Instant::now())
+                {
+                    return Err(ProtocolError::AudienceMismatch);
+                }
+                let now = receiver.clock.tick_ms()?;
+                let result = entry_gate.enter(now, shared, |entry| {
+                    receiver.runner.enter(&entry_cell, entry)
+                });
+                drop(permit);
+                result
+            })
+            .await
+            .map_err(|_| ProtocolError::Unknown)??;
             Ok(())
         }
         .await;
