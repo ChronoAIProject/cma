@@ -30,14 +30,21 @@ export function Badge({
   tone,
   children,
   live = false,
+  wrap = false,
 }: {
   readonly tone: StatusTone;
   readonly children: ReactNode;
   /** Announce changes politely, for a status that moves while somebody reads. */
   readonly live?: boolean;
+  readonly wrap?: boolean;
 }) {
   return (
-    <span className="badge" data-tone={tone} role={live ? 'status' : undefined}>
+    <span
+      className="badge"
+      data-tone={tone}
+      data-wrap={wrap || undefined}
+      role={live ? 'status' : undefined}
+    >
       {toneDot(tone)}
       <span className="badge__word">{children}</span>
     </span>
