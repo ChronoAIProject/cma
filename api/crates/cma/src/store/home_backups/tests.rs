@@ -6,6 +6,8 @@ use std::time::{Duration, SystemTime};
 mod commit_unknown_tests;
 #[path = "discovery_tests.rs"]
 mod discovery_tests;
+#[path = "erasure_tests.rs"]
+mod erasure_tests;
 #[path = "schema_tests.rs"]
 mod schema_tests;
 #[path = "startup_tests.rs"]
