@@ -62,6 +62,10 @@ export function clearFatherDraft(): void {
   if (window.location.pathname === '/bots/new') {
     const url = new URL(window.location.href);
     url.searchParams.delete('setup');
-    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+    window.history.replaceState(
+      window.history.state,
+      '',
+      `${url.pathname}${url.search}${url.hash}`,
+    );
   }
 }

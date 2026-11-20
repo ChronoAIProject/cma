@@ -36,6 +36,7 @@ export class LocalDocuments {
   links: { id: string; permission: string; created_at: string }[] = [];
   exists = true;
   saveFailures = 0;
+  saveGate?: Promise<void>;
   registryDocuments?: readonly LocalDocuments['document'][];
   registryPageSize = 50;
   registryFailures = 0;
@@ -91,7 +92,7 @@ export class LocalDocuments {
       }
       if (url.pathname.endsWith('/source'))
         return reply({
-          id: documentId,
+          id: this.document.id,
           revision: this.document.source_revision,
           markdown: this.markdown,
         });
@@ -132,8 +133,9 @@ export class LocalDocuments {
         }
         return reply(this.links);
       }
-      if (url.pathname === `/api/v1/documents/${documentId}`) {
+      if (url.pathname === `/api/v1/documents/${this.document.id}`) {
         if (method === 'PATCH') {
+          await this.saveGate;
           if (this.saveFailures > 0) {
             this.saveFailures--;
             return reply({ detail: 'Save could not be confirmed' }, 503);
