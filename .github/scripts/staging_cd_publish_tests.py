@@ -1,16 +1,19 @@
 """Publication cannot pass a blocking scan or mutate the scanned image bytes."""
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import ci_retry
 import staging_cd_publish as publication
 from image_scanner_policy import MANIFEST_SHA256
 from image_secret_gate import ScanRefusal, checksum
 from staging_cd_common import Refusal
 from staging_cd_finalize import finalize
+from staging_cd_publication_diagnostics import ImageCommandRefusal
 from staging_cd_publish import publish
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt, fixture_runtime_receipt
 
@@ -160,6 +163,60 @@ class PublicationTests(unittest.TestCase):
             with self.assertRaises(Refusal):
                 publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=runner)
             runner.assert_not_called()
+
+    def publish_with(self, directory, copies, readbacks, *, login=()):
+        """Publish with scripted login/copy outcomes and tag readbacks between preflight and verify."""
+        archive, digest, registry, scanner, _ = self.fixture(directory)
+        tags = {"ours": (digest, {}), "other": ("sha256:" + "e" * 64, {}), None: None}
+        registry.manifest.side_effect = [None, *[tags[item] for item in readbacks], (digest, {})]
+        outcomes = {"login": list(login), "copy": list(copies)}
+        def run(args, **kwargs):
+            pending = outcomes[args[1]]
+            outcome = pending.pop(0) if pending else None
+            if isinstance(outcome, BaseException):
+                raise outcome
+            if args[1] == "login":
+                Path(args[3]).write_text("fixture")
+            return b""
+        runner, checks = Mock(side_effect=run), Mock(return_value=True)
+        with patch("staging_cd_publish.inspect", return_value=digest):
+            try:
+                result = publish(archive, fixture_identity(), Path(directory), registry, "fixture", "actor",
+                                 reservation_check=checks, scanner=scanner, runner=runner,
+                                 retry={"sleep": lambda _seconds: None})
+            except Exception as error:  # noqa: BLE001 - each case asserts the exact failure type.
+                result = error
+        self.assertFalse((Path(directory) / "registry-auth.json").exists())
+        return result, runner, checks, registry
+
+    def test_uncertain_copy_is_settled_by_reading_the_reserved_tag_back(self):
+        def failed(command, stderr):
+            # command() marks transport failures this way; the refusal text stays fixed.
+            try:
+                raise ImageCommandRefusal(["skopeo", command], stderr) from ci_retry.cli_cause(stderr)
+            except ImageCommandRefusal as error:
+                return error
+        timeout = subprocess.TimeoutExpired("skopeo", 1800)
+        cases = (
+            # login outcomes, copy outcomes, tag readbacks, copies, reservation checks, result
+            ((), [timeout], ["ours"], 1, 3, dict),           # it landed: never copy again
+            ((), [timeout], [None], 2, 4, dict),             # proven absent: one repeat after authority
+            ((failed("login", b"read: connection reset by peer"),), [], [], 1, 3, dict),
+            ((), [timeout], ["other"], 1, 2, Refusal),       # another digest holds the immutable tag
+            ((), [timeout, timeout], [None, None], 2, 3, subprocess.TimeoutExpired),
+            ((), [failed("copy", b"denied: permission_denied: write_package")], [], 1, 2, ImageCommandRefusal),
+        )
+        for login, copies, readbacks, copy_count, check_count, expected in cases:
+            with self.subTest(copies=copies, readbacks=readbacks), tempfile.TemporaryDirectory() as directory:
+                result, runner, checks, registry = self.publish_with(directory, copies, readbacks, login=login)
+                self.assertIsInstance(result, expected)
+                if expected is dict:
+                    self.assertEqual(result["digest"], "sha256:" + "d" * 64)
+                copied = [call for call in runner.call_args_list if call.args[0][1] == "copy"]
+                self.assertEqual(len(copied), copy_count)
+                self.assertEqual(checks.call_count, check_count)
+                # Preflight, one readback per uncertain copy, then verification after success.
+                self.assertEqual(registry.manifest.call_count, 1 + len(readbacks) + (expected is dict))
 
     def test_partial_publication_finalizes_only_successful_receipts(self):
         receipt = fixture_receipt()
