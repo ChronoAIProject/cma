@@ -7,6 +7,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from ci_outcome import error_site, report
 from staging_cd_admission import event_identity
 from staging_cd_applied import configured_group
 from staging_cd_checkout import checkout_path
@@ -17,7 +18,7 @@ from staging_cd_process import ProcessTimeout, run as run_process
 from staging_cd_receipts import canonical
 from staging_cd_runtime import run_private
 from staging_cd_refusal import (
-    REASONS as PRIVATE_REASONS, VERIFICATION_REASONS, read as read_refusal, read_verification,
+    REASONS as PRIVATE_REASONS, UNRECOGNIZED, VERIFICATION_REASONS, read as read_refusal, read_verification,
 )
 from staging_cd_set import OVERTAKEN, document, private_document, release_set, validate_set
 from staging_cd_tools import environment as tool_environment
@@ -49,6 +50,9 @@ RESULTS = {0: PENDING_RUNTIME_CHECK,
 
 
 PRECONDITIONS = {"mode", "checkout", "policy", "credentials-format", "budget", "authority"}
+# Outcome tokens the public log may carry; anything else stays "unreported".
+REPORTED_PRIVATE = PRIVATE_REASONS | {UNRECOGNIZED}
+REPORTED_VERIFICATION = VERIFICATION_REASONS | {UNRECOGNIZED}
 
 
 class NotAdmitted(Refusal):
@@ -280,9 +284,36 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     return code if code in (10, 20, 30, 40, 50) else 20
 
 
+def release_components(env):
+    """Name the components this invocation was asked to deploy, if readable."""
+    try:
+        return sorted(validate_set(document(env.get("CD_RELEASE_SET")))["receipts"])
+    except (ValueError, TypeError, KeyError):
+        return None
+
+
+def explain(outcome, reason, verification, recovery, release, site, components):
+    """Report an exit 10, 20, 30 or 40 outcome with its cause and next step."""
+    fields = {"subject": "deploy", "component": components}
+    if outcome == 20:
+        return report("deploy-verification", verification, recovery=recovery, **fields)
+    if outcome == 10:
+        # Exit 10 alone certifies the rollback; only the release token is reported.
+        return report("deploy-release", release, **fields)
+    if reason is not None and reason.startswith("private-"):
+        return report("deploy-private", reason[len("private-"):], **fields)
+    if reason is not None:
+        return report("deploy-precondition", reason, site=site, **fields)
+    if outcome == 30:
+        return report("deploy-private", "unreported", **fields)
+    if outcome == 40 and site is not None:
+        return report("deploy-precondition", "input", site=site, **fields)
+    return None
+
+
 def main():
     outcome, skipped = 40, False
-    reason = None
+    reason, site = None, None
     verification = "unreported"
     recovery = "unreported"
     release = "unreported"
@@ -296,29 +327,34 @@ def main():
         skipped = True
     def private_refusal(token):
         nonlocal reason
-        if token in PRIVATE_REASONS:
+        if token in REPORTED_PRIVATE:
             reason = "private-" + token
 
     def unverified(first, second):
         nonlocal verification, recovery
-        if first in VERIFICATION_REASONS and second in VERIFICATION_REASONS:
+        if first in REPORTED_VERIFICATION and second in REPORTED_VERIFICATION:
             verification, recovery = first, second
 
     def rolled_back(token):
         nonlocal release
-        if token in VERIFICATION_REASONS:
+        if token in REPORTED_VERIFICATION:
             release = token
 
     def operation(masker):
-        nonlocal outcome, reason
+        nonlocal outcome, reason, site
         try:
             outcome = deploy(os.environ, masker, on_disabled=disabled, on_private_refusal=private_refusal,
                              on_unverified=unverified, on_rolled_back=rolled_back,
                              on_overtaken=overtaken_keys.extend)
         except NotAdmitted as refusal:
             outcome = refusal.code
+            # The precondition's own check, never the wrapper, names the line.
+            site = error_site(refusal.__cause__) if refusal.__cause__ is not None else None
             if refusal.reason in PRECONDITIONS:
                 reason = refusal.reason
+        except Exception as error:
+            site = error_site(error)
+            raise
         return outcome in (0, DISABLED, SUPERSEDED_BY_NEWER_FINAL)
     result = run_private(operation, None, subject="deploy", explain=False)
     if result == 0 and outcome == SUPERSEDED_BY_NEWER_FINAL:
@@ -328,18 +364,8 @@ def main():
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
                 stream.write(f"disposition={OVERTAKEN}\n")
-    diagnostic = None
-    if outcome == 20:
-        diagnostic = f"FAIL verification={verification} recovery={recovery}"
-    elif outcome == 10:
-        # Exit 10 alone certifies the rollback; only the release token is reported.
-        diagnostic = f"FAIL release={release} recovery=verified"
-    elif reason is not None:
-        diagnostic = "FAIL precondition=" + reason
-    elif outcome == 30:
-        diagnostic = "FAIL precondition=private-unreported"
-    if diagnostic:
-        print(diagnostic)
+    components = release_components(os.environ)
+    diagnostic = explain(outcome, reason, verification, recovery, release, site, components)
     if skipped:
         print(RESULTS[DISABLED])
     if outcome in (UNVERIFIED_COHORT, CONTRACT_READ_FAILED):
@@ -378,7 +404,7 @@ def main():
         from staging_cd_contract import GROUP
         for component in sorted(GROUP):
             if value.get("components", {}).get(component, {}).get("state") == "withheld":
-                print("FAIL component=" + component + " reason=deployed-compatibility-unqualified")
+                report("deploy-component", "deployed-compatibility-unqualified", subject="deploy", component=component)
     if result == 0:
         return 0
     return outcome if outcome in (10, 20, 30, 40, 50, UNVERIFIED_COHORT, CONTRACT_READ_FAILED) else 40

@@ -33,9 +33,9 @@ def vocabularies():
     withheld = {reason for _, reason in build_cache.WITHHELD_REASONS}
     withheld |= {build_cache.withheld_reason(subprocess.SubprocessError()), build_cache.withheld_reason(OSError())}
     return {
-        "deploy-private": set(refusal.REASONS) | {"unreported"},
-        "deploy-verification": set(refusal.VERIFICATION_REASONS),
-        "deploy-precondition": set(invoke.PRECONDITIONS),
+        "deploy-private": set(refusal.REASONS) | {"unreported", refusal.UNRECOGNIZED},
+        "deploy-verification": set(refusal.VERIFICATION_REASONS) | {refusal.UNRECOGNIZED},
+        "deploy-precondition": set(invoke.PRECONDITIONS) | {"input"},
         "deploy-component": {reason for reason in deploy_result.STATES.values() if reason != "none"},
         "publication": set(publication.REASONS),
         "publication-stage": set(publication.STAGES),
@@ -82,6 +82,7 @@ class CatalogueTests(unittest.TestCase):
             with self.subTest(family=family):
                 missing = expected - codes(family).keys()
                 self.assertFalse(missing, f"{family} codes lack a catalogue entry: {sorted(missing)}")
+                self.assertEqual(set(codes(family)), expected, f"{family} catalogues codes nothing emits")
 
     def test_every_entry_is_complete_one_line_text_with_a_known_cause(self):
         entries = [("uncatalogued", "-", ci_outcome.CATALOGUE["uncatalogued"])]

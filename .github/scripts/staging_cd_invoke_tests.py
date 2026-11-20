@@ -15,6 +15,7 @@ from staging_cd_clock import CONTROLLER_TOTAL_ENV, timestamp
 from staging_cd_receipts import canonical
 from staging_cd_receipts_tests import fixture_receipt
 from staging_cd_set import release_set
+from staging_cd_outcome_tests import legacy
 import staging_cd_invoke as invoke
 
 
@@ -161,8 +162,19 @@ class InvokeTests(unittest.TestCase):
                 reason = {"controller": "private-unreported", "controller-reason": "private-image-version"}.get(stage, reason)
                 expected = "FAIL precondition=" + reason
                 public = [line for line in output.getvalue().splitlines() if not line.startswith("::add-mask::")]
-                self.assertEqual(public, ["FAIL deploy", expected])
-                self.assertIn(expected, summary.read_text().splitlines())
+                self.assertEqual(legacy("\n".join(public) + "\n").splitlines(), ["FAIL deploy", expected])
+                explained = public[1]
+                self.assertTrue(explained.startswith(expected + " component=web "), explained)
+                self.assertIn(explained, summary.read_text().splitlines())
+                self.assertIn(" | Next step |", summary.read_text())
+                if stage == "mode":
+                    # The precondition names its own check, not the wrapper that admitted it.
+                    source = Path(invoke.__file__).read_text().splitlines()
+                    line = next(n for n, text in enumerate(source, 1) if '"Deployment mode is invalid")' in text) - 1
+                    self.assertEqual(explained, f"{expected} component=web at=staging_cd_invoke.py:{line} cause=change")
+                    self.assertTrue(public[2].startswith(f"::error file=.github/scripts/staging_cd_invoke.py,line={line},"))
+                if stage.startswith("controller"):
+                    self.assertIn("What changed: Nothing.", public[2])
                 self.assertNotIn(marker, summary.read_text())
                 self.assertEqual(runner.call_count, int(stage.startswith("controller")))
 
@@ -191,6 +203,39 @@ class InvokeTests(unittest.TestCase):
             path.unlink()
             os.mkfifo(path)
             self.assertIsNone(read(path, request))
+
+    def test_unadmitted_input_names_its_check_instead_of_a_bare_failure(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(self.environment(Path(directory)), GITHUB_REF="refs/heads/private-detail")
+            output = io.StringIO()
+            with patch.dict(os.environ, env, clear=True), contextlib.redirect_stdout(output):
+                self.assertEqual(invoke.main(), 40)
+        public = [line for line in output.getvalue().splitlines() if not line.startswith("::add-mask::")]
+        self.assertEqual(legacy("\n".join(public) + "\n").splitlines(), ["FAIL deploy", "FAIL precondition=input"])
+        self.assertRegex(public[1], r"\AFAIL precondition=input component=web at=staging_cd_admission\.py:\d+ cause=")
+        self.assertIn("What changed: Nothing.", public[2])
+        self.assertNotIn("private-detail", output.getvalue())
+
+    def test_bound_unknown_tokens_are_unrecognized_and_never_echoed(self):
+        from staging_cd_receipts import sha256
+        from staging_cd_refusal import read, read_verification
+
+        request = {"schema": 1}
+        digest = sha256(request).encode()
+        cases = ((digest + b" clock\n", "clock", None),
+                 (digest + b" newer-controller-token\n", "unrecognized", None),
+                 (digest + b" \xff\n", "unrecognized", None),
+                 (digest + b" pod-restarts newer-controller-token\n", None, ("pod-restarts", "unrecognized")),
+                 (b"0" * 64 + b" newer-controller-token\n", None, None),
+                 (digest + b" newer-controller-token", None, None))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "packet"
+            for value, refusal, verification in cases:
+                with self.subTest(value=value):
+                    path.write_bytes(value)
+                    path.chmod(0o600)
+                    self.assertEqual(read(path, request), refusal)
+                    self.assertEqual(read_verification(path, request), verification)
 
     def test_unverified_packet_is_bound_allowlisted_and_used_only_for_exit_20(self):
         from staging_cd_receipts import sha256
@@ -238,6 +283,9 @@ class InvokeTests(unittest.TestCase):
                         self.assertNotIn("FAIL verification=", text)
                     else:
                         expected = "write-timeout recovery=recovery-ownership" if case in ("bound", "late-bound") else "unreported recovery=unreported"
+                        if case == "unknown":
+                            # A bound packet with an unknown token is catalogue drift, not silence.
+                            expected = "unrecognized recovery=recovery-ownership"
                         if case in ("late-missing", "late-success"):
                             expected = "phase-budget recovery=unreported"
                         if case == "bad-result":
@@ -248,7 +296,7 @@ class InvokeTests(unittest.TestCase):
         from staging_cd_receipts import sha256
         real_deploy = invoke.deploy
         for case, expected in (("bound", "pod-restarts"), ("missing", "unreported"),
-                               ("wrong-request", "unreported"), ("unknown", "unreported"),
+                               ("wrong-request", "unreported"), ("unknown", "unrecognized"),
                                ("trailing", "unreported"), ("unsafe", "unreported"),
                                ("bad-result", None), ("late", None)):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
@@ -297,9 +345,11 @@ class InvokeTests(unittest.TestCase):
                                       + " recovery=unreported", text)
                     else:
                         self.assertNotIn("FAIL verification=", text)
-                        self.assertIn(f"FAIL release={expected} recovery=verified", text.splitlines())
+                        self.assertIn(f"FAIL release={expected} recovery=verified component=web", text)
                 if expected is not None:
-                    self.assertEqual(public, ["FAIL deploy", f"FAIL release={expected} recovery=verified"])
+                    self.assertEqual(legacy("\n".join(public) + "\n").splitlines(),
+                                     ["FAIL deploy", f"FAIL release={expected} recovery=verified"])
+                    self.assertIn("restored and verified the previous release", public[2])
                     self.assertIn(invoke.RESULTS[10], summary.read_text())
 
     def test_rollback_uncertainty_emits_fixed_operator_alert_and_preserves_revision_summary(self):
