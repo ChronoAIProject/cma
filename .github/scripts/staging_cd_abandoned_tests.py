@@ -89,6 +89,24 @@ class AbandonedTests(unittest.TestCase):
             github(runner).request("actions/runs/9", allow_not_found=True)
         self.assertEqual(runner.call_count, 2)
 
+    def test_reads_carry_headers_and_repeat_only_explicitly_throttled_403s(self):
+        ok = subprocess.CompletedProcess([], 0, 'HTTP/2.0 200 OK\r\nX-RateLimit-Remaining: 0\r\n\r\n{"id": 9}', "")
+        def forbidden(remaining):
+            return subprocess.CompletedProcess(
+                [], 1, f'HTTP/2.0 403 Forbidden\r\nX-RateLimit-Remaining: {remaining}\r\n\r\n{{"message": "x"}}',
+                "gh: API rate limit exceeded (HTTP 403)")
+        runner = Mock(side_effect=[forbidden(0), ok])
+        self.assertEqual(github(runner).request("actions/runs/9"), {"id": 9})
+        self.assertEqual(runner.call_count, 2)
+        args = runner.call_args.args[0]
+        self.assertEqual(args[-1], "repos/ChronoAIProject/cma/actions/runs/9")
+        self.assertIn("--include", args)
+        # The same message without the exhausted quota header is a permission refusal.
+        runner = Mock(side_effect=[forbidden(4999), ok])
+        with self.assertRaisesRegex(Refusal, "GitHub API request failed"):
+            github(runner).request("actions/runs/9")
+        runner.assert_called_once()
+
     def test_read_budget_shortens_attempts_and_refuses_once_spent(self):
         now = [0.0]
         timeouts = []

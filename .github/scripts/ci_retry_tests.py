@@ -1,5 +1,6 @@
 """Retries are bounded by attempts and deadline; writes never repeat blindly."""
 import ast
+import email.message
 import errno
 import http.client
 import socket
@@ -143,6 +144,26 @@ class ClassifierTests(unittest.TestCase):
         for code in (400, 401, 403, 404, 409, 422):
             self.assertEqual(ci_retry.http_status(code), PERMANENT, code)
 
+    def test_a_403_is_throttling_only_with_an_explicit_header(self):
+        throttled = ("HTTP/2.0 403 Forbidden\nX-RateLimit-Remaining: 0\nX-RateLimit-Reset: 1",
+                     "HTTP/2.0 403 Forbidden\nretry-after: 60", {"Retry-After": "60"},
+                     {"x-ratelimit-remaining": "0"})
+        for headers in throttled:
+            with self.subTest(headers=headers):
+                self.assertEqual(ci_retry.http_status(403, headers), TRANSIENT)
+                self.assertIsInstance(ci_retry.status_cause(403, headers), ci_retry.TransientError)
+        for code, headers in ((403, None), (403, "X-RateLimit-Remaining: 4999"), (403, {"X-Other": "0"}),
+                              (403, "HTTP/2.0 403 Forbidden\nX-RateLimit-Remaining: 10"),
+                              (401, {"Retry-After": "60"}), (404, "X-RateLimit-Remaining: 0")):
+            with self.subTest(code=code, headers=headers):
+                self.assertEqual(ci_retry.http_status(code, headers), PERMANENT)
+                self.assertIsNone(ci_retry.status_cause(code, headers))
+        message = email.message.Message()
+        message["Retry-After"] = "30"
+        throttled = urllib.error.HTTPError("https://example.invalid", 403, "forbidden", message, None)
+        denied = urllib.error.HTTPError("https://example.invalid", 403, "forbidden", email.message.Message(), None)
+        self.assertEqual((ci_retry.classify(throttled), ci_retry.classify(denied)), (TRANSIENT, PERMANENT))
+
     def test_exception_types_and_explicit_causes(self):
         def chained(cause):
             try:
@@ -184,9 +205,11 @@ class ClassifierTests(unittest.TestCase):
             "writing blob: received unexpected HTTP status: 502 Bad Gateway",
             "fatal: unable to access: The requested URL returned error: 504",
             "error: RPC failed; curl 92 HTTP/2 stream 5 was not closed cleanly",
-            "fatal: the remote end hung up unexpectedly", "unexpected EOF",
+            "fatal: the remote end hung up unexpectedly",
             "command failed with exit status 128: Connection reset by peer",
-            "toomanyrequests: retry later", "You have exceeded a secondary rate limit (HTTP 403)",
+            "toomanyrequests: retry later", "local error: tls: bad record MAC",
+            'writing blob: Patch "https://ghcr.io/v2/x/blobs/uploads/y": unexpected EOF',
+            'Get "https://api.github.com/repos/x": EOF', "read tcp 10.0.0.1:1->10.0.0.2:443: unexpected EOF",
             "context deadline exceeded (Client.Timeout exceeded while awaiting headers)",
         )
         permanent = (
@@ -194,6 +217,11 @@ class ClassifierTests(unittest.TestCase):
             "gh: Validation Failed (HTTP 422)", "unauthorized: authentication required",
             "denied: permission_denied: write_package", "manifest unknown",
             "Reference already exists (HTTP 422) after timeout",
+            # A local archive cut short is damaged, not a network blip.
+            "unexpected EOF", "archive/tar: unexpected EOF",
+            "copying system image: reading blob sha256:abc: unexpected EOF",
+            # Text carries no headers, so a 403 is never read as throttling.
+            "You have exceeded a secondary rate limit (HTTP 403)", "API rate limit exceeded (HTTP 403)",
         )
         for text in transient:
             with self.subTest(text=text):

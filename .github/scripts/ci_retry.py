@@ -48,21 +48,49 @@ class WriteConflict(PermanentError):
     """A write's target holds a value this write did not produce."""
 
 
-def http_status(code):
-    """Timeouts, throttling and server errors are transient; other statuses are not."""
-    return TRANSIENT if code in (408, 425, 429) or 500 <= code <= 599 else PERMANENT
+def header(headers, name):
+    """A header value from raw `Name: value` lines or a mapping, matched case-insensitively."""
+    if isinstance(headers, str):
+        rows = (line.partition(":")[::2] for line in headers.splitlines())
+    elif hasattr(headers, "items"):
+        rows = headers.items()
+    else:
+        return None
+    for key, value in rows:
+        if str(key).strip().lower() == name:
+            return str(value).strip()
+    return None
+
+
+def throttled(headers):
+    """Only explicit signals: a Retry-After header or an exhausted rate-limit quota."""
+    return header(headers, "retry-after") is not None or header(headers, "x-ratelimit-remaining") == "0"
+
+
+def http_status(code, headers=None):
+    """Timeouts, throttling and server errors are transient; other statuses are not.
+
+    A 403 is throttling only when its headers say so; its message text never decides.
+    """
+    if code in (408, 425, 429) or 500 <= code <= 599:
+        return TRANSIENT
+    return TRANSIENT if code == 403 and throttled(headers) else PERMANENT
 
 
 STATUS = re.compile(r"(?:\bHTTP(?:/[0-9.]+)?|\b(?<!exit )status(?:[ _]?code)?|returned error)\s*[:=]?\s*\(?([1-5][0-9]{2})\b",
                     re.IGNORECASE)
-THROTTLED = re.compile(r"secondary rate limit|too ?many ?requests", re.IGNORECASE)
 TRANSPORT = re.compile("|".join((
     r"connection (?:reset|refused|aborted|closed)", r"broken pipe", r"timed? ?out", r"deadline exceeded",
-    r"\beof\b", r"temporary failure", r"no such host", r"could not resolve", r"server misbehaving",
-    r"network is unreachable", r"no route to host", r"tls handshake", r"ssl_error_syscall", r"gnutls",
-    r"http2:", r"goaway", r"stream error", r"error connecting to", r"hung up unexpectedly",
+    r"temporary failure", r"no such host", r"could not resolve", r"server misbehaving",
+    r"network is unreachable", r"no route to host", r"tls handshake", r"bad record mac", r"ssl_error_syscall",
+    r"gnutls", r"http2:", r"goaway", r"stream error", r"error connecting to", r"hung up unexpectedly",
     r"use of closed network connection", r"rpc failed", r"bad gateway", r"service unavailable", r"gateway time-?out",
+    r"too ?many ?requests",
 )), re.IGNORECASE)
+# A truncated stream is transport only when the message names the remote end;
+# the same words from reading a local archive mean the file itself is damaged.
+EOF = re.compile(r"\beof\b", re.IGNORECASE)
+REMOTE = re.compile(r"https?://|\btcp\b|\btls:", re.IGNORECASE)
 
 
 def cli_message(text):
@@ -74,11 +102,12 @@ def cli_message(text):
     text = text[-SCAN_LIMIT:]
     codes = [int(code) for code in STATUS.findall(text)]
     if codes:
-        # An HTTP response arrived; its status decides, except for throttling
-        # that GitHub reports as 403.
-        transient = any(http_status(code) == TRANSIENT for code in codes) or THROTTLED.search(text)
-        return TRANSIENT if transient else PERMANENT
-    return TRANSIENT if TRANSPORT.search(text) or THROTTLED.search(text) else PERMANENT
+        # An HTTP response arrived; its status decides. Text carries no headers,
+        # so a 403 here is never read as throttling.
+        return TRANSIENT if any(http_status(code) == TRANSIENT for code in codes) else PERMANENT
+    if TRANSPORT.search(text) or (EOF.search(text) and REMOTE.search(text)):
+        return TRANSIENT
+    return PERMANENT
 
 
 def cli_cause(text):
@@ -86,9 +115,9 @@ def cli_cause(text):
     return TransientError() if cli_message(text) == TRANSIENT else None
 
 
-def status_cause(code):
-    """A cause for `raise Refusal(...) from status_cause(code)`; None when permanent."""
-    return TransientError() if http_status(code) == TRANSIENT else None
+def status_cause(code, headers=None):
+    """A cause for `raise Refusal(...) from status_cause(code, headers)`; None when permanent."""
+    return TransientError() if http_status(code, headers) == TRANSIENT else None
 
 
 TRANSIENT_ERRNOS = frozenset(getattr(errno, name) for name in (
@@ -109,7 +138,7 @@ def classify(error):
         if isinstance(error, TransientError):
             return TRANSIENT
         if isinstance(error, urllib.error.HTTPError):
-            return http_status(error.code)
+            return http_status(error.code, error.headers)
         if isinstance(error, urllib.error.URLError):
             # A URLError wraps the transport exception; a text reason is a usage error.
             if not isinstance(error.reason, BaseException):

@@ -63,11 +63,11 @@ class GitHub:
             tag = self.local_tags(path)
             if tag is not None:
                 return tag
+        require(payload is None or not allow_not_found, "Optional GitHub reads cannot write")
+        # Reads ask for the status line and headers, the only explicit throttling signal.
         args = ["gh", "api", "--hostname", "github.com", "-H", "Accept: application/vnd.github+json",
-                "-H", "X-GitHub-Api-Version: 2022-11-28", "repos/" + REPOSITORY + "/" + path]
-        if allow_not_found:
-            require(payload is None, "Optional GitHub reads cannot write")
-            args += ["--include", "--method", "GET"]
+                "-H", "X-GitHub-Api-Version: 2022-11-28", *(["--include", "--method", "GET"] if payload is None else []),
+                "repos/" + REPOSITORY + "/" + path]
         if payload is not None:
             args += ["--method", method or "POST", "--input", "-"]
 
@@ -100,16 +100,20 @@ class GitHub:
         require(len(data) <= 16 * 1024 * 1024, "GitHub API request failed")
         # Only gh's diagnostic can tell a transport failure from a refusal.
         diagnostic = getattr(result, "stderr", None)
-        if allow_not_found:
-            headers, separator, data = data.replace("\r\n", "\n").partition("\n\n")
-            status = headers.split("\n", 1)[0]
-            if not (separator and matches(r"HTTP/[0-9.]+ [1-5][0-9]{2}(?: [^\r\n]*)?", status)):
-                if result.returncode != 0:
-                    # No HTTP response arrived at all.
-                    raise Refusal("GitHub API request failed") from ci_retry.cli_cause(diagnostic)
-                raise Refusal("GitHub API response is invalid")
-            code = int(status.split(" ", 2)[1])
-            if code == 404 and result.returncode == 1:
+        code = headers = None
+        if payload is None:
+            head, separator, body = data.replace("\r\n", "\n").partition("\n\n")
+            status = head.split("\n", 1)[0]
+            if separator and matches(r"HTTP/[0-9.]+ [1-5][0-9]{2}(?: [^\r\n]*)?", status):
+                code, headers, data = int(status.split(" ", 2)[1]), head, body
+            elif result.returncode != 0:
+                # No HTTP response arrived at all.
+                raise Refusal("GitHub API request failed") from ci_retry.cli_cause(diagnostic)
+            else:
+                # gh prints a status line for every response; only a missing 404 needs one.
+                require(not allow_not_found, "GitHub API response is invalid")
+        if code is not None:
+            if code == 404 and allow_not_found and result.returncode == 1:
                 try:
                     error = json.loads(data)
                 except (TypeError, ValueError) as error:
@@ -118,7 +122,7 @@ class GitHub:
                         "GitHub API response is invalid")
                 raise GitHubNotFound("GitHub resource was not found")
             if code != 200:
-                raise Refusal("GitHub API request failed") from ci_retry.status_cause(code)
+                raise Refusal("GitHub API request failed") from ci_retry.status_cause(code, headers)
         if result.returncode != 0:
             raise Refusal("GitHub API request failed") from ci_retry.cli_cause(diagnostic)
         try:
