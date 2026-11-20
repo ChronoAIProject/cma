@@ -11,7 +11,11 @@ use std::sync::Mutex;
 use tower::ServiceExt;
 
 #[derive(Default)]
-struct Store(Mutex<Vec<Option<SubjectId>>>);
+struct Store(
+    Mutex<Vec<Option<SubjectId>>>,
+    Mutex<Vec<PageRequest>>,
+    Mutex<Vec<SandboxId>>,
+);
 
 #[test]
 fn retained_terminal_rows_project_stopped_compute_without_discarding_disk_or_totals() {
@@ -61,15 +65,37 @@ pub(crate) fn router() -> Router {
 }
 #[async_trait]
 impl SandboxUsageStore for Store {
-    async fn usage(&self, _: &SandboxId) -> Result<Option<SandboxUsage>, SandboxStoreError> {
-        Ok(None)
+    async fn usage(&self, id: &SandboxId) -> Result<Option<SandboxUsage>, SandboxStoreError> {
+        self.2.lock().unwrap().push(id.clone());
+        Ok((id.as_str() == "known").then(|| SandboxUsage {
+            sandbox_id: id.clone(),
+            owner: SubjectId("owner".into()),
+            name: "Usage fixture".into(),
+            status: "paused".into(),
+            allocation: Allocation {
+                running: false,
+                cpu_millis: 0,
+                memory_mib: 0,
+                disk_gib: 0,
+            },
+            created_at: 100,
+            tracking_started_at: 100,
+            last_observed_at: 100,
+            source_seq: 1,
+            source_revision: 1,
+            revision: 1,
+            has_started: false,
+            complete_lifecycle: true,
+            totals: UsageTotals::default(),
+        }))
     }
     async fn usage_page(
         &self,
         owner: Option<&SubjectId>,
-        _: &PageRequest,
+        page: &PageRequest,
     ) -> Result<Page<SandboxUsage>, SandboxStoreError> {
         self.0.lock().unwrap().push(owner.cloned());
+        self.1.lock().unwrap().push(page.clone());
         Ok(Page {
             items: vec![],
             next: None,
@@ -96,10 +122,15 @@ impl SandboxUsageStore for Store {
     }
     async fn usage_events(
         &self,
-        _: &SandboxId,
-        _: &PageRequest,
+        id: &SandboxId,
+        page: &PageRequest,
     ) -> Result<Page<UsageEvent>, SandboxStoreError> {
-        panic!("history must not be read for an unknown Sandbox")
+        assert_eq!(id.as_str(), "known");
+        self.1.lock().unwrap().push(page.clone());
+        Ok(Page {
+            items: vec![],
+            next: None,
+        })
     }
 }
 
@@ -218,4 +249,141 @@ async fn admin_filter_and_pagination_are_validated_at_the_http_boundary() {
         );
     }
     assert_eq!(store.0.lock().unwrap().len(), 2);
+}
+
+async fn invalid_query(response: Response) {
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/problem+json"
+    );
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 16384).await.unwrap()).unwrap();
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+            "title": "invalid_query",
+            "status": 400,
+            "detail": "Use a valid cursor and a limit from 1 through 200.",
+            "code": "invalid_query"
+        })
+    );
+}
+
+#[tokio::test]
+async fn pagination_query_refusals_are_fixed_problems_before_store_reads() {
+    let store = Arc::new(Store::default());
+    for path in [
+        "/api/v1/usage/sandboxes",
+        "/api/v1/admin/usage/sandboxes",
+        "/api/v1/usage/sandboxes/known/events",
+    ] {
+        for query in [
+            "limit=-1",
+            "limit=0",
+            "limit=201",
+            "limit=65536",
+            "limit=abc",
+            "unknown=private-input",
+        ] {
+            invalid_query(
+                call(
+                    &format!("{path}?{query}"),
+                    Some(&[Capability::UseOwnSandboxes, Capability::ReadAllSandboxes]),
+                    store.clone(),
+                )
+                .await,
+            )
+            .await;
+        }
+    }
+    assert!(store.0.lock().unwrap().is_empty());
+    assert!(store.1.lock().unwrap().is_empty());
+    assert!(store.2.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn usage_pagination_preserves_boundaries_default_and_cursor() {
+    for path in [
+        "/api/v1/usage/sandboxes",
+        "/api/v1/admin/usage/sandboxes",
+        "/api/v1/usage/sandboxes/known/events",
+    ] {
+        let store = Arc::new(Store::default());
+        for (query, limit) in [("", 50), ("limit=1&", 1), ("limit=200&", 200)] {
+            let response = call(
+                &format!("{path}?{query}cursor=retained-cursor"),
+                Some(&[Capability::UseOwnSandboxes, Capability::ReadAllSandboxes]),
+                store.clone(),
+            )
+            .await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                store.1.lock().unwrap().last(),
+                Some(&PageRequest {
+                    limit,
+                    cursor: Some("retained-cursor".into()),
+                })
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn admin_summary_refuses_malformed_queries_without_adding_pagination() {
+    let store = Arc::new(Store::default());
+    let admin = Some(&[Capability::ReadAllSandboxes][..]);
+    for query in [
+        "limit=-1",
+        "limit=65536",
+        "limit=abc",
+        "unknown=private-input",
+    ] {
+        invalid_query(
+            call(
+                &format!("/api/v1/admin/usage?{query}"),
+                admin,
+                store.clone(),
+            )
+            .await,
+        )
+        .await;
+    }
+    assert!(store.0.lock().unwrap().is_empty());
+    for limit in [0, 201, 65535] {
+        let response = call(
+            &format!("/api/v1/admin/usage?limit={limit}&owner=another-owner"),
+            admin,
+            store.clone(),
+        )
+        .await;
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+    assert_eq!(
+        *store.0.lock().unwrap(),
+        vec![Some(SubjectId("another-owner".into())); 3]
+    );
+    assert!(store.1.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn malformed_usage_queries_preserve_authentication_precedence() {
+    let store = Arc::new(Store::default());
+    for path in [
+        "/api/v1/usage/sandboxes",
+        "/api/v1/admin/usage/sandboxes",
+        "/api/v1/usage/sandboxes/known/events",
+        "/api/v1/admin/usage",
+    ] {
+        let response = call(&format!("{path}?limit=-1"), None, store.clone()).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            response.headers()[header::CONTENT_TYPE],
+            "application/problem+json"
+        );
+    }
+    assert!(store.0.lock().unwrap().is_empty());
+    assert!(store.1.lock().unwrap().is_empty());
+    assert!(store.2.lock().unwrap().is_empty());
 }

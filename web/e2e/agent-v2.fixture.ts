@@ -146,6 +146,11 @@ export class LocalAgentV2 {
     this.holdInput = false;
   }
 
+  /** Whether the app has requested a held snapshot page that is not yet released. */
+  get snapshotPending() {
+    return this.pendingSnapshot !== undefined;
+  }
+
   releaseSnapshot() {
     if (!this.pendingSnapshot) throw new Error('No snapshot page is pending');
     this.json(this.pendingSnapshot, this.snapshot(this.items.slice(1)));

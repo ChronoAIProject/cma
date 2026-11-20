@@ -16,6 +16,7 @@ import { AgentProvisioningProgress } from './AgentProvisioningProgress';
 import { TaskComposer } from './TaskComposer';
 import { RunTargetMenu } from './RunTargetMenu';
 import { RepositoryChip } from './RepositoryChip';
+import { RepositoryPreparationHelp } from './RepositoryPreparationHelp';
 import { TaskTemplates } from './TaskTemplates';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { useTaskExperience } from '../taskExperience';
@@ -439,6 +440,12 @@ function TaskHomeContent({
           environments and check capacity before starting again.
         </p>
       ) : null}
+      <RepositoryPreparationHelp
+        client={client}
+        viewerId={viewerId}
+        intent={intent}
+        operation={operation}
+      />
       {intent?.receipt && operation?.status === 'failed' ? (
         <Button
           disabled={quotaFailed && capacityUnavailable}

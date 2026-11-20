@@ -3,8 +3,11 @@ import subprocess
 import tempfile
 import unittest
 
+import selection
+import test_batch_selection
+
 from image_inputs import changed_images
-from policy import Workspace
+from policy import SHARED, Workspace
 from selection import changed_paths, comparison, snapshot
 import test_images
 from test_policy import metadata
@@ -101,6 +104,45 @@ class SnapshotTests(unittest.TestCase):
             self.assertEqual(changed_images([workflow], snapshots), [])
             self.write(workflow, (self.root / workflow).read_text().replace('FOO=one', 'FOO=two'))
             self.assertEqual(changed_images([workflow], snapshots), [])
+
+
+class CIEventSelectionTests(unittest.TestCase):
+    setUp = test_batch_selection.BatchTests.setUp
+    write = test_batch_selection.BatchTests.write
+    pin_recipes = test_batch_selection.BatchTests.pin_recipes
+    git = test_batch_selection.BatchTests.git
+    commit = test_batch_selection.BatchTests.commit
+
+    def test_ci_full_events_keep_cd_and_develop_pr_selective(self):
+        before = self.third
+        self.write('api/crates/cmaeg/src/lib.rs', 'pub fn changed() {}')
+        release_base = self.commit()
+        self.write('web/src/main.tsx', 'export const app = 2;')
+        head = self.commit()
+        repository = 'example/repository'
+        push = {'repository': {'full_name': repository}, 'ref': 'refs/heads/develop',
+                'before': before, 'after': head, 'deleted': False}
+        pull = {'number': 7, 'repository': {'full_name': repository}, 'pull_request': {
+            'base': {'ref': 'develop', 'sha': release_base, 'repo': {'full_name': repository}},
+            'head': {'ref': 'feature', 'sha': head, 'repo': {'full_name': repository}}}}
+        cd = selection.determine(self.root, push, 'push')
+        selective = selection.determine_ci(self.root, pull, 'pull_request', repository)
+        self.assertEqual(selective, selection.determine(self.root, pull, 'pull_request'))
+        self.assertFalse(selective['am'])
+        self.assertEqual(cd['deployables'], ['cma-web'])
+        self.assertFalse(cd['eg'])
+        pull['pull_request']['base']['ref'] = 'main'
+        pull['pull_request']['head']['ref'] = 'develop'
+        for event, name in [(push, 'push'), (pull, 'pull_request')]:
+            with self.subTest(event=name):
+                result = selection.determine_ci(self.root, event, name, repository)
+                baseline = selection.determine(self.root, event, name)
+                self.assertEqual(result['deployables'], baseline['deployables'])
+                self.assertEqual(result['test_tracks'], dict(repo=True, am=True, eg=True, web=True))
+                self.assertEqual(result['head'], head)
+                for track in ('am', 'eg'):
+                    self.assertEqual(result[track + '_packages'], sorted(Workspace(metadata(self.root), self.root).owned[track] | SHARED))
+        self.assertEqual(selection.determine(self.root, push, 'push'), cd)
 
 
 if __name__ == '__main__':

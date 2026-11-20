@@ -127,3 +127,90 @@ impl Source {
         };
     }
 }
+
+#[tokio::test]
+async fn semantic_counter_normal_response() {
+    assert_semantic_counter(false).await;
+}
+
+#[tokio::test]
+async fn semantic_counter_snapshot_failure() {
+    assert_semantic_counter(true).await;
+}
+
+async fn assert_semantic_counter(failure: bool) {
+    let f = super::fixture().await;
+    let input = Some(json!({"conversation":"agt_composed", "input":"question", "stream":true}));
+    let initial = f
+        .router
+        .clone()
+        .oneshot(request(
+            Method::POST,
+            "/api/v2/responses",
+            "owner",
+            input.clone(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(initial.status(), StatusCode::OK);
+    drop(initial);
+    if failure {
+        bind(&f).await;
+        f.source.fail.store(true, SeqCst);
+    } else {
+        let command = f
+            .store
+            .command_work_page(&layer2_core::sandbox::store::PageRequest::default())
+            .await
+            .unwrap()
+            .items
+            .remove(0);
+        f.store
+            .reject_unclaimed_command(
+                &command.receipt.envelope.command_id,
+                command.revision,
+                CommandFailureCode::AuthorityRevoked,
+                layer2_core::now_rfc3339(),
+            )
+            .await
+            .unwrap();
+    }
+    let recorder = metrics_exporter_prometheus::PrometheusBuilder::new().build_recorder();
+    let metrics = recorder.handle();
+    let _recording = metrics::set_default_local_recorder(&recorder);
+    let app = f
+        .router
+        .clone()
+        .layer(axum::middleware::from_fn(crate::telemetry::http::observe));
+    let response = app
+        .oneshot(request(Method::POST, "/api/v2/responses", "owner", input))
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .unwrap();
+    let wire = std::str::from_utf8(&bytes).unwrap();
+    let reason = if failure {
+        assert!(wire.contains("response_observation_unavailable"));
+        assert!(!wire.lines().any(|line| line.starts_with("id:")));
+        "dependency_error"
+    } else {
+        assert!(wire.contains("response.failed"));
+        assert!(wire.contains("id: 1"));
+        "normal_terminal"
+    };
+    let text = metrics.render();
+    assert!(text.contains("cma_sse_contract_opened_total{stream_kind=\"responses_v2\",consumer=\"unknown\",protocol=\"responses\"} 1"), "{text}");
+    assert!(text.contains(&format!("cma_sse_contract_closed_total{{stream_kind=\"responses_v2\",consumer=\"unknown\",protocol=\"responses\",reason=\"{reason}\"}} 1")), "{text}");
+    assert!(text.contains(
+        "cma_sse_observation_closed_total{route=\"/api/v2/responses\",reason=\"eof\"} 1"
+    ));
+    for private in [
+        "agt_composed",
+        "fixture-credential",
+        "response source unavailable",
+    ] {
+        assert!(!text.contains(private));
+    }
+}
