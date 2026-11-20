@@ -34,7 +34,14 @@ async fn cold_reports_wake_workers_and_complete_in_first_response() {
         );
         assert_eq!(first.0, 200, "{:?}", first.1);
         assert_eq!(coalesced.0, 200, "{:?}", coalesced.1);
-        assert_eq!(first.1["report_id"], coalesced.1["report_id"]);
+        let admitted_at = first.1["as_of"].as_u64().unwrap();
+        let coalesced_at = coalesced.1["as_of"].as_u64().unwrap();
+        // Public requests can straddle the legacy admission-minute boundary.
+        if admitted_at / 60 == coalesced_at / 60 {
+            assert_eq!(first.1["report_id"], coalesced.1["report_id"]);
+        } else {
+            assert_ne!(first.1["report_id"], coalesced.1["report_id"]);
+        }
         assert_eq!(first.1["status"], "ready");
         assert_eq!(first.1["summary"]["sandbox_count"], 24);
         let id = first.1["report_id"].as_str().unwrap();
@@ -64,9 +71,21 @@ async fn cold_reports_wake_workers_and_complete_in_first_response() {
         let elapsed = started.elapsed();
         eprintln!("local admin report + 24 rows + CPU series: {elapsed:?}");
         assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
-        let cached = request(&store, "POST", BASE, "operator", true, query).await;
-        assert_eq!(cached.0, 200);
-        assert_eq!(cached.1["report_id"], first.1["report_id"]);
+        // Cache identity is scoped to the original admission minute, not the
+        // wall clock after the HTTP reads and report generation have completed.
+        let cached = store
+            .submit(
+                scope("operator", true),
+                serde_json::from_value::<ReportInput>(query)
+                    .unwrap()
+                    .validate(admitted_at)
+                    .unwrap(),
+                admitted_at,
+            )
+            .await
+            .unwrap();
+        assert_eq!(cached.status, ReportStatus::Ready);
+        assert_eq!(cached.report_id, id);
         assert_eq!(
             request(
                 &store,
