@@ -10,6 +10,7 @@ import subprocess
 import sys
 import tempfile
 
+from ci_events import full_ci_required
 from image_inputs import NAMES, changed_input_maps, image_inputs, recipes, validate_recipe_sources
 from git_comparison import check_sha, comparison_details, git
 from policy import Workspace, select
@@ -119,15 +120,32 @@ def determine(root, event, event_name):
     return result
 
 
+def determine_ci(root, event, event_name, repository):
+    full = full_ci_required(event, event_name, repository)
+    result = determine(root, event, event_name)
+    if full:
+        with snapshot(root, result['head']) as tree:
+            coverage = select([], workspace(tree), force_all=True)
+        for key in ('repo', 'am', 'eg', 'web', 'am_packages', 'eg_packages'):
+            result[key] = coverage[key]
+        result['test_tracks'] = {key: result[key] for key in ('repo', 'am', 'eg', 'web')}
+        result['reasons'] = sorted(set(result['reasons']) | {'full-ci-event'})
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--root', type=Path, default=Path.cwd())
     parser.add_argument('--event', type=Path, default=os.environ.get('GITHUB_EVENT_PATH'))
     parser.add_argument('--event-name', default=os.environ.get('GITHUB_EVENT_NAME'))
+    parser.add_argument('--ci', action='store_true', help='enforce CI event and full coverage policy')
     args = parser.parse_args()
     try:
         event = json.loads(args.event.read_text()) if args.event else {}
-        result = determine(args.root.resolve(), event, args.event_name)
+        if args.ci:
+            result = determine_ci(args.root.resolve(), event, args.event_name, os.environ['GITHUB_REPOSITORY'])
+        else:
+            result = determine(args.root.resolve(), event, args.event_name)
     except (KeyError, TypeError, ValueError, subprocess.SubprocessError, OSError):
         # An image-analysis failure must never become a successful empty list.
         # Suppress subprocess output, which may contain arbitrary PR content.

@@ -32,6 +32,9 @@ class BoundaryTests(unittest.TestCase):
         for value in [None, "a\\b", "a\x00b", "/absolute", "a/../escape"]:
             with self.assertRaises(ScanError):
                 archive_path(value)
+        for value in [None, "a\x00b", "/absolute", "a/../escape"]:
+            with self.assertRaises(ScanError):
+                archive_path(value, posix_tar=True)
         with self.assertRaises(ScanError):
             copy_stream(io.BytesIO(b"too long"), self.root / "copy", 2)
         with self.assertRaises(ScanError):

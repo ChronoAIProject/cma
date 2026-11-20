@@ -53,6 +53,9 @@ jobs:
         name: "Public repository boundary"
         run: "ruby .github/scripts/check-public-tree.rb"
       -
+        name: "Nightly smoke workflow regressions"
+        run: "ruby .github/scripts/nightly-staging-workflow-tests.rb"
+      -
         name: "Root contains only permitted entries"
         run: |
           allowed=".git .github api web CLAUDE.md AGENTS.md CONTRIBUTING.md README.md .gitignore .dockerignore"

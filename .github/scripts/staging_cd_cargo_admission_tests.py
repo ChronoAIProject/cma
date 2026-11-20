@@ -346,17 +346,13 @@ class Contracts(unittest.TestCase):
         runner.assert_called_once()
 
     def test_job_permissions_failure_isolation_and_authority(self):
+        # The release workflows no longer call the cache budget; the entrypoint
+        # itself must still refuse any caller outside the develop release.
         cd = yaml.safe_load((ROOT / ".github/workflows/staging-cd.yml").read_text())["jobs"]
-        budget = cd["cargo_budget"]
-        self.assertTrue(budget["continue-on-error"])
-        self.assertEqual(budget["permissions"], {"actions": "read", "contents": "write"})
-        self.assertFalse(any("cargo_budget" in j.get("needs", []) for j in cd.values()))
-        self.assertEqual(budget["needs"], "allocate")
+        self.assertNotIn("cargo_budget", cd)
         publish_job = yaml.safe_load((ROOT / ".github/workflows/staging-release.yml").read_text())["jobs"]["publish"]
         self.assertEqual(publish_job["permissions"]["contents"], "read")
-        gate = next(s for s in publish_job["steps"] if s.get("id") == "cargo-headroom")
-        self.assertTrue(gate["continue-on-error"])
-        self.assertIn("publication.outputs.build-cache-key", gate["env"]["CARGO_SAVE_KEY"])
+        self.assertFalse(any(s.get("id") == "cargo-headroom" for s in publish_job["steps"]))
         for altered in (
             {"GITHUB_REPOSITORY": "other"},
             {"GITHUB_EVENT_NAME": "pull_request"},

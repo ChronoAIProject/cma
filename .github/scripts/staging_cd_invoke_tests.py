@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 from staging_cd_common import Refusal
 from staging_cd_checkout import checkout_path
 from staging_cd_runtime import run_private
-from staging_cd_clock import timestamp
+from staging_cd_clock import CONTROLLER_TOTAL_ENV, timestamp
 from staging_cd_receipts import canonical
 from staging_cd_receipts_tests import fixture_receipt
 from staging_cd_set import release_set
@@ -28,19 +28,33 @@ class InvokeTests(unittest.TestCase):
             with patch("staging_cd_clock.time.time", return_value=1010), \
                     patch.object(invoke, "run_process", return_value=10) as process:
                 self.assertEqual(invoke.execute(script, Path(directory) / "input", "bootstrap", timestamp(1000), {}), 20)
-                self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}), 10)
+                self.assertEqual(process.call_args.args[1][CONTROLLER_TOTAL_ENV], "600")
                 self.assertEqual(process.call_args.args[2], 590)
+                self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}), 10)
+                self.assertEqual(process.call_args.args[1][CONTROLLER_TOTAL_ENV], "990")
+                self.assertEqual(process.call_args.args[2], 980)
                 self.assertEqual(process.call_args.kwargs["grace_seconds"], 15)
                 process.return_value = 1
                 self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}), 20)
             for private_code in (0, 20, 30, -9):
-                with patch("staging_cd_clock.time.time", return_value=1590), patch.object(
+                with patch("staging_cd_clock.time.time", return_value=1980), patch.object(
                         invoke, "run_process", side_effect=invoke.ProcessTimeout("fixture", 10, private_code)):
                     self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}),
                                      30 if private_code == 30 else 20)
-            with patch("staging_cd_clock.time.time", side_effect=[1590, 1601]), \
+            with patch("staging_cd_clock.time.time", side_effect=[1980, 1991]), \
                     patch.object(invoke, "run_process", return_value=0):
                 self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}), 20)
+
+    def test_release_watchdog_accepts_a_result_after_the_legacy_cutoff(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {CONTROLLER_TOTAL_ENV: "600"}
+            with patch("staging_cd_clock.time.time", side_effect=[1010, 1670]), \
+                    patch.object(invoke, "run_process", return_value=0) as child:
+                self.assertEqual(invoke.execute(root / "staging/scripts/deploy_set.py", root / "input",
+                                               "release", timestamp(1000), env), 0)
+            self.assertEqual(child.call_args.args[1][CONTROLLER_TOTAL_ENV], "990")
+            self.assertEqual(env[CONTROLLER_TOTAL_ENV], "600")
 
     def test_release_file_permissions_exact_schema_and_cleanup_on_unknown_outcome(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -212,7 +226,7 @@ class InvokeTests(unittest.TestCase):
                 output = io.StringIO()
                 with patch.dict(os.environ, env, clear=True), patch.object(invoke, "deploy", side_effect=operation), contextlib.redirect_stdout(output):
                     if case.startswith("late"):
-                        clock = iter((20.0, 601.0, 601.0))
+                        clock = iter((20.0, 991.0, 991.0))
                         with patch.object(invoke, "elapsed", side_effect=lambda _: next(clock)):
                             self.assertEqual(invoke.main(), 20)
                     else:

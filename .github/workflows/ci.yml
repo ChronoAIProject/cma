@@ -1,8 +1,12 @@
 name: "CI"
 on:
+  push:
+    branches:
+      - "develop"
   pull_request:
     branches:
       - "develop"
+      - "main"
     types:
       - "opened"
       - "reopened"
@@ -54,7 +58,7 @@ jobs:
       -
         name: "Select from changed paths and Cargo dependencies"
         id: "select"
-        run: "python3 -B .github/scripts/ci_tracks/selection.py"
+        run: "python3 -B .github/scripts/ci_tracks/selection.py --ci"
   version-label:
     permissions:
       contents: "read"

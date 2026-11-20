@@ -29,6 +29,13 @@ def digest(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def content_image(path, payload):
+    # The same synthetic image exercises content resolution for web and runtime.
+    entries = [("etc/example.pem", payload), ("etc/machine-id", b""),
+               ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))]
+    return docker_archive(path, [tar_bytes(entries)])
+
+
 def finding(path, payload=None, **changes):
     row = {"scope": "layer", "image": 0, "layer": 0, "entry": 0, "path": path_hash(path),
            "rule": "path.key-or-certificate"}
@@ -48,10 +55,10 @@ class ContentPolicyTests(unittest.TestCase):
         self.output = self.root / "scan"
         self.payload = b"synthetic public payload"
         self.item = finding("etc/example.pem", self.payload)
-        config = docker_archive(self.archive, [tar_bytes([("etc/example.pem", self.payload)])])
+        config = content_image(self.archive, self.payload)
         files = [SCANNER / "scan-image-secrets.sh", SCANNER / "scan_image_secrets.py"]
         files += sorted((SCANNER / "image_secrets").glob("*.py"))
-        self.report = {"schema": "image-secret-scan-v1", "scanner_version": "1.0.3", "gitleaks_version": "8.30.1",
+        self.report = {"schema": "image-secret-scan-v1", "scanner_version": "1.0.4", "gitleaks_version": "8.30.1",
                        "complete": True, "input_kind": "archive", "archive_sha256": gate.checksum(self.archive),
                        "findings": [self.item], "allowlisted": [], "exit_code": 1,
                        "scanner_files": {str(p.relative_to(SCANNER)): gate.checksum(p) for p in files},
@@ -62,14 +69,17 @@ class ContentPolicyTests(unittest.TestCase):
         self.entry = {"component": "web", "scope": "layer", "path": "etc/example.pem", "file_sha256": digest(self.payload),
                       "candidate_sha256": digest(self.payload), "rule": self.item["rule"],
                       "classification": "public-material", "reason": "Synthetic fixture only"}
-        self.catalog = {"schema": "cma-image-content-policy-v1", "scanner_version": "1.0.3",
+        self.catalog = {"schema": "cma-image-content-policy-v1", "scanner_version": "1.0.4",
                         "gitleaks_version": "8.30.1", **self.report["policy"], "entries": [self.entry]}
         self.catalog_path = self.root / "catalog.json"
         self.catalog_path.write_text(json.dumps(self.catalog))
 
-    def scanner(self, *_args):
+    def scanner(self, *args):
         self.output.mkdir()
-        (self.output / "REPORT.json").write_text(json.dumps(self.report))
+        report = copy.deepcopy(self.report)
+        if "--staging-runtime-component" in args:
+            report["policy"]["staging_runtime_component"] = args[args.index("--staging-runtime-component") + 1]
+        (self.output / "REPORT.json").write_text(json.dumps(report))
         raise gate.ScanRefusal("Synthetic findings", "scanner_findings")
 
     def test_complete_scan_resolves_exact_content_and_keeps_all_findings(self):
@@ -144,6 +154,16 @@ class ContentPolicyTests(unittest.TestCase):
             item = finding("etc/example.pem", entry=number)
             result = layer_identities(layer, {"target": ("file", digest(self.payload))}, {number: [item]})
             self.assertEqual(result.get(item["finding_id"]), expected)
+
+    def test_layer_resolution_keeps_backslash_and_plain_names_distinct(self):
+        escaped = r"usr/lib/systemd/system/example\x2dunit"
+        plain = "usr/lib/systemd/system/example-unit"
+        layer = self.root / "layer.tar"
+        layer.write_bytes(tar_bytes([(escaped, self.payload), (plain, b"other")]))
+        exact = finding(escaped, self.payload)
+        wrong = finding(plain, self.payload)
+        self.assertEqual(layer_identities(layer, {}, {0: [exact, wrong]}),
+                         {exact["finding_id"]: digest(self.payload)})
 
     def test_pax_credential_metadata_cannot_inherit_public_payload(self):
         layer = self.root / "layer.tar"

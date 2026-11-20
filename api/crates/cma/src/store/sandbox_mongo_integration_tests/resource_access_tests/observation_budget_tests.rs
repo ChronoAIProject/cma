@@ -15,6 +15,8 @@ mod serving;
 use serving::*;
 #[path = "observation_capacity_tests.rs"]
 mod observation_capacity;
+#[path = "observation_refresh_tests.rs"]
+mod observation_refresh;
 #[path = "response_shared_tests.rs"]
 mod response_shared;
 
