@@ -9,8 +9,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import ci_retry
 from staging_cd_build import build, command, identity, inspect, recipe, snapshot
 from staging_cd_common import Refusal
+from staging_cd_publication_diagnostics import ImageCommandRefusal
 from staging_cd_receipts import canonical, IDENTITY_LABEL
 from staging_cd_receipts_tests import fixture_identity
 from staging_cd_receipts_tests import fixture_receipt
@@ -78,6 +80,17 @@ class BuildTests(unittest.TestCase):
                 self.assertEqual(command(["build-tool"]), b"done")
                 self.assertNotIn("GH_TOKEN", child.call_args.kwargs["env"])
                 self.assertNotIn("NYXID_CHRONO_CD_KEY", child.call_args.kwargs["env"])
+
+    def test_failed_commands_mark_only_transport_failures_as_repeatable(self):
+        for stderr, expected in (("read: connection reset by peer", ci_retry.TRANSIENT),
+                                 ("received unexpected HTTP status: 503 Service Unavailable", ci_retry.TRANSIENT),
+                                 ("denied: permission_denied: write_package", ci_retry.PERMANENT),
+                                 ("Dockerfile parse error", ci_retry.PERMANENT)):
+            with self.subTest(stderr=stderr), self.assertRaises(ImageCommandRefusal) as raised:
+                command(["/bin/sh", "-c", 'printf "%s" "$0" >&2; exit 1', stderr], timeout=30)
+            self.assertEqual(ci_retry.classify(raised.exception), expected)
+            # The refusal keeps fixed text; the diagnostic is never part of it.
+            self.assertNotIn(stderr, str(raised.exception))
 
     def test_source_archive_rejects_links_and_parent_traversal(self):
         for name, kind in (("../outside", tarfile.REGTYPE), ("link", tarfile.SYMTYPE)):

@@ -10,6 +10,10 @@ from staging_cd_set import document
 from staging_cd_targets import TARGETS
 
 CONCLUSIONS = {"success", "failure", "skipped", "cancelled"}
+# A newer reservation's skip is handled: that newer run deploys. When an older
+# run finalized the same source first, no run is known to own the deployment
+# (a newer run may have planned around this one), so that skip always fails.
+DISPOSITIONS = frozenset({"reservation_superseded", "source_already_final"})
 
 
 def outcome(value):
@@ -17,7 +21,7 @@ def outcome(value):
 
 
 def summarize(env):
-    """True requires verified releases; None denotes a handled AM takeover."""
+    """True requires verified releases; None denotes a handled takeover."""
     changed, allocation = env["CD_PLAN_CHANGED"], env["CD_ALLOCATION_RESULT"]
     require(changed in ("true", "false"), "Plan outcome is missing")
     if changed == "false":
@@ -32,11 +36,14 @@ def summarize(env):
     if not lanes:
         return ["Allocation returned no component work."], True
 
-    disposition = env.get("CD_AM_DISPOSITION", "")
-    require(disposition in ("", "reservation_superseded"), "Unknown AM publication disposition")
-    superseded = disposition == "reservation_superseded"
-    require(not superseded or ("am" in lanes and not env.get("CD_FINALIZED_AM")),
-            "Superseded AM conflicts with finalization evidence")
+    superseded = {}
+    for c in sorted(TARGETS):
+        disposition = env.get("CD_DISPOSITION_" + c.upper().replace("-", "_"), "")
+        require(disposition == "" or disposition in DISPOSITIONS, "Unknown publication disposition")
+        if disposition:
+            require(c in lanes and not env.get("CD_FINALIZED_" + c.upper().replace("-", "_")),
+                    "Superseded publication conflicts with finalization evidence")
+            superseded[c] = disposition
     passed = env["CD_INFRASTRUCTURE_RESULT"] == "success"
     lines = ["| Component | Publish + finalize | Admit | Deploy job | Controller outcome |",
              "|---|---|---|---|---|"]
@@ -56,7 +63,7 @@ def summarize(env):
         payload = document(outputs["component_result"]) if outputs.get("component_result") else None
         states = payload["components"] if payload is not None else {}
         require(isinstance(states, dict) and states.keys() <= set(admitted), "Unexpected controller outcome")
-        if superseded and "am" in selected:
+        if superseded.keys() & selected:
             # A contract cannot promote partially. Check the other selected
             # publishers independently so supersession cannot conceal a failure.
             passed &= job["result"] == "skipped" and not any(outputs.values())
@@ -64,9 +71,9 @@ def summarize(env):
                 suffix = c.upper().replace("-", "_")
                 result = outcome(env["CD_PUBLISH_" + suffix])
                 passed &= result == "success"
-                if c == "am" and result == "success":
-                    result = disposition
-                elif c != "am":
+                if c in superseded and result == "success":
+                    result = superseded[c]
+                elif c not in superseded:
                     passed &= env.get("CD_FINALIZED_" + suffix) == "success"
                 lines.append(f"| {c} | {result} | {missing} | {missing} | unreported |")
             continue
@@ -82,10 +89,14 @@ def summarize(env):
             passed &= (publish in ("success", "retained") and job["result"] == "success"
                        and outputs.get("admit") == "success" and c in admitted and deploy == "success"
                        and state == "controller-verified")
-    if superseded:
-        lines.append("AM publication skipped: reservation_superseded. This run has no verified AM release.")
-        if passed:
-            return lines, None
+    for c, disposition in sorted(superseded.items()):
+        lines.append(f"{c} publication skipped: {disposition}. This run has no verified {c} release.")
+        if disposition == "source_already_final":
+            lines.append(f"{c}: an older run finalized this source. The next develop push resumes this "
+                         "group's final; push to deploy (a re-run allocates nothing once develop moves on).")
+            passed = False
+    if superseded and passed:
+        return lines, None
     return lines, passed
 
 

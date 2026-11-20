@@ -5,8 +5,8 @@ from staging_cd_allocation_io import TransientRead, UncertainPush, parallel_read
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical, parse_annotation
-from staging_cd_reservations import Reservations, outcome_ref, pending_name, validate_reservation
-from staging_cd_versions import DEPLOYABLES, FINISH_STARTED_BUILDS, version_tuple
+from staging_cd_reservations import Reservations, pending_name, validate_reservation
+from staging_cd_versions import DEPLOYABLES, version_tuple
 
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
 
@@ -163,14 +163,9 @@ class AllocationSnapshot(Reservations):
         if not self.planned:
             return
         refs, objects = {}, []
-        # A finalizer may still own the previous pending version. Whichever
-        # transaction first inserts its outcome decides whether it can finalize.
-        # A lane that finishes started builds leaves the outcome to its finalizer.
-        pending_versions = {(item["component"], item["version"]): item for item in self.pending}
-        for tag in self.finals:
-            identity = tag["receipt"]["identity"]
-            pending_versions.pop((identity["component"], identity["version"]), None)
-        contested = {}
+        # A finalizer may still own the previous pending version. Every lane
+        # lets a started build finish, so allocation never claims its outcome;
+        # only that finalizer writes it, atomically with the final tag.
         for value in self.planned:
             text = (f"object {value['source']}\ntype commit\ntag {pending_name(value)}\n"
                     "tagger github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 0 +0000\n\n"
@@ -180,12 +175,6 @@ class AllocationSnapshot(Reservations):
                     "Reservation object could not be created")
             name, oid = pending_name(value), result.stdout.strip()
             refs["refs/tags/" + name] = refs[claim_ref(value)] = oid
-            predecessor = pending_versions.get((value["component"], value["previous"]))
-            if predecessor is not None and value["component"] not in FINISH_STARTED_BUILDS:
-                ref = outcome_ref(value["component"], value["previous"])
-                refs[ref] = oid
-                contested[ref] = predecessor
-            pending_versions[(value["component"], value["version"])] = value
             objects.append((name, oid, value["component"]))
             self.progress(value["component"], "reservation-push")
         # Git commits all claims and reservations together. A losing worker
@@ -199,14 +188,14 @@ class AllocationSnapshot(Reservations):
             require(self.ref_oids(*refs) == refs, "Allocation write settlement is uncertain")
         else:
             if pushed.returncode:
-                self.check_conflict(refs, contested)
+                self.check_conflict(refs)
             else:
                 require(sum(line.startswith("*\t") and "[new tag]" in line for line in pushed.stdout.splitlines())
                         == len(refs), "An up-to-date push is not a new version reservation")
         parallel_read(lambda row: self.verify(*row), objects)
         self.pending.extend(self.planned)
 
-    def check_conflict(self, expected, contested):
+    def check_conflict(self, expected):
         # Ambiguous success must match the entire transaction. A proven foreign
         # successor allows replanning; absence or malformed evidence never does.
         actual = self.ref_oids(*expected)
@@ -225,19 +214,6 @@ class AllocationSnapshot(Reservations):
             require(winner["component"] == item["component"] and winner["previous"] == item["previous"]
                     and tag.get("tag") == pending_name(winner) and tag["object"].get("sha") == winner["source"],
                     "Allocation reservation readback differs")
-            raise AllocationConflict("Allocation reservation collision")
-        for ref, predecessor in contested.items():
-            oid = actual.get(ref)
-            if oid is None or oid == expected[ref]:
-                continue
-            # The old finalizer won before takeover. Only an immutable final
-            # matching both the outcome object and original owner allows replan.
-            component = predecessor["component"]
-            name = DEPLOYABLES[component] + "/v" + predecessor["version"]
-            final = "refs/tags/" + name
-            require(self.ref_oids(final).get(final) == oid, "Allocation reservation readback differs")
-            _, tag = self.annotation((component, "final", name, oid))
-            verify_final_owner(predecessor, tag)
             raise AllocationConflict("Allocation reservation collision")
         raise Refusal("Allocation reservation readback differs")
 
