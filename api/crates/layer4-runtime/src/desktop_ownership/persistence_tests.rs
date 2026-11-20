@@ -61,8 +61,7 @@ async fn confirmation_preserves_damaged_custody_after_join_with_or_without_prior
             let fixture = Fixture::new();
             let (release, wait) = tokio::sync::oneshot::channel();
             fixture
-                .receiver
-                .register(None, |_| async move {
+                .historical_stream(|_| async move {
                     let _ = wait.await;
                 })
                 .await

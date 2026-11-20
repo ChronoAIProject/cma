@@ -4,9 +4,9 @@ import json
 import os
 from pathlib import Path
 import sys
-import re
 import subprocess
 
+from ci_events import full_ci_required, repository_name
 from image_inputs import NAMES
 
 LABELS = frozenset({'version-upgrade:major', 'version-upgrade:minor', 'version-upgrade:patch'})
@@ -33,8 +33,7 @@ def selected_upgrade(event, images):
 
 
 def current_pull(event, repository):
-    if not isinstance(repository, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repository):
-        raise ValueError('invalid repository identity')
+    repository_name(repository)
     expected = event['pull_request']
     number = event['number']
     if type(number) is not int or number <= 0 or event['repository']['full_name'] != repository:
@@ -51,19 +50,24 @@ def current_pull(event, repository):
                 raise ValueError('PR base/head changed since this check event')
         if current[side]['repo']['full_name'] != expected[side]['repo']['full_name']:
             raise ValueError('PR source repository changed')
-    if current['base']['repo']['full_name'] != repository or current['base']['ref'] != 'develop':
-        raise ValueError('PR must target this repository develop branch')
+    full_ci_required(dict(event, pull_request=current), 'pull_request', repository)
     return current
 
 
 def main():
     try:
-        if os.environ['GITHUB_EVENT_NAME'] != 'pull_request' or os.environ['SELECTOR_RESULT'] != 'success':
-            raise ValueError('successful PR selection required')
+        if os.environ['SELECTOR_RESULT'] != 'success':
+            raise ValueError('successful CI selection required')
         event = json.loads(Path(os.environ['GITHUB_EVENT_PATH']).read_text())
         images = deployables(json.loads(os.environ['DEPLOYABLES']))
         print('Deployables: ' + (', '.join(images) or '(none)'))
-        current = current_pull(event, os.environ['GITHUB_REPOSITORY'])
+        event_name = os.environ['GITHUB_EVENT_NAME']
+        full = full_ci_required(event, event_name, os.environ['GITHUB_REPOSITORY'])
+        if event_name == 'pull_request':
+            current = current_pull(event, os.environ['GITHUB_REPOSITORY'])
+        if full:
+            print('Version policy: not applicable (develop push or develop-to-main release PR)')
+            return 0
         upgrade = selected_upgrade({'pull_request': current}, images)
     except (KeyError, OSError, TypeError, ValueError, subprocess.SubprocessError) as error:
         print(f'::error::Version label check failed: {error}')

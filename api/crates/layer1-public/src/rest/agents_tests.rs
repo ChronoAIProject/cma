@@ -10,6 +10,7 @@ mod lifecycle;
 mod lifecycle_templates;
 pub(super) mod message_feedback;
 mod models;
+mod pagination;
 mod settings;
 mod shared_settings;
 mod skills;

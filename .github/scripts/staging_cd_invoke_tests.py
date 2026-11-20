@@ -11,7 +11,7 @@ from unittest.mock import Mock, patch
 from staging_cd_common import Refusal
 from staging_cd_checkout import checkout_path
 from staging_cd_runtime import run_private
-from staging_cd_clock import timestamp
+from staging_cd_clock import CONTROLLER_TOTAL_ENV, timestamp
 from staging_cd_receipts import canonical
 from staging_cd_receipts_tests import fixture_receipt
 from staging_cd_set import release_set
@@ -28,19 +28,33 @@ class InvokeTests(unittest.TestCase):
             with patch("staging_cd_clock.time.time", return_value=1010), \
                     patch.object(invoke, "run_process", return_value=10) as process:
                 self.assertEqual(invoke.execute(script, Path(directory) / "input", "bootstrap", timestamp(1000), {}), 20)
-                self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}), 10)
+                self.assertEqual(process.call_args.args[1][CONTROLLER_TOTAL_ENV], "600")
                 self.assertEqual(process.call_args.args[2], 590)
+                self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}), 10)
+                self.assertEqual(process.call_args.args[1][CONTROLLER_TOTAL_ENV], "990")
+                self.assertEqual(process.call_args.args[2], 980)
                 self.assertEqual(process.call_args.kwargs["grace_seconds"], 15)
                 process.return_value = 1
                 self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}), 20)
             for private_code in (0, 20, 30, -9):
-                with patch("staging_cd_clock.time.time", return_value=1590), patch.object(
+                with patch("staging_cd_clock.time.time", return_value=1980), patch.object(
                         invoke, "run_process", side_effect=invoke.ProcessTimeout("fixture", 10, private_code)):
                     self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}),
                                      30 if private_code == 30 else 20)
-            with patch("staging_cd_clock.time.time", side_effect=[1590, 1601]), \
+            with patch("staging_cd_clock.time.time", side_effect=[1980, 1991]), \
                     patch.object(invoke, "run_process", return_value=0):
                 self.assertEqual(invoke.execute(script, Path(directory) / "input", "release", timestamp(1000), {}), 20)
+
+    def test_release_watchdog_accepts_a_result_after_the_legacy_cutoff(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = {CONTROLLER_TOTAL_ENV: "600"}
+            with patch("staging_cd_clock.time.time", side_effect=[1010, 1670]), \
+                    patch.object(invoke, "run_process", return_value=0) as child:
+                self.assertEqual(invoke.execute(root / "staging/scripts/deploy_set.py", root / "input",
+                                               "release", timestamp(1000), env), 0)
+            self.assertEqual(child.call_args.args[1][CONTROLLER_TOTAL_ENV], "990")
+            self.assertEqual(env[CONTROLLER_TOTAL_ENV], "600")
 
     def test_release_file_permissions_exact_schema_and_cleanup_on_unknown_outcome(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -132,7 +146,7 @@ class InvokeTests(unittest.TestCase):
                         return 30
                     runner.side_effect = refuse
 
-                def operation(values, masker, on_disabled, on_private_refusal, on_unverified):
+                def operation(values, masker, on_disabled, on_private_refusal, on_unverified, on_rolled_back):
                     return real_deploy(values, masker, reader, runner,
                                        policy_reader=policy, on_disabled=on_disabled, on_private_refusal=on_private_refusal)
 
@@ -212,7 +226,7 @@ class InvokeTests(unittest.TestCase):
                 output = io.StringIO()
                 with patch.dict(os.environ, env, clear=True), patch.object(invoke, "deploy", side_effect=operation), contextlib.redirect_stdout(output):
                     if case.startswith("late"):
-                        clock = iter((20.0, 601.0, 601.0))
+                        clock = iter((20.0, 991.0, 991.0))
                         with patch.object(invoke, "elapsed", side_effect=lambda _: next(clock)):
                             self.assertEqual(invoke.main(), 20)
                     else:
@@ -229,13 +243,71 @@ class InvokeTests(unittest.TestCase):
                             expected = "result recovery=unreported"
                         self.assertIn("FAIL verification=" + expected, text)
 
+    def test_verified_rollback_reports_only_an_allowlisted_release_token(self):
+        from staging_cd_receipts import sha256
+        real_deploy = invoke.deploy
+        for case, expected in (("bound", "pod-restarts"), ("missing", "unreported"),
+                               ("wrong-request", "unreported"), ("unknown", "unreported"),
+                               ("trailing", "unreported"), ("unsafe", "unreported"),
+                               ("bad-result", None), ("late", None)):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                env = self.environment(root)
+                summary = root / "summary"
+                env["GITHUB_STEP_SUMMARY"] = str(summary)
+
+                def runner(script, path, mode, started, child_env):
+                    self.assertEqual(child_env["CD_REPORT_REFUSAL"], "1")
+                    print("private-output-canary")
+                    digest = sha256(json.loads(path.read_text())) if case != "wrong-request" else "0" * 64
+                    if case == "bad-result":
+                        path.with_name("component-result.json").write_text("{}")
+                    value = digest + " pod-restarts unreported\n"
+                    if case == "unknown":
+                        value = value.replace("pod-restarts", "private-output-canary")
+                    if case == "trailing":
+                        value += "private-output-canary"
+                    # An older controller writes no packet on exit 10.
+                    if case != "missing":
+                        packet = path.with_name("verification-code")
+                        packet.write_text(value)
+                        packet.chmod(0o644 if case == "unsafe" else 0o600)
+                    return 10
+
+                def operation(values, masker, **callbacks):
+                    return real_deploy(values, masker, lambda _: root, runner,
+                                       policy_reader=lambda *a, **kw: ["web"], **callbacks)
+                output = io.StringIO()
+                with patch.dict(os.environ, env, clear=True), patch.object(invoke, "deploy", side_effect=operation), \
+                        contextlib.redirect_stdout(output):
+                    if case == "late":
+                        clock = iter((20.0, 991.0, 991.0))
+                        with patch.object(invoke, "elapsed", side_effect=lambda _: next(clock)):
+                            self.assertEqual(invoke.main(), 20)
+                    else:
+                        self.assertEqual(invoke.main(), 10 if expected else 20)
+                public = [line for line in output.getvalue().splitlines() if not line.startswith("::add-mask::")]
+                for text in (output.getvalue(), summary.read_text()):
+                    self.assertNotIn("private-output-canary", text)
+                    if expected is None:
+                        # A late or malformed exit 10 is unverified, never a rollback claim.
+                        self.assertNotIn("FAIL release=", text)
+                        self.assertIn("FAIL verification=" + ("phase-budget" if case == "late" else "result")
+                                      + " recovery=unreported", text)
+                    else:
+                        self.assertNotIn("FAIL verification=", text)
+                        self.assertIn(f"FAIL release={expected} recovery=verified", text.splitlines())
+                if expected is not None:
+                    self.assertEqual(public, ["FAIL", f"FAIL release={expected} recovery=verified"])
+                    self.assertIn(invoke.RESULTS[10], summary.read_text())
+
     def test_rollback_uncertainty_emits_fixed_operator_alert_and_preserves_revision_summary(self):
         with tempfile.TemporaryDirectory() as directory:
             env = self.environment(Path(directory))
             summary = Path(directory) / "summary"
             summary.write_text("Infrastructure revision: `" + "c" * 40 + "`\n")
             env["GITHUB_STEP_SUMMARY"] = str(summary)
-            def operation(_env, _masker, on_disabled, on_private_refusal, on_unverified):
+            def operation(_env, _masker, on_disabled, on_private_refusal, on_unverified, on_rolled_back):
                 return code if code in (0, 10, 20, 30, 40) else 20
             for code in (0, 10, 20, 30, 40, 1):
                 output = io.StringIO()
@@ -376,7 +448,7 @@ class InvokeTests(unittest.TestCase):
                     tools.assert_not_called()
 
     def test_disabled_main_exits_success_with_skip_summary_and_no_deployed_claim(self):
-        def operation(_env, _masker, on_disabled, on_private_refusal, on_unverified):
+        def operation(_env, _masker, on_disabled, on_private_refusal, on_unverified, on_rolled_back):
             on_disabled()
             return invoke.DISABLED
         with tempfile.TemporaryDirectory() as directory:

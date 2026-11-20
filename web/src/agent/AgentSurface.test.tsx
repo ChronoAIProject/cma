@@ -285,12 +285,12 @@ it('names the full lineage and exposes messages, approvals, tools, reasoning, us
   expect(screen.getByRole('heading', { name: 'Agent one' })).toBeInTheDocument();
   expect(screen.getByText('The repository is ready.')).toBeInTheDocument();
   expect(screen.queryByRole('button', { name: 'View activity' })).not.toBeInTheDocument();
-  await actor.click(screen.getByRole('button', { name: 'Typecheck' }));
+  await actor.click(screen.getByRole('button', { name: 'Typecheck Duration unavailable' }));
   const tool = screen.getByRole('article', { name: 'Tool call: Typecheck' });
   expect(within(tool).getByRole('img', { name: 'Completed' })).toBeInTheDocument();
   await actor.click(within(tool).getByRole('button', { name: /Typecheck/ }));
   expect(tool.querySelector('.tool-call__details pre')).toHaveTextContent('Typecheck');
-  expect(tool).not.toHaveTextContent(/duration/i);
+  expect(tool).toHaveTextContent('Duration unavailable');
   expect(screen.queryByText('Check the types.')).not.toBeInTheDocument();
   expect(screen.getByText('Conversation recovery')).toBeInTheDocument();
   expect(screen.getByRole('button', { name: /^Agent settings:/ })).toHaveAccessibleDescription(

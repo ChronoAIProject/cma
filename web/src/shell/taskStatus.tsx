@@ -8,7 +8,7 @@ import { statusTone } from '../vocabulary/status';
 export const taskWords = {
   loading: 'Loading activity',
   not_started: 'Ready to start',
-  completed: 'Completed',
+  completed: 'Turn ended',
   working: 'Working',
   waiting_approval: 'Waiting for approval',
   starting: 'Preparing',

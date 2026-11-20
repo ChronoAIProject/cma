@@ -30,8 +30,14 @@ class UncertainPush(Refusal):
     """A timed-out remote transaction may already have committed."""
 
 
+# Inventory reads grow with every published tag. At 30 s, hosted runs reached
+# the reservation push with less than the 7 s it requires and failed.
+ALLOCATION_SECONDS = 120
+
+
 class AllocationIO:
-    def __init__(self, runner=subprocess.run, *, clock=time.monotonic, sleep=time.sleep, seconds=30):
+    def __init__(self, runner=subprocess.run, *, clock=time.monotonic, sleep=time.sleep,
+                 seconds=ALLOCATION_SECONDS):
         self.runner, self.clock, self.sleep = runner, clock, sleep
         self.deadline = clock() + seconds
 

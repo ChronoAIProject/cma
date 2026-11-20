@@ -88,6 +88,41 @@ class VersionLabelContractTests(unittest.TestCase):
                     redirect_stdout(io.StringIO()):
                 self.assertEqual(version_label.main(), 1)
 
+    def test_release_pr_bypasses_upgrade_only_at_current_develop_to_main_identity(self):
+        self.pull['base']['ref'] = 'main'
+        self.pull['head']['ref'] = 'develop'
+        self.event['pull_request'] = copy.deepcopy(self.pull)
+        code, output = self.check([], self.pull)
+        self.assertEqual(code, 0)
+        self.assertIn('not applicable', output)
+        for side, field, value in [('base', 'ref', 'develop'), ('head', 'ref', 'feature'),
+                                   ('head', 'sha', 'c' * 40), ('base', 'sha', 'd' * 40),
+                                   ('head', 'repo', {'full_name': 'fork/repository'})]:
+            current = copy.deepcopy(self.pull)
+            current[side][field] = value
+            with self.subTest(side=side, field=field):
+                self.assertEqual(self.check([], current)[0], 1)
+        self.assertEqual(self.check([], dict(self.pull, state='closed'))[0], 1)
+
+    def test_push_policy_bypass_requires_valid_event_and_successful_selector(self):
+        push = {'repository': {'full_name': self.repository}, 'ref': 'refs/heads/develop',
+                'before': 'a' * 40, 'after': 'b' * 40, 'deleted': False}
+        self.event_path.write_text(json.dumps(push))
+        environment = dict(self.environment, GITHUB_EVENT_NAME='push', DEPLOYABLES='[]')
+        for changes, expected in [({}, 0), ({'SELECTOR_RESULT': 'failure'}, 1),
+                                   ({'SELECTOR_RESULT': 'skipped'}, 1), ({'DEPLOYABLES': 'null'}, 1),
+                                   ({'DEPLOYABLES': '["unknown"]'}, 1), ({'GITHUB_EVENT_NAME': 'schedule'}, 1),
+                                   ({'GITHUB_REPOSITORY': 'other/repository'}, 1)]:
+            with self.subTest(changes=changes), patch.dict(os.environ, dict(environment, **changes)), \
+                    patch.object(version_label.subprocess, 'run') as request, redirect_stdout(io.StringIO()):
+                self.assertEqual(version_label.main(), expected)
+                request.assert_not_called()
+        for field, value in [('ref', 'refs/heads/main'), ('deleted', True), ('after', '0' * 40),
+                              ('before', 'bad'), ('repository', None)]:
+            self.event_path.write_text(json.dumps(dict(push, **{field: value})))
+            with patch.dict(os.environ, environment), redirect_stdout(io.StringIO()):
+                self.assertEqual(version_label.main(), 1)
+
 
 if __name__ == '__main__':
     unittest.main()

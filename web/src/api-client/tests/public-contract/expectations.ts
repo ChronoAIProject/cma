@@ -134,6 +134,7 @@ export const localCodes = new Map([
 ]);
 
 const protectedQueries = new Map([
+  ['usage-admin-summary-unknown-query', ['unknown']],
   ['filesystem-tree-reject-unknown-query', ['owner_access']],
   ['filesystem-content-reject-unknown-query', ['owner_access']],
   ['filesystem-download-reject-unknown-query', ['owner_access']],

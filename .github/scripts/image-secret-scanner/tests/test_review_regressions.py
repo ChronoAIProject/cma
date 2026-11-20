@@ -74,7 +74,7 @@ class ReviewRegressions(unittest.TestCase):
         report = json.loads((output / "REPORT.json").read_bytes())
         all_output = console + (output / "REPORT.json").read_bytes() + (output / "REPORT.txt").read_bytes()
         self.assertEqual(code, expected, report.get("error"))
-        self.assertEqual(report["scanner_version"], "1.0.3")
+        self.assertEqual(report["scanner_version"], "1.0.4")
         self.assertEqual(report["complete"], expected != 2)
         if private_value:
             self.assertFalse(
@@ -138,7 +138,6 @@ class ReviewRegressions(unittest.TestCase):
         formats = [
             zip_bytes("settings", plain),
             gzip.compress(plain),
-            bz2.compress(plain),
             lzma.compress(plain),
             zstd,
             tar_bytes([("settings", plain)]),
@@ -184,12 +183,16 @@ class ReviewRegressions(unittest.TestCase):
         for data in [
             zip_bytes("hello", plain),
             gzip.compress(plain),
-            bz2.compress(plain),
             lzma.compress(plain),
             tar_bytes([("hello", plain)]),
             b"prefix" + zip_bytes("hello", plain),
         ]:
             self.scan([("without-extension", data)], 0)
+
+    def test_bzip2_outside_runtime_inventory_refuses_even_when_valid(self):
+        for plain in (b"ordinary public data", token().encode()):
+            report = self.scan([("renamed.dat", bz2.compress(plain))], 2)
+            self.assertEqual(report["error"], "unsupported-nested-container")
 
 
 if __name__ == "__main__":

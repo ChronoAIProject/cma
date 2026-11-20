@@ -1,7 +1,36 @@
+import type { SandboxStatus, SandboxSummary } from '../api/types';
 import { statusLabel } from '../vocabulary/status';
 import { taskWords } from './taskStatus';
 
 export type NavigationView = 'agent' | 'sandbox';
+type SandboxNavigationGroup =
+  'live' | 'changing' | 'paused' | 'needs_attention' | 'deleting' | 'hidden';
+
+const sandboxStatusGroups = {
+  active: 'live',
+  paused: 'paused',
+  failed: 'needs_attention',
+  provisioning: 'changing',
+  installing: 'changing',
+  pausing: 'changing',
+  reviving: 'changing',
+  credential_rotating: 'changing',
+  rotating: 'changing',
+  retiring: 'deleting',
+  retired: 'hidden',
+} satisfies Record<SandboxStatus, SandboxNavigationGroup>;
+
+export function sandboxNavigationGroup(
+  sandbox: Pick<SandboxSummary, 'status' | 'lifecycle'>,
+  deletionRequested = false,
+): SandboxNavigationGroup {
+  if (sandbox.status === 'retired') return 'hidden';
+  if (sandbox.status === 'retiring' || deletionRequested) return 'deleting';
+  if (sandbox.status === 'failed') return 'needs_attention';
+  if (sandbox.lifecycle?.operation) return 'changing';
+  return sandboxStatusGroups[sandbox.status];
+}
+
 export const navigationStatuses = (view: NavigationView) => [
   { value: 'all', label: 'All statuses' },
   ...(view === 'agent'
@@ -17,7 +46,9 @@ export function sandboxNavigationGroups(status: string) {
     ? [{ id: status, label: selected.label }]
     : [
         { id: 'live', label: 'Live' },
+        { id: 'changing', label: 'Changing' },
         { id: 'paused', label: 'Paused' },
+        { id: 'needs_attention', label: 'Needs attention' },
       ];
 }
 

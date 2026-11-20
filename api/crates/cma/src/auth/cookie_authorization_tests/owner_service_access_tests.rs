@@ -133,6 +133,23 @@ async fn runtime_delegated_and_machine_credentials_cannot_become_owner_consent()
 }
 
 #[tokio::test]
+async fn catalog_capability_does_not_allow_a_different_owners_credential_to_grant_services() {
+    let fixture = ResourceFixture::with_owner("owner").await;
+    provider_expiry(&fixture, future_expiry()).await;
+    let credential = ordinary_token();
+    let mut context = external_context(&fixture, &credential).await;
+    context.caller.subject = layer2_core::SubjectId::new("other-owner");
+    assert_eq!(
+        fixture
+            .identity
+            .auth
+            .owner_service_access_authority(&context, &credential)
+            .await,
+        Err(CommandAuthorizationError::Revoked)
+    );
+}
+
+#[tokio::test]
 async fn api_owner_gets_specific_missing_service_or_backing_authority_requirement() {
     let fixture = ResourceFixture::with_owner("owner").await;
     let credential = ordinary_token();

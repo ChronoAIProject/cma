@@ -13,7 +13,7 @@ interface PendingAction {
 }
 
 /** Keep the original operation in memory; only the verified server result releases it. */
-export function useConnectionGate(enabled = true, scope?: object) {
+export function useConnectionGate(enabled = true, scope?: object, description?: string) {
   const [pending, setPending] = useState<PendingAction>();
   const [interactive, setInteractive] = useState(false);
   const [error, setError] = useState<string>();
@@ -101,6 +101,7 @@ export function useConnectionGate(enabled = true, scope?: object) {
         dialogTitle="Connect your accounts"
         forceSubscription={pending.forceSubscription}
         expectedOwner={pending.owner}
+        description={description}
         onReady={() => complete(pending)}
         onCancel={cancel}
       />

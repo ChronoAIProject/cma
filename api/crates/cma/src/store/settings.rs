@@ -62,14 +62,25 @@ fn update_pipeline(settings: &PlatformSettings) -> Result<Vec<Document>, StoreEr
 
 /// Compare-and-set adapter for the singleton platform settings document.
 pub struct MongoPlatformSettingsStore {
+    initial_settings: super::settings_defaults::InitialSettings,
     settings: Collection<SettingsDoc>,
 }
 
 impl MongoPlatformSettingsStore {
+    #[cfg(test)]
     pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
+        Self::open_with_defaults(client, database, Default::default()).await
+    }
+
+    pub(super) async fn open_with_defaults(
+        client: &Client,
+        database: &str,
+        initial_settings: super::settings_defaults::InitialSettings,
+    ) -> Result<Self, StoreError> {
         let database = client.database(database);
         schema::initialize_collections(&database, &[SETTINGS]).await?;
         Ok(Self {
+            initial_settings,
             settings: majority_collection(&database, SETTINGS),
         })
     }
@@ -100,7 +111,7 @@ impl PlatformSettingsStore for MongoPlatformSettingsStore {
             .map(|stored| {
                 stored.unwrap_or(StoredPlatformSettings {
                     revision: 0,
-                    settings: PlatformSettings::default(),
+                    settings: self.initial_settings.platform(),
                 })
             })
     }

@@ -67,7 +67,7 @@ it('distinguishes an unstarted ready task from a successfully completed ready ta
     within(screen.getByRole('treeitem', { name: /New research/ })).getByText('Ready to start'),
   ).toBeVisible();
   expect(
-    within(screen.getByRole('treeitem', { name: /Finished research/ })).getByText('Completed'),
+    within(screen.getByRole('treeitem', { name: /Finished research/ })).getByText('Turn ended'),
   ).toBeVisible();
 });
 
@@ -243,7 +243,7 @@ it('filters by completed task outcome without confusing ready or failed turns', 
     />,
   );
   await expandNavigationFilters(user);
-  await chooseOption(user, 'Agent status filter', 'Completed');
+  await chooseOption(user, 'Agent status filter', 'Turn ended');
   expect(screen.getByRole('treeitem', { name: /^Finished task/ })).toBeVisible();
   expect(screen.queryByRole('treeitem', { name: /^New task/ })).not.toBeInTheDocument();
   await chooseOption(user, 'Agent status filter', 'Failed');

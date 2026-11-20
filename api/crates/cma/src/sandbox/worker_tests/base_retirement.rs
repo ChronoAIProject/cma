@@ -110,21 +110,27 @@ async fn failed_retirement_revocation_is_durable_debt_and_retried() {
         .await
         .unwrap();
 
-    for _ in 0..4 {
+    for _ in 0..2 {
         harness.run(&created.id, now).await;
     }
-    let retired_with_debt = harness.stored(&created.id).await;
-    assert_eq!(retired_with_debt.status, SandboxStatus::Retired);
+    let retiring_with_debt = harness.stored(&created.id).await;
+    assert_eq!(retiring_with_debt.status, SandboxStatus::Retiring);
     assert_eq!(
-        retired_with_debt.work.step,
-        SandboxWorkStep::RetryRetiredRevocations
+        retiring_with_debt.work.step,
+        SandboxWorkStep::RevokeRetirementCredentials
     );
-    assert_eq!(retired_with_debt.credential.revoke_debt.len(), 1);
+    assert_eq!(retiring_with_debt.credential.revoke_debt.len(), 1);
     assert_eq!(
         harness.actions.snapshot(),
         ["mint:1", "stop-agents", "revoke:provider-key-1"]
     );
-    harness.run(&created.id, now).await;
+    assert!(retiring_with_debt.runtime.is_some());
+    assert!(retiring_with_debt.purge_after.is_none());
+    assert!(!harness.worker.run_one(&created.id, now).await.unwrap());
+    let retry = stamp_time(&retiring_with_debt.work.ready_at);
+    for _ in 0..3 {
+        harness.run(&created.id, retry).await;
+    }
     let settled = harness.stored(&created.id).await;
     assert!(settled.credential.revoke_debt.is_empty());
     assert_eq!(settled.work.step, SandboxWorkStep::WaitForPurge);
@@ -160,11 +166,13 @@ async fn retirement_keeps_revoke_debt_until_custody_is_deleted() {
         .await
         .unwrap();
 
-    for _ in 0..4 {
+    for _ in 0..2 {
         harness.run(&active.id, now).await;
     }
     let retired = harness.stored(&active.id).await;
-    assert_eq!(retired.status, SandboxStatus::Retired);
+    assert_eq!(retired.status, SandboxStatus::Retiring);
+    assert!(retired.runtime.is_some());
+    assert!(retired.purge_after.is_none());
     assert_eq!(retired.credential.revoke_debt.len(), 1);
     assert!(harness
         .credentials
@@ -173,7 +181,10 @@ async fn retirement_keeps_revoke_debt_until_custody_is_deleted() {
         .unwrap()
         .is_some());
 
-    harness.run(&active.id, now).await;
+    let retry = stamp_time(&retired.work.ready_at);
+    for _ in 0..3 {
+        harness.run(&active.id, retry).await;
+    }
     let settled = harness.stored(&active.id).await;
     assert!(settled.credential.revoke_debt.is_empty());
     assert_eq!(settled.work.step, SandboxWorkStep::WaitForPurge);
