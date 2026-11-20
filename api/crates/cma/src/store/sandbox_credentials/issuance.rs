@@ -4,6 +4,7 @@ use crate::sandbox::{CredentialIssuance, IssuanceIdentity, IssuanceObservation, 
 use crate::store::sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome};
 use layer2_core::sandbox::Sandbox;
 use mongodb::bson::{Bson, Document};
+use mongodb::options::ReadConcern;
 use mongodb::ClientSession;
 
 pub(in crate::store) const COLLECTION: &str = "sandbox_credential_issuance";
@@ -65,9 +66,17 @@ pub(super) async fn read(
     store: &MongoSandboxCredentialStore,
     sandbox: &Sandbox,
 ) -> Result<Option<CredentialIssuance>, CredentialCustodyError> {
+    let mut session = store
+        .client
+        .start_session()
+        .snapshot(true)
+        .await
+        .map_err(unavailable)?;
     let intent = store
         .intents
         .find_one(doc! {"_id":sandbox.id.as_str()})
+        .read_concern(ReadConcern::snapshot())
+        .session(&mut session)
         .await
         .map_err(unavailable)?
         .map(decode)
@@ -79,6 +88,8 @@ pub(super) async fn read(
                 "_id":sandbox.id.as_str(), "credential_issuance_fence":{"$exists":true}
             })
             .projection(doc! {"_id":1})
+            .read_concern(ReadConcern::snapshot())
+            .session(&mut session)
             .await
             .map_err(unavailable)?
             .is_some()
