@@ -15,9 +15,9 @@ from staging_cd_release_tags import local_tag_reader
 from staging_cd_resolve import output as step_output
 from staging_cd_receipts import canonical, published_receipt, validate_receipt
 from staging_cd_registry import Registry
-from staging_cd_reservations import Reservations, validate_reservation
+from staging_cd_reservations import Reservations, SourceAlreadyFinal, validate_reservation
 from staging_cd_publication_diagnostics import PublicationDiagnostics, run_publication
-from staging_cd_versions import DEPLOYABLES, FINISH_STARTED_BUILDS
+from staging_cd_versions import DEPLOYABLES
 from staging_cd_timing import Timings
 from staging_cd_build_cache import BuildCache
 from staging_cd_runtime_smoke import CleanupIncomplete, qualify as qualify_runtime
@@ -140,9 +140,8 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
         remote = registry.manifest(repository, identity["version"])
         require(remote is not None and remote[0] == digest and registry.exists(repository, digest),
                 "Registry digest differs from the scanned archive")
-    # A copy already in flight may finish writing its own burned version.
-    # It cannot hand a receipt to finalization after a successor takes over,
-    # or, in a lane that finishes started builds, after a higher final.
+    # A started build ignores a successor's pending reservation, but it cannot
+    # hand a receipt to finalization after a higher final has landed.
     require(reservation_check() is True, "Publication reservation is not current")
     diagnostics.mark("receipt")
     return receipt
@@ -164,6 +163,7 @@ def main():
     timings = Timings()
     build_metrics = []
     cache_metrics = []
+    skip = {"disposition": "reservation_superseded"}
     def operation(_masker, diagnostics):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Image publication only accepts develop pushes")
@@ -185,7 +185,13 @@ def main():
                 reservation = value
                 reservations = Reservations(api, env.get("GH_TOKEN"), root)
                 # A queued older reservation yields here, before any build work.
-                reservations.require_current(reservation, build_started=False)
+                try:
+                    reservations.require_current(reservation, build_started=False)
+                except SourceAlreadyFinal:
+                    # An older run published this source and no run is known to deploy
+                    # this group, so the report fails this skip instead of handling it.
+                    skip["disposition"] = "source_already_final"
+                    raise
                 with tempfile.TemporaryDirectory(prefix="cma-publication-", dir=env["RUNNER_TEMP"]) as temp:
                     directory = Path(temp)
                     source = directory / "source"
@@ -248,8 +254,8 @@ def main():
                     status.write("build-cache-ready=" + ("true" if accepted else "false") + "\n")
         return True
     def superseded():
-        require(env.get("CD_COMPONENT") in FINISH_STARTED_BUILDS, "Unexpected superseded component")
-        step_output(env, "disposition", "reservation_superseded")
+        require(env.get("CD_COMPONENT") in DEPLOYABLES, "Unexpected superseded component")
+        step_output(env, "disposition", skip["disposition"])
 
     result = run_publication(operation, on_superseded=superseded)
     # run_private has restored the public descriptors; only fixed stage records

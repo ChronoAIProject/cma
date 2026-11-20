@@ -60,11 +60,10 @@ jobs:
         run: bash .github/scripts/staging_cd_transport.sh
       - name: Install pinned image secret scanner backend
         run: bash .github/scripts/install-image-gitleaks.sh
-      # A queued AM release that a newer reservation already owns skips the
+      # A queued release that a newer reservation already owns skips the
       # large restores below. Publication repeats this check and stays the
       # authority for the outcome, so a failed precheck only costs time.
-      - name: Check Agent Manager release ownership
-        if: inputs.component == 'am'
+      - name: Check release ownership
         id: ownership
         continue-on-error: true
         timeout-minutes: 2
@@ -72,7 +71,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_COMPONENT: ${{ inputs.component }}
           CD_TASKS: ${{ inputs.tasks }}
-        run: python3 -B .github/scripts/staging_cd_am_ownership.py
+        run: python3 -B .github/scripts/staging_cd_release_ownership.py
       - name: Prepare component Cargo cache
         if: inputs.component == 'am' || inputs.component == 'eg'
         id: build-cache
@@ -149,7 +148,7 @@ jobs:
   finalize:
     name: Finalize
     needs: publish
-    if: always() && needs.publish.outputs.artifact != '' && needs.publish.outputs.disposition != 'reservation_superseded'
+    if: always() && needs.publish.outputs.artifact != '' && needs.publish.outputs.disposition == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
