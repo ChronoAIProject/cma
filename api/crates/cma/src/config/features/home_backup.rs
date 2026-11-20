@@ -40,6 +40,9 @@ impl HomeBackupConfig {
         if self.max_in_flight == 0 {
             return Err("CHRONO_HOME_BACKUP_MAX_IN_FLIGHT must be in 1..=65535".into());
         }
+        if enabled {
+            return Err("CHRONO_HOME_BACKUP_ENABLED requires a qualified capture and recovery worker; capture foundation cannot be enabled".into());
+        }
         Ok(())
     }
 }

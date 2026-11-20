@@ -4,13 +4,13 @@ use futures_util::TryStreamExt;
 use layer2_core::sandbox::home_backup::*;
 use mongodb::{
     bson::{doc, Document},
-    options::IndexOptions,
-    Client, Collection, IndexModel,
+    Client, Collection,
 };
 mod capture;
 mod codec;
 mod discovery;
 mod retirement;
+pub(in crate::store) mod schema_v1;
 #[cfg(test)]
 mod tests;
 
@@ -30,49 +30,12 @@ impl MongoHomeBackupStore {
         database: &str,
     ) -> Result<Self, layer2_core::StoreError> {
         let db = client.database(database);
-        super::schema::initialize_collections(&db, &[SCHEDULES_COLLECTION, BACKUPS_COLLECTION])
-            .await?;
-        let store = Self {
+        schema_v1::require_prepared(&db).await?;
+        Ok(Self {
             client: client.clone(),
             schedules: super::durability::majority_collection(&db, SCHEDULES_COLLECTION),
             backups: super::durability::majority_collection(&db, BACKUPS_COLLECTION),
-        };
-        // Index creation is part of the versioned startup contract, never a
-        // writer gate. Existing rows are checked before accepting any work.
-        let mut schedules = store.schedules.find(doc! {}).await.map_err(unavailable)?;
-        while let Some(row) = schedules.try_next().await.map_err(unavailable)? {
-            read_schedule(row)?;
-        }
-        let mut backups = store.backups.find(doc! {}).await.map_err(unavailable)?;
-        while let Some(row) = backups.try_next().await.map_err(unavailable)? {
-            read_backup(row)?;
-        }
-        store
-            .schedules
-            .create_index(
-                IndexModel::builder()
-                    .keys(doc! {"state":1,"next_due_at":1,"_id":1})
-                    .build(),
-            )
-            .await
-            .map_err(unavailable)?;
-        store
-            .backups
-            .create_indexes([
-                IndexModel::builder()
-                    .keys(doc! {"sandbox_id":1,"epoch":1})
-                    .options(IndexOptions::builder().unique(true).build())
-                    .build(),
-                IndexModel::builder()
-                    .keys(doc! {"sandbox_id":1,"state":1,"cut.ready_at":-1})
-                    .build(),
-                IndexModel::builder()
-                    .keys(doc! {"state":1,"retention.expires_at":1,"_id":1})
-                    .build(),
-            ])
-            .await
-            .map_err(unavailable)?;
-        Ok(store)
+        })
     }
 }
 
@@ -145,9 +108,6 @@ impl HomeBackupStore for MongoHomeBackupStore {
     ) -> Result<HomeBackupClaim, HomeBackupError> {
         capture::save(self, claim, schedule, backup, now).await
     }
-}
-fn unavailable(_: mongodb::error::Error) -> layer2_core::StoreError {
-    layer2_core::StoreError::Unavailable("home backup persistence unavailable".into())
 }
 fn failed(error: mongodb::error::Error) -> HomeBackupError {
     if super::sandbox_mongo::is_transient(&error) {

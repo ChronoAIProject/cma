@@ -13,7 +13,7 @@ fn settings(values: &[(&str, &str)], enabled: bool) -> Result<HomeBackupConfig, 
 }
 
 #[test]
-fn capture_is_disabled_by_default_and_class_is_required_for_enablement() {
+fn capture_is_disabled_by_default_and_refuses_enablement_without_a_worker() {
     assert!(
         !FeatureFlags::from_lookup(&mut |_| Ok(None))
             .unwrap()
@@ -24,9 +24,15 @@ fn capture_is_disabled_by_default_and_class_is_required_for_enablement() {
     assert_eq!(defaults.interval_seconds, 1800);
     assert_eq!(defaults.max_in_flight, 2);
     assert!(settings(&[], true).is_err());
+    assert!(settings(
+        &[("CHRONO_HOME_BACKUP_SNAPSHOT_CLASS", "retained-class")],
+        true
+    )
+    .unwrap_err()
+    .contains("CHRONO_HOME_BACKUP_ENABLED"));
     let configured = settings(
         &[("CHRONO_HOME_BACKUP_SNAPSHOT_CLASS", "retained-class")],
-        true,
+        false,
     )
     .unwrap();
     assert_eq!(configured.snapshot_class.as_deref(), Some("retained-class"));

@@ -94,6 +94,7 @@ mod gateway_records;
 #[cfg(test)]
 mod gateway_records_mongo_integration_tests;
 mod hierarchy;
+#[allow(dead_code)] // Foundation primitives have no production capture worker.
 pub(crate) mod home_backups;
 mod launch_context;
 #[cfg(test)]
@@ -215,7 +216,6 @@ pub(crate) use codex_subscriptions::MongoSubscriptionStore;
 pub(crate) use default_profiles::DefaultProfileSpec;
 pub use directory::MongoUserDirectoryStore;
 pub(crate) use encryption::AuthEncryptionKey;
-pub(crate) use home_backups::MongoHomeBackupStore;
 pub use mongo::MongoStores;
 pub use operation::MongoOperationStore;
 pub use registration_capacity::MongoRegistrationCapacityStore;

@@ -296,7 +296,6 @@ impl MongoStores {
             )
             .await?,
         );
-        super::MongoHomeBackupStore::open(&client, database).await?;
         let message_feedback = Arc::new(
             super::message_feedback::MongoMessageFeedbackStore::open(&client.database(database))
                 .await?,

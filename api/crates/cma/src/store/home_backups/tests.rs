@@ -2,8 +2,12 @@ use super::*;
 use mongodb::options::{Acknowledgment, ReadConcernLevel};
 use std::time::{Duration, SystemTime};
 
+#[path = "commit_unknown_tests.rs"]
+mod commit_unknown_tests;
 #[path = "discovery_tests.rs"]
 mod discovery_tests;
+#[path = "schema_tests.rs"]
+mod schema_tests;
 #[path = "startup_tests.rs"]
 mod startup_tests;
 
@@ -218,6 +222,10 @@ impl Fixture {
         let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("isolated Mongo replica-set URI");
         let client = Client::with_uri_str(&uri).await.unwrap();
         let database = format!("home_backup_contract_{}", uuid::Uuid::new_v4().simple());
+        crate::store::migrations::home_backup_catalog::prepare_for_test(
+            &client.database(&database),
+        )
+        .await;
         let store = MongoHomeBackupStore::open(&client, &database)
             .await
             .unwrap();
@@ -571,10 +579,16 @@ async fn exhausted_fence_and_unknown_schema_fail_without_mutation() {
         .insert_one(doc! {"_id":"future","document_schema_version":99})
         .await
         .unwrap();
-    assert!(
-        MongoHomeBackupStore::open(&fixture.client, &fixture.database)
-            .await
-            .is_err()
+    let reopened = MongoHomeBackupStore::open(&fixture.client, &fixture.database)
+        .await
+        .unwrap();
+    assert!(matches!(
+        reopened.get_backup("future").await,
+        Err(HomeBackupError::Invalid(_))
+    ));
+    assert_eq!(
+        store.backups.find_one(doc! {"_id":"future"}).await.unwrap(),
+        Some(doc! {"_id":"future","document_schema_version":99})
     );
     fixture.cleanup().await;
 }
