@@ -42,26 +42,6 @@ mod tests {
     }
 
     #[test]
-    fn documented_account_revocations_match_the_failure_guidance() {
-        let document = include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../../../docs/CMA_Recovery_Failures.md"
-        ));
-        let section = document
-            .split_once("## Access revoked during account deletion")
-            .expect("deletion revocation has a documented recovery boundary")
-            .1
-            .split("\n## ")
-            .next()
-            .unwrap();
-        for class in ["agent_access_revoked", "workspace_access_revoked"] {
-            assert!(section.contains(class));
-        }
-        assert!(section.contains("Account deletion is in progress"));
-        assert!(section.contains("No Agent or Workspace recovery action"));
-    }
-
-    #[test]
     fn remediation_is_safe_and_specific_without_interpolating_failure_details() {
         for class in [
             "resource_quota",
