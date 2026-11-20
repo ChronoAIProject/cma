@@ -6,7 +6,7 @@ from staging_cd_compatibility import ContractPolicy, GROUP
 from staging_cd_receipts import canonical, validate_identity
 from staging_cd_reservations import validate_reservation
 from staging_cd_resolve import ObsoleteSource
-from staging_cd_set import automatic_set, document, release_set
+from staging_cd_set import automatic_set, document, later_final, release_set
 from staging_cd_targets import TARGETS
 from staging_cd_watermark import SUPERSEDED
 from staging_cd_transition import verify_transition
@@ -57,6 +57,30 @@ def transition_anchor(matrix):
     require(not marked or (marked.keys() == GROUP and len(set(marked.values())) == 1),
             "Contract transition marker coverage differs")
     return next(iter(marked.values()), None)
+
+
+def overtaken_admission(matrix, value, failures, api):
+    """The components of a wholly overtaken independent admission, else none.
+
+    Every member must be superseded-source with a final of the same component
+    at a later develop source. That final's own run promotes it in its own lane,
+    so this admission deploys nothing and is handled. A contract member, a
+    transition, a partial set, missing evidence or any other reason stays red.
+    """
+    try:
+        tasks = groups(matrix)
+        if (value is not None or not tasks or transition_anchor(matrix) is not None or GROUP & tasks.keys()
+                or failures.keys() != tasks.keys() or set(failures.values()) != {"superseded-source"}):
+            return ()
+        history = api.history()
+        for component, entries in tasks.items():
+            last = entries[-1]
+            source = (last["receipt"] if last["mode"] == "resume" else last["reservation"])["source"]
+            if not later_final(api.tags(component), source, history):
+                return ()
+        return tuple(sorted(tasks))
+    except (Refusal, OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError):
+        return ()
 
 
 def automatic_admission(matrix, api, registry, *, policy=None):

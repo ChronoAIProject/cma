@@ -54,7 +54,9 @@ class DeployCheckoutTests(unittest.TestCase):
         first, retry = checkouts
         self.assertEqual(first["with"], retry["with"])
         self.assertIs(first["continue-on-error"], True)
-        self.assertEqual(retry["if"], f"steps.{first['id']}.outcome == 'failure'")
+        # The repeat keeps the first attempt's own gate (an overtaken set skips both).
+        self.assertEqual(first["if"], "steps.release.outputs.disposition == ''")
+        self.assertEqual(retry["if"], f"{first['if']} && steps.{first['id']}.outcome == 'failure'")
         self.assertNotIn("continue-on-error", retry)
         inputs = first["with"]
         self.assertEqual(str(inputs["persist-credentials"]).lower(), "false")
