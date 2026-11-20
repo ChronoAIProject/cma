@@ -1,4 +1,8 @@
 {
+  "auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure": {
+    "kind": "fixture",
+    "reason": "Requires enforced Mongo authorization; selected exactly by image-manager-mongo-contract.sh am on its owned authenticated replica set."
+  },
   "auth::keys::fixture_contract_tests::executable_provider_accepts_exact_production_grants_without_hiding_repeated_posts": {
     "kind": "fixture",
     "reason": "Requires Node.js executable counting-provider fixture; local HTTP only, no MongoDB or external provider."

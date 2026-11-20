@@ -213,15 +213,27 @@ async fn other_replica_acceptance_revokes_fresh_request_stream_frame_and_command
 }
 
 #[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+#[ignore = "requires CMA_IM_TEST_MONGODB_URI pointing at an authenticated replica set"]
 async fn fresh_snapshot_cannot_mask_real_database_permission_failure() {
-    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
     let admin = Client::with_uri_str(&uri).await.unwrap();
     let db = admin.database(&format!(
         "cma_standing_denied_{}",
         uuid::Uuid::new_v4().simple()
     ));
     MongoAccountDeletionStore::open(&db).await.unwrap();
+    let mut anonymous_options = mongodb::options::ClientOptions::parse(&uri).await.unwrap();
+    anonymous_options.credential = None;
+    let anonymous = Client::with_options(anonymous_options).unwrap();
+    let denied = anonymous
+        .database(db.name())
+        .collection::<mongodb::bson::Document>("account_deletions")
+        .find_one(mongodb::bson::doc! {})
+        .await
+        .expect_err("the permission-loss fixture must reject unauthenticated reads");
+    assert!(
+        matches!(denied.kind.as_ref(), mongodb::error::ErrorKind::Command(error) if error.code == 13)
+    );
     let password = uuid::Uuid::new_v4().to_string();
     db.run_command(
         mongodb::bson::doc! {"createUser":"standing-reader","pwd":&password,
