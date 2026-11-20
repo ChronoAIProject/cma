@@ -74,3 +74,29 @@ export function navigationFixture(
 ): readonly NavigationSandbox[] {
   return [{ sandbox: sandboxFixture(sandboxStatus), workspaces: [workspaceFixture(agentStatus)] }];
 }
+
+export function parkedRuntimeUpdateFixture(): SandboxDetail {
+  const sandbox = sandboxFixture('rotating');
+  return {
+    ...sandbox,
+    lifecycle: {
+      ...sandbox.lifecycle!,
+      operation: {
+        purpose: 'image_rotation',
+        phase: 'conversation_reopen',
+        startedAt: '2026-11-19T00:00:00Z',
+      },
+    },
+    runtimeUpdate: {
+      currentVersion: 'image-before',
+      latestVersion: 'image-after',
+      targetVersion: 'image-after',
+      updateAvailable: true,
+      state: 'failed',
+      canUpdate: true,
+      failure: { code: 'runtime_unavailable', message: 'The runtime could not be reopened.' },
+      schedule: { timezone: 'Asia/Singapore', localTime: '02:00' },
+      preservesHome: true,
+    },
+  };
+}

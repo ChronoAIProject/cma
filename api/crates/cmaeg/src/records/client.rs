@@ -11,6 +11,10 @@ use serde::{Deserialize, Serialize};
 mod guarded;
 pub(crate) use guarded::AdmissionRootWrite;
 
+#[path = "client_read.rs"]
+mod read;
+pub(crate) use read::ReadFailure;
+
 const RECORD_PATH: &str = "/api/v1/gateway/channel-records";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -234,56 +238,6 @@ impl RecordClient {
             .await
     }
 
-    pub async fn get(&self, record_url: &str) -> Result<RecordValue, RecordError> {
-        let record_path = self.record_path;
-        let url = Url::parse(record_url)
-            .map_err(|error| RecordError::Rejected(format!("record URL is invalid: {error}")))?;
-        let id = url
-            .path()
-            .strip_prefix(&format!("{record_path}/"))
-            .ok_or_else(|| RecordError::Rejected("invalid record path".into()))?;
-        if self.record_url(id)?.as_str() != record_url
-            || url.origin() != self.base_url.origin()
-            || !url.path().starts_with(&format!("{record_path}/"))
-        {
-            return Err(RecordError::Rejected(
-                "record URL is outside the configured CMA origin".into(),
-            ));
-        }
-        if let Some(db) = &self.database {
-            return db.for_kind(self.record_kind).get(id).await;
-        }
-        let response = self
-            .client
-            .get(url)
-            .bearer_auth(
-                self.service_token
-                    .bearer()
-                    .await
-                    .map_err(|error| RecordError::Unavailable(error.to_string()))?
-                    .as_str(),
-            )
-            .timeout(Duration::from_millis(1_500))
-            .send()
-            .await
-            .map_err(transport)?;
-        if response.status() == StatusCode::NOT_FOUND {
-            return Err(RecordError::NotFound);
-        }
-        let response = success(response).await?;
-        let body = read_json::<GetResponse>(response).await?;
-        let blob = STANDARD.decode(body.blob).map_err(|error| {
-            RecordError::Malformed(format!("record blob is not base64: {error}"))
-        })?;
-        if blob.is_empty() || blob.len() > 65_536 {
-            return Err(RecordError::Malformed("invalid blob size".into()));
-        }
-        Ok(RecordValue {
-            blob,
-            version: body.version,
-        })
-    }
-
     /// Internal bounded watermark lookup; HTTP stores retain the full-read path.
     pub(crate) async fn local_versions(
         &self,
@@ -345,57 +299,6 @@ impl RecordClient {
         }
         success(response).await.map(|_| true)
     }
-
-    pub async fn list(
-        &self,
-        owner: Option<&str>,
-        after: Option<&str>,
-        limit: usize,
-    ) -> Result<Vec<RecordHead>, RecordError> {
-        self.check_thread_fence_transport()?;
-        self.check_media_continuation_transport()?;
-        if let Some(db) = &self.database {
-            return db
-                .for_kind(self.record_kind)
-                .list(owner, after, limit)
-                .await;
-        }
-        if self.record_kind == super::RecordKind::MediaContinuation && !(1..=32).contains(&limit) {
-            return Err(RecordError::Rejected(
-                "invalid media continuation page size".into(),
-            ));
-        }
-        let url = self
-            .base_url
-            .join(self.record_path)
-            .map_err(|error| RecordError::Rejected(error.to_string()))?;
-        let mut query = Vec::<(&str, String)>::new();
-        if let Some(owner) = owner {
-            query.push(("owner", owner.to_owned()));
-        }
-        if let Some(after) = after {
-            query.push(("after", after.to_owned()));
-        }
-        query.push(("limit", limit.to_string()));
-        let response = self
-            .client
-            .get(url)
-            .bearer_auth(
-                self.service_token
-                    .bearer()
-                    .await
-                    .map_err(|error| RecordError::Unavailable(error.to_string()))?
-                    .as_str(),
-            )
-            .query(&query)
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await
-            .map_err(transport)?;
-        let response = success(response).await?;
-        let body = read_json::<ListResponse>(response).await?;
-        Ok(body.items)
-    }
 }
 
 #[derive(Debug, Serialize)]
@@ -453,17 +356,11 @@ fn transport(error: reqwest::Error) -> RecordError {
 }
 
 async fn read_json<T: serde::de::DeserializeOwned>(
-    mut response: reqwest::Response,
+    response: reqwest::Response,
 ) -> Result<T, RecordError> {
-    let mut bytes = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(transport)? {
-        if bytes.len() + chunk.len() > 256 * 1024 {
-            return Err(RecordError::Malformed("response exceeds size limit".into()));
-        }
-        bytes.extend_from_slice(&chunk);
-    }
-    serde_json::from_slice(&bytes)
-        .map_err(|_| RecordError::Malformed("invalid response JSON".into()))
+    read::read_json(response)
+        .await
+        .map_err(|failure| failure.error)
 }
 
 #[cfg(test)]

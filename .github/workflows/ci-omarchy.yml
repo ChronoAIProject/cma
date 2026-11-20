@@ -6,12 +6,21 @@ on:
     # Keep this list aligned with the pinned dependency stage, which defines the archive key.
     paths:
       - api/crates/layer4-runtime/Dockerfile
+      - api/crates/layer4-runtime/image/assert-no-private-keyrings.py
+      - api/crates/layer4-runtime/image/build-arch-openssl-cli.sh
+      - api/crates/layer4-runtime/image/build-omarchy-base.sh
+      - api/crates/layer4-runtime/image/install-arch-openssl-cli.sh
+      - api/crates/layer4-runtime/image/normalize-machine-id.py
+      - api/crates/layer4-runtime/image/normalize-omarchy.py
+      - api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch
+      - api/crates/layer4-runtime/image/verify-openssl-cli-hardening.sh
       - api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch
       - api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch
       - api/crates/layer4-runtime/src/omarchy/build-graphics.sh
       - api/crates/layer4-runtime/src/omarchy/build-hyprland.sh
       - api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch
       - api/crates/layer4-runtime/src/omarchy/install.sh
+      - api/crates/layer4-runtime/src/omarchy/remove-google-account.patch
       - api/crates/layer4-runtime/src/omarchy/secure-tools.sh
       - api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp
       - api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch
@@ -46,6 +55,11 @@ jobs:
         name: "Omarchy desktop fixture regressions"
         run: |
           python3 -B .github/scripts/omarchy-cache-key-tests.py
+          python3 -B .github/scripts/runtime_image_layers_tests.py
+          python3 -B .github/scripts/runtime_image_metadata_tests.py
+          python3 -B .github/scripts/runtime_image_private_keyrings_tests.py
+          python3 -B .github/scripts/runtime_image_machine_id_tests.py
+          python3 -B .github/scripts/runtime_image_hygiene_tests.py
           python3 .github/scripts/omarchy-close-browser-tests.py
           python3 .github/scripts/omarchy-browser-input-tests.py
           node --test .github/scripts/omarchy-browser-page.test.cjs
@@ -95,13 +109,15 @@ jobs:
           platforms: "linux/amd64"
           push: false
           load: true
+          outputs: "type=docker,rewrite-timestamp=true"
           tags: "cma-runtime-omarchy:ci"
           build-args: |
-            OMARCHY_CMA_BASE=runtime
+            OMARCHY_CMA_BASE=runtime-tools
             RUNTIME_DESKTOP=1
             CHRONO_BUILD=${{ steps.identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
             OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            SOURCE_DATE_EPOCH=0
           cache-from: |
             ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
           cache-to: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && (steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true') && format('type=local,mode=min,dest={0}/omarchy-layer-cache', runner.temp) || '' }}"
@@ -112,6 +128,10 @@ jobs:
           docker buildx prune --all --force
           test "$(docker image inspect cma-runtime-omarchy:ci --format '{{.Id}}')" = "$image_id"
           df -h /
+      -
+        name: "Verify every Omarchy image layer"
+        timeout-minutes: 20
+        run: "python3 -B .github/scripts/runtime_image_hygiene.py --image cma-runtime-omarchy:ci --component runtime-omarchy --output \"$RUNNER_TEMP/omarchy-evidence/layer-hygiene.json\""
       -
         name: "Verify Omarchy runtime contract"
         run: "node .github/scripts/omarchy-contract.mjs \"$GITHUB_SHA\" \"$RUNNER_TEMP/omarchy-evidence/runtime-contract.json\""
