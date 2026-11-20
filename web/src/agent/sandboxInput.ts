@@ -3,7 +3,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { ApiError } from '@cma/client';
 import type { CmaWebClient } from '../api/client';
 import type { AgentDetail, SandboxDetail } from '../api/types';
-import { sandboxLifecycleLabel, sandboxRefreshDelay } from '../sandbox/lifecycle';
+import {
+  sandboxLifecycleLabel,
+  sandboxRefreshDelay,
+  sandboxUnavailableNotice,
+} from '../sandbox/lifecycle';
 import { bootstrapInputAllowed, revivalInputAllowed } from './bootstrap';
 import { createPollDelay, sandboxPollKey } from '../sandbox/pollDelay';
 
@@ -268,15 +272,26 @@ function resourceAvailability(observation: Observation | undefined): SandboxReso
       notice: 'Sandbox status is unavailable. Live resources are held.',
     };
   const sandbox = observation.sandbox;
+  if (sandbox.lifecycle?.operation !== undefined)
+    return {
+      state: 'inactive',
+      notice:
+        sandboxUnavailableNotice(sandbox) ?? 'Sandbox state is changing. Live resources are held.',
+    };
   if (sandbox.status === 'paused')
-    return { state: 'paused', notice: 'Sandbox paused. Live resources resume when it is active.' };
+    return {
+      state: 'paused',
+      notice: 'Sandbox paused. Your work is preserved. Resume the Sandbox to use live Computer.',
+    };
   if (
     !['active', 'credential_rotating'].includes(sandbox.status) ||
     !sandbox.runtimeVersion?.trim()
   )
     return {
       state: 'inactive',
-      notice: 'Live resources are unavailable while the Sandbox runtime is inactive.',
+      notice:
+        sandboxUnavailableNotice(sandbox) ??
+        'Live resources are unavailable while the Sandbox runtime is inactive.',
     };
   return { state: 'live', runtimeVersion: sandbox.runtimeVersion };
 }

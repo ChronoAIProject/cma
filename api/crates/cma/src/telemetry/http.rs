@@ -7,6 +7,7 @@ use axum::{
     response::Response,
 };
 use http_body::{Body as _, Frame, SizeHint};
+use layer1_public::stream_telemetry::{BodyEnd, CloseReason, Contract};
 use std::{
     pin::Pin,
     task::{Context, Poll},
@@ -66,6 +67,14 @@ pub(crate) async fn observe(mut request: Request, next: Next) -> Response {
                 .next()
                 .is_some_and(|v| v.trim() == "text/event-stream")
         });
+    let contract_observed = sse && response.status().is_success();
+    let contract = response.extensions().get::<Contract>().cloned();
+    let stream_kind = contract
+        .as_ref()
+        .map_or("unclassified_stream", |value| value.kind().label());
+    if contract_observed {
+        metrics::counter!("cma_sse_contract_opened_total", "stream_kind" => stream_kind, "consumer" => consumer, "protocol" => protocol).increment(1);
+    }
     let (parts, body) = response.into_parts();
     let bytes = metrics::counter!("cma_http_response_body_bytes_total", "route" => route.clone(), "method" => method);
     let mut observed = ObservedBody {
@@ -74,6 +83,10 @@ pub(crate) async fn observe(mut request: Request, next: Next) -> Response {
         route,
         method,
         sse,
+        contract_observed,
+        contract,
+        consumer,
+        protocol,
         started,
         finished: false,
     };
@@ -122,6 +135,10 @@ struct ObservedBody {
     route: String,
     method: &'static str,
     sse: bool,
+    contract_observed: bool,
+    contract: Option<Contract>,
+    consumer: &'static str,
+    protocol: &'static str,
     started: Instant,
     finished: bool,
 }
@@ -131,6 +148,24 @@ impl ObservedBody {
             return;
         }
         self.finished = true;
+        if self.contract_observed {
+            let end = match reason {
+                "eof" => BodyEnd::Eof,
+                "error" => BodyEnd::Error,
+                _ => BodyEnd::Dropped,
+            };
+            let kind = self
+                .contract
+                .as_ref()
+                .map_or("unclassified_stream", |value| value.kind().label());
+            let semantic = self
+                .contract
+                .as_ref()
+                .map_or(CloseReason::UnclassifiedStream, |value| {
+                    value.close_reason(end)
+                });
+            metrics::counter!("cma_sse_contract_closed_total", "stream_kind" => kind, "consumer" => self.consumer, "protocol" => self.protocol, "reason" => semantic.label()).increment(1);
+        }
         metrics::counter!("cma_http_body_closed_total", "route" => self.route.clone(), "method" => self.method, "reason" => reason).increment(1);
         metrics::histogram!("cma_http_body_lifetime_seconds", "route" => self.route.clone(), "method" => self.method).record(self.started.elapsed().as_secs_f64());
         if self.sse {
