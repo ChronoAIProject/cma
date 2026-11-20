@@ -68,20 +68,34 @@ impl AgentMessageAssembly {
             .output_state
             .as_ref()
             .and_then(|state| state.committed_at);
-        let mut buffer = previous
+        let previous_buffer = previous
             .output_state
             .as_ref()
-            .and_then(|state| state.buffer.clone())
-            .unwrap_or_else(|| QuietOutputBuffer {
-                sources: Vec::new(),
-                generation,
-                // An idle gap does not reset the time since the last durable cursor.
-                deadline: committed_at.unwrap_or(now) + policy.max_age,
-            });
-        buffer.sources.push(source.clone());
-        if buffer.sources.len() >= policy.max_frames || now >= buffer.deadline {
+            .and_then(|state| state.buffer.as_ref());
+        // An idle gap does not reset the time since the last durable cursor.
+        let deadline = previous_buffer.map_or_else(
+            || committed_at.unwrap_or(now) + policy.max_age,
+            |buffer| buffer.deadline,
+        );
+        let Some(count) = previous_buffer
+            .map_or(0, |buffer| buffer.sources.len())
+            .checked_add(1)
+            .filter(|count| *count < policy.max_frames && now < deadline)
+        else {
             return false;
+        };
+        // Refusal needs no copies. An accepted batch allocates its final source
+        // capacity once, avoiding clone-then-push's overlapping Vec buffers.
+        let mut sources = Vec::with_capacity(count);
+        if let Some(buffer) = previous_buffer {
+            sources.extend(buffer.sources.iter().cloned());
         }
+        sources.push(source.clone());
+        let buffer = QuietOutputBuffer {
+            sources,
+            generation: previous_buffer.map_or(generation, |buffer| buffer.generation),
+            deadline,
+        };
         self.output_state = Some(Box::new(OutputState {
             buffer: Some(buffer),
             committed_at,
@@ -90,12 +104,23 @@ impl AgentMessageAssembly {
     }
 
     pub(super) fn durable_copy(&self) -> Self {
-        let mut durable = self.clone();
-        durable.output_state = None;
-        durable.pending_update = None;
-        durable
+        // Runtime receipts can retain many identities. They have no persistent
+        // representation, so do not copy them into a disposable intermediate.
+        Self {
+            message_id: self.message_id.clone(),
+            content: self.content.clone(),
+            prompt_evidence: self.prompt_evidence,
+            live_message: self.live_message.clone(),
+            live_thought: self.live_thought.clone(),
+            pending_update: None,
+            output_state: None,
+        }
     }
 }
+
+#[cfg(test)]
+#[path = "conversation_recorder/ingress_coalesce_tests.rs"]
+mod ingress_tests;
 
 pub(super) enum RecordInput<'a> {
     Update(&'a layer3_adapter::ConversationUpdate, bool),

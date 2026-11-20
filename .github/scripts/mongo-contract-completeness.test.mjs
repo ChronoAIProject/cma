@@ -293,3 +293,21 @@ test('resource execution selection includes root and nested contracts without om
     for (const name of omitted) cases[name] = caseMetadata(true);
   }
 });
+
+const ingressPrefix = 'store::agent_conversation_store::mongo_ingress_tests::';
+test('ingress snapshot contracts are required and omission fails completeness', () => {
+  assert.ok(requiredPrefixes.includes(ingressPrefix));
+  const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  const selection = source.split('\n').find(line => line.trimStart().startsWith('ingress-ownership)'));
+  assert.ok(selection.includes(`test(${ingressPrefix})`));
+  assert.ok(selection.includes('test(store::agent_conversation_store::checkpoint_tests::)'));
+  assert.ok(source.includes("'--list-ingress-ownership'"));
+  const name = `${ingressPrefix}admitted_snapshot_matches_the_legacy_atomic_snapshot_and_retains_custody`;
+  const metadata = inventory();
+  metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(true);
+  assert.equal(check(metadata).status, 0);
+  metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(false);
+  const omitted = check(metadata);
+  assert.equal(omitted.status, 1);
+  assert.ok(omitted.stderr.includes(name), omitted.stderr);
+});

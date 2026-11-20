@@ -15,15 +15,14 @@ pub(super) fn update_parts(
     bool,
 ) {
     use layer3_adapter::ConversationUpdate;
-    let retained_effect = matches!(update, ConversationUpdate::RetainedEffect(_));
-    match update.effect() {
-        ConversationUpdate::RuntimeOutput { receipt, update } => (
-            Some(&receipt.source),
-            update.as_deref().map(ConversationUpdate::effect),
-            update.as_ref().is_some_and(|update| update.is_shared()),
-        ),
-        update => (None, Some(update), retained_effect),
-    }
+    let delivery = update.delivery();
+    let shared = matches!(update, ConversationUpdate::RetainedEffect(_))
+        || matches!(update, ConversationUpdate::RuntimeOutput { update: Some(effect), .. } if effect.is_shared());
+    (
+        delivery.receipt.map(|receipt| &receipt.source),
+        delivery.effect,
+        shared,
+    )
 }
 
 impl DurableAgentUpdateRecorder {
@@ -197,15 +196,27 @@ pub(super) fn fingerprint(
     source: Option<&layer3_adapter::RuntimeOutputSource>,
     update: Option<&layer3_adapter::ConversationUpdate>,
 ) -> String {
-    source.map_or_else(
-        || {
-            format!(
-                "{:x}",
-                Sha256::digest(
-                    format!("{:?}", update.as_ref().expect("legacy update is present")).as_bytes()
-                )
-            )
-        },
-        |source| format!("{:x}", Sha256::digest(format!("{source:?}").as_bytes())),
-    )
+    use std::fmt::Write;
+
+    struct Fingerprint(Sha256);
+    impl Write for Fingerprint {
+        fn write_str(&mut self, value: &str) -> std::fmt::Result {
+            self.0.update(value.as_bytes());
+            Ok(())
+        }
+    }
+
+    // Keep the predecessor's exact Debug encoding without allocating a second
+    // copy of a potentially maximal typed update just to hash it.
+    let mut digest = Fingerprint(Sha256::new());
+    match source {
+        Some(source) => write!(&mut digest, "{source:?}"),
+        None => write!(
+            &mut digest,
+            "{:?}",
+            update.expect("legacy update is present")
+        ),
+    }
+    .expect("hashing formatter cannot fail");
+    format!("{:x}", digest.0.finalize())
 }

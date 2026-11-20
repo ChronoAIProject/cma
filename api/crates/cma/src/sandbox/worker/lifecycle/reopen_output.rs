@@ -3,7 +3,9 @@ use std::time::Duration;
 
 use futures_util::FutureExt as _;
 use layer2_core::sandbox::store::AgentReopenGuard;
-use layer2_core::sandbox::{AgentConversationError, AgentMessageAssembly, AgentUpdateRecorder};
+#[cfg(test)]
+use layer2_core::sandbox::AgentMessageAssembly;
+use layer2_core::sandbox::{AgentConversationError, AgentUpdateRecorder};
 use layer2_core::{now_rfc3339, AgentId};
 use layer3_adapter::{AdapterError, ConversationUpdate};
 use tokio::sync::mpsc;
@@ -62,7 +64,7 @@ async fn drain<T>(
     guard: &AgentReopenGuard,
 ) -> layer3_adapter::Result<T> {
     tokio::pin!(operation);
-    let mut assembly = AgentMessageAssembly::default();
+    let mut assembly = recorder.recording_session();
     loop {
         tokio::select! {
             biased;
@@ -71,22 +73,38 @@ async fn drain<T>(
                 let Some(update) = update else {
                     return prefer_opening_failure(operation.as_mut(), AdapterError::Unavailable("reopen output receiver ended".into()));
                 };
-                let receipt = match &update {
-                    ConversationUpdate::RuntimeOutput { receipt, .. } => Some(receipt),
-                    ConversationUpdate::Lost { .. } => return Err(AdapterError::Unavailable("reopen output contains a gap".into())),
-                    _ => None,
-                };
+                let delivery = update.delivery();
+                if delivery.receipt.is_none() && matches!(delivery.effect, Some(ConversationUpdate::Lost { .. })) {
+                    return Err(AdapterError::Unavailable("reopen output contains a gap".into()));
+                }
+                let receipt = delivery.receipt;
                 let recording = async {
-                    loop {
-                        match recorder.record_reopen_update(agent_id, guard, &mut assembly, update.clone(), now_rfc3339()).await {
-                            Ok(_) => break,
-                            Err(AgentConversationError::Unavailable(_)) => tokio::time::sleep(Duration::from_secs(1)).await,
-                            Err(error) => return Err(AdapterError::Unavailable(format!("durable reopen output was refused: {error}"))),
+                    let outcome = loop {
+                        match recorder.record_reopen_in_session(agent_id, guard, &mut assembly, &update, std::time::SystemTime::now()).await {
+                            Ok(outcome) => break outcome,
+                            Err(error) if matches!(&*error, AgentConversationError::Unavailable(_)) => {
+                                drop(error);
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                            },
+                            Err(error) => return Err(if assembly.policy().is_some() {
+                                tracing::warn!(error = %*error, "admitted reopen recording refused");
+                                AdapterError::Unavailable(String::new())
+                            } else {
+                                AdapterError::Unavailable(format!("durable reopen output was refused: {}", &*error))
+                            }),
+                        }
+                    };
+                    if let Some(receipt) = receipt {
+                        if assembly.policy().is_some() {
+                            receipt.acknowledge_admitted().map_err(|error| {
+                                tracing::warn!(error = %error, "admitted reopen acknowledgement refused");
+                                AdapterError::Unavailable(String::new())
+                            })?;
+                        } else {
+                            receipt.acknowledge().await?;
                         }
                     }
-                    if let Some(receipt) = receipt {
-                        receipt.acknowledge().await?;
-                    }
+                    drop(outcome);
                     Ok(())
                 };
                 tokio::pin!(recording);
@@ -130,6 +148,9 @@ fn prefer_opening_failure<T>(
     }
 }
 
+#[cfg(test)]
+#[path = "reopen_output_ingress_tests.rs"]
+mod ingress_tests;
 #[cfg(test)]
 #[path = "reopen_output_tests.rs"]
 mod tests;

@@ -22,6 +22,7 @@ readonly suite_filter
 nextest_contracts() {
   local selection_filter='not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets))'
   case "$selection" in
+    ingress-ownership) selection_filter='package(=cma) and (test(store::agent_conversation_store::mongo_ingress_tests::) or test(store::agent_conversation_store::checkpoint_tests::))' ;;
     scale) selection_filter="package(=cma) and test(=$scale_test)" ;;
     owner-allocation) selection_filter="package(=cma) and test(=$owner_allocation_test)" ;;
     audit-bounds) selection_filter="package(=cma) and test(=$audit_bounds_test)" ;;
@@ -47,6 +48,14 @@ nextest_contracts() {
 if [[ $# == 0 || ( $# == 2 && "$1" == '--shard' ) ]]; then
   exec python3 "$script_directory/mongo-contract-partitions.py" "${BASH_SOURCE[0]}" "$@"
 fi
+if [[ $# == 1 && "$1" == '--list-ingress-ownership' ]]; then
+  selection='ingress-ownership'
+  if [[ "${CMA_NEXTEST_REUSE:-}" != 1 ]]; then
+    nextest_build_args=(--locked -p cma)
+  fi
+  nextest_contracts list --message-format json
+  exit
+fi
 if [[ $# == 1 && "$1" == '--list' ]]; then
   cd "$repo_root/api"
   nextest_contracts list --message-format json
@@ -54,6 +63,8 @@ if [[ $# == 1 && "$1" == '--list' ]]; then
 fi
 if [[ $# == 1 && "$1" == '--scale' ]]; then
   selection='scale'
+elif [[ $# == 1 && "$1" == '--ingress-ownership' ]]; then
+  selection='ingress-ownership'
 elif [[ $# == 1 && "$1" == '--owner-allocation' ]]; then
   selection='owner-allocation'
 elif [[ $# == 1 && "$1" == '--audit-bounds' ]]; then
@@ -83,6 +94,10 @@ else
   [[ ${BASH_REMATCH[1]} -le ${BASH_REMATCH[2]} ]] || exit 2
   selection='ordinary'
   partition=$1
+fi
+
+if [[ "${CMA_NEXTEST_REUSE:-}" != 1 && "$selection" == ingress-ownership ]]; then
+  nextest_build_args=(--locked -p cma)
 fi
 
 if [[ "${CMA_NEXTEST_REUSE:-}" != 1 && ( "$selection" == organization-inventory || "$selection" == agent-list-contracts || "$selection" == availability || "$selection" == agent-lists || "$selection" == agent-list-profile ) ]]; then
@@ -171,7 +186,7 @@ endpoint=$(docker port "$contract_name" 27017/tcp)
 export CHRONO_TEST_MONGODB_URI="mongodb://${endpoint}/?directConnection=true&replicaSet=cma_ci"
 export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
 cd "$repo_root/api"
-if [[ "$selection" == 'availability' ]]; then
+if [[ "$selection" == 'availability' || "$selection" == 'ingress-ownership' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --no-capture
 elif [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'organization-inventory' || "$selection" == 'agent-list-contracts' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'request-limits' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' || "$selection" == 'bson-ceiling' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --success-output final

@@ -4,7 +4,7 @@ use layer3_adapter::ConversationUpdate;
 
 use crate::ids::AgentId;
 
-use super::store::{AgentConversationUpdateStore, AgentStore, SandboxStoreError};
+use super::store::AgentConversationUpdateStore;
 use super::{
     AgentConversationError, AgentMessageAssembly, AgentUpdateOutcome, AgentUpdateRecorder,
 };
@@ -52,6 +52,14 @@ pub struct DurableAgentUpdateRecorder {
 }
 
 mod configuration;
+mod ingress;
+
+#[cfg(test)]
+mod ingress_cancellation_tests;
+#[cfg(test)]
+mod ingress_compat_tests;
+#[cfg(test)]
+mod ingress_session_tests;
 
 #[async_trait::async_trait]
 impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
@@ -94,70 +102,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
         runtime_generation: u64,
         assembly: &mut AgentMessageAssembly,
     ) -> Result<(), AgentConversationError> {
-        if assembly.pending_update.is_some() || assembly.buffered_output().is_some() {
-            return Err(AgentConversationError::InvalidState(
-                "an uncertain update must be retried before restoring its assembly",
-            ));
-        }
-        for _ in 0..MAX_CONVERSATION_COMMIT_RETRIES {
-            let snapshot = self
-                .store
-                .agent_message_snapshot(id)
-                .await
-                .map_err(store_error)?
-                .ok_or(AgentConversationError::NotFound)?;
-            let current = snapshot.agent;
-            let previous = snapshot.checkpoint;
-            if runtime_generation == 0
-                || current.conversation.runtime_generation != Some(runtime_generation)
-            {
-                return Err(AgentConversationError::StaleGeneration);
-            }
-            if !current.status.is_live() {
-                return Err(AgentConversationError::InvalidState(
-                    "assembly restoration requires a live agent",
-                ));
-            }
-            let recovered = match checkpoint::recover_assembly(
-                self.store.as_ref(),
-                &current,
-                previous.as_ref(),
-            )
-            .await
-            {
-                Ok(recovered) => recovered,
-                Err(error) => {
-                    if AgentStore::get_agent(self.store.as_ref(), id)
-                        .await
-                        .map_err(store_error)?
-                        .as_ref()
-                        != Some(&current)
-                    {
-                        continue;
-                    }
-                    return Err(error);
-                }
-            };
-            if let Some(next) = previous
-                .as_ref()
-                .and_then(|value| value.reanchored(&current))
-            {
-                match self
-                    .store
-                    .commit_agent_message_update(current, previous, next, None)
-                    .await
-                {
-                    Ok(_) => {}
-                    Err(SandboxStoreError::Conflict) => continue,
-                    Err(error) => return Err(store_error(error)),
-                }
-            }
-            *assembly = recovered;
-            return Ok(());
-        }
-        Err(AgentConversationError::Unavailable(
-            "conversation changed during every restoration attempt".into(),
-        ))
+        checkpoint::restore(self, id, runtime_generation, assembly).await
     }
 
     async fn record_reopen_update(
@@ -207,9 +152,7 @@ impl AgentUpdateRecorder for DurableAgentUpdateRecorder {
         update: ConversationUpdate,
         appended_at: String,
     ) -> Result<AgentOutputCommit, AgentConversationError> {
-        if !matches!(update, ConversationUpdate::RuntimeOutput { .. })
-            && assembly.buffered_output().is_some()
-        {
+        if update.delivery().receipt.is_none() && assembly.buffered_output().is_some() {
             return Err(AgentConversationError::InvalidState(
                 "flush quiet receipts before a legacy update",
             ));

@@ -3,10 +3,10 @@ use std::future::Future;
 use std::time::Duration;
 
 use futures_util::FutureExt as _;
-use layer2_core::sandbox::{
-    Agent, AgentConversationError, AgentMessageAssembly, AgentUpdateRecorder,
-};
-use layer2_core::{now_rfc3339, AgentId};
+#[cfg(test)]
+use layer2_core::sandbox::AgentMessageAssembly;
+use layer2_core::sandbox::{Agent, AgentConversationError, AgentUpdateRecorder};
+use layer2_core::AgentId;
 use layer3_adapter::ConversationUpdate;
 use tokio::sync::mpsc;
 
@@ -56,12 +56,12 @@ async fn drain<T>(
     conversation: &str,
 ) -> Result<T, WorkerFailure> {
     tokio::pin!(operation);
-    let mut assembly = AgentMessageAssembly::default();
+    let mut assembly = recorder.recording_session();
     recorder
-        .restore_assembly(agent_id, generation, &mut assembly)
+        .restore_recording(agent_id, generation, &mut assembly)
         .await
-        .map_err(|_| unavailable())?;
-    if !assembly.is_empty() {
+        .map_err(|error| recording_failure(&error, assembly.policy().is_some()))?;
+    if !assembly.assembly().is_empty() {
         return Err(unavailable());
     }
     loop {
@@ -72,19 +72,20 @@ async fn drain<T>(
                 let Some(update) = update else {
                     return prefer_failure(operation.as_mut(), unavailable());
                 };
-                let receipt = match &update {
-                    ConversationUpdate::RuntimeOutput { receipt, .. }
-                        if receipt.source.native_conversation_id == conversation => Some(receipt),
-                    ConversationUpdate::RuntimeOutput { .. } | ConversationUpdate::Lost { .. } => return Err(unavailable()),
-                    _ => None,
-                };
+                let delivery = update.delivery();
+                if delivery.receipt.is_some_and(|receipt| receipt.source.native_conversation_id != conversation)
+                    || (delivery.receipt.is_none() && matches!(delivery.effect, Some(ConversationUpdate::Lost { .. })))
+                {
+                    return Err(unavailable());
+                }
+                let receipt = delivery.receipt;
                 let mut completed = None;
                 loop {
                     // Confirmation and recording share the Agent writer queue.
                     // Keep driving the opener while this receipt waits for its
                     // transaction, then finish the receipt before handing off.
                     let recorded = {
-                        let recording = recorder.record_update(agent_id, generation, &mut assembly, update.clone(), now_rfc3339());
+                        let recording = recorder.record_update_in_session(agent_id, generation, &mut assembly, &update, std::time::SystemTime::now());
                         tokio::pin!(recording);
                         loop {
                             tokio::select! {
@@ -94,16 +95,27 @@ async fn drain<T>(
                         }
                     };
                     match recorded {
-                        Ok(_) => {
+                        Ok(_outcome) => {
                             if let Some(receipt) = receipt {
-                                if let Err(error) = receipt.acknowledge().await {
-                                    return recorded_failure(completed, operation.as_mut(), adapter_failure(error));
+                                let acknowledged = if assembly.policy().is_some() {
+                                    receipt.acknowledge_admitted().map_err(|error| {
+                                        tracing::warn!(error = %error, "admitted reconnect acknowledgement refused");
+                                        WorkerFailure::retryable("agent_connection_output_unavailable", String::new())
+                                    })
+                                } else {
+                                    receipt.acknowledge().await.map_err(adapter_failure)
+                                };
+                                if let Err(error) = acknowledged {
+                                    return recorded_failure(completed, operation.as_mut(), error);
                                 }
                             }
                             break;
                         }
-                        Err(AgentConversationError::Unavailable(_)) => tokio::time::sleep(Duration::from_secs(1)).await,
-                        Err(_) => return recorded_failure(completed, operation.as_mut(), unavailable()),
+                        Err(error) if matches!(&*error, AgentConversationError::Unavailable(_)) => {
+                            drop(error);
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                        },
+                        Err(error) => return recorded_failure(completed, operation.as_mut(), recording_failure(&error, assembly.policy().is_some())),
                     }
                 }
                 if let Some(result) = completed {
@@ -111,6 +123,15 @@ async fn drain<T>(
                 }
             }
         }
+    }
+}
+
+fn recording_failure(error: &AgentConversationError, admitted: bool) -> WorkerFailure {
+    if admitted {
+        tracing::warn!(error = %error, "admitted reconnect recording refused");
+        WorkerFailure::retryable("agent_connection_output_unavailable", String::new())
+    } else {
+        unavailable()
     }
 }
 
@@ -143,6 +164,9 @@ fn unavailable() -> WorkerFailure {
     )
 }
 
+#[cfg(test)]
+#[path = "connection_output_ingress_tests.rs"]
+mod ingress_tests;
 #[cfg(test)]
 #[path = "connection_output_tests.rs"]
 mod tests;

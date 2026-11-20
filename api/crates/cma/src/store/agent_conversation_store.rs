@@ -33,6 +33,10 @@ pub(in crate::store) mod checkpoint;
 mod checkpoint_tests;
 mod cleanup_admission;
 mod implementation;
+mod ingress;
+mod ingress_snapshot;
+#[cfg(test)]
+mod mongo_ingress_tests;
 pub(in crate::store) mod publication;
 use super::agent_log_segments::{conversation as scoped, transaction_scope::TransactionScope};
 #[cfg(test)]

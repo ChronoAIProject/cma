@@ -4,6 +4,14 @@ use crate::ids::AgentId;
 use crate::sandbox::{Agent, AgentLogEntry, AgentLogKind, Sandbox, SandboxStatus};
 
 use super::{SandboxMutationGuard, SandboxStoreError};
+use crate::sandbox::ingress_ownership::{
+    AdmittedError, AdmittedOperation, IngressOwnershipPolicy, SharedOwned,
+};
+
+type SnapshotOperation<'a> = AdmittedOperation<
+    'a,
+    Result<Option<SharedOwned<super::AgentMessageSnapshot>>, SandboxStoreError>,
+>;
 
 /// One generation-fenced, all-or-nothing conversation mutation.
 #[derive(Debug, Clone)]
@@ -184,6 +192,40 @@ fn admits_input(current: &Agent, mutation: &AgentConversationMutation) -> bool {
 /// Durable agent conversation state and its gap-free semantic log.
 #[async_trait]
 pub trait AgentConversationStore: Send + Sync {
+    /// Reserve the concrete future before boxing or constructing query storage.
+    /// The inner result preserves domain classification and allocation custody;
+    /// the outer result describes admission or unsupported source capabilities.
+    fn agent_message_snapshot_operation<'a>(
+        &'a self,
+        _id: &'a AgentId,
+        _policy: &'a IngressOwnershipPolicy,
+    ) -> Result<SnapshotOperation<'a>, AdmittedError> {
+        Err(AdmittedError::Unsupported(
+            "allocation-owned conversation snapshot operations are unsupported",
+        ))
+    }
+
+    /// Explicit allocation-owned read. Implementations must reserve raw read
+    /// capacity before I/O and inspect that same snapshot before typed decoding.
+    /// Allocated errors retain their working reservation through the final owner.
+    async fn admitted_agent_message_snapshot(
+        &self,
+        _id: &AgentId,
+        _policy: &crate::sandbox::ingress_ownership::IngressOwnershipPolicy,
+    ) -> Result<
+        Option<crate::sandbox::ingress_ownership::SharedOwned<super::AgentMessageSnapshot>>,
+        crate::sandbox::ingress_ownership::OwnedWork<SandboxStoreError>,
+    > {
+        Err(
+            crate::sandbox::ingress_ownership::IngressWorkScope::inherit_owned(async {
+                SandboxStoreError::InvalidTransaction(
+                    "allocation-owned conversation snapshots are unsupported",
+                )
+            })
+            .await,
+        )
+    }
+
     /// Settle a known-aborted output append without admitting new work. A store
     /// must verify the exact snapshot and normal-capacity refusal transactionally.
     async fn commit_agent_capacity_update(

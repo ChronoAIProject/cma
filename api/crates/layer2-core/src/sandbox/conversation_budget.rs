@@ -71,6 +71,30 @@ pub(super) async fn terminal<'a>(
 use super::{live, AgentConversationUpdateStore, Arc, DurableAgentUpdateRecorder};
 
 impl DurableAgentUpdateRecorder {
+    /// Admit live publication copies against the supplied policy's data class.
+    /// The producer owns its source fragment separately from these shared copies.
+    pub fn with_live_ownership<S>(
+        store: Arc<S>,
+        writer_policy: Arc<super::super::task_experience::TaskExperiencePolicy>,
+        spend_source: Option<Arc<dyn crate::budget::SpendSource>>,
+        coalesce_policy: Option<super::AgentOutputCoalescePolicy>,
+        policy: &super::super::ingress_ownership::IngressOwnershipPolicy,
+    ) -> Arc<Self>
+    where
+        S: AgentConversationUpdateStore + 'static,
+    {
+        Arc::new(Self {
+            live_source: std::sync::OnceLock::new(),
+            store,
+            writer_policy,
+            spend_source,
+            coalesce_policy,
+            live: live::AgentLiveHub::with_budget(super::live_budget::LiveBudget::process_owned(
+                policy,
+            )),
+        })
+    }
+
     pub fn new<S>(store: Arc<S>) -> Arc<Self>
     where
         S: AgentConversationUpdateStore + 'static,

@@ -380,13 +380,22 @@ where
         )
     })?;
     let mut task = tokio::spawn(crate::telemetry::agent_output::inherit_commands(
-        async move {
+        layer2_core::sandbox::ingress_ownership::IngressWorkScope::inherit_owned(async move {
             let _permit = permit;
             future.await
-        },
+        }),
     ));
     match tokio::time::timeout(deadline, &mut task).await {
-        Ok(Ok(result)) => Ok(result),
+        Ok(Ok(result)) => result.into_current().map_err(|owned| {
+            tracing::error!(
+                context,
+                "reconciliation allocation scope does not match its receiver"
+            );
+            // No result may escape its owner on mismatch. The outer error still
+            // means unresolved reconciliation; it must not manufacture an abort.
+            drop(owned);
+            String::new()
+        }),
         Ok(Err(error)) => {
             tracing::error!(
                 context,
@@ -426,3 +435,7 @@ pub(super) fn unavailable(context: &str, error: Error) -> StoreError {
 #[cfg(test)]
 #[path = "sandbox_mongo_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ingress_reconciliation_tests.rs"]
+mod ingress_reconciliation_tests;

@@ -76,7 +76,7 @@ async fn quiet_batch_acks_only_last_receipt_after_unavailable_flush_retries() {
         attempts: AtomicUsize::new(0),
         failures: 2,
     };
-    let mut assembly = AgentMessageAssembly::default();
+    let mut assembly = RecordingSession::new(None);
     let mut pending = None;
     let (send, mut receive) = mpsc::channel(8);
     let id = AgentId("agt_batch".into());
@@ -111,16 +111,21 @@ async fn quiet_batch_acks_only_last_receipt_after_unavailable_flush_retries() {
 #[tokio::test]
 async fn cumulative_ack_requires_exact_receipt_and_keeps_newer_pending_output() {
     let (send, mut receive) = mpsc::channel(8);
-    let mut pending = Some(RuntimeOutputReceipt::new(source(3), send.clone()));
+    let mut pending = Some(PendingReceipt::Legacy(RuntimeOutputReceipt::new(
+        source(3),
+        send.clone(),
+    )));
     let older = RuntimeOutputReceipt::new(source(1), send);
-    acknowledge(&source(1), Some(&older), &mut pending)
+    acknowledge(&source(1), Some(&older), &mut pending, false)
         .await
         .unwrap();
     assert_eq!(receive.recv().await, Some(source(1)));
     assert_eq!(pending.as_ref().unwrap().source.cursor, 3);
     let mut invalid = source(3);
     invalid.payload_sha256 = "f".repeat(64);
-    assert!(acknowledge(&invalid, None, &mut pending).await.is_err());
+    assert!(acknowledge(&invalid, None, &mut pending, false)
+        .await
+        .is_err());
     assert!(receive.try_recv().is_err());
     drop(pending);
     assert!(
