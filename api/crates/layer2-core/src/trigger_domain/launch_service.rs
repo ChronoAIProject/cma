@@ -135,7 +135,9 @@ impl LaunchServiceError {
     }
 }
 
+#[derive(Clone)]
 pub struct LaunchService {
+    pub(super) admission_policy: super::LaunchAdmissionPolicy,
     pub(super) common_first_messages: bool,
     pub(super) definitions: Arc<dyn TriggerStore>,
     pub(super) profile_reader: Arc<dyn TriggerProfileReader>,
@@ -170,6 +172,7 @@ impl LaunchService {
         let sandbox_profiles: Arc<dyn SandboxProfileStore> = profiles.clone();
         let workspace_profiles: Arc<dyn WorkspaceProfileStore> = profiles;
         Arc::new(Self {
+            admission_policy: Default::default(),
             common_first_messages: false,
             definitions,
             profile_reader,
@@ -255,13 +258,8 @@ impl LaunchService {
                 return Err(LaunchServiceError::Disabled);
             }
             let trigger = self.public_trigger(public_id).await?;
-            super::visitor_allowance::refuse_exhausted_visitor(
-                self.launches.as_ref(),
-                caller,
-                policy.visitor_launches_per_day,
-                crate::seconds_from_rfc3339(&now_rfc3339()).unwrap_or_default(),
-            )
-            .await?;
+            self.check_visitor_allowance(caller, policy.visitor_launches_per_day)
+                .await?;
             let profiles = self
                 .profile_reader
                 .read_trigger_profiles(&trigger.revision.content.target)

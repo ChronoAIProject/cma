@@ -1,5 +1,6 @@
 use super::*;
 use futures_util::future::join_all;
+use layer2_core::trigger_domain::LaunchAdmissionPolicy;
 
 // Keep fixed windows beyond the TTL monitor's clock during the campaign.
 const BEFORE_MIDNIGHT: &str = "2099-09-05T23:59:59Z";
@@ -24,6 +25,7 @@ async fn replicas(seed: &Seeded) -> [MongoTriggerDefinitionStore; 2] {
             .await
             .unwrap(),
     ]
+    .map(|store| store.with_launch_admission_policy(LaunchAdmissionPolicy::VisitorAllowance))
 }
 
 async fn race(

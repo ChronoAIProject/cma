@@ -3,6 +3,39 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use super::{launch_service_support::store_error, LaunchServiceError, LaunchStore};
 use crate::{Caller, Capability};
 
+/// Deployment policy; never part of a retained Launch or public request.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LaunchAdmissionPolicy {
+    #[default]
+    Baseline,
+    VisitorAllowance,
+}
+
+impl super::LaunchService {
+    pub fn with_admission_policy(
+        &self,
+        admission_policy: LaunchAdmissionPolicy,
+    ) -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            admission_policy,
+            ..self.clone()
+        })
+    }
+
+    pub(super) async fn check_visitor_allowance(
+        &self,
+        caller: &Caller,
+        limit: u32,
+    ) -> Result<(), LaunchServiceError> {
+        if self.admission_policy == LaunchAdmissionPolicy::Baseline {
+            return Ok(());
+        }
+        let now = crate::seconds_from_rfc3339(&crate::now_rfc3339())
+            .ok_or_else(|| LaunchServiceError::Unavailable("Launch clock is unavailable".into()))?;
+        refuse_exhausted_visitor(self.launches.as_ref(), caller, limit, now).await
+    }
+}
+
 /// Return the UTC day and next midnight for an admitted Launch timestamp.
 pub fn visitor_launch_day(created_at_seconds: u64) -> (u64, SystemTime) {
     let day = created_at_seconds / 86_400;

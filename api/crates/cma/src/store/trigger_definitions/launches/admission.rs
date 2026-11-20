@@ -1,5 +1,6 @@
 use layer2_core::trigger_domain::{
-    Launch, LaunchAdmission, LaunchAdmissionResult, LaunchEvent, LaunchState, LaunchStoreError,
+    Launch, LaunchAdmission, LaunchAdmissionPolicy, LaunchAdmissionResult, LaunchEvent,
+    LaunchState, LaunchStoreError,
 };
 use mongodb::ClientSession;
 use std::time::Duration;
@@ -14,7 +15,7 @@ use super::event_log;
 use super::queries::{self, ReadError};
 use super::transactions;
 use super::validation;
-use super::{unavailable, MongoTriggerDefinitionStore};
+use super::{unavailable, MongoTriggerDefinitionStore, TRANSACTION_ATTEMPTS};
 
 const ADMISSION_ATTEMPTS: usize = 16;
 
@@ -45,10 +46,20 @@ pub(super) async fn admit(
     let events = validation::append_events(&mut launch, admission.events, event_at)?;
     launch.validate()?;
 
+    let enhanced = store.launch_admission_policy == LaunchAdmissionPolicy::VisitorAllowance;
+    let attempts = if enhanced {
+        ADMISSION_ATTEMPTS
+    } else {
+        TRANSACTION_ATTEMPTS
+    };
     let mut last_transient = None;
-    for attempt in 0..ADMISSION_ATTEMPTS {
+    for attempt in 0..attempts {
         if attempt > 0 {
-            tokio::time::sleep(launch_admission_retry_delay(attempt)).await;
+            if enhanced {
+                tokio::time::sleep(launch_admission_retry_delay(attempt)).await;
+            } else {
+                tokio::task::yield_now().await;
+            }
         }
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
@@ -122,10 +133,7 @@ pub(super) async fn admit(
             CommitOutcome::Failed(error) => return Err(unavailable(error)),
         }
     }
-    tracing::warn!(
-        attempts = ADMISSION_ATTEMPTS,
-        "launch admission retries exhausted"
-    );
+    tracing::warn!(attempts, "launch admission retries exhausted");
     Err(LaunchStoreError::Unavailable(format!(
         "Launch admission exhausted its retry budget: {}",
         last_transient.unwrap_or_else(|| "no driver result".into())

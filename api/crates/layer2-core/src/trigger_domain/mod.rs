@@ -95,7 +95,7 @@ pub use store::{
     TriggerStoreError,
 };
 pub use trigger_service::{TriggerService, TriggerServiceError, TriggerStatistics};
-pub use visitor_allowance::visitor_launch_day;
+pub use visitor_allowance::{visitor_launch_day, LaunchAdmissionPolicy};
 pub use worker_effects::{
     LaunchEffectKind, LaunchEffectRecord, LaunchEffectState, LaunchWorkLease, LaunchWorkState,
     LaunchWorkStep, MAX_LAUNCH_RETRY_DELAY_SECONDS, MAX_LAUNCH_WORK_ATTEMPTS,

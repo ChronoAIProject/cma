@@ -18,6 +18,14 @@ impl TriggerProfileReader for CountedProfiles {
 }
 
 fn observed_service(fixture: &Fixture, limit: u32) -> (Arc<LaunchService>, Arc<CountedProfiles>) {
+    let (service, profiles) = baseline_service(fixture, limit);
+    (
+        service.with_admission_policy(LaunchAdmissionPolicy::VisitorAllowance),
+        profiles,
+    )
+}
+
+fn baseline_service(fixture: &Fixture, limit: u32) -> (Arc<LaunchService>, Arc<CountedProfiles>) {
     let profiles = Arc::new(CountedProfiles {
         inner: fixture.profiles.clone(),
         calls: AtomicUsize::new(0),
@@ -48,6 +56,26 @@ async fn exhausted_fixture() -> (Fixture, Launch) {
     }
     fixture.broker.state.lock().unwrap().calls = 0;
     (fixture, original.unwrap())
+}
+
+#[tokio::test]
+async fn default_service_keeps_baseline_dependency_order() {
+    let (fixture, _) = exhausted_fixture().await;
+    fixture.broker.set_unavailable(true);
+    let (service, profiles) = baseline_service(&fixture, 5);
+    assert!(matches!(
+        service
+            .create_or_resume(
+                &fixture.caller,
+                &fixture.public.public_id,
+                fixture.request("default-after-allowance"),
+            )
+            .await,
+        Err(LaunchServiceError::Unavailable(_))
+    ));
+    assert_eq!(profiles.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.broker.calls(), 1);
+    assert_eq!(fixture.stats().await.launches_total, 5);
 }
 
 #[tokio::test]

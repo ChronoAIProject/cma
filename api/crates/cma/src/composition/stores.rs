@@ -33,7 +33,8 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
     stores.trigger_definitions = Arc::new(
         (*stores.trigger_definitions)
             .clone()
-            .with_global_sandbox_limit(config.global_sandbox_limit),
+            .with_global_sandbox_limit(config.global_sandbox_limit)
+            .with_launch_admission_policy(config.features.launch_admission_policy()),
     );
     stores.sandbox_model = Arc::new(
         (*stores.sandbox_model)
