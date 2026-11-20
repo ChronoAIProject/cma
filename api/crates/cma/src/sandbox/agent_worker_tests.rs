@@ -68,6 +68,7 @@ mod settings_replay_tests;
 mod sign_in_tests;
 mod skill_home;
 mod skill_material_tests;
+mod skill_publication_contention_tests;
 mod staged_connection_tests;
 mod startup_failure_tests;
 mod startup_hold_tests;
