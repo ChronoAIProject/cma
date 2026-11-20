@@ -34,7 +34,18 @@ async fn uncertain_capture_publication_reconciles_the_same_catalog_identity_afte
         .unwrap();
     assert_eq!(result, Err(HomeBackupError::CommitUnknown));
     let reopened = MongoHomeBackupStore::open(&admin, &name).await.unwrap();
-    let retained = reopened.get_backup(&intent.id).await.unwrap().unwrap();
+    let retained = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            if let Some(record) = reopened.get_backup(&intent.id).await.unwrap() {
+                break record;
+            }
+            // An uncertain acknowledgement does not establish majority visibility.
+            // Reconcile only the original identity; absence cannot authorize replay.
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("the committed capture must become visible to its majority reader");
     let retained_schedule = reopened
         .get_schedule(&claim.schedule.id)
         .await

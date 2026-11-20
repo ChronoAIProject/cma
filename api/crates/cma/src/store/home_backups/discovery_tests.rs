@@ -93,6 +93,8 @@ async fn keyset_backfill_keeps_legacy_in_denominator_and_never_mutates_sandbox()
     let original = insert(&fixture, &native).await;
     insert(&fixture, &retained("b-legacy", false)).await;
     let mut released = retained("c-released", false);
+    released.status = layer2_core::sandbox::SandboxStatus::Retiring;
+    released.work.step = layer2_core::sandbox::SandboxWorkStep::StopAgents;
     released.lifecycle.home.as_mut().unwrap().released = true;
     insert(&fixture, &released).await;
     let mut unbound = retained("d-unbound", false);
