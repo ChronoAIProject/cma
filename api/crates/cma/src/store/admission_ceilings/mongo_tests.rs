@@ -79,11 +79,11 @@ async fn pending_home_observation_survives_unset_retained_home_ceiling() {
         let commands = observed.lock().unwrap();
         assert_eq!(
             commands.len(),
-            2,
-            "activation and pending homes each require exactly one point read"
+            1,
+            "disabled recovery preserves the ordinary pending counter point read"
         );
         assert_eq!(
-            commands[1].get_document("filter").unwrap(),
+            commands[0].get_document("filter").unwrap(),
             &doc! {"_id":{"scope":"global_sandbox_capacity"}}
         );
         assert!(commands[0].contains_key("maxTimeMS"));

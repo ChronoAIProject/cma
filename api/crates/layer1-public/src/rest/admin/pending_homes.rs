@@ -20,6 +20,39 @@ pub(super) fn routes() -> Router<Arc<AdminState>> {
     )
 }
 
+#[derive(Serialize, ToSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub(super) enum PendingHomesObservationView {
+    Disabled,
+    CapacityInactive,
+    IndexMissing,
+    IndexMismatch,
+    Unavailable,
+    Verified {
+        expected_pending_launch_homes: u64,
+        pending_launch_homes_drift: i64,
+    },
+}
+impl From<layer2_core::admission::PendingHomesObservation> for PendingHomesObservationView {
+    fn from(value: layer2_core::admission::PendingHomesObservation) -> Self {
+        use layer2_core::admission::PendingHomesObservation as Observation;
+        match value {
+            Observation::Disabled => Self::Disabled,
+            Observation::CapacityInactive => Self::CapacityInactive,
+            Observation::IndexMissing => Self::IndexMissing,
+            Observation::IndexMismatch => Self::IndexMismatch,
+            Observation::Unavailable => Self::Unavailable,
+            Observation::Verified {
+                expected_pending_launch_homes,
+                pending_launch_homes_drift,
+            } => Self::Verified {
+                expected_pending_launch_homes,
+                pending_launch_homes_drift,
+            },
+        }
+    }
+}
+
 #[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct ReconcilePendingHomesRequest {
@@ -114,7 +147,11 @@ impl IntoResponse for Failure {
 #[derive(OpenApi)]
 #[openapi(
     paths(reconcile),
-    components(schemas(ReconcilePendingHomesRequest, PendingHomesReconciliationView))
+    components(schemas(
+        ReconcilePendingHomesRequest,
+        PendingHomesReconciliationView,
+        PendingHomesObservationView
+    ))
 )]
 struct PendingHomesApi;
 pub(crate) fn document() -> utoipa::openapi::OpenApi {

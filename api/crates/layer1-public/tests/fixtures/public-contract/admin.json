@@ -1229,8 +1229,9 @@
             "retained_homes": null,
             "pending_launch_homes": 0,
             "active_sessions": null,
-            "expected_pending_launch_homes": 0,
-            "pending_launch_homes_drift": 0
+            "pending_homes": {
+              "status": "disabled"
+            }
           },
           "ceilings_history": [],
           "history": []
@@ -1840,8 +1841,9 @@
             "retained_homes": null,
             "pending_launch_homes": 0,
             "active_sessions": null,
-            "expected_pending_launch_homes": 0,
-            "pending_launch_homes_drift": 0
+            "pending_homes": {
+              "status": "disabled"
+            }
           },
           "ceilings_history": [],
           "history": [
@@ -2414,6 +2416,430 @@
           "status": 409,
           "detail": "The pending home counter changed. Read the current state before issuing a new command.",
           "code": "pending_homes_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-read-disabled",
+      "operation": "GET /api/v1/admin/admission",
+      "scenario": "admission_pending_homes_read_disabled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 0,
+          "operator_stop": null,
+          "last_change": null,
+          "writes_available": false,
+          "ceilings": {
+            "revision": 0,
+            "ceilings": {
+              "registrations": null,
+              "retained_homes": null,
+              "active_sessions": null,
+              "owner_active_sessions": null,
+              "existing_reserve": {
+                "retained_homes": null,
+                "active_sessions": null
+              }
+            },
+            "last_change": null,
+            "writes_available": false
+          },
+          "effective_limits": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          },
+          "capacity": {
+            "registrations": null,
+            "retained_homes": null,
+            "pending_launch_homes": 4,
+            "active_sessions": null,
+            "pending_homes": {
+              "status": "disabled"
+            }
+          },
+          "ceilings_history": [],
+          "history": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-read-capacity-inactive",
+      "operation": "GET /api/v1/admin/admission",
+      "scenario": "admission_pending_homes_read_capacity_inactive",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 0,
+          "operator_stop": null,
+          "last_change": null,
+          "writes_available": false,
+          "ceilings": {
+            "revision": 0,
+            "ceilings": {
+              "registrations": null,
+              "retained_homes": null,
+              "active_sessions": null,
+              "owner_active_sessions": null,
+              "existing_reserve": {
+                "retained_homes": null,
+                "active_sessions": null
+              }
+            },
+            "last_change": null,
+            "writes_available": false
+          },
+          "effective_limits": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          },
+          "capacity": {
+            "registrations": null,
+            "retained_homes": null,
+            "pending_launch_homes": 4,
+            "active_sessions": null,
+            "pending_homes": {
+              "status": "capacity_inactive"
+            }
+          },
+          "ceilings_history": [],
+          "history": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-read-index-missing",
+      "operation": "GET /api/v1/admin/admission",
+      "scenario": "admission_pending_homes_read_index_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 0,
+          "operator_stop": null,
+          "last_change": null,
+          "writes_available": false,
+          "ceilings": {
+            "revision": 0,
+            "ceilings": {
+              "registrations": null,
+              "retained_homes": null,
+              "active_sessions": null,
+              "owner_active_sessions": null,
+              "existing_reserve": {
+                "retained_homes": null,
+                "active_sessions": null
+              }
+            },
+            "last_change": null,
+            "writes_available": false
+          },
+          "effective_limits": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          },
+          "capacity": {
+            "registrations": null,
+            "retained_homes": null,
+            "pending_launch_homes": 4,
+            "active_sessions": null,
+            "pending_homes": {
+              "status": "index_missing"
+            }
+          },
+          "ceilings_history": [],
+          "history": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-read-index-mismatch",
+      "operation": "GET /api/v1/admin/admission",
+      "scenario": "admission_pending_homes_read_index_mismatch",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 0,
+          "operator_stop": null,
+          "last_change": null,
+          "writes_available": false,
+          "ceilings": {
+            "revision": 0,
+            "ceilings": {
+              "registrations": null,
+              "retained_homes": null,
+              "active_sessions": null,
+              "owner_active_sessions": null,
+              "existing_reserve": {
+                "retained_homes": null,
+                "active_sessions": null
+              }
+            },
+            "last_change": null,
+            "writes_available": false
+          },
+          "effective_limits": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          },
+          "capacity": {
+            "registrations": null,
+            "retained_homes": null,
+            "pending_launch_homes": 4,
+            "active_sessions": null,
+            "pending_homes": {
+              "status": "index_mismatch"
+            }
+          },
+          "ceilings_history": [],
+          "history": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-read-unavailable",
+      "operation": "GET /api/v1/admin/admission",
+      "scenario": "admission_pending_homes_read_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 0,
+          "operator_stop": null,
+          "last_change": null,
+          "writes_available": false,
+          "ceilings": {
+            "revision": 0,
+            "ceilings": {
+              "registrations": null,
+              "retained_homes": null,
+              "active_sessions": null,
+              "owner_active_sessions": null,
+              "existing_reserve": {
+                "retained_homes": null,
+                "active_sessions": null
+              }
+            },
+            "last_change": null,
+            "writes_available": false
+          },
+          "effective_limits": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          },
+          "capacity": {
+            "registrations": null,
+            "retained_homes": null,
+            "pending_launch_homes": 4,
+            "active_sessions": null,
+            "pending_homes": {
+              "status": "unavailable"
+            }
+          },
+          "ceilings_history": [],
+          "history": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-read-verified",
+      "operation": "GET /api/v1/admin/admission",
+      "scenario": "admission_pending_homes_read_verified",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 0,
+          "operator_stop": null,
+          "last_change": null,
+          "writes_available": false,
+          "ceilings": {
+            "revision": 0,
+            "ceilings": {
+              "registrations": null,
+              "retained_homes": null,
+              "active_sessions": null,
+              "owner_active_sessions": null,
+              "existing_reserve": {
+                "retained_homes": null,
+                "active_sessions": null
+              }
+            },
+            "last_change": null,
+            "writes_available": false
+          },
+          "effective_limits": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          },
+          "capacity": {
+            "registrations": null,
+            "retained_homes": null,
+            "pending_launch_homes": 4,
+            "active_sessions": null,
+            "pending_homes": {
+              "status": "verified",
+              "expected_pending_launch_homes": 5,
+              "pending_launch_homes_drift": -1
+            }
+          },
+          "ceilings_history": [],
+          "history": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-pending-homes-read-verified-zero",
+      "operation": "GET /api/v1/admin/admission",
+      "scenario": "admission_pending_homes_read_verified_zero",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/admin/admission",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "revision": 0,
+          "operator_stop": null,
+          "last_change": null,
+          "writes_available": false,
+          "ceilings": {
+            "revision": 0,
+            "ceilings": {
+              "registrations": null,
+              "retained_homes": null,
+              "active_sessions": null,
+              "owner_active_sessions": null,
+              "existing_reserve": {
+                "retained_homes": null,
+                "active_sessions": null
+              }
+            },
+            "last_change": null,
+            "writes_available": false
+          },
+          "effective_limits": {
+            "registrations": null,
+            "retained_homes": null,
+            "active_sessions": null,
+            "owner_active_sessions": null,
+            "existing_reserve": {
+              "retained_homes": null,
+              "active_sessions": null
+            }
+          },
+          "capacity": {
+            "registrations": null,
+            "retained_homes": null,
+            "pending_launch_homes": 0,
+            "active_sessions": null,
+            "pending_homes": {
+              "status": "verified",
+              "expected_pending_launch_homes": 0,
+              "pending_launch_homes_drift": 0
+            }
+          },
+          "ceilings_history": [],
+          "history": []
         },
         "bodyKind": "json"
       },

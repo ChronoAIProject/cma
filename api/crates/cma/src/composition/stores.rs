@@ -27,6 +27,7 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
         .configure_admission_ceilings(
             config.global_sandbox_limit,
             config.features.admission_ceilings_writes_enabled,
+            config.features.pending_home_reconciliation,
         )
         .await
         .map_err(|error| format!("admission ceilings are not usable: {error}"))?;

@@ -10,11 +10,14 @@ use super::{
     schema::DOCUMENT_SCHEMA_VERSION,
     settings::SETTINGS,
 };
-use layer2_core::{admission::PendingHomesReconciliation, StoreError, SubjectId};
+use layer2_core::{
+    admission::{PendingHomesObservation, PendingHomesReconciliation},
+    StoreError, SubjectId,
+};
 use mongodb::{
     bson::{doc, Document},
-    options::{Hint, IndexOptions},
-    Client, ClientSession, Collection, IndexModel,
+    options::Hint,
+    Client, ClientSession, Collection,
 };
 use std::sync::{
     atomic::{AtomicBool, Ordering},
@@ -23,6 +26,7 @@ use std::sync::{
 use std::time::Duration;
 
 mod correction;
+mod readiness;
 mod repair;
 
 pub(super) const INDEX: &str = "sandbox_admissions_reserved_launch_homes";
@@ -34,26 +38,9 @@ pub(super) fn reserved_filter() -> Document {
     doc! {"_id.scope": "launch_home_capacity", "state": "reserved"}
 }
 
-pub(super) async fn ensure_index(admissions: &Collection<Document>) -> Result<(), StoreError> {
-    admissions
-        .create_index(
-            IndexModel::builder()
-                .keys(doc! {"state": 1, "_id": 1})
-                .options(
-                    IndexOptions::builder()
-                        .name(INDEX.to_owned())
-                        .partial_filter_expression(reserved_filter())
-                        .build(),
-                )
-                .build(),
-        )
-        .await
-        .map_err(|error| unavailable(&format!("create reserved Launch home index: {error}")))?;
-    Ok(())
-}
-
 #[derive(Clone)]
 pub(crate) struct PendingLaunchHomes {
+    enabled: bool,
     client: Client,
     admissions: Collection<Document>,
     launches: Collection<Document>,
@@ -113,29 +100,31 @@ enum Outcome {
 }
 
 impl PendingLaunchHomes {
-    pub(super) async fn open(client: &Client, database: &str) -> Result<Self, StoreError> {
+    pub(super) fn new(client: &Client, database: &str) -> Self {
         let database = client.database(database);
-        let admissions = majority_collection(&database, ADMISSIONS);
-        ensure_index(&admissions).await?;
-        let active = super::registration_capacity::activation::read(&admissions, None)
-            .await
-            .map_err(super::registration_capacity::activation::Error::into_store_error)?;
-        Ok(Self {
+        Self {
+            enabled: false,
             client: client.clone(),
-            admissions,
+            admissions: majority_collection(&database, ADMISSIONS),
             launches: majority_collection(&database, "trigger_launches"),
             settings: majority_collection(&database, SETTINGS),
             activity: majority_collection(&database, ACTIVITY),
-            activation: Arc::new(AtomicBool::new(active)),
-        })
+            activation: Arc::new(AtomicBool::new(false)),
+        }
     }
 
     pub(super) fn with_activation(mut self, activation: Arc<AtomicBool>) -> Self {
-        if self.active() {
-            activation.store(true, Ordering::Relaxed);
-        }
         self.activation = activation;
         self
+    }
+
+    pub(super) fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    pub(crate) fn enabled(&self) -> bool {
+        self.enabled
     }
 
     pub(crate) fn active(&self) -> bool {
@@ -143,6 +132,9 @@ impl PendingLaunchHomes {
     }
 
     async fn require_activation(&self, session: &mut ClientSession) -> Result<(), Error> {
+        if !self.enabled || !self.active() {
+            return Err(unavailable("pending home recovery is disabled or inactive").into());
+        }
         match super::registration_capacity::activation::read(&self.admissions, Some(session)).await
         {
             Ok(true) => Ok(()),
@@ -161,9 +153,6 @@ impl PendingLaunchHomes {
         &self,
         session: &mut ClientSession,
     ) -> Result<Observation, Error> {
-        if !self.active() {
-            return Ok(Observation::default());
-        }
         self.require_activation(session).await?;
         let expected = self
             .admissions
@@ -192,9 +181,7 @@ impl PendingLaunchHomes {
     }
 
     pub(crate) async fn observe(&self) -> Result<Observation, StoreError> {
-        if !self.active() {
-            return Ok(Observation::default());
-        }
+        self.require_ready().await?;
         match self.transaction(Operation::Observe).await? {
             Outcome::Observation(observation) => {
                 report_drift(&observation);

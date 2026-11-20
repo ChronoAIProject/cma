@@ -226,7 +226,11 @@ async fn pending_homes_reconciliation_defaults_to_read_only_and_requires_the_cei
     )
     .await;
     assert_eq!(gated.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let (open, _) = admission_fixture_with_ceilings(false, true);
+    let (open, _) = admission_fixture_with_ceilings_store(
+        false,
+        true,
+        Arc::new(PendingHomesFixture::default()),
+    );
     let response = send(
         &open,
         Method::POST,
@@ -275,16 +279,31 @@ async fn pending_homes_requests_reject_invalid_reasons_counts_and_preview_values
 }
 
 #[derive(Default)]
-pub(crate) struct PendingHomesFailure(layer2_core::admission::MemoryAdmissionCeilingsStore);
+pub(crate) struct PendingHomesFixture {
+    pub pending: u64,
+    pub observation: layer2_core::admission::PendingHomesObservation,
+    pub inner: layer2_core::admission::MemoryAdmissionCeilingsStore,
+}
 #[async_trait]
-impl layer2_core::admission::AdmissionCeilingsStore for PendingHomesFailure {
+impl layer2_core::admission::AdmissionCeilingsStore for PendingHomesFixture {
     async fn read(&self) -> Result<layer2_core::admission::AdmissionCeilingsState, StoreError> {
-        self.0.read().await
+        self.inner.read().await
     }
     async fn read_with_history(
         &self,
     ) -> Result<layer2_core::admission::AdmissionCeilingsRead, StoreError> {
-        self.0.read_with_history().await
+        let mut read = self.inner.read_with_history().await?;
+        read.counts.pending_launch_homes = match self.observation {
+            layer2_core::admission::PendingHomesObservation::Verified {
+                expected_pending_launch_homes,
+                pending_launch_homes_drift,
+            } => expected_pending_launch_homes
+                .checked_add_signed(pending_launch_homes_drift)
+                .unwrap(),
+            _ => self.pending,
+        };
+        read.counts.pending_homes = self.observation.clone();
+        Ok(read)
     }
     async fn replace(
         &self,
@@ -294,20 +313,27 @@ impl layer2_core::admission::AdmissionCeilingsStore for PendingHomesFailure {
         ceilings: layer2_core::admission::AdmissionCeilings,
         now: u64,
     ) -> Result<layer2_core::admission::AdmissionCeilingsState, StoreError> {
-        self.0.replace(revision, actor, reason, ceilings, now).await
+        self.inner
+            .replace(revision, actor, reason, ceilings, now)
+            .await
     }
     async fn reconcile_pending_homes(
         &self,
         observed: u64,
         _: &SubjectId,
         _: &str,
-        _: bool,
+        dry_run: bool,
         _: u64,
     ) -> Result<layer2_core::admission::PendingHomesReconciliation, StoreError> {
         if observed == 1 {
             Err(StoreError::RevisionConflict {
                 expected: 1,
                 actual: 2,
+            })
+        } else if observed == 0 {
+            Ok(layer2_core::admission::PendingHomesReconciliation {
+                dry_run,
+                ..Default::default()
             })
         } else {
             Err(StoreError::Unavailable(
@@ -321,7 +347,7 @@ async fn pending_homes_conflicts_are_typed_and_retry_exhaustion_is_retryable() {
     let (app, _) = admission_fixture_with_ceilings_store(
         false,
         true,
-        Arc::new(PendingHomesFailure::default()),
+        Arc::new(PendingHomesFixture::default()),
     );
     let path = "/api/v1/admin/admission/pending-homes/reconcile";
     for (observed, status, code) in [
@@ -346,4 +372,31 @@ async fn pending_homes_conflicts_are_typed_and_retry_exhaustion_is_retryable() {
         }
         assert_eq!(body(response).await["code"], code);
     }
+}
+
+#[tokio::test]
+async fn disabled_ledger_returns_no_fake_correction_or_verified_measurements() {
+    let (app, _) = admission_fixture_with_ceilings(false, true);
+    let response = send(
+        &app,
+        Method::POST,
+        "/api/v1/admin/admission/pending-homes/reconcile",
+        Some(json!({"reason":"inspect", "observed_pending":0})),
+        [Capability::ConfigurePlatform],
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(body(response).await["code"], "pending_homes_unavailable");
+    let response = send(
+        &app,
+        Method::GET,
+        CONTROL,
+        None,
+        [Capability::ConfigurePlatform],
+    )
+    .await;
+    assert_eq!(
+        body(response).await["capacity"]["pending_homes"],
+        json!({"status":"disabled"})
+    );
 }

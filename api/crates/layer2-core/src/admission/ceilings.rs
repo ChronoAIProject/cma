@@ -209,10 +209,7 @@ pub struct AdmissionCapacityCounts {
     pub retained_homes: Option<CapacityCount>,
     /// Exact retained reservation count, including when the home ceiling is unset.
     pub pending_launch_homes: u64,
-    /// Exact receipt count from the same snapshot as the stored counter.
-    pub expected_pending_launch_homes: u64,
-    /// Stored counter minus reserved receipts; positive means excess capacity usage.
-    pub pending_launch_homes_drift: i64,
+    pub pending_homes: super::PendingHomesObservation,
     pub active_sessions: Option<CapacityCount>,
 }
 

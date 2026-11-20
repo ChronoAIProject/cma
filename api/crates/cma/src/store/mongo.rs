@@ -59,6 +59,7 @@ impl MongoStores {
         mut self,
         deployment_limit: u16,
         writes_enabled: bool,
+        pending_home_reconciliation: bool,
     ) -> Result<Self, StoreError> {
         if writes_enabled {
             self.registration_capacity = Arc::new(
@@ -73,7 +74,8 @@ impl MongoStores {
                 deployment_limit,
             )
             .await?
-            .with_activation(self.registration_capacity.activation_observation()),
+            .with_activation(self.registration_capacity.activation_observation())
+            .with_pending_home_reconciliation(pending_home_reconciliation),
         );
         Ok(self)
     }

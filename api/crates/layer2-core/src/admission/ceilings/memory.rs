@@ -38,14 +38,12 @@ impl AdmissionCeilingsStore for MemoryAdmissionCeilingsStore {
         _observed_pending: u64,
         _actor: &SubjectId,
         _reason: &str,
-        dry_run: bool,
+        _dry_run: bool,
         _now: u64,
     ) -> Result<crate::admission::PendingHomesReconciliation, StoreError> {
-        // This policy-only adapter has no activated Launch receipt ledger.
-        Ok(crate::admission::PendingHomesReconciliation {
-            dry_run,
-            ..Default::default()
-        })
+        Err(StoreError::Unavailable(
+            "pending home receipt ledger is unavailable".into(),
+        ))
     }
     async fn read(&self) -> Result<AdmissionCeilingsState, StoreError> {
         Ok(self.state.lock().map_err(|_| unavailable())?.state.clone())

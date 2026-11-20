@@ -1,4 +1,3 @@
-//! Production control-plane service and router assembly.
 use std::sync::Arc;
 mod access;
 pub(crate) mod activity;

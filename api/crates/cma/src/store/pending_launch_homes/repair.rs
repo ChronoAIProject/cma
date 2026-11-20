@@ -16,7 +16,7 @@ impl PendingLaunchHomes {
         after: Option<Document>,
         progress: Option<&std::sync::Mutex<Option<Document>>>,
     ) -> Result<SweepReport, StoreError> {
-        if !self.active() {
+        if !self.enabled || !self.active() {
             return Ok(SweepReport::default());
         }
         self.observe().await?;

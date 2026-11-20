@@ -40,11 +40,10 @@ impl MongoAdmissionCeilingsStore {
         require_transaction_topology(&database).await?;
         schema::initialize_collections(&database, &[SETTINGS, ACTIVITY]).await?;
         Ok(Self {
-            pending_homes: super::pending_launch_homes::PendingLaunchHomes::open(
+            pending_homes: super::pending_launch_homes::PendingLaunchHomes::new(
                 client,
                 database.name(),
-            )
-            .await?,
+            ),
             client: client.clone(),
             database: database.clone(),
             deployment_limit,
@@ -58,6 +57,11 @@ impl MongoAdmissionCeilingsStore {
         activation: std::sync::Arc<std::sync::atomic::AtomicBool>,
     ) -> Self {
         self.pending_homes = self.pending_homes.with_activation(activation);
+        self
+    }
+
+    pub(crate) fn with_pending_home_reconciliation(mut self, enabled: bool) -> Self {
+        self.pending_homes = self.pending_homes.with_enabled(enabled);
         self
     }
 

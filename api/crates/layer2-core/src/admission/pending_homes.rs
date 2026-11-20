@@ -4,6 +4,22 @@ use serde::{Deserialize, Serialize};
 
 use crate::{StoreError, SubjectId};
 
+/// Measurements exist only after a successful receipt census in the counter snapshot.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PendingHomesObservation {
+    #[default]
+    Disabled,
+    CapacityInactive,
+    IndexMissing,
+    IndexMismatch,
+    Unavailable,
+    Verified {
+        expected_pending_launch_homes: u64,
+        pending_launch_homes_drift: i64,
+    },
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PendingHomesReconciliation {

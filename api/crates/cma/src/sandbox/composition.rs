@@ -135,7 +135,6 @@ impl SandboxLifecycleComposition {
         .with_profile_agents(Arc::clone(&dependencies.agents))
         .with_runtime_version(config.runtime_version.clone())
         .with_platform_spend(dependencies.store.clone())
-        .with_pending_homes(dependencies.pending_homes.clone())
         .with_failed_runtime_recovery(Arc::new(
             layer2_core::sandbox::SandboxRuntimeUpdateService::new(
                 dependencies.store.clone(),
@@ -148,6 +147,11 @@ impl SandboxLifecycleComposition {
                 ),
             )),
         ));
+        let reconciliation = if dependencies.pending_homes.enabled() {
+            reconciliation.with_pending_homes(dependencies.pending_homes.clone())
+        } else {
+            reconciliation
+        };
         let updates = DurableAgentUpdateRecorder::with_output_policy(
             dependencies.store.clone(),
             dependencies.store.writer_policy.clone(),

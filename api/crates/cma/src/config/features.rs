@@ -40,6 +40,7 @@ pub(crate) struct FeatureFlags {
     pub platform_counter_shards: bool,
     pub admission_control_writes_enabled: bool,
     pub admission_ceilings_writes_enabled: bool,
+    pub pending_home_reconciliation: bool,
     pub agent_control_write_coordination: bool,
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
@@ -94,6 +95,10 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            pending_home_reconciliation: flag(
+                lookup,
+                "CHRONO_PENDING_HOME_RECONCILIATION_ENABLED",
+            )?,
             admin_runtime_inventory: flag(lookup, "CHRONO_ADMIN_RUNTIME_INVENTORY_ENABLED")?,
             ownership_retry_hints_enabled: flag(
                 lookup,
@@ -334,3 +339,6 @@ mod observation_tests;
 #[cfg(test)]
 #[path = "features/ownership_retry_hint_tests.rs"]
 mod ownership_retry_hint_tests;
+
+#[cfg(test)]
+mod pending_homes_tests;

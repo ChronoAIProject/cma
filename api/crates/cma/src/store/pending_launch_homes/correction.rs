@@ -10,12 +10,7 @@ impl PendingLaunchHomes {
         dry_run: bool,
         now: u64,
     ) -> Result<PendingHomesReconciliation, StoreError> {
-        if !self.active() {
-            return Ok(PendingHomesReconciliation {
-                dry_run,
-                ..Default::default()
-            });
-        }
+        self.require_ready().await?;
         let id = format!("pending_launch_homes_change:{}", uuid::Uuid::new_v4());
         match self
             .transaction(Operation::Correct(Correction {
