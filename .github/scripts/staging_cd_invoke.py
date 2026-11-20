@@ -7,6 +7,7 @@ import sys
 import tempfile
 from pathlib import Path
 
+from cd_target import controller
 from staging_cd_admission import event_identity
 from staging_cd_applied import configured_group
 from staging_cd_checkout import checkout_path
@@ -74,14 +75,15 @@ def private_script(env, run_command=subprocess.run):
     root = checkout_path(env)
     require(root.is_dir(), "Private checkout is absent")
     current = root
-    for part in ("staging", "scripts", "deploy_set.py"):
+    directory = controller(env)
+    for part in (*directory, "scripts", "deploy_set.py"):
         current = current / part
         require(not current.is_symlink(), "Private entry point links are forbidden")
     require(current.is_file(), "Private deployment entry point is absent")
     child_env = {k: env[k] for k in PROCESS_KEYS if k in env}
     child_env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
     for args, expected in ((["rev-parse", "HEAD"], revision),
-                           (["status", "--porcelain", "--untracked-files=all", "--", "staging"], "")):
+                           (["status", "--porcelain", "--untracked-files=all", "--", "/".join(directory)], "")):
         result = run_command(["git", "-C", str(root), *args], env=child_env,
                              capture_output=True, text=True, timeout=30, check=False)
         require(result.returncode == 0 and result.stdout.strip() == expected,

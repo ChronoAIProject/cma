@@ -2,21 +2,24 @@
 import json
 from pathlib import Path
 
+from cd_target import branch
 from staging_cd_common import matches, require
 from staging_cd_versions import REPOSITORY
 
 
 def event_identity(env):
-    require(env.get("GITHUB_REPOSITORY") == REPOSITORY and env.get("GITHUB_REF") == "refs/heads/develop"
+    # Staging deploys from develop, production from main (cd_target).
+    ref = "refs/heads/" + branch(env)
+    require(env.get("GITHUB_REPOSITORY") == REPOSITORY and env.get("GITHUB_REF") == ref
             and env.get("GITHUB_EVENT_NAME") in ("push", "workflow_dispatch")
             and matches(r"[0-9a-f]{40}", env.get("GITHUB_SHA")),
             "Deployment requires an authorized develop event")
     event = json.loads(Path(env["GITHUB_EVENT_PATH"]).read_text())
-    require(isinstance(event, dict) and event.get("ref") in ("develop", "refs/heads/develop")
+    require(isinstance(event, dict) and event.get("ref") in (branch(env), ref)
             and isinstance(event.get("repository"), dict)
             and event["repository"].get("full_name") == REPOSITORY, "Deployment event identity differs")
     if env["GITHUB_EVENT_NAME"] == "push":
-        require(event["ref"] == "refs/heads/develop" and event.get("after") == env["GITHUB_SHA"]
+        require(event["ref"] == ref and event.get("after") == env["GITHUB_SHA"]
                 and event.get("deleted") is False and event.get("forced", False) is False,
                 "Deployment push identity differs")
     else:
