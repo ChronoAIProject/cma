@@ -73,12 +73,17 @@ def github(path, *, timeout, output=None):
     return output
 
 
+# Producers are recent develop push heads; older bundles have expired anyway.
+FIRST_PARENT_WINDOW = 2000
+
+
 def on_develop(root, source, head, timeout):
-    # A tag push reports the tag's name as its branch. Only a commit already on
-    # the protected develop history that this release builds can be a producer.
-    result = subprocess.run(["git", "merge-base", "--is-ancestor", source, head], cwd=root,
-                            capture_output=True, timeout=timeout, check=False)
-    return result.returncode == 0
+    # A tag push reports the tag's name as its branch, and merged PR commits are
+    # also develop ancestors. Only a commit on develop's own first-parent line,
+    # which every develop push head is, can be a producer.
+    result = subprocess.run(["git", "rev-list", "--first-parent", f"--max-count={FIRST_PARENT_WINDOW}", head],
+                            cwd=root, capture_output=True, text=True, timeout=timeout, check=False)
+    return result.returncode == 0 and source in result.stdout.split()
 
 
 def validate_artifact(artifact, component):
@@ -182,7 +187,9 @@ def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develo
                   timeout=remaining(10))
     require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list), "listing")
     rows = [row for row in listing["artifacts"] if isinstance(row, dict)
-            and isinstance(row.get("workflow_run"), dict) and row["workflow_run"].get("head_branch") == "develop"]
+            and isinstance(row.get("workflow_run"), dict) and row["workflow_run"].get("head_branch") == "develop"
+            and type(row["workflow_run"].get("repository_id")) is int
+            and row["workflow_run"].get("head_repository_id") == row["workflow_run"]["repository_id"]]
     rows.sort(key=lambda row: row.get("id") if type(row.get("id")) is int else 0, reverse=True)
     download = destination.parent / "artifact.zip"
     for artifact in rows[:CANDIDATES]:

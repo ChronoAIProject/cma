@@ -137,7 +137,10 @@ class CargoArtifactTests(unittest.TestCase):
 
     def test_rows_from_other_branches_cannot_crowd_out_develop_producers(self):
         foreign = [self.spec(90 + n, artifact={"workflow_run": {"id": 90 + n, "head_sha": SOURCE,
-                   "head_branch": "feature", "repository_id": 7, "head_repository_id": 7}}) for n in range(6)]
+                   "head_branch": "feature", "repository_id": 7, "head_repository_id": 7}}) for n in range(3)]
+        # A fork's own develop branch has the right name but another repository.
+        foreign += [self.spec(95 + n, artifact={"workflow_run": {"id": 95 + n, "head_sha": SOURCE,
+                    "head_branch": "develop", "repository_id": 7, "head_repository_id": 9}}) for n in range(3)]
         good = self.spec(20)
         result = self.restore(Remote(self.root, [*foreign, good]))
         self.assertEqual((result["state"], result["producer_run"]), ("RESTORED", 20))
@@ -151,9 +154,20 @@ class CargoArtifactTests(unittest.TestCase):
             (repo / name).write_text(name)
             git("add", name)
             git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", name)
+        first = git("rev-parse", "HEAD").stdout.strip()
+        # A merged side-branch commit is a develop ancestor but never a develop push head.
+        git("checkout", "-q", "-b", "side")
+        (repo / "side").write_text("side")
+        git("add", "side")
+        git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", "side")
+        side = git("rev-parse", "HEAD").stdout.strip()
+        git("checkout", "-q", "-")
+        git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "merge", "-q", "--no-ff", "-m", "merge", "side")
         head = git("rev-parse", "HEAD").stdout.strip()
-        first = git("rev-parse", "HEAD~1").stdout.strip()
         self.assertTrue(transport.on_develop(repo, first, head, 5))
+        self.assertTrue(transport.on_develop(repo, head, head, 5))
+        self.assertEqual(git("merge-base", "--is-ancestor", side, head).returncode, 0)
+        self.assertFalse(transport.on_develop(repo, side, head, 5))
         self.assertFalse(transport.on_develop(repo, head, first, 5))
         self.assertFalse(transport.on_develop(repo, "c" * 40, head, 5))
 
