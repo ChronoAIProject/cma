@@ -6,6 +6,15 @@ import test from 'node:test';
 import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
 
 const taskHome = 'sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::';
+
+test('Usage continuation Mongo contract remains in the ordinary selector', () => {
+  const name = 'store::sandbox_mongo_integration_tests::sandbox_usage_tests::continuation::usage_signed_continuations_cross_replicas_preserve_raw_store_and_reject_scope_changes';
+  const prefix = requiredPrefixes.find(prefix => name.startsWith(prefix));
+  assert.ok(prefix, 'new Usage Mongo contract must be selected');
+  const runner = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  assert.ok(runner.includes(`test(${prefix})`));
+  assert.ok(!runner.includes(`not test(=${name})`));
+});
 const child = `${taskHome}subprocess::task_home_create_child`;
 const caseMetadata = (selected, ignored = true) => ({
   ignored, 'filter-match': {status: selected ? 'matches' : 'mismatch'},

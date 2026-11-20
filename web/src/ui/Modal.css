@@ -130,6 +130,12 @@
     overflow: auto;
     overscroll-behavior: contain;
   }
+
+  .modal__content,
+  .modal__body {
+    flex: none;
+    overflow: visible;
+  }
 }
 
 @media (max-width: 480px) {
@@ -144,12 +150,6 @@
     /* A phone keeps the footer action on screen instead of 40% of the height empty. */
     max-height: calc(100vh - 32px);
     max-height: calc(100dvh - 32px);
-  }
-
-  .modal__content,
-  .modal__body {
-    flex: none;
-    overflow: visible;
   }
 }
 

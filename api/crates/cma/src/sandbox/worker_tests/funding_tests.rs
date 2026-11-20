@@ -48,7 +48,10 @@ fn funded_worker(h: &Harness) -> (Arc<SandboxWorker>, Arc<Funding>) {
     });
     (worker_with_funding(h, funding.clone()), funding)
 }
-fn worker_with_funding(h: &Harness, funding: Arc<dyn SandboxFundingAdapter>) -> Arc<SandboxWorker> {
+pub(super) fn worker_with_funding(
+    h: &Harness,
+    funding: Arc<dyn SandboxFundingAdapter>,
+) -> Arc<SandboxWorker> {
     let dependencies = SandboxWorkerDependencies {
         store: h.store.clone(),
         adapter: h.adapter.clone(),

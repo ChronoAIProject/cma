@@ -285,6 +285,7 @@ async fn public_discovery_uses_exact_incoming_credential_for_three_read_only_met
     let f = Fixture::new(StatusCode::OK, true, true, false).await;
     let response = f.get("?platform=lark").send().await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["content-type"], "application/json");
     assert_eq!(response.headers()["cache-control"], "no-store");
     assert_eq!(
         response.json::<Value>().await.unwrap()["items"][0]["user_service_id"],
@@ -300,6 +301,44 @@ async fn public_discovery_uses_exact_incoming_credential_for_three_read_only_met
             ("2".into(), "Bearer inventory-request-fixture".into())
         ]
     );
+}
+
+#[tokio::test]
+async fn authenticated_discovery_errors_match_documented_problem_media() {
+    let document: Value = serde_json::from_str(&crate::openapi::snapshot()).unwrap();
+    let content =
+        &document["paths"]["/relay-resource-connections"]["get"]["responses"]["default"]["content"];
+    for (upstream, query, status, code, reads) in [
+        (
+            StatusCode::OK,
+            "?platform=invalid",
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            false,
+        ),
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "?platform=lark",
+            StatusCode::SERVICE_UNAVAILABLE,
+            "provider_unavailable",
+            true,
+        ),
+    ] {
+        let f = Fixture::new(upstream, true, true, false).await;
+        let response = f.get(query).send().await.unwrap();
+        assert_eq!(response.status(), status);
+        assert_eq!(response.headers()["cache-control"], "no-store");
+        let media = response.headers()["content-type"].to_str().unwrap();
+        assert_eq!(media, "application/problem+json");
+        assert_eq!(
+            content[media]["schema"]["$ref"],
+            "#/components/schemas/Problem"
+        );
+        let body = response.json::<Value>().await.unwrap();
+        assert_eq!(body["status"], status.as_u16());
+        assert_eq!(body["code"], code);
+        assert_eq!(!f.calls.lock().unwrap().is_empty(), reads);
+    }
 }
 
 #[tokio::test]
