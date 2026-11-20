@@ -85,6 +85,30 @@ def check_component_cache_writers(documents)
   end
 end
 
+MERGE_GROUP_EXPORT = "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || " \
+  "github.event.pull_request.head.repo.full_name == github.repository)"
+API_CACHE_READERS = "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || " \
+  "(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || " \
+  "github.event_name == 'merge_group')"
+
+# A queue entry tests the exact commit develop becomes, so its tested images
+# are retained for exact-source CD reuse; fork PR runs still retain nothing.
+def check_merge_group_artifacts(documents)
+  [['ci-images', 'images', ['Export tested native image', 'Retain tested native image']],
+   ['ci-omarchy', 'omarchy', ['Export tested Omarchy image', 'Retain tested Omarchy image']]].each do |file, job, names|
+    steps = documents.fetch(file).fetch('jobs').fetch(job).fetch('steps')
+    names.each do |name|
+      found = steps.select { |s| s['name'] == name }
+      require_check(found.length == 1 && found.first['if'] == MERGE_GROUP_EXPORT && !found.first.key?('continue-on-error'),
+        "#{name} must retain push, same-repository PR and merge-group images only")
+    end
+  end
+  images = documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps')
+  prepare = images.select { |s| s['name'] == 'Prepare API Cargo cache identity' }
+  require_check(prepare.length == 1 && prepare.first['if'] == API_CACHE_READERS,
+    'queue entries may restore, never save, the develop API Cargo archive')
+end
+
 # Only the read-only CI workflow may run on merge-queue refs: publication and
 # deployment authority stays with develop pushes and explicit dispatches.
 def check_merge_group_triggers(workflows)
@@ -102,6 +126,7 @@ end
 def validate(documents, actions)
   require_runtime_inventory(documents)
   check_component_cache_writers(documents)
+  check_merge_group_artifacts(documents)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
   require_check(events.keys.sort == %w[merge_group pull_request push], 'CI must cover PRs, develop pushes and merge groups')
@@ -277,12 +302,18 @@ check_merge_group_triggers(workflows)
   end
   abort 'merge-group trigger regression accepted'
 end
+before_queue = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
 mutations = [
   ->(d) { d['ci'][true].delete('merge_group') },
   ->(d) { d['ci'][true]['merge_group']['types'] = ['destroyed'] },
   ->(d) { d['ci'][true]['merge_group']['branches'] = ['main'] },
   ->(d) { d['ci'][true]['merge_group']['paths'] = ['web/**'] },
   ->(d) { d['ci']['concurrency']['group'] = 'ci-${{ github.workflow }}-${{ github.event.merge_group.base_ref || github.ref }}' },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Export tested native image' }['if'] = before_queue },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Retain tested native image' }['if'] = 'success()' },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Export tested Omarchy image' }['if'] = 'success()' },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['name'] == 'Retain tested Omarchy image' }['if'] = before_queue },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Prepare API Cargo cache identity' }['if'] = "matrix.component == 'api'" },
   ->(d) { d['ci-repo']['jobs']['structure']['steps'].reject! { |s| s['name'] == 'Synthetic authority and observer regressions' } },
   ->(d) { d['ci-repo']['jobs']['structure']['if'] = 'false' },
   ->(d) { d['ci-repo']['jobs']['structure']['continue-on-error'] = true },

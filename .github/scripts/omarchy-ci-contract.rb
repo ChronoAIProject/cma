@@ -2,7 +2,7 @@
 
 # Keep Omarchy independent of the Backend graph, including its archive split.
 module OmarchyCIContract
-  EXPORT_IF = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+  EXPORT_IF = "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
   CACHE_MISS = "steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true'"
   DEVELOP_PUSH = "github.event_name == 'push' && github.ref == 'refs/heads/develop'"
   CACHE_WRITE = "#{DEVELOP_PUSH} && (#{CACHE_MISS})"
