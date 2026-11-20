@@ -39,10 +39,35 @@ class StagingWorkflowTest < Minitest::Test
     %w[web am eg runtime runtime_omarchy].each do |component|
       release = jobs.fetch("release_#{component}")
       assert_equal 'allocate', release.fetch('needs')
+      next if component == 'am'
+
       refute release.key?('concurrency')
     end
     workflow('staging-release').fetch('jobs').each_value { |job| refute job.key?('concurrency') }
     refute jobs['allocate']['steps'].any? { |step| step['run'].to_s.match?(/buildx|skopeo|deploy\.py/) }
+  end
+
+  def test_agent_manager_releases_run_one_at_a_time_and_queued_ones_skip_restores
+    jobs = workflow('staging-cd')['jobs']
+    assert_equal({ 'group' => 'cma-staging-am-release', 'queue' => 'max', 'cancel-in-progress' => false },
+                 jobs.fetch('release_am').fetch('concurrency'))
+    groups = jobs.values.map { |job| job.dig('concurrency', 'group') }.compact
+    assert_equal 1, groups.count('cma-staging-am-release')
+
+    steps = workflow('staging-release')['jobs']['publish']['steps']
+    index = ->(name) { steps.index { |step| step['name'] == name } }
+    ownership = steps[index.call('Check Agent Manager release ownership')]
+    assert_equal 'ownership', ownership['id']
+    assert_equal "inputs.component == 'am'", ownership['if']
+    assert_equal true, ownership['continue-on-error']
+    assert_equal 'python3 -B .github/scripts/staging_cd_am_ownership.py', ownership['run']
+    restores = ['Restore compatible Cargo mounts', 'Restore authenticated layer detector evidence']
+    restores.each do |name|
+      assert_operator index.call('Check Agent Manager release ownership'), :<, index.call(name)
+      assert_includes steps[index.call(name)]['if'], "steps.ownership.outputs.superseded != 'true'"
+    end
+    publication = steps[index.call('Build once, scan every layer, and publish exact bytes')]
+    refute publication.key?('if'), 'publication must always run and decide the outcome'
   end
 
   def test_all_mutation_paths_share_one_set_lock_without_serializing_publication

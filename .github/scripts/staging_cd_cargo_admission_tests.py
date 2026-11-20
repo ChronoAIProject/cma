@@ -185,7 +185,8 @@ class Admission(unittest.TestCase):
                     transfer.side_effect = None
                     self.assertTrue(next_build.restore())
                     self.assertEqual(next_build.restore_result, "hit")
-                    transfer.assert_called_with("inject", next_build.accepted, namespace=next_build.namespace)
+                    transfer.assert_called_with("inject", next_build.accepted, namespace=next_build.namespace,
+                                                timeout=360, max_content=6 * 1024 ** 3)
                     shutil.rmtree(first.accepted)
 
     def test_failed_inventory_and_invalid_receipt_cannot_write(self):

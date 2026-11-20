@@ -129,6 +129,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             "disabled" => app.policy.set(Ok(LaunchPolicy {
                 enabled: false,
                 orchestration_paused: false,
+                visitor_launches_per_day: 5,
             })),
             "quota_unavailable" => app.quota.unavailable(),
             "quota_refused" => app.quota.refuse(),
