@@ -195,11 +195,31 @@ async fn handle(
                     crate::activity::ConsumerState::Produced,
                     None,
                 )),
-                TurnOutcome::Completed { .. } => Some(crate::activity::Change::state(
-                    turn.consumer.as_ref().map_or("default", |id| id.as_str()),
-                    crate::activity::ConsumerState::Completed,
-                    None,
-                )),
+                TurnOutcome::Completed { final_text } => {
+                    let consumer = turn.consumer.as_ref().map_or("default", |id| id.as_str());
+                    if final_text
+                        .as_ref()
+                        .is_some_and(|text| !text.trim().is_empty())
+                    {
+                        sender
+                            .observer
+                            .checkpoint(
+                                &opened.payload.record_id,
+                                &opened.payload.event_id,
+                                crate::activity::Change::state(
+                                    consumer,
+                                    crate::activity::ConsumerState::Produced,
+                                    None,
+                                ),
+                            )
+                            .await;
+                    }
+                    Some(crate::activity::Change::state(
+                        consumer,
+                        crate::activity::ConsumerState::Completed,
+                        None,
+                    ))
+                }
                 TurnOutcome::Failed { .. } | TurnOutcome::Incomplete { .. } => {
                     Some(crate::activity::Change::state(
                         turn.consumer.as_ref().map_or("default", |id| id.as_str()),

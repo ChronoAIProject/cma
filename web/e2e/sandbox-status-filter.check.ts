@@ -11,7 +11,10 @@ async function choose(page: Page, picker: string, option: string) {
 }
 async function environments(page: Page) {
   await filters(page);
-  await page.getByRole('button', { name: 'Manage environments', exact: true }).click();
+  await page
+    .getByRole('group', { name: 'Navigation filters' })
+    .getByRole('button', { name: 'Manage environments', exact: true })
+    .click();
   await filters(page);
 }
 function noEffects(fixture: LocalSandboxFilters) {
@@ -163,5 +166,162 @@ test('LOCAL corrupt or unavailable storage keeps safe, usable filters', async ({
   await expect(
     page.getByRole('tree', { name: 'Provisioning sandboxes' }).getByRole('treeitem'),
   ).toHaveCount(1);
+  noEffects(fixture);
+});
+
+for (const scope of ['Personal', 'Shared', 'Synthetic research (Organization)']) {
+  test(`LOCAL ${scope} lifecycle groups keep counts, filters, collapse and keyboard navigation`, async ({
+    page,
+    baseURL,
+  }, testInfo) => {
+    const fixture = new LocalSandboxFilters();
+    fixture.paginated = false;
+    const failed = fixture.sandboxes.find((row) => row.status === 'failed')!;
+    fixture.sandboxes.push({
+      ...failed,
+      id: 'sbx_filter_failed_operation',
+      name: 'failed operation fixture',
+      lifecycle: {
+        ...failed.lifecycle!,
+        operation: {
+          purpose: 'revive',
+          phase: 'runtime_provisioning',
+          started_at: failed.created_at,
+        },
+      },
+    });
+    for (const status of ['active', 'paused'] as const)
+      fixture.sandboxes.push({
+        ...failed,
+        id: `sbx_filter_${status}_operation`,
+        name: `${status} operation fixture`,
+        status,
+        lifecycle: {
+          ...failed.lifecycle!,
+          operation: {
+            purpose: 'revive',
+            phase: 'runtime_provisioning',
+            started_at: failed.created_at,
+          },
+        },
+      });
+    await fixture.route(page, baseURL!);
+    await page.goto('/agent-manager');
+    await environments(page);
+    if (scope !== 'Personal') await choose(page, 'Navigation scope', scope);
+    for (const [label, count] of [
+      ['Live', 1],
+      ['Changing', 8],
+      ['Paused', 1],
+      ['Needs attention', 2],
+    ] as const) {
+      const region = page.getByRole('region', { name: `${label} sandboxes`, exact: true });
+      await expect(region.locator('.resource-tree__count')).toHaveText(String(count));
+      await expect(region.locator('[role="treeitem"][aria-level="1"]')).toHaveCount(count);
+    }
+    const live = page.getByRole('tree', { name: 'Live sandboxes', exact: true });
+    await expect(live).not.toContainText('failed');
+    await expect(live).not.toContainText('operation fixture');
+    await expect(page.getByText('retired fixture', { exact: true })).toHaveCount(0);
+    await page
+      .getByText('Deletion progress (1)', { exact: true })
+      .filter({ visible: true })
+      .click();
+    await expect(
+      page.getByRole('button', { name: 'View status for retiring fixture' }),
+    ).toBeVisible();
+    await choose(page, 'Sandbox status filter', 'Needs attention');
+    await expect(
+      page
+        .getByRole('region', { name: 'Needs attention sandboxes' })
+        .locator('.resource-tree__count'),
+    ).toHaveText('2');
+    await expect(page.getByRole('tree')).toHaveCount(1);
+    await page.getByRole('button', { name: 'Clear filters' }).click();
+    const changing = page.getByRole('tree', { name: 'Changing sandboxes', exact: true });
+    const rows = changing.getByRole('treeitem');
+    await rows.first().focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(rows.nth(1)).toBeFocused();
+    await page.getByRole('button', { name: 'Collapse Needs attention sandboxes' }).click();
+    await expect(page.getByText('failed fixture', { exact: true })).toHaveCount(0);
+    if (scope === 'Personal') {
+      await page.reload();
+      await environments(page);
+    }
+    await expect(
+      page.getByRole('button', { name: 'Expand Needs attention sandboxes' }),
+    ).toBeVisible();
+    await page.getByRole('button', { name: 'Expand Needs attention sandboxes' }).click();
+    await expect(page.getByText('failed fixture', { exact: true })).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('lifecycle-groups.png') });
+    noEffects(fixture);
+  });
+}
+
+test('LOCAL observed lifecycle transitions move a focused Sandbox exactly once without writes', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalSandboxFilters();
+  const index = fixture.sandboxes.findIndex((row) => row.status === 'failed');
+  fixture.sandboxes[index] = {
+    ...fixture.sandboxes[index]!,
+    name: 'Moving fixture',
+    status: 'active',
+  };
+  await page.clock.install();
+  await fixture.route(page, baseURL!);
+  await page.goto('/agent-manager');
+  await environments(page);
+  const row = page
+    .getByRole('treeitem')
+    .filter({ has: page.getByText('Moving fixture', { exact: true }) });
+  await row.focus();
+  for (const [status, label] of [
+    ['pausing', 'Changing'],
+    ['paused', 'Paused'],
+    ['reviving', 'Changing'],
+    ['active', 'Live'],
+    ['failed', 'Needs attention'],
+  ] as const) {
+    fixture.sandboxes[index] = { ...fixture.sandboxes[index]!, status };
+    await page.clock.runFor(15_100);
+    await expect(
+      page
+        .getByRole('tree', { name: `${label} sandboxes`, exact: true })
+        .getByText('Moving fixture', { exact: true }),
+    ).toBeVisible();
+    await expect(row).toHaveCount(1);
+    await expect(row).toBeFocused();
+  }
+  fixture.sandboxes[index] = { ...fixture.sandboxes[index]!, status: 'retiring' };
+  await page.clock.runFor(15_100);
+  await expect(row).toHaveCount(0);
+  await page.getByText('Deletion progress (2)', { exact: true }).filter({ visible: true }).click();
+  await expect(page.getByRole('button', { name: 'View status for Moving fixture' })).toBeVisible();
+  noEffects(fixture);
+});
+
+test('LOCAL rejects an unknown wire status with a safe error before rendering any Live Sandbox', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalSandboxFilters();
+  await fixture.route(page, baseURL!);
+  await page.route('**/api/v1/sandboxes?*', (route) =>
+    route.fulfill({
+      json: {
+        items: [{ ...fixture.boundary.sandbox, name: 'Unknown fixture', status: 'future_status' }],
+      },
+    }),
+  );
+  await page.goto('/agent-manager');
+  await environments(page);
+  await expect(
+    page.getByRole('complementary', { name: 'Application navigation' }).getByRole('alert'),
+  ).toContainText('The Sandbox hierarchy could not be loaded.');
+  await expect(page.getByRole('tree', { name: 'Live sandboxes' })).toHaveCount(0);
+  await expect(page.getByText('Unknown fixture', { exact: true })).toHaveCount(0);
   noEffects(fixture);
 });

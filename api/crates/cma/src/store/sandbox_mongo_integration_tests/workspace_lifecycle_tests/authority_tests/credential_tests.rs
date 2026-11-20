@@ -14,6 +14,8 @@ mod legacy_admission_tests;
 mod legacy_tests;
 mod observation_tests;
 mod retirement_fixture;
+mod retirement_tests;
+mod snapshot_tests;
 mod uncertainty;
 
 struct Tokens;

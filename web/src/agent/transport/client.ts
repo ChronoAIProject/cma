@@ -28,6 +28,23 @@ export class AgentV2Session {
   readonly events: Cma['agentEventsV2'];
   readonly responses: Cma['responsesV2'];
   private entryHandoff?: () => boolean;
+  private readonly admittedInputs = new Map<
+    string,
+    { receipt: V2ResponseReceipt; input: string }
+  >();
+
+  recordAcceptedInput(receipt: V2ResponseReceipt, input: string): void {
+    this.admittedInputs.set(receipt.commandId, { receipt, input });
+    try {
+      this.journal.queuedInputs.remember([receipt.commandId]);
+    } catch {
+      // Status reconciliation retains the in-memory receipt and retries persistence.
+    }
+  }
+
+  knownInputs() {
+    return this.admittedInputs.values();
+  }
 
   constructor(
     private readonly sdk: Cma,
@@ -47,7 +64,7 @@ export class AgentV2Session {
 
   /** A fresh replay handle keeps the tab's selection and pending-input journal. */
   forSnapshotRefresh(): AgentV2Session {
-    return new AgentV2Session(
+    const refreshed = new AgentV2Session(
       this.sdk,
       this.journal,
       this.user,
@@ -55,6 +72,8 @@ export class AgentV2Session {
       this.cancelUser,
       this.inputUser,
     );
+    for (const [id, value] of this.admittedInputs) refreshed.admittedInputs.set(id, value);
+    return refreshed;
   }
 
   async authorize(signal?: AbortSignal): Promise<void> {
@@ -135,7 +154,10 @@ export class AgentV2Session {
     return this.withRecovery(signal, async (recovery) => {
       await recovery.retry(() => this.checkIdentity(this.inputUser, recovery.signal));
       return submitAgentInput(this.sdk, this.journal, input, {
-        onAccepted,
+        onAccepted: (receipt) => {
+          this.recordAcceptedInput(receipt, input);
+          onAccepted(receipt);
+        },
         onReceiptObserved,
         answerContext,
         signal: recovery.signal,
@@ -148,8 +170,12 @@ export class AgentV2Session {
   async recover(onAccepted: (receipt: V2ResponseReceipt) => void, signal?: AbortSignal) {
     return this.withRecovery(signal, async (recovery) => {
       await recovery.retry(() => this.checkIdentity(this.inputUser, recovery.signal));
+      const input = this.journal.read()?.input;
       return recoverAgentInput(this.sdk, this.journal, {
-        onAccepted,
+        onAccepted: (receipt) => {
+          if (input !== undefined) this.recordAcceptedInput(receipt, input);
+          onAccepted(receipt);
+        },
         signal: recovery.signal,
         recovery,
         authorize: () => this.checkIdentity(this.inputUser, recovery.signal),

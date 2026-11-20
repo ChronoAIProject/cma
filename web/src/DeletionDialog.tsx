@@ -1,6 +1,6 @@
 import { routePath } from './routing/routes';
 import { refreshSandboxCapacity } from './sandbox/useSandboxCapacity';
-import { Presence } from './ui/Presence';
+import { Presence, usePresenceExiting } from './ui/Presence';
 import { useEffect, useRef, useState } from 'react';
 import type { CmaWebClient } from './api/client';
 import { ApiError } from '@cma/client';
@@ -39,6 +39,7 @@ export function DeletionDialog({
   readonly backgroundOnAcceptance?: boolean;
   readonly onClose: () => void;
 }) {
+  const exiting = usePresenceExiting();
   const [request, setRequest] = useState(initial);
   const [started, setStarted] = useState(restored);
   const [sending, setSending] = useState(false);
@@ -60,6 +61,8 @@ export function DeletionDialog({
   };
 
   useEffect(() => {
+    if (exiting) return;
+    backgrounded.current = false;
     const controller = new AbortController();
     let timer: ReturnType<typeof setTimeout> | undefined;
     let events: DeletionObservation['events'] = [];
@@ -133,7 +136,7 @@ export function DeletionDialog({
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', poll);
     };
-  }, [client, request, revision, viewerId]);
+  }, [client, request, revision, viewerId, exiting]);
 
   const submit = async () => {
     if (inFlight.current || request.accepted) return;

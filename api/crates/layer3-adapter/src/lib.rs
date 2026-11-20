@@ -55,6 +55,7 @@ pub mod ingress_budget;
 mod prompt_identity;
 mod provider_finality;
 pub mod recovery_diagnostics;
+pub mod resource_execution_protocol;
 mod runtime;
 pub mod runtime_bootstrap;
 pub mod runtime_control_relay;
