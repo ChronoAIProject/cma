@@ -110,8 +110,7 @@ for (const width of [1440, 390]) {
       expect(filled!.height).toBeGreaterThan(0);
       await expect(bar.locator('span')).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
       await expect(plan).toContainText('Current step 2: Implement the change');
-      const header = page.getByRole('link', { name: 'Current plan: Working · step 2 of 3' });
-      await expect(header).toBeVisible();
+      await expect(page.getByRole('link', { name: /^Current plan:/ })).toHaveCount(0);
       const draft = page.getByRole('textbox', { name: 'Message', exact: true });
       await draft.fill('Keep my next task draft');
       await expect(draft).toHaveValue('Keep my next task draft');
@@ -121,10 +120,7 @@ for (const width of [1440, 390]) {
       await expect(plan).toHaveCount(1);
       await expect(plan.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '1');
       await expect(draft).toHaveValue('Keep my next task draft');
-      await header.focus();
-      await page.keyboard.press('Enter');
-      await expect(plan).toBeFocused();
-      const toggle = plan.getByRole('button', { name: /^(Hide|Show) plan$/ });
+      const toggle = plan.getByRole('button', { name: /^(Hide|Show|View) plan$/ });
       await toggle.focus();
       await page.keyboard.press('Enter');
       await expect(toggle).toHaveAttribute('aria-expanded', 'false');
@@ -132,7 +128,6 @@ for (const width of [1440, 390]) {
       await expect(toggle).toHaveAttribute('aria-expanded', 'true');
       if (width === 390) {
         expect((await toggle.boundingBox())!.height).toBeGreaterThanOrEqual(44);
-        expect((await header.boundingBox())!.height).toBeGreaterThanOrEqual(44);
       }
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
         true,
@@ -141,9 +136,10 @@ for (const width of [1440, 390]) {
       current = proof.replay;
       stream!.write(proof.replay.slice(proof.changed.length));
       await expect(plan).toContainText('Turn ended · Check unfinished plan steps and output.');
-      await expect(header).toHaveCount(0);
+      await expect(page.getByRole('link', { name: /^Current plan:/ })).toHaveCount(0);
       await page.reload();
       await expect(plan).toHaveCount(1);
+      await expect(plan).toContainText('Turn ended · Check unfinished plan steps and output.');
       await expect(toggle).toHaveAttribute('aria-expanded', 'false');
       await expect(plan).toContainText('Completed 1/3 steps');
       await expect(
@@ -151,6 +147,9 @@ for (const width of [1440, 390]) {
       ).toHaveCount(0);
       await toggle.click();
       await expect(plan.getByText('Waiting', { exact: true })).toBeVisible();
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+        true,
+      );
       await page.screenshot({ path: `${evidence}/replayed-${width}.png`, fullPage: true });
       expect(boundary.errors).toEqual([]);
       expect(boundary.unexpected).toEqual([]);
