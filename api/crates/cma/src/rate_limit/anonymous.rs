@@ -1,4 +1,4 @@
-//! Per-pod protection for anonymous public Trigger reads.
+//! Process-wide protection for anonymous public Trigger reads.
 
 use std::{num::NonZeroU32, sync::Arc};
 
@@ -9,9 +9,6 @@ use super::{
     retry_after_seconds,
     tiers::{exact_path_segments, is_public_trigger_preview},
 };
-
-const DEFAULT_PER_MINUTE: NonZeroU32 = NonZeroU32::new(1_200).expect("non-zero default");
-const DEFAULT_CONCURRENCY: NonZeroU32 = NonZeroU32::new(16).expect("non-zero default");
 
 /// A process-local total budget shared by every anonymous public Trigger route.
 pub(super) struct AnonymousPublicBudget {
@@ -42,13 +39,10 @@ impl AnonymousPublicBudget {
     }
 }
 
-impl Default for AnonymousPublicBudget {
-    fn default() -> Self {
-        Self::new(DEFAULT_PER_MINUTE, DEFAULT_CONCURRENCY)
-    }
-}
-
 pub(super) fn is_anonymous_public_route(path: &str) -> bool {
+    if path.ends_with('/') || path.contains("//") {
+        return false;
+    }
     is_public_trigger_preview(path)
         || exact_path_segments(path, &["api", "v1", "triggers", "public", "*", "open", "*"])
         || exact_path_segments(

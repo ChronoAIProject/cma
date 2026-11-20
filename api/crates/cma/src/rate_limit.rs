@@ -99,7 +99,7 @@ pub(crate) struct RateLimiters {
     response_input_tier_enabled: bool,
     control_tier_enabled: bool,
     default_leases: lease::LeaseTable,
-    anonymous_public: AnonymousPublicBudget,
+    anonymous_public: Option<AnonymousPublicBudget>,
     visitor_launches: VisitorLaunchQuota,
     trusted_proxies: TrustedProxyConfig,
     decisions: AtomicU64,
@@ -122,10 +122,12 @@ impl RateLimiters {
             Quota::per_minute(config.control_per_minute),
             trusted_proxies,
         );
-        limiters.anonymous_public = AnonymousPublicBudget::new(
-            config.anonymous_public.per_minute,
-            config.anonymous_public.concurrency,
-        );
+        limiters.anonymous_public = config.anonymous_public.enabled.then(|| {
+            AnonymousPublicBudget::new(
+                config.anonymous_public.per_minute,
+                config.anonymous_public.concurrency,
+            )
+        });
         limiters.response_input_tier_enabled = config.response_input_tier_enabled;
         limiters.control_tier_enabled = config.control_tier_enabled;
         limiters.shared = Some((shared, config));
@@ -152,7 +154,7 @@ impl RateLimiters {
             response_input_tier_enabled: false,
             control_tier_enabled: false,
             default_leases: lease::LeaseTable::default(),
-            anonymous_public: AnonymousPublicBudget::default(),
+            anonymous_public: None,
             visitor_launches: VisitorLaunchQuota::default(),
             trusted_proxies,
             decisions: AtomicU64::new(0),
@@ -222,8 +224,12 @@ pub(crate) async fn admit(
         limiters.response_input_tier_enabled,
         limiters.control_tier_enabled,
     );
-    let _anonymous_permit = if is_anonymous_public_route(request.uri().path()) {
-        match limiters.anonymous_public.try_admit() {
+    let _anonymous_permit = if let Some(budget) = limiters
+        .anonymous_public
+        .as_ref()
+        .filter(|_| is_anonymous_public_route(request.uri().path()))
+    {
+        match budget.try_admit() {
             Ok(permit) => Some(permit),
             Err(retry_after_seconds) => {
                 return limited_response(
@@ -445,3 +451,11 @@ mod desktop_tests;
 #[cfg(test)]
 #[path = "rate_limit/anonymous_tests.rs"]
 mod anonymous_tests;
+
+#[cfg(test)]
+#[path = "rate_limit/anonymous_policy_tests.rs"]
+mod anonymous_policy_tests;
+
+#[cfg(test)]
+#[path = "rate_limit/anonymous_mongo_tests.rs"]
+mod anonymous_mongo_tests;

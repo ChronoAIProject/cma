@@ -144,6 +144,7 @@ async fn prove(count: usize) {
                 control_tier_enabled: true,
                 response_input_tier_enabled: true,
                 anonymous_public: crate::config::AnonymousPublicConfig {
+                    enabled: false,
                     per_minute: n(1200),
                     concurrency: n(16),
                 },

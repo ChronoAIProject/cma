@@ -35,6 +35,7 @@ async fn replica_with_policy(
         control_per_minute: n(control),
         response_input_tier_enabled: enabled,
         anonymous_public: crate::config::AnonymousPublicConfig {
+            enabled: false,
             per_minute: n(1_200),
             concurrency: n(16),
         },

@@ -38,8 +38,10 @@ async fn authenticated_launch_creation_is_outside_the_budget() {
         governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
         super::TrustedProxyConfig::sample(),
     );
-    limiters.anonymous_public =
-        AnonymousPublicBudget::new(NonZeroU32::new(1).unwrap(), NonZeroU32::new(1).unwrap());
+    limiters.anonymous_public = Some(AnonymousPublicBudget::new(
+        NonZeroU32::new(1).unwrap(),
+        NonZeroU32::new(1).unwrap(),
+    ));
     let app = Router::new()
         .route(
             "/api/v1/triggers/public/pub_one",
@@ -127,8 +129,10 @@ async fn anonymous_permit_is_held_for_the_request_and_released_on_cancellation()
         governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
         super::TrustedProxyConfig::sample(),
     );
-    limiters.anonymous_public =
-        AnonymousPublicBudget::new(NonZeroU32::new(100).unwrap(), NonZeroU32::new(1).unwrap());
+    limiters.anonymous_public = Some(AnonymousPublicBudget::new(
+        NonZeroU32::new(100).unwrap(),
+        NonZeroU32::new(1).unwrap(),
+    ));
 
     let started = Arc::new(Notify::new());
     let release = Arc::new(Notify::new());
@@ -249,8 +253,10 @@ async fn refusal_precedes_downstream_budget_io() {
         governor::Quota::per_minute(NonZeroU32::new(100).unwrap()),
         super::TrustedProxyConfig::sample(),
     );
-    limiters.anonymous_public =
-        AnonymousPublicBudget::new(NonZeroU32::new(1).unwrap(), NonZeroU32::new(1).unwrap());
+    limiters.anonymous_public = Some(AnonymousPublicBudget::new(
+        NonZeroU32::new(1).unwrap(),
+        NonZeroU32::new(1).unwrap(),
+    ));
     let limiters = std::sync::Arc::new(limiters);
     let downstream_calls = Arc::new(AtomicUsize::new(0));
     let calls = Arc::clone(&downstream_calls);
@@ -273,4 +279,43 @@ async fn refusal_precedes_downstream_budget_io() {
     assert_eq!(app.clone().oneshot(request()).await.unwrap().status(), 200);
     assert_eq!(app.clone().oneshot(request()).await.unwrap().status(), 429);
     assert_eq!(downstream_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn default_local_admission_has_no_anonymous_total_limit() {
+    use axum::{body::Body, middleware, routing::get, Router};
+    use tower::ServiceExt;
+
+    let quota = governor::Quota::per_minute(NonZeroU32::new(6000).unwrap());
+    let limiters = super::RateLimiters::from_quotas(
+        quota,
+        quota,
+        quota,
+        quota,
+        quota,
+        quota,
+        super::TrustedProxyConfig::sample(),
+    );
+    let app = Router::new()
+        .route("/api/v1/triggers/public/pub_one", get(|| async { "ok" }))
+        .layer(middleware::from_fn_with_state(
+            std::sync::Arc::new(limiters),
+            super::admit,
+        ));
+    for attempt in 0..1201 {
+        let response = app
+            .clone()
+            .oneshot(
+                axum::http::Request::get("/api/v1/triggers/public/pub_one")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            200,
+            "default policy refused request {attempt}"
+        );
+    }
 }
