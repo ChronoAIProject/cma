@@ -43,7 +43,7 @@ async fn warm_output_cache_checks_independent_generation_projection_and_audit_st
     let (f, id) = adopted().await;
     let db = f.client.database(&f.name);
     let filter = doc! {"_id":f.agent.id.as_str()};
-    let original_agent = f
+    let mut original_agent = f
         .store
         .agents
         .find_one(filter.clone())
@@ -78,6 +78,18 @@ async fn warm_output_cache_checks_independent_generation_projection_and_audit_st
         reqwest::StatusCode::OK,
         "{}",
         response.text().await.unwrap()
+    );
+    // Cold acquisition fences source deletion; warm reads must add no writes.
+    assert!(!original_agent.contains_key("resource_share_guard"));
+    original_agent.insert("resource_share_guard", 1_i64);
+    assert_eq!(
+        f.store
+            .agents
+            .find_one(filter.clone())
+            .await
+            .unwrap()
+            .unwrap(),
+        original_agent
     );
     let expected = request(&client, &f, &servers[1], &path)
         .send()
