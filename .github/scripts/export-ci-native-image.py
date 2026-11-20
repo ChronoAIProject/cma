@@ -52,7 +52,7 @@ def export(component, revision, destination):
     event = os.environ.get("GITHUB_EVENT_NAME", "")
     require(repository == "ChronoAIProject/cma", "CI repository differs")
     require(re.fullmatch(r"[1-9][0-9]*", run_id) and re.fullmatch(r"[1-9][0-9]*", attempt), "CI run identity required")
-    require(event in ("push", "pull_request"), "CI event identity required")
+    require(event in ("push", "pull_request", "merge_group"), "CI event identity required")
 
     destination.mkdir(mode=0o700, parents=True, exist_ok=False)
     archive = destination / f"cma-{component}-linux-amd64.docker.tar.gz"

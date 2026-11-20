@@ -51,7 +51,7 @@ module CIContract
   end
 
   def self.native_image_artifacts(images)
-    condition = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+    condition = "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
     export = step(images, "Export tested native image", 'python3 .github/scripts/export-ci-native-image.py "$IMAGE_COMPONENT" "$GITHUB_SHA" "$RUNNER_TEMP/ci-native-image"', condition)
     require!(export["timeout-minutes"] == 10 && export["env"] == { "IMAGE_COMPONENT" => "${{ matrix.component }}" }, "native export must retain exact component and timeout")
     upload = step(images, "Retain tested native image", nil, condition)
@@ -67,7 +67,7 @@ module CIContract
   def self.api_cargo_cache(ci, images)
     base = "matrix.component == 'api' && steps.api-cargo-cache.outcome == 'success'"
     prepare = step(images, "Prepare API Cargo cache identity", "python3 .github/scripts/api-cargo-cache.py prepare",
-      "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))")
+      "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'merge_group')")
     require!(prepare["id"] == "api-cargo-cache", "API cache identity changed")
     inject = step(images, "Inject API Cargo cache mounts", "python3 .github/scripts/api-cargo-cache.py inject", base)
     extract = step(images, "Extract API Cargo cache before pruning", "python3 .github/scripts/api-cargo-cache.py extract",
