@@ -113,7 +113,7 @@ def validate_incremental_member(member, path):
                 "incompatible incremental hard link")
 
 
-def validate_bundle(directory, prefix, *, family=None):
+def validate_bundle(directory, prefix, *, family=None, max_archive=None):
     require(directory.is_dir() and not directory.is_symlink(), "cache bundle absent")
     require({path.name for path in directory.iterdir()} == {"manifest.json", "registry.tar.gz", "target.tar.gz"},
             "unexpected cache files")
@@ -132,7 +132,9 @@ def validate_bundle(directory, prefix, *, family=None):
     archives = manifest.get("archives")
     require(isinstance(archives, dict) and set(archives) == set(MOUNTS), "missing cache mount")
     size = sum((directory / f"{name}.tar.gz").lstat().st_size for name in MOUNTS)
-    require(size <= MAX_ARCHIVE_BYTES, "compressed cache exceeds 1 GiB")
+    # The Actions cache path keeps MAX_ARCHIVE_BYTES; staging run artifacts pass their own bound.
+    require(size <= (MAX_ARCHIVE_BYTES if max_archive is None else max_archive),
+            "compressed cache exceeds its bound")
     content = count = 0
     for name in MOUNTS:
         path = directory / f"{name}.tar.gz"
@@ -196,12 +198,12 @@ def transfer(operation, directory, builder=None, *, namespace=None):
             subprocess.run(command, input=dockerfile(operation), text=True, check=True, timeout=150, env=env)
 
 
-def seal(directory, prefix, *, family=None):
+def seal(directory, prefix, *, family=None, max_archive=None):
     require(not (directory / "oversize").exists(), "expanded cache exceeds 4 GiB")
     manifest = {"format": FORMAT, "prefix": prefix,
                 "archives": {name: digest(directory / f"{name}.tar.gz") for name in MOUNTS}}
     (directory / "manifest.json").write_text(json.dumps(manifest))
-    validate_bundle(directory, prefix, family=family)
+    validate_bundle(directory, prefix, family=family, max_archive=max_archive)
 
 
 def run(operation, directory):
