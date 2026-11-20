@@ -1,6 +1,7 @@
 //! Bounded majority-readback used after a concurrent immutable write.
 use std::{future::Future, time::Duration};
 
+/// Waits before each read; together they stay well inside the two-second deadline.
 const DELAYS_MS: [u64; 7] = [0, 5, 10, 20, 40, 80, 160];
 
 /// Retries `read` on a short backoff for at most two seconds. `None` means the
