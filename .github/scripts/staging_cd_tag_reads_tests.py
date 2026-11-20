@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import tempfile
 import time
 import unittest
@@ -18,13 +19,16 @@ import staging_cd_resolve
 from staging_cd_allocation_io import AllocationIO
 from staging_cd_allocation_snapshot import AllocationSnapshot
 from staging_cd_common import Refusal
+from staging_cd_component_admission import automatic_admission, overtaken_admission
 from staging_cd_github import GitHub
-from staging_cd_receipts import annotation, canonical
+from staging_cd_history import DevelopHistory
+from staging_cd_receipts import annotation, canonical, final_tag_text
 from staging_cd_receipts_tests import fixture_receipt
 from staging_cd_release_calls_tests import serve
 from staging_cd_release_tags import REMOTE, LocalTags
 from staging_cd_reservations import (ReservationSuperseded, Reservations, claim_ref, next_reservation,
                                      pending_name, validate_reservation)
+from staging_cd_set import OvertakenByNewerFinal, release_set, verify_set
 
 
 class Stop(Exception):
@@ -32,6 +36,54 @@ class Stop(Exception):
 
 
 class TagReadTests(unittest.TestCase):
+    def test_overtaken_admission_and_verify_prove_the_newer_final_from_checkout_objects(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = dict(os.environ, GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull,
+                       GIT_AUTHOR_NAME="Fixture", GIT_AUTHOR_EMAIL="fixture@example.invalid",
+                       GIT_COMMITTER_NAME="Fixture", GIT_COMMITTER_EMAIL="fixture@example.invalid")
+            def git(*args, data=None):
+                return subprocess.run(["git", *args], cwd=root, env=env, input=data, text=True,
+                                      capture_output=True, check=True, timeout=10).stdout.strip()
+            git("init", "--quiet")
+            tree = git("mktree", data="")
+            older = git("commit-tree", tree, "-m", "Older merge")
+            newer = git("commit-tree", tree, "-p", older, "-m", "Newer merge")
+            receipts = [fixture_receipt(source=older, tree=tree),
+                        fixture_receipt(source=newer, tree=tree, previous="0.10.1", version="0.10.2")]
+            rows = [{"ref": "refs/tags/" + item["tag"], "object": {"type": "tag", "sha": git("mktag", data=final_tag_text(item))}}
+                    for item in receipts]
+            calls, objects = collections.Counter(), []
+            def api(args, **_kwargs):
+                if args[0] == "git":
+                    # The credential-free advertisement that fences admitted versions.
+                    calls["git ls-remote"] += 1
+                    return subprocess.CompletedProcess(args, 0, "".join(
+                        row["object"]["sha"] + "\t" + row["ref"] + "\n" for row in rows), "")
+                calls[args[-1].split("/cma/", 1)[1]] += 1
+                return subprocess.CompletedProcess(args, 0, "HTTP/2 200 OK\n\n" + json.dumps(rows), "")
+            def local(args, **kwargs):
+                if args[-1] == "--batch":
+                    objects.extend(kwargs["input"].decode().split())
+                return subprocess.run(args, **kwargs)
+            client = GitHub("fixture", api, local_tags=LocalTags(root, runner=local))
+            registry = Mock()
+            registry.exists.return_value = True
+            registry.manifest.return_value = (receipts[0]["digest"], {})
+            matrix = {"include": [{"component": "web", "tasks": canonical(
+                [{"component": "web", "mode": "resume", "receipt": receipts[0]}])}]}
+            with patch.object(client, "history", return_value=DevelopHistory(newer, [newer, older])):
+                admitted, failures = automatic_admission(matrix, client, registry)
+                self.assertEqual((admitted, failures), (None, {"web": "superseded-source"}))
+                self.assertEqual(overtaken_admission(matrix, admitted, failures, client), ("web",))
+                with self.assertRaises(OvertakenByNewerFinal) as error:
+                    verify_set(release_set({"web": receipts[0]}), client, registry, automatic=True)
+        self.assertEqual(error.exception.components, ("web",))
+        # Each newer-final check re-reads the live inventory, never an annotation through the API.
+        self.assertEqual(set(calls), {"git/matching-refs/tags/cma-web/v", "git ls-remote"})
+        self.assertGreater(calls["git/matching-refs/tags/cma-web/v"], 2)
+        self.assertCountEqual(objects, [row["object"]["sha"] for row in rows])
+
     def test_repeated_checks_read_each_tag_object_once_and_every_inventory_again(self):
         receipt = fixture_receipt()
         oid = "a" * 40
