@@ -91,7 +91,7 @@ class CheckoutTests(unittest.TestCase):
                 rows = summary.read_text().splitlines()
                 summary.unlink()
                 self.assertEqual(rows[2:3], [row for row in rows if row.startswith("| private-checkout | ")])
-                self.assertEqual(len(rows), 3)
+                self.assertEqual(rows[3:], [""])  # A blank line ends the table.
 
 
 if __name__ == "__main__":

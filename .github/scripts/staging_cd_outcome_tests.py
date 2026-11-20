@@ -4,19 +4,34 @@ import contextlib
 import inspect
 import io
 import json
+import os
 import re
-import string
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
 
 import ci_outcome
-from ci_outcome import FAMILIES, codes, render, report
+from ci_outcome import catalogue, codes, render, report
 
-CATALOGUE_PATH = Path(__file__).with_name("ci_outcomes.json")
+SCRIPTS = Path(__file__).parent
+CATALOGUE_PATH = SCRIPTS / "ci_outcomes.json"
 PRIVATE = "private-marker"
+
+
+def families():
+    return catalogue()["families"]
+
+
+def line_of(module, text, offset=0):
+    """The line in a public script holding text, so tests survive unrelated edits."""
+    lines = (SCRIPTS / module).read_text(encoding="utf-8").splitlines()
+    matches = [number for number, line in enumerate(lines, 1) if text in line]
+    assert len(matches) == 1, (module, text)
+    return matches[0] + offset
 
 
 def vocabularies():
@@ -87,7 +102,7 @@ def legacy(text):
 
 class CatalogueTests(unittest.TestCase):
     def test_every_code_of_every_vocabulary_has_an_entry(self):
-        owned = {family for family, spec in FAMILIES.items() if "codes" in spec}
+        owned = {family for family, spec in families().items() if "codes" in spec}
         self.assertEqual(set(vocabularies()), owned, "every catalogue family needs a producing vocabulary")
         for family, expected in vocabularies().items():
             with self.subTest(family=family):
@@ -96,8 +111,8 @@ class CatalogueTests(unittest.TestCase):
                 self.assertEqual(set(codes(family)), expected, f"{family} catalogues codes nothing emits")
 
     def test_every_entry_is_complete_one_line_text_with_a_known_cause(self):
-        entries = [("uncatalogued", "-", ci_outcome.CATALOGUE["uncatalogued"])]
-        for family, spec in FAMILIES.items():
+        entries = [("uncatalogued", "-", catalogue()["uncatalogued"])]
+        for family, spec in families().items():
             entries += [(family, code, value) for code, value in spec.get("codes", {}).items()]
         self.assertGreater(len(entries), 150)
         for family, code, value in entries:
@@ -111,25 +126,33 @@ class CatalogueTests(unittest.TestCase):
                     # Leak tests use "private" as their marker; explanations never say it.
                     self.assertNotRegex(text, r"[\r\n{}|]|::|(?i:private)")
                     self.assertLessEqual(len(text), 240)
-        self.assertEqual(set(ci_outcome.CATALOGUE["causes"]), set(ci_outcome.CAUSES))
+        self.assertEqual(set(catalogue()["causes"]), set(ci_outcome.CAUSES))
 
-    def test_family_shapes_reference_only_known_families_and_placeholders(self):
-        for family, spec in FAMILIES.items():
+    def test_family_shapes_lines_and_placeholders(self):
+        import string
+        stage_families = {spec["stages"] for spec in families().values() if "stages" in spec}
+        self.assertEqual(set(ci_outcome.LINES), set(families()) - stage_families)
+        for family, template in ci_outcome.LINES.items():
+            fields = {name for _, name, _, _ in string.Formatter().parse(template) if name is not None}
+            self.assertLessEqual(fields, set(ci_outcome.PLACEHOLDERS), family)
+            self.assertNotIn("\n", template)
+        for family, spec in families().items():
             with self.subTest(family=family):
-                self.assertLessEqual(set(spec), {"line", "codes", "codes_from", "stages", "effect", "level", "title"})
+                self.assertLessEqual(set(spec), {"codes", "codes_from", "stages", "effect", "level", "title",
+                                                 "cause", "next"})
                 self.assertEqual(("codes" in spec) + ("codes_from" in spec), 1)
                 if "codes_from" in spec:
-                    self.assertIn("codes", FAMILIES[spec["codes_from"]])
+                    self.assertIn("codes", families()[spec["codes_from"]])
                 if "stages" in spec:
-                    self.assertIn("codes", FAMILIES[spec["stages"]])
+                    self.assertIn("codes", families()[spec["stages"]])
                 self.assertIn(spec.get("level", "error"), ci_outcome.LEVELS)
-                if "line" in spec:
-                    fields = {name for _, name, _, _ in string.Formatter().parse(spec["line"]) if name is not None}
-                    self.assertLessEqual(fields, set(ci_outcome.PLACEHOLDERS))
-                    self.assertNotIn("\n", spec["line"])
-                for key in ("effect", "title"):
+                self.assertIn(spec.get("cause", "unknown"), ci_outcome.CAUSES)
+                if "next" in spec:
+                    fields = {name for _, name, _, _ in string.Formatter().parse(spec["next"]) if name is not None}
+                    self.assertEqual(fields, {"next"})
+                for key in ("effect", "title", "next"):
                     if key in spec:
-                        self.assertNotRegex(spec[key], r"[\r\n{}|]|::|(?i:private)")
+                        self.assertNotRegex(spec[key].replace("{next}", ""), r"[\r\n{}|]|::|(?i:private)")
                 for code in codes(family):
                     self.assertRegex(code, r"\A[A-Za-z][A-Za-z0-9_-]{0,47}\Z")
         self.assertEqual(ci_outcome.COMPONENTS, __import__("staging_cd_targets").TARGETS)
@@ -212,7 +235,7 @@ class RenderTests(unittest.TestCase):
 
 
 class ReportTests(unittest.TestCase):
-    def test_report_prints_line_and_annotation_and_appends_one_table(self):
+    def test_report_tables_continue_and_end_with_a_blank_line(self):
         with tempfile.TemporaryDirectory() as directory:
             summary = Path(directory) / "summary"
             summary.write_text("Infrastructure revision: fixture\n")
@@ -223,13 +246,18 @@ class ReportTests(unittest.TestCase):
             lines = output.getvalue().splitlines()
             self.assertEqual(lines[0], first)
             self.assertEqual([line.split(" ", 1)[0] for line in lines], ["FAIL", "::error", "FAIL", "::error"])
-            text = summary.read_text()
-            self.assertEqual(text.count(ci_outcome.HEADER), 1)
-            self.assertTrue(text.startswith("Infrastructure revision: fixture\n\n" + ci_outcome.HEADER))
+            rows = summary.read_text().split("\n")
+            self.assertEqual(rows[:4], ["Infrastructure revision: fixture", "", ci_outcome.HEADER, ci_outcome.RULE])
+            self.assertTrue(rows[4].startswith("| allocation | READ_FAILED:"))
+            self.assertTrue(rows[5].startswith("| allocation | DEADLINE_EXCEEDED:"))
+            self.assertEqual(rows[6:], ["", ""])  # A blank line ends the table.
             with summary.open("a") as stream:
                 stream.write("Admission-to-result seconds: 1.00\n")
             report("allocation", "READ_FAILED", subject="allocation", stream=output, env=env)
-            self.assertEqual(summary.read_text().count(ci_outcome.HEADER), 2)
+            text = summary.read_text()
+            self.assertEqual(text.count(ci_outcome.HEADER), 2)
+            self.assertIn("|\n\nAdmission-to-result seconds: 1.00\n\n" + ci_outcome.HEADER, text)
+            self.assertTrue(text.endswith(" |\n\n"))
 
     def test_report_never_raises_and_still_prints_the_machine_line(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -241,6 +269,49 @@ class ReportTests(unittest.TestCase):
             with contextlib.redirect_stdout(output):
                 line = report("allocation", "READ_FAILED", subject="allocation", component=object(), env={})
             self.assertEqual(line, "FAIL allocation READ_FAILED component=? cause=transient")
+
+    def test_a_damaged_catalogue_or_renderer_still_prints_the_original_machine_line(self):
+        dockerfile = line_of("staging_cd_build.py", 'require(value.get("dockerfile_sha256")')
+        fields = dict(subject="publication", stage="build", site=f"staging_cd_build.py:{dockerfile}", component="am")
+        expected = f"FAIL publication stage=build reason=validation_refused component=am at=staging_cd_build.py:{dockerfile}"
+        for patched in ("catalogue", "render"):
+            with self.subTest(patched=patched), tempfile.TemporaryDirectory() as directory:
+                summary = Path(directory) / "summary"
+                output = io.StringIO()
+                with unittest.mock.patch.object(ci_outcome, patched, side_effect=ValueError(PRIVATE)):
+                    line = report("publication", "validation_refused", stream=output,
+                                  env={"GITHUB_STEP_SUMMARY": str(summary)}, **fields)
+                    self.assertEqual(report("publication", PRIVATE + " x", stream=io.StringIO(), env={},
+                                            subject="publication"), "FAIL publication stage=? reason=?")
+                    if patched == "catalogue":
+                        self.assertIs(ci_outcome.entry("publication", "build_failed"), ci_outcome.UNAVAILABLE)
+                        self.assertEqual(ci_outcome.codes("publication"), {})
+                self.assertEqual(line, expected)
+                self.assertEqual(output.getvalue(), expected + "\n")
+                self.assertFalse(summary.exists())
+
+    def test_a_malformed_catalogue_breaks_no_importer_or_exit_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            copy = Path(directory)
+            for name in ("ci_outcome.py", "staging_cd_common.py", "staging_cd_runtime.py"):
+                shutil.copy(SCRIPTS / name, copy / name)
+            (copy / "ci_outcomes.json").write_text('{"families": ')
+            program = (
+                "import sys\n"
+                "from staging_cd_common import require\n"
+                "from staging_cd_runtime import run_private\n"
+                "passed = run_private(lambda _m: True, None, subject='fixture-step')\n"
+                "failed = run_private(lambda _m: require(False, 'hidden'), None, subject='fixture-step')\n"
+                "raise SystemExit(passed * 10 + failed)\n")
+            result = subprocess.run([sys.executable, "-B", "-c", program], cwd=copy, capture_output=True, text=True,
+                                    env={"PATH": os.environ.get("PATH", ""), "PYTHONDONTWRITEBYTECODE": "1"},
+                                    check=False)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        # Only the plain machine lines: no annotation, no cause, the same exit status.
+        self.assertEqual(result.stdout, "PASS fixture-step\nFAIL fixture-step reason=refused\n")
+        self.assertEqual(result.stderr, "")
+        with self.assertRaises(ValueError):
+            ci_outcome.check_catalogue({"families": {}})
 
     def test_error_site_names_public_frames_and_never_the_message(self):
         def fail():
@@ -316,8 +387,8 @@ class DiagnosticReportTests(unittest.TestCase):
                 self.assertEqual(run(), 1)
             first, line, annotation = output.getvalue().splitlines()
             self.assertNotIn(PRIVATE, output.getvalue() + summary.read_text())
-            self.assertEqual(summary.read_text().splitlines()[:2], [ci_outcome.HEADER, ci_outcome.RULE])
-            self.assertEqual(len(summary.read_text().splitlines()), 3)
+            self.assertEqual(summary.read_text().split("\n")[:2], [ci_outcome.HEADER, ci_outcome.RULE])
+            self.assertEqual(summary.read_text().split("\n")[3:], ["", ""])
             return first, line, annotation
 
     def test_publication_reports_stage_component_and_reservation_check(self):

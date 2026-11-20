@@ -6,7 +6,6 @@
     "operator": "An owner or operator must act; re-running alone will not fix it.",
     "unknown": "The code alone does not decide it; start at the reported check or stage."
   },
-  "components": ["am", "eg", "runtime", "runtime-omarchy", "web"],
   "uncatalogued": {
     "title": "Uncatalogued failure code",
     "meaning": "The step reported a code that the failure catalogue does not describe, so no explanation is available.",
@@ -15,7 +14,6 @@
   },
   "families": {
     "step": {
-      "line": "FAIL {subject} reason={code}",
       "codes": {
         "refused": {
           "title": "Input check refused",
@@ -50,7 +48,6 @@
       }
     },
     "publication": {
-      "line": "FAIL publication stage={stage} reason={code}",
       "stages": "publication-stage",
       "codes": {
         "registry_denied": {
@@ -228,7 +225,6 @@
       }
     },
     "finalize": {
-      "line": "FAIL finalize stage={stage} reason={code}",
       "stages": "finalize-stage",
       "codes": {
         "artifact_unavailable": {
@@ -478,7 +474,6 @@
       }
     },
     "allocation": {
-      "line": "FAIL allocation {code}",
       "codes": {
         "RESERVATION_OWNER_UNREADABLE": {
           "title": "Reservation owner unreadable",
@@ -645,7 +640,6 @@
       }
     },
     "admission": {
-      "line": "FAIL component={component} reason={code}",
       "codes": {
         "publication-unqualified": {
           "title": "Publication unqualified",
@@ -687,7 +681,6 @@
     },
     "deploy-precondition": {
       "title": "Deployment not admitted",
-      "line": "FAIL precondition={code}",
       "effect": "Nothing. The deployment controller was not started.",
       "codes": {
         "mode": {
@@ -736,7 +729,6 @@
     },
     "deploy-private": {
       "title": "Deployment refused",
-      "line": "FAIL precondition=private-{code}",
       "effect": "Nothing. The deployment controller refused before any mutation.",
       "codes": {
         "permit": {
@@ -851,7 +843,6 @@
     },
     "deploy-verification": {
       "title": "Deployment unverified",
-      "line": "FAIL verification={code} recovery={recovery}",
       "effect": "Staging may have changed and its state is unproven. An operator must reconcile it before staging is trusted again.",
       "codes": {
         "write-timeout": {
@@ -1044,12 +1035,10 @@
     },
     "deploy-release": {
       "title": "Release rolled back",
-      "line": "FAIL release={code} recovery=verified",
       "effect": "Staging changed, the release failed this check, and the controller restored and verified the previous release.",
       "codes_from": "deploy-verification"
     },
     "deploy-component": {
-      "line": "FAIL component={component} reason={code}",
       "codes": {
         "deployed-compatibility-unqualified": {
           "title": "Withheld: compatibility unqualified",
@@ -1066,7 +1055,6 @@
       }
     },
     "deploy-clock": {
-      "line": "FAIL: deployment not admitted; invalid or expired admission time",
       "effect": "Nothing. Deployment setup did not start.",
       "codes": {
         "admission-time": {
@@ -1078,7 +1066,6 @@
       }
     },
     "component-result": {
-      "line": "FAIL component-result reason={code}",
       "codes": {
         "invalid-public-evidence": {
           "title": "Component result invalid",
@@ -1089,7 +1076,6 @@
       }
     },
     "release-outcome": {
-      "line": "FAIL release-outcome reason={code}",
       "codes": {
         "evidence-invalid": {
           "title": "Outcome evidence invalid",
@@ -1112,7 +1098,6 @@
       }
     },
     "component-report": {
-      "line": "FAIL component={component} reason={code}",
       "codes": {
         "allocation-incomplete": {
           "title": "Allocation incomplete",
@@ -1225,7 +1210,6 @@
       }
     },
     "cache-withheld": {
-      "line": "WITHHELD build-cache reason={code}",
       "level": "warning",
       "codes": {
         "oversize-compressed": {

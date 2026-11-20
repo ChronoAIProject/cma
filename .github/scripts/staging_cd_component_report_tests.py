@@ -196,7 +196,7 @@ class ComponentReportTests(unittest.TestCase):
 
     def test_every_reachable_row_is_explained_by_a_catalogue_entry(self):
         import itertools
-        from ci_outcome import CATALOGUE, entry
+        from ci_outcome import catalogue, entry
         from staging_cd_component_admission import REASONS
         from staging_cd_component_report import CODES, diagnosis
         publishes = ("success", "failure", "skipped", "cancelled", "unknown", "retained", "reservation_superseded",
@@ -210,7 +210,7 @@ class ComponentReportTests(unittest.TestCase):
             if found is None:
                 self.assertEqual(columns[1:], ("admitted", "success", "controller-verified"))
                 continue
-            self.assertIsNot(entry(*found), CATALOGUE["uncatalogued"], found)
+            self.assertIsNot(entry(*found), catalogue()["uncatalogued"], found)
             if found[0] == "component-report":
                 seen.add(found[1])
         self.assertEqual(seen | {"allocation-incomplete", "evidence-invalid"}, set(CODES))
