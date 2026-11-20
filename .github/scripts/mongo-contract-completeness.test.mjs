@@ -27,7 +27,7 @@ test('capacity recovery completion contracts remain in the ordinary selector', (
     const name = root + suffix;
     const prefix = requiredPrefixes.find(prefix => name.startsWith(prefix));
     assert.ok(prefix, `${name} must be selected`);
-    assert.ok(runner.includes(`test(${prefix})`));
+    assert.ok(registeredFilter.includes(`test(${prefix})`));
     assert.ok(!runner.includes(`not test(=${name})`));
     const metadata = inventory();
     metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(false);
