@@ -202,6 +202,7 @@ for (const width of [1440, 390]) {
     await page.reload();
     await settle(page);
     await page.getByRole('button', { name: 'Resume document template' }).click();
+    await expect(page.getByLabel('Document type', { exact: true })).toBeFocused();
     await expect(page.getByLabel('Document type', { exact: true })).toHaveValue(' report ');
     await expect(page.getByLabel('Subject', { exact: true })).toHaveValue('草稿 [subject]');
     await expect(page.getByLabel('Audience', { exact: true })).toHaveValue('');
