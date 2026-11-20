@@ -33,6 +33,7 @@ async fn production_connection_enforces_both_converted_contracts_before_returnin
                     authority: MongoAuthorityMode::SharedSchema,
                     agent_manager_replicas: false,
                     startup_schema: mode,
+                    initial_settings: Default::default(),
                 },
             )
             .await

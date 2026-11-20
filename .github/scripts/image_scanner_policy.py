@@ -8,7 +8,7 @@ from pathlib import Path
 BUNDLE = Path(".github/scripts/image-secret-scanner")
 # Exact candidate source binding, including detector policy and cache tests.
 # Adoption of changed bytes requires independent review before merge.
-MANIFEST_SHA256 = "61861609136340969ec648836cb35cb5edd1988addf8e94d6725f262841d5258"
+MANIFEST_SHA256 = "3d562617c65f85ae9fd958adfbf76e1e38e18a135f95ad2209348be42fa3a810"
 CLASSIFICATION_DIR = Path(".github/image-secret-classifications")
 # Archive SHA256 -> (packet SHA256, SA-01 review SHA256). Add an entry only
 # from an exact SA-01 verdict; a packet's self-declared reviewer is not approval.
@@ -16,15 +16,15 @@ APPROVED_CLASSIFICATIONS: dict[str, tuple[str, str]] = {}
 # (content manifest SHA256, authentic SA-01 review SHA256). Remains disabled
 # until the exact catalog and resolver have received that independent verdict.
 APPROVED_CONTENT_POLICY = (
-    "7ac9546ab794e16152d024e8593497347399dd906e3986744b8917e3b5eb87cb",
-    "21bd0a107965dd588fab2bcb0c9ac6839efd967e8f2355f21d688a73dff03ca9",
+    "3cfb89bf19c4ddda0fad950c284078852a88a13e3ec91b44183504b3f306d79e",
+    "9eae89fca11ab926dbf837cd1813dd1468cf83fed418fecf80f629e50d66f8bb",
 )
 PACKAGE_EVIDENCE = Path(".github/scripts/image-package-evidence.json")
 # Independently reviewed evidence and verdict digests. Evidence gathered from
 # the candidate image cannot supply either pin.
 APPROVED_PACKAGE_EVIDENCE = (
-    "8c998334d178665048911fcf21179f2cbe0e03a18178ac0e9d178ded12e214b8",
-    "c2125fe26e55fb046864dc97005c26061d443408ef7e96d948b2152c564ea064",
+    "29457c3cc4c1ce3dd760c36744ca35804d8c2047c9ee1069b0e6b5bef694390f",
+    "ea805bf6d1eee9f7ee6ec5526633ae690dd409cdbcb933a345d4637c654b8a07",
 )
 # Runtime scope requires a new exact-manifest review before activation.
 CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json",

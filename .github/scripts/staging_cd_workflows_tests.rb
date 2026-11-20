@@ -352,6 +352,17 @@ class StagingWorkflowTest < Minitest::Test
     refute publisher.to_s.include?('cma-publication-python')
   end
 
+  def test_image_publication_gate_receipts_are_checked_in_required_ci
+    job = workflow('ci-repo')['jobs']['structure']
+    refute job.key?('if')
+    refute job.key?('continue-on-error')
+    step = job['steps'].find { |item| item['name'] == 'Staging publication and deployment contracts' }
+    refute step.key?('if')
+    refute step.key?('continue-on-error')
+    assert_includes step['run'].lines.map(&:strip),
+                    '"$RUNNER_TEMP/staging-cd-tests/bin/python" -B .github/scripts/image-secret-gate-tests.py'
+  end
+
   def test_selection_cache_has_only_a_develop_push_writer_after_successful_selection
     document = workflow('staging-cd')
     trigger = document.fetch('on', document[true])

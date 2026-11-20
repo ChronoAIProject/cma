@@ -13,7 +13,9 @@ from image_secrets.common import ScanError, archive_path, digest_file
 from image_secrets.gate import assess, valid_digest
 
 PUBLIC_RULES = frozenset({"path.key-or-certificate", "gitleaks.image-secret-assignment",
-                          "gitleaks.generic-api-key"})
+                          "gitleaks.generic-api-key",
+                          # Exact rows only: Gitleaks' own default-rule literal in its binary.
+                          "gitleaks.aws-amazon-bedrock-api-key-short-lived"})
 
 
 def published_vector(row):

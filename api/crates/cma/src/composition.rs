@@ -19,6 +19,7 @@ mod routes;
 mod runtime;
 mod runtime_inventory;
 mod stores;
+mod usage;
 use crate::{
     auth::{service_portal, AuthState},
     config::Config,
@@ -366,6 +367,7 @@ impl ControlPlaneComposition {
             ),
             "cma_codex".into(),
         );
+        let metadata = routes::agent_metadata(&stores, resource_access.clone(), config);
         let resource_routes = rest::profiles_router(profiles)
             .merge(rest::account_deletion_router(deletions))
             .merge(rest::answer_deliverables_router(deliverables))
@@ -380,19 +382,15 @@ impl ControlPlaneComposition {
                 adapter.clone(),
                 config,
             ))
-            .merge(layer1_public::rest::sandbox_commands_router(
-                sandbox_control_service,
-            ))
-            .merge(routes::agent_metadata(&stores, resource_access.clone()))
+            .merge(rest::sandbox_commands_router(sandbox_control_service))
+            .merge(metadata)
             .merge(capacity_recovery::router(
                 &stores,
                 resource_access.clone(),
                 &mut sandbox_lifecycle,
                 config.features.capacity_recovery_enabled,
             ))
-            .merge(layer1_public::rest::resource_access_router(
-                resource_access.clone(),
-            ))
+            .merge(rest::resource_access_router(resource_access.clone()))
             .merge(rest::profile_authoring_router(profile_authoring))
             .merge(rest::hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))
