@@ -1,8 +1,10 @@
 """Bound allocation reads and joins; remote writes are never retried."""
+import random
 import subprocess
 import time
 from concurrent.futures import ThreadPoolExecutor
 
+import ci_retry
 from staging_cd_common import Refusal, require
 from staging_cd_github import GitHub, GitHubNotFound
 from staging_cd_history import DevelopHistory
@@ -22,7 +24,7 @@ def parallel_read(operation, values):
             raise
 
 
-class TransientRead(Refusal):
+class TransientRead(Refusal, ci_retry.TransientError):
     """A read-only network operation can be attempted again within its budget."""
 
 
@@ -33,13 +35,24 @@ class UncertainPush(Refusal):
 # Inventory reads grow with every published tag. At 30 s, hosted runs reached
 # the reservation push with less than the 7 s it requires and failed.
 ALLOCATION_SECONDS = 120
+# A complete ref advertisement and parallel owner readbacks need time after the
+# single remote write, and a push never starts in the final second.
+PUSH_SETTLEMENT_SECONDS = 6
+PUSH_RESERVE_SECONDS = PUSH_SETTLEMENT_SECONDS + 1
 
 
 class AllocationIO:
     def __init__(self, runner=subprocess.run, *, clock=time.monotonic, sleep=time.sleep,
-                 seconds=ALLOCATION_SECONDS):
-        self.runner, self.clock, self.sleep = runner, clock, sleep
+                 rand=random.random, seconds=ALLOCATION_SECONDS):
+        self.runner, self.clock, self.sleep, self.rand = runner, clock, sleep, rand
         self.deadline = clock() + seconds
+
+    @property
+    def retry(self):
+        # Reads share one short budget with the reservation push. Waits stay
+        # sub-second, and no repeat may eat into the time the push reserves.
+        return {"base": 0.5, "cap": 2.0, "deadline": self.deadline - PUSH_RESERVE_SECONDS, "clock": self.clock,
+                "sleep": self.sleep, "rand": self.rand}
 
     def remaining(self):
         remaining = self.deadline - self.clock()
@@ -59,18 +72,14 @@ class AllocationIO:
         return result
 
     def read(self, args, **kwargs):
-        try:
-            return self.read_once(args, **kwargs)
-        except TransientRead:
-            self.sleep(min(0.2, self.remaining()))
-        return self.read_once(args, **kwargs)
+        return ci_retry.call(lambda: self.read_once(args, **kwargs), name="allocation-read",
+                             classify=ci_retry.classify, **self.retry)
 
     def write(self, args, **kwargs):
         push = args[:2] == ["git", "push"]
-        # A complete ref advertisement and parallel owner readbacks need time
-        # after the single remote write. Never start a push in the final second.
-        available = self.remaining() - (6 if push else 0)
-        require(available >= 1 if push else available > 0, "Allocation deadline exceeded")
+        available = self.remaining() - (PUSH_SETTLEMENT_SECONDS if push else 0)
+        require(available >= PUSH_RESERVE_SECONDS - PUSH_SETTLEMENT_SECONDS if push else available > 0,
+                "Allocation deadline exceeded")
         kwargs["timeout"] = min(10, available)
         try:
             return self.runner(args, **kwargs)
@@ -82,13 +91,15 @@ class AllocationIO:
 
 class AllocationGitHub(GitHub):
     def __init__(self, token, io):
-        super().__init__(token, runner=io.read)
+        super().__init__(token, runner=io.read, retry=io.retry)
         self.io = io
 
     def request(self, path, payload=None, *, allow_not_found=False, single_attempt=False):
         require(payload is None, "Allocation API only permits reads")
         try:
-            return super().request(path, allow_not_found=True, runner=self.io.read_once if single_attempt else self.io.read)
+            # The inherited read policy repeats transient attempts inside the allocation deadline.
+            return super().request(path, allow_not_found=True, runner=self.io.read_once,
+                                   attempts=1 if single_attempt else 3)
         except GitHubNotFound:
             if allow_not_found:
                 raise

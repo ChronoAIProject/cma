@@ -180,7 +180,7 @@ it.each(['not_enabled', 'unsupported', 'forbidden', 'temporarily_unavailable'] a
       temporarily_unavailable: 'is temporarily unavailable. Try again.',
     }[state];
     const fileDescription = {
-      not_enabled: 'File browsing is not enabled for this environment.',
+      not_enabled: 'File browsing is not available for this environment.',
       unsupported: 'This environment does not support file browsing.',
       forbidden: 'You do not have access to these files.',
       temporarily_unavailable: 'We couldn’t check file availability.',
@@ -294,7 +294,7 @@ it('recovers all views on the existing visible 30-second refresh without enablin
   expect(fileClient.list).not.toHaveBeenCalled();
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(fileClient.environment).toHaveBeenCalledTimes(2);
-  expect(currentTab().getByText('Live screen is not enabled for this environment.')).toBeVisible();
+  expect(currentTab().getByText('Live screen is not enabled')).toBeVisible();
   expect(currentTab().getByRole('button', { name: 'Enable browser' })).toBeEnabled();
   expect(fileClient.list).not.toHaveBeenCalled();
   view.rerender(panel(client, 'activity'));

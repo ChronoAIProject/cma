@@ -7,8 +7,11 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest.mock import Mock, patch
+
+import yaml
 
 from staging_cd_common import Refusal
 import staging_cd_finalize as finalization
@@ -66,6 +69,28 @@ class FinalizeDiagnosticsTests(unittest.TestCase):
                     self.assertEqual(finalization.main(), 1)
                 self.assertEqual(output.getvalue(), "FAIL\nFAIL finalize stage=attempt reason=attempt_burned\n")
                 store.return_value.finalize.assert_not_called()
+
+    def test_github_and_registry_reads_share_a_budget_inside_the_job_timeout(self):
+        workflow = Path(__file__).resolve().parents[1] / "workflows/staging-release.yml"
+        job = yaml.safe_load(workflow.read_text())["jobs"]["finalize"]
+        # Checkout, the receipt download and the tag writes keep at least five minutes.
+        self.assertLessEqual(finalization.FINALIZE_READ_SECONDS + 300, job["timeout-minutes"] * 60)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receipts.json"
+            path.write_text("[]")
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1",
+                   "CD_RECEIPTS_PATH": str(path), "CD_TASKS": "[]", "GH_TOKEN": "fixture", "CD_COMPONENT": "web"}
+            with patch.dict(os.environ, env, clear=True), patch.object(finalization, "event_identity"), \
+                    patch.object(finalization, "GitHub") as github, patch.object(finalization, "Registry") as registry, \
+                    patch.object(finalization, "Reservations"), patch.object(finalization, "finalize") as final, \
+                    patch.object(finalization, "output"), contextlib.redirect_stdout(io.StringIO()):
+                final.return_value = {"identity": {"component": "web"}}
+                started = time.monotonic()
+                self.assertEqual(finalization.main(), 0)
+        deadline = github.call_args.kwargs["deadline"]
+        self.assertEqual(registry.call_args.kwargs, {"deadline": deadline})
+        self.assertLessEqual(started + finalization.FINALIZE_READ_SECONDS, deadline)
+        self.assertLessEqual(deadline, time.monotonic() + finalization.FINALIZE_READ_SECONDS)
 
     def test_untrusted_diagnostic_fields_are_not_printed(self):
         def operation(_masker, diagnostics):

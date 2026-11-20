@@ -80,28 +80,29 @@ class ComponentAdmissionTests(unittest.TestCase):
             return subprocess.CompletedProcess(args, 0, '\n'.join(lines), '')
         return lambda receipts: require_current_versions(receipts, runner=runner)
 
-    def test_am_with_pending_successor_deploys_but_a_higher_final_is_withheld(self):
-        keys = ['am', 'eg', 'web']
-        pending = self.advertisement(*(DEPLOYABLES[key] + '/pending/v0.10.2' for key in keys))
+    def test_every_lane_with_a_pending_successor_deploys_but_a_higher_final_is_withheld(self):
+        keys, apps = sorted(DEPLOYABLES), ['am', 'eg', 'web']
+        successors = [DEPLOYABLES[key] + '/pending/v0.10.2' for key in keys]
+        pending = self.advertisement(*successors)
         self.api.require_current_versions.side_effect = pending
         value, failures = self.admit(keys)
-        self.assertEqual(set(value['receipts']), {'am'})
-        self.assertEqual(failures, {'eg': 'superseded-source', 'web': 'superseded-source'})
+        self.assertEqual((set(value['receipts']), failures), (set(keys), {}))
+        value, _ = self.admit(apps)
         self.assertEqual(verify_set(value, self.api, self.registry, automatic=True), value)
         self.execute(value, check=pending)
-
-        pending = self.advertisement(DEPLOYABLES['am'] + '/pending/v0.10.2')
-        self.api.require_current_versions.side_effect = pending
-        value, failures = self.admit(['am', 'web'])
-        self.assertEqual((set(value['receipts']), failures), ({'am', 'web'}, {}))
-        final = self.advertisement(DEPLOYABLES['am'] + '/v0.10.2')
-        # A final arriving after admission withholds AM under the lock and at launch.
-        self.api.require_current_versions.side_effect = final
-        self.assertEqual(set(verify_set(value, self.api, self.registry, automatic=True)['receipts']), {'web'})
-        self.execute(value, check=final, expected={'web'})
-        narrowed, failures = self.admit(['am', 'web'])
-        self.assertEqual(set(narrowed['receipts']), {'web'})
-        self.assertEqual(failures, {'am': 'superseded-source'})
+        for key in keys:
+            with self.subTest(component=key):
+                final = self.advertisement(*successors, DEPLOYABLES[key] + '/v0.10.2')
+                self.api.require_current_versions.side_effect = final
+                narrowed, failures = self.admit(keys)
+                self.assertEqual(set(narrowed['receipts']), set(keys) - {key})
+                self.assertEqual(failures, {key: 'superseded-source'})
+                if key in apps:
+                    # A final arriving after admission withholds its lane under the lock and at launch.
+                    current = set(apps) - {key}
+                    self.assertEqual(set(verify_set(value, self.api, self.registry, automatic=True)['receipts']),
+                                     current)
+                    self.execute(value, check=final, expected=current)
 
     def test_new_pending_version_withholds_only_its_component(self):
         from staging_cd_watermark import SUPERSEDED
