@@ -1,4 +1,4 @@
-"""Takeovers stop only the obsolete AM publisher and never produce a receipt."""
+"""A queued AM reservation yields before building; a started build finishes unless a higher final exists."""
 import contextlib
 import io
 import json
@@ -14,8 +14,10 @@ from image_secret_gate import checksum
 from staging_cd_common import Refusal
 from staging_cd_history import DevelopHistory
 from staging_cd_publication_diagnostics import ImageCommandRefusal
-from staging_cd_receipts_tests import fixture_identity
+from staging_cd_receipts_tests import fixture_identity, fixture_receipt, fixture_tag
 from staging_cd_reservations import ReservationSuperseded, Reservations
+
+PUBLISHED = ["build", "scan", "login", "copy", "verify"]
 
 
 def reservation(version, source, owner):
@@ -25,13 +27,17 @@ def reservation(version, source, owner):
     return dict(value, schema="cma-version-reservation-v1")
 
 
+def final_tag(value):
+    return fixture_tag(fixture_receipt(**{key: item for key, item in value.items() if key != "schema"}))
+
+
 class SupersededPublicationTests(unittest.TestCase):
-    def exercise(self, version, boundary, directory):
+    def exercise(self, version, boundary, directory, *, successor="pending"):
         held = reservation(version, "a" * 40, 100)
-        successor = reservation(version + 1, "b" * 40, 101)
+        later = reservation(version + 1, "b" * 40, 101)
         pending, trace = [held], []
         api = Mock()
-        history = DevelopHistory(successor["source"], [successor["source"], held["source"]])
+        history = DevelopHistory(later["source"], [later["source"], held["source"]])
         api.history.return_value = api.history_containing.return_value = history
         api.tags.return_value = []
         owners = Reservations(api, "fixture", directory)
@@ -41,10 +47,19 @@ class SupersededPublicationTests(unittest.TestCase):
         registry = Mock()
         registry.manifest.side_effect = [None, (digest, {})]
 
+        def arrive(point):
+            # The successor is either a queued reservation or an already finalized release.
+            if boundary == point:
+                if successor == "pending":
+                    pending.append(later)
+                else:
+                    api.tags.return_value = [final_tag(later)]
+
+        arrive("before-build")
+
         def build(_root, _reservation, dest, **_kwargs):
             trace.append("build")
-            if boundary == "after-build":
-                pending.append(successor)
+            arrive("after-build")
             archive = dest / "image.oci.tar"
             archive.write_bytes(b"synthetic image")
             return archive, release
@@ -61,16 +76,14 @@ class SupersededPublicationTests(unittest.TestCase):
             trace.append(args[1])
             if args[1] == "login":
                 Path(args[3]).touch()
-                if boundary == "before-copy":
-                    pending.append(successor)
+                arrive("before-copy")
             elif boundary == "copy-failed":
-                pending.append(successor)
+                pending.append(later)
                 raise ImageCommandRefusal(args, b"")
 
         def exists(*_):
             trace.append("verify")
-            if boundary == "after-verify":
-                pending.append(successor)
+            arrive("after-verify")
             return True
 
         registry.exists.side_effect = exists
@@ -98,23 +111,39 @@ class SupersededPublicationTests(unittest.TestCase):
             code = publisher.main()
         return code, log.getvalue(), trace, output, receipt
 
-    def test_recorded_races_and_pre_copy_fence(self):
-        for version, boundary, steps in [
-            (5, "after-build", ["build"]), (6, "after-verify", ["build", "scan", "login", "copy", "verify"]),
-            (7, "after-build", ["build"]), (8, "before-copy", ["build", "scan", "login"]),
-            (9, "unchanged", ["build", "scan", "login", "copy", "verify"]),
+    def test_started_build_finishes_past_pending_successor_and_queued_build_yields(self):
+        for version, successor, boundary, steps in [
+            (5, "pending", "before-build", []), (6, "final", "before-build", []),
+            (7, "pending", "after-build", PUBLISHED), (8, "pending", "before-copy", PUBLISHED),
+            (9, "pending", "after-verify", PUBLISHED), (10, "pending", "unchanged", PUBLISHED),
         ]:
-            with self.subTest(version=version, boundary=boundary), tempfile.TemporaryDirectory() as directory:
-                code, log, trace, output, receipt = self.exercise(version, boundary, directory)
+            with self.subTest(successor=successor, boundary=boundary), tempfile.TemporaryDirectory() as directory:
+                code, log, trace, output, receipt = self.exercise(version, boundary, directory, successor=successor)
                 self.assertEqual(code, 0, log)
                 self.assertEqual(trace, steps)
-                self.assertEqual(receipt.exists(), boundary == "unchanged")
-                if boundary == "unchanged":
-                    self.assertFalse(output.exists())
-                else:
-                    self.assertIn("reason=reservation_superseded", log)
-                    self.assertNotIn("FAIL", log)
+                self.assertNotIn("FAIL", log)
+                if boundary == "before-build":
+                    self.assertIn("SKIP publication stage=validate reason=reservation_superseded", log)
                     self.assertEqual(output.read_text(), "disposition=reservation_superseded\n")
+                    self.assertFalse(receipt.exists())
+                else:
+                    self.assertNotIn("SKIP", log)
+                    self.assertFalse(output.exists())
+                    published, = json.loads(receipt.read_text())
+                    self.assertEqual(published["identity"]["version"], f"0.13.{version}")
+
+    def test_higher_final_after_build_starts_fails_without_receipt_or_skip(self):
+        for version, boundary, steps in [(5, "after-build", ["build"]),
+                                         (6, "before-copy", ["build", "scan", "login"]),
+                                         (7, "after-verify", PUBLISHED)]:
+            with self.subTest(boundary=boundary), tempfile.TemporaryDirectory() as directory:
+                code, log, trace, output, receipt = self.exercise(version, boundary, directory, successor="final")
+                self.assertEqual(code, 1)
+                self.assertEqual(trace, steps)
+                self.assertIn("FAIL publication", log)
+                self.assertIn("reason=validation_refused", log)
+                self.assertNotIn("SKIP", log)
+                self.assertFalse(output.exists() or receipt.exists())
 
     def test_registry_failure_remains_a_failure_even_if_an_owner_arrives(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -132,11 +161,15 @@ class SupersededPublicationTests(unittest.TestCase):
         api.history.return_value = api.history_containing.return_value = chain
         api.tags.return_value = []
         owners = Reservations(api, "fixture", Path.cwd())
-        for inventory in ([], [held, older]):
+        for started, inventory in ((False, []), (False, [held, older]), (True, [])):
             owners.list = Mock(return_value=inventory)
-            with self.subTest(inventory=len(inventory)), self.assertRaises(Refusal) as err:
-                owners.require_current(held)
+            with self.subTest(started=started, inventory=len(inventory)), self.assertRaises(Refusal) as err:
+                owners.require_current(held, build_started=started)
             self.assertNotIsInstance(err.exception, ReservationSuperseded)
+        # Once the build has started, a higher reservation alone no longer fences it.
+        owners.list = Mock(return_value=[held, older])
+        self.assertTrue(owners.require_current(held, build_started=True))
+        api.history_containing.assert_not_called()
 
 
 if __name__ == "__main__":

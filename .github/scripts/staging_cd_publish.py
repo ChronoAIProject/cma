@@ -17,7 +17,7 @@ from staging_cd_receipts import canonical, published_receipt, validate_receipt
 from staging_cd_registry import Registry
 from staging_cd_reservations import Reservations, validate_reservation
 from staging_cd_publication_diagnostics import PublicationDiagnostics, run_publication
-from staging_cd_versions import DEPLOYABLES
+from staging_cd_versions import DEPLOYABLES, FINISH_STARTED_BUILDS
 from staging_cd_timing import Timings
 from staging_cd_build_cache import BuildCache
 from staging_cd_runtime_smoke import CleanupIncomplete, qualify as qualify_runtime
@@ -141,7 +141,8 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
         require(remote is not None and remote[0] == digest and registry.exists(repository, digest),
                 "Registry digest differs from the scanned archive")
     # A copy already in flight may finish writing its own burned version.
-    # It cannot hand a receipt to finalization after a successor takes over.
+    # It cannot hand a receipt to finalization after a successor takes over,
+    # or, in a lane that finishes started builds, after a higher final.
     require(reservation_check() is True, "Publication reservation is not current")
     diagnostics.mark("receipt")
     return receipt
@@ -172,7 +173,8 @@ def main():
             else:
                 reservation = value
                 reservations = Reservations(api, env.get("GH_TOKEN"), root)
-                reservations.require_current(reservation)
+                # A queued older reservation yields here, before any build work.
+                reservations.require_current(reservation, build_started=False)
                 with tempfile.TemporaryDirectory(prefix="cma-publication-", dir=env["RUNNER_TEMP"]) as temp:
                     directory = Path(temp)
                     source = directory / "source"
@@ -204,7 +206,8 @@ def main():
                                           env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
                                           diagnostics=diagnostics, timings=timings,
                                           scan_evidence=output.parent / "package-policy",
-                                          reservation_check=lambda: reservations.require_current(reservation))
+                                          reservation_check=lambda: reservations.require_current(
+                                              reservation, build_started=True))
                     except CleanupIncomplete as error:
                         # Preserve only fixed-schema cleanup status and the
                         # synthetic campaign ID, never raw helper/daemon output.
@@ -229,7 +232,7 @@ def main():
                     status.write("build-cache-ready=" + ("true" if accepted else "false") + "\n")
         return True
     def superseded():
-        require(env.get("CD_COMPONENT") == "am", "Unexpected superseded component")
+        require(env.get("CD_COMPONENT") in FINISH_STARTED_BUILDS, "Unexpected superseded component")
         step_output(env, "disposition", "reservation_superseded")
 
     result = run_publication(operation, on_superseded=superseded)

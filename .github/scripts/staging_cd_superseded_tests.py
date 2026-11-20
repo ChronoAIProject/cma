@@ -14,8 +14,8 @@ from staging_cd_allocate import allocate_queue
 from staging_cd_common import Refusal
 from staging_cd_history import DevelopHistory
 from staging_cd_publish_tests import PublicationTests
-from staging_cd_receipts_tests import fixture_identity
-from staging_cd_reservations import Reservations, next_reservation
+from staging_cd_receipts_tests import fixture_identity, fixture_receipt, fixture_tag
+from staging_cd_reservations import ReservationSuperseded, Reservations, next_reservation
 from staging_cd_versions import version_tuple
 
 
@@ -108,14 +108,49 @@ class SupersededTests(unittest.TestCase):
         allocate_queue(queue, api, store, 99, 1)
         real = Reservations(api, 'fixture', Path.cwd(), runner=Mock())
         real.list = lambda _component=None: copy.deepcopy(pending)
-        self.assertTrue(real.require_current(pending[-1]))
+        self.assertTrue(real.require_current(pending[-1], build_started=False))
         for value in pending[:-1]:
             with self.assertRaisesRegex(Refusal, 'superseded and burned'):
-                real.require_current(value)
+                real.require_current(value, build_started=False)
         current = pending[-1]
         real.list = lambda _component=None: []
-        with self.assertRaisesRegex(Refusal, 'missing'):
-            real.require_current(current)
+        for started in (False, True):
+            with self.assertRaisesRegex(Refusal, 'missing'):
+                real.require_current(current, build_started=started)
+        real.runner.assert_not_called()
+
+    def test_started_am_build_ignores_higher_pending_but_never_a_higher_final(self):
+        queue, api, store, pending = self.fixture()
+        allocate_queue(queue, api, store, 99, 1)
+        real = Reservations(api, 'fixture', Path.cwd(), runner=Mock())
+        real.list = lambda _component=None: copy.deepcopy(pending)
+        for value in pending[:-1]:
+            # A queued older build yields; one already running may finish.
+            with self.assertRaises(ReservationSuperseded):
+                real.require_current(value, build_started=False)
+            self.assertTrue(real.require_current(value, build_started=True))
+        newest = pending[-1]
+        finals = [fixture_tag(fixture_receipt(**{k: v for k, v in newest.items() if k != 'schema'}))]
+        api.tags.return_value = finals
+        real.list = lambda _component=None: copy.deepcopy(pending[:-1])
+        for started in (False, True):
+            for value in pending[:-1]:
+                with self.subTest(started=started, version=value['version']):
+                    with self.assertRaisesRegex(Refusal, 'superseded and burned') as error:
+                        real.require_current(value, build_started=started)
+                    # A higher final fails a started build; it never becomes a skip.
+                    self.assertEqual(isinstance(error.exception, ReservationSuperseded), not started)
+        # Other lanes still revoke a started build when a higher pending appears.
+        web = []
+        for index, source in enumerate(letter * 40 for letter in 'abcd'):
+            web.append(next_reservation('web', source, 'e' * 40, index + 1, 'patch', index + 10, 1, [], web))
+        api.tags.return_value = []
+        real.list = lambda _component=None: copy.deepcopy(web)
+        for value in web[:-1]:
+            with self.assertRaisesRegex(Refusal, 'superseded and burned') as error:
+                real.require_current(value, build_started=True)
+            self.assertNotIsInstance(error.exception, ReservationSuperseded)
+        self.assertTrue(real.require_current(web[-1], build_started=True))
         real.runner.assert_not_called()
 
     def test_current_owner_can_build_but_superseded_owner_never_snapshots(self):
