@@ -28,6 +28,8 @@ on:
         value: ${{ jobs.deploy.outputs.status }}
       deploy_disposition:
         value: ${{ jobs.deploy.outputs.disposition }}
+      admit_disposition:
+        value: ${{ jobs.admit.outputs.disposition }}
       admitted:
         value: ${{ jobs.admit.outputs.admitted }}
       failures:
@@ -52,6 +54,7 @@ jobs:
       changed: ${{ steps.set.outputs.changed }}
       admitted: ${{ steps.set.outputs.admitted }}
       failures: ${{ steps.set.outputs.failures }}
+      disposition: ${{ steps.set.outputs.disposition }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:

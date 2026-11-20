@@ -44,7 +44,7 @@ def summarize(env):
             require(c in lanes and not env.get("CD_FINALIZED_" + c.upper().replace("-", "_")),
                     "Superseded publication conflicts with finalization evidence")
             superseded[c] = disposition
-    overtaken = set()
+    overtaken, admission_overtaken = set(), set()
     passed = env["CD_INFRASTRUCTURE_RESULT"] == "success"
     lines = ["| Component | Publish + finalize | Admit | Deploy job | Controller outcome |",
              "|---|---|---|---|---|"]
@@ -72,6 +72,15 @@ def summarize(env):
             require(lane != "contract" and bool(admitted) and not GROUP & set(admitted) and payload is None
                     and outputs.get("deploy") == "success", "Overtaken deployment conflicts with its evidence")
             overtaken.update(admitted)
+        admission = outputs.get("admit_disposition") or ""
+        require(admission in ("", OVERTAKEN), "Unknown admission disposition")
+        if admission:
+            # Admission found a later-source final for every selected member.
+            require(lane != "contract" and not GROUP & selected and not admitted and not disposition
+                    and failures.keys() == selected and set(failures.values()) == {"superseded-source"}
+                    and outputs.get("admit") == "success" and not outputs.get("deploy") and payload is None,
+                    "Overtaken admission conflicts with its evidence")
+            admission_overtaken.update(selected)
         if superseded.keys() & selected:
             # A contract cannot promote partially. Check the other selected
             # publishers independently so supersession cannot conceal a failure.
@@ -89,15 +98,19 @@ def summarize(env):
         for c in sorted(selected | reported):
             publish = outcome(env["CD_PUBLISH_" + c.upper().replace("-", "_")]) if c in selected else "retained"
             admit = failures.get(c) or ("admitted" if c in admitted else missing)
-            deploy = outcome(outputs["deploy"]) if outputs.get("deploy") else missing
-            state = OVERTAKEN if c in overtaken else "unreported"
+            # A handled admission deliberately ran no deployment job.
+            deploy = (outcome(outputs["deploy"]) if outputs.get("deploy")
+                      else "skipped" if c in admission_overtaken else missing)
+            state = OVERTAKEN if c in overtaken | admission_overtaken else "unreported"
             if c in states:
                 state = states[c]["state"]
                 require(state in STATES and states[c]["reason"] == STATES[state], "Invalid controller outcome")
             lines.append(f"| {c} | {publish} | {admit} | {deploy} | {state} |")
+            handled = c in admission_overtaken
             passed &= (publish in ("success", "retained") and job["result"] == "success"
-                       and outputs.get("admit") == "success" and c in admitted and deploy == "success"
-                       and state in ("controller-verified", OVERTAKEN))
+                       and outputs.get("admit") == "success"
+                       and (handled or (c in admitted and deploy == "success"
+                                        and state in ("controller-verified", OVERTAKEN))))
     for c, disposition in sorted(superseded.items()):
         lines.append(f"{c} publication skipped: {disposition}. This run has no verified {c} release.")
         if disposition == "source_already_final":
@@ -107,7 +120,10 @@ def summarize(env):
     for c in sorted(overtaken):
         lines.append(f"{c} deployment skipped: {OVERTAKEN}. A newer final's run owns this deployment; "
                      f"this run has no verified {c} release.")
-    if (superseded or overtaken) and passed:
+    for c in sorted(admission_overtaken):
+        lines.append(f"{c} admission skipped: {OVERTAKEN}. A newer final's run owns this deployment; "
+                     f"this run has no verified {c} release.")
+    if (superseded or overtaken or admission_overtaken) and passed:
         return lines, None
     return lines, passed
 

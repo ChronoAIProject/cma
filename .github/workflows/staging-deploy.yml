@@ -50,7 +50,7 @@ jobs:
     outputs:
       status: ${{ job.status }}
       component_result: ${{ steps.coordinate.outputs.component_result }}
-      disposition: ${{ steps.release.outputs.disposition }}
+      disposition: ${{ steps.release.outputs.disposition || steps.coordinate.outputs.disposition }}
     env:
       CD_STARTED_AT: ${{ inputs.started_at }}
       CD_DEPLOY_MODE: ${{ inputs.mode }}

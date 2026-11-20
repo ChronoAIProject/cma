@@ -251,7 +251,9 @@ class StagingWorkflowTest < Minitest::Test
   def test_an_overtaken_set_skips_every_deployment_step_and_reaches_the_component_report
     deploy = workflow('staging-deploy')
     job = deploy['jobs']['deploy']
-    assert_equal '${{ steps.release.outputs.disposition }}', job.dig('outputs', 'disposition')
+    # Verification or, after it, the coordinator under the set lock may find the set overtaken.
+    assert_equal '${{ steps.release.outputs.disposition || steps.coordinate.outputs.disposition }}',
+                 job.dig('outputs', 'disposition')
     trigger = deploy['on'] || deploy.fetch(true)
     assert_equal '${{ jobs.deploy.outputs.disposition }}', trigger.dig('workflow_call', 'outputs', 'disposition', 'value')
     steps = job['steps']
@@ -272,6 +274,11 @@ class StagingWorkflowTest < Minitest::Test
     trigger = promote['on'] || promote.fetch(true)
     assert_equal '${{ jobs.deploy.outputs.disposition }}',
                  trigger.dig('workflow_call', 'outputs', 'deploy_disposition', 'value')
+    assert_equal '${{ jobs.admit.outputs.disposition }}',
+                 trigger.dig('workflow_call', 'outputs', 'admit_disposition', 'value')
+    admit = promote['jobs']['admit']
+    assert_equal '${{ steps.set.outputs.disposition }}', admit.dig('outputs', 'disposition')
+    assert_equal 'automatic', admit['steps'].find { |step| step['id'] == 'set' }.dig('env', 'CD_RESOLVE_MODE')
   end
 
   def test_proven_takeover_in_any_lane_skips_finalize_and_reaches_the_component_report

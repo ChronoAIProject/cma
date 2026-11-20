@@ -86,7 +86,7 @@ def main():
         run_created,
         timestamp,
     )
-    from staging_cd_component_admission import automatic_admission
+    from staging_cd_component_admission import automatic_admission, overtaken_admission
     from staging_cd_set import OVERTAKEN, OvertakenByNewerFinal, dispatch_set, document, verify_set
     env = os.environ
     overtaken = []
@@ -109,6 +109,14 @@ def main():
             output(env, "admitted", canonical(sorted(value["receipts"]) if value else []))
             output(env, "failures", canonical(failures))
             output(env, "changed", "true" if value else "false")
+            overtaken.extend(overtaken_admission(matrix, value, failures, api))
+            if overtaken:
+                # Deploy nothing; each newer final's own run promotes it.
+                output(env, "disposition", OVERTAKEN)
+                if env.get("GITHUB_STEP_SUMMARY"):
+                    with open(env["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                        summary.write(f"Admission skipped: {OVERTAKEN} for {', '.join(overtaken)}. "
+                                      "A newer final's run owns this deployment.\n")
             started = timestamp() if value else None
             selected = set(failures) | (set(value["receipts"]) if value else set())
             write_admission(env, selected, value, failures, started)
@@ -152,7 +160,8 @@ def main():
     status = run_private(operation, None)
     if status == 0 and overtaken:
         # Fixed component tokens only; this run deploys nothing for them.
-        print(f"SKIP deployment reason={OVERTAKEN} components={','.join(overtaken)}: "
+        stage = "admission" if env.get("CD_RESOLVE_MODE") == "automatic" else "deployment"
+        print(f"SKIP {stage} reason={OVERTAKEN} components={','.join(overtaken)}: "
               "a newer final's run owns this deployment")
     return status
 

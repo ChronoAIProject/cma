@@ -31,6 +31,12 @@ class OvertakenByNewerFinal(Refusal):
         self.components = tuple(sorted(components))
 
 
+def later_final(tags, source, history):
+    """True when a final of this component sits at a later develop first-parent source."""
+    position = history.position(source)
+    return any(history.position(tag["target"]) > position for tag in tags)
+
+
 def document(text):
     require(isinstance(text, str) and len(text) <= 65536, "Release input is oversized or missing")
     def unique(pairs):
@@ -150,8 +156,7 @@ def verify_set(value, api, registry, *, automatic, inputs=None):
                 raise
             obsolete.add(component)
             # Positive evidence: a final of this component at a later develop source.
-            position = history.position(receipt["source"])
-            if any(history.position(tag["target"]) > position for tag in tags):
+            if later_final(tags, receipt["source"], history):
                 overtaken.add(component)
     if automatic:
         transition = value.get("contract_transition")

@@ -146,7 +146,8 @@ class InvokeTests(unittest.TestCase):
                         return 30
                     runner.side_effect = refuse
 
-                def operation(values, masker, on_disabled, on_private_refusal, on_unverified, on_rolled_back):
+                def operation(values, masker, on_disabled, on_private_refusal, on_unverified, on_rolled_back,
+                              on_overtaken=None):
                     return real_deploy(values, masker, reader, runner,
                                        policy_reader=policy, on_disabled=on_disabled, on_private_refusal=on_private_refusal)
 
@@ -307,7 +308,8 @@ class InvokeTests(unittest.TestCase):
             summary = Path(directory) / "summary"
             summary.write_text("Infrastructure revision: `" + "c" * 40 + "`\n")
             env["GITHUB_STEP_SUMMARY"] = str(summary)
-            def operation(_env, _masker, on_disabled, on_private_refusal, on_unverified, on_rolled_back):
+            def operation(_env, _masker, on_disabled, on_private_refusal, on_unverified, on_rolled_back,
+                          on_overtaken=None):
                 return code if code in (0, 10, 20, 30, 40) else 20
             for code in (0, 10, 20, 30, 40, 1):
                 output = io.StringIO()
@@ -448,7 +450,8 @@ class InvokeTests(unittest.TestCase):
                     tools.assert_not_called()
 
     def test_disabled_main_exits_success_with_skip_summary_and_no_deployed_claim(self):
-        def operation(_env, _masker, on_disabled, on_private_refusal, on_unverified, on_rolled_back):
+        def operation(_env, _masker, on_disabled, on_private_refusal, on_unverified, on_rolled_back,
+                      on_overtaken=None):
             on_disabled()
             return invoke.DISABLED
         with tempfile.TemporaryDirectory() as directory:
