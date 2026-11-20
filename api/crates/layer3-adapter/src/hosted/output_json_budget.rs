@@ -24,7 +24,7 @@ impl Refusal {
             Self::InvalidJson => "runtime output JSON is malformed",
             Self::PrivateKey => "runtime output JSON contains a reserved parser key",
         };
-        crate::AdapterError::Rejected(reason.into())
+        crate::AdapterError::Rejected(crate::ingress_budget::diagnostic::text(reason))
     }
 }
 

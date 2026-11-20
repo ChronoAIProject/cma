@@ -530,3 +530,35 @@ fn shared_view_is_wire_owned_but_byte_equivalent_to_the_domain_event() {
     assert_eq!(view.launch_id, LAUNCH_ID);
     assert_eq!(serde_json::to_vec(&view).unwrap(), domain_json);
 }
+
+#[tokio::test]
+async fn launch_sse_rechecks_standing_before_each_buffered_frame() {
+    use crate::rest::shared_stream_tests::ChangingStanding;
+    for deleting in [OWNER, "unrelated", "outage"] {
+        let store = TestLaunchStore::new([LaunchEventKind::Created, LaunchEventKind::Completed]);
+        let standing = Arc::new(ChangingStanding::default());
+        let router = launch_companion_router(
+            LaunchCompanionState::new(Arc::new(store)).with_account_standing(standing.clone()),
+        );
+        let response = router
+            .oneshot(request(
+                "/api/v1/agui/launches/lch_one/events?follow=false",
+                OWNER,
+            ))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let mut body = response.into_body().into_data_stream();
+        assert_eq!(frames(&body.next().await.unwrap().unwrap())[0].0, "1");
+        *standing.0.lock().unwrap() = Some(deleting);
+        let next = body.next().await;
+        if deleting == "unrelated" {
+            assert_eq!(frames(&next.unwrap().unwrap())[0].0, "2");
+        } else {
+            assert!(
+                next.is_none(),
+                "a buffered launch event escaped after {deleting}"
+            );
+        }
+    }
+}

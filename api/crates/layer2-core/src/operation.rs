@@ -4,6 +4,11 @@ use std::time::{Duration, SystemTime};
 
 use crate::SubjectId;
 
+/// Shared public operation-key grammar: one to 255 visible ASCII bytes.
+pub fn valid_idempotency_key(bytes: &[u8]) -> bool {
+    !bytes.is_empty() && bytes.len() <= 255 && bytes.iter().all(|byte| (0x21..=0x7e).contains(byte))
+}
+
 /// Failure returned by a durable foundation store.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StoreError {
@@ -107,6 +112,21 @@ pub trait OperationStore: Send + Sync {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn operation_keys_share_the_public_visible_ascii_contract() {
+        for (key, accepted) in [
+            (b"retry-1".to_vec(), true),
+            (b"".to_vec(), false),
+            (b"contains space".to_vec(), false),
+            (b"line\nfeed".to_vec(), false),
+            (b"\xff".to_vec(), false),
+            (vec![b'x'; 255], true),
+            (vec![b'x'; 256], false),
+        ] {
+            assert_eq!(valid_idempotency_key(&key), accepted);
+        }
+    }
 
     #[test]
     fn a_claim_preserves_its_durable_identity() {

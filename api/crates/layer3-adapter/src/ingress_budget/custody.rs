@@ -15,6 +15,10 @@ impl<T> SharedCustody<T> {
             inner: Some(Arc::new(value)),
         }
     }
+
+    pub(crate) fn ptr_eq(left: &Self, right: &Self) -> bool {
+        Arc::ptr_eq(left.inner.as_ref().unwrap(), right.inner.as_ref().unwrap())
+    }
 }
 
 impl<T> Clone for SharedCustody<T> {

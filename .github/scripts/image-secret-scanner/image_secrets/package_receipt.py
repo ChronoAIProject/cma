@@ -72,13 +72,16 @@ def portable_database(finding, expected, db, database_checks, diff_id):
     return dict(db, layer=finding["layer"], diff_id=diff_id, entry=entries[0])
 
 
+def occurrence_database(finding, expected, db, database_checks, *, portable, diff_id):
+    if portable:
+        return portable_database(finding, expected, db, database_checks, diff_id)
+    return db if checked_database(finding, expected, db, database_checks) else None
+
+
 def checked_vectors(finding, expected, verified, database_checks, *, portable, diff_id):
     proof = expected["self_test"]
-    db = proof["database"]
-    if portable:
-        db = portable_database(finding, expected, db, database_checks, diff_id)
-    elif not checked_database(finding, expected, db, database_checks):
-        return None
+    db = occurrence_database(finding, expected, proof["database"], database_checks,
+                             portable=portable, diff_id=diff_id)
     if db is None:
         return None
     spans = verified.get(finding["rule"], [])
@@ -96,11 +99,11 @@ def matches_image(proof, report, config, image):
             and proof["image_manifest"] == image)
 
 
-def certificate_evidence(report, finding, expected, checked, config, image):
+def certificate_evidence(report, finding, expected, checked, config, image, *, portable=False):
     if checked is None:
         return None
     proof = expected["nested_certificate"]
-    if (not matches_image(proof, report, config, image) or proof["finding_id"] != finding["finding_id"]
+    if (not portable and (not matches_image(proof, report, config, image) or proof["finding_id"] != finding["finding_id"])
             or proof["der_sha256s"] != checked["der_sha256s"]):
         return None
     coordinates = ("image", "layer", "entry", "member")
@@ -122,8 +125,6 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
     platform, config, image, diff_id, (outer_path, outer_sha256, nested) = occurrence
     member_id = finding.get("member")
     portable = portable_row is not None
-    if portable and member_id is not None:
-        return None
     selected = portable_row[:2] if portable else evidence.entries.get(
         (component, platform, finding["layer"], diff_id, finding["entry"], member_id))
     if selected is None:
@@ -132,10 +133,14 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
     if outer_path != expected["path"] or outer_sha256 != expected["file_sha256"]:
         return None
     path, observed_sha256 = outer_path, outer_sha256
+    member = expected["member"]
+    if (member is None) != (member_id is None):
+        return None
     if member_id is not None:
+        # The reopened member must be the regular member the detector decoded at this locator.
         candidate_member = nested.get(member_id)
-        member = expected["member"]
-        if candidate_member != ("!".join([outer_path, *member["path"]]), member["sha256"]):
+        if member["locator"] != member_id or candidate_member != ("!".join([outer_path, *member["path"]]),
+                                                                  member["sha256"]):
             return None
         path, observed_sha256 = candidate_member
     review = reviews.get((finding["rule"], finding.get("candidate_sha256"), finding.get("line")))
@@ -178,17 +183,18 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
                     extra[key] = expected[key]
     if explanation == KEY_MARKER_VIEW_ADVISORY:
         candidate = finding.get("candidate_sha256")
-        for key in ("key_marker_view", "native_json_key_view"):
+        for key in ("key_marker_view", "native_json_key_view", "elf_nul_key_view"):
             claim = verified.get(key, {}).get(candidate)
             if claim is not None:
                 break
-        if claim is None or claim["finding_id"] != finding_id:
+        if claim is None or not portable and claim["finding_id"] != finding_id:
             return None
         proof = expected[key]
-        if not matches_image(proof, report, config, image):
+        if not portable and not matches_image(proof, report, config, image):
             return None
         classification = explanation
-        extra[key] = {**claim, **{field: value for field, value in proof.items() if field != "matches"}}
+        extra[key] = {**claim, **{field: value for field, value in proof.items() if field != "matches"},
+                      **image_identity, "finding_id": finding_id}
     if explanation == GO_CLI_ADVISORY:
         claim = verified.get("go_cli_strings", {}).get((finding["rule"], finding.get("candidate_sha256")))
         if claim is None or not portable and claim["finding_id"] != finding_id:
@@ -216,12 +222,16 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         extra[proof_key] = vector_proof
     elif explanation == DISTRIBUTION_ADVISORY:
         distribution = expected["distribution_config"]
-        if (not verified.get(DISTRIBUTION_ADVISORY) or not matches_image(distribution, report, config, image)
-                or distribution["finding_id"] != finding["finding_id"]
-                or not checked_database(finding, expected, distribution["database"], database_checks)):
+        if (not verified.get(DISTRIBUTION_ADVISORY) or not portable
+                and (not matches_image(distribution, report, config, image) or distribution["finding_id"] != finding_id)):
+            return None
+        db = occurrence_database(finding, expected, distribution["database"], database_checks,
+                                 portable=portable, diff_id=diff_id)
+        if db is None:
             return None
         classification = explanation
-        extra["distribution_config"] = {"public_path": outer_path, **distribution}
+        extra["distribution_config"] = {**distribution, **image_identity, "public_path": outer_path,
+                                        "finding_id": finding_id, "database": db}
     elif explanation == DIGEST_FRAME_ADVISORY:
         frame_proof = verified.get(DIGEST_FRAME_ADVISORY)
         if frame_proof is None:
@@ -230,7 +240,7 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         extra["public_digest_frames"] = frame_proof
     elif explanation == CERTIFICATE_ADVISORY:
         certificate = certificate_evidence(report, finding, expected, verified.get(CERTIFICATE_ADVISORY),
-                                           config, image)
+                                           config, image, portable=portable)
         if certificate is None:
             return None
         classification = explanation
@@ -305,13 +315,66 @@ def arch_trust_decisions(report, evidence, observations, verified, packet):
     return rows
 
 
+def portable_trust_decisions(report, evidence, observations, verified, packet, owners):
+    """Locate the reviewed paths by name; every image, layer, entry and finding identity is this scan's."""
+    seen = report["inventory"].get("arch_trust", {})
+    coordinate_keys = ("image", "layer", "entry")
+    unresolved = {tuple(row[key] for key in coordinate_keys) for row in report["findings"]
+                  if row["scope"] == "layer" and row["rule"] not in ADVISORY_RULES
+                  and (row["rule"] != CERTIFICATE_RULE or "member" in row)}
+    expected_paths = {path_digest(path): expected for path, expected in arch_trust.portable_entries(packet).items()}
+    candidates = [row for row in report["findings"] if row["scope"] == "layer" and row["rule"] == CERTIFICATE_RULE
+                  and "member" not in row and row["layer"] == arch_trust.LAYER and row["path"] in expected_paths]
+    rows = []
+    targets = {}
+    # The alias is decided only after its image's TLS bundle has its own decision.
+    for finding in sorted(candidates, key=lambda row: row["path"] == path_digest(arch_trust.ALIAS)):
+        expected = expected_paths[finding["path"]]
+        coordinate = tuple(finding[key] for key in coordinate_keys)
+        occurrence = observations.get(coordinate)
+        checked = verified.get(coordinate, {}).get(ARCH_CERTIFICATE_ADVISORY)
+        if (coordinate in unresolved or occurrence is None or checked is None
+                or checked.get("namespace_verified") is not True):
+            continue
+        platform, _, _, _, (path, file_sha256, _) = occurrence
+        if (platform != arch_trust.PLATFORM or path != expected["path"] or file_sha256 != finding.get("file_sha256")
+                or file_sha256 != finding.get("candidate_sha256")):
+            continue
+        position = dict(zip(coordinate_keys, coordinate))
+        proof = {"public_path": path, "catalog": "portable", **checked}
+        row = {**receipt_context(finding, occurrence, file_sha256), "classification": ARCH_CERTIFICATE_ADVISORY,
+               "arch_trust": proof, "proof_sha256": expected["proof_sha256"]}
+        if path == arch_trust.ALIAS:
+            target = targets.get(finding["image"])
+            if (target is None or position not in seen.get("aliases", ())
+                    or checked["link_target"] != expected["link_target"]):
+                continue
+            proof["target_finding_id"] = target["finding_id"]
+        else:
+            observed = dict(position, member_sha256=checked["member_sha256"], der_sha256s=checked["der_sha256s"])
+            if (observed not in seen.get("files", ()) or file_sha256 != expected["file_sha256"]
+                    or checked["der_sha256s"] != expected["der_sha256s"]):
+                continue
+            native = expected["native"]
+            if native is not None:
+                owner = owners.get(coordinate)
+                if owner is None:
+                    continue
+                proof["native"] = dict(native, package=evidence.packages[native["package_sha256"]], current_owner=owner)
+            if path == arch_trust.TLS:
+                targets[finding["image"]] = row
+        rows.append(row)
+    return rows
+
+
 def build(archive, output, report, component, evidence, *, source=None):
     require(component in SCOPES and report["policy"].get("staging_runtime_component") == component)
     require(report["archive_sha256"] == digest_file(archive))
     vector_checks = {}
     database_checks = {}
-    portable = (PortableOccurrences(evidence.portable_entries, evidence.packages, source)
-                if component == "runtime" and evidence.portable_entries else None)
+    trust = evidence.portable_trust if component == evidence.portable_component else None
+    portable = (PortableOccurrences(evidence.portable_entries or {}, evidence.packages, source, component, trust=trust)
+                if component == evidence.portable_component and (evidence.portable_entries or trust) else None)
     with tempfile.TemporaryDirectory(prefix="package-occurrences-", dir=output) as tmp:
         observations = collect(archive, Path(tmp), report, component, evidence,
                                vector_checks=vector_checks, database_checks=database_checks, portable=portable)
@@ -323,13 +386,17 @@ def build(archive, output, report, component, evidence, *, source=None):
         coordinate = (finding["image"], finding["layer"], finding["entry"])
         occurrence = observations.get(coordinate)
         if occurrence is not None:
+            reviewed = portable_rows.get(coordinate, {}).get(finding.get("member"))
             result = exact_match(report, finding, component, evidence, occurrence, database_checks,
-                                 vector_checks.get(coordinate, {}), portable_row=portable_rows.get(coordinate))
+                                 vector_checks.get(coordinate, {}), portable_row=reviewed)
             if result is not None:
                 rows.append(result)
     if component == arch_trust.COMPONENT and evidence.arch_trust:
         for packet in evidence.arch_trust.values():
             rows.extend(arch_trust_decisions(report, evidence, observations, vector_checks, packet))
+    if component == arch_trust.COMPONENT and trust is not None:
+        rows.extend(portable_trust_decisions(report, evidence, observations, vector_checks, trust,
+                                             portable.trust_owners(observations)))
     require(report["archive_sha256"] == digest_file(archive))
     return {
         "schema": "cma-staging-package-decisions-v1",

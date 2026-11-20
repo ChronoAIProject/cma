@@ -13,7 +13,10 @@ struct Probe {
 
 #[async_trait::async_trait]
 impl public_access::PublicAuthorization for Probe {
-    async fn authorize(&self, request: public_access::PublicRequest<'_>) -> Result<(), StatusCode> {
+    async fn authorize(
+        &self,
+        request: public_access::PublicRequest<'_>,
+    ) -> Result<(), public_access::PublicRefusal> {
         self.authorizations.fetch_add(1, Ordering::SeqCst);
         if self.allowed.load(Ordering::SeqCst)
             && request.context.caller.subject.as_str() == "synthetic-caller"
@@ -24,7 +27,7 @@ impl public_access::PublicAuthorization for Probe {
         {
             Ok(())
         } else {
-            Err(StatusCode::FORBIDDEN)
+            Err(StatusCode::FORBIDDEN.into())
         }
     }
 }

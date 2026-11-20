@@ -1,5 +1,7 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest';
+import { workspaceDetail } from '../../api/rest/hierarchy';
+import { object, text } from '../schema';
 import { ProtocolError, ValidationError } from '../index.js';
 import {
   agentSummary,
@@ -237,6 +239,29 @@ describe('Sandbox hierarchy resources', () => {
     test.answer(worktree);
     expect(await test.client.worktrees.read(worktree.id)).toEqual(worktree);
     expect(test.calls.at(-1)?.url).toContain(`/worktrees/${worktree.id}`);
+  });
+
+  it('decodes optional task activity without changing resource freshness across server versions', async () => {
+    const test = transport();
+    const agent = { ...agentSummary, profile: reference };
+    for (const task of [{}, { task_activity_at: '2026-09-04T17:00:00Z' }]) {
+      test.answer({
+        ...workspace,
+        worktrees: [worktree],
+        agents: [{ ...agent, ...task }],
+        worktree_count: 1,
+        agent_count: 1,
+      });
+      const result = await test.client.workspaces.read(workspace.id);
+      expect(workspaceDetail(result).agents[0]).toMatchObject({
+        taskActivityAt: task.task_activity_at,
+        updatedAt: agent.updated_at,
+      });
+      // Previous clients' object parser discards additive response fields.
+      expect(object({ updated_at: text })({ ...agent, ...task })).toEqual({
+        updated_at: agent.updated_at,
+      });
+    }
   });
 
   it('requires closed states, mandatory fields, safe cursors and exact statuses', async () => {

@@ -359,3 +359,43 @@ async fn mongo_provider_relay_retained_migration_is_idle_fenced_and_preserves_re
     assert_eq!(after, before);
     f.client.database(&f.database).drop().await.unwrap();
 }
+
+struct ErasingOwner;
+#[async_trait::async_trait]
+impl layer2_core::account_deletion::AccountStanding for ErasingOwner {
+    async fn erasing(
+        &self,
+        _: &layer2_core::SubjectId,
+    ) -> std::result::Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        Ok(true)
+    }
+}
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn provider_tool_relay_standing_gate_denies_deleting_owner() {
+    let mut fixture = Fixture::new().await;
+    let attachment = fixture.open(&fixture.source).await;
+    let capability = fixture.capability(&attachment);
+    fixture
+        .source
+        .authenticate_relay(&capability, true)
+        .await
+        .unwrap();
+    Arc::get_mut(&mut fixture.source).unwrap().standing = Arc::new(ErasingOwner);
+    assert!(fixture
+        .source
+        .authenticate_relay(&capability, true)
+        .await
+        .is_err());
+    assert!(fixture
+        .source
+        .authenticate_relay(&capability, false)
+        .await
+        .is_err());
+    fixture
+        .client
+        .database(&fixture.database)
+        .drop()
+        .await
+        .unwrap();
+}

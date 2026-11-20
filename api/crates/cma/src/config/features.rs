@@ -10,6 +10,9 @@ mod resource_list_tests;
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub visitor_launch_admission: bool,
+    pub usage_signed_cursors_enabled: bool,
+    pub usage_strict_cursors_enabled: bool,
     pub visitor_two_sandbox_defaults: bool,
     pub admin_runtime_inventory: bool,
     pub ownership_retry_hints_enabled: bool,
@@ -95,6 +98,9 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            visitor_launch_admission: flag(lookup, "CHRONO_VISITOR_LAUNCH_ADMISSION_ENABLED")?,
+            usage_signed_cursors_enabled: flag(lookup, "CHRONO_USAGE_SIGNED_CURSORS_ENABLED")?,
+            usage_strict_cursors_enabled: flag(lookup, "CHRONO_USAGE_STRICT_CURSORS_ENABLED")?,
             visitor_two_sandbox_defaults: flag(
                 lookup,
                 "CHRONO_VISITOR_TWO_SANDBOX_DEFAULTS_ENABLED",
@@ -225,6 +231,12 @@ impl FeatureFlags {
                 "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
             )?,
         };
+        if flags.usage_strict_cursors_enabled && !flags.usage_signed_cursors_enabled {
+            return Err(
+                "CHRONO_USAGE_STRICT_CURSORS_ENABLED requires CHRONO_USAGE_SIGNED_CURSORS_ENABLED"
+                    .into(),
+            );
+        }
         if flags.agent_shared_observation && !flags.agui_bounded_replay {
             return Err("CHRONO_AGENT_SHARED_OBSERVATION_ENABLED requires CHRONO_AGUI_BOUNDED_REPLAY_ENABLED".into());
         }
@@ -242,6 +254,9 @@ impl FeatureFlags {
         Ok(flags)
     }
 }
+
+#[cfg(test)]
+mod usage_cursor_tests;
 
 #[cfg(test)]
 mod capacity_tests;
@@ -339,6 +354,8 @@ mod observation_tests;
 #[cfg(test)]
 #[path = "features/ownership_retry_hint_tests.rs"]
 mod ownership_retry_hint_tests;
+
+mod launch_admission;
 
 #[cfg(test)]
 #[path = "features/visitor_defaults_tests.rs"]

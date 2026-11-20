@@ -1,15 +1,18 @@
 use super::*;
 
-pub(super) async fn receive_delivery(
-    mut receipt: oneshot::Receiver<ConversationSendOutcome>,
-    mut progress: Option<watch::Receiver<u64>>,
-    mut history: Option<watch::Receiver<Option<tokio::time::Instant>>>,
+pub(super) async fn receive_delivery<T, R>(
+    mut receipt: R,
+    mut progress: Option<DeliveryWatchReceiver<u64>>,
+    mut history: Option<DeliveryWatchReceiver<Option<tokio::time::Instant>>>,
     state: &AtomicU8,
     deadline: Duration,
     refreshing: bool,
     started: tokio::time::Instant,
-) -> Result<ConversationSendOutcome, &'static str> {
-    let mut cursor = progress.as_ref().map_or(0, |value| *value.borrow());
+) -> Result<T, &'static str>
+where
+    R: Future<Output = Result<T, oneshot::error::RecvError>> + Unpin,
+{
+    let mut cursor = progress.as_ref().map_or(0, DeliveryWatchReceiver::latest);
     let limit = if refreshing && progress.is_some() {
         CONTEXT_DELIVERY_LIMIT
     } else {
@@ -36,8 +39,8 @@ pub(super) async fn receive_delivery(
                     continue;
                 }
                 if state.load(Ordering::Acquire) == WRITING {
-                    let until = *history.as_mut()
-                        .expect("watched history load").borrow_and_update();
+                    let until = history.as_mut()
+                        .expect("watched history load").take_latest();
                     loading = until.is_some();
                     let now = tokio::time::Instant::now();
                     idle.as_mut().reset(now + idle_window(loading, deadline));
@@ -60,7 +63,7 @@ pub(super) async fn receive_delivery(
                     progress = None;
                     continue;
                 }
-                let next = *progress.as_ref().expect("watched progress").borrow();
+                let next = progress.as_ref().expect("watched progress").latest();
                 if next > cursor {
                     cursor = next;
                     // Output from another queued operation must not extend a

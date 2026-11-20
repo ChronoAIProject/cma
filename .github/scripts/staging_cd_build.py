@@ -15,26 +15,21 @@ from staging_cd_receipts import IDENTITY_LABEL, canonical, sha256, validate_iden
 from staging_cd_reservations import validate_reservation
 from staging_cd_versions import DEPLOYABLES
 from staging_cd_build_progress import summarize
-from staging_cd_build_guard import run as run_owned_build
 from staging_cd_contract import from_source, labels as contract_labels, verify_labels
 
 ALLOWED_ARGUMENTS = {"RUNTIME_DESKTOP", "OMARCHY_CMA_BASE", "CHRONO_WEB_REPLICA_RECOVERY_ENABLED"}
 PROCESS_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")
 
 
-def command(args, *, cwd=None, env=None, data=None, timeout=3600, progress=None, check_owner=None):
+def command(args, *, cwd=None, env=None, data=None, timeout=3600, progress=None):
     child = {key: value for key, value in os.environ.items() if key in PROCESS_KEYS}
     if env:
         child.update(env)
     if env and "CMA_RUNTIME_EVIDENCE_ID" in env:
         require(data is None, "Runtime canary cannot receive input credentials")
         return canary_run(args, child, timeout, cwd=cwd)
-    if check_owner is None:
-        result = subprocess.run(args, cwd=cwd, env=child, input=data, capture_output=True,
-                                timeout=timeout, check=False)
-    else:
-        require(data is None and args[:3] == ["docker", "buildx", "build"], "Invalid guarded build command")
-        result = run_owned_build(args, cwd=cwd, env=child, timeout=timeout, check_owner=check_owner)
+    result = subprocess.run(args, cwd=cwd, env=child, input=data, capture_output=True,
+                            timeout=timeout, check=False)
     if progress is not None:
         progress.update(summarize(result.stderr))
     if result.returncode != 0:
@@ -95,7 +90,7 @@ def snapshot(root, revision, destination, runner=command):
     archive.unlink()
 
 
-def build(root, reservation, directory, runner=command, *, source=None, cache=None, progress=None, check_owner=None):
+def build(root, reservation, directory, runner=command, *, source=None, cache=None, progress=None):
     if source is None:
         source = directory / "source"
         snapshot(root, reservation["source"], source, runner)
@@ -121,8 +116,6 @@ def build(root, reservation, directory, runner=command, *, source=None, cache=No
     if cache is not None:
         args += cache.build_options()
     options = {"progress": progress} if progress is not None and runner is command else {}
-    if check_owner is not None:
-        options["check_owner"] = check_owner
     if cache is not None:
         options["env"] = cache.build_environment()
     runner([*args, str(source)], timeout=14400, **options)

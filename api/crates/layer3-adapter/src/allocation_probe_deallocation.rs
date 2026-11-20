@@ -1,6 +1,7 @@
 //! Test-only pause before one identified allocation is physically freed.
 
 use super::AllocationProbe;
+use crate::ingress_budget::{AllocationPlan, IngressClass, IngressOwnershipPolicy};
 use std::{
     alloc::{GlobalAlloc, Layout},
     marker::PhantomData,
@@ -65,6 +66,14 @@ pub(crate) struct DeallocationPause<'a> {
 }
 
 impl AllocationProbe {
+    pub(crate) fn pause_deallocation<T>(
+        &mut self,
+        bytes: usize,
+        initialize: impl FnOnce() -> T,
+    ) -> (T, DeallocationPause<'_>) {
+        self.capture_deallocation(bytes, initialize, |_| None)
+    }
+
     /// Select the backing containing a borrowed payload, even when another
     /// allocation has the same layout on this target.
     pub(crate) fn pause_deallocation_containing<T>(
@@ -123,6 +132,30 @@ impl AllocationProbe {
 }
 
 impl DeallocationPause<'_> {
+    pub(crate) fn admission_blocked_while_dropping(
+        self,
+        policy: &IngressOwnershipPolicy,
+        class: IngressClass,
+        drop_owner: impl FnOnce() + Send + 'static,
+    ) -> bool {
+        let available = policy.budget(class).available_bytes();
+        let pressure = policy
+            .admit(
+                class,
+                AllocationPlan::checked("deallocation sentinel pressure", &[available]).unwrap(),
+            )
+            .unwrap();
+        let admitted = self.inspect_while_dropping(drop_owner, || {
+            policy.admit(
+                class,
+                AllocationPlan::checked("deallocation sentinel", &[1]).unwrap(),
+            )
+        });
+        let blocked = admitted.is_err();
+        drop((admitted, pressure));
+        blocked
+    }
+
     /// Inspect the remaining charge after child fields drop but before the
     /// selected outer allocation is freed. Children may release their own plans.
     pub(crate) fn inspect_while_dropping<T>(

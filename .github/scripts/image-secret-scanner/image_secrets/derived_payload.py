@@ -2,7 +2,7 @@
 
 import re
 
-from . import go_cli_strings, library_vectors, nested_certificates, reviewed_literals
+from . import go_cli_strings, library_vectors, mime_sources, nested_certificates, reviewed_literals
 from .common import digest_bytes
 from .gate import (
     FORMAT_MARKER_ADVISORY,
@@ -19,11 +19,13 @@ MIME_SOURCE = "usr/share/mime/packages/freedesktop.org.xml"
 HEX_CONSTANT = re.compile(rb"[A-Fa-f0-9]{32,128}")
 
 
-def validate(row, package, *, portable=False):
+def validate(row, package, *, portable=False, packages=None):
+    """``packages`` selects the native Arch form, which also names every generator source."""
     proof = row["derived_payload"]
     common = {"kind", "input_sha256", "output_sha256", "producer"}
     require(isinstance(proof, dict))
     kind = proof.get("kind")
+    require(packages is None or kind == "mime-index")
     if kind == "compiled-executable":
         image_binding(proof, common | {"span"}, portable=portable, finding_fields={"findings"})
         require(row["path"] == "usr/bin/openssl" and row["member"] is None
@@ -44,12 +46,15 @@ def validate(row, package, *, portable=False):
     elif kind == "go-cli-strings":
         image_binding(proof, common | {"strings"}, portable=portable, finding_fields={"findings"})
     else:
-        image_binding(proof, common, portable=portable, finding_fields={"findings"})
+        image_binding(proof, common | ({"sources"} if packages is not None else set()), portable=portable,
+                      finding_fields={"findings"})
         require(kind == "mime-index" and row["path"] in MIME_TARGETS and row["member"] is None
                 and package["name"] == "shared-mime-info" and package["authority_type"] in ("debian-index", "arch-signature")
                 and row["package_member"]["path"][-1] == MIME_SOURCE and "reviewed_literals" in row)
+        if packages is not None:
+            mime_sources.validate(row, package, packages)
         allowed = {(rule, FORMAT_MARKER_ADVISORY) for rule in FORMAT_MARKER_RULES}
-        if "native_json_key_view" in row:
+        if "native_json_key_view" in row or "key_marker_view" in row:
             allowed.add((KEY_MARKER_VIEW_RULE, KEY_MARKER_VIEW_ADVISORY))
         require(all(isinstance(match, dict) and (match.get("rule"), match.get("explanation")) in allowed
                     for match in row["matches"]))

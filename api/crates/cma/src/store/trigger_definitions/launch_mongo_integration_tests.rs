@@ -30,6 +30,7 @@ mod initiation;
 #[path = "launch_observation_mongo_tests.rs"]
 mod observation_tests;
 mod platform_spend;
+mod visitor_contention;
 mod visitor_quota;
 
 fn digest(byte: char) -> String {
@@ -738,3 +739,6 @@ async fn ready_admission_handoffs_indexes_and_corruption_are_strict() {
     ));
     database.drop().await.unwrap();
 }
+
+#[path = "launch_deletion_mongo_tests.rs"]
+mod account_deletion;
