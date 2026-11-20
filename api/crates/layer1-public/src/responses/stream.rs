@@ -1,4 +1,4 @@
-use crate::stream_telemetry::{self, Kind, Poll};
+use crate::stream_telemetry::{self, CloseReason, Contract, ContractKind, Kind, Poll};
 use std::{
     collections::{HashMap, VecDeque},
     convert::Infallible,
@@ -76,168 +76,192 @@ fn open_inner(
         indexed,
         pagination_required: false,
     };
-    sse_response(stream::unfold(open, |mut open| async move {
-        let mut quiet_pages = 0;
-        loop {
-            if let Some(value) = open.pending.pop_front() {
-                if let Some(authorization) = &open.authorization {
-                    if open
-                        .state
-                        .reads
-                        .validate_event_stream(authorization)
-                        .await
-                        .is_err()
-                    {
-                        return None;
-                    }
-                }
-                return Some((Ok::<_, Infallible>(sse_event(value)), open));
-            }
-            if open.pagination_required {
-                if let Some(held) = &open.authorization {
-                    if open.state.reads.validate_event_stream(held).await.is_err() {
-                        return None;
-                    }
-                }
-                open.pagination_required = false;
-                open.ended = true;
-                let value = envelope(
-                    "error",
-                    open.sequence,
-                    json!({"code":"response_pagination_required","message":"Read the response with output_page=true and its returned cursor; output was not truncated."}),
-                );
-                return Some((Ok(sse_event(value)), open));
-            }
-            if open.ended {
-                return None;
-            }
-            let poll = Poll::new(Kind::Responses);
-            let (agent, response, history, more) = if open.indexed {
-                match open.read_indexed().await {
-                    Ok(value) => value,
-                    Err(_) => return None,
-                }
-            } else {
-                let (agent, history) = match open.read().await {
-                    Ok(value) => value,
-                    Err(_) => return None,
-                };
-                let Some(response) =
-                    retrieve::project(&open.state.agent_page_origin, &agent, &history, open.turn)
-                else {
-                    poll.complete(false);
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                    continue;
-                };
-                (agent, response, history, false)
-            };
-            open.announce(&response);
-            let mut message_count = 0;
-            let turn = open.turn;
-            for entry in history.iter().filter(|entry| entry.seq >= turn) {
-                if matches!(entry.kind, AgentLogKind::TurnStarted { turn_sequence, .. } if turn_sequence != open.turn)
-                {
-                    break;
-                }
-                if matches!(entry.kind, AgentLogKind::AgentMessage { .. }) {
-                    message_count += 1;
-                }
-                if entry.seq <= open.cursor {
-                    continue;
-                }
-                open.cursor = entry.seq;
-                match &entry.kind {
-                    AgentLogKind::AgentMessage { content } => {
-                        if open.indexed {
-                            let message =
-                                retrieve::output_message(&agent, turn, open.output_count, content);
-                            open.append_message(&message, open.output_count);
-                            open.output_count += 1;
-                        } else {
-                            open.append_output(&response, message_count);
+    let contract = Contract::new(ContractKind::Responses);
+    let evidence = contract.clone();
+    let body = stream::unfold(open, move |mut open| {
+        let evidence = evidence.clone();
+        async move {
+            let mut quiet_pages = 0;
+            loop {
+                if let Some(value) = open.pending.pop_front() {
+                    if let Some(authorization) = &open.authorization {
+                        if let Err(error) =
+                            open.state.reads.validate_event_stream(authorization).await
+                        {
+                            evidence.record(CloseReason::read(&error));
+                            return None;
                         }
                     }
-                    AgentLogKind::ToolCallStarted {
-                        call_id,
-                        title,
-                        kind,
-                        status,
-                    } => {
-                        let item = json!({"id": format!("tool_{}_{}", agent.id, entry.seq), "type": "cma_chat.tool_activity",
-                            "call_id": call_id, "kind": kind, "target": title, "status": status, "duration_ms": null});
-                        open.tools.insert(call_id.clone(), item.clone());
-                        open.push_tool(&response.id, item);
+                    return Some((Ok::<_, Infallible>(sse_event(value)), open));
+                }
+                if open.pagination_required {
+                    if let Some(held) = &open.authorization {
+                        if let Err(error) = open.state.reads.validate_event_stream(held).await {
+                            evidence.record(CloseReason::read(&error));
+                            return None;
+                        }
                     }
-                    AgentLogKind::ToolOutputReported { call_id, output } => {
-                        if let Some(item) = open.tools.get_mut(call_id) {
-                            item["output"] = json!(output);
-                            let item = item.clone();
+                    evidence.record(CloseReason::PaginationRequired);
+                    open.pagination_required = false;
+                    open.ended = true;
+                    let value = envelope(
+                        "error",
+                        open.sequence,
+                        json!({"code":"response_pagination_required","message":"Read the response with output_page=true and its returned cursor; output was not truncated."}),
+                    );
+                    return Some((Ok(sse_event(value)), open));
+                }
+                if open.ended {
+                    evidence.record(CloseReason::NormalTerminal);
+                    return None;
+                }
+                let poll = Poll::new(Kind::Responses);
+                let (agent, response, history, more) = if open.indexed {
+                    match open.read_indexed().await {
+                        Ok(value) => value,
+                        Err(error) => {
+                            evidence.record(CloseReason::read(&error));
+                            return None;
+                        }
+                    }
+                } else {
+                    let (agent, history) = match open.read().await {
+                        Ok(value) => value,
+                        Err(error) => {
+                            evidence.record(CloseReason::read(&error));
+                            return None;
+                        }
+                    };
+                    let Some(response) = retrieve::project(
+                        &open.state.agent_page_origin,
+                        &agent,
+                        &history,
+                        open.turn,
+                    ) else {
+                        poll.complete(false);
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        continue;
+                    };
+                    (agent, response, history, false)
+                };
+                open.announce(&response);
+                let mut message_count = 0;
+                let turn = open.turn;
+                for entry in history.iter().filter(|entry| entry.seq >= turn) {
+                    if matches!(entry.kind, AgentLogKind::TurnStarted { turn_sequence, .. } if turn_sequence != open.turn)
+                    {
+                        break;
+                    }
+                    if matches!(entry.kind, AgentLogKind::AgentMessage { .. }) {
+                        message_count += 1;
+                    }
+                    if entry.seq <= open.cursor {
+                        continue;
+                    }
+                    open.cursor = entry.seq;
+                    match &entry.kind {
+                        AgentLogKind::AgentMessage { content } => {
+                            if open.indexed {
+                                let message = retrieve::output_message(
+                                    &agent,
+                                    turn,
+                                    open.output_count,
+                                    content,
+                                );
+                                open.append_message(&message, open.output_count);
+                                open.output_count += 1;
+                            } else {
+                                open.append_output(&response, message_count);
+                            }
+                        }
+                        AgentLogKind::ToolCallStarted {
+                            call_id,
+                            title,
+                            kind,
+                            status,
+                        } => {
+                            let item = json!({"id": format!("tool_{}_{}", agent.id, entry.seq), "type": "cma_chat.tool_activity",
+                            "call_id": call_id, "kind": kind, "target": title, "status": status, "duration_ms": null});
+                            open.tools.insert(call_id.clone(), item.clone());
                             open.push_tool(&response.id, item);
                         }
-                    }
-                    AgentLogKind::ToolCallUpdated {
-                        call_id,
-                        title,
-                        status,
-                        output,
-                    } => {
-                        let item = open.tools.entry(call_id.clone()).or_insert_with(|| json!({
+                        AgentLogKind::ToolOutputReported { call_id, output } => {
+                            if let Some(item) = open.tools.get_mut(call_id) {
+                                item["output"] = json!(output);
+                                let item = item.clone();
+                                open.push_tool(&response.id, item);
+                            }
+                        }
+                        AgentLogKind::ToolCallUpdated {
+                            call_id,
+                            title,
+                            status,
+                            output,
+                        } => {
+                            let item = open.tools.entry(call_id.clone()).or_insert_with(|| json!({
                             "id": format!("tool_{}_{}", agent.id, entry.seq), "type": "cma_chat.tool_activity",
                             "call_id": call_id, "kind": "unknown", "target": null, "duration_ms": null
                         }));
-                        item["status"] = json!(status);
-                        if let Some(title) = title {
-                            item["target"] = json!(title);
+                            item["status"] = json!(status);
+                            if let Some(title) = title {
+                                item["target"] = json!(title);
+                            }
+                            if let Some(output) = output {
+                                item["output"] = json!(output);
+                            }
+                            let item = item.clone();
+                            open.push_tool(&response.id, item);
                         }
-                        if let Some(output) = output {
-                            item["output"] = json!(output);
-                        }
-                        let item = item.clone();
-                        open.push_tool(&response.id, item);
+                        _ => {}
                     }
-                    _ => {}
                 }
-            }
-            if open.indexed
-                && (serde_json::to_vec(&open.tools).map_or(true, |b| b.len() > 4 * 1024 * 1024)
-                    || serde_json::to_vec(&open.pending)
-                        .map_or(true, |b| b.len() > 6 * 4 * 1024 * 1024))
-            {
-                open.pending.clear();
-                open.pagination_required = true;
-            }
-            if response.status != ResponseStatus::InProgress && !more && !open.pagination_required {
-                open.finish_reasoning();
-                let kind = match response.status {
-                    ResponseStatus::Completed => "response.completed",
-                    ResponseStatus::Failed => "response.failed",
-                    _ => "response.incomplete",
-                };
-                open.push(kind, json!({"response": response}));
-                open.ended = true;
-            } else if !more && !open.pagination_required {
-                let committed = history
-                    .iter()
-                    .rev()
-                    .find(|entry| matches!(entry.kind, AgentLogKind::AgentMessage { .. }))
-                    .map_or(0, |entry| entry.seq);
-                open.drain_live(&agent, committed);
-            }
-            poll.complete(!open.pending.is_empty());
-            if open.indexed && open.pending.is_empty() && more {
-                quiet_pages += 1;
-                if quiet_pages == 8 {
-                    // A sparse turn must not scan its entire prefix in one
-                    // body poll. SSE comments preserve event numbering and
-                    // every intermediate update while yielding to backpressure.
-                    return Some((Ok(Event::default().comment("keep-alive")), open));
+                if open.indexed
+                    && (serde_json::to_vec(&open.tools).map_or(true, |b| b.len() > 4 * 1024 * 1024)
+                        || serde_json::to_vec(&open.pending)
+                            .map_or(true, |b| b.len() > 6 * 4 * 1024 * 1024))
+                {
+                    open.pending.clear();
+                    open.pagination_required = true;
                 }
-            }
-            if open.pending.is_empty() && !more {
-                tokio::time::sleep(Duration::from_millis(100)).await;
+                if response.status != ResponseStatus::InProgress
+                    && !more
+                    && !open.pagination_required
+                {
+                    open.finish_reasoning();
+                    let kind = match response.status {
+                        ResponseStatus::Completed => "response.completed",
+                        ResponseStatus::Failed => "response.failed",
+                        _ => "response.incomplete",
+                    };
+                    open.push(kind, json!({"response": response}));
+                    open.ended = true;
+                } else if !more && !open.pagination_required {
+                    let committed = history
+                        .iter()
+                        .rev()
+                        .find(|entry| matches!(entry.kind, AgentLogKind::AgentMessage { .. }))
+                        .map_or(0, |entry| entry.seq);
+                    open.drain_live(&agent, committed);
+                }
+                poll.complete(!open.pending.is_empty());
+                if open.indexed && open.pending.is_empty() && more {
+                    quiet_pages += 1;
+                    if quiet_pages == 8 {
+                        // A sparse turn must not scan its entire prefix in one
+                        // body poll. SSE comments preserve event numbering and
+                        // every intermediate update while yielding to backpressure.
+                        return Some((Ok(Event::default().comment("keep-alive")), open));
+                    }
+                }
+                if open.pending.is_empty() && !more {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
             }
         }
-    }))
+    });
+    let mut response = sse_response(body);
+    response.extensions_mut().insert(contract);
+    response
 }
 
 struct Open {

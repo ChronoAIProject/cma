@@ -4,6 +4,13 @@ use std::path::Path;
 
 /// Create every missing directory and persist each new parent entry.
 pub(crate) fn create_dir_all(path: &Path) -> io::Result<()> {
+    create_dir_all_with(path, &mut sync_directory)
+}
+
+fn create_dir_all_with(
+    path: &Path,
+    sync: &mut impl FnMut(&Path) -> io::Result<()>,
+) -> io::Result<()> {
     let mut missing = Vec::new();
     let mut cursor = path;
     while std::fs::symlink_metadata(cursor)
@@ -16,7 +23,7 @@ pub(crate) fn create_dir_all(path: &Path) -> io::Result<()> {
     }
     std::fs::create_dir_all(path)?;
     for created in missing.iter().rev() {
-        sync_parent(created)?;
+        sync(parent(created)?)?;
     }
     Ok(())
 }
@@ -87,6 +94,13 @@ pub(crate) fn sync_parent(path: &Path) -> io::Result<()> {
 }
 
 pub(crate) fn sync_file(path: &Path) -> io::Result<()> {
+    sync_file_with(path, &mut File::sync_all)
+}
+
+pub(crate) fn sync_file_with(
+    path: &Path,
+    sync: &mut impl FnMut(&File) -> io::Result<()>,
+) -> io::Result<()> {
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -101,7 +115,7 @@ pub(crate) fn sync_file(path: &Path) -> io::Result<()> {
             "file sync target is not a regular file",
         ));
     }
-    file.sync_all()
+    sync(&file)
 }
 
 /// Persist a complete regular-file/directory tree and its entry in its parent.
@@ -161,6 +175,45 @@ pub(crate) fn sync_directory(path: &Path) -> io::Result<()> {
     directory.sync_all()
 }
 
+/// Persist every ancestor entry, including those left visible by a failed mkdir
+/// sync. No nearer ancestor has a durability guarantee, so continue to root.
+pub(crate) fn sync_directory_chain(
+    path: &Path,
+    sync: &mut impl FnMut(&Path) -> io::Result<()>,
+) -> io::Result<()> {
+    sync(path)?;
+    let mut synced = std::collections::BTreeSet::from([path.canonicalize()?]);
+    // Temporary roots can contain aliases (for example the platform temp dir).
+    // Persist both the resolved directories and the parents holding each alias.
+    let mut pending = vec![std::path::absolute(path)?];
+    let mut visited = std::collections::BTreeSet::new();
+    while let Some(path) = pending.pop() {
+        for ancestor in path.ancestors() {
+            if !visited.insert(ancestor.to_path_buf()) {
+                continue;
+            }
+            let resolved = ancestor.canonicalize()?;
+            for directory in resolved.ancestors() {
+                if synced.insert(directory.to_path_buf()) {
+                    sync(directory)?;
+                }
+            }
+            if std::fs::symlink_metadata(ancestor)?
+                .file_type()
+                .is_symlink()
+            {
+                let target = std::fs::read_link(ancestor)?;
+                pending.push(if target.is_absolute() {
+                    target
+                } else {
+                    parent(ancestor)?.join(target)
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
 fn sync_distinct_parents(left: &Path, right: &Path) -> io::Result<()> {
     let left_parent = parent(left)?;
     let right_parent = parent(right)?;
@@ -177,3 +230,7 @@ fn parent(path: &Path) -> io::Result<&Path> {
     path.parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "entry has no parent"))
 }
+
+#[cfg(test)]
+#[path = "fs_durability_tests.rs"]
+pub(crate) mod tests;

@@ -1,0 +1,174 @@
+use super::*;
+
+fn arm_gc(f: &Fixture) {
+    *f.backend.gc_credentials.lock().unwrap() = Some(f.harness.credentials.clone());
+}
+
+fn add_debt(f: &Fixture, row: &mut Sandbox, now: SystemTime) {
+    row.credential
+        .queue_revoke("older-key".into(), rfc3339_at(now));
+    f.harness
+        .credentials
+        .live_keys
+        .lock()
+        .unwrap()
+        .insert("older-key".into());
+    f.harness
+        .credentials
+        .revoke_failure_ids
+        .lock()
+        .unwrap()
+        .insert("older-key".into());
+}
+
+#[tokio::test]
+async fn retained_fast_paths_settle_parent_debt_before_provider_gc_even_with_lost_reply() {
+    for state in ["suspended", "terminating", "absent", "uncredentialed"] {
+        let (f, mut original, mut now) = if state == "uncredentialed" {
+            let (f, row, _, now) = retirement_tests::failed_revive().await;
+            (f, row, now)
+        } else {
+            let f = Fixture::new().await;
+            let created = f.harness.create().await;
+            let mut now = start_time(&created);
+            let active = f
+                .drive(
+                    &created.id,
+                    &mut now,
+                    SandboxStatus::Active,
+                    &runtime_image(),
+                )
+                .await;
+            let paused = f.pause(&active, &mut now).await;
+            (f, paused, now)
+        };
+        if state == "terminating" || state == "absent" {
+            original.runtime = original
+                .lifecycle
+                .suspended_runtime
+                .take()
+                .map(|binding| *binding);
+            if state == "absent" {
+                f.backend.lose_object().await;
+            } else {
+                f.backend.set_lifecycle(state).await;
+            }
+        }
+        let revision = original.revision;
+        original.begin_retirement(rfc3339_at(now)).unwrap();
+        add_debt(&f, &mut original, now);
+        f.harness
+            .store
+            .save_sandbox(revision, original.clone())
+            .await
+            .unwrap();
+        arm_gc(&f);
+        f.backend.lose_delete.store(true, Ordering::SeqCst);
+        f.step(&original.id, now, &runtime_image()).await;
+        let blocked = f.harness.stored(&original.id).await;
+        assert_eq!(blocked.status, SandboxStatus::Retiring, "{state}");
+        assert_eq!(blocked.work.step, SandboxWorkStep::StopAgents);
+        assert!(!blocked.lifecycle.home.as_ref().unwrap().released);
+        assert!(!f
+            .backend
+            .calls
+            .snapshot()
+            .contains(&"delete-retained".into()));
+        assert!(!f.backend.home_destroyed.load(Ordering::SeqCst));
+        assert_eq!(blocked.credential.revoke_debt.len(), 1);
+        assert!(stamp_time(&blocked.work.ready_at) > now);
+        f.harness
+            .credentials
+            .revoke_failure_ids
+            .lock()
+            .unwrap()
+            .clear();
+        let retired = f
+            .drive(
+                &original.id,
+                &mut now,
+                SandboxStatus::Retired,
+                &runtime_image(),
+            )
+            .await;
+        assert!(retired.lifecycle.home.as_ref().unwrap().released);
+        assert!(retired.credential.revoke_debt.is_empty());
+        if state != "absent" {
+            assert!(f.backend.home_destroyed.load(Ordering::SeqCst));
+        }
+        assert_eq!(
+            f.backend
+                .calls
+                .snapshot()
+                .iter()
+                .filter(|s| *s == "delete-retained")
+                .count(),
+            2
+        );
+    }
+}
+
+#[tokio::test]
+async fn older_cleanup_phases_hold_the_home_until_parent_only_debt_is_settled() {
+    for step in [
+        SandboxWorkStep::TeardownRuntime,
+        SandboxWorkStep::MarkRetired,
+    ] {
+        let f = Fixture::native().await;
+        let created = f.harness.create().await;
+        let mut now = start_time(&created);
+        let mut row = f
+            .drive(
+                &created.id,
+                &mut now,
+                SandboxStatus::Active,
+                &runtime_image(),
+            )
+            .await;
+        let revision = row.revision;
+        row.begin_retirement(rfc3339_at(now)).unwrap();
+        row.work.step = step;
+        if step == SandboxWorkStep::MarkRetired {
+            use layer3_adapter::hosted::HostedBackend;
+            f.backend
+                .teardown(&RuntimeHandle::new(
+                    &row.runtime.as_ref().unwrap().runtime_id,
+                ))
+                .await
+                .unwrap();
+            row.runtime = None;
+        }
+        row.credential.current = None;
+        row.credential.pending = None;
+        row.credential.delivered = false;
+        // Simulate a retained parent whose only remaining key has no custody row.
+        f.harness.credentials.materials.lock().unwrap().clear();
+        f.harness.credentials.live_keys.lock().unwrap().clear();
+        add_debt(&f, &mut row, now);
+        f.harness
+            .store
+            .save_sandbox(revision, row.clone())
+            .await
+            .unwrap();
+        let calls = f.backend.calls.snapshot();
+        arm_gc(&f);
+        f.step(&row.id, now, &runtime_image()).await;
+        let blocked = f.harness.stored(&row.id).await;
+        assert_eq!(blocked.status, SandboxStatus::Retiring);
+        assert_eq!(blocked.work.step, step);
+        assert_eq!(f.backend.calls.snapshot(), calls);
+        assert_eq!(blocked.lifecycle.home, row.lifecycle.home);
+        assert!(!blocked.lifecycle.home.as_ref().unwrap().released);
+        f.harness
+            .credentials
+            .revoke_failure_ids
+            .lock()
+            .unwrap()
+            .clear();
+        let retired = f
+            .drive(&row.id, &mut now, SandboxStatus::Retired, &runtime_image())
+            .await;
+        assert!(retired.lifecycle.home.as_ref().unwrap().released);
+        assert!(retired.credential.revoke_debt.is_empty());
+    }
+}

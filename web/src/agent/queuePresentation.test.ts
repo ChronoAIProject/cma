@@ -26,6 +26,7 @@ const row = (commandId: string) => ({
 });
 const queue = (ids: string[]): QueuedInputsControl => ({
   items: ids.map(row),
+  outcomes: [],
   managedCommandIds: new Set(ids),
   edit: vi.fn(),
   remove: vi.fn(),
@@ -84,11 +85,15 @@ it('preserves recovered queue entries and bridges their own start before the dur
   });
 });
 
-it('does not resurrect cancelled ordinary input or hide uncertain queue mutations', () => {
+it('retains admitted input when discovery omits it without outcome evidence', () => {
   const control = queue(['b']);
   expect(
-    queuePresentation(conversation, [message('b', false)], { ...control, items: [] }).messages,
-  ).toEqual([]);
+    queuePresentation(conversation, [message('b', true)], { ...control, items: [] }).messages,
+  ).toEqual([message('b', true)]);
+});
+
+it('does not hide uncertain queue mutations behind an active input', () => {
+  const control = queue(['b']);
   const recovery = { ...control, items: [{ ...row('b'), needsRecovery: true }] };
   const result = queuePresentation(active('b'), [message('b', false)], recovery);
   expect(result.items).toEqual(recovery.items);
@@ -145,4 +150,41 @@ it('preserves an unconfirmed input without synthesizing another bubble for its u
     receipt: { commandId: 'older', responseId: 'resp_older' },
   });
   expect(previousStart.items).toEqual([row('new')]);
+});
+
+it.each(['expired', 'cancelled'] as const)(
+  'shows an active command’s %s outcome without recreating its optimistic bubble',
+  (kind) => {
+    const result = queuePresentation(active('b'), [message('b', true)], {
+      ...queue(['b']),
+      items: [],
+      outcomes: [
+        { commandId: 'b', responseId: 'resp_b', input: row('b').input, kind, terminal: true },
+      ],
+    });
+    expect(result.items).toEqual([]);
+    expect(result.messages).toEqual([]);
+    expect(result.outcomes).toHaveLength(1);
+  },
+);
+
+it('bridges retained command text while its active user frame is delayed', () => {
+  const control: QueuedInputsControl = {
+    ...queue([]),
+    outcomes: [
+      {
+        commandId: 'b',
+        responseId: 'resp_b',
+        input: row('b').input,
+        kind: 'starting',
+        terminal: false,
+      },
+    ],
+  };
+  const result = queuePresentation(active('b'), [], control);
+  expect(result.items).toEqual([]);
+  expect(result.outcomes).toEqual([]);
+  expect(result.messages).toEqual([
+    expect.objectContaining({ content: row('b').input, queued: false }),
+  ]);
 });

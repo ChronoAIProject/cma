@@ -32,14 +32,17 @@ pub use agent_state::AgentRoutesState;
 
 const DEFAULT_PAGE_LIMIT: u16 = 200;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AgentPageParams {
     organization: Option<String>,
     sandbox: Option<String>,
     workspace: Option<String>,
+    #[param(value_type = Option<String>)]
     status: Option<AgentStatus>,
     cursor: Option<String>,
+    #[param(minimum = 1, maximum = 200, default = 200)]
     limit: Option<u16>,
 }
 
@@ -73,9 +76,10 @@ impl AgentPageParams {
 }
 
 pub(super) fn routes() -> Router<AgentRoutesState> {
+    let list = get(list).layer(axum::middleware::from_fn(agent_state::list_private_headers));
     Router::new()
         .route("/api/v1/workspaces/{id}/agents", post(create))
-        .route("/api/v1/agents", get(list).post(create_lifecycle))
+        .route("/api/v1/agents", list.post(create_lifecycle))
         .route(
             "/api/v1/desktop-capability",
             get(super::desktop_creation::read),
@@ -280,15 +284,9 @@ pub(crate) async fn create(
     get,
     path = "/api/v1/agents",
     tag = "agents",
-    params(
-        ("organization" = Option<String>, Query),
-        ("sandbox" = Option<String>, Query),
-        ("workspace" = Option<String>, Query),
-        ("status" = Option<String>, Query),
-        ("cursor" = Option<String>, Query),
-        ("limit" = Option<u16>, Query)
-    ),
-    responses((status = 200, body = AccessibleAgentPageView))
+    params(AgentPageParams),
+    responses((status = 200, body = AccessibleAgentPageView),
+        (status = 400, description = "invalid_instance_query: invalid filters, cursor or limit; limit must be from 1 through 200", body = super::ProblemDocument, content_type = "application/problem+json"))
 )]
 pub(crate) async fn list(
     State(state): State<AgentRoutesState>,

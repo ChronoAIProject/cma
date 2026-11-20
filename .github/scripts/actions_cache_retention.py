@@ -11,7 +11,9 @@ from runpy import run_path
 from staging_cd_build_cargo_keys import CARGO_NAMESPACE, identity
 
 DEVELOP = "refs/heads/develop"
-BUDGET = 8 * 1024 ** 3
+# The repository cache eviction limit is 100 GiB. Keep 10 GiB below it so
+# this sweep, not GitHub's least-recently-used eviction, decides removals.
+BUDGET = 90 * 1024 ** 3
 PULL = re.compile(r"refs/pull/([1-9][0-9]*)/merge")
 HEX = r"[a-f0-9]{64}"
 INDEX = re.compile(r"(index-cma-(?:am|eg|web|runtime|runtime-omarchy)-1-[0-9a-f]{8})#([0-9]+)")
