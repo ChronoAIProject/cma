@@ -46,6 +46,9 @@ impl Observer {
         }
     }
     async fn read(&self, window: Window) -> Result<String, &'static str> {
+        super::super::migrations::require_command_cohort_index(&self.database)
+            .await
+            .map_err(|_| "database")?;
         let mut session = self
             .database
             .client()

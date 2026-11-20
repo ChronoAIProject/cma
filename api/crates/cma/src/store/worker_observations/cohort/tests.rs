@@ -315,5 +315,31 @@ async fn snapshot_census_bounds_and_failures_are_real_mongo_contracts() {
     assert_eq!(observer.read(window()).await, Err("budget"));
     commands.drop_index(INDEX).await.unwrap();
     assert_eq!(observer.read(window()).await, Err("database"));
+    commands
+        .create_index(
+            mongodb::IndexModel::builder()
+                .keys(doc! {"record.receipt.admitted_at":1})
+                .options(
+                    mongodb::options::IndexOptions::builder()
+                        .name(INDEX.to_owned())
+                        .build(),
+                )
+                .build(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(observer.read(window()).await, Err("database"));
+    commands.drop().await.unwrap();
+    // Mongo can ignore a hint on an absent collection and return an empty
+    // snapshot. A missing source must not become a healthy zero population.
+    assert_eq!(observer.read(window()).await, Err("database"));
+    observer.sample().await;
+    let exported = cache.render();
+    for window in WINDOWS {
+        assert!(exported.contains(&format!(
+            "cma_task_cohort_sample_success{{window=\"{window}\"}} 0"
+        )));
+    }
+    assert!(db.list_collection_names().await.unwrap().is_empty());
     db.drop().await.unwrap();
 }
