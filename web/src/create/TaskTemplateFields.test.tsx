@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest';
 import { unavailableClient, type CmaWebClient } from '../api/client';
 import { taskExperience } from '../test/taskExperience';
+import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { TaskHome } from './TaskHome';
 import { taskDraftStorageKey, discardSubmittedTaskDraft } from './taskDraft';
 import { lifecycleStorageKey } from './lifecycleIntent';
@@ -18,6 +19,7 @@ function setup(overrides: Partial<CmaWebClient> = {}, viewerId = 'owner', worksp
     taskExperience: taskExperience(viewerId),
     readTaskCreationSupport: async () => true,
     readTaskTemplateSupport: async () => true,
+    readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     createAgentLifecycle: create,
     ...overrides,
   };

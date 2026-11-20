@@ -1,6 +1,7 @@
 import { memo, useContext } from 'react';
 import Markdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import remarkCjkFriendly from 'remark-cjk-friendly/parseOnly';
 import { MessageMedia } from './MessageMedia';
 import {
   MessageMediaContext,
@@ -90,7 +91,7 @@ export const MessageContent = memo(function MessageContent({
       <div className="agent-content" data-streaming={streaming ? '' : undefined}>
         {/* Default HTML handling preserves placeholders and markup as inert text. */}
         <Markdown
-          remarkPlugins={[remarkGfm]}
+          remarkPlugins={[remarkGfm, remarkCjkFriendly]}
           components={inertResources ? inertComponents : components}
           urlTransform={(url) =>
             messageFilePath(url, access?.workingDirectory) === undefined
