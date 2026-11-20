@@ -7,6 +7,7 @@ import TaskList from '@tiptap/extension-task-list';
 import TaskItem from '@tiptap/extension-task-item';
 import { Details, DetailsContent, DetailsSummary } from '@tiptap/extension-details';
 import { DocumentCodeBlock } from './DocumentCodeBlock';
+import { DocumentLink } from './DocumentLink';
 
 export function safeDocumentImage(value: string): string | undefined {
   if (
@@ -104,13 +105,10 @@ export function documentExtensions() {
   return [
     StarterKit.configure({
       codeBlock: false,
-      link: {
-        openOnClick: 'whenNotEditable',
-        autolink: true,
-        HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
-      },
+      link: false,
     }),
     DocumentCodeBlock,
+    DocumentLink,
     Markdown,
     TableKit.configure({ table: { resizable: true } }),
     SafeImage.configure({ allowBase64: true }),
