@@ -9,7 +9,7 @@ use layer3_adapter::desktop_ownership::wire::{
 use layer3_adapter::{DesktopOwnership, DesktopOwnershipChallenge};
 
 #[tokio::test]
-async fn authenticated_control_drains_real_legacy_and_owned_websockets() {
+async fn authenticated_control_refuses_ownerless_and_drains_owned_websockets() {
     let home = std::env::temp_dir().join(format!("cma-desktop-http-{}", uuid::Uuid::new_v4()));
     let config = crate::config::RuntimeConfig::for_test(home.clone());
     let state = config.state_root.clone();
@@ -40,17 +40,9 @@ async fn authenticated_control_drains_real_legacy_and_owned_websockets() {
     handshake
         .headers_mut()
         .insert("x-cma-runtime-token", token.parse().unwrap());
-    let (mut legacy, _) = tokio_tungstenite::connect_async(handshake.clone())
-        .await
-        .unwrap();
-    legacy
-        .send(TungsteniteMessage::Binary(vec![1]))
-        .await
-        .unwrap();
-    assert_eq!(
-        legacy.next().await.unwrap().unwrap(),
-        TungsteniteMessage::Binary(vec![1])
-    );
+    let refused = tokio_tungstenite::connect_async(handshake.clone()).await;
+    assert!(matches!(refused,
+        Err(tokio_tungstenite::tungstenite::Error::Http(response)) if response.status() == 400));
     let challenge: DesktopOwnershipChallenge = http
         .post(format!("{url}/challenge"))
         .header("x-cma-runtime-token", &token)
@@ -84,13 +76,6 @@ async fn authenticated_control_drains_real_legacy_and_owned_websockets() {
         .await
         .unwrap();
     assert_eq!(response.status(), 200);
-    let closed = tokio::time::timeout(Duration::from_secs(1), legacy.next())
-        .await
-        .expect("legacy drain must close the socket");
-    assert!(matches!(
-        closed,
-        None | Some(Err(_)) | Some(Ok(TungsteniteMessage::Close(_)))
-    ));
     assert!(tokio_tungstenite::connect_async(handshake.clone())
         .await
         .is_err());

@@ -2,7 +2,7 @@ import { Presence } from '../ui/Presence';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { AgentStatus } from '../api/types';
 import { Button } from '../ui/Button';
-import { IconSendOutline16, IconStopFill16 } from '../ui/icons';
+import { IconSendOutline16 } from '../ui/icons';
 import type { SandboxInputAvailability } from './sandboxInput';
 import type { TriggerQuickMessage } from '@cma/client';
 import { QuickMessages } from './QuickMessages';
@@ -21,6 +21,8 @@ import { useComposerCommands } from './ComposerCommands';
 import { commandRefusal, type SessionCommand } from './slashCommands';
 import { SteeringModePicker, type SteeringMode } from './SteeringMode';
 import './Composer.css';
+import type { ResponseControlAvailability } from './controlReadiness';
+import { ResponseStop, useResponseStop } from './ResponseStop';
 import {
   ComposerSuggestionEditor,
   type ComposerSuggestionEditorHandle,
@@ -41,6 +43,7 @@ interface ComposerProps {
   readonly queueWhileStarting?: boolean;
   readonly starting?: boolean;
   readonly controlsUnavailable?: boolean;
+  readonly responseControls?: ResponseControlAvailability;
   readonly requestPending?: boolean;
   readonly acceptedMessage?: string;
   readonly acceptedSteeringMessage?: string;
@@ -87,6 +90,7 @@ export function Composer({
   queueWhileStarting = false,
   starting = false,
   controlsUnavailable = false,
+  responseControls,
   requestPending = false,
   acceptedMessage,
   acceptedSteeringMessage,
@@ -115,6 +119,15 @@ export function Composer({
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const sending = useRef(false);
   const composing = useRef(false);
+  const [inputFocused, setInputFocused] = useState(false);
+  const [inputComposing, setInputComposing] = useState(false);
+  const stopControl = useResponseStop({
+    running,
+    availability: responseControls ?? (controlsUnavailable ? 'unbound' : 'available'),
+    busy,
+    stopping,
+    onStop,
+  });
   const noticeId = useId();
   const inputBlocked = !inputAvailability.allowed || draft?.recoveryBlocked === true;
   const preparing = status === 'starting' && queueWhileStarting;
@@ -373,15 +386,22 @@ export function Composer({
             }}
             onCompositionStart={() => {
               composing.current = true;
+              setInputComposing(true);
             }}
             onCompositionEnd={() => {
               composing.current = false;
+              setInputComposing(false);
             }}
             onBlur={() => {
               composing.current = false;
+              setInputComposing(false);
+              setInputFocused(false);
               commands.onBlur();
             }}
-            onFocus={commands.onFocus}
+            onFocus={() => {
+              setInputFocused(true);
+              commands.onFocus();
+            }}
             onKeyDown={(event) => {
               // Safari can end composition before the confirming Enter and reports keyCode 229.
               if (
@@ -391,9 +411,9 @@ export function Composer({
               )
                 return;
               if (commands.onKeyDown(event)) return;
-              if (event.key === 'Escape' && running && !busy && !controlsUnavailable) {
+              if (event.key === 'Escape' && stopControl.enabled && !event.defaultPrevented) {
                 event.preventDefault();
-                void onStop();
+                stopControl.stop();
                 return;
               }
               if (event.key === 'Enter' && !event.shiftKey) {
@@ -457,26 +477,12 @@ export function Composer({
                 />
               ) : null}
               {running && (messageContent === '' || !queueWhileRunning) ? (
-                <>
-                  <span className="agent-composer__stop-hint">
-                    {stopping ? 'Stopping…' : 'Esc to stop'}
-                  </span>
-                  <Button
-                    placement="agent-composer__submit agent-composer__submit--stop"
-                    variant="primary"
-                    icon={<IconStopFill16 />}
-                    aria-label={stopping ? 'Stopping response' : 'Stop response'}
-                    title={
-                      stopping
-                        ? 'Stopping response…'
-                        : controlsUnavailable
-                          ? 'This turn does not support response controls.'
-                          : 'Stop response (Esc)'
-                    }
-                    disabled={stopping || busy || controlsUnavailable}
-                    onClick={() => void onStop()}
-                  ></Button>
-                </>
+                <ResponseStop
+                  control={stopControl}
+                  shortcut={
+                    stopControl.enabled && inputFocused && !inputComposing && !commands.open
+                  }
+                />
               ) : null}
             </div>
           </div>

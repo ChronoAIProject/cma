@@ -41,9 +41,10 @@ for (const theme of ['light', 'dark']) {
         )
         .toBe(`/api/v1/admin/usage/metrics/reports/${id}/sandboxes`);
       const summary = metrics.reports.get(id)!.summary!;
+      const count = Number(summary.sandbox_count);
       await expect(
         page.getByText(
-          `${Number(summary.sandbox_count).toLocaleString('en-SG')} Sandboxes · ${Number(summary.running_count).toLocaleString('en-SG')} running`,
+          `${count.toLocaleString('en-SG')} ${count === 1 ? 'Sandbox' : 'Sandboxes'} · ${Number(summary.running_count).toLocaleString('en-SG')} running`,
           { exact: true },
         ),
       ).toBeVisible();
@@ -128,7 +129,7 @@ for (const theme of ['light', 'dark']) {
     await expect(
       page.getByRole('button', { name: 'Sandbox: Research 19998', exact: true }),
     ).toHaveAttribute('title', 'Research 19998');
-    await expect(page.getByText(/^1 Sandboxes · 1 running$/)).toBeVisible();
+    await expect(page.getByText(/^1 Sandbox · 1 running$/)).toBeVisible();
     await page.screenshot({
       path: info.outputPath(`sandbox-selected-${theme}.png`),
       animations: 'disabled',

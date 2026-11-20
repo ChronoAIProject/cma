@@ -32,6 +32,27 @@ impl Fixture {
             receiver,
         }
     }
+    async fn historical_stream<F, Fut>(&self, operation: F) -> Result<()>
+    where
+        F: FnOnce(Session) -> Fut,
+        Fut: std::future::Future<Output = ()> + Send + 'static,
+    {
+        let mut tasks = self.receiver.tasks.lock().await;
+        let state = self.receiver.state.lock().unwrap();
+        assert!(!state.legacy_closed && state.record.is_none());
+        let session = Session {
+            receiver: self.receiver.clone(),
+            revision: state.revision,
+            owner: None,
+        };
+        let finish = session.clone();
+        let future = operation(session);
+        tasks.spawn(async move {
+            let _finish = session::Finish(finish);
+            future.await;
+        });
+        Ok(())
+    }
     fn owner(&self, epoch: u64) -> DesktopOwnership {
         DesktopOwnership {
             sandbox_id: "sandbox".into(),
@@ -222,14 +243,13 @@ async fn first_owned_admission_cancels_and_joins_pending_legacy_upgrade() {
     let (ready, received) = tokio::sync::oneshot::channel();
     let finished = Arc::new(AtomicUsize::new(0));
     let count = finished.clone();
-    f.receiver
-        .register(None, move |session| async move {
-            ready.send(()).unwrap();
-            assert!(session.run(std::future::pending::<()>()).await.is_err());
-            count.fetch_add(1, Ordering::SeqCst);
-        })
-        .await
-        .unwrap();
+    f.historical_stream(move |session| async move {
+        ready.send(()).unwrap();
+        assert!(session.run(std::future::pending::<()>()).await.is_err());
+        count.fetch_add(1, Ordering::SeqCst);
+    })
+    .await
+    .unwrap();
     received.await.unwrap();
     let owner = f.accept(1).await;
     assert_eq!(finished.load(Ordering::SeqCst), 1);
@@ -259,12 +279,11 @@ async fn first_owned_admission_cancels_and_joins_pending_legacy_upgrade() {
 async fn cancelled_takeover_keeps_task_custody_and_retired_epoch() {
     let f = Fixture::new();
     let (release, wait) = tokio::sync::oneshot::channel();
-    f.receiver
-        .register(None, |_| async move {
-            let _ = wait.await;
-        })
-        .await
-        .unwrap();
+    f.historical_stream(|_| async move {
+        let _ = wait.await;
+    })
+    .await
+    .unwrap();
     let challenge = f.receiver.challenge(f.request(None)).unwrap();
     let receiver = f.receiver.clone();
     let owner = f.owner(1);

@@ -136,9 +136,7 @@ it.each([false, true])(
     view.rerender(draw());
     expect(screen.queryByRole('link', { name: /^Current plan:/ })).not.toBeInTheDocument();
     expect(screen.getAllByRole('region', { name: 'Plan' })).toHaveLength(1);
-    expect(
-      screen.getByText('Response finished · Plan completion not fully reported'),
-    ).toBeVisible();
+    expect(screen.getByText('Turn ended · Check unfinished plan steps and output.')).toBeVisible();
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('Retain next draft');
   },
 );

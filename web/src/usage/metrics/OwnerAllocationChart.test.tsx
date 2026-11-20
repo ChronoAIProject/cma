@@ -53,6 +53,32 @@ async function select(value: string) {
   await actor.click(screen.getByRole('menuitemradio', { name: value }));
 }
 
+it.each([
+  [0, '0 Sandboxes'],
+  [1, '1 Sandbox'],
+  ['1', '1 Sandbox'],
+  [2, '2 Sandboxes'],
+  ['9007199254740993', '9,007,199,254,740,993 Sandboxes'],
+] as const)('uses the exact Sandbox count %s in owner chart text', async (count, label) => {
+  const { api, props } = fixture(1);
+  api.ownerAllocations.mockResolvedValue({
+    report_id: props.reportId,
+    metric: 'cpu',
+    unit: 'core-hours',
+    items: [{ ...owners(1)[0]!, sandbox_count: count }],
+    next: null,
+    total_count: 1,
+  });
+  render(<OwnerAllocationChart {...props} />);
+  expect(await screen.findByRole('listitem')).toHaveTextContent(
+    `1 core-hours; ${label}; Partial history`,
+  );
+  await userEvent.click(screen.getByText('View owner allocation chart data'));
+  const table = screen.getByRole('table', { name: 'Owner allocation chart data' });
+  expect(within(table).getByRole('columnheader', { name: 'Sandboxes' })).toBeVisible();
+  expect(api.create).not.toHaveBeenCalled();
+});
+
 it('defaults to Top 10, changes only the displayed ranking and never creates a report', async () => {
   const { api, props } = fixture();
   render(<OwnerAllocationChart {...props} />);

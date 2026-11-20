@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 mod activity_indexes;
 mod activity_page_index;
 mod agent_log_segments;
+pub(in crate::store) mod agent_log_source_keys;
 mod agent_owner_index;
 mod binding_indexes;
 mod collection_indexes;

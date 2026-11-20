@@ -13,6 +13,7 @@ from unittest.mock import Mock, patch
 from staging_cd_common import Refusal
 import staging_cd_finalize as finalization
 from staging_cd_finalize_diagnostics import REASONS, run_finalization
+from image_scanner_policy import MANIFEST_SHA256
 from staging_cd_receipts import published_receipt
 from staging_cd_reservations import next_reservation
 
@@ -51,7 +52,7 @@ class FinalizeDiagnosticsTests(unittest.TestCase):
                 reservation = next_reservation("web", "a" * 40, "b" * 40, 1, "patch", run_id, attempt, [], [])
                 receipt = published_receipt(dict(reservation, schema="cma-image-release-v1", build="c" * 64),
                                             "sha256:" + "d" * 64, "e" * 64,
-                                            {"detected": 0, "blocking": 0, "advisory": 0, "reviewed": 0, "allowlisted": 0})
+                                            {"detected": 0, "blocking": 0, "advisory": 0, "reviewed": 0, "allowlisted": 0}, scanner_identity=("1.0.4", MANIFEST_SHA256))
                 path = Path(directory) / "receipts.json"
                 path.write_text(json.dumps([receipt]))
                 env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1",

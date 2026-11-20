@@ -195,7 +195,7 @@ it('keeps the summary status while refreshing, then shows the refreshed completi
       }}
     />,
   );
-  expect(screen.getByRole('treeitem', { name: /Agent one.*Completed/ })).toBeInTheDocument();
+  expect(screen.getByRole('treeitem', { name: /Agent one.*Turn ended/ })).toBeInTheDocument();
 });
 
 it('lists Agents without Sandbox or Workspace groups, most recently active first', () => {
