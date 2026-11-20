@@ -25,29 +25,83 @@ use crate::store::MongoActivityStore;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn lifecycle_service_policy_changes_survive_reopen_and_agent_reads() {
-    service_case(SandboxOrigin::Lifecycle {
-        operation_id: "always-on-service-operation".into(),
-    })
+async fn lifecycle_initial_unset_survives_policy_changes_and_reopening() {
+    service_case(
+        SandboxOrigin::Lifecycle {
+            operation_id: "always-on-service-lifecycle".into(),
+        },
+        None,
+    )
     .await;
 }
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn trigger_service_policy_changes_survive_reopen_and_agent_reads() {
-    service_case(SandboxOrigin::Trigger {
-        launch_id: "always-on-service-launch".into(),
-    })
+async fn lifecycle_initial_disabled_survives_policy_changes_and_reopening() {
+    service_case(
+        SandboxOrigin::Lifecycle {
+            operation_id: "always-on-service-lifecycle".into(),
+        },
+        Some(false),
+    )
     .await;
 }
 
-async fn service_case(origin: SandboxOrigin) {
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn lifecycle_initial_enabled_survives_policy_changes_and_reopening() {
+    service_case(
+        SandboxOrigin::Lifecycle {
+            operation_id: "always-on-service-lifecycle".into(),
+        },
+        Some(true),
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn trigger_initial_unset_survives_policy_changes_and_reopening() {
+    service_case(
+        SandboxOrigin::Trigger {
+            launch_id: "always-on-service-trigger".into(),
+        },
+        None,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn trigger_initial_disabled_survives_policy_changes_and_reopening() {
+    service_case(
+        SandboxOrigin::Trigger {
+            launch_id: "always-on-service-trigger".into(),
+        },
+        Some(false),
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn trigger_initial_enabled_survives_policy_changes_and_reopening() {
+    service_case(
+        SandboxOrigin::Trigger {
+            launch_id: "always-on-service-trigger".into(),
+        },
+        Some(true),
+    )
+    .await;
+}
+
+async fn service_case(origin: SandboxOrigin, initial_policy: Option<bool>) {
     let (client, name) = database("policy_service").await;
     let database = client.database(&name);
     assert!(database.list_collection_names().await.unwrap().is_empty());
     let result = tokio::time::timeout(
         Duration::from_secs(120),
-        AssertUnwindSafe(exercise(&client, &name, origin)).catch_unwind(),
+        AssertUnwindSafe(exercise(&client, &name, origin, initial_policy)).catch_unwind(),
     )
     .await;
     let cleanup =
@@ -108,10 +162,16 @@ async fn operator_service(
     .with_maintenance(store)
 }
 
-async fn exercise(client: &Client, database: &str, origin: SandboxOrigin) {
+async fn setup(
+    client: &Client,
+    database: &str,
+    origin: SandboxOrigin,
+    initial_policy: Option<bool>,
+) -> (Arc<MongoSandboxStore>, SandboxAdmission, Sandbox, Agent) {
     let store = Arc::new(MongoSandboxStore::open(client, database).await.unwrap());
     let mut original = sandbox("sbx_policy_service", "unused");
     original.origin = origin;
+    original.profile.always_on = initial_policy;
     let admission = SandboxAdmission::new(
         original.clone(),
         SandboxAdmissionName::Exact(original.name.clone()),
@@ -138,6 +198,17 @@ async fn exercise(client: &Client, database: &str, origin: SandboxOrigin) {
     current.revision += 1;
     store.save_sandbox(1, current.clone()).await.unwrap();
     let agent = insert_hierarchy(&store, &current).await;
+    (store, admission, current, agent)
+}
+
+async fn exercise(
+    client: &Client,
+    database: &str,
+    origin: SandboxOrigin,
+    initial_policy: Option<bool>,
+) {
+    let (store, admission, mut current, agent) =
+        setup(client, database, origin, initial_policy).await;
     let owner = owner(current.owner.as_str());
     let operator = administrator();
     let owner_service = owner_service(store.clone());
@@ -275,6 +346,22 @@ async fn assert_reopened(
         retained.admission_fingerprint,
         admission.admission_fingerprint
     );
+    retained.validate().unwrap();
+    for changed_policy in [None, Some(false), Some(true)] {
+        if changed_policy == admission.sandbox.profile.always_on {
+            continue;
+        }
+        let mut changed = admission.sandbox.clone();
+        changed.id = SandboxId("sbx_changed_initial_policy".into());
+        changed.profile.always_on = changed_policy;
+        let request =
+            SandboxAdmission::new(changed, admission.name.clone(), 0, NOW.into()).unwrap();
+        assert_eq!(
+            store.admit_sandbox(request).await.unwrap_err(),
+            SandboxStoreError::SandboxOriginConflict,
+            "a different original policy must conflict even if it is the current policy"
+        );
+    }
     let inventory = service
         .list_own(&owner, &PageRequest::default())
         .await
@@ -380,3 +467,6 @@ impl SandboxResourceReader for NoRuntimeResources {
         panic!("policy replay and Agent ancestry reads must not call a runtime")
     }
 }
+
+#[path = "sandbox_admission_always_on_http_mongo_tests.rs"]
+mod http_tests;
