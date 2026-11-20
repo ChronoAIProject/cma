@@ -93,6 +93,22 @@ pub(super) async fn begin_with_store(
     f: &Fixture,
     store: Arc<MongoSandboxStore>,
 ) -> (Arc<SandboxWorker>, Arc<ScanObserver>) {
+    begin_with_policy(
+        f,
+        store,
+        SandboxPolicy {
+            retention_grace: Duration::ZERO,
+            ..SandboxPolicy::default()
+        },
+    )
+    .await
+}
+
+pub(super) async fn begin_with_policy(
+    f: &Fixture,
+    store: Arc<MongoSandboxStore>,
+    policy: SandboxPolicy,
+) -> (Arc<SandboxWorker>, Arc<ScanObserver>) {
     let registry = Arc::new(LiveAgentRegistry::default());
     let spec = CodexSandboxSpec::default();
     let image = spec.deployment.image.uri.clone();
@@ -104,10 +120,6 @@ pub(super) async fn begin_with_store(
         entered: Default::default(),
         resume: Default::default(),
     });
-    let policy = SandboxPolicy {
-        retention_grace: Duration::ZERO,
-        ..SandboxPolicy::default()
-    };
     let worker = SandboxWorker::new(
         SandboxWorkerDependencies {
             store: store.clone(),
