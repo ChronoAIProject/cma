@@ -6,13 +6,39 @@ use super::{
 use layer3_adapter::agent_sandbox::NativePoolControl;
 use std::time::Duration;
 
-const STARTUP_WARMUP_LIMIT: Duration = Duration::from_secs(120);
+// Outlast the release settle window plus drain, scheduling and image pull:
+// with 120 s each, a promotion onto a full node pool always gave up exactly
+// when older capacity first became eligible to drain, so every runtime
+// promotion restarted the Agent Manager once. The total stays inside the
+// default 300 s startup probe budget.
+const STARTUP_WARMUP_LIMIT: Duration = Duration::from_secs(super::RELEASE_SETTLE.as_secs() + 150);
 
 impl NativeWarmPools {
     /// Release preparation should prewarm this plan before the Recreate rollout.
     /// This bounded guard never serves allocations before readiness and does not
     /// imply that the old API remains available during a Recreate deployment.
     pub async fn await_default_ready(&self) -> Result<(), WarmPoolError> {
+        // The supervisor that retires superseded pools starts only after this
+        // gate, yet on a full node pool the new default schedules only once
+        // their spare capacity drains. Run the same lease-fenced reconciliation
+        // batches while waiting, so a starting pod frees the room it needs.
+        let drain = async {
+            loop {
+                for _ in 0..20 {
+                    if !matches!(self.reconcile_one().await, Ok(true)) {
+                        break;
+                    }
+                }
+                tokio::time::sleep(Duration::from_secs(5)).await;
+            }
+        };
+        tokio::select! {
+            result = self.await_default_plans_ready() => result,
+            _ = drain => unreachable!("superseded pool draining never completes"),
+        }
+    }
+
+    async fn await_default_plans_ready(&self) -> Result<(), WarmPoolError> {
         let provider = self
             .adapter
             .native_pools()
