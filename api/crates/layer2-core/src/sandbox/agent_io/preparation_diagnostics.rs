@@ -55,6 +55,7 @@ impl Drop for Observation<'_> {
 
 pub fn command_access_error_kind(error: &ResourceAccessError) -> &'static str {
     match error {
+        ResourceAccessError::AccountDeletionInProgress => "account_deletion_in_progress",
         ResourceAccessError::Access(AccessError::NotFound)
         | ResourceAccessError::Store(ResourceAccessStoreError::NotFound) => "resource_not_found",
         ResourceAccessError::Access(AccessError::RevalidationRequired) => "revalidation_required",

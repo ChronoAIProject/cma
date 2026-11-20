@@ -72,6 +72,7 @@ impl LaunchService {
         Arc::new(Self {
             admission_policy: self.admission_policy,
             common_first_messages: enabled,
+            standing: self.standing.clone(),
             definitions: self.definitions.clone(),
             profile_reader: self.profile_reader.clone(),
             sandbox_profiles: self.sandbox_profiles.clone(),

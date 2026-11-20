@@ -17,6 +17,16 @@ use super::{
     TriggerAssetsState,
 };
 
+impl TriggerAssetsState {
+    pub fn with_account_standing(
+        mut self,
+        standing: std::sync::Arc<dyn layer2_core::account_deletion::AccountStanding>,
+    ) -> Self {
+        self.standing = standing;
+        self
+    }
+}
+
 const KNOWN_CACHE_CONTROL: &str = "public, max-age=300, stale-while-revalidate=3600";
 const UNKNOWN_CACHE_CONTROL: &str = "public, max-age=60";
 const SVG_CONTENT_TYPE: &str = "image/svg+xml; charset=utf-8";
@@ -146,7 +156,11 @@ pub(super) async fn read(
     let theme = query
         .theme
         .unwrap_or(published.revision.content.presentation.theme);
-    let mut available = published.availability == TriggerAvailability::Published;
+    let erasing = match state.standing.erasing(&published.owner).await {
+        Ok(erasing) => erasing,
+        Err(_) => return badge_problem(StatusCode::SERVICE_UNAVAILABLE, "badge-unavailable"),
+    };
+    let mut available = published.availability == TriggerAvailability::Published && !erasing;
     if available {
         if let Some(placement_id) = query.placement {
             let placement = state

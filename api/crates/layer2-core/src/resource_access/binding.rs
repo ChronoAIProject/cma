@@ -58,9 +58,12 @@ impl ResourceAccessService {
         access.validate(&proof).await.map_err(binding_error)?;
         let decision = AccessDecision::binding(&proof, false);
         decision.require(capability)?;
+        self.require_owner_available(&snapshot.scope(target)?.owner, false)
+            .await?;
         Ok(AuthorizedResource {
             snapshot,
             decision,
+            caller: context.caller.clone(),
             binding: Some(proof),
         })
     }

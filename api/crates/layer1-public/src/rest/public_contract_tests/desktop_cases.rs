@@ -36,6 +36,16 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
 }
 
 async fn fixture(name: &str) -> Fixture {
+    fixture_with_standing(
+        name,
+        Arc::new(layer2_core::account_deletion::AvailableAccounts),
+    )
+    .await
+}
+async fn fixture_with_standing(
+    name: &str,
+    standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+) -> Fixture {
     let fixture = agents::fixture().await;
     let id = SandboxId("sbx_route".into());
     let mut sandbox = fixture.store.get_sandbox(&id).await.unwrap().unwrap();
@@ -61,6 +71,15 @@ async fn fixture(name: &str) -> Fixture {
     }
     agent.profile.content.isolated_agent = name == "desktop_isolated";
     agents::insert_agent(&fixture.store, agent, vec![]).await;
+    let access = Arc::new(
+        layer2_core::resource_access::ResourceAccessService::new(
+            fixture.store.clone(),
+            Arc::new(super::super::shared_agent_tests::Authority(
+                std::sync::Mutex::new(super::super::shared_agent_tests::Reply::Member),
+            )),
+        )
+        .with_account_standing(standing),
+    );
     let subject = match name {
         "desktop_anonymous" => None,
         "desktop_other_owner" => Some("owner-b"),
@@ -68,7 +87,11 @@ async fn fixture(name: &str) -> Fixture {
     };
     let ownership = Arc::new(ownership::Ownership::new(subject.unwrap_or("anonymous")));
     let service = DesktopService::new(
-        fixture.state.reads.with_sessions(ownership.clone()),
+        fixture
+            .state
+            .reads
+            .with_resource_access(access)
+            .with_sessions(ownership.clone()),
         Arc::new(layer3_adapter::codex::CodexAdapter::with_backend(
             backend::DesktopBackend {
                 unavailable: name == "desktop_runtime_unavailable",
@@ -209,5 +232,59 @@ struct AbortServer(tokio::task::JoinHandle<()>);
 impl Drop for AbortServer {
     fn drop(&mut self) {
         self.0.abort();
+    }
+}
+
+#[tokio::test]
+async fn desktop_websocket_disconnects_at_next_standing_recheck() {
+    use crate::rest::shared_stream_tests::ChangingStanding;
+    for deleting in ["owner-a", "unrelated", "outage"] {
+        let standing = Arc::new(ChangingStanding::default());
+        let fixture = fixture_with_standing("desktop_ready", standing.clone()).await;
+        let scenario = fixture.scenario;
+        let router = scenario
+            .router
+            .layer(Extension(AuthenticatedSubject(SubjectId::new("owner-a"))))
+            .layer(Extension(scenario.authorization));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let _server = AbortServer(server);
+        let (mut socket, response) = tokio_tungstenite::connect_async(format!(
+            "ws://{address}/api/v1/agents/agt_contract/desktop/ws"
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SWITCHING_PROTOCOLS
+        );
+        assert_eq!(
+            socket.next().await.unwrap().unwrap(),
+            Message::Binary(b"RFB 003.008\n".to_vec())
+        );
+        *standing.0.lock().unwrap() = Some(deleting);
+        tokio::time::pause();
+        // Let protected ownership renew while crossing the public recheck interval.
+        // A single jump would instead expire every account's receiver lease.
+        for _ in 0..31 {
+            tokio::time::advance(std::time::Duration::from_secs(1)).await;
+            tokio::task::yield_now().await;
+        }
+        tokio::time::resume();
+        if deleting == "unrelated" {
+            assert!(fixture.ownership.state.lock().unwrap().writes > 1);
+            socket.send(Message::Binary(vec![1, 2, 3])).await.unwrap();
+            assert_eq!(
+                socket.next().await.unwrap().unwrap(),
+                Message::Binary(vec![1, 2, 3])
+            );
+        } else {
+            assert!(matches!(
+                socket.next().await.unwrap().unwrap(),
+                Message::Close(_)
+            ));
+        }
+        let _ = socket.close(None).await;
     }
 }

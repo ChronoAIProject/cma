@@ -314,6 +314,7 @@ impl AgentHistoryExporter for AdapterAgentHistoryExporter {
                 | AdapterError::RuntimeLedgerHold(_)
                 | AdapterError::AtCapacity(_) => AgentHistoryExportError::Unavailable,
                 AdapterError::Rejected(_)
+                | AdapterError::AccessRevoked
                 | AdapterError::SkillUpgradeRefused(_)
                 | AdapterError::OperationIdentityConflict(_)
                 | AdapterError::RuntimeContractMismatch(_) => AgentHistoryExportError::Rejected,
@@ -374,6 +375,7 @@ fn resource_failure(sandbox_id: &str, error: AdapterError) -> SandboxResourceRea
             "the runtime does not support resource readings".into(),
         ),
         AdapterError::Rejected(_)
+        | AdapterError::AccessRevoked
         | AdapterError::SkillUpgradeRefused(_)
         | AdapterError::OperationIdentityConflict(_)
         | AdapterError::RuntimeContractMismatch(_) => SandboxResourceReadError::Corrupt(
