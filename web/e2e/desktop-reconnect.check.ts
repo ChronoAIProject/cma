@@ -50,7 +50,7 @@ for (const status of [429, 409]) {
       const desktop = page.getByRole('region', { name: 'Machine desktop', exact: true });
       await expect(desktop.getByRole('status')).toContainText('Reconnecting');
       await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
-      await page.clock.runFor(19_999);
+      await page.clock.fastForward(19_999);
       expect(discovery).toBe(1);
       expect(stream.connections).toHaveLength(0);
       await page.clock.runFor(1);
@@ -122,7 +122,7 @@ for (const status of [404, 503]) {
       if (status === 503) {
         await expect(desktop.getByRole('status')).toContainText('Reconnecting');
         for (const [index, delay] of [1000, 2000, 4000, 8000, 16000, 30000].entries()) {
-          await page.clock.runFor(delay);
+          await page.clock.fastForward(delay);
           await expect.poll(() => discovery).toBe(index + 2);
           // Flush the response before advancing to the next retry deadline.
           await expect(desktop.getByRole('status')).toContainText(
@@ -145,7 +145,7 @@ for (const status of [404, 503]) {
         desktop.getByRole('button', { name: 'Take control', exact: true }),
       ).toBeDisabled();
       // The unit regression also advances ten minutes with no remaining timers.
-      await page.clock.runFor(10_000);
+      await page.clock.fastForward(10_000);
       expect(discovery).toBe(status === 404 ? 1 : 7);
       expect(stream.connections).toHaveLength(0);
       available = true;
@@ -153,7 +153,7 @@ for (const status of [404, 503]) {
       await reconnect.focus();
       await reconnect.press('Enter');
       if (status === 503) {
-        await page.clock.runFor(19_999);
+        await page.clock.fastForward(19_999);
         expect(discovery).toBe(7);
         expect(stream.connections).toHaveLength(0);
         await page.clock.runFor(1);
