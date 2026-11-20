@@ -156,8 +156,8 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
         require("package_evidence" not in report and "package_evidence_sha256" not in policy)
     else:
         from image_secrets import (
-            elf_nul_key_view, native_json_key_view, nested_certificates, package_receipt, portable_ownership,
-            reviewed_literals,
+            elf_nul_key_view, mime_sources, native_json_key_view, nested_certificates, package_receipt,
+            portable_ownership, reviewed_literals,
         )
         from image_secrets.gate import (
             ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY, DEBIAN_CONTROL_ADVISORY,
@@ -187,12 +187,22 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                         and evidence["package_member"]["type"] == "regular")
                 if origin["kind"] == "compiled-executable":
                     require(origin["span"]["sha256"] == evidence["candidate_sha256"])
+                if "sources" in origin:
+                    # Native generated index: the scan proved each signed source at this archive's layers.
+                    observed = evidence["current_owner"]["sources"]
+                    pinned = {source["path"]: source["sha256"] for source in origin["sources"]}
+                    require(origin["kind"] == "mime-index" and expected_runtime == "runtime-omarchy"
+                            and [(row["path"], row["sha256"]) for row in observed] == list(pinned.items())
+                            and pinned.get(mime_sources.SOURCE) == origin["input_sha256"])
             owner = evidence.get("current_owner")
             if expected_runtime == "runtime-omarchy" and owner is not None:
-                # Signed Arch files name their pacman records; CMA producers their reserved inputs.
+                # Signed Arch files name their pacman records, generated indexes their signed sources
+                # and reserved recipe, and CMA producers their reserved inputs.
                 signed = evidence["package"]["authority_type"] == "arch-signature"
-                require(owner.keys() == ({"pacman"} if signed else {"build_inputs"})
-                        and (signed or portable_ownership.valid_producer_inputs(owner["build_inputs"])))
+                generated = signed and origin is not None and "sources" in origin
+                expected_owner = {"sources", "build_inputs"} if generated else {"pacman"} if signed else {"build_inputs"}
+                require(owner.keys() == expected_owner
+                        and (signed and not generated or portable_ownership.valid_producer_inputs(owner["build_inputs"])))
             if classification in PACKAGE_ADVISORY_RULES:
                 require(package_advisory_allowed(classification, evidence["rule"], expected_runtime, evidence["member"]))
                 if classification == SELF_TEST_ADVISORY:
@@ -216,6 +226,8 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                             and package_receipt.path_digest(control["installed_path"]) == evidence["outer_path_digest"])
                 elif classification in reviewed_literals.CLASSES:
                     literal = evidence["reviewed_literal"]
+                    # A raw marker receipt and a detector-view receipt are never combined.
+                    require(not {"key_marker_view", "native_json_key_view", "elf_nul_key_view"} & evidence.keys())
                     source_sha256 = origin["input_sha256"] if origin is not None else evidence["outer_file_sha256"]
                     require(literal["archive_sha256"] == archive_digest and bool(literal["spans"])
                             and all(literal[key] == evidence[key] for key in
@@ -224,7 +236,7 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                             and evidence["package_member"]["sha256"] == source_sha256)
                 elif classification == KEY_MARKER_VIEW_ADVISORY:
                     views = {"key_marker_view", "native_json_key_view", "elf_nul_key_view"} & evidence.keys()
-                    require(len(views) == 1)
+                    require(len(views) == 1 and "reviewed_literal" not in evidence)
                     [kind] = views
                     key_view = evidence[kind]
                     original, detector = (key_view[key] for key in ("original", "detector"))
@@ -237,7 +249,7 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                         require(original == detector)
                     member_sha256 = evidence["outer_file_sha256"]
                     if origin is not None:
-                        require(kind == "native_json_key_view" and origin["kind"] == "mime-index")
+                        require(kind in ("native_json_key_view", "key_marker_view") and origin["kind"] == "mime-index")
                         member_sha256 = origin["input_sha256"]
                     require(key_view["archive_sha256"] == archive_digest
                             and detector["sha256"] == evidence["candidate_sha256"]

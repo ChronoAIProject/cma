@@ -265,8 +265,10 @@ def read_payload_candidate(stream, member, path, workspace, expected, reviews):
             origin = expected.get("derived_payload")
             if "reviewed_literals" in expected and ("nyxid_format_labels" not in expected or member.mode & 0o111):
                 verify_literals(verified, payload, metadata, expected)
-            if "key_marker_view" in expected:
-                verified["key_marker_view"] = key_marker_view.verify(payload, metadata, expected["key_marker_view"])
+            if "key_marker_view" in expected and (origin is None or verified.get("derived_payload")):
+                verified["key_marker_view"] = key_marker_view.verify(
+                    payload, metadata, expected["key_marker_view"],
+                    mime_index=None if origin is None else expected["path"])
             if "native_json_key_view" in expected and (origin is None or verified.get("derived_payload")):
                 verified["native_json_key_view"] = native_json_key_view.verify(
                     payload, metadata, expected["native_json_key_view"])
