@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from staging_cd_build import build, command, identity, inspect, recipe, snapshot
+from staging_cd_build_profile import AM_PROFILE, AM_PROFILE_LABEL, for_source, from_environment
 from staging_cd_common import Refusal
 from staging_cd_receipts import canonical, IDENTITY_LABEL
 from staging_cd_receipts_tests import fixture_identity
@@ -17,6 +18,8 @@ from staging_cd_receipts_tests import fixture_receipt
 from staging_cd_contract import VERSION_FILE, RECIPE
 from staging_cd_contract_tests import fixture_config
 from staging_cd_reservations import next_reservation
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 class BuildTests(unittest.TestCase):
@@ -53,6 +56,44 @@ class BuildTests(unittest.TestCase):
             (root / ".dockerignore").write_text("")
             with self.assertRaises(Refusal):
                 recipe(root, "web")
+
+    def test_am_staging_profile_binds_build_args_label_and_identity(self):
+        reservation = next_reservation("am", "a" * 40, "b" * 40, 42, "patch", 1, 1, [], [])
+        ids = set()
+        for level in ("", "0", "1"):
+            with self.subTest(level=level), tempfile.TemporaryDirectory() as directory:
+                def runner(args, **_kwargs):
+                    archive = next(arg.removeprefix("type=oci,dest=") for arg in args if arg.startswith("type=oci,dest="))
+                    Path(archive).touch()
+
+                run = Mock(side_effect=runner)
+                _, release = build(ROOT, reservation, Path(directory), run, source=ROOT,
+                                   staging_am_opt_level=level)
+                args = run.call_args.args[0]
+                selected = [arg for arg in args if arg.startswith((AM_PROFILE + "=", AM_PROFILE_LABEL + "="))]
+                self.assertEqual(selected, [AM_PROFILE_LABEL + "=" + level, AM_PROFILE + "=" + level] if level else [])
+                self.assertIn(IDENTITY_LABEL + "=" + canonical(release), args)
+                ids.add(release["build"])
+        self.assertEqual(len(ids), 3)
+        for level in ("2", " 1", "0 --config injected"):
+            with self.subTest(level=level), self.assertRaises(Refusal):
+                identity(reservation, ROOT, staging_am_opt_level=level)
+
+    def test_am_staging_profile_is_ref_bound_and_handles_old_recipes(self):
+        env = {"GITHUB_REPOSITORY": "ChronoAIProject/cma", "GITHUB_REF": "refs/heads/develop",
+               "GITHUB_EVENT_NAME": "push", AM_PROFILE: "0"}
+        self.assertEqual(from_environment(env, "am"), "0")
+        self.assertEqual(from_environment(env, "eg"), "")
+        for key, value in (("GITHUB_REF", "refs/heads/main"), ("GITHUB_EVENT_NAME", "pull_request"),
+                           ("GITHUB_REPOSITORY", "someone/fork")):
+            with self.subTest(key=key), self.assertRaises(Refusal):
+                from_environment({**env, key: value}, "am")
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            recipe_file = root / "api/crates/cma/Dockerfile"
+            recipe_file.parent.mkdir(parents=True)
+            recipe_file.write_text("FROM scratch AS runtime\n")
+            self.assertEqual(for_source(root, "am", "1"), "")
 
     def test_build_once_uses_exact_version_and_never_receives_credentials(self):
         with tempfile.TemporaryDirectory() as directory:

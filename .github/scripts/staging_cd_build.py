@@ -15,6 +15,7 @@ from staging_cd_receipts import IDENTITY_LABEL, canonical, sha256, validate_iden
 from staging_cd_reservations import validate_reservation
 from staging_cd_versions import DEPLOYABLES
 from staging_cd_build_progress import summarize
+from staging_cd_build_profile import AM_PROFILE, AM_PROFILE_LABEL, for_source as source_profile
 from staging_cd_build_guard import run as run_owned_build
 from staging_cd_contract import from_source, labels as contract_labels, verify_labels
 
@@ -65,11 +66,14 @@ def recipe(source, component):
     return value
 
 
-def identity(reservation, source):
+def identity(reservation, source, *, staging_am_opt_level=""):
     validate_reservation(reservation)
     value = recipe(source, reservation["component"])
     arguments = dict(value["build_args"], CHRONO_BUILD=reservation["version"], CHRONO_BUILD_SHA=reservation["source"],
                      OS_SECURITY_REFRESH=reservation["source"])
+    level = source_profile(source, reservation["component"], staging_am_opt_level)
+    if level:
+        arguments[AM_PROFILE] = level
     if reservation["component"] in {"runtime", "runtime-omarchy"}:
         arguments["SOURCE_DATE_EPOCH"] = "0"
     inputs = {"tree": reservation["tree"], "dockerfile": hashlib.sha256((source / value["dockerfile"]).read_bytes()).hexdigest(),
@@ -95,11 +99,12 @@ def snapshot(root, revision, destination, runner=command):
     archive.unlink()
 
 
-def build(root, reservation, directory, runner=command, *, source=None, cache=None, progress=None, check_owner=None):
+def build(root, reservation, directory, runner=command, *, source=None, cache=None, progress=None,
+          check_owner=None, staging_am_opt_level=""):
     if source is None:
         source = directory / "source"
         snapshot(root, reservation["source"], source, runner)
-    release, value, arguments = identity(reservation, source)
+    release, value, arguments = identity(reservation, source, staging_am_opt_level=staging_am_opt_level)
     archive = directory / "image.oci.tar"
     exporter = "type=oci,dest=" + str(archive)
     if reservation["component"] in {"runtime", "runtime-omarchy"}:
@@ -110,6 +115,8 @@ def build(root, reservation, directory, runner=command, *, source=None, cache=No
             "--label", "org.opencontainers.image.source=https://github.com/ChronoAIProject/cma",
             "--label", "org.opencontainers.image.revision=" + release["source"],
             "--label", "org.opencontainers.image.version=" + release["version"]]
+    if AM_PROFILE in arguments:
+        args += ["--label", AM_PROFILE_LABEL + "=" + arguments[AM_PROFILE]]
     for name, label in schema_labels(reservation["component"], source).items():
         args += ["--label", name + "=" + label]
     for name, label in contract_labels(from_source(reservation["component"], release["source"], source)).items():

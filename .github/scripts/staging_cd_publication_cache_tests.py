@@ -11,10 +11,13 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+from actions_cargo_admission import candidates
 from staging_cd_build_cache import BuildCache, SCOPES, bridge, identity, layer_options, prepare
 from staging_cd_build_progress import summarize
+from staging_cd_build_profile import AM_PROFILE
 from staging_cd_common import Refusal
 from staging_cd_cache_context import context
+from staging_cd_reservations import next_reservation
 from staging_cd_timing import Timings
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -92,10 +95,40 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(prepare(ROOT, env)['key'], actual.archive_key(env))
             source = snapshot.call_args.args[2]
             snapshot.assert_called_once_with(ROOT, reservation["source"], source)
-            key.assert_called_once_with(source, 'eg')
+            key.assert_called_once_with(source, 'eg', staging_am_opt_level="")
         task['reservation'] = dict(reservation, source='invalid')
         with self.assertRaises(Refusal):
             prepare(ROOT, dict(env, CD_TASKS=json.dumps([task])))
+
+    def test_staging_am_profiles_isolate_lookup_restore_and_layer_scopes(self):
+        env = dict(self.env, CD_COMPONENT="am", CD_TASKS=json.dumps([{"component": "am", "mode": "resume"}]),
+                   ACTIONS_RUNTIME_TOKEN="synthetic", ACTIONS_RESULTS_URL="synthetic")
+        default = BuildCache(ROOT, env, ROOT, "am")
+        first = BuildCache(ROOT, {**env, AM_PROFILE: "0"}, ROOT, "am")
+        second = BuildCache(ROOT, {**env, AM_PROFILE: "1"}, ROOT, "am")
+        self.assertEqual(first.key.graph, second.key.graph)
+        self.assertEqual(len({default.key.family, first.key.family, second.key.family}), 3)
+        reservation = next_reservation("am", env["GITHUB_SHA"], "b" * 40, 42, "patch", 123, 1, [], [])
+        publications = json.dumps({"am": json.dumps([{"component": "am", "mode": "publish",
+                                                      "reservation": reservation}])})
+        for level, cache in (("0", first), ("1", second)):
+            selected = {**env, AM_PROFILE: level}
+            prepared = prepare(ROOT, selected)
+            self.assertEqual(prepared["key"], cache.key.archive_key(env))
+            with patch("actions_cargo_admission.Path.cwd", return_value=ROOT):
+                self.assertEqual(candidates(dict(selected, CARGO_PUBLICATIONS=publications)), [prepared["key"]])
+            scopes = [arg for arg in cache.build_options() if "scope=" in arg]
+            self.assertEqual(len(scopes), 2)
+            self.assertTrue(all("scope=cma-am-staging-opt-" + level + "," in arg for arg in scopes))
+        tool = bridge()
+        self.populate(first.accepted)
+        tool.seal(first.accepted, first.key.prefix, family=first.key.family)
+        with patch.object(tool, "transfer") as transfer, patch("staging_cd_build_cache.bridge", return_value=tool):
+            self.assertFalse(default.restore())
+            self.assertFalse(second.restore())
+            transfer.assert_not_called()
+            self.assertTrue(first.restore())
+            transfer.assert_called_once()
 
     def test_validated_mounts_restore_and_corrupt_content_builds_cold(self):
         cache = self.cache()

@@ -6,6 +6,8 @@ on:
     branches: [develop]
   workflow_dispatch:
 permissions: {}
+env:
+  CMA_STAGING_AM_OPT_LEVEL: ${{ vars.CMA_STAGING_AM_OPT_LEVEL }}
 jobs:
   sweep:
     if: >-

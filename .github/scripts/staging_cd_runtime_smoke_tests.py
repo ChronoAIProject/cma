@@ -132,7 +132,7 @@ class RuntimeSmokeTests(unittest.TestCase):
             stack.enter_context(patch.dict(os.environ, env))
             for name in ("event_identity", "snapshot", "Registry", "GitHub", "Reservations"):
                 stack.enter_context(patch("staging_cd_publish." + name))
-            stack.enter_context(patch("staging_cd_publish.identity", return_value=(identity, None, None)))
+            stack.enter_context(patch("staging_cd_publish.identity", return_value=(identity, None, {})))
             stack.enter_context(patch("staging_cd_publish.try_reuse", return_value=root / "fixture.tar"))
             def interrupted(*_args, **kwargs):
                 self.assertTrue(kwargs["qualified"])
