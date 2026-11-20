@@ -144,7 +144,7 @@ pub(super) fn admit(
         IngressReservation::try_acquire(pool, aggregate, fields.weight()?).ok_or_else(capacity)?;
     Ok(Some(RuntimeOutputUpdate::accounted(
         fields.owned(),
-        Arc::new(storage),
+        storage,
     )))
 }
 
