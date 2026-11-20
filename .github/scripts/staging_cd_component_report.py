@@ -92,8 +92,8 @@ def summarize(env):
     for c, disposition in sorted(superseded.items()):
         lines.append(f"{c} publication skipped: {disposition}. This run has no verified {c} release.")
         if disposition == "source_already_final":
-            lines.append(f"{c}: an older run finalized this source. The next push resumes this group's "
-                         "final; re-run or push to deploy.")
+            lines.append(f"{c}: an older run finalized this source. The next develop push resumes this "
+                         "group's final; push to deploy (a re-run allocates nothing once develop moves on).")
             passed = False
     if superseded and passed:
         return lines, None

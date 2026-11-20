@@ -106,8 +106,9 @@ class ComponentReportTests(unittest.TestCase):
                 # No run is known to deploy this group, at the head or behind it.
                 self.assertIs(verified, False)
                 self.assertIn(f"| {c} | source_already_final | skipped | skipped | unreported |", rows)
-                self.assertIn(f"{c}: an older run finalized this source. The next push resumes this group's "
-                              "final; re-run or push to deploy.", rows)
+                self.assertIn(f"{c}: an older run finalized this source. The next develop push resumes this "
+                              "group's final; push to deploy (a re-run allocates nothing once develop moves on).",
+                              rows)
                 with tempfile.TemporaryDirectory() as tmp:
                     output = Path(tmp, "outputs")
                     with patch.dict(os.environ, dict(env, GITHUB_OUTPUT=str(output)), clear=True):
