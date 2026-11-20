@@ -292,7 +292,11 @@ export interface CmaWebClient {
   ) => Promise<import('@cma/client').RetainedOutputPage>;
   readAgentTranscript(
     id: string,
-    options?: ReadOptions & { readonly maxPages?: number; readonly maxBytes?: number },
+    options?: ReadOptions & {
+      readonly maxPages?: number;
+      readonly maxBytes?: number;
+      readonly cache?: 'no-store';
+    },
   ): Promise<AgentTranscript>;
   exportAgentHistory(id: string, options?: ReadOptions): Promise<Blob>;
   readAgentUsage(id: string, options?: ReadOptions): Promise<AgentUsage>;

@@ -28,6 +28,7 @@ export function useHistoryExport(client: CmaWebClient, viewerId: string, enabled
       const source = retained
         ? await client.readAgentTranscript(agentId, {
             signal: operation.signal,
+            cache: 'no-store',
             maxPages: 256,
             maxBytes: 16 * 1024 * 1024,
           })

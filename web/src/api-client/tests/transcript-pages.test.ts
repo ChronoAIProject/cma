@@ -48,6 +48,16 @@ function scripted(values: readonly unknown[], failure = -1) {
 }
 
 describe('transcript continuation', () => {
+  it('bypasses HTTP caches on every authorized export page', async () => {
+    const test = scripted(pages);
+    await test.client.agents.transcript('agent', {
+      cache: 'no-store',
+      maxPages: 256,
+      maxBytes: 16 * 1024 * 1024,
+    });
+    expect(test.calls).toHaveLength(4);
+    for (const call of test.calls) expect(call.init.cache).toBe('no-store');
+  });
   it('bounds export pagination and byte accumulation without publishing partial history', async () => {
     const limited = scripted(pages);
     await expect(limited.client.agents.transcript('agent', { maxPages: 1 })).rejects.toThrow(

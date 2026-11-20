@@ -23,6 +23,7 @@ export interface TranscriptPageOptions extends OperationOptions {
   readonly limit?: number;
 }
 export interface TranscriptReadOptions extends OperationOptions {
+  readonly cache?: 'no-store';
   readonly maxPages?: number;
   readonly maxBytes?: number;
 }
