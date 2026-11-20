@@ -41,11 +41,10 @@ impl CaptureStore {
             stream_id: stream.id.clone(),
             source: event.clone(),
             previous_revision: (!fresh).then_some(stream.last_revision),
-            source_gap: (!fresh
+            source_gap: !fresh
                 && (stream.last_revision.checked_add(1) != Some(event.revision)
-                    || stream.last_ended_at != event.started_at))
-                || (!fresh
-                    && matches!(
+                    || stream.last_ended_at != event.started_at
+                    || matches!(
                         event.kind,
                         layer2_core::sandbox_usage::UsageEventKind::Baseline
                     )),

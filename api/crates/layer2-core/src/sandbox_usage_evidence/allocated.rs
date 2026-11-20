@@ -29,7 +29,9 @@ pub fn project(event: &UsageEvent, cursor: u64) -> Result<Projection, UsageError
     if event.started_at > event.ended_at
         || event.ended_at > MAX_SECONDS
         || !(event.started_at..=event.ended_at).contains(&cursor)
-        || (cursor != event.started_at && cursor != event.ended_at && cursor % MINUTE != 0)
+        || (cursor != event.started_at
+            && cursor != event.ended_at
+            && !cursor.is_multiple_of(MINUTE))
     {
         return Err(UsageError::InvalidTime);
     }
