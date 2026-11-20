@@ -22,7 +22,10 @@ APPROVED_CONTENT_POLICY = (
 PACKAGE_EVIDENCE = Path(".github/scripts/image-package-evidence.json")
 # Independently reviewed evidence and verdict digests. Evidence gathered from
 # the candidate image cannot supply either pin.
-APPROVED_PACKAGE_EVIDENCE = None
+APPROVED_PACKAGE_EVIDENCE = (
+    "a330135eef2d9f4489ce8ba651f1cf1b5b13413b0359b8235689ce4494db10cd",
+    "2605f24f8f774e92398960841610f110f5812710722cfa47df9b0784eb2f28e3",
+)
 # Runtime scope requires a new exact-manifest review before activation.
 CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json",
                            "image_runtime_headers.py",
