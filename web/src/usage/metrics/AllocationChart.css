@@ -25,7 +25,7 @@
 }
 .usage-chart-table table {
   min-width: 0;
-  table-layout: fixed;
+  table-layout: auto;
 }
 .usage-chart-table table th {
   white-space: normal;

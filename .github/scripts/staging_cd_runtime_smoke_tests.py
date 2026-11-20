@@ -56,6 +56,9 @@ class RuntimeSmokeTests(unittest.TestCase):
                 self.assertEqual(Path(calls[3][0][1]).name, "runtime-image-evidence.mjs")
                 self.assertEqual(calls[3][1]["env"]["CMA_RUNTIME_EVIDENCE_DOCKERFILE"],
                                  str(root / "api/crates/layer4-runtime/Dockerfile"))
+                # Only the Omarchy lane selects the desktop contract profile.
+                self.assertEqual(calls[3][1]["env"].get("CMA_RUNTIME_EVIDENCE_PROFILE"),
+                                 "omarchy" if component == "runtime-omarchy" else None)
 
     def test_failures_never_produce_proof_and_remove_only_owned_tag(self):
         for failure in ("config", "run", "result", "cleanup"):

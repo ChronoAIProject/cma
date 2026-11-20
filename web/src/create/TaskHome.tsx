@@ -141,6 +141,15 @@ function TaskHomeContent({
     repository: repositorySupported,
     template: templateSupported,
   });
+  const submissionDisabled =
+    !policy.task_home_admission ||
+    capacityUnavailable ||
+    checkingCapacity ||
+    lifecycle.pending ||
+    lifecycle.blocked ||
+    Boolean(intent) ||
+    !canCreate ||
+    supported !== true;
   return (
     <section
       className="task-home"
@@ -202,15 +211,7 @@ function TaskHomeContent({
         onKeyDown={submitTaskOnShortcut}
         onSubmit={async (event) => {
           event.preventDefault();
-          if (
-            !policy.task_home_admission ||
-            !canCreate ||
-            supported !== true ||
-            intent ||
-            lifecycle.pending ||
-            lifecycle.blocked
-          )
-            return;
+          if (submissionDisabled) return;
           setValidation(submission.issue);
           if (submission.issue) {
             const target = submission.issue.field
@@ -269,8 +270,8 @@ function TaskHomeContent({
         ) : null}
         {draft.template && templateSupported !== true ? (
           <p className="task-home__status" role="status">
-            Template tasks are unavailable on this service. Your fields are saved; you can also
-            write a task without a template.
+            Template tasks are not available on this service. You can keep editing or write a task
+            without a template.
           </p>
         ) : null}
         <TaskComposer
@@ -280,16 +281,7 @@ function TaskHomeContent({
           input={input}
           validation={validation?.message}
           errorId={errorId}
-          disabled={
-            !policy.task_home_admission ||
-            capacityUnavailable ||
-            checkingCapacity ||
-            lifecycle.pending ||
-            lifecycle.blocked ||
-            Boolean(intent) ||
-            !canCreate ||
-            supported !== true
-          }
+          disabled={submissionDisabled}
           onChange={(text) => {
             setValidation(undefined);
             draft.change(text);
