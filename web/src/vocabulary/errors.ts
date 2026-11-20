@@ -1,5 +1,6 @@
 import { ApiError, ProtocolError, TransportError } from '@cma/client';
 import { CredentialAccountError, credentialSetupMessage } from '../auth/credentialSetup';
+import { visitorAllowanceGuidanceEnabled } from '../public/visitorAllowanceFeature';
 
 export const refusalSentences = {
   sandbox_credential_setup_required: credentialSetupMessage,
@@ -53,7 +54,7 @@ export function settledAllowanceReset(error: unknown): Date | undefined {
 
 export function refusalSentence(error: unknown): string {
   if (error instanceof CredentialAccountError) return error.message;
-  const resetAt = settledAllowanceReset(error);
+  const resetAt = visitorAllowanceGuidanceEnabled() ? settledAllowanceReset(error) : undefined;
   if (resetAt !== undefined) {
     const resetTime = new Intl.DateTimeFormat(undefined, {
       month: 'short',
@@ -73,9 +74,9 @@ export function refusalSentence(error: unknown): string {
 }
 
 export function failureRemediation(code: string): string {
+  if (visitorAllowanceGuidanceEnabled() && code === 'sandbox_limit_reached')
+    return 'Your sandbox allowance is full. Delete a sandbox you no longer need, wait for deletion to complete, then start again.';
   switch (code) {
-    case 'sandbox_limit_reached':
-      return 'Your sandbox allowance is full. Delete a sandbox you no longer need, wait for deletion to complete, then start again.';
     case 'first_message_failed':
       return 'Your first message could not be sent. Open the agent to check its conversation before sending it again.';
     case 'recovery_required':

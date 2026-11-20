@@ -7,6 +7,8 @@ import {
 } from './errors';
 
 describe('public allowance guidance', () => {
+  beforeEach(() => vi.stubEnv('VITE_VISITOR_ALLOWANCE_GUIDANCE_ENABLED', 'true'));
+  afterEach(() => vi.unstubAllEnvs());
   it('returns the shared reset time only for a complete visitor allowance refusal', () => {
     const resetAt = '2026-11-14T00:00:00Z';
     const extensions = { resource: 'visitor_launches', reset_at: resetAt };

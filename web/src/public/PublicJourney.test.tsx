@@ -1,7 +1,7 @@
 import { StrictMode } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@cma/client';
 import { AuthContextProvider } from '../auth/context';
 import type { AuthProvider, AuthState } from '../auth/types';
@@ -38,7 +38,9 @@ function setup(provider = auth(signedIn), client = publicClient()) {
   );
   return { ...view, provider, client, navigate, user: userEvent.setup() };
 }
+beforeEach(() => vi.stubEnv('VITE_VISITOR_ALLOWANCE_GUIDANCE_ENABLED', 'true'));
 afterEach(() => {
+  vi.unstubAllEnvs();
   sessionStorage.clear();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();

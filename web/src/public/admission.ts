@@ -3,11 +3,12 @@ import type { PublicClient } from './client';
 import { type BrowserIntent, writeIntent } from './intent';
 import { publicCopy } from '../vocabulary/needs';
 import { settledAllowanceReset } from '../vocabulary/errors';
+import { visitorAllowanceGuidanceEnabled } from './visitorAllowanceFeature';
 
 const pending = new Map<string, Promise<Launch>>();
 
 export function isSettledQuotaRefusal(error: unknown): boolean {
-  return settledAllowanceReset(error) !== undefined;
+  return visitorAllowanceGuidanceEnabled() && settledAllowanceReset(error) !== undefined;
 }
 
 export function isUnsettledCommand(error: unknown): boolean {
