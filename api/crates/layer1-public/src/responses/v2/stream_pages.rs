@@ -1,6 +1,6 @@
 //! Response observation defers source work until after the HTTP headers.
 use super::{error, projection, stream, ResponsesV2State};
-use crate::stream_telemetry::{Kind, Poll};
+use crate::stream_telemetry::{CloseReason, Contract, ContractKind, Kind, Poll};
 use axum::response::{sse::Event, Response};
 use futures_util::stream::unfold;
 use layer2_core::sandbox::{
@@ -37,7 +37,9 @@ pub(super) async fn open(
         return error::read(err);
     }
     let command_id = receipt.command_id.to_string();
+    let evidence = Contract::new(ContractKind::ResponsesV2);
     let open = Open {
+        evidence: evidence.clone(),
         observation,
         state,
         authorization,
@@ -64,13 +66,13 @@ pub(super) async fn open(
                         continue;
                     }
                     // Backpressure cannot extend or renew a captured grant.
-                    if open
+                    if let Err(error) = open
                         .state
                         .reads
                         .validate_event_stream(&open.authorization)
                         .await
-                        .is_err()
                     {
+                        open.evidence.record(CloseReason::read(&error));
                         return open.fail("response_observation_unavailable");
                     }
                     open.next = sequence + 1;
@@ -80,6 +82,9 @@ pub(super) async fn open(
                     return open.fail("response_pagination_required");
                 }
                 if open.terminal || open.failed {
+                    if !open.failed {
+                        open.evidence.record(CloseReason::NormalTerminal);
+                    }
                     return None;
                 }
                 if !open.first && !open.more {
@@ -91,7 +96,8 @@ pub(super) async fn open(
                     if let Some(observation) = &mut open.observation {
                         // Every notice checks current command state even if its
                         // durable log coordinate is unchanged.
-                        if observation.changed().await.is_err() {
+                        if let Err(error) = observation.changed().await {
+                            open.evidence.record(CloseReason::read(&error));
                             return open.fail("response_observation_unavailable");
                         }
                     } else {
@@ -127,6 +133,7 @@ pub(super) async fn open(
         }),
         &response_id,
         &command_id,
+        evidence,
     )
 }
 
@@ -137,6 +144,7 @@ struct Seen {
 }
 
 struct Open {
+    evidence: Contract,
     observation: Option<layer2_core::sandbox::agent_observation::AgentObservationSubscription>,
     state: ResponsesV2State,
     authorization: AgentEventStreamAuthorization,
@@ -173,6 +181,7 @@ impl Open {
                 .response_for_stream(&self.authorization, id)
                 .await
         }
+        .inspect_err(|error| self.evidence.record(CloseReason::command(error)))
         .map_err(|_| "response_observation_unavailable")?;
         if command.command.receipt != self.receipt {
             return Err("response_observation_unavailable");
@@ -182,6 +191,7 @@ impl Open {
             .reads
             .event_stream_header(&self.authorization)
             .await
+            .inspect_err(|error| self.evidence.record(CloseReason::read(error)))
             .map_err(|_| "response_observation_unavailable")?;
         let current = Seen { command, header };
         if self.seen.as_ref() == Some(&current) {
@@ -198,6 +208,7 @@ impl Open {
                     Box::pin(async move { indexed::read(source, &origin, reading, next).await })
                 })
                 .await
+                .inspect_err(|error| self.evidence.record(CloseReason::read(error)))
                 .map_err(|error| match error {
                     layer2_core::sandbox::AgentReadError::InvalidPage => "invalid_replay_cursor",
                     _ => "response_observation_unavailable",
@@ -221,6 +232,7 @@ impl Open {
                 current.command.command.turn_sequence,
             )
             .await
+            .inspect_err(|error| self.evidence.record(CloseReason::read(error)))
             .map_err(|_| "response_observation_unavailable")?;
         let response =
             super::shared_projection::project(&self.state, current.command.clone(), &history)
@@ -266,6 +278,12 @@ impl Open {
     }
 
     fn fail(mut self, code: &'static str) -> Option<(Result<Event, Infallible>, Self)> {
+        self.evidence
+            .record(if code == "response_pagination_required" {
+                CloseReason::PaginationRequired
+            } else {
+                CloseReason::ServerError
+            });
         self.failed = true;
         self.pending.clear();
         let event = json!({"type":"error","sequence_number":self.next,"code":code,

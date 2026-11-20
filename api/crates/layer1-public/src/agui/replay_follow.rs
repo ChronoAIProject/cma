@@ -1,4 +1,5 @@
 use super::*;
+use crate::stream_telemetry::{CloseReason, Contract, ContractKind};
 use layer2_core::sandbox::{AgentEventStreamHeader, AgentEventStreamSnapshot, AgentReadError};
 use std::future::pending;
 
@@ -265,55 +266,71 @@ impl From<AgentReadError> for OpenError {
 }
 
 pub(super) fn response(open: Following) -> Response {
-    let stream = stream::unfold(open, |mut open| async move {
-        loop {
-            if open.prepare_shared_frame().is_err() {
-                return Some(interrupted(open));
-            }
-            if let Some(event) = open.pending.pop_front() {
-                if let Err(error) = open.validate().await {
-                    if authority_lost(&error) {
+    let contract = Contract::new(ContractKind::Agui);
+    let evidence = contract.clone();
+    let stream = stream::unfold(open, move |mut open| {
+        let evidence = evidence.clone();
+        async move {
+            loop {
+                if let Err(error) = open.prepare_shared_frame() {
+                    evidence.record(CloseReason::read(&error));
+                    return Some(interrupted(open));
+                }
+                if let Some(event) = open.pending.pop_front() {
+                    if let Err(error) = open.validate().await {
+                        evidence.record(CloseReason::read(&error));
+                        if authority_lost(&error) {
+                            return None;
+                        }
+                        return Some(interrupted(open));
+                    }
+                    if event.live && open.header != open.observed_header {
+                        // Time-based observation also detects batches held under
+                        // backpressure. Discard once, then catch up before the gap.
+                        open.discarded_fragments += 1 + open.pending.len() as u64;
+                        open.pending.clear();
+                        continue;
+                    }
+                    if matches!(event.kind, "RUN_FINISHED" | "RUN_ERROR") {
+                        evidence.terminal_frame();
+                    }
+                    return Some((Ok::<_, std::io::Error>(event.sse()), open));
+                }
+                if open.ended {
+                    evidence.replay_complete(!open.follow);
+                    return None;
+                }
+                if !open.replay_queue.empty() {
+                    continue;
+                }
+                let poll = Poll::new(Kind::Agui);
+                let result = if open
+                    .header
+                    .as_ref()
+                    .is_some_and(|header| open.after < header.head)
+                {
+                    open.fill().await
+                } else {
+                    open.wait().await
+                };
+                if let Err(error) = result {
+                    evidence.record(match &error {
+                        OpenError::Read(error) => CloseReason::read(error),
+                        OpenError::UnknownRun => CloseReason::ServerError,
+                    });
+                    if matches!(error, OpenError::Read(ref error) if authority_lost(error)) {
                         return None;
                     }
                     return Some(interrupted(open));
                 }
-                if event.live && open.header != open.observed_header {
-                    // Time-based observation also detects batches held under
-                    // backpressure. Discard once, then catch up before the gap.
-                    open.discarded_fragments += 1 + open.pending.len() as u64;
-                    open.pending.clear();
-                    continue;
-                }
-                return Some((Ok::<_, std::io::Error>(event.sse()), open));
+                poll.complete(!open.pending.is_empty());
             }
-            if open.ended {
-                return None;
-            }
-            if !open.replay_queue.empty() {
-                continue;
-            }
-            let poll = Poll::new(Kind::Agui);
-            let result = if open
-                .header
-                .as_ref()
-                .is_some_and(|header| open.after < header.head)
-            {
-                open.fill().await
-            } else {
-                open.wait().await
-            };
-            if let Err(error) = result {
-                if matches!(error, OpenError::Read(ref error) if authority_lost(error)) {
-                    return None;
-                }
-                return Some(interrupted(open));
-            }
-            poll.complete(!open.pending.is_empty());
         }
     });
     let mut response = Sse::new(stream_telemetry::observe(stream, Kind::Agui))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)))
         .into_response();
+    response.extensions_mut().insert(contract);
     response
         .headers_mut()
         .insert("cache-control", "no-cache, no-store".parse().unwrap());
