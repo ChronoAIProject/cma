@@ -5,11 +5,11 @@ import sys
 import tempfile
 from pathlib import Path
 
-from image_secret_gate import checksum, scan_staging_archive
+from image_secret_gate import ScanRefusal, checksum, verified_staging_scan
 from staging_cd_admission import event_identity
 from staging_cd_artifacts import try_reuse
 from staging_cd_build import build, command, identity, inspect, snapshot
-from staging_cd_common import require
+from staging_cd_common import matches, require
 from staging_cd_github import GitHub
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_resolve import output as step_output
@@ -25,9 +25,48 @@ from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS, TARGETS
 from staging_cd_contract import GROUP, from_source
 
 
-def publish(archive, identity, directory, registry, credential, actor, *, scanner=scan_staging_archive,
+def validated_tasks(tasks, env):
+    require(isinstance(tasks, list) and tasks, "Image publication tasks are missing")
+    component = env["CD_COMPONENT"]
+    validated = []
+    # Check the whole component queue before acting on its first reservation.
+    for task in tasks:
+        require(isinstance(task, dict) and task.get("component") == component, "Publication component differs")
+        mode = task.get("mode")
+        if mode == "resume":
+            value = validate_receipt(task.get("receipt"))
+            require(value["identity"]["component"] == component, "Resumed receipt component differs")
+        else:
+            require(mode == "publish", "Unknown publication task")
+            value = validate_reservation(task.get("reservation"))
+            require(value["component"] == component, "Reservation component differs")
+            require(value["run_id"] == int(env["GITHUB_RUN_ID"])
+                    and value["run_attempt"] == int(env["GITHUB_RUN_ATTEMPT"]), "Reservation owner differs")
+        validated.append((mode, value))
+    return validated
+
+
+def retain_package_evidence(report, directory, source, image_digest):
+    if "package_evidence" not in report:
+        return
+    require(directory is not None, "Verified package evidence needs a retention path")
+    require(matches(r"[a-f0-9]{64}", report.get("archive_sha256")),
+            "Verified package evidence needs the exact archive digest")
+    # The gate has already validated these redacted findings and classifications.
+    fields = ("archive_sha256", "package_evidence", "findings", "reviewed_classifications",
+              "blocking_findings", "advisory_findings", "counts")
+    payload = {key: report[key] for key in fields}
+    payload.update(schema="cma-staging-package-scan-v1", source=source, image_digest=image_digest,
+                   evidence_sha256=report["policy"]["package_evidence_sha256"])
+    directory.mkdir(parents=True, exist_ok=True)
+    target = directory / (report["archive_sha256"] + ".json")
+    with target.open("x", encoding="utf-8") as stream:
+        stream.write(canonical(payload) + "\n")
+
+
+def publish(archive, identity, directory, registry, credential, actor, *, scanner=None,
             runner=command, qualified=False, smoke=qualify_runtime, source=None, diagnostics=None, timings=None,
-            reservation_check):
+            reservation_check, scan_evidence=None):
     require(reservation_check() is True, "Publication reservation is not current")
     timings = timings or Timings()
     diagnostics = diagnostics or PublicationDiagnostics()
@@ -45,11 +84,24 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     report_dir = directory / "scan"
     diagnostics.mark("scan")
     with timings.stage("scan"):
-        scanned = scanner(archive, report_dir)
+        try:
+            if scanner is None:
+                scanned, scanner_identity = verified_staging_scan(
+                    archive, report_dir, component=identity["component"], source=source)
+            else:
+                scanned, scanner_identity = scanner(archive, report_dir, component=identity["component"])
+        except ScanRefusal as error:
+            if error.package_report is not None:
+                retain_package_evidence(error.package_report, scan_evidence, identity["source"], digest)
+            raise
         report = json.loads((report_dir / "REPORT.json").read_text())
+        runtime_scope = identity["component"] if identity["component"] in RUNTIME_TARGETS else None
+        require(isinstance(report.get("policy"), dict) and report["policy"].get("staging_runtime_component") == runtime_scope,
+                "Verified scan component differs from the release")
         timings.detector_cache(report.get("detector_cache"))
         diagnostics.mark("archive_check")
         require(checksum(archive) == scanned, "Scanned archive changed before publication")
+        retain_package_evidence(report, scan_evidence, identity["source"], digest)
     require(isinstance(credential, str) and credential and isinstance(actor, str) and actor,
             "Registry publisher credential is unavailable")
     if identity["component"] in RUNTIME_TARGETS:
@@ -61,7 +113,8 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     require(identity["component"] not in RUNTIME_TARGETS or proof is not None,
             "Runtime publication requires image smoke")
     diagnostics.mark("receipt")
-    receipt = published_receipt(identity, digest, scanned, report["counts"], compatibility=compatibility)
+    receipt = published_receipt(identity, digest, scanned, report["counts"], scanner_identity=scanner_identity,
+                                compatibility=compatibility)
     if proof is not None:
         receipt["runtime_smoke"] = proof
     validate_receipt(receipt)
@@ -102,27 +155,22 @@ def main():
     def operation(_masker, diagnostics):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Image publication only accepts develop pushes")
-        tasks = json.loads(env["CD_TASKS"])
-        require(isinstance(tasks, list) and tasks, "Image publication tasks are missing")
+        diagnostics.mark("validate")
+        tasks = validated_tasks(json.loads(env["CD_TASKS"]), env)
         receipts = []
         output = Path(env["CD_RECEIPTS_PATH"])
         output.parent.mkdir(parents=True, exist_ok=True)
         registry = Registry(credential=env.get("GH_TOKEN"), actor=env.get("GITHUB_ACTOR"))
         api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(env.get("CD_COMPONENT"), Path.cwd()))
-        for task in tasks:
+        for mode, value in tasks:
             cache = None
             diagnostics.mark("validate")
-            require(task["component"] == env["CD_COMPONENT"], "Publication component differs")
-            if task["mode"] == "resume":
+            if mode == "resume":
                 diagnostics.mark("resume")
-                receipt = validate_receipt(task["receipt"])
+                receipt = value
                 require(registry.exists(receipt["repository"], receipt["digest"]), "Published digest is unavailable")
             else:
-                require(task["mode"] == "publish", "Unknown publication task")
-                reservation = validate_reservation(task["reservation"])
-                require(reservation["component"] == task["component"], "Reservation component differs")
-                require(reservation["run_id"] == int(env["GITHUB_RUN_ID"])
-                        and reservation["run_attempt"] == int(env["GITHUB_RUN_ATTEMPT"]), "Reservation owner differs")
+                reservation = value
                 reservations = Reservations(api, env.get("GH_TOKEN"), root)
                 reservations.require_current(reservation)
                 with tempfile.TemporaryDirectory(prefix="cma-publication-", dir=env["RUNNER_TEMP"]) as temp:
@@ -150,13 +198,19 @@ def main():
                             build_metrics.append(progress)
                             guard = {}
                             if reservation["component"] == "am":
-                                guard["check_owner"] = lambda: reservations.check_build_owner(reservation)
+                                def check_owner(probe):
+                                    credential = env.get("GH_TOKEN")
+                                    lookup = GitHub(credential, runner=probe)
+                                    Reservations(lookup, credential, root).check_build_owner(reservation)
+                                guard["check_owner"] = check_owner
                             archive, release = build(root, reservation, directory, source=source, cache=cache,
                                                      progress=progress, **guard)
+                    require(release["component"] == reservation["component"], "Built release component differs")
                     try:
                         receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
                                           env.get("GITHUB_ACTOR"), qualified=qualified, source=source,
                                           diagnostics=diagnostics, timings=timings,
+                                          scan_evidence=output.parent / "package-policy",
                                           reservation_check=lambda: reservations.require_current(reservation))
                     except CleanupIncomplete as error:
                         # Preserve only fixed-schema cleanup status and the
@@ -165,8 +219,8 @@ def main():
                             canonical(error.receipt) + "\n", encoding="utf-8")
                         raise
             receipts.append(receipt)
-            # Only fixed-schema source/image/scan counts cross the job boundary.
-            # The raw scanner evidence and all image bytes are deleted locally.
+            # Publication receipts keep their existing schema; verified package
+            # decisions are retained separately from raw scan directory and image bytes.
             diagnostics.mark("receipt")
             output.write_text(canonical(receipts) + "\n", encoding="utf-8")
             # Persist successful publication before optional cache work. A later

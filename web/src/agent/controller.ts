@@ -4,7 +4,7 @@ import {
   useHistoryRetry,
   retainCurrentMetadata,
 } from './historyPublication';
-import { controlBaselineReady } from './controlReadiness';
+import { controlBaselineReady, responseControlAvailability } from './controlReadiness';
 import { observeRead } from './transport/readObserver';
 import { retrySchedule } from './transport/readRetry';
 import { useAgentTitle } from './useAgentTitle';
@@ -443,6 +443,7 @@ export function useAgentController(
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
     controlNotice,
     controlBaselineReady: controlReady,
+    responseControls: responseControlAvailability(state, agentId, suspended),
     controlsUnavailable:
       suspended ||
       (v2 !== undefined &&

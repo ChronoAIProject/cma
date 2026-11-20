@@ -48,7 +48,9 @@ pub fn desktop_router_with_origins(service: Arc<DesktopService>, origins: Vec<St
 #[utoipa::path(get, path = "/api/v1/agents/{id}/desktop", tag = "agents",
     params(("id" = String, Path)),
     responses((status = 200, body = DesktopDescriptor),
-        (status = 404, body = super::ProblemDocument)))]
+        (status = 404, body = super::ProblemDocument),
+        (status = 409, body = super::ProblemDocument),
+        (status = 503, body = super::ProblemDocument)))]
 async fn describe(
     State(state): State<DesktopState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,

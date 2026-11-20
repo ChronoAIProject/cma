@@ -168,13 +168,13 @@ class Reservations:
 
         expected = {value["component"]: (pending_name(value), value["version"])}
         try:
-            require_version_refs(expected)
+            require_version_refs(expected, runner=self.api.runner)
         except SupersededVersions:
             # The inexpensive ref advertisement is a hint. Only the normal
             # annotated reservation/receipt and ancestry checks prove takeover.
             self.require_current(value)
             try:
-                require_version_refs(expected)
+                require_version_refs(expected, runner=self.api.runner)
             except SupersededVersions:
                 raise Refusal("Higher component version lacks verified reservation ownership") from None
 

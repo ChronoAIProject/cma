@@ -369,7 +369,8 @@ function ConsoleContent({
               shared={shared !== undefined}
               detail={ready?.detail}
               onStopForControl={agent.interruptForControl}
-              resourceAvailability={agent.resourceAvailability}
+              resourceAvailability={shared === undefined ? agent.resourceAvailability : undefined}
+              canManageSandbox={permissions.pauseSandbox}
               panel={panel}
               onSelect={setPanel}
               conversation={ready?.conversation}

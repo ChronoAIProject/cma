@@ -2,15 +2,40 @@
 import copy
 import hashlib
 import json
+import os
+import re
 import tempfile
 from pathlib import Path
 
+import image_runtime_headers as runtime_headers
 from image_bundle_contexts import entries as bundle_entries
 from image_secrets.common import ScanError, archive_path, digest_file
 from image_secrets.gate import assess, valid_digest
 
 PUBLIC_RULES = frozenset({"path.key-or-certificate", "gitleaks.image-secret-assignment",
                           "gitleaks.generic-api-key"})
+
+
+def published_vector(row):
+    # Only an exact reviewed runtime entry can classify a published self-test
+    # key. Provenance is bound by the independently approved catalog manifest;
+    # it does not replace the file/candidate/rule identity checks below.
+    if (row.get("rule") != "gitleaks.private-key" or row.get("component") != "runtime"
+            or row.get("scope") != "layer"):
+        return False
+    proof = row.get("provenance")
+    fields = {"package", "package_version", "upstream_tag", "upstream_commit",
+              "source_file", "source_line", "source_sha256"}
+    if not isinstance(proof, dict) or set(proof) != fields:
+        return False
+    return (all(isinstance(proof[key], str) and re.fullmatch(r"[A-Za-z0-9.+:~_-]{1,100}", proof[key])
+                for key in ("package", "package_version", "upstream_tag"))
+            and isinstance(proof["upstream_commit"], str)
+            and re.fullmatch(r"[a-f0-9]{40}", proof["upstream_commit"]) is not None
+            and isinstance(proof["source_file"], str)
+            and re.fullmatch(r"lib/crypto-selftests(?:-pk)?\.c", proof["source_file"]) is not None
+            and type(proof["source_line"]) is int and proof["source_line"] > 0
+            and valid_digest(proof["source_sha256"]))
 
 
 def require(condition):
@@ -57,11 +82,12 @@ def catalog_index(catalog, report):
         require(catalog.get(key) == report["policy"].get(key))
     index = {}
     for row in catalog["entries"]:
-        require(row["component"] in {"web", "am", "eg"} and row["scope"] in {"layer", "config"}
+        require(row["component"] in {"web", "am", "eg", "runtime", "runtime-omarchy"}
+                and row["scope"] in {"layer", "config"}
                 and archive_path(row["path"]) == row["path"] and "*" not in row["path"]
                 and valid_digest(row["file_sha256"]) and row["classification"] in {"public-material", "REAL"}
                 and isinstance(row["reason"], str) and bool(row["reason"].strip())
-                and (row["classification"] == "REAL" or row["rule"] in PUBLIC_RULES))
+                and (row["classification"] == "REAL" or row["rule"] in PUBLIC_RULES or published_vector(row)))
         require("candidate_sha256" not in row or valid_digest(row["candidate_sha256"]))
         require(row["rule"] == "path.key-or-certificate" or "candidate_sha256" in row)
         key = (row["component"], row["scope"], path_hash(row["path"]), row["rule"], row["file_sha256"])
@@ -72,7 +98,7 @@ def catalog_index(catalog, report):
     return index
 
 
-def decisions(index, component, findings, identities, contexts=None):
+def decisions(index, component, findings, identities, contexts=None, headers=None):
     contexts = {} if contexts is None else contexts
     matched = []
     for finding in findings:
@@ -85,6 +111,10 @@ def decisions(index, component, findings, identities, contexts=None):
                 and finding.get("file_sha256") == identity and finding["finding_id"] in contexts):
             rows = index.get(("bundle", component, contexts[finding["finding_id"]], finding["rule"],
                               finding.get("candidate_sha256")), [])
+        if (key not in index and headers is not None and finding["finding_id"] in headers.confirmed
+                and key == ("runtime", "layer", path_hash(runtime_headers.PATH),
+                            runtime_headers.RULE, runtime_headers.FILE_SHA256)):
+            rows = [{"classification": "public-material", "reason": runtime_headers.REASON}]
         if not rows:
             continue
         # A REAL decision always blocks; a competing public entry cannot override it.
@@ -105,10 +135,11 @@ def resolve(archive, report_path, component, catalog_path, review_sha256, scanne
     validate_detection(report, archive, scanner)
     catalog = json.loads(catalog_path.read_bytes())
     index = catalog_index(catalog, report)
+    headers = runtime_headers.staging_proof(component, os.environ, catalog["entries"])
     original = digest_file(archive)
     contexts = {}
     with tempfile.TemporaryDirectory(prefix="content-identity-", dir=report_path.parent) as temporary:
-        identities = archive_identities(archive, Path(temporary), report, contexts)
+        identities = archive_identities(archive, Path(temporary), report, contexts, headers)
     require(digest_file(archive) == original and valid_digest(review_sha256))
     packet = {"schema": "image-secret-classifications-v1", "archive_sha256": original,
               "scanner_version": report["scanner_version"],
@@ -117,7 +148,7 @@ def resolve(archive, report_path, component, catalog_path, review_sha256, scanne
               "review": {"reviewer": "solution-architect-01",
                          "reference": "content-policy-sha256:" + digest_file(catalog_path),
                          "report_sha256": review_sha256},
-              "entries": decisions(index, component, report["findings"], identities, contexts)}
+              "entries": decisions(index, component, report["findings"], identities, contexts, headers)}
     packet_bytes = (json.dumps(packet, sort_keys=True) + "\n").encode()
     packet_path = report_path.parent / "content-classifications.json"
     packet_path.write_bytes(packet_bytes)

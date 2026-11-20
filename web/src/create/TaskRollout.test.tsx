@@ -1,3 +1,4 @@
+import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createClient } from '@cma/client';
@@ -28,6 +29,7 @@ it('offers ordinary manual Agent creation when task policy is disabled', async (
   });
   const client = {
     ...unavailableClient,
+    readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     taskExperience: sdk.taskExperience,
     readTaskCreationSupport: async () => true,
     createAgentLifecycle: create,

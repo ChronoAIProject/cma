@@ -90,9 +90,13 @@ def validate(documents, actions)
   check_component_cache_writers(documents)
   ci = documents.fetch('ci')
   events = ci.fetch('on', ci[true])
-  require_check(events.keys == ['pull_request'], 'CI must be PR-only')
+  require_check(events.keys.sort == %w[pull_request push], 'CI must cover PRs and develop pushes')
+  require_check(events['push'] == {'branches' => ['develop']}, 'CI push must cover develop without path filters')
+  require_check(ci['permissions'] == {'contents' => 'read'}, 'CI permissions must remain read-only')
+  require_check(ci['concurrency'] == {'group' => 'ci-${{ github.workflow }}-${{ github.ref }}',
+    'cancel-in-progress' => true}, 'CI concurrency must remain per ref')
   pr = events.fetch('pull_request')
-  require_check(pr.fetch('branches') == ['develop'], 'CI target differs')
+  require_check(pr.fetch('branches') == %w[develop main], 'CI target differs')
   require_check(pr.fetch('types').sort == %w[opened reopened synchronize edited labeled unlabeled].sort, 'label event coverage differs')
   require_check(!pr.key?('paths') && !pr.key?('paths-ignore'), 'required checks must always be created')
   jobs = ci.fetch('jobs')
@@ -120,6 +124,18 @@ def validate(documents, actions)
     'DEPLOYABLES' => '${{ needs.changes.outputs.deployables }}',
     'SELECTOR_RESULT' => '${{ needs.changes.result }}', 'GH_TOKEN' => '${{ github.token }}'
   }, 'version selector or live label context differs')
+  selector = jobs.fetch('changes').fetch('steps').find { |step| step['id'] == 'select' }
+  require_check(selector && selector['run'] == 'python3 -B .github/scripts/ci_tracks/selection.py --ci' &&
+    !selector.key?('if') && !selector.key?('continue-on-error'), 'CI-specific selection must be required')
+  %w[am eg web].each do |track|
+    [track, "#{track}-images"].each do |key|
+      require_check(jobs.fetch(key)['if'] == "needs.changes.outputs.#{track} == 'true'", 'product selection differs')
+    end
+  end
+  %w[am eg].each do |track|
+    require_check(jobs.fetch(track)['with'] == {'track' => track, 'packages' => "${{ needs.changes.outputs.#{track}_packages }}"},
+      'selected Rust packages must reach the test workflow')
+  end
   %w[deployables test_tracks].each { |key| require_check(jobs.fetch('changes').fetch('outputs').key?(key), 'shared selector output absent') }
   %w[runtime-images omarchy rust-test-build].each do |key|
     require_check(jobs.fetch(key).fetch('if') == "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'", 'shared Rust prerequisite selection differs')
@@ -169,7 +185,14 @@ def validate(documents, actions)
   require_check(structure.none? { |s| s.fetch('name', '').match?(/Release |Skopeo|image reconciliation|image import/i) }, 'release tooling leaked into Repo')
   serialized = JSON.generate(documents)
   require_check(!serialized.include?('continue-on-error":true,"run'), 'product gate bypass')
-  require_check(!serialized.include?('ci-contract.rb') && !serialized.include?('staging-authority.test'), 'Trigger tooling retained')
+  synthetic = structure.select { |s| s['name'] == 'Synthetic authority and observer regressions' }
+  command = 'node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs'
+  require_check(synthetic.size == 1 && synthetic.first['run'] == command &&
+    !synthetic.first.key?('if') && !synthetic.first.key?('continue-on-error'), 'synthetic authority and observer suites must run')
+  repo_job = documents.fetch('ci-repo').fetch('jobs').fetch('structure')
+  require_check(!repo_job.key?('if') && !repo_job.key?('continue-on-error'), 'Repository structure must be required')
+  require_check(!serialized.match?(%r{ci-contract\.rb|staging-authority\.mjs|deployment-observer\.mjs|gh workflow run|gh api[^\n]*dispatches|kubectl}),
+    'live authority, observer or mutation tooling retained')
   check_omarchy_archive(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
 end
 
@@ -212,11 +235,23 @@ actions = Dir.glob(File.join(root, '.github/actions/**/action.{yml,yaml}')).to_h
 end
 validate(documents, actions)
 mutations = [
+  ->(d) { d['ci-repo']['jobs']['structure']['steps'].reject! { |s| s['name'] == 'Synthetic authority and observer regressions' } },
+  ->(d) { d['ci-repo']['jobs']['structure']['if'] = 'false' },
+  ->(d) { d['ci-repo']['jobs']['structure']['continue-on-error'] = true },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-to') }['with']['cache-to'].sub!("|| ''", "|| 'type=gha'") },
   ->(d) { d['ci-web']['jobs']['web']['steps'].find { |s| s['name'] == 'Restore npm download cache' }['uses'] = 'actions/cache@v4' },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Restore Trivy databases' }['with'].delete('restore-keys') },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['with'].delete('cache') },
-  ->(d) { d['ci'][true]['push'] = {'branches' => ['develop']} },
+  ->(d) { d['ci'][true].delete('push') },
+  ->(d) { d['ci'][true]['push']['paths'] = ['web/**'] },
+  ->(d) { d['ci'][true]['pull_request']['branches'].delete('main') },
+  ->(d) { d['ci']['jobs']['changes']['steps'].last['run'] = 'python3 -B .github/scripts/ci_tracks/selection.py' },
+  ->(d) { d['ci']['jobs']['am']['if'] = 'false' },
+  ->(d) { d['ci']['jobs']['eg']['if'] = 'false' },
+  ->(d) { d['ci']['jobs']['web-images']['if'] = 'false' },
+  ->(d) { d['ci']['jobs']['eg']['with']['packages'] = '["cmaeg"]' },
+  ->(d) { d['ci']['permissions']['contents'] = 'write' },
+  ->(d) { d['ci']['concurrency']['cancel-in-progress'] = false },
   ->(d) { d['ci']['jobs']['gate-eg']['needs'].delete('runtime-images') },
   ->(d) { d['ci']['jobs']['gate-am']['if'] = 'success()' },
   ->(d) { d['ci']['jobs']['version-label']['name'] = 'Optional label' },
@@ -253,6 +288,18 @@ mutations = [
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['build-args'].sub!('SOURCE_DATE_EPOCH=0', 'SOURCE_DATE_EPOCH=1') },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-cache-restore' }['if'] = "github.event_name == 'push'" },
 ]
+synthetic_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic authority and observer regressions' }
+%w[staging-authority deployment-observer].each do |suite|
+  mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'].sub!(" .github/scripts/#{suite}.test.mjs", '') }
+  mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'].sub!("#{suite}.test.mjs", "#{suite}.mjs") }
+end
+[{'if' => 'false'}, {'continue-on-error' => true}].each do |bypass|
+  mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index].merge!(bypass) }
+end
+mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'] += ' || true' }
+%w[staging-authority.mjs deployment-observer.mjs].each do |tool|
+  mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'] << {'run' => "node .github/scripts/#{tool}"} }
+end
 [['ci-images', 'images'], ['ci-omarchy', 'omarchy']].each do |file, job|
   ['removed', 'optional', 'skipped', 'fake-success', 'late'].each do |change|
     mutations << lambda do |d|

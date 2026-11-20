@@ -5,6 +5,8 @@ use serde_json::Value;
 mod generation;
 #[path = "response_shared_limits.rs"]
 mod limits;
+#[path = "response_shared_readiness.rs"]
+mod readiness;
 #[path = "response_shared_release.rs"]
 mod release;
 
@@ -146,6 +148,7 @@ async fn measure(
         }));
         buffers.push(buffer);
     }
+    readiness::wait_for_replay(&buffers, &consumers).await;
     tokio::time::sleep(Duration::from_secs(12)).await;
     let measured = f.meter.stats.lock().unwrap().clone();
     for consumer in consumers {

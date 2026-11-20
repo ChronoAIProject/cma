@@ -93,12 +93,16 @@ export class LocalAgentV2 {
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
   }
 
-  append(kind: Record<string, unknown>, responseBinding: typeof binding | null = null) {
+  append(
+    kind: Record<string, unknown>,
+    responseBinding: typeof binding | null = null,
+    appendedAt = this.started,
+  ) {
     const sequence = this.items.length + 1;
     const item = {
       cursor: cursor(sequence),
       sequence,
-      appended_at: this.started,
+      appended_at: appendedAt,
       kind,
       response_binding: responseBinding,
     };
@@ -140,6 +144,11 @@ export class LocalAgentV2 {
     this.receipt(this.pendingInput);
     this.pendingInput = undefined;
     this.holdInput = false;
+  }
+
+  /** Whether the app has requested a held snapshot page that is not yet released. */
+  get snapshotPending() {
+    return this.pendingSnapshot !== undefined;
   }
 
   releaseSnapshot() {

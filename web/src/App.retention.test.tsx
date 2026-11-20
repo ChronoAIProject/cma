@@ -45,39 +45,59 @@ it('retains the exact Agent draft, Gateway editor and uncertain request across p
     throw new Error('Unexpected portal request: ' + url);
   });
   vi.stubGlobal('fetch', fetcher);
-  show();
-  const composer = await screen.findByRole('textbox', { name: 'Message' });
+  const portalOption = (name: 'Agent Manager' | 'Event Gateway') => {
+    const navigation = within(
+      screen.getByRole('complementary', { name: 'Application navigation' }),
+    );
+    fireEvent.click(navigation.getByRole('button', { name: /^Service: / }));
+    const menu = within(screen.getByRole('menu', { name: 'CMA services' }));
+    return menu.getByRole('menuitemradio', { name });
+  };
+  // Settle the fixture reads before querying the shell. Polling the retained
+  // portals during mocked responses repeats accessibility work on busy workers.
+  await act(async () => {
+    show();
+  });
+  const composer = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(composer, { target: { value: 'Retain this Agent draft' } });
-  chooseService('Event Gateway');
-  fireEvent.click(
-    within(await screen.findByRole('region', { name: 'Channel workspace' })).getByRole('button', {
-      name: 'New channel',
-    }),
-  );
-  const editor = screen.getByRole('textbox', { name: 'Channel name' });
+  const gateway = portalOption('Event Gateway');
+  await act(async () => {
+    fireEvent.click(gateway);
+  });
+  const workspace = within(screen.getByRole('region', { name: 'Channel workspace' }));
+  fireEvent.click(workspace.getByRole('button', { name: 'New channel' }));
+  const editor = screen.getByLabelText('Channel name');
+  const form = within(editor.closest('form')!);
   fireEvent.change(editor, { target: { value: 'Retained channel' } });
-  fireEvent.change(screen.getByLabelText('Provider agent key'), {
+  fireEvent.change(form.getByLabelText('Provider agent key'), {
     target: { value: 'test-only-credential' },
   });
-  fireEvent.change(screen.getByLabelText('NyxID issuer'), {
+  fireEvent.change(form.getByLabelText('NyxID issuer'), {
     target: { value: 'https://nyxid.example.test' },
   });
-  fireEvent.change(screen.getByLabelText('Signing key ID'), { target: { value: 'fixture-key' } });
-  fireEvent.change(screen.getByLabelText('Route IDs 1'), { target: { value: 'fixture-route' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Create channel' }));
-  await waitFor(() => expect(writes).toHaveLength(1));
-  chooseService('Agent Manager');
+  fireEvent.change(form.getByLabelText('Signing key ID'), { target: { value: 'fixture-key' } });
+  fireEvent.change(form.getByLabelText('Route IDs 1'), { target: { value: 'fixture-route' } });
+  const submit = form.getByRole('button', { name: 'Create channel' });
+  expect(submit).toBeEnabled();
+  fireEvent.click(submit);
+  expect(writes).toHaveLength(1);
+  fireEvent.click(portalOption('Agent Manager'));
   expect(window.location.pathname).toBe('/agents/agt_1');
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
   expect(composer).toHaveValue('Retain this Agent draft');
   await act(async () => rejectWrite(new TypeError('Gateway response interrupted')));
-  chooseService('Event Gateway');
+  fireEvent.click(portalOption('Event Gateway'));
   expect(screen.getByRole('textbox', { name: 'Channel name' })).toBe(editor);
   expect(editor).toHaveValue('Retained channel');
-  fireEvent.click(screen.getByRole('button', { name: 'Retry same request' }));
-  await waitFor(() => expect(writes).toHaveLength(2));
+  const retry = screen.getByRole('button', { name: 'Retry same request' });
+  expect(retry).toBeEnabled();
+  await act(async () => {
+    fireEvent.click(retry);
+  });
+  expect(writes).toHaveLength(2);
   expect(writes[1]?.body).toBe(writes[0]?.body);
   expect(writes[1]?.headers).toEqual(writes[0]?.headers);
+  expect(editor).not.toBeInTheDocument();
   expect(fetcher.mock.calls.some(([url]) => url.includes('/image-manager'))).toBe(false);
 });
 

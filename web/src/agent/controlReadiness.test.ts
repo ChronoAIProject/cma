@@ -3,7 +3,7 @@ import { AGENT_DETAIL } from '../test/agent';
 import { workspaceFixture } from '../test/hierarchy';
 import { conversationFromTranscript } from './conversation';
 import type { AgentResourceState } from './controllerTypes';
-import { controlBaselineReady } from './controlReadiness';
+import { controlBaselineReady, responseControlAvailability } from './controlReadiness';
 import { harness } from './transport/controller.fixture';
 
 const ready = {
@@ -43,4 +43,31 @@ it('keeps legacy history gates and requires a v2 cursor, including an empty auth
         'agt_1',
       ),
     ).toBe(true);
+});
+
+it('distinguishes checking from a verified turn without a response target', async () => {
+  const h = harness();
+  const v2 = await h.client.agentTransport!.open('agt_1');
+  const state = {
+    ...ready,
+    v2,
+    conversation: { ...ready.conversation, activeRunId: '1', agentCursor: 'ag1.authorized.1' },
+  };
+  expect(responseControlAvailability(state, 'agt_1', true)).toBe('checking-access');
+  expect(responseControlAvailability(state, 'another-agent')).toBe('checking');
+  expect(responseControlAvailability({ ...state, historyLoading: true }, 'agt_1')).toBe('checking');
+  expect(responseControlAvailability({ ...state, historyUnavailable: true }, 'agt_1')).toBe(
+    'checking',
+  );
+  expect(responseControlAvailability(state, 'agt_1')).toBe('unbound');
+  const bound = {
+    ...state,
+    historyLoading: true,
+    conversation: {
+      ...state.conversation,
+      responseBinding: { responseId: 'resp_current', commandId: 'cmd_current', turnSequence: 1 },
+    },
+  };
+  expect(responseControlAvailability(bound, 'agt_1')).toBe('available');
+  expect(responseControlAvailability(ready, 'agt_1')).toBe('available');
 });

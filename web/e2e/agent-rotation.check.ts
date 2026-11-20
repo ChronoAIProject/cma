@@ -80,7 +80,7 @@ for (const theme of ['light', 'dark']) {
       await expect(group).toBeVisible();
       await expect(
         group.getByRole('treeitem', {
-          name: /Completed research, Completed, Runtime update failed/,
+          name: /Completed research, Turn ended, Runtime update failed/,
         }),
       ).toBeVisible();
       await expect(

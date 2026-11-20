@@ -1,3 +1,4 @@
+import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { act, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
 import { unavailableClient, type CmaWebClient } from '../api/client';
@@ -24,6 +25,7 @@ function pendingPolicy() {
   );
   const client: CmaWebClient = {
     ...unavailableClient,
+    readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     taskExperience: { read },
     readTaskCreationSupport: async () => true,
     readTaskRepositorySupport: async () => true,

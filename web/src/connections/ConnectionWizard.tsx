@@ -23,6 +23,7 @@ interface WizardProps {
   readonly expectedOwner?: string;
   readonly presentation?: 'inline' | 'dialog';
   readonly dialogTitle?: string;
+  readonly description?: string;
   readonly client?: ConnectionClient;
 }
 
@@ -57,6 +58,7 @@ function ConnectionSequence({
   expectedOwner,
   presentation = 'inline',
   dialogTitle = 'Connect required services',
+  description = 'Connect the accounts this sandbox needs. CMA verifies each connection automatically, then continues opening your Sandbox.',
   client = connectionClient,
 }: WizardProps & { readonly onRetry: () => void }) {
   const key = JSON.stringify(target);
@@ -317,10 +319,7 @@ function ConnectionSequence({
       aria-label="Required connections"
       aria-busy={busy || report === undefined}
     >
-      <p>
-        Connect the accounts this sandbox needs. CMA verifies each connection automatically, then
-        continues opening your Sandbox.
-      </p>
+      <p>{description}</p>
       {report === undefined ? (
         <p role="status">Checking your connections…</p>
       ) : (

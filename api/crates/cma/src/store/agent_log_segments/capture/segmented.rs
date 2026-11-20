@@ -19,21 +19,6 @@ pub(super) async fn read(
             .await?
             .precedes(&head)?;
     }
-    let query=store.agent_log.find_one(doc! {"agent_id":agent.id.as_str(),"$or":[{"seq":{"$gt":head.last_seq}},{"seq":{"$lt":1_i64}}]})
-        .projection(doc! {"_id":1});
-    let query = if snapshot {
-        query.read_concern(ReadConcern::snapshot())
-    } else {
-        query
-    };
-    if query
-        .session(&mut *session)
-        .await
-        .map_err(TransactionLogError::Driver)?
-        .is_some()
-    {
-        return Err(SandboxStoreError::SequenceConflict.into());
-    }
     let source = store.agent_log.clone_with_type::<RawDocumentBuf>();
     let mut read = crate::store::mongo_read_telemetry::Read::find(source.name());
     let query=source.find(doc! {"agent_id":agent.id.as_str(),"seq":{"$gte":head.active_start_seq,"$lte":head.last_seq}})

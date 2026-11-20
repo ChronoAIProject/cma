@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { expect, it } from 'vitest';
 import { taskStateMeta } from './taskStatus';
 
-it('gives Ready to start and Completed distinct static dot tones', () => {
+it('gives Ready to start and Turn ended distinct static dot tones', () => {
   render(
     <>
       {taskStateMeta('not_started')}
@@ -11,12 +11,12 @@ it('gives Ready to start and Completed distinct static dot tones', () => {
     </>,
   );
   expect(screen.getByText('Ready to start')).toHaveAttribute('data-tone', 'ready');
-  expect(screen.getByText('Completed')).toHaveAttribute('data-tone', 'completed');
+  expect(screen.getByText('Turn ended')).toHaveAttribute('data-tone', 'completed');
   expect(screen.getByText('Ready to start').querySelector('[aria-hidden]')).toHaveAttribute(
     'data-tone',
     'ready',
   );
-  expect(screen.getByText('Completed').querySelector('[aria-hidden]')).toHaveAttribute(
+  expect(screen.getByText('Turn ended').querySelector('[aria-hidden]')).toHaveAttribute(
     'data-tone',
     'completed',
   );
@@ -29,7 +29,7 @@ it('keeps stale task observations muted without a status dot', () => {
       {taskStateMeta('completed', true)}
     </>,
   );
-  for (const label of ['Ready to start', 'Completed']) {
+  for (const label of ['Ready to start', 'Turn ended']) {
     expect(screen.getByText(label)).toHaveAttribute('data-tone', 'muted');
     expect(screen.getByText(label).querySelector('[aria-hidden]')).toBeNull();
   }

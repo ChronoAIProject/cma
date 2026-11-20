@@ -2,7 +2,7 @@
 import unittest
 from unittest.mock import Mock, patch
 
-from staging_cd_clock import TOTAL_SECONDS, dispatch_started, elapsed, remaining, timestamp
+from staging_cd_clock import (WATCHDOG_SECONDS, controller_seconds, dispatch_started, elapsed, remaining, timestamp)
 from staging_cd_common import Refusal
 
 
@@ -15,9 +15,13 @@ class ClockTests(unittest.TestCase):
         self.assertEqual(remaining(started, mode="bootstrap", now=1020), 25)
         with self.assertRaises(Refusal):
             remaining(started, mode="bootstrap", now=1045)
-        self.assertEqual(remaining(started, TOTAL_SECONDS, now=1595), 5)
-        with self.assertRaises(Refusal):
-            remaining(started, TOTAL_SECONDS, now=1600)
+        for mode, limit in (("bootstrap", 600), ("release", 990)):
+            with self.subTest(mode=mode):
+                self.assertEqual(controller_seconds(mode), limit)
+                self.assertEqual(remaining(started, limit, now=1000 + limit - 5), 5)
+                with self.assertRaises(Refusal):
+                    remaining(started, limit, now=1000 + limit)
+        self.assertEqual(WATCHDOG_SECONDS, 1005)
         for value, now in ((timestamp(1001), 1000), (started, 1120), (started, 1125),
                            ("1000", 1000), ("2026-01-01T00:00:00", 1000),
                            ("2026-99-99T00:00:00Z", 1000), (None, 1000)):

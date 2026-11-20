@@ -22,9 +22,11 @@ export default defineConfig({
   testDir: '.',
   testMatch: [
     'agent-v2.check.ts',
+    'agent-v2-cjk.check.ts',
     'agent-v2-queued.check.ts',
     'agent-v2-composer.check.ts',
     'agent-terminal-recovery.check.ts',
+    'agent-recovery-consistency.check.ts',
   ],
   workers: 1,
   retries: 0,
