@@ -7,6 +7,7 @@ use layer2_core::sandbox::{
 };
 use mongodb::{bson::doc, ClientSession};
 
+pub(super) mod activity;
 mod batch;
 pub(super) use batch::read_many;
 
