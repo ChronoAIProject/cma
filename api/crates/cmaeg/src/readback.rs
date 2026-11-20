@@ -1,8 +1,11 @@
 //! Bounded majority-readback used after a concurrent immutable write.
 use std::{future::Future, time::Duration};
 
+/// Waits before each read; together they stay well inside the two-second deadline.
 const DELAYS_MS: [u64; 7] = [0, 5, 10, 20, 40, 80, 160];
 
+/// Retries `read` on a short backoff for at most two seconds. `None` means the
+/// value never became visible; a read error or the deadline is returned as is.
 pub(crate) async fn bounded<T, E, F, Fut>(
     mut read: F,
     timeout_error: impl Fn() -> E,

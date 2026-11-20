@@ -6,6 +6,58 @@ fn snapshot() -> Value {
 }
 
 #[test]
+fn connection_error_media_matches_problem_responses_and_preserves_success() {
+    let generated: Value = serde_json::from_str(&cmaeg::openapi::snapshot()).unwrap();
+    let operations = [
+        (
+            "/channel-connections",
+            "post",
+            "201",
+            Some("ConnectionView"),
+        ),
+        ("/channel-connections", "get", "200", Some("ConnectionPage")),
+        (
+            "/channel-connections/{connection_ref}",
+            "get",
+            "200",
+            Some("ConnectionView"),
+        ),
+        (
+            "/channel-connections/{connection_ref}",
+            "delete",
+            "204",
+            None,
+        ),
+        (
+            "/relay-resource-connections",
+            "get",
+            "200",
+            Some("ResourceConnectionList"),
+        ),
+    ];
+    for document in [generated, snapshot()] {
+        for (path, method, status, schema) in operations {
+            let responses = &document["paths"][path][method]["responses"];
+            assert_eq!(
+                responses["default"]["content"],
+                json!({"application/problem+json": {"schema": {"$ref": "#/components/schemas/Problem"}}}),
+                "{method} {path} must document its runtime Problem media type"
+            );
+            if let Some(schema) = schema {
+                assert_eq!(
+                    responses[status]["content"],
+                    json!({"application/json": {"schema": {"$ref": format!("#/components/schemas/{schema}")}}}),
+                    "{method} {path} success must remain JSON"
+                );
+            } else {
+                assert!(responses[status].is_object());
+                assert!(responses[status].get("content").is_none());
+            }
+        }
+    }
+}
+
+#[test]
 fn openapi_compat_preserves_the_reviewed_v1_contract() {
     let current = serde_json::from_str(&cmaeg::openapi::snapshot()).unwrap();
     let errors = compat::errors(&snapshot(), &current);

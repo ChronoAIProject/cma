@@ -16,6 +16,9 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if let Some(failure) = self.prepare_retirement_cleanup(&mut sandbox, now).await? {
+            return self.retry_failure(sandbox, failure, now).await;
+        }
         let timing = TeardownTiming::new(&sandbox.id, sandbox.work.attempts);
         // Suspension may have reached Kubernetes before its database acknowledgement.
         // Native deletion proves CRD and Pod absence without a running process.
