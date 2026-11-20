@@ -416,11 +416,7 @@ it('replaces a discovered then absent admitted message with its expiry explanati
       : originalFetch(url, init),
   );
   fireEvent(window, new Event('focus'));
-  await screen.findByText(
-    'Message expired before it started. Submit it again if still needed.',
-    {},
-    { timeout: 3000 },
-  );
+  await screen.findByText('Expired before starting', {}, { timeout: 3000 });
   expect(bubbles('Immediate local message')).toHaveLength(1);
   expect(screen.queryByText('Sent')).not.toBeInTheDocument();
   expect(h.post).toHaveBeenCalledOnce();
