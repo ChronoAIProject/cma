@@ -190,6 +190,14 @@ async fn admit_once(
             "new Launch ID already has orphan event rows",
         )));
     }
+    let enhanced = store.launch_admission_policy == LaunchAdmissionPolicy::VisitorAllowance;
+    // Exhausted visitors need no fence write. Charging still follows deletion checks
+    // in this transaction, so a concurrent deletion cannot admit new work.
+    let charge = if enhanced {
+        super::visitor_quota::prepare(&store.launch_data, launch, session).await?
+    } else {
+        None
+    };
     let database = store.client.database(&store.definitions.namespace().db);
     // Only visitor-owned resources serialize with the visitor's deletion.
     if crate::store::account_deletions::fence_subject_in_session(&database, &launch.owner, session)
@@ -209,7 +217,12 @@ async fn admit_once(
     {
         return Err(AttemptError::Domain(LaunchStoreError::TriggerRetired));
     }
-    super::visitor_quota::admit(&store.launch_data, launch, session).await?;
+    let charge = if enhanced {
+        charge
+    } else {
+        super::visitor_quota::prepare(&store.launch_data, launch, session).await?
+    };
+    super::visitor_quota::charge(&store.launch_data, charge, session).await?;
     let ceilings = platform_open(store, session).await?;
     let home_capacity_admission = crate::store::launch_home_capacity::reserve(
         &store.launch_data.admissions,

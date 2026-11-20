@@ -172,16 +172,41 @@ async fn transient_insert_retries_but_permanent_driver_and_domain_refusals_do_no
                 .unwrap();
         }
         observed.trace.lock().unwrap().clear();
+        if policy == LaunchAdmissionPolicy::VisitorAllowance {
+            observed
+                .fault(
+                    &seed,
+                    &["update"],
+                    16,
+                    doc! { "errorCode": 112, "errorLabels": ["TransientTransactionError"] },
+                )
+                .await;
+        }
         let result = observed
             .store
             .admit_launch(admission(&trigger, "visitor", 5, BEFORE_MIDNIGHT))
             .await;
+        observed.clear_fault(&seed).await;
         assert!(matches!(
             result,
             Err(LaunchStoreError::VisitorQuota { limit: 5, .. })
         ));
         assert_eq!(observed.inserts("visitor_launch_days"), 0);
         assert_eq!(observed.inserts(LAUNCHES), 0);
+        let fence_writes = observed
+            .trace
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(name, command)| {
+                name == "update" && command.get_str("update").ok() == Some("sandbox_admissions")
+            })
+            .count();
+        assert_eq!(
+            fence_writes,
+            usize::from(policy == LaunchAdmissionPolicy::Baseline),
+            "enabled quota refusals must not contend on the deletion fence"
+        );
         let reads = observed
             .trace
             .lock()

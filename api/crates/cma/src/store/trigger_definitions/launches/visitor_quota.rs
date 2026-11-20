@@ -5,7 +5,7 @@ use layer2_core::{
     PlatformSettings, StoreError, SubjectId,
 };
 use mongodb::{
-    bson::{doc, DateTime},
+    bson::{doc, DateTime, Document},
     options::{IndexOptions, ReadPreference, SelectionCriteria},
     ClientSession, IndexModel,
 };
@@ -47,14 +47,20 @@ pub(super) async fn admitted(
     u32::try_from(used).map_err(|error| super::corrupt(error.to_string()))
 }
 
-pub(super) async fn admit(
+pub(super) struct Charge {
+    key: String,
+    document: Document,
+    exists: bool,
+}
+
+pub(super) async fn prepare(
     data: &LaunchCollections,
     launch: &Launch,
     session: &mut ClientSession,
-) -> Result<(), AttemptError> {
+) -> Result<Option<Charge>, AttemptError> {
     use AttemptError::{Domain, Driver};
     if launch.authority != LaunchAuthorityClass::Visitor {
-        return Ok(());
+        return Ok(None);
     }
     let settings = data
         .settings
@@ -108,18 +114,33 @@ pub(super) async fn admit(
     }
     let document = doc! { "_id": &key, "document_schema_version": 1_i64, "used": (used + 1) as i64,
     "expires_at": DateTime::from_system_time(reset_at + Duration::from_secs(86_400)) };
-    if previous.is_some() {
+    Ok(Some(Charge {
+        key,
+        document,
+        exists: previous.is_some(),
+    }))
+}
+
+pub(super) async fn charge(
+    data: &LaunchCollections,
+    charge: Option<Charge>,
+    session: &mut ClientSession,
+) -> Result<(), AttemptError> {
+    let Some(charge) = charge else {
+        return Ok(());
+    };
+    if charge.exists {
         data.visitor_days
-            .replace_one(doc! { "_id": &key }, document)
+            .replace_one(doc! { "_id": charge.key }, charge.document)
             .session(&mut *session)
             .await
-            .map_err(Driver)?;
+            .map_err(AttemptError::Driver)?;
     } else {
         data.visitor_days
-            .insert_one(document)
+            .insert_one(charge.document)
             .session(&mut *session)
             .await
-            .map_err(Driver)?;
+            .map_err(AttemptError::Driver)?;
     }
     Ok(())
 }
