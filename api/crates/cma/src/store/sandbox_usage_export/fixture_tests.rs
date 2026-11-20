@@ -3,7 +3,7 @@ use layer2_core::sandbox_usage::{Allocation, UsageEvent, UsageEventKind};
 use serde_json::Value;
 use std::{collections::BTreeSet, fs, path::PathBuf};
 
-const MANIFEST_SHA256: &str = "0ee25ff6640a4508a774df2a6e7185a6dba6cb1f1ee0f63523d36ce232830830";
+const MANIFEST_SHA256: &str = "2f189190dd24595d0b261a56030be38d2328df8c285d35fec08c3e3293948797";
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cma_usage_v1")
@@ -159,5 +159,41 @@ fn positive_usage_requires_each_runtime_and_home_binding_component() {
             payload::fact_value(&incomplete, &batch.facts[0], id),
             Err(SandboxStoreError::Unavailable(_))
         ));
+    }
+}
+
+#[test]
+fn inactive_incomplete_bindings_map_to_null_pairs_without_changing_source_evidence() {
+    for mask in 0..16 {
+        let (mut event, mut capture) = golden_capture();
+        capture.source.allocation = Allocation::default();
+        capture.source.next_allocation = Allocation::default();
+        capture.source.quantity = capture.source.allocation.usage(60).unwrap();
+        capture.resource = records::ResourceSnapshot {
+            runtime_id: (mask & 1 != 0).then(|| "runtime-example".into()),
+            runtime_generation: (mask & 2 != 0).then_some(7),
+            home_id: (mask & 4 != 0).then(|| "home-example".into()),
+            home_generation: (mask & 8 != 0).then(|| "opaque-home-generation".into()),
+        };
+        let source_bytes = serde_json::to_vec(&capture).unwrap();
+        let batch = layer2_core::sandbox_usage_evidence::project(
+            &capture.source,
+            capture.source.started_at,
+        )
+        .unwrap();
+        let id = event["facts"][0]["fact_id"].as_str().unwrap();
+        let fact = payload::fact_value(&capture, &batch.facts[0], id).unwrap();
+        assert_eq!(
+            fact["resource"],
+            serde_json::json!({
+                "runtime_id": (mask & 3 == 3).then_some("runtime-example"),
+                "runtime_generation": (mask & 3 == 3).then_some("7"),
+                "home_id": (mask & 12 == 12).then_some("home-example"),
+                "home_generation": (mask & 12 == 12).then_some("opaque-home-generation"),
+            })
+        );
+        event["facts"][0] = fact;
+        assert_wire_event(&event);
+        assert_eq!(serde_json::to_vec(&capture).unwrap(), source_bytes);
     }
 }

@@ -234,7 +234,10 @@ async fn terminal_retained_home(runtime_generation: Option<u64>) {
     assert_eq!(fact["quantities"]["sandbox_disk_gib_seconds"], "600");
     assert_eq!(fact["audit_time"]["compute_uptime_ms"], "0");
     assert_eq!(fact["audit_time"]["retained_home_ms"], "60000");
-    assert_eq!(fact["resource"]["runtime_id"], "runtime-fixture");
+    assert_eq!(
+        fact["resource"]["runtime_id"],
+        serde_json::json!(runtime_generation.map(|_| "runtime-fixture"))
+    );
     assert_eq!(
         fact["resource"]["runtime_generation"],
         serde_json::json!(runtime_generation.map(|value| value.to_string()))
@@ -242,6 +245,40 @@ async fn terminal_retained_home(runtime_generation: Option<u64>) {
     assert_eq!(
         fact["resource"]["home_generation"],
         "opaque-home-generation"
+    );
+    let retained = fixture
+        .db
+        .collection::<Document>(CAPTURES)
+        .find_one(doc! {"_id":source_id(&parent, 4)})
+        .await
+        .unwrap()
+        .unwrap();
+    let source: records::Captured = records::decode(&retained).unwrap();
+    assert_eq!(
+        source.resource.runtime_id.as_deref(),
+        Some("runtime-fixture")
+    );
+    assert_eq!(source.resource.runtime_generation, runtime_generation);
+    assert_eq!(
+        value["source_digest"],
+        records::hash(&serde_json::to_vec(&source).unwrap())
+    );
+    assert_eq!(
+        value["source_digest"],
+        retained.get_str("source_digest").unwrap()
+    );
+    assert!(!capture
+        .project_one(&source_id(&parent, 4), now() + 1)
+        .await
+        .unwrap());
+    assert_eq!(
+        Some(row),
+        fixture
+            .db
+            .collection::<Document>(OUTBOX)
+            .find_one(doc! {"source_id":source_id(&parent, 4)})
+            .await
+            .unwrap()
     );
     assert_eq!(fixture.wire_events().await.len(), 5);
     fixture.db.drop().await.unwrap();
