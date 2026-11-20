@@ -1,3 +1,4 @@
+import { AccountDeletion } from './account-deletion.js';
 import { reportBrowserFault, type BrowserFault } from './browser-telemetry.js';
 import { Documents } from './documents.js';
 import { TaskExperiencePolicy } from './task-experience.js';
@@ -45,6 +46,7 @@ import { AgentEventsV2 } from './agent-events-v2/index.js';
 export class Cma {
   readonly #config: ResolvedConfig;
   readonly documents: Documents;
+  readonly accountDeletion: AccountDeletion;
   readonly taskExperience: TaskExperiencePolicy;
   readonly usage: SandboxUsage;
   readonly usageMetrics: SandboxMetrics;
@@ -89,6 +91,7 @@ export class Cma {
   constructor(config: ClientConfig = {}) {
     this.#config = resolveConfig(config);
     this.documents = new Documents(this.#config);
+    this.accountDeletion = new AccountDeletion(this.#config);
     this.taskExperience = new TaskExperiencePolicy(this.#config);
     this.usage = new SandboxUsage(this.#config);
     this.usageMetrics = new SandboxMetrics(this.#config);

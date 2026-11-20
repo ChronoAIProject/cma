@@ -18,6 +18,7 @@ import {
   loadCorpus,
   resolveSymbols,
   type ContractCase,
+  type Dispatch,
 } from './public-contract/context.js';
 import { resourceDispatch } from './public-contract/resources.js';
 import { deliverableDispatch, deliveryExchange } from './public-contract/deliverables.js';
@@ -40,7 +41,10 @@ import { browserOperations, verifyNavigation } from './public-contract/navigatio
 import { verifyDesktopUpgrade } from './public-contract/desktop.js';
 
 const corpus = loadCorpus();
-const dispatch = {
+const dispatch: Record<string, Dispatch> = {
+  'GET /api/v1/account/deletion': ({ client, options }) => client.accountDeletion.status(options),
+  'POST /api/v1/account/deletion': ({ client, body, command }) =>
+    client.accountDeletion.request(body, command),
   ...capacityRecoveryDispatch,
   ...deliverableDispatch(corpus),
   ...usageDispatch,

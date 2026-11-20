@@ -143,3 +143,48 @@ async fn append_during_binding_preserves_the_captured_page_and_head() {
         assert!(!String::from_utf8_lossy(&bytes).contains("later title"));
     }
 }
+
+#[tokio::test]
+async fn buffered_pages_recheck_caller_and_owner_standing_before_releasing_private_results() {
+    use crate::rest::shared_stream_tests::ChangingStanding;
+
+    for route in [SNAPSHOT, HEAD] {
+        for deleting in ["reader", "owner-a", "unrelated", "outage"] {
+            for fail in [false, true] {
+                let mut f = fixture(true, false).await;
+                super::super::head_tests::share(&f).await;
+                let standing = Arc::new(ChangingStanding::default());
+                f.access = Arc::new(
+                    f.access
+                        .as_ref()
+                        .clone()
+                        .with_account_standing(standing.clone()),
+                );
+                f.state.reads = f.state.reads.with_resource_access(f.access.clone());
+                let (state, gate, resume) = gated(&f, fail);
+                let app = router(state);
+                let pending = tokio::spawn(async move {
+                    raw(&app, route, "reader", "cma-message-bindings").await
+                });
+                entered(&gate).await;
+                *standing.0.lock().unwrap() = Some(deleting);
+                resume.notify_one();
+                let (status, bytes) = pending.await.unwrap();
+                if deleting == "unrelated" && !fail {
+                    assert_eq!(status, StatusCode::OK, "{route}");
+                } else {
+                    assert_eq!(
+                        status,
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "{route} {deleting}"
+                    );
+                    let body: Value = serde_json::from_slice(&bytes).unwrap();
+                    assert_eq!(body["code"], "agent_read_unavailable");
+                    assert!(body.get("items").is_none());
+                    assert!(body.get("active_turn").is_none());
+                    assert!(!String::from_utf8_lossy(&bytes).contains("Private source input"));
+                }
+            }
+        }
+    }
+}

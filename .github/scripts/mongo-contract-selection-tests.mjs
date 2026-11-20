@@ -172,7 +172,7 @@ done
     const [name, ...args] = block.trim().split('\n');
     return [name, args[args.indexOf('-E') + 1]];
   }));
-  const boundary = ' & not test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors)';
+  const boundary = ' & not test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure)';
   const corpus = filters.all.slice(filters.all.indexOf(boundary));
   assert.ok(filters.all.includes(boundary));
   for (const mode of modes) {

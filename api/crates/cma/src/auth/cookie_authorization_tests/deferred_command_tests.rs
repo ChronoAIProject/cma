@@ -33,6 +33,35 @@ fn envelope(authorization: AgentAuthorizationRevision) -> AgentCommandEnvelope {
     }
 }
 
+struct DeletingCommandOwner;
+#[async_trait::async_trait]
+impl layer2_core::account_deletion::AccountStanding for DeletingCommandOwner {
+    async fn erasing(
+        &self,
+        _: &SubjectId,
+    ) -> Result<bool, layer2_core::account_deletion::AccountDeletionError> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn delayed_command_refuses_a_currently_erasing_actor_and_owner() {
+    let mut fixture = Fixture::new().await;
+    fixture.seed().await;
+    let reference = fixture
+        .auth
+        .personal_command_authority(&caller(), "must-not-leak-access-token")
+        .await
+        .unwrap();
+    let command = envelope(reference);
+    assert!(fixture.auth.authorize_command(&command).await.is_ok());
+    Arc::get_mut(&mut fixture.auth).unwrap().standing = Arc::new(DeletingCommandOwner);
+    assert_eq!(
+        fixture.auth.authorize_command(&command).await,
+        Err(CommandAuthorizationError::Revoked)
+    );
+}
+
 #[tokio::test]
 async fn admission_requires_exact_selected_credential_and_fresh_provider_permissions() {
     let fixture = Fixture::new().await;
