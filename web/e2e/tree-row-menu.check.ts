@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 
-async function fixture(page: Page, baseURL: string, actions = true) {
+async function fixture(page: Page, baseURL: string, mobile: boolean, actions = true) {
   const boundary = new LocalStartup();
   boundary.agent = { ...boundary.agent, status: 'ready', title: 'Menu fixture task' };
   boundary.workspace = {
@@ -25,8 +25,11 @@ async function fixture(page: Page, baseURL: string, actions = true) {
       }),
     );
   await page.goto('/agent-manager');
-  const navigation = page.getByRole('button', { name: 'Show navigation', exact: true });
-  if (await navigation.isVisible()) await navigation.click();
+  if (mobile) {
+    const navigation = page.getByRole('button', { name: 'Show navigation', exact: true });
+    await expect(navigation).toBeVisible();
+    await navigation.click();
+  }
   const row = page
     .getByRole('tree', { name: 'Personal Agents', exact: true })
     .locator(`[data-node-id="agent:${boundary.agent.id}"]`);
@@ -63,7 +66,7 @@ for (const touch of [true, false]) {
       page,
       baseURL,
     }) => {
-      const { boundary, row } = await fixture(page, baseURL!);
+      const { boundary, row } = await fixture(page, baseURL!, touch);
       expect(await page.evaluate(() => matchMedia('(pointer: coarse)').matches)).toBe(touch);
       expect(await page.evaluate(() => matchMedia('(hover: hover)').matches)).toBe(!touch);
       await untouched(row);
@@ -126,7 +129,7 @@ for (const touch of [true, false]) {
       page,
       baseURL,
     }) => {
-      const { boundary, row } = await fixture(page, baseURL!, false);
+      const { boundary, row } = await fixture(page, baseURL!, touch, false);
       await expect(
         row.getByRole('button', { name: /^Options for/, includeHidden: true }),
       ).toHaveCount(0);
