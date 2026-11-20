@@ -50,6 +50,7 @@ zeroize = { workspace = true }
 serde_json_canonicalizer = "=0.3.2"
 
 [dev-dependencies]
+jsonschema = { version = "0.33.0", default-features = false }
 tracing-subscriber = { workspace = true, features = ["json"] }
 http-body-util = { workspace = true }
 kube = { workspace = true }

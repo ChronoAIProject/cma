@@ -3,10 +3,32 @@ use layer2_core::sandbox_usage::{Allocation, UsageEvent, UsageEventKind};
 use serde_json::Value;
 use std::{collections::BTreeSet, fs, path::PathBuf};
 
-const MANIFEST_SHA256: &str = "5aa9606080eef4123e5314f0eac412f2c1bc018eb83aff172e01bfbbc14ac033";
+const MANIFEST_SHA256: &str = "0ee25ff6640a4508a774df2a6e7185a6dba6cb1f1ee0f63523d36ce232830830";
 
 fn root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cma_usage_v1")
+}
+
+pub(super) fn assert_wire_event(value: &Value) {
+    static VALIDATOR: std::sync::OnceLock<jsonschema::Validator> = std::sync::OnceLock::new();
+    let validator = VALIDATOR.get_or_init(|| {
+        let schema: Value = serde_json::from_slice(include_bytes!(
+            "../../../tests/fixtures/cma_usage_v1/schema.json"
+        ))
+        .unwrap();
+        jsonschema::options()
+            .with_draft(jsonschema::Draft::Draft202012)
+            .build(&schema)
+            .unwrap()
+    });
+    let errors: Vec<_> = validator
+        .iter_errors(value)
+        .map(|error| error.to_string())
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "complete producer event violates N1 schema: {errors:?}"
+    );
 }
 
 #[test]
@@ -39,11 +61,13 @@ fn shared_release_manifest_pins_every_fixture_and_canonical_digest() {
         let canonical = fs::read(root().join(entry["canonical_file"].as_str().unwrap())).unwrap();
         assert_eq!(serde_json_canonicalizer::to_vec(&value).unwrap(), canonical);
         assert_eq!(records::hash(&canonical), entry["canonical_sha256"]);
+        if entry["kind"] == "event" {
+            assert_wire_event(&value);
+        }
     }
 }
 
-#[test]
-fn allocated_minute_matches_the_shared_golden_fact_exactly() {
+fn golden_capture() -> (Value, records::Captured) {
     let golden: Value = serde_json::from_slice(include_bytes!(
         "../../../tests/fixtures/cma_usage_v1/allocated.json"
     ))
@@ -83,6 +107,13 @@ fn allocated_minute_matches_the_shared_golden_fact_exactly() {
         },
         source,
     };
+    (golden, capture)
+}
+
+#[test]
+fn allocated_minute_matches_the_shared_golden_fact_exactly() {
+    let (golden, capture) = golden_capture();
+    let fact = &golden["facts"][0];
     let batch =
         layer2_core::sandbox_usage_evidence::project(&capture.source, capture.source.started_at)
             .unwrap();
@@ -93,4 +124,40 @@ fn allocated_minute_matches_the_shared_golden_fact_exactly() {
         serde_json_canonicalizer::to_vec(&projected).unwrap(),
         serde_json_canonicalizer::to_vec(fact).unwrap()
     );
+}
+
+#[test]
+fn positive_usage_requires_each_runtime_and_home_binding_component() {
+    let (golden, capture) = golden_capture();
+    let batch =
+        layer2_core::sandbox_usage_evidence::project(&capture.source, capture.source.started_at)
+            .unwrap();
+    let id = golden["facts"][0]["fact_id"].as_str().unwrap();
+    for resource in [
+        records::ResourceSnapshot {
+            runtime_id: None,
+            ..capture.resource.clone()
+        },
+        records::ResourceSnapshot {
+            runtime_generation: None,
+            ..capture.resource.clone()
+        },
+        records::ResourceSnapshot {
+            home_id: None,
+            ..capture.resource.clone()
+        },
+        records::ResourceSnapshot {
+            home_generation: None,
+            ..capture.resource.clone()
+        },
+    ] {
+        let incomplete = records::Captured {
+            resource,
+            ..capture.clone()
+        };
+        assert!(matches!(
+            payload::fact_value(&incomplete, &batch.facts[0], id),
+            Err(SandboxStoreError::Unavailable(_))
+        ));
+    }
 }

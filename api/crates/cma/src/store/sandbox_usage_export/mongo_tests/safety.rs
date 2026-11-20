@@ -162,8 +162,21 @@ async fn outbox_failure_rolls_back_facts_sequence_and_projection_cursor() {
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn terminal_compute_stops_while_original_home_generation_and_disk_remain() {
+    for runtime_generation in [Some(1), None] {
+        terminal_retained_home(runtime_generation).await;
+    }
+}
+
+async fn terminal_retained_home(runtime_generation: Option<u64>) {
     let fixture = Fixture::new(true).await;
-    let mut parent = fixture.parent("retained-home-owner").await;
+    let mut parent = fixture
+        .parent_with_generation("retained-home-owner", runtime_generation)
+        .await;
+    let (failed_at, checkpoint_at) = if runtime_generation.is_some() {
+        (MINUTE, TWO_MINUTES)
+    } else {
+        (NOW, MINUTE)
+    };
     let mut home = SandboxHome::reserve(
         &parent.id,
         HomeVolumePolicy {
@@ -192,11 +205,11 @@ async fn terminal_compute_stops_while_original_home_generation_and_disk_remain()
         class: "terminal_validation".into(),
         detail: "synthetic setup refusal".into(),
     });
-    parent.updated_at = MINUTE.into();
+    parent.updated_at = failed_at.into();
     fixture.store.save_sandbox(2, parent.clone()).await.unwrap();
     fixture
         .store
-        .checkpoint_usage_one(parent.id.as_str(), TWO_MINUTES)
+        .checkpoint_usage_one(parent.id.as_str(), checkpoint_at)
         .await
         .unwrap();
     let capture = fixture.capture();
@@ -221,9 +234,15 @@ async fn terminal_compute_stops_while_original_home_generation_and_disk_remain()
     assert_eq!(fact["quantities"]["sandbox_disk_gib_seconds"], "600");
     assert_eq!(fact["audit_time"]["compute_uptime_ms"], "0");
     assert_eq!(fact["audit_time"]["retained_home_ms"], "60000");
+    assert_eq!(fact["resource"]["runtime_id"], "runtime-fixture");
+    assert_eq!(
+        fact["resource"]["runtime_generation"],
+        serde_json::json!(runtime_generation.map(|value| value.to_string()))
+    );
     assert_eq!(
         fact["resource"]["home_generation"],
         "opaque-home-generation"
     );
+    assert_eq!(fixture.wire_events().await.len(), 5);
     fixture.db.drop().await.unwrap();
 }

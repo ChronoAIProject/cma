@@ -106,6 +106,31 @@ impl Fixture {
             .await
             .unwrap()
     }
+
+    async fn wire_events(&self) -> Vec<serde_json::Value> {
+        use futures_util::TryStreamExt;
+        let rows: Vec<Document> = self
+            .db
+            .collection(OUTBOX)
+            .find(doc! {})
+            .sort(doc! {"sequence":1})
+            .await
+            .unwrap()
+            .try_collect()
+            .await
+            .unwrap();
+        assert!(!rows.is_empty());
+        rows.iter()
+            .map(|row| {
+                let bytes = row.get_binary_generic("payload").unwrap();
+                let value = serde_json::from_slice(bytes).unwrap();
+                super::fixture_tests::assert_wire_event(&value);
+                assert_eq!(serde_json_canonicalizer::to_vec(&value).unwrap(), *bytes);
+                assert_eq!(records::hash(bytes), row.get_str("digest").unwrap());
+                value
+            })
+            .collect()
+    }
 }
 
 fn config() -> UsageCaptureConfig {
