@@ -5,6 +5,117 @@ import { LocalUsageFilterOptions } from './usage-filter-options.fixture';
 import { metricRow } from '../src/usage/metrics/fixtures.test-support';
 
 for (const admin of [false, true]) {
+  test(`LOCAL allocated sorting keeps API pagination and partial history for admin=${admin}`, async ({
+    page,
+    baseURL,
+  }) => {
+    const boundary = new LocalStartup();
+    const metrics = new LocalUsageMetrics();
+    const values = [8.165, 14.729, 37.688, 47.935, 0, 8.165, 8.1654];
+    const rows = Array.from({ length: 61 }, (_, n) => ({
+      ...metricRow,
+      sandbox_id: `sort-${String(n).padStart(3, '0')}`,
+      name: `Subtotal ${String(n).padStart(3, '0')}`,
+      allocated_period: {
+        ...metricRow.allocated_period,
+        cpu_core_hours: values[n % 7]!,
+        memory_gib_hours: values[(n * 3 + 1) % 7]!,
+        disk_gib_hours: values[(n * 5 + 2) % 7]!,
+        complete: n % 2 === 0,
+        unknown_seconds: n % 2 === 0 ? 0 : 600,
+      },
+    }));
+    metrics.presentationRows = rows;
+    await boundary.route(page, baseURL!);
+    await metrics.route(page);
+    await metrics.session(
+      page,
+      admin ? ['use_own_sandboxes', 'read_all_sandboxes'] : ['use_own_sandboxes'],
+    );
+    const reads: URL[] = [];
+    let delivered = rows.slice(0, 50);
+    await page.route(/\/usage\/metrics\/reports\/[^/]+\/sandboxes\?/, async (route) => {
+      const url = new URL(route.request().url());
+      reads.push(url);
+      const reportId = url.pathname.split('/reports/')[1]!.split('/')[0]!;
+      const sort = url.searchParams.get('sort')!;
+      const order = url.searchParams.get('order')!;
+      const field =
+        sort === 'allocated_cpu_core_hours'
+          ? 'cpu_core_hours'
+          : sort === 'allocated_memory_gib_hours'
+            ? 'memory_gib_hours'
+            : 'disk_gib_hours';
+      const ordered = [...rows].sort(
+        (a, b) =>
+          (order === 'asc' ? 1 : -1) *
+          (a.allocated_period[field] - b.allocated_period[field] ||
+            a.sandbox_id.localeCompare(b.sandbox_id)),
+      );
+      const cursor = url.searchParams.get('cursor');
+      if (cursor) expect(cursor).toBe(`${reportId}:${sort}:${order}:50`);
+      expect(url.searchParams.get('limit')).toBe('50');
+      const offset = cursor ? 50 : 0;
+      delivered = ordered.slice(offset, offset + 50);
+      await route.fulfill({
+        json: {
+          report_id: reportId,
+          as_of: metrics.reports.get(reportId)!.as_of,
+          items: delivered,
+          total_count: rows.length,
+          next: offset === 0 ? `${reportId}:${sort}:${order}:50` : null,
+        },
+      });
+    });
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.goto(admin ? '/operations?tab=sandboxes' : '/usage');
+    const surface = admin
+      ? page.getByRole('region', { name: 'Sandbox resource dashboard' })
+      : page.getByRole('dialog', { name: 'Your usage' });
+    const table = surface.getByRole('table', { name: 'Sandboxes and allocated usage' });
+    const assertPage = async (sort: string, order: string, second: boolean) => {
+      await expect.poll(() => reads.at(-1)?.searchParams.get('sort')).toBe(sort);
+      await expect.poll(() => reads.at(-1)?.searchParams.get('order')).toBe(order);
+      await expect.poll(() => reads.at(-1)?.searchParams.has('cursor')).toBe(second);
+      await expect(table).not.toHaveAttribute('aria-busy', 'true');
+      await expect(table.getByRole('button', { name: /^Subtotal / })).toHaveText(
+        delivered.map((row) => row.name),
+      );
+      await expect(table.getByText('Partial history', { exact: true })).toHaveCount(
+        delivered.filter((row) => !row.allocated_period.complete).length,
+      );
+      return delivered.map((row) => row.sandbox_id);
+    };
+    await expect(table.getByRole('button', { name: /^Subtotal / })).toHaveCount(50);
+    for (const [sort, label] of [
+      ['allocated_cpu_core_hours', 'CPU (core-hours)'],
+      ['allocated_memory_gib_hours', 'Memory (GiB-hours)'],
+      ['allocated_disk_gib_hours', 'Disk (GiB-hours)'],
+    ]) {
+      await table.getByRole('columnheader').filter({ hasText: label }).getByRole('button').click();
+      for (const order of ['asc', 'desc']) {
+        const first = await assertPage(sort!, order, false);
+        await surface.getByRole('button', { name: 'Next usage page' }).click();
+        const last = await assertPage(sort!, order, true);
+        expect(new Set([...first, ...last]).size).toBe(61);
+        await expect(surface.getByRole('button', { name: 'Next usage page' })).toBeDisabled();
+        if (order === 'asc')
+          await surface.getByRole('button', { name: 'Sort descending', exact: true }).click();
+      }
+    }
+    const oldReport = metrics.creates.at(-1)!.id;
+    await surface.getByRole('button', { name: 'Refresh usage', exact: true }).click();
+    await expect.poll(() => metrics.creates.at(-1)!.id).not.toBe(oldReport);
+    await assertPage('allocated_disk_gib_hours', 'desc', false);
+    expect(reads.at(-1)!.pathname).toContain(metrics.creates.at(-1)!.id);
+    expect(reads.every((url) => url.pathname.includes('/admin/') === admin)).toBe(true);
+    expect(boundary.writes).toEqual([]);
+    expect(boundary.errors).toEqual([]);
+    expect(boundary.unexpected).toEqual([]);
+  });
+}
+
+for (const admin of [false, true]) {
   test(`LOCAL allocation coverage follows refresh and filters in ${admin ? 'operations' : 'personal usage'}`, async ({
     page,
     baseURL,

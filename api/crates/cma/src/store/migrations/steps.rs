@@ -1,7 +1,7 @@
 //! The explicit manifest registry is also the migrator's reader floor.
 use super::{
-    activity_indexes, activity_page_index, agent_log_segments, agent_owner_index, binding_indexes,
-    collection_indexes, opening_index, Result,
+    activity_indexes, activity_page_index, agent_log_segments, agent_log_source_keys,
+    agent_owner_index, binding_indexes, collection_indexes, opening_index, Result,
 };
 use mongodb::bson::{doc, Document};
 
@@ -13,17 +13,19 @@ pub(super) enum Step {
     AgentOpening,
     AgentOwnerPage,
     AgentLogSegments,
+    AgentLogSourceKeys,
     BindingIndexes,
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 7] = [
+    pub(super) const ALL: [Self; 8] = [
         Self::Activity,
         Self::ActivityPage,
         Self::LedgerCollection,
         Self::AgentOpening,
         Self::AgentOwnerPage,
         Self::AgentLogSegments,
+        Self::AgentLogSourceKeys,
         Self::BindingIndexes,
     ];
     pub(super) fn parse(id: &str) -> Result<Self> {
@@ -41,6 +43,7 @@ impl Step {
             Self::AgentOpening => opening_index::ID,
             Self::AgentOwnerPage => agent_owner_index::ID,
             Self::AgentLogSegments => agent_log_segments::ID,
+            Self::AgentLogSourceKeys => agent_log_source_keys::ID,
         }
     }
     pub(super) fn checksum(self) -> String {
@@ -52,6 +55,7 @@ impl Step {
             Self::AgentOpening => opening_index::checksum(),
             Self::AgentOwnerPage => agent_owner_index::checksum(),
             Self::AgentLogSegments => agent_log_segments::checksum(),
+            Self::AgentLogSourceKeys => agent_log_source_keys::checksum(),
         }
     }
     pub(super) fn manifest(self) -> String {
@@ -63,7 +67,7 @@ impl Step {
             Self::Activity => 2,
             Self::ActivityPage => 1,
             Self::LedgerCollection => 5,
-            Self::AgentOpening | Self::AgentOwnerPage => 1,
+            Self::AgentOpening | Self::AgentOwnerPage | Self::AgentLogSourceKeys => 1,
             Self::AgentLogSegments => agent_log_segments::MAX_SCHEMA_STEPS,
         }
     }
@@ -74,6 +78,7 @@ impl Step {
             Self::LedgerCollection => &collection_indexes::COLLECTIONS,
             Self::AgentOpening => &opening_index::COLLECTIONS,
             Self::AgentOwnerPage => &["agents"],
+            Self::AgentLogSourceKeys => &["agent_log"],
             Self::AgentLogSegments => crate::store::agent_log_segments::COLLECTIONS,
         }
     }
@@ -85,6 +90,7 @@ impl Step {
             | Self::LedgerCollection
             | Self::AgentOpening
             | Self::AgentOwnerPage
+            | Self::AgentLogSourceKeys
             | Self::BindingIndexes => "created_indexes",
         }
     }
@@ -111,6 +117,11 @@ impl Step {
                 .into_iter()
                 .map(|index| ("agents", index))
                 .collect()),
+            Self::AgentLogSourceKeys => Ok(agent_log_source_keys::inspect(database)
+                .await?
+                .into_iter()
+                .map(|index| ("agent_log", index))
+                .collect()),
             Self::AgentLogSegments => Err("segment migration requires schema-unit inspection"),
         }
     }
@@ -132,6 +143,9 @@ impl Step {
             Self::AgentOpening => opening_index::create(database, collection, index).await,
             Self::AgentOwnerPage if collection == "agents" => {
                 agent_owner_index::create(database, index).await
+            }
+            Self::AgentLogSourceKeys if collection == "agent_log" => {
+                agent_log_source_keys::create(database, index).await
             }
             _ => Err("migration collection mismatch"),
         }

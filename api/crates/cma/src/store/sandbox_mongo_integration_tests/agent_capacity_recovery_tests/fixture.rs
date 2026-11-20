@@ -103,6 +103,7 @@ pub(super) async fn capacity_fixture(store: &MongoSandboxStore) -> Agent {
     );
     let db = store.client.database(&store.agents.namespace().db);
     schema::migrate(&db).await.unwrap();
+    crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;
     let mut session = store.client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
     for name in [

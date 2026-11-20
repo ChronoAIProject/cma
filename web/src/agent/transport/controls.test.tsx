@@ -209,3 +209,42 @@ it('treats a generic conflict on the first JS invocation as uncertain because br
   expect(h.observe).toHaveBeenCalledOnce();
   unmount();
 });
+
+it('deduplicates pending Stop and drops availability when access is suspended', async () => {
+  const h = activeHarness();
+  let release!: (value: Response) => void;
+  const accepted = await h.control('resp_1', {
+    body: JSON.stringify({
+      turn_sequence: 1,
+      expected_agent_revision: 10,
+      command: { type: 'cancel' },
+    }),
+  });
+  h.control.mockClear();
+  h.control.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        release = resolve;
+      }),
+  );
+  const view = renderHook(({ suspended }) => useAgentController(h.client, 'agt_1', { suspended }), {
+    initialProps: { suspended: false },
+  });
+  await waitFor(() => expect(view.result.current.responseControls).toBe('available'));
+  let request!: Promise<void>;
+  act(() => {
+    request = view.result.current.interrupt();
+  });
+  await waitFor(() => expect(h.control).toHaveBeenCalledOnce());
+  await act(() => view.result.current.interrupt());
+  expect(h.control).toHaveBeenCalledOnce();
+  await act(async () => {
+    release(accepted);
+    await request;
+  });
+  view.rerender({ suspended: true });
+  expect(view.result.current.responseControls).toBe('checking-access');
+  await act(() => view.result.current.interrupt());
+  expect(h.control).toHaveBeenCalledOnce();
+  view.unmount();
+});

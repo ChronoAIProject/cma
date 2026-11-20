@@ -58,6 +58,10 @@ pub(super) async fn fixture(suffix: &str) -> (Client, String, MongoSandboxStore,
 // requires the original Created row, so build this retained source through the
 // actual legacy append and worker publication boundaries.
 pub(super) async fn ready_source(store: &MongoSandboxStore, suffix: &str) -> Agent {
+    crate::store::migrations::agent_log_source_keys::prepare_for_test(
+        &store.client.database(&store.agents.namespace().db),
+    )
+    .await;
     let (_, mut worktree, claimed) = claimed_agent_work_fixture(store, suffix).await;
     store
         .append_agent_log(

@@ -430,7 +430,7 @@ it('refuses invalid repository URLs on submit before admission', async () => {
   fireEvent.change(input, { target: { value: 'http://github.com/org/repo' } });
   expect(screen.queryByRole('alert')).not.toBeInTheDocument();
   const button = screen.getByRole('button', { name: 'Create agent' });
-  expect(button).toBeEnabled();
+  await waitFor(() => expect(button).toBeEnabled());
   fireEvent.click(button);
   expect(screen.getByRole('alert')).toHaveTextContent('HTTPS GitHub repository URL');
   expect(input).toHaveFocus();

@@ -9,6 +9,7 @@ async fn repeated_failure_segmented_publication_keeps_head_and_exact_receipt() {
     let mut f = Fixture::new(500).await;
     let db = f.client.database(&f.name);
     schema::migrate(&db).await.unwrap();
+    crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;
     let mut session = f.client.start_session().await.unwrap();
     start_transaction(&mut session).await.unwrap();
     writer_gate::replace(

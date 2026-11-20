@@ -65,6 +65,8 @@ async fn adopted(
         .creation()
         .clone();
     schema::migrate(&client.database(&database)).await.unwrap();
+    crate::store::migrations::agent_log_source_keys::prepare_for_test(&client.database(&database))
+        .await;
     gate(&store, &created.agent.id, 0, true).await;
     append(&store, &created.agent.id, "adopt-before-reuse").await;
     gate(&store, &created.agent.id, 1, false).await;
