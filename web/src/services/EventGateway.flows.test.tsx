@@ -39,6 +39,14 @@ const select = async (name: string) => {
     );
 };
 
+// The fixture owns the responses. Settle them before querying the committed UI.
+async function clickAndSettle(button: HTMLElement) {
+  expect(button).toBeEnabled();
+  await act(async () => {
+    fireEvent.click(button);
+  });
+}
+
 it('retains an uncertain edit while switching channels and retries the original version and request', async () => {
   const alpha = channel('Alpha', 7),
     beta = channel('Beta');
@@ -57,21 +65,37 @@ it('retains an uncertain edit while switching channels and retries the original 
     return json({ items: [saves > 0 ? updated : alpha, beta] });
   });
   vi.stubGlobal('fetch', fetcher);
-  render(<EventGateway session={session} denied={vi.fn()} />);
-  await select('Alpha');
-  fireEvent.change(screen.getByLabelText('Channel name'), { target: { value: 'Renamed Alpha' } });
-  await userEvent.click(screen.getByRole('button', { name: 'Save channel' }));
-  await screen.findByRole('button', { name: 'Retry same request' });
+  vi.stubGlobal('EventSource', undefined);
+  await act(async () => {
+    render(<EventGateway session={session} denied={vi.fn()} />);
+  });
+  const channels = within(screen.getByRole('region', { name: 'Channels' }));
+  const details = (name: string) => within(screen.getByRole('region', { name: `${name} details` }));
+  async function openSettings(name: string) {
+    fireEvent.click(channels.getByRole('button', { name: new RegExp(`^${name}`) }));
+    const map = within(details(name).getByRole('region', { name: 'Delivery map' }));
+    fireEvent.click(await map.findByRole('button', { name: new RegExp(`^Channel: ${name}`) }));
+    return within(screen.getByRole('dialog', { name: 'Channel settings' }));
+  }
+  const alphaSettings = await openSettings('Alpha');
+  fireEvent.change(alphaSettings.getByLabelText('Channel name'), {
+    target: { value: 'Renamed Alpha' },
+  });
+  await clickAndSettle(alphaSettings.getByRole('button', { name: 'Save channel' }));
+  expect(alphaSettings.getByRole('button', { name: 'Retry same request' })).toBeEnabled();
   // The first request may have committed before its response was lost.
   // Refreshing its new version must preserve the original idempotent retry.
-  await userEvent.click(screen.getByRole('button', { name: 'Close' }));
-  await userEvent.click(screen.getByRole('button', { name: 'Refresh channels' }));
-  await screen.findByRole('heading', { name: 'Renamed Alpha' });
-  await select('Beta');
-  expect(screen.queryByRole('button', { name: 'Retry same request' })).not.toBeInTheDocument();
-  await select('Alpha');
-  await userEvent.click(screen.getByRole('button', { name: 'Retry same request' }));
-  await screen.findByRole('heading', { name: 'Renamed Alpha' });
+  fireEvent.click(alphaSettings.getByRole('button', { name: 'Close' }));
+  await clickAndSettle(channels.getByRole('button', { name: 'Refresh channels' }));
+  expect(details('Renamed Alpha').getByRole('heading', { name: 'Renamed Alpha' })).toBeVisible();
+  const betaSettings = await openSettings('Beta');
+  expect(
+    betaSettings.queryByRole('button', { name: 'Retry same request' }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(betaSettings.getByRole('button', { name: 'Close' }));
+  const resumedSettings = await openSettings('Renamed Alpha');
+  await clickAndSettle(resumedSettings.getByRole('button', { name: 'Retry same request' }));
+  expect(details('Renamed Alpha').getByRole('heading', { name: 'Renamed Alpha' })).toBeVisible();
   const requests = fetcher.mock.calls.filter(([, init]) => init?.method === 'PUT');
   expect(requests).toHaveLength(2);
   expect(requests[1]?.[1]?.body).toBe(requests[0]?.[1]?.body);
@@ -80,8 +104,8 @@ it('retains an uncertain edit while switching channels and retries the original 
     expected_version: 7,
     name: 'Renamed Alpha',
   });
-  expect(screen.getByRole('button', { name: 'Save channel' })).toBeEnabled();
-  expect(screen.getByText('Changes saved.')).toBeVisible();
+  expect(resumedSettings.getByRole('button', { name: 'Save channel' })).toBeEnabled();
+  expect(resumedSettings.getByText('Changes saved.')).toBeVisible();
 });
 
 it('retains an uncertain create across navigation and removes a freshly created channel after deletion', async () => {
@@ -107,14 +131,6 @@ it('retains an uncertain create across navigation and removes a freshly created 
     const channels = within(screen.getByRole('region', { name: 'Channels' }));
     fireEvent.click(channels.getByRole('button', { name: /^Existing/ }));
   };
-  // Each mocked response settles in React's async act, so the next assertion
-  // observes the committed UI without pointer timers or polling the workspace.
-  const submit = async (button: HTMLElement) => {
-    expect(button).toBeEnabled();
-    await act(async () => {
-      fireEvent.click(button);
-    });
-  };
   openExisting();
   expect(screen.getByRole('heading', { name: 'Existing' })).toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
@@ -134,13 +150,13 @@ it('retains an uncertain create across navigation and removes a freshly created 
   fireEvent.change(within(form).getByLabelText('Route IDs 1'), {
     target: { value: 'fixture-route' },
   });
-  await submit(within(form).getByRole('button', { name: 'Create channel' }));
+  await clickAndSettle(within(form).getByRole('button', { name: 'Create channel' }));
   expect(screen.getByRole('button', { name: 'Retry same request' })).toBeVisible();
   openExisting();
   expect(form).not.toBeVisible();
   fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
   expect(within(form).getByLabelText('Channel name')).toBeDisabled();
-  await submit(screen.getByRole('button', { name: 'Retry same request' }));
+  await clickAndSettle(screen.getByRole('button', { name: 'Retry same request' }));
   const details = within(screen.getByRole('region', { name: 'Created details' }));
   expect(details.getByRole('heading', { name: 'Created' })).toBeVisible();
   const requests = fetcher.mock.calls.filter(([, init]) => init?.method === 'POST');
@@ -152,7 +168,7 @@ it('retains an uncertain create across navigation and removes a freshly created 
   fireEvent.click(await map.findByRole('button', { name: /Channel: Created/ }));
   const settings = within(screen.getByRole('dialog', { name: 'Channel settings' }));
   fireEvent.click(settings.getByRole('button', { name: 'Delete channel' }));
-  await submit(settings.getByRole('button', { name: 'Confirm delete' }));
+  await clickAndSettle(settings.getByRole('button', { name: 'Confirm delete' }));
   expect(screen.queryByRole('heading', { name: 'Created' })).not.toBeInTheDocument();
   expect(screen.getByRole('region', { name: 'Channel workspace' })).toBeVisible();
   expect(
