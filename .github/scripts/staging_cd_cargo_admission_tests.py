@@ -67,7 +67,7 @@ class Ledger:
 class Admission(unittest.TestCase):
     def setUp(self):
         self.ledger = Ledger()
-        self.api = Inventory(entry(1, "unmanaged", size=7 * GIB + 3 * GIB // 4))
+        self.api = Inventory(entry(1, "unmanaged", size=BUDGET - GIB // 4))
         self.am, self.eg = seed(4, "am").key, seed(6, "eg").key
 
     def reserve(self, keys):
@@ -98,7 +98,7 @@ class Admission(unittest.TestCase):
         self.assertEqual(self.ledger.state.charges, {})
 
     def test_grant_committed_during_census_defers_the_older_writer(self):
-        self.api.rows[1] = entry(1, "external", size=13 * GIB // 2)
+        self.api.rows[1] = entry(1, "external", size=BUDGET - 3 * GIB // 2)
         self.assertEqual(self.reserve([self.am])["grants"], 1)
         am = authority() | {"CD_COMPONENT": "am"}
         eg = authority() | {"CD_COMPONENT": "eg", "GITHUB_RUN_ID": "6"}
@@ -120,8 +120,8 @@ class Admission(unittest.TestCase):
             stable = save_decision(self.api, self.ledger, am, ".", self.am)
         self.assertEqual((changed["allowed"], changed["reason"]), (False, "budget-revision-changed"))
         self.assertEqual((stable["allowed"], stable["reason"]), (False, "repository-headroom"))
-        self.assertEqual(changed["inventory_bytes"], 15 * GIB // 2)
-        self.assertEqual(stable["inventory_bytes"] + stable["outstanding_bytes"], 15 * GIB // 2 + MAX_CHARGE)
+        self.assertEqual(changed["inventory_bytes"], BUDGET - GIB // 2)
+        self.assertEqual(stable["inventory_bytes"] + stable["outstanding_bytes"], BUDGET - GIB // 2 + MAX_CHARGE)
 
     def test_positive_skip_releases_grant_and_both_services_fit_when_space_exists(self):
         self.api.rows[1] = replace(self.api.rows[1], size=GIB)
