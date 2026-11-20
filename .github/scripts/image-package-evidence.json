@@ -1,5 +1,5 @@
 {
-  "scanner_manifest_sha256": "02cc16f799e7a549a60a4c7b2431421b64dbc59bfc8fa4e8d7744c15cdb6e0d6",
+  "scanner_manifest_sha256": "791cef403329aa642586b3d3d937109524b98f87a3b09064c303c4aadbcc0051",
   "schema": "cma-staging-runtime-package-evidence-v2",
   "packages": [
     {"architecture":"all","artifact_sha256":"f62535fc7be1f77e4b12cd1e420b8542b8e895cbb14178926963a41a9232a4fe","authority_sha256":"39914ab78005c91daf7a318eb018842e8c820c58ed511bd19ea4baff5b81261d","authority_type":"pinned-upstream","name":"corepack","version":"0.35.0"},

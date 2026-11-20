@@ -39,7 +39,7 @@ with tempfile.TemporaryDirectory(prefix="detector-fixture-") as temporary:
     shadow = Path(temporary)
     for original in stage.iterdir():
         data = original.read_bytes()
-        if data.startswith(b"published fixture "):
+        if data.startswith((b"published fixture ", b"MIME-Magic\x00\n")):
             data = data.decode("utf-8", "replace").encode("utf-8")
         (shadow / original.name).write_bytes(data)
     result = subprocess.run([binary, action, str(shadow), *arguments[1:]], check=False)

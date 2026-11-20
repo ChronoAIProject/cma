@@ -94,7 +94,7 @@
     {"path": "tests/test_layer_cache.py", "sha256": "01e2d13c300716e376dda0d5b14347827e58378b9a751698b9b34fdbdfee45be", "bytes": 11107, "lines": 211, "mode": "0o644"},
     {"path": "tests/test_layer_cache_gate.py", "sha256": "7d2d3401ef0bf96bcd1182198bc3a23f9f34625ce5c9f9881369ddb1fbe54399", "bytes": 2345, "lines": 51, "mode": "0o644"},
     {"path": "tests/test_library_vectors.py", "sha256": "10247c352b99fc1346ded19a7d97cd6b6d4bc8d7da3240a52ec729212ebb58ab", "bytes": 14348, "lines": 249, "mode": "0o644"},
-    {"path": "tests/test_native_json_key_view.py", "sha256": "7b6471ecca6465e1733cc03c43638ecb97c0a49e96fdf67f422d218b8c5be1bc", "bytes": 19211, "lines": 318, "mode": "0o644"},
+    {"path": "tests/test_native_json_key_view.py", "sha256": "620d9d62c578f6d1a1670eaef1a6c3b9b798ece927efc5a3c6e9a7253a92aae7", "bytes": 19234, "lines": 318, "mode": "0o644"},
     {"path": "tests/test_nested_certificates.py", "sha256": "86886b81b16e715284a97b054b26dd6930c86985851dc181b826378ec52c46cb", "bytes": 13041, "lines": 232, "mode": "0o644"},
     {"path": "tests/test_npm_help_template.py", "sha256": "50a51a882642d42ba28bd1739e62429d8104dafca89551b04ba78d0a384fc16f", "bytes": 5570, "lines": 91, "mode": "0o644"},
     {"path": "tests/test_nyxid_format_labels.py", "sha256": "1725c1710d76f3e9aaccac1e96e6e964ffe29802342e7f3384c7ae9bd60ca878", "bytes": 7179, "lines": 122, "mode": "0o644"},
