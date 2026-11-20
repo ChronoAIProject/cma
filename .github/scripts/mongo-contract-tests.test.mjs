@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFileSync, spawn } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
 import './mongo-contract-completeness.test.mjs';
+import './mongo-contract-registry.test.mjs';
 import { registerSelectionTests } from './mongo-contract-selection-tests.mjs';
 import { registerShardTests } from './mongo-contract-shards.test.mjs';
+import { registerRegistryRunnerTests } from './mongo-contract-registry-runner-tests.mjs';
 
 const scaleTest = 'store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages';
 const ownerTest = 'store::usage_reports::tests::owner_allocation::metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound';
@@ -29,9 +31,10 @@ function fixture(scenario, reuse = false) {
   const scripts = join(root, '.github/scripts');
   mkdirSync(scripts, {recursive: true});
   mkdirSync(join(root, 'api/target/nextest'), {recursive: true});
-  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-partitions.py', 'mongo-contract-schedule.py', 'mongo-contract-timings.json', 'mongo-contract-completeness.py', 'mongo-contract-exceptions.json', 'backend-nextest.sh']) {
+  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-registry.py', 'mongo-contract-partitions.py', 'mongo-contract-schedule.py', 'mongo-contract-timings.json', 'mongo-contract-completeness.py', 'mongo-contract-exceptions.json', 'backend-nextest.sh']) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
+  cpSync(new URL('mongo-contract-suites', import.meta.url), join(scripts, 'mongo-contract-suites'), {recursive: true});
   const metadata = join(root, 'api/target/nextest');
   writeFileSync(join(metadata, 'cargo-metadata.json'), JSON.stringify({workspace_root: join(root, 'api'), target_directory: join(root, 'api/target')}));
   writeFileSync(join(metadata, 'binaries-metadata.json'), JSON.stringify({'rust-build-meta': {'target-directory': join(root, 'api/target')}}));
@@ -209,6 +212,8 @@ if (command === 'cargo') {
     close: () => rmSync(directory, { recursive: true }),
   };
 }
+
+registerRegistryRunnerTests({fixture, requiredPrefixes});
 
 for (const reuse of [false, true]) {
   const mode = reuse ? 'archive' : 'source';
