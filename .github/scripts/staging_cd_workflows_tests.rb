@@ -248,15 +248,16 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal '${{ runner.temp }}/public-admission/admission.json', evidence['with']['path']
   end
 
-  def test_proven_am_takeover_skips_finalize_and_reaches_the_component_report
+  def test_proven_takeover_in_any_lane_skips_finalize_and_reaches_the_component_report
     release = workflow('staging-release')
     assert_equal '${{ steps.publication.outputs.disposition }}', release.dig('jobs', 'publish', 'outputs', 'disposition')
     trigger = release['on'] || release.fetch(true)
     assert_equal '${{ jobs.publish.outputs.disposition }}', trigger.dig('workflow_call', 'outputs', 'disposition', 'value')
     assert_includes release.dig('jobs', 'finalize', 'if'), "needs.publish.outputs.disposition != 'reservation_superseded'"
     report = workflow('staging-cd').dig('jobs', 'recheck', 'steps').last.fetch('env')
-    assert_equal '${{ needs.release_am.outputs.disposition }}', report['CD_AM_DISPOSITION']
-    %w[am runtime runtime_omarchy].each do |key|
+    refute report.key?('CD_AM_DISPOSITION')
+    %w[web am eg runtime runtime_omarchy].each do |key|
+      assert_equal "${{ needs.release_#{key}.outputs.disposition }}", report["CD_DISPOSITION_#{key.upcase}"]
       assert_equal "${{ needs.release_#{key}.outputs.finalized }}", report["CD_FINALIZED_#{key.upcase}"]
     end
   end
