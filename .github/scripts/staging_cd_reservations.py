@@ -163,21 +163,6 @@ class Reservations:
                     for item in candidates), "Publication reservation is superseded and burned")
         return True
 
-    def check_build_owner(self, value):
-        from staging_cd_watermark import SupersededVersions, require_version_refs
-
-        expected = {value["component"]: (pending_name(value), value["version"])}
-        try:
-            require_version_refs(expected, runner=self.api.runner)
-        except SupersededVersions:
-            # The inexpensive ref advertisement is a hint. Only the normal
-            # annotated reservation/receipt and ancestry checks prove takeover.
-            self.require_current(value)
-            try:
-                require_version_refs(expected, runner=self.api.runner)
-            except SupersededVersions:
-                raise Refusal("Higher component version lacks verified reservation ownership") from None
-
     def remove_after_publication(self, receipt, expected_oid):
         self.mark("cleanup_verify")
         component = receipt["identity"]["component"]

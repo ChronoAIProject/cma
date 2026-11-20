@@ -196,15 +196,8 @@ def main():
                         with timings.stage("build"):
                             progress: dict = {}
                             build_metrics.append(progress)
-                            guard = {}
-                            if reservation["component"] == "am":
-                                def check_owner(probe):
-                                    credential = env.get("GH_TOKEN")
-                                    lookup = GitHub(credential, runner=probe)
-                                    Reservations(lookup, credential, root).check_build_owner(reservation)
-                                guard["check_owner"] = check_owner
                             archive, release = build(root, reservation, directory, source=source, cache=cache,
-                                                     progress=progress, **guard)
+                                                     progress=progress)
                     require(release["component"] == reservation["component"], "Built release component differs")
                     try:
                         receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
