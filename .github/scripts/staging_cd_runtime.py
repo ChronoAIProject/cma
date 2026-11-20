@@ -10,6 +10,8 @@ from ci_outcome import error_site, field, report
 from staging_cd_common import Refusal
 
 SKIPPED = object()
+# Failure kinds, explained by the "step" catalogue family.
+KINDS = frozenset({"refused", "timeout", "os-error", "error", "declined"})
 
 
 def mask_tree(value, emit):

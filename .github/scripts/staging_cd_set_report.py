@@ -1,9 +1,14 @@
 """A skipped or superseded deployment job is never deployment acceptance."""
 import os
 
+from ci_outcome import error_site, report
 from staging_cd_component_admission import validate_failures
 from staging_cd_receipts import canonical
 from staging_cd_set import document, validate_set
+
+# Run-level failures, explained by the release-outcome catalogue family.
+OUTCOMES = frozenset({"evidence-invalid", "deployment-not-accepted", "publication-failed"})
+SUBJECT = "redeploy-outcome"
 
 
 def main():
@@ -17,8 +22,9 @@ def main():
         allowed = {None, "", "success", "failure", "cancelled", "skipped"}
         if any(state not in allowed for state in (admission, deploy, publication)):
             raise ValueError("Invalid job conclusion")
-    except (ValueError, TypeError, KeyError):
+    except (ValueError, TypeError, KeyError) as error:
         print("::error::Component outcome evidence is invalid; no deployment acceptance is claimed.")
+        report("release-outcome", "evidence-invalid", subject=SUBJECT, site=error_site(error))
         return 1
     print("CD_RESULT " + canonical({"schema": "cma-component-run-result-v1",
           "publication_result": publication or "unknown", "admission_result": admission or "unknown",
@@ -30,15 +36,18 @@ def main():
     elif admission == "skipped" and deploy == "skipped":
         message, code = "SKIP: no coordinated deployment attempted", 0
     else:
-        message, code = "FAIL: deployment not accepted; reconcile failed or superseded admission", 1
-    lines = [f"FAIL component={component} reason={reason}" for component, reason in sorted(failures.items())]
+        message, code, outcome = "FAIL: deployment not accepted; reconcile failed or superseded admission", 1, \
+            "deployment-not-accepted"
     if failures or publication in ("failure", "cancelled"):
-        message, code = "FAIL: publication or qualification failed for one or more components; consult admitted deployment outcome", 1
-    for line in lines:
-        print(line)
+        message, code, outcome = "FAIL: publication or qualification failed for one or more components; consult admitted deployment outcome", 1, \
+            "publication-failed"
+    # Each component line keeps its format and gains its cause and next step.
+    lines = [report("admission", reason, subject=SUBJECT, component=component)
+             for component, reason in sorted(failures.items())]
     print(message)
     if code:
         print("::error::One or more release outcomes failed. Maintainer reconciliation is required.")
+        report("release-outcome", outcome, subject=SUBJECT)
     if os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
             stream.write("\n".join([*lines, message]) + "\n")

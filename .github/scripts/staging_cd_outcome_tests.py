@@ -23,6 +23,7 @@ def vocabularies():
     """Map each catalogue family to the exact codes its producers can emit."""
     import staging_cd_allocate as allocate
     import staging_cd_build_cache as build_cache
+    import staging_cd_clock as clock
     import staging_cd_component_admission as admission
     import staging_cd_component_report as component_report
     import staging_cd_deploy_result as deploy_result
@@ -30,6 +31,8 @@ def vocabularies():
     import staging_cd_invoke as invoke
     import staging_cd_publication_diagnostics as publication
     import staging_cd_refusal as refusal
+    import staging_cd_runtime as runtime
+    import staging_cd_set_report as set_report
 
     withheld = {reason for _, reason in build_cache.WITHHELD_REASONS}
     withheld |= {build_cache.withheld_reason(subprocess.SubprocessError()), build_cache.withheld_reason(OSError())}
@@ -46,6 +49,10 @@ def vocabularies():
         "admission": set(admission.REASONS),
         "cache-withheld": withheld,
         "component-report": set(component_report.CODES),
+        "deploy-clock": {clock.ADMISSION_FAILURE},
+        "component-result": {deploy_result.INVALID_EVIDENCE},
+        "release-outcome": set(set_report.OUTCOMES),
+        "step": set(runtime.KINDS),
     }
 
 
@@ -80,6 +87,8 @@ def legacy(text):
 
 class CatalogueTests(unittest.TestCase):
     def test_every_code_of_every_vocabulary_has_an_entry(self):
+        owned = {family for family, spec in FAMILIES.items() if "codes" in spec}
+        self.assertEqual(set(vocabularies()), owned, "every catalogue family needs a producing vocabulary")
         for family, expected in vocabularies().items():
             with self.subTest(family=family):
                 missing = expected - codes(family).keys()
@@ -350,6 +359,62 @@ class DiagnosticReportTests(unittest.TestCase):
             lambda _masker: allocation.allocate_queue({"head": PRIVATE}, None, None, 1, 1)))
         self.assertEqual(line, f"FAIL allocation QUEUE_INVALID at=staging_cd_allocate.py:{line_of} cause=unknown")
         self.assertIn("title=allocation%3A Release queue invalid", annotation)
+
+
+class FixedCodeReportTests(unittest.TestCase):
+    """Fixed deployment codes keep their lines and gain a check, cause and next step."""
+
+    def run_main(self, main, env):
+        with tempfile.TemporaryDirectory() as directory:
+            summary = Path(directory) / "summary"
+            output = io.StringIO()
+            with unittest.mock.patch.dict("os.environ", dict(env, GITHUB_STEP_SUMMARY=str(summary)), clear=True), \
+                    contextlib.redirect_stdout(output):
+                code = main()
+            text = output.getvalue()
+            self.assertNotIn(PRIVATE, text + (summary.read_text() if summary.exists() else ""))
+            return code, text, summary.read_text() if summary.exists() else ""
+
+    def test_expired_admission_names_the_bound_that_refused(self):
+        import staging_cd_clock as clock
+        source = Path(clock.__file__).read_text().splitlines()
+        line = next(n for n, text in enumerate(source, 1) if '"Deployment admission timestamp is malformed")' in text) - 1
+        code, text, summary = self.run_main(clock.main, {"CD_STARTED_AT": PRIVATE})
+        self.assertEqual(code, 30)
+        self.assertEqual(legacy(text), "FAIL: deployment not admitted; invalid or expired admission time\n")
+        self.assertTrue(text.startswith("FAIL: deployment not admitted; invalid or expired admission time"
+                                        f" at=staging_cd_clock.py:{line} cause=transient\n"))
+        self.assertIn("What changed: Nothing.", text)
+        self.assertIn("| deploy-admission | admission-time:", summary)
+
+    def test_invalid_component_result_names_its_check(self):
+        import staging_cd_deploy_result as deploy_result
+        code, text, _ = self.run_main(deploy_result.main, {"CD_COMPONENT_RESULT": PRIVATE})
+        self.assertEqual(code, 1)
+        self.assertEqual(legacy(text), "FAIL component-result reason=invalid-public-evidence\n")
+        self.assertRegex(text.splitlines()[0], r" at=staging_cd_\w+\.py:\d+ cause=unknown\Z")
+
+    def test_redeploy_outcome_explains_each_component_and_the_run(self):
+        import staging_cd_set_report as set_report
+        env = {"CD_ADMISSION_JOB_RESULT": "success", "CD_DEPLOY_JOB_RESULT": "skipped", "CD_SET_EXPECTED": "true",
+               "CD_PUBLICATION_JOB_RESULT": "failure",
+               "CD_COMPONENT_FAILURES": '{"runtime":"publication-unqualified","web":"superseded-source"}'}
+        code, text, summary = self.run_main(set_report.main, env)
+        self.assertEqual(code, 1)
+        lines = [line for line in legacy(text).splitlines() if not line.startswith("CD_RESULT ")]
+        self.assertEqual(lines, [
+            "FAIL component=runtime reason=publication-unqualified",
+            "FAIL component=web reason=superseded-source",
+            "FAIL: publication or qualification failed for one or more components; consult admitted deployment outcome",
+            "::error::One or more release outcomes failed. Maintainer reconciliation is required.",
+            "FAIL release-outcome reason=publication-failed"])
+        self.assertIn("FAIL component=web reason=superseded-source cause=transient", text)
+        self.assertEqual(summary.count("| redeploy-outcome |"), 3)
+        code, text, _ = self.run_main(set_report.main, dict(env, CD_COMPONENT_FAILURES=PRIVATE))
+        self.assertEqual(code, 1)
+        self.assertEqual(legacy(text).splitlines(), [
+            "::error::Component outcome evidence is invalid; no deployment acceptance is claimed.",
+            "FAIL release-outcome reason=evidence-invalid"])
 
 
 class RefusalSiteTests(unittest.TestCase):
