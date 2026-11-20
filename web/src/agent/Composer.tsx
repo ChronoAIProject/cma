@@ -293,6 +293,8 @@ export function Composer({
         editorRef={editorRef}
         inputRef={inputRef}
         content={content}
+        hasAttachments={attachments.items.length > 0}
+        restoreDisabled={!usable || inputBlocked || submitting || requestPending}
         onChange={(text) => {
           editVersion.current += 1;
           setCommandError(undefined);
