@@ -19,7 +19,9 @@ from tests import test_key_marker_view as key_tests
 from tests import test_package_policy as packages
 
 PATH = elf_nul_key_view.PATHS["libssh2"]
+QT_PATH = elf_nul_key_view.PATHS["qt6-base"]
 MIDDLE = b"parser recognizes published header declarations " + b"." * 65
+LABELS = (b"-----END " + b"PUBLIC KEY-----", b"-----END RSA " + b"PRIVATE KEY-----")
 OFFSET = 256
 
 
@@ -39,13 +41,14 @@ class ElfNulKeyViewTests(unittest.TestCase):
     manifest = packages.PackageTests.manifest
     publish = derived_tests.DerivedPayloadTests.publish
 
-    def fixture(self, *, gap=b"\0\0", writable=False, duplicate=False, middle=MIDDLE, extra=b""):
-        declarations = (key_tests.BEGIN, middle, key_tests.END)
+    def fixture(self, *, gap=b"\0\0", writable=False, duplicate=False, middle=MIDDLE, extra=b"", inner=None,
+                path=PATH, package="libssh2"):
+        declarations = (key_tests.BEGIN, *(inner or (middle,)), key_tests.END)
         body = gap.join(declarations)
         alternate = b"\0" + (b"\x03" * len(gap)).join(declarations) if duplicate else b""
         contents = elf(body + alternate + extra, writable=writable)
-        supplied = fixtures.tar_bytes([(PATH, contents)])
-        layer = fixtures.tar_bytes([(PATH, contents), ("etc/machine-id", b""),
+        supplied = fixtures.tar_bytes([(path, contents)])
+        layer = fixtures.tar_bytes([(path, contents), ("etc/machine-id", b""),
                                     ("var/lib/dbus/machine-id", (tarfile.SYMTYPE, "/etc/machine-id"))])
         archive = self.root / "ssh-view.tar"
         fixtures.oci_archive(archive, [layer])
@@ -56,8 +59,8 @@ class ElfNulKeyViewTests(unittest.TestCase):
         detector = body.translate(TEXT_BYTES)
         leak = next(row for row in raw["blocking_findings"] if row["rule"] == KEY_MARKER_VIEW_RULE
                     and row["candidate_sha256"] == digest_bytes(detector))
-        manifest = self.manifest(supplied, layer, component=scope, file=PATH)
-        manifest["packages"][0].update(name="libssh2", authority_type="arch-signature", architecture="x86_64")
+        manifest = self.manifest(supplied, layer, component=scope, file=path)
+        manifest["packages"][0].update(name=package, authority_type="arch-signature", architecture="x86_64")
         [row] = manifest["entries"]
         source = {"path": "src/public-format-labels.c", "line": 1, "sha256": digest_bytes(body)}
         parts = []
@@ -171,6 +174,80 @@ class ElfNulKeyViewTests(unittest.TestCase):
         self.assertIn("content.binary-private-key", {row["rule"] for row in refused["blocking_findings"]})
         self.assertNotIn(KEY_MARKER_VIEW_ADVISORY,
                          {row["classification"] for row in refused["package_evidence"]["entries"]})
+
+    def qt_labels(self, **options):
+        archive, manifest, raw = self.fixture(inner=options.pop("inner", LABELS), path=QT_PATH, package="qt6-base",
+                                              **options)
+        [row] = manifest["entries"]
+        row["elf_nul_key_view"]["middle_labels"] = elf_nul_key_view.LABELS
+        [claim] = row["elf_nul_key_view"]["matches"]
+        parts = claim["declarations"]
+        spec = {"artifact_sha256": row["package_sha256"], "file_sha256": row["file_sha256"],
+                "source": parts[0]["source"], "source_sha256": parts[0]["proof_sha256"],
+                "lines": tuple(part["line"] for part in parts), "version": manifest["packages"][0]["version"],
+                "offset": OFFSET, "size": claim["original"]["size"]}
+        return archive, manifest, raw, spec
+
+    def test_qt_network_label_table_requires_the_pinned_member_and_published_labels(self):
+        archive, manifest, raw, spec = self.qt_labels()
+        unreviewed = copy.deepcopy(manifest)
+        del unreviewed["entries"][0]["elf_nul_key_view"]["middle_labels"]
+        self.assertIsNone(key_tests.KeyMarkerViewTests.refused(
+            self, archive, unreviewed, "qt-unreviewed", classification="content_refused"))
+        self.assertIsNone(key_tests.KeyMarkerViewTests.refused(
+            self, archive, manifest, "qt-unpinned", classification="content_refused"))
+        with patch.multiple(elf_nul_key_view, QT6_NETWORK_LABELS=spec):
+            clean = self.publish(archive, manifest, "qt-labels")
+            self.assertEqual(clean["findings"], raw["findings"])
+            self.assertEqual(clean["blocking_findings"], [])
+            [row] = [item for item in clean["package_evidence"]["entries"]
+                     if item["classification"] == KEY_MARKER_VIEW_ADVISORY]
+            self.assertEqual(row["elf_nul_key_view"]["middle_labels"], elf_nul_key_view.LABELS)
+            changes = {
+                "different-member": lambda value: value["entries"][0].update(path=QT_PATH + ".other"),
+                "different-version": lambda value: value["packages"][0].update(version="6.12.0-4"),
+                "different-package": lambda value: value["packages"][0].update(name="libssh2"),
+                "reordered-lines": lambda value: value["entries"][0]["elf_nul_key_view"]["matches"][0][
+                    "declarations"][1].update(line=spec["lines"][2]),
+                "different-source": lambda value: value["entries"][0]["elf_nul_key_view"]["matches"][0][
+                    "declarations"][2].update(source="src/network/ssl/other.cpp"),
+                "missing-declaration": lambda value: value["entries"][0]["elf_nul_key_view"]["matches"][0][
+                    "declarations"].pop(1),
+                "diagnostic-flag": lambda value: value["entries"][0]["elf_nul_key_view"].update(
+                    middle_diagnostic=elf_nul_key_view.DIAGNOSTIC),
+            }
+            for name, change in changes.items():
+                with self.subTest(name=name):
+                    altered = copy.deepcopy(manifest)
+                    change(altered)
+                    self.assertIsNone(key_tests.KeyMarkerViewTests.refused(
+                        self, archive, altered, name, classification="content_refused"))
+        for name, options in (("unlabelled-inner", {"inner": (LABELS[0], b"QTLSBACKENDPUBLICLABELTABLEROW")}),
+                              ("different-separator", {"gap": b"\0\x03"})):
+            with self.subTest(name=name):
+                changed_archive, changed, changed_raw, changed_spec = self.qt_labels(**options)
+                with patch.multiple(elf_nul_key_view, QT6_NETWORK_LABELS=changed_spec):
+                    refused = self.publish(changed_archive, changed, name, blocks=True)
+                self.assertEqual(refused["findings"], changed_raw["findings"])
+                self.assertIn(KEY_MARKER_VIEW_RULE, {item["rule"] for item in refused["blocking_findings"]})
+
+    def test_qt_network_labels_keep_independent_key_material_blocking(self):
+        generated = subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                                    "-outform", "DER"], capture_output=True, check=True, timeout=10).stdout
+        archive, manifest, raw, spec = self.qt_labels(extra=generated)
+        with patch.multiple(elf_nul_key_view, QT6_NETWORK_LABELS=spec):
+            refused = self.publish(archive, manifest, "qt-independent-key", blocks=True)
+        self.assertEqual(refused["findings"], raw["findings"])
+        self.assertIn("content.binary-private-key", {row["rule"] for row in refused["blocking_findings"]})
+        self.assertNotIn(KEY_MARKER_VIEW_ADVISORY,
+                         {row["classification"] for row in refused["package_evidence"]["entries"]})
+
+    def test_ssh_views_refuse_the_qt_label_flag(self):
+        _, manifest, _ = self.fixture()
+        archive = self.root / "ssh-view.tar"
+        manifest["entries"][0]["elf_nul_key_view"]["middle_labels"] = elf_nul_key_view.LABELS
+        self.assertIsNone(key_tests.KeyMarkerViewTests.refused(
+            self, archive, manifest, "ssh-label-flag", classification="content_refused"))
 
     def portable(self):
         _, manifest, _ = self.fixture()
