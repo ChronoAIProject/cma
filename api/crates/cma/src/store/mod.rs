@@ -2,6 +2,7 @@
 mod admission_capacity;
 mod admission_checks;
 
+pub(crate) mod account_deletions;
 pub mod activity;
 pub(crate) mod admission_ceilings;
 pub(crate) mod admission_control;
@@ -141,7 +142,7 @@ mod retained_reopen;
 pub(crate) mod retirement_archive;
 mod sandbox_admission;
 #[cfg(test)]
-mod sandbox_admission_mongo_integration_tests;
+pub(crate) mod sandbox_admission_mongo_integration_tests;
 pub(crate) mod sandbox_billing;
 pub(crate) mod sandbox_colors;
 mod sandbox_controls;

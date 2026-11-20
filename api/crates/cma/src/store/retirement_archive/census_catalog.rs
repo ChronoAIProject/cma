@@ -13,6 +13,8 @@ pub(super) enum Policy {
 }
 use Policy::*;
 pub(super) const AUDIT: &[(&str, Policy)] = &[
+    ("account_deletions", Independent),
+    ("account_deletion_events", Independent),
     ("model_budget_reservations", Budget),
     ("sandbox_metric_bindings", Sandbox(&["sandbox_id"])),
     ("sandbox_metric_rollups", Sandbox(&["sandbox_id"])),
