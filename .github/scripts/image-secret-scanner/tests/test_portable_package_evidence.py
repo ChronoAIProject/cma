@@ -150,5 +150,10 @@ class PortablePackageTests(unittest.TestCase):
                 (packages.SOURCE, packages.PUBLIC_SOURCE), *MACHINE_IDENTITY])])
             evidence = pinned, digest_bytes(pinned), packages.REVIEW
             with patch.object(gate, "load_package_evidence", return_value=evidence):
-                with self.assertRaisesRegex(gate.ScanRefusal, "remains blocking"):
-                    gate.verified_staging_scan(archive, self.root / "wrong-scope", component="runtime-omarchy")
+                output = self.root / "wrong-scope"
+                with self.assertRaises(gate.ScanRefusal) as refused:
+                    gate.verified_staging_scan(archive, output, component="runtime-omarchy")
+            self.assertEqual(refused.exception.outcome, "content_refused")
+            report = json.loads((output / "REPORT.json").read_bytes())
+            self.assertEqual(report["counts"]["blocking"], 1)
+            self.assertNotIn("package_evidence", report)
