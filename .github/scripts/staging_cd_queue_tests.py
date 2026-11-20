@@ -1,12 +1,16 @@
 """An unreserved displaced source has no version to burn."""
 import json
+import os
+import tempfile
 import unittest
-from unittest.mock import Mock
+from pathlib import Path
+from unittest.mock import Mock, patch
 
 from staging_cd_allocate import allocate_queue, run_active
 from staging_cd_common import Refusal
 from staging_cd_history import DevelopHistory
 from staging_cd_queue import first_parent, reconcile
+import staging_cd_recheck
 from staging_cd_recheck import recheck
 from staging_cd_receipts_tests import fixture_receipt, fixture_tag
 from staging_cd_reservations import next_reservation
@@ -19,16 +23,29 @@ class QueueTests(unittest.TestCase):
         api = Mock()
         reference = {"ref": "refs/heads/develop", "object": {"type": "commit", "sha": THIRD}}
         api.request.return_value = reference
-        self.assertTrue(recheck(THIRD, api))
+        # At the develop head no newer run exists; behind it, a covering newer run does.
+        self.assertIs(recheck(THIRD, api), False)
         run = {"head_sha": THIRD, "event": "push", "head_branch": "develop",
                "path": ".github/workflows/staging-cd.yml", "status": "in_progress"}
         for updates in ({}, {"status": "completed", "conclusion": "success"}):
             api.request.side_effect = [reference, {"workflow_runs": [dict(run, **updates)]}]
-            self.assertTrue(recheck(SECOND, api))
+            self.assertIs(recheck(SECOND, api), True)
         for runs in ([], [dict(run, status="completed", conclusion="failure")], [dict(run, head_sha=FIRST)]):
             api.request.side_effect = [reference, {"workflow_runs": runs}]
             with self.assertRaises(Refusal):
                 recheck(SECOND, api)
+
+    def test_recheck_reports_whether_develop_advanced_for_the_component_report(self):
+        for advanced, expected in ((False, "false"), (True, "true")):
+            with self.subTest(advanced=advanced), tempfile.TemporaryDirectory() as directory:
+                output = Path(directory, "output")
+                env = {"CD_QUEUE": json.dumps({"head": THIRD}), "GH_TOKEN": "fixture", "GITHUB_OUTPUT": str(output)}
+                with patch.dict(os.environ, env, clear=True), \
+                        patch.object(staging_cd_recheck, "event_identity"), \
+                        patch.object(staging_cd_recheck, "recheck", return_value=advanced), \
+                        patch.object(staging_cd_recheck, "GitHub"), patch("sys.stdout"):
+                    self.assertEqual(staging_cd_recheck.main(), 0)
+                self.assertEqual(output.read_text(), f"advanced={expected}\n")
 
     def queue(self):
         return {"head": THIRD, "event_source": THIRD, "changes": [

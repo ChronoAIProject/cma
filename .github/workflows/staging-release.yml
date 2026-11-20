@@ -148,7 +148,7 @@ jobs:
   finalize:
     name: Finalize
     needs: publish
-    if: always() && needs.publish.outputs.artifact != '' && needs.publish.outputs.disposition != 'reservation_superseded'
+    if: always() && needs.publish.outputs.artifact != '' && needs.publish.outputs.disposition == ''
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:

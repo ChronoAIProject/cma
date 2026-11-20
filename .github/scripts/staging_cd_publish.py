@@ -15,7 +15,7 @@ from staging_cd_release_tags import local_tag_reader
 from staging_cd_resolve import output as step_output
 from staging_cd_receipts import canonical, published_receipt, validate_receipt
 from staging_cd_registry import Registry
-from staging_cd_reservations import Reservations, validate_reservation
+from staging_cd_reservations import Reservations, SourceAlreadyFinal, validate_reservation
 from staging_cd_publication_diagnostics import PublicationDiagnostics, run_publication
 from staging_cd_versions import DEPLOYABLES
 from staging_cd_timing import Timings
@@ -163,6 +163,7 @@ def main():
     timings = Timings()
     build_metrics = []
     cache_metrics = []
+    skip = {"disposition": "reservation_superseded"}
     def operation(_masker, diagnostics):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Image publication only accepts develop pushes")
@@ -184,7 +185,13 @@ def main():
                 reservation = value
                 reservations = Reservations(api, env.get("GH_TOKEN"), root)
                 # A queued older reservation yields here, before any build work.
-                reservations.require_current(reservation, build_started=False)
+                try:
+                    reservations.require_current(reservation, build_started=False)
+                except SourceAlreadyFinal:
+                    # An older run published this source, so no newer run deploys it;
+                    # the report decides from the develop head whether that is handled.
+                    skip["disposition"] = "source_already_final"
+                    raise
                 with tempfile.TemporaryDirectory(prefix="cma-publication-", dir=env["RUNNER_TEMP"]) as temp:
                     directory = Path(temp)
                     source = directory / "source"
@@ -248,7 +255,7 @@ def main():
         return True
     def superseded():
         require(env.get("CD_COMPONENT") in DEPLOYABLES, "Unexpected superseded component")
-        step_output(env, "disposition", "reservation_superseded")
+        step_output(env, "disposition", skip["disposition"])
 
     result = run_publication(operation, on_superseded=superseded)
     # run_private has restored the public descriptors; only fixed stage records

@@ -145,7 +145,9 @@ class SupersededPublicationTests(unittest.TestCase):
                 self.assertNotIn("FAIL", log)
                 if boundary == "before-build":
                     self.assertIn("SKIP publication stage=validate reason=reservation_superseded", log)
-                    self.assertEqual(output.read_text(), "disposition=reservation_superseded\n")
+                    # An older run's same-source final is named apart: no newer run deploys it.
+                    disposition = "source_already_final" if successor == "peer" else "reservation_superseded"
+                    self.assertEqual(output.read_text(), f"disposition={disposition}\n")
                     self.assertFalse(receipt.exists())
                 else:
                     self.assertNotIn("SKIP", log)

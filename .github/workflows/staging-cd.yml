@@ -378,6 +378,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Verify newer merges have a reconciliation run
+        id: recheck
         env:
           GH_TOKEN: ${{ github.token }}
           CD_QUEUE: ${{ needs.plan.outputs.queue }}
@@ -390,6 +391,7 @@ jobs:
           CD_ALLOCATION_RESULT: ${{ needs.allocate.result }}
           CD_INFRASTRUCTURE_RESULT: ${{ needs.infrastructure.result }}
           CD_LANES: ${{ needs.allocate.outputs.lanes }}
+          CD_DEVELOP_ADVANCED: ${{ steps.recheck.outputs.advanced }}
           CD_PUBLISH_WEB: ${{ needs.release_web.result }}
           CD_PUBLISH_AM: ${{ needs.release_am.result }}
           CD_PUBLISH_EG: ${{ needs.release_eg.result }}

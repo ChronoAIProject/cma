@@ -10,6 +10,10 @@ from staging_cd_set import document
 from staging_cd_targets import TARGETS
 
 CONCLUSIONS = {"success", "failure", "skipped", "cancelled"}
+# A newer reservation's skip is always handled: that newer run deploys. When an
+# older run finalized the same source first, no newer run owns the deployment,
+# so the skip is handled only once develop has advanced past this run.
+DISPOSITIONS = frozenset({"reservation_superseded", "source_already_final"})
 
 
 def outcome(value):
@@ -32,14 +36,15 @@ def summarize(env):
     if not lanes:
         return ["Allocation returned no component work."], True
 
-    superseded = set()
+    superseded = {}
     for c in sorted(TARGETS):
         disposition = env.get("CD_DISPOSITION_" + c.upper().replace("-", "_"), "")
-        require(disposition in ("", "reservation_superseded"), "Unknown publication disposition")
+        require(disposition == "" or disposition in DISPOSITIONS, "Unknown publication disposition")
         if disposition:
             require(c in lanes and not env.get("CD_FINALIZED_" + c.upper().replace("-", "_")),
                     "Superseded publication conflicts with finalization evidence")
-            superseded.add(c)
+            superseded[c] = disposition
+    advanced = env.get("CD_DEVELOP_ADVANCED") == "true"
     passed = env["CD_INFRASTRUCTURE_RESULT"] == "success"
     lines = ["| Component | Publish + finalize | Admit | Deploy job | Controller outcome |",
              "|---|---|---|---|---|"]
@@ -59,7 +64,7 @@ def summarize(env):
         payload = document(outputs["component_result"]) if outputs.get("component_result") else None
         states = payload["components"] if payload is not None else {}
         require(isinstance(states, dict) and states.keys() <= set(admitted), "Unexpected controller outcome")
-        if superseded & selected:
+        if superseded.keys() & selected:
             # A contract cannot promote partially. Check the other selected
             # publishers independently so supersession cannot conceal a failure.
             passed &= job["result"] == "skipped" and not any(outputs.values())
@@ -68,7 +73,7 @@ def summarize(env):
                 result = outcome(env["CD_PUBLISH_" + suffix])
                 passed &= result == "success"
                 if c in superseded and result == "success":
-                    result = "reservation_superseded"
+                    result = superseded[c]
                 elif c not in superseded:
                     passed &= env.get("CD_FINALIZED_" + suffix) == "success"
                 lines.append(f"| {c} | {result} | {missing} | {missing} | unreported |")
@@ -85,8 +90,13 @@ def summarize(env):
             passed &= (publish in ("success", "retained") and job["result"] == "success"
                        and outputs.get("admit") == "success" and c in admitted and deploy == "success"
                        and state == "controller-verified")
-    for c in sorted(superseded):
-        lines.append(f"{c} publication skipped: reservation_superseded. This run has no verified {c} release.")
+    for c, disposition in sorted(superseded.items()):
+        lines.append(f"{c} publication skipped: {disposition}. This run has no verified {c} release.")
+        if disposition == "source_already_final" and not advanced:
+            # This run is the develop head, so its contract group stays undeployed.
+            lines.append(f"{c}: an older run finalized this source. The next push resumes this group's "
+                         "final; re-run or push to deploy.")
+            passed = False
     if superseded and passed:
         return lines, None
     return lines, passed

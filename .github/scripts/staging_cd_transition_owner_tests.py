@@ -15,7 +15,7 @@ from staging_cd_compatibility import GROUP
 from staging_cd_history import DevelopHistory
 from staging_cd_receipts import annotation
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt
-from staging_cd_reservations import ReservationSuperseded, Reservations, outcome_ref, pending_name
+from staging_cd_reservations import ReservationSuperseded, Reservations, SourceAlreadyFinal, outcome_ref, pending_name
 from staging_cd_versions import DEPLOYABLES
 
 
@@ -137,7 +137,7 @@ class TransitionOwnerTests(unittest.TestCase):
                     finals[key] = self.finalize(old)
                     # The source is published: the claim yields before building, and the
                     # ownership precheck skips its restores. A started build would fail instead.
-                    with self.assertRaises(ReservationSuperseded):
+                    with self.assertRaises(SourceAlreadyFinal):
                         publisher.require_current(new, build_started=False)
                     self.assertFalse(self.owned(successor[key]))
                     with self.assertRaisesRegex(Refusal, "different immutable release") as error:

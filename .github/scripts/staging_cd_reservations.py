@@ -22,6 +22,10 @@ class ReservationSuperseded(Refusal):
         super().__init__("Publication reservation is superseded and burned")
 
 
+class SourceAlreadyFinal(ReservationSuperseded):
+    """An older run finalized this exact source first, so no newer run owns its deployment."""
+
+
 def validate_reservation(value):
     require(isinstance(value, dict) and set(value) == FIELDS and value["schema"] == "cma-version-reservation-v1",
             "Version reservation is malformed")
@@ -178,7 +182,7 @@ class Reservations:
         # it yields before building. After its build starts it still fails.
         if any(tag["receipt"]["source"] == value["source"] for tag in finals):
             if not build_started:
-                raise ReservationSuperseded()
+                raise SourceAlreadyFinal()
             raise Refusal("This merge already has a different immutable release")
         return True
 

@@ -89,6 +89,30 @@ class ComponentReportTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     summarize(dict(env, **{"CD_FINALIZED_" + suffix: "success"}))
 
+    def test_same_source_skip_is_handled_only_when_a_newer_run_will_deploy(self):
+        lanes = {"am": "contract", "runtime": "contract", "runtime-omarchy": "contract", "web": "web"}
+        for c in sorted(GROUP):
+            for advanced, handled in (("true", True), ("false", False), (None, False)):
+                with self.subTest(component=c, advanced=advanced):
+                    suffix = c.upper().replace("-", "_")
+                    env = dict(self.lanes(lanes), **{"CD_DISPOSITION_" + suffix: "source_already_final",
+                                                     "CD_FINALIZED_" + suffix: "",
+                                                     "CD_PROMOTE_CONTRACT": '{"result":"skipped","outputs":{}}'})
+                    if advanced is not None:
+                        env["CD_DEVELOP_ADVANCED"] = advanced
+                    rows, verified = summarize(env)
+                    self.assertIn(f"| {c} | source_already_final | skipped | skipped | unreported |", rows)
+                    resume = (f"{c}: an older run finalized this source. The next push resumes this group's "
+                              "final; re-run or push to deploy.")
+                    # At the develop head no newer run deploys this group, so the skip is a failure.
+                    self.assertIs(verified, None if handled else False)
+                    self.assertEqual(resume in rows, not handled)
+                    # A newer reservation's skip stays handled even at the head.
+                    env["CD_DISPOSITION_" + suffix] = "reservation_superseded"
+                    self.assertIsNone(summarize(env)[1])
+        with self.assertRaises(ValueError):
+            summarize(dict(self.env(), CD_DISPOSITION_AM="source_finalized"))
+
     def test_successful_job_without_a_result_for_admitted_web_fails_the_report(self):
         for result in (None, "", '{"components":{}}'):
             with self.subTest(result=result), tempfile.TemporaryDirectory() as tmp:
