@@ -3,7 +3,8 @@
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Sandbox, SandboxEvent};
 use layer2_core::sandbox_usage::{
-    observe, observe_funded_checkpoint, rebaseline, SandboxUsage, UsageEvent,
+    observe, observe_capture_checkpoint, observe_funded_checkpoint, rebaseline, SandboxUsage,
+    UsageEvent,
 };
 use mongodb::{
     bson::{doc, Document},
@@ -19,7 +20,7 @@ pub(super) const STATES: &str = "sandbox_usage";
 pub(super) const EVENTS: &str = "sandbox_usage_events";
 
 pub(crate) mod billing;
-mod checkpoint;
+pub(in crate::store) mod checkpoint;
 mod interval_index;
 pub(in crate::store) mod raw_event;
 mod reads;
@@ -154,6 +155,7 @@ pub(super) enum UsageObservation {
     Lifecycle,
     Checkpoint,
     FundedCheckpoint,
+    CaptureCheckpoint,
 }
 
 impl From<bool> for UsageObservation {
@@ -175,7 +177,7 @@ pub(super) async fn record(
     expected_source: (u64, u64),
     mode: impl Into<UsageObservation>,
 ) -> Result<(), TransactionEventError> {
-    record_collections(
+    let recorded = record_collections(
         (&store.sandbox_usage, &store.sandbox_usage_events),
         session,
         sandbox,
@@ -184,7 +186,11 @@ pub(super) async fn record(
         expected_source,
         mode,
     )
-    .await
+    .await?;
+    if let (Some(capture), Some((state, event))) = (&store.usage_capture, recorded) {
+        capture.record(session, &state, &event, sandbox).await?;
+    }
+    Ok(())
 }
 
 pub(super) async fn record_collections(
@@ -198,7 +204,7 @@ pub(super) async fn record_collections(
     at: &str,
     expected_source: (u64, u64),
     mode: impl Into<UsageObservation>,
-) -> Result<(), TransactionEventError> {
+) -> Result<Option<(SandboxUsage, UsageEvent)>, TransactionEventError> {
     let current = collections
         .0
         .find_one(doc! { "_id": sandbox.id.as_str() })
@@ -221,6 +227,9 @@ pub(super) async fn record_collections(
             UsageObservation::FundedCheckpoint => {
                 observe_funded_checkpoint(previous.as_ref(), sandbox, source_seq, at)
             }
+            UsageObservation::CaptureCheckpoint => {
+                observe_capture_checkpoint(previous.as_ref(), sandbox, source_seq, at)
+            }
             mode => observe(
                 previous.as_ref(),
                 sandbox,
@@ -234,7 +243,7 @@ pub(super) async fn record_collections(
         TransactionEventError::Domain(SandboxStoreError::Corrupt(error.to_string()))
     })?;
     let Some((state, event)) = observation else {
-        return Ok(());
+        return Ok(None);
     };
     let document = state_document(&state).map_err(TransactionEventError::Domain)?;
     if previous.is_some() {
@@ -258,5 +267,5 @@ pub(super) async fn record_collections(
         .session(&mut *session)
         .await
         .map_err(TransactionEventError::Driver)?;
-    Ok(())
+    Ok(Some((state, event)))
 }
