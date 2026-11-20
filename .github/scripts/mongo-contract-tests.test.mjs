@@ -18,11 +18,13 @@ const diagnosticsTest = 'store::mongo_diagnostics::mongo_tests::real_mongo_monit
 const scanTest = 'store::agent_log_telemetry::tests::cooperation::benchmark::local_scan_scheduling_abba_reproduction';
 const bsonCeilingTest = 'store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::failures::personal_agent_list_preserves_sources_near_the_bson_document_ceiling';
 const isolatedTests = [scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest];
+// On-demand only: neither the listing nor any PR shard selects it.
+const observationTest = 'store::sandbox_mongo_integration_tests::resource_access_tests::history_measurement::observation_budget::observation_one_hundred_observers_on_two_replicas_for_thirty_minutes';
 // The isolated fixtures start many mock subprocesses before ordinary work.
 // Bound that setup separately from the signal-to-cleanup deadline below.
 const runnerSetupTimeoutMs = 30_000;
 const fixturePredicate = 'not test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure) & not test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors) & not test(=store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison) & not test(=store::usage_reports::tests::hotfix_cpu::native_usage_hotfix_decode_phase_calibration) & not test(=store::usage_reports::tests::hotfix_matrix::native_usage_hotfix_full_report_six_case_matrix) & not test(store::migrations::tests::segments_runtime::) & not test(=sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::subprocess::task_home_create_child) & not test(=store::sandbox_sessions::exclusive::process_tests::desktop_claim_child) & not test(=store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_disabled_services_and_ownerless_receiver_refuse_new_streams) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::retained_legacy_rows_block_until_close_or_expiry_and_cannot_release_successor) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_replica_handoff_and_revocation_use_actual_receiver) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_uncertain_confirm_and_receiver_restart_preserve_fencing) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::delayed_receiver_renewal_ack_cannot_restore_public_authority) & not test(=store::sandbox_sessions::exclusive::service_tests::endpoint_tests::measurements::matched_public_desktop_connect_windows)';
-const qualificationPredicate = "not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets))";
+const qualificationPredicate = `not (test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_phase_profile) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_list_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::concurrency::personal_agent_provenance_one_hundred_concurrent_public_readers_meet_budgets) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison) or test(=store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets) or test(=${observationTest}))`;
 const ordinaryPredicate = `not (test(=${scaleTest}) or test(=${ownerTest}) or test(=${auditTest}) or test(=${diagnosticsTest}) or test(=${scanTest}) or test(=${bsonCeilingTest})) & ${qualificationPredicate}`;
 
 function fixture(scenario, reuse = false) {
@@ -96,6 +98,10 @@ if (command === 'cargo') {
     if (scenario === 'list-duplicate-bson') suites.duplicate = {testcases:{[${JSON.stringify(bsonCeilingTest)}]:testcases[${JSON.stringify(bsonCeilingTest)}]}};
     console.log(JSON.stringify({'rust-suites':suites}));
     process.exit(0);
+  }
+  if (args[args.indexOf('-E')+1].startsWith('package(=cma) and test(=${observationTest})')) {
+    if (args.includes('--partition')) process.exit(8);
+    process.exit(scenario === 'observation-error' ? 7 : 0);
   }
   if (args[args.indexOf('-E')+1].startsWith('package(=cma) and test(::cpu_profile::)')) {
     if (args.includes('--partition')) process.exit(8);
@@ -228,6 +234,26 @@ for (const reuse of [false, true]) {
         assert.ok(f.calls().every(row => row.authenticatedUri === undefined), 'ordinary fixtures discard authenticated caller authority');
         const build = reuse ? ['--binaries-metadata', join(f.metadata, 'binaries-metadata.json'), '--cargo-metadata', join(f.metadata, 'cargo-metadata.json')] : ['--workspace', '--locked'];
         const selection = `package(=cma) and test(::cpu_profile::) & ${fixturePredicate} & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`;
+        assert.deepEqual(cargo[0].args, ['nextest', 'run', ...build, '--no-tests', 'fail', '--test-threads', '1', '--no-fail-fast', '--success-output', 'final', '--run-ignored', 'only', '-E', selection]);
+        assert.match(cargo[0].uri, /^mongodb:\/\/127\.0\.0\.1:[0-9]+\/\?directConnection=true&replicaSet=cma_ci$/);
+        assert.equal(f.calls().filter(row => row.command === 'docker' && row.args[0] === 'run').length, 1);
+        assert.equal(f.containers().length, 0);
+        assert.equal(f.volumes().length, 0);
+        assert.ok(existsSync(f.foreignVolume));
+      } finally { f.close(); }
+    }
+  });
+
+  test(`${mode}: the thirty-minute observation qualification runs only through its own fixture`, () => {
+    for (const scenario of ['success', 'observation-error']) {
+      const f = fixture(scenario, reuse);
+      try {
+        const run = () => execFileSync('bash', [...f.args, '--observation-budget'], {env: f.env, timeout: 15000, stdio: 'pipe'});
+        if (scenario === 'success') run(); else assert.throws(run, error => error.status === 7);
+        const cargo = f.calls().filter(row => row.command === 'cargo');
+        assert.equal(cargo.length, 1, 'no listing or partition planning precedes the qualification');
+        const build = reuse ? ['--binaries-metadata', join(f.metadata, 'binaries-metadata.json'), '--cargo-metadata', join(f.metadata, 'cargo-metadata.json')] : ['--workspace', '--locked'];
+        const selection = `package(=cma) and test(=${observationTest}) & ${fixturePredicate} & (${requiredPrefixes.map(prefix => `test(${prefix})`).join(' | ')})`;
         assert.deepEqual(cargo[0].args, ['nextest', 'run', ...build, '--no-tests', 'fail', '--test-threads', '1', '--no-fail-fast', '--success-output', 'final', '--run-ignored', 'only', '-E', selection]);
         assert.match(cargo[0].uri, /^mongodb:\/\/127\.0\.0\.1:[0-9]+\/\?directConnection=true&replicaSet=cma_ci$/);
         assert.equal(f.calls().filter(row => row.command === 'docker' && row.args[0] === 'run').length, 1);
@@ -482,5 +508,5 @@ for (const reuse of [false, true]) {
   });
 }
 
-registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, fixturePredicate, ordinaryPredicate, qualificationPredicate});
+registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, observationTest, fixturePredicate, ordinaryPredicate, qualificationPredicate});
 registerShardTests({fixture, scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest});

@@ -11,7 +11,7 @@ function selectionFunctions(source) {
   return source.slice(start, end);
 }
 
-export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, fixturePredicate, ordinaryPredicate, qualificationPredicate}) {
+export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, observationTest, fixturePredicate, ordinaryPredicate, qualificationPredicate}) {
   test('selection proof parses old and isolated owner and audit predicates', () => {
     const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
     const result = execFileSync('python3', ['-c', `
@@ -83,6 +83,33 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
       assert.deepEqual(remaining, before);
     });
   }
+
+  test('selection proof removes the thirty-minute qualification from the listing and ordinary partitions only', () => {
+    const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+    const result = execFileSync('python3', ['-c', `
+import json, runpy, sys
+parse = runpy.run_path(sys.argv[1])["mongo_filters"]
+source = sys.argv[2]
+before = "\\n".join(line for line in source.splitlines()
+    if not line.startswith("readonly observation_budget_test=")
+    and not line.strip().startswith("observation-budget)"))
+before = before.replace(' or test(=$observation_budget_test)', '')
+print(json.dumps({"before": parse(before), "after": parse(source)}))
+`, fileURLToPath(new URL('backend-selection-proof.py', import.meta.url)), source], {
+      env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
+    });
+    const {before, after} = JSON.parse(result);
+    const {'observation-budget': dedicated, ...remaining} = after;
+    assert.equal(before['observation-budget'], undefined);
+    assert.ok(dedicated.startsWith(`package(=cma) and test(=${observationTest}) & ${fixturePredicate} & (`));
+    for (const mode of ['all', 'ordinary']) {
+      assert.equal(remaining[mode].split(` or test(=${observationTest})`).length, 2, `${mode} excludes it exactly once`);
+      remaining[mode] = remaining[mode].replace(` or test(=${observationTest})`, '');
+    }
+    assert.ok(after.all.startsWith(`${qualificationPredicate} & ${fixturePredicate} & (`));
+    assert.ok(after.ordinary.startsWith(`${ordinaryPredicate} & ${fixturePredicate} & (`));
+    assert.deepEqual(remaining, before);
+  });
 }
 
 test('focused Agent-list runner keeps the complete ordinary and full selections', () => {
@@ -159,7 +186,7 @@ test('merged runner selections share the complete contract corpus and fixture ex
   const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
   const modes = ['all', 'ordinary', 'scale', 'owner-allocation', 'audit-bounds', 'diagnostics',
     'scan-cooperation', 'request-limits', 'agent-list-contracts', 'availability',
-    'agent-list-profile', 'organization-inventory', 'agent-lists', 'cpu-profile'];
+    'agent-list-profile', 'organization-inventory', 'agent-lists', 'cpu-profile', 'observation-budget'];
   const prefix = selectionFunctions(source);
   const captured = execFileSync('bash', ['-c', prefix + `
 nextest_build() { printf '%s\\n' "$@"; }
