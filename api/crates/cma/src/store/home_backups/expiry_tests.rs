@@ -47,7 +47,7 @@ async fn closed_admission_claims_only_expiring_and_preserves_live_authority() {
     fixture.cleanup().await;
 }
 
-fn at_offset(seconds: i64) -> String {
+pub(super) fn at_offset(seconds: i64) -> String {
     let now = std::time::SystemTime::now();
     let duration = std::time::Duration::from_secs(seconds.unsigned_abs());
     layer2_core::rfc3339_at(if seconds >= 0 {
@@ -57,7 +57,7 @@ fn at_offset(seconds: i64) -> String {
     })
 }
 
-fn expired() -> HomeBackup {
+pub(super) fn expired() -> HomeBackup {
     let mut value = standalone_backup(HomeBackupState::Ready);
     value.cut.requested_at = at_offset(-7200);
     value.cut.source_creation_time = Some(at_offset(-7100));
@@ -66,7 +66,7 @@ fn expired() -> HomeBackup {
     value
 }
 
-fn proof(value: &HomeBackup) -> HomeBackupDeletionObservation {
+pub(super) fn proof(value: &HomeBackup) -> HomeBackupDeletionObservation {
     HomeBackupDeletionObservation {
         snapshot_name: value.storage.snapshot_name.clone(),
         source_reference: value.storage.source_reference.clone(),
@@ -118,9 +118,15 @@ async fn expiry_refuses_pins_and_future_deadlines_then_claims_one_holder() {
         .replace_one(doc! {"_id":&value.id}, backup_document(&value).unwrap())
         .await
         .unwrap();
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let other_client = Client::with_uri_str(&uri).await.unwrap();
+    let other = MongoHomeBackupStore::open(&other_client, &fixture.database)
+        .await
+        .unwrap();
+    let other_holder = super::holder();
     let (first, second) = tokio::join!(
         fixture.store.claim_expiry(&now, &holder, &until),
-        fixture.store.claim_expiry(&now, &holder, &until)
+        other.claim_expiry(&now, &other_holder, &until)
     );
     let claimed: Vec<_> = [first, second]
         .into_iter()
