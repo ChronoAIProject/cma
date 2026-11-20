@@ -3,6 +3,7 @@ use mongodb::bson::{Bson, Document};
 
 use super::{corrupt, digest, FORMAT};
 
+/// Accepts only the Agent document schema versions this reader understands.
 pub(in crate::store) fn require_agent_version(document: &Document) -> Result<(), String> {
     match document.get("document_schema_version") {
         Some(Bson::Int64(1 | 2) | Bson::Int32(1 | 2)) => Ok(()),
