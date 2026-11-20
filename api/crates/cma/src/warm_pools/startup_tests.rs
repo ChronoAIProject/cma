@@ -124,3 +124,45 @@ fn startup_accepts_one_spare_only_for_current_observed_durable_binding() {
     target.error = Some("unavailable".into());
     assert!(!observed_ready(&target, &[ready]));
 }
+
+#[tokio::test(start_paused = true)]
+async fn startup_drain_never_claims_or_zeroes_a_prewarmed_default() {
+    // The same prewarmed, unbound default as above, but through the full
+    // startup wait with superseded-pool draining running alongside it.
+    let (store, mut provider) = fixture();
+    let image = crate::warm_pools::deployment_image(provider.original.spec.image.uri.clone());
+    provider.original.spec.image = image.clone();
+    store.target.lock().unwrap().plan.spec.image = image;
+    let store = Arc::new(store);
+    let home = provider.original.spec.home.clone();
+    let capacity = layer3_adapter::SandboxCapacity {
+        cpu_millis: provider.original.spec.cpu_millis,
+        memory_mib: provider.original.spec.memory_mib,
+    };
+    let uri = provider.original.spec.image.uri.clone();
+    let adapter = layer3_adapter::codex::CodexAdapter::with_backend(
+        resize::PoolBackend(provider),
+        layer3_adapter::codex::CodexSandboxSpec::default(),
+    );
+    let service = NativeWarmPools::new(
+        store.clone(),
+        Arc::new(adapter),
+        uri,
+        Some(home),
+        capacity,
+        1,
+        None,
+    );
+    service.await_default_ready().await.unwrap();
+    assert_eq!(
+        *store.calls.lock().unwrap(),
+        [
+            "claim:wp_test",
+            "inventory",
+            "persist-binding",
+            "resize:3",
+            "finish:true",
+            "inventory",
+        ]
+    );
+}
