@@ -27,6 +27,9 @@ MIB = 1024**2
 # (uncompressed) ZIP framing for three members fits in the extra MiB.
 MAX_ARTIFACT_BYTES = 1024**3 + 4096 + MIB
 CANDIDATES = 5
+# Any workflow run may upload an artifact with this name. List enough rows to
+# find the develop producers among them.
+LISTING = 50
 DEADLINE_SECONDS = 240
 CHUNK = 8 * MIB
 
@@ -70,6 +73,14 @@ def github(path, *, timeout, output=None):
     return output
 
 
+def on_develop(root, source, head, timeout):
+    # A tag push reports the tag's name as its branch. Only a commit already on
+    # the protected develop history that this release builds can be a producer.
+    result = subprocess.run(["git", "merge-base", "--is-ancestor", source, head], cwd=root,
+                            capture_output=True, timeout=timeout, check=False)
+    return result.returncode == 0
+
+
 def validate_artifact(artifact, component):
     require(isinstance(artifact, dict) and artifact.get("name") == artifact_name(component)
             and artifact.get("expired") is False and type(artifact.get("id")) is int and artifact["id"] > 0
@@ -79,6 +90,9 @@ def validate_artifact(artifact, component):
             and re.fullmatch(r"sha256:[a-f0-9]{64}", artifact["digest"]), "artifact")
     origin = artifact.get("workflow_run")
     require(isinstance(origin, dict) and type(origin.get("id")) is int and origin["id"] > 0
+            and origin.get("head_branch") == "develop"
+            and type(origin.get("repository_id")) is int
+            and origin.get("head_repository_id") == origin["repository_id"]
             and isinstance(origin.get("head_sha"), str) and re.fullmatch(r"[0-9a-f]{40}", origin["head_sha"]),
             "artifact")
     return origin
@@ -146,7 +160,11 @@ def discard(path):
         shutil.rmtree(path)
 
 
-def restore(env, get=github, clock=time.monotonic):
+FAILURES = (Refused, KeyError, TypeError, ValueError, AttributeError, EOFError, NotImplementedError, OSError,
+            subprocess.SubprocessError, zipfile.BadZipFile, zipfile.LargeZipFile)
+
+
+def restore(env, get=github, clock=time.monotonic, root=None, ancestry=on_develop):
     destination = context(env)
     component = env["CD_COMPONENT"]
     require(not destination.exists() and not destination.is_symlink(), "destination")
@@ -159,14 +177,19 @@ def restore(env, get=github, clock=time.monotonic):
         require(left > 0, "deadline")
         return min(cap, left)
 
-    listing = get(f"repos/{REPO}/actions/artifacts?name={artifact_name(component)}&per_page={CANDIDATES}",
+    root = Path.cwd() if root is None else root
+    listing = get(f"repos/{REPO}/actions/artifacts?name={artifact_name(component)}&per_page={LISTING}",
                   timeout=remaining(10))
     require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list), "listing")
+    rows = [row for row in listing["artifacts"] if isinstance(row, dict)
+            and isinstance(row.get("workflow_run"), dict) and row["workflow_run"].get("head_branch") == "develop"]
+    rows.sort(key=lambda row: row.get("id") if type(row.get("id")) is int else 0, reverse=True)
     download = destination.parent / "artifact.zip"
-    for artifact in listing["artifacts"][:CANDIDATES]:
+    for artifact in rows[:CANDIDATES]:
         try:
             origin = validate_artifact(artifact, component)
             require(str(origin["id"]) != env["GITHUB_RUN_ID"], "self")
+            require(ancestry(root, origin["head_sha"], env["GITHUB_SHA"], remaining(10)), "ancestry")
             run = get(f"repos/{REPO}/actions/runs/{origin['id']}", timeout=remaining(10))
             attempt = run.get("run_attempt") if isinstance(run, dict) else None
             require(type(attempt) is int and attempt > 0, "producer")
@@ -178,8 +201,7 @@ def restore(env, get=github, clock=time.monotonic):
             unpack(download, artifact, destination)
             return {"state": "RESTORED", **producer, "artifact_id": artifact["id"],
                     "artifact_digest": artifact["digest"]}
-        except (Refused, KeyError, TypeError, OSError, json.JSONDecodeError, subprocess.SubprocessError,
-                zipfile.BadZipFile, zipfile.LargeZipFile) as error:
+        except FAILURES as error:
             # A partly written bundle must never reach the validator.
             discard(destination)
             if isinstance(error, Refused) and str(error) == "deadline":
@@ -192,7 +214,7 @@ def restore(env, get=github, clock=time.monotonic):
 def main():
     try:
         result = restore(os.environ)
-    except (Refused, KeyError, TypeError, OSError, json.JSONDecodeError, subprocess.SubprocessError):
+    except FAILURES:
         result = {"state": "UNAVAILABLE"}
     print(json.dumps({"event": "cargo-artifact", "component": os.environ.get("CD_COMPONENT"), **result},
                      sort_keys=True), flush=True)

@@ -1,5 +1,6 @@
 import hashlib
 import stat
+import subprocess
 import tempfile
 import unittest
 import zipfile
@@ -34,7 +35,8 @@ class Remote:
     def artifact(self, run_id, digest, **altered):
         return {"id": run_id * 10, "name": "cma-cd-cargo-" + self.component, "expired": False,
                 "size_in_bytes": 1024, "digest": digest,
-                "workflow_run": {"id": run_id, "head_sha": SOURCE, "repository_id": 7, "head_repository_id": 7},
+                "workflow_run": {"id": run_id, "head_sha": SOURCE, "head_branch": "develop",
+                                 "repository_id": 7, "head_repository_id": 7},
                 **altered}
 
     def __call__(self, path, *, timeout, output=None):
@@ -42,7 +44,7 @@ class Remote:
         assert 0 < timeout <= 180
         prefix = f"repos/{REPO}/actions/"
         if path.startswith(prefix + "artifacts?name="):
-            assert path == f"{prefix}artifacts?name=cma-cd-cargo-{self.component}&per_page=5"
+            assert path == f"{prefix}artifacts?name=cma-cd-cargo-{self.component}&per_page=50"
             return {"artifacts": [spec["artifact"] for spec in self.runs]}
         for spec in self.runs:
             run_id = spec["artifact"]["workflow_run"]["id"]
@@ -75,6 +77,10 @@ class CargoArtifactTests(unittest.TestCase):
     def tearDown(self):
         self.temp.cleanup()
 
+    def restore(self, remote, env=None, *, ancestry=lambda root, source, head, timeout: True, **options):
+        return transport.restore(self.env if env is None else env, get=remote, root=self.root,
+                                 ancestry=ancestry, **options)
+
     def spec(self, run_id, *, members=None, symlink=None, digest=None, **altered):
         path = self.root / f"bundle-{run_id}.zip"
         real = bundle(path, members, symlink=symlink)
@@ -84,7 +90,7 @@ class CargoArtifactTests(unittest.TestCase):
 
     def test_restores_exact_sealed_files_from_a_verified_develop_publication(self):
         remote = Remote(self.root, [self.spec(41)])
-        result = transport.restore(self.env, get=remote)
+        result = self.restore(remote)
         self.assertEqual(result["state"], "RESTORED")
         self.assertEqual((result["producer_run"], result["producer_source"]), (41, SOURCE))
         self.assertEqual({p.name: p.read_bytes() for p in self.accepted.iterdir()}, FILES)
@@ -100,19 +106,56 @@ class CargoArtifactTests(unittest.TestCase):
                         {"artifact": {"size_in_bytes": transport.MAX_ARTIFACT_BYTES + 1}},
                         {"digest": "sha256:" + "0" * 64}, {"members": {**FILES, "extra": b"x"}},
                         {"members": {"manifest.json": b"{}", "registry.tar.gz": b"r"}},
-                        {"symlink": "target.tar.gz"}, {"artifact": {"workflow_run": {"id": 900, "head_sha": SOURCE,
-                                                                    "repository_id": 7, "head_repository_id": 7}}}):
+                        {"symlink": "target.tar.gz"},
+                        {"artifact": {"workflow_run": {"id": 900, "head_sha": SOURCE, "head_branch": "develop",
+                                                       "repository_id": 7, "head_repository_id": 7}}},
+                        {"artifact": {"workflow_run": {"id": 51, "head_sha": SOURCE, "head_branch": "develop",
+                                                       "repository_id": 7, "head_repository_id": 8}}}):
             with self.subTest(altered=altered):
                 bad = self.spec(51, **altered)
                 remote = Remote(self.root, [bad])
-                self.assertEqual(transport.restore(self.env, get=remote), {"state": "MISS"})
+                self.assertEqual(self.restore(remote), {"state": "MISS"})
                 self.assertFalse(self.accepted.exists())
                 good = self.spec(52)
-                result = transport.restore(self.env, get=Remote(self.root, [bad, good]))
+                result = self.restore(Remote(self.root, [bad, good]))
                 self.assertEqual((result["state"], result["producer_run"]), ("RESTORED", 52))
                 for path in self.accepted.iterdir():
                     path.unlink()
                 self.accepted.rmdir()
+
+    def test_a_producer_off_develop_history_is_never_trusted(self):
+        # A tag named develop reports head_branch "develop" for an arbitrary commit.
+        calls = []
+        def ancestry(root, source, head, timeout):
+            calls.append((root, source, head))
+            return False
+        remote = Remote(self.root, [self.spec(81)])
+        self.assertEqual(self.restore(remote, ancestry=ancestry), {"state": "MISS"})
+        self.assertEqual(calls, [(self.root, SOURCE, CURRENT)])
+        self.assertFalse(any("/zip" in path for path in remote.paths))
+        self.assertFalse(self.accepted.exists())
+
+    def test_rows_from_other_branches_cannot_crowd_out_develop_producers(self):
+        foreign = [self.spec(90 + n, artifact={"workflow_run": {"id": 90 + n, "head_sha": SOURCE,
+                   "head_branch": "feature", "repository_id": 7, "head_repository_id": 7}}) for n in range(6)]
+        good = self.spec(20)
+        result = self.restore(Remote(self.root, [*foreign, good]))
+        self.assertEqual((result["state"], result["producer_run"]), ("RESTORED", 20))
+
+    def test_real_ancestry_check_uses_git_history(self):
+        repo = self.root / "repo"
+        repo.mkdir()
+        git = lambda *args: subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+        git("init", "-q")
+        for name in ("one", "two"):
+            (repo / name).write_text(name)
+            git("add", name)
+            git("-c", "user.name=t", "-c", "user.email=t@example.invalid", "commit", "-q", "-m", name)
+        head = git("rev-parse", "HEAD").stdout.strip()
+        first = git("rev-parse", "HEAD~1").stdout.strip()
+        self.assertTrue(transport.on_develop(repo, first, head, 5))
+        self.assertFalse(transport.on_develop(repo, head, first, 5))
+        self.assertFalse(transport.on_develop(repo, "c" * 40, head, 5))
 
     def test_context_and_existing_destination_refuse_before_any_read(self):
         for altered in ({"GITHUB_REPOSITORY": "fork/cma"}, {"GITHUB_EVENT_NAME": "pull_request"},
@@ -120,18 +163,18 @@ class CargoArtifactTests(unittest.TestCase):
             with self.subTest(altered=altered):
                 remote = Remote(self.root, [self.spec(61)])
                 with self.assertRaises(transport.Refused):
-                    transport.restore(self.env | altered, get=remote)
+                    self.restore(remote, self.env | altered)
                 self.assertEqual(remote.paths, [])
         self.accepted.mkdir(parents=True)
         remote = Remote(self.root, [self.spec(62)])
         with self.assertRaises(transport.Refused):
-            transport.restore(self.env, get=remote)
+            self.restore(remote)
         self.assertEqual(remote.paths, [])
 
     def test_deadline_stops_further_candidates_without_partial_output(self):
         ticks = iter([0, 1, 2, 3, transport.DEADLINE_SECONDS + 1, transport.DEADLINE_SECONDS + 2])
         remote = Remote(self.root, [self.spec(71), self.spec(72)])
-        result = transport.restore(self.env, get=remote, clock=lambda: next(ticks))
+        result = self.restore(remote, clock=lambda: next(ticks))
         self.assertEqual(result, {"state": "MISS"})
         self.assertFalse(self.accepted.exists())
         self.assertFalse(any("/zip" in path for path in remote.paths))
