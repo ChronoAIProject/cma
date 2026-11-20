@@ -234,6 +234,9 @@ fn binary(bytes: Vec<u8>) -> Binary {
 }
 
 #[cfg(test)]
+mod restore_evidence_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
