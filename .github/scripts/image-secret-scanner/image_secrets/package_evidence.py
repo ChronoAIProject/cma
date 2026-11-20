@@ -113,6 +113,7 @@ class PackageEvidence:
     arch_trust: dict = None
     portable_entries: dict = None
     portable_component: str = None
+    portable_trust: dict = None
 
     @classmethod
     def load(cls, data, *, manifest_sha256, review_sha256, scanner_manifest_sha256):
@@ -138,11 +139,13 @@ class PackageEvidence:
                 and digest_bytes(data) == manifest_sha256)
         raw = json_bytes(data)
         expected_fields = {"schema", "scanner_manifest_sha256", "packages", "entries"}
-        require(isinstance(raw, dict) and raw.keys() in (expected_fields, expected_fields | {"arch_trust"}))
+        require(isinstance(raw, dict) and raw.keys() in (expected_fields, expected_fields | {"arch_trust"},
+                                                         expected_fields | {"trust_store"}))
         require(isinstance(raw["schema"], str))
         portable_component = PORTABLE_SCOPES.get(raw["schema"])
         portable = portable_component is not None
         native_arch = portable_component == "runtime-omarchy"
+        require("trust_store" not in raw or native_arch)
         require((raw["schema"] == "cma-staging-package-evidence-v1" or portable and "arch_trust" not in raw)
                 and raw["scanner_manifest_sha256"] == scanner_manifest_sha256
                 and isinstance(raw["packages"], list) and isinstance(raw["entries"], list))
@@ -316,5 +319,10 @@ class PackageEvidence:
                                          if match["explanation"] == KEY_MARKER_VIEW_ADVISORY})
             entries[key] = (dict(row, path=path), verified)
         arch = arch_trust_evidence.load_catalog(raw["arch_trust"], packages) if "arch_trust" in raw else None
+        trust = arch_trust_evidence.load_portable(raw["trust_store"], packages) if "trust_store" in raw else None
+        if trust is not None:
+            # A trust-store path is never also a package row, so one physical entry has one decision.
+            reviewed = set(trust["files"]) | {trust["alias"]["path"] if trust["alias"] else None}
+            require(not reviewed.intersection(path for _, path, _ in entries))
         return cls(manifest_sha256, review_sha256, scanner_manifest_sha256, packages,
-                   {} if portable else entries, arch, entries if portable else None, portable_component)
+                   {} if portable else entries, arch, entries if portable else None, portable_component, trust)

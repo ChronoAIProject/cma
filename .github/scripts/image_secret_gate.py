@@ -58,15 +58,55 @@ def require(condition, message="Image secret scan receipt is incomplete, unbound
         raise ScanRefusal(message)
 
 
+def validate_portable_trust(evidence, proof, package_rows):
+    from image_secrets import arch_trust
+    from image_secrets.gate import ARCH_CERTIFICATE_ADVISORY, valid_digest
+
+    # The rebuild-stable catalog names no image identity; the receipt's own
+    # coordinates are the current scan's and the namespace check is mandatory.
+    path = proof["public_path"]
+    require(proof.get("catalog") == "portable" and "repack" not in proof
+            and proof.get("namespace_verified") is True
+            and re.fullmatch(r"sha256:[a-f0-9]{64}", evidence["layer_digest"]))
+    if path == arch_trust.ALIAS:
+        target = package_rows.get(proof["target_finding_id"])
+        require(proof["link_target"] == arch_trust.LINK and evidence["file_sha256"] is None
+                and target is not None and target["classification"] == ARCH_CERTIFICATE_ADVISORY
+                and target["arch_trust"]["public_path"] == arch_trust.TLS
+                and target["arch_trust"].get("catalog") == "portable"
+                and all(target[key] == evidence[key] for key in
+                        ("image", "image_config", "image_manifest", "layer", "layer_digest")))
+        return
+    hashes = proof["der_sha256s"]
+    require(path in arch_trust.FILES and proof["member_sha256"] == evidence["file_sha256"]
+            and len(hashes) == arch_trust.FILES[path] and all(valid_digest(value) for value in hashes)
+            and hashes == sorted(set(hashes)))
+    native = proof.get("native")
+    require((path == arch_trust.GNUPG) == (native is not None))
+    if native is not None:
+        package, pacman = native["package"], native["current_owner"]["pacman"]
+        require(package["authority_type"] == "arch-signature" and package["name"] == "gnupg"
+                and package["artifact_sha256"] == native["package_sha256"]
+                and native["member"]["type"] == "regular" and native["member"]["path"][-1] == path
+                and native["member"]["sha256"] == proof["member_sha256"]
+                and pacman.keys() == {"desc", "files", "mtree"}
+                and all(record["layer"] == evidence["layer"] for record in pacman.values())
+                and pacman["mtree"]["sha256"] == native["mtree_sha256"])
+
+
 def validate_arch_certificate(evidence, package_rows, archive_digest):
     from image_secrets import arch_trust
     from image_secrets.gate import ARCH_CERTIFICATE_ADVISORY, valid_digest
 
     proof = evidence["arch_trust"]
-    path, base = proof["public_path"], proof["base"]
+    path = proof["public_path"]
     require(evidence["platform"] == arch_trust.PLATFORM and evidence["layer"] == arch_trust.LAYER
-            and valid_digest(evidence["proof_sha256"])
-            and evidence["layer_digest"] == arch_trust.physical_layer(proof)
+            and valid_digest(evidence["proof_sha256"]))
+    if "base" not in proof:
+        validate_portable_trust(evidence, proof, package_rows)
+        return
+    base = proof["base"]
+    require(evidence["layer_digest"] == arch_trust.physical_layer(proof)
             and all(re.fullmatch(r"sha256:[a-f0-9]{64}", digest) for digest in base.values()))
     repack = proof.get("repack")
     if repack is not None:

@@ -330,7 +330,7 @@ def read_arch_trust_entry(layer, entry, expected, workspace, budget):
 
 def layer_occurrences(archive, name, diff_id, requested, workspace, budget, reviewed_payloads, databases,
                       arch_entries, *, namespace=None, layer_index=None, portable=None, platform_id=None,
-                      image_index=None):
+                      image_index=None, trust_paths=None):
     physical = archive.layer(name, diff_id)
     result = {}
     portable_paths = defaultdict(list)
@@ -338,11 +338,11 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget, revi
         with tarfile.open(physical, "r:") as layer:
             for index, member in enumerate(layer):
                 budget.entry()
+                path = archive_path(member.name, posix_tar=True) if namespace is not None or trust_paths else None
                 if namespace is not None:
                     # The namespace is derived from the digest-verified archive. No
                     # detector observation can supply a missing link or override a whiteout.
-                    location = {"path": archive_path(member.name, posix_tar=True), "layer": layer_index}
-                    namespace.observe(member, location, None, None)
+                    namespace.observe(member, {"path": path, "layer": layer_index}, None, None)
                 selected = (portable.select(platform_id, layer, member, budget, stream_digest,
                                             (image_index, layer_index, index)) if portable else None)
                 if selected is not None:
@@ -350,6 +350,10 @@ def layer_occurrences(archive, name, diff_id, requested, workspace, budget, revi
                     portable_paths[path].append(index)
                     payload = {None: candidate} if candidate is not None else {}
                     found = read_entry(layer, member, {None}, workspace, budget, payload, package_databases)
+                    if found is not None:
+                        result[index] = found
+                elif trust_paths and path in trust_paths:
+                    found = read_arch_trust_entry(layer, member, trust_paths[path], workspace, budget)
                     if found is not None:
                         result[index] = found
                 elif index in requested:
@@ -428,6 +432,7 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
             platform_id = platform(image)
             namespace = None
             alias = None
+            trust_paths = None
             if (component == arch_trust.COMPONENT and platform_id == arch_trust.PLATFORM
                     and evidence.arch_trust and image["diff_ids"]):
                 packet = evidence.arch_trust.get(image["diff_ids"][arch_trust.LAYER])
@@ -435,6 +440,10 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
                     alias = packet["alias"]
                     if alias is not None:
                         namespace = TrustStore()
+            elif (component == arch_trust.COMPONENT and platform_id == arch_trust.PLATFORM
+                  and evidence.portable_trust):
+                trust_paths = arch_trust.portable_entries(evidence.portable_trust)
+                namespace = TrustStore(tracked=trust_paths)
             for j, (name, diff_id) in enumerate(zip(image["layers"], image["diff_ids"])):
                 require(coordinates.get((i, j)) == diff_id)
                 layer = (platform_id, j, diff_id)
@@ -443,7 +452,8 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
                     entries = layer_occurrences(archive, name, diff_id, request, workspace, budget,
                                                 reviewed_payloads.get(layer, {}), databases.get(layer, {}),
                                                 arch_entries.get(layer, {}), namespace=namespace, layer_index=j,
-                                                portable=portable, platform_id=platform_id, image_index=i)
+                                                portable=portable, platform_id=platform_id, image_index=i,
+                                                trust_paths=trust_paths if j == arch_trust.LAYER else None)
                     for index, (occurrence, verified, verified_databases) in entries.items():
                         coordinate = (i, j, index)
                         found[coordinate] = (platform_id, config, manifest, diff_id, occurrence)
@@ -451,7 +461,12 @@ def collect(path, workspace, report, component, evidence, *, vector_checks=None,
                             vector_checks[coordinate] = verified
                         if database_checks is not None and verified_databases:
                             database_checks[coordinate] = verified_databases
-            if (namespace is not None and vector_checks is not None
+            if namespace is not None and vector_checks is not None and trust_paths is not None:
+                for coordinate, checks in vector_checks.items():
+                    check = checks.get(ARCH_CERTIFICATE_ADVISORY)
+                    if coordinate[:2] == (i, arch_trust.LAYER) and check is not None:
+                        check["namespace_verified"] = arch_trust.resolves(namespace, found[coordinate][4][0])
+            elif (namespace is not None and vector_checks is not None
                     and namespace.direct_alias(arch_trust.ALIAS, arch_trust.TLS, arch_trust.LAYER)):
                 check = vector_checks.get((i, arch_trust.LAYER, alias["entry"]), {}).get(ARCH_CERTIFICATE_ADVISORY)
                 if check is not None:

@@ -24,6 +24,21 @@ def matches_image(packet, archive, config, manifest):
         archive, config, manifest)
 
 
+def portable_entries(packet):
+    """Reviewed rebuild-stable paths that the receipt reopens in the base layer by name."""
+    entries = dict(packet["files"])
+    if packet["alias"] is not None:
+        entries[ALIAS] = packet["alias"]
+    return entries
+
+
+def resolves(namespace, path):
+    """Checked after every layer: the alias reaches the TLS bundle, and each file is never replaced."""
+    if path == ALIAS:
+        return namespace.direct_alias(ALIAS, TLS, LAYER)
+    return namespace.final_entry(path, LAYER)
+
+
 def inspect_file(physical, path, inspect_der):
     return certificate_inventory(physical, inspect_der, FILES[path], comments=path != GNUPG)
 
