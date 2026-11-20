@@ -131,6 +131,8 @@ async fn standing_status_read_is_causally_after_a_unique_primary_barrier() {
     use std::sync::Mutex;
     let commands = Arc::new(Mutex::new(Vec::new()));
     let observed = commands.clone();
+    let times = Arc::new(Mutex::new(Vec::new()));
+    let completed = times.clone();
     let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
@@ -139,21 +141,32 @@ async fn standing_status_read_is_causally_after_a_unique_primary_barrier() {
             options: Default::default(),
         },
     ));
-    options.command_event_handler = Some(EventHandler::callback(move |event| {
-        if let CommandEvent::Started(event) = event {
-            if event.command_name == "find" {
-                observed.lock().unwrap().push(event.command);
-            }
+    options.command_event_handler = Some(EventHandler::callback(move |event| match event {
+        CommandEvent::Started(event) if event.command_name == "find" => {
+            observed.lock().unwrap().push(event.command);
         }
+        CommandEvent::Succeeded(event) if event.command_name == "find" => {
+            completed
+                .lock()
+                .unwrap()
+                .push(event.reply.get_timestamp("operationTime").unwrap());
+        }
+        _ => {}
     }));
     let client = Client::with_options(options).unwrap();
     let db = client.database(&format!(
         "cma_acd_barrier_{}",
         uuid::Uuid::new_v4().simple()
     ));
-    let store = MongoAccountDeletionStore::open(&db).await.unwrap();
+    let writer = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    let acceptance = MongoAccountDeletionStore::open(&writer.database(db.name()))
+        .await
+        .unwrap();
     let owner = SubjectId::new("owner");
-    store.request(&owner, "accepted", NOW).await.unwrap();
+    acceptance.request(&owner, "accepted", NOW).await.unwrap();
+    let store = MongoAccountDeletionStore::from_database(&db);
     commands.lock().unwrap().clear();
     assert!(store.erasing(&owner).await.unwrap());
     let reads = commands.lock().unwrap().clone();
@@ -169,7 +182,10 @@ async fn standing_status_read_is_causally_after_a_unique_primary_barrier() {
     assert_eq!(reads[1].get_str("find").unwrap(), RECORDS);
     let status = reads[1].get_document("readConcern").unwrap();
     assert_eq!(status.get_str("level").unwrap(), "majority");
-    assert!(status.get_timestamp("afterClusterTime").is_ok());
+    assert_eq!(
+        status.get_timestamp("afterClusterTime").unwrap(),
+        times.lock().unwrap()[0]
+    );
     assert_eq!(reads[0].get("lsid"), reads[1].get("lsid"));
     for read in reads {
         assert_eq!(read.get_i32("maxTimeMS").unwrap(), 750);
