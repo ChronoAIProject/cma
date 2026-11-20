@@ -2,8 +2,10 @@
 import contextlib
 import io
 import os
+import socket
 import tempfile
 import unittest
+import urllib.error
 from pathlib import Path
 from unittest.mock import Mock, patch
 
@@ -48,7 +50,8 @@ class AppMetadataTests(unittest.TestCase):
         checkout_index = next(i for i, step in enumerate(steps) if step.get("with", {}).get("repository"))
         self.assertLess(steps.index(prepare), checkout_index)
         self.assertEqual(prepare["run"], "python3 -B .github/scripts/staging_cd_checkout.py prepare-app")
-        self.assertEqual(prepare["env"]["CD_INFRA_TOKEN"], "${{ steps.infra-token.outputs.token }}")
+        self.assertEqual(prepare["env"]["CD_INFRA_TOKEN"],
+                         "${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}")
 
         repo_patch = patch.object(metadata, "REPOSITORY", "Example/xy")
         repo_patch.start()
@@ -136,6 +139,24 @@ class AppMetadataTests(unittest.TestCase):
             with self.subTest(token=token), self.assertRaises(Refusal):
                 metadata.github_reader(token)
         self.assertIsNone(metadata.NoRedirect().redirect_request(None, None, 302, "", {}, "https://example.invalid"))
+
+    def test_transport_failures_repeat_and_refusals_do_not(self):
+        response = Mock(status=200)
+        response.read.return_value = b'{"fixture":true}'
+        for failure, calls in ((urllib.error.URLError(socket.gaierror(-3, "private")), 2),
+                               (urllib.error.HTTPError("https://api.github.com", 503, "private", {}, None), 2),
+                               (urllib.error.HTTPError("https://api.github.com", 401, "private", {}, None), 1)):
+            opener = Mock()
+            opener.open.side_effect = [failure, contextlib.nullcontext(response)]
+            with self.subTest(failure=failure), \
+                    patch.object(metadata.urllib.request, "build_opener", return_value=opener):
+                read = metadata.github_reader("fixture", retry={"sleep": lambda _seconds: None})
+                if calls == 2:
+                    self.assertEqual(read("installation/repositories?per_page=100"), {"fixture": True})
+                else:
+                    with self.assertRaises(urllib.error.HTTPError):
+                        read("installation/repositories?per_page=100")
+            self.assertEqual(opener.open.call_count, calls)
 
     def test_prepare_app_keeps_metadata_private_and_requires_configured_sha(self):
         with tempfile.TemporaryDirectory() as directory:

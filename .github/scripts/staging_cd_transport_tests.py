@@ -5,7 +5,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-INSTALL = Path(__file__).with_name("staging_cd_transport.sh")
+SCRIPT = Path(__file__).with_name("staging_cd_transport.sh")
+# Package fetches repeat transient mirror failures before publication gives up.
+UPDATE = ["apt-get -o Acquire::Retries=5 update -qq"]
+INSTALL = ["apt-get -o Acquire::Retries=5 install -y -qq skopeo libarchive-tools zstd"]
 
 
 class TransportTests(unittest.TestCase):
@@ -19,7 +22,7 @@ class TransportTests(unittest.TestCase):
                     path.write_text("#!/bin/sh\n" + script + "\n")
                     path.chmod(0o700)
             log = root / "calls"
-            result = subprocess.run(["/bin/bash", str(INSTALL)], capture_output=True,
+            result = subprocess.run(["/bin/bash", str(SCRIPT)], capture_output=True,
                                     env={"CD_COMPONENT": component, "CALLS": str(log), "PATH": os.fspath(root)})
             return result.returncode, log.read_text().splitlines() if log.exists() else []
 
@@ -27,7 +30,7 @@ class TransportTests(unittest.TestCase):
         self.assertEqual(self.check_transport("web", 'echo "--preserve-digests"'), (0, []))
 
     def test_absent_incompatible_or_nonweb_uses_installer(self):
-        install = (0, ["apt-get update -qq", "apt-get install -y -qq skopeo libarchive-tools zstd"])
+        install = (0, UPDATE + INSTALL)
         for component, binary in (("web", None), ("web", "exit 1"), ("web", "echo legacy"),
                                   ("am", 'echo "--preserve-digests"')):
             with self.subTest(component=component, binary=binary):
@@ -37,7 +40,7 @@ class TransportTests(unittest.TestCase):
         for missing in ({"python": "exit 1"}, {"python": None}, {"zstd": "exit 1"}, {"zstd": None}):
             with self.subTest(missing=missing):
                 self.assertEqual(self.check_transport("web", 'echo "--preserve-digests"', **missing),
-                                 (0, ["apt-get update -qq", "apt-get install -y -qq skopeo libarchive-tools zstd"]))
+                                 (0, UPDATE + INSTALL))
 
     def test_install_failure_stops_publication(self):
-        self.assertEqual(self.check_transport("web", apt_status=4), (4, ["apt-get update -qq"]))
+        self.assertEqual(self.check_transport("web", apt_status=4), (4, UPDATE))

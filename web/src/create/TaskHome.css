@@ -121,6 +121,22 @@
   outline: none;
   box-shadow: none;
 }
+.task-home__preview {
+  display: grid;
+  gap: var(--space-3);
+  padding-block: var(--space-3);
+}
+.task-home__preview h2 {
+  margin: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--text-body);
+}
+.task-home__preview-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+  font: var(--dsw-alias-workspace-body-font);
+}
 .task-home__footer {
   display: flex;
   align-items: center;

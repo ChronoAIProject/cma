@@ -77,6 +77,8 @@ module OmarchyCIContract
       SH
       { "name" => "Verify Omarchy runtime contract",
         "run" => 'node .github/scripts/omarchy-contract.mjs "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/runtime-contract.json"' },
+      { "name" => "Verify Omarchy staging qualification profile",
+        "run" => 'CMA_RUNTIME_EVIDENCE_PROFILE=omarchy node .github/scripts/runtime-image-evidence.mjs run cma-runtime-omarchy:ci "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/staging-qualification.json"' },
       { "name" => "Qualify exact Omarchy ledger storage",
         "run" => 'node .github/scripts/runtime-ledger-evidence.mjs cma-runtime-omarchy:ci "$GITHUB_SHA" "$RUNNER_TEMP/omarchy-evidence/ledger-storage.json"' },
       { "name" => "Prepare native Chromium namespaces", "run" => "sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0" },

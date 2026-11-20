@@ -66,7 +66,7 @@ test('LOCAL capability refusals remain distinct and revoke retained files', asyn
     for (const [state, message] of [
       ['forbidden', 'You do not have access to these files.'],
       ['unsupported', 'This environment does not support file browsing.'],
-      ['not_enabled', 'File browsing is not enabled for this environment.'],
+      ['not_enabled', 'File browsing is not available for this environment.'],
       ['temporarily_unavailable', 'We couldn’t check file availability.'],
     ] as const) {
       fixture.phase = state;

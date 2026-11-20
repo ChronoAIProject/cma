@@ -5,7 +5,7 @@ import { LocalUsageFilterOptions } from './usage-filter-options.fixture';
 import { asOf, metricRow } from '../src/usage/metrics/fixtures.test-support';
 
 for (const admin of [false, true]) {
-  test(`LOCAL allocated sorting keeps API pagination and partial history for admin=${admin}`, async ({
+  test(`LOCAL allocated sorting keeps API pagination and confirmed missing intervals for admin=${admin}`, async ({
     page,
     baseURL,
   }) => {
@@ -81,7 +81,7 @@ for (const admin of [false, true]) {
       await expect(table.getByRole('button', { name: /^Subtotal / })).toHaveText(
         delivered.map((row) => row.name),
       );
-      await expect(table.getByText('Partial history', { exact: true })).toHaveCount(
+      await expect(table.getByText('Missing intervals confirmed', { exact: true })).toHaveCount(
         delivered.filter((row) => !row.allocated_period.complete).length,
       );
       return delivered.map((row) => row.sandbox_id);
@@ -160,19 +160,17 @@ for (const admin of [false, true]) {
       await expect(history.locator('summary')).toContainText(summary);
       if ((await history.getAttribute('open')) === null) await history.locator('summary').click();
       for (const [label, duration] of [
-        ['Missing history', missing],
-        ['Extended from last known state', projected],
+        ['Missing intervals', missing],
+        [
+          'Projection from last known state',
+          projected === 'None' ? 'None' : `${projected} (estimated)`,
+        ],
       ])
         await expect(
           history.locator('dt').filter({ hasText: label }).locator('..').locator('dd'),
         ).toHaveText(duration!);
-      await expect(history.getByText('What’s missing?', { exact: true })).toHaveCount(
-        missing === 'None' ? 0 : 1,
-      );
-      await expect(history.getByText('Some allocation history is missing')).toHaveCount(
-        missing === 'None' ? 0 : 1,
-      );
-      await expect(history.getByText(/This report does not identify the reason/)).toHaveCount(
+      await expect(history.getByText('How this is calculated')).toBeVisible();
+      await expect(history.getByText(/No missing interval has been established/)).toHaveCount(
         badge === 'Coverage unverified' ? 1 : 0,
       );
       await expect(history.getByText(/Durations add up across Sandboxes/)).toBeVisible();
@@ -187,31 +185,31 @@ for (const admin of [false, true]) {
     ).toBeVisible();
     await assertHistory(
       'Coverage unverified',
-      'Includes time extended from last known state',
-      'None',
+      'Projection from last known state',
+      'None confirmed',
       '2d 4m',
     );
     await page.screenshot({ path: info.outputPath('projected-history.png') });
     await page.reload();
     await assertHistory(
       'Coverage unverified',
-      'Includes time extended from last known state',
-      'None',
+      'Projection from last known state',
+      'None confirmed',
       '2d 4m',
     );
     daily = { ...daily, unknown_seconds: 3600, projected_tail_seconds: 120 };
     await surface.getByRole('button', { name: 'Refresh usage', exact: true }).click();
-    await assertHistory('Partial history', 'Some allocation history is missing', '1h', '2m');
+    await assertHistory('Missing intervals confirmed', 'Confirmed missing duration', '1h', '2m');
     await expect(
-      history.getByText(/Missing history is excluded.*does not mean zero/),
+      history.getByText(/Missing intervals are excluded.*does not mean zero/),
     ).toBeVisible();
     await surface.getByRole('button', { name: 'Usage time range' }).click();
     await page.getByRole('menuitemradio', { name: 'Last 7 days', exact: true }).click();
     await surface.getByRole('button', { name: 'Apply usage filters' }).click();
     await assertHistory(
       'Coverage unverified',
-      'Allocation history coverage is not fully verified',
-      'None',
+      'No missing interval has been established',
+      'None confirmed',
       'None',
     );
     expect(metrics.creates.at(-1)!.input.to! - metrics.creates.at(-1)!.input.from!).toBe(604800);
@@ -223,7 +221,7 @@ for (const admin of [false, true]) {
       .getByRole('menuitemradio', { name: admin ? 'Research 00000' : /^Research Sandbox \(/ })
       .click();
     await surface.getByRole('button', { name: 'Apply usage filters' }).click();
-    await assertHistory('Complete history', 'How allocation is calculated', 'None', 'None');
+    await assertHistory('Coverage verified', 'How this is calculated', 'None', 'None');
     expect(metrics.creates.at(-1)!.input.filters?.sandbox_id).toBe(
       admin ? options.rows[0]!.value : metricRow.sandbox_id,
     );
@@ -234,12 +232,7 @@ for (const admin of [false, true]) {
       projected_tail_seconds: 60,
     });
     await surface.getByRole('button', { name: 'Refresh usage', exact: true }).click();
-    await assertHistory(
-      'Complete history',
-      'Includes time extended from last known state',
-      'None',
-      '1m',
-    );
+    await assertHistory('Coverage verified', 'Projection from last known state', 'None', '1m');
     expect(metrics.creates.every((read) => read.admin === admin)).toBe(true);
     if (!admin) expect(metrics.creates.every((read) => !read.input.filters?.owner)).toBe(true);
     expect(boundary.writes).toEqual([]);
