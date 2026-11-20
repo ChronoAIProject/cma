@@ -53,7 +53,7 @@ pub struct ListQuery {
     platform: ResourcePlatform,
 }
 
-#[utoipa::path(get, path="/v1/relay-resource-connections", operation_id="listRelayResourceConnections", tag="connections", security(("creatorBearer"=[])), params(ListQuery), responses((status=200,body=ResourceConnectionList),(status="default",body=cmaeg_core::problem::Problem)))]
+#[utoipa::path(get, path="/v1/relay-resource-connections", operation_id="listRelayResourceConnections", tag="connections", security(("creatorBearer"=[])), params(ListQuery), responses((status=200,body=ResourceConnectionList),(status="default",body=cmaeg_core::problem::Problem,content_type="application/problem+json")))]
 pub async fn list(
     State(state): State<ResourceConnections>,
     _creator: Creator,

@@ -43,6 +43,26 @@ impl AgentAccessToolAuthenticator for DeliveryAuth {
     }
 }
 
+struct RevokingAuth {
+    auth: Arc<DeliveryAuth>,
+    calls: AtomicUsize,
+}
+#[async_trait::async_trait]
+impl AgentAccessToolAuthenticator for RevokingAuth {
+    async fn authenticate_setup(&self, capability: &str) -> Result<(), AgentAccessError> {
+        self.auth.authenticate_setup(capability).await
+    }
+    async fn authenticate(
+        &self,
+        capability: &str,
+    ) -> Result<AgentAccessRequester, AgentAccessError> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) >= 2 {
+            self.auth.stub.confirmed.store(false, Ordering::SeqCst);
+        }
+        self.auth.authenticate(capability).await
+    }
+}
+
 #[tokio::test]
 async fn confirmed_runtime_describes_only_its_authorized_deliverable_and_loses_access_after_revocation(
 ) {
@@ -112,10 +132,10 @@ async fn confirmed_runtime_describes_only_its_authorized_deliverable_and_loses_a
         },
     });
     let app = agent_delivery_tools_router(
-        auth,
+        auth.clone(),
         stub.clone(),
         None,
-        Some(service),
+        Some(service.clone()),
         "https://cma.example",
     );
     let command = rpc(
@@ -142,7 +162,84 @@ async fn confirmed_runtime_describes_only_its_authorized_deliverable_and_loses_a
     );
     let denied = body(app.clone().oneshot(request(&stub, &invalid)).await.unwrap()).await;
     assert_eq!(denied["result"]["isError"], true);
-    stub.confirmed.store(false, Ordering::SeqCst);
+    assert_eq!(
+        denied["result"]["structuredContent"]["error"],
+        json!({"code":"invalid_resource", "retryable":false})
+    );
+    let missing = rpc(
+        "tools/call",
+        json!({"name":"describe_deliverable","arguments":{"kind":"agent_artifact","id":format!("art_{}", "a".repeat(64))}}),
+    );
+    let missing = body(app.clone().oneshot(request(&stub, &missing)).await.unwrap()).await;
+    assert_eq!(missing["result"]["isError"], true);
+    assert_eq!(
+        missing["result"]["structuredContent"]["error"],
+        json!({"code":"not_accessible", "retryable":false})
+    );
+    assert!(missing["result"]["structuredContent"]
+        .get("marker")
+        .is_none());
+    for old_conversation in [false, true] {
+        let mut stale = auth.requester.clone();
+        if old_conversation {
+            stale.conversation.push_str("-previous");
+        } else {
+            stale.runtime.provision_generation = Some(99);
+        }
+        let stale_app = agent_delivery_tools_router(
+            Arc::new(DeliveryAuth {
+                stub: stub.clone(),
+                requester: stale,
+            }),
+            stub.clone(),
+            None,
+            Some(service.clone()),
+            "https://cma.example",
+        );
+        let stale = body(stale_app.oneshot(request(&stub, &command)).await.unwrap()).await;
+        assert_eq!(stale["result"], missing["result"]);
+    }
+    let unconfigured = rpc(
+        "tools/call",
+        json!({"name":"describe_deliverable","arguments":{"kind":"live_file","path":"report.json"}}),
+    );
+    let unconfigured = body(
+        app.clone()
+            .oneshot(request(&stub, &unconfigured))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(unconfigured["result"]["isError"], true);
+    assert_eq!(
+        unconfigured["result"]["structuredContent"]["error"],
+        json!({"code":"verification_unavailable", "retryable":false})
+    );
+    let malformed = rpc(
+        "tools/call",
+        json!({"name":"describe_deliverable","arguments":{"kind":"live_file","path":1}}),
+    );
+    let malformed = body(
+        app.clone()
+            .oneshot(request(&stub, &malformed))
+            .await
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(malformed["error"]["code"], -32602);
+    assert!(malformed.get("result").is_none());
+    let revoked_app = agent_delivery_tools_router(
+        Arc::new(RevokingAuth {
+            auth,
+            calls: AtomicUsize::new(0),
+        }),
+        stub.clone(),
+        None,
+        Some(service),
+        "https://cma.example",
+    );
+    let revoked = body(revoked_app.oneshot(request(&stub, &command)).await.unwrap()).await;
+    assert_eq!(revoked["result"], missing["result"]);
     assert_eq!(
         app.oneshot(request(&stub, &command))
             .await
