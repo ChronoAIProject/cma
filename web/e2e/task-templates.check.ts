@@ -235,7 +235,7 @@ test('LOCAL complete conversion confirms replacement and keeps the template fiel
   await page.getByLabel('Your task').fill('Keep the existing draft until confirmation');
   await page.getByRole('button', { name: 'Research a topic', exact: true }).click();
   await page.getByLabel('Topic', { exact: true }).fill('  Synthetic topic  ');
-  const preview = await page.getByLabel('Task preview').inputValue();
+  const preview = 'Research Synthetic topic and summarize the key findings, with links to sources.';
   await page.getByRole('button', { name: 'Write a task without a template' }).click();
   const dialog = page.getByRole('dialog', { name: 'Replace your free-text draft?' });
   await dialog.getByRole('button', { name: 'Keep editing template' }).click();

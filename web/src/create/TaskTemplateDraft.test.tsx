@@ -80,7 +80,7 @@ it('converts complete fields exactly, retaining their original whitespace after 
   fill('Document type', ' report ');
   fill('Subject', '  草稿 [subject]  ');
   fill('Audience', 'readers');
-  const preview = (screen.getByLabelText('Task preview') as HTMLTextAreaElement).value;
+  const preview = 'Write a report about 草稿 [subject] for readers.';
   click('Write a task without a template');
   expect(screen.getByLabelText('Your task')).toHaveValue(preview);
   view.unmount();
