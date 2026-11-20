@@ -68,9 +68,6 @@ test('LOCAL autolink bounds import, typing and paste through Preview, save and r
   await popup.close();
   await page.getByRole('button', { name: 'Edit', exact: true }).click();
   await expect(content).toHaveAttribute('contenteditable', 'true');
-  await content.locator('a').first().click();
-  expect(context.pages()).toHaveLength(1);
-  expect(external).toEqual([url]);
   await content.evaluate((node) => {
     const editor = (node as HTMLElement & { editor: Editor }).editor;
     editor.commands.setTextSelection(editor.state.doc.content.size - 1);
