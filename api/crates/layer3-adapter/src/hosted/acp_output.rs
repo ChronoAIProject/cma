@@ -24,6 +24,10 @@ const HEADER_BYTES: usize = 24;
 mod memory;
 use memory::OutputQueue;
 
+#[cfg(test)]
+#[path = "acp_output_component_tests.rs"]
+mod component_tests;
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct OutputCapability {

@@ -127,6 +127,7 @@ impl Bridge {
         AdmittedError,
     > {
         let policy = attachment.into_policy();
+        ingress::components::require(&policy)?;
         let scope = IngressWorkScope::new(policy.admit(
             IngressClass::Data,
             AllocationPlan::checked("admitted open scope", &[sizing::shared_owner_bytes::<()>()])?,

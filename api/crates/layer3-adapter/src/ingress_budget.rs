@@ -159,7 +159,7 @@ impl IngressBudget {
         self.1.bootstrap.bytes()
     }
 
-    /// Root and class storage remain charged while this root is retained.
+    /// Resident root, class and process storage stays charged while retained.
     pub fn metadata_bytes(&self) -> usize {
         self.1
             .classes
@@ -179,7 +179,7 @@ impl IngressBudget {
         assert_eq!(
             self.available_bytes() + self.metadata_bytes(),
             self.capacity_bytes(),
-            "only resident root/class metadata may remain charged"
+            "only resident metadata may remain charged"
         );
     }
 

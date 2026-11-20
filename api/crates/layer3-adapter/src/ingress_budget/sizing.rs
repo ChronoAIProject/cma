@@ -111,6 +111,29 @@ impl ClassBounds {
         self.metadata
     }
 
+    pub(crate) fn process_storage_bytes(self) -> usize {
+        self.metadata
+            - super::root_storage::Bootstrap::new().bytes()
+            - super::classes::storage_bytes().expect("bounds validate the platform layout")
+    }
+
+    /// Process-static allocations precede admitted load and outlive attachments.
+    pub(crate) fn with_process_storage(mut self, plan: AllocationPlan) -> Result<Self> {
+        let metadata = self
+            .metadata
+            .checked_add(plan.requested_bytes())
+            .ok_or_else(invalid)?;
+        let reserved = metadata
+            .checked_add(self.control)
+            .and_then(|bytes| bytes.checked_add(self.transformation))
+            .ok_or_else(invalid)?;
+        if reserved >= self.total {
+            return Err(invalid());
+        }
+        self.metadata = metadata;
+        Ok(self)
+    }
+
     pub fn maximum_attachments(self) -> Option<usize> {
         self.maximum_attachments.map(NonZeroUsize::get)
     }
@@ -123,6 +146,25 @@ impl ClassBounds {
 
 pub fn array_bytes<T>(capacity: usize) -> Result<usize> {
     capacity.checked_mul(size_of::<T>()).ok_or_else(invalid)
+}
+
+pub(crate) fn semaphore_storage_bytes() -> std::result::Result<usize, super::AdmissionRefusal> {
+    if !cfg!(any(target_os = "linux", target_vendor = "apple")) {
+        return Err(super::AdmissionRefusal::InvalidPlan {
+            phase: "unsupported class pool layout",
+        });
+    }
+    // Tokio 1.53.3 releases permits through the pinned std mutex.
+    AllocationPlan::checked(
+        "semaphore storage",
+        &[
+            size_of::<tokio::sync::Semaphore>(),
+            2 * size_of::<usize>(),
+            align_of::<tokio::sync::Semaphore>(),
+            super::root_storage::lazy_lock_bytes(),
+        ],
+    )
+    .map(AllocationPlan::requested_bytes)
 }
 
 /// Both Arc headers, the payload layout and the separately shared reservation.
@@ -195,3 +237,7 @@ pub(super) fn invalid() -> AdapterError {
 #[cfg(test)]
 #[path = "sizing_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "process_storage_tests.rs"]
+mod process_storage_tests;

@@ -19,23 +19,7 @@ pub(super) struct ClassPools {
 }
 
 pub(super) fn storage_bytes() -> Result<usize, AdmissionRefusal> {
-    if !cfg!(any(target_os = "linux", target_vendor = "apple")) {
-        return Err(AdmissionRefusal::InvalidPlan {
-            phase: "unsupported class pool layout",
-        });
-    }
-    // Tokio 1.53.3 releases permits through a std mutex.
-    let lock_backing = super::root_storage::lazy_lock_bytes();
-    let semaphore = AllocationPlan::checked(
-        "class semaphore storage",
-        &[
-            size_of::<Semaphore>(),
-            2 * size_of::<usize>(),
-            align_of::<Semaphore>(),
-            lock_backing,
-        ],
-    )?
-    .requested_bytes();
+    let semaphore = super::sizing::semaphore_storage_bytes()?;
     Ok(AllocationPlan::checked("class pools", &[semaphore; 3])?.requested_bytes())
 }
 
@@ -51,8 +35,8 @@ pub(super) fn install(root: &IngressBudget, bounds: ClassBounds) -> Result<(), A
                     phase: "class pools",
                 })?;
             let bootstrap = storage
-                .split(root.bootstrap_bytes())
-                .expect("resident bounds include the fixed root bootstrap");
+                .split(bounds.metadata_bytes() - storage_bytes()?)
+                .expect("resident bounds include class and process storage");
             let classes = ClassPools {
                 bounds,
                 data: Arc::new(Semaphore::new(bounds.data_bytes())),
@@ -65,9 +49,9 @@ pub(super) fn install(root: &IngressBudget, bounds: ClassBounds) -> Result<(), A
                 root.1.classes.set(classes).is_ok(),
                 "exclusive class initialization"
             );
-            // This root cannot reclaim its own allocation while it still
-            // exists. Debit its fixed bootstrap once, after successful install;
-            // only the separate class allocations have returnable permits.
+            // Root and process-static bootstrap outlive attachment work. Debit
+            // that finite provision once, after successful installation; only
+            // the separate class allocations have returnable permits.
             bootstrap.forget();
         }
     }
