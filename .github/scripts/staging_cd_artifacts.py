@@ -1,4 +1,4 @@
-"""Qualify PR image artifacts against exact merged source and build inputs."""
+"""Qualify CI image artifacts against exact merged source and build inputs."""
 import hashlib
 import json
 import os
@@ -19,6 +19,7 @@ MAX_ARTIFACT = 8 * 1024 * 1024 * 1024
 # to a build, which is always correct, instead of holding the publish step.
 REUSE_SECONDS = 900
 DOWNLOAD_SECONDS = 600
+QUEUE_EVENT = "merge_group"
 
 
 def qualifies(metadata, expected, run):
@@ -30,12 +31,17 @@ def qualifies(metadata, expected, run):
     if not isinstance(metadata, dict) or not required.issubset(metadata):
         return False
     workflow = metadata["workflow"]
+    # The manifest must name the same event as the run that retained it, and a
+    # queue manifest the exact group ref that run tested.
+    event = run.get("event")
     return (metadata["schema"] == "cma-ci-native-image-v1"
             and metadata["component"] == deployable_registry()[DEPLOYABLES[expected["component"]]]["component"]
             and metadata["sourceRevision"] == expected["source"] and metadata["sourceTree"] == expected["tree"]
             and metadata["platform"] == "linux/amd64" and metadata["versionLabel"] == expected["version"]
             and metadata["buildFingerprint"] == expected["build"] and isinstance(workflow, dict)
-            and workflow.get("repository") == REPOSITORY and workflow.get("event") == "pull_request"
+            and workflow.get("repository") == REPOSITORY and event in ("pull_request", QUEUE_EVENT)
+            and workflow.get("event") == event
+            and (event != QUEUE_EVENT or workflow.get("ref") == "refs/heads/" + str(run.get("head_branch")))
             and workflow.get("runId") == str(run["id"]) and workflow.get("runAttempt") == str(run["run_attempt"]))
 
 
@@ -72,35 +78,65 @@ def download(artifact, destination, token, *, deadline=None, retry=None):
     require("sha256:" + digest.hexdigest() == artifact["digest"], "CI artifact checksum differs")
 
 
-def fetch(expected, api, archive, token, downloader, deadline):
-    """Find and download the newest successful PR run's native image artifact."""
-    pr = api.request("pulls/" + str(expected["pr"]), deadline=deadline)
-    require(pr.get("merged") is True and pr.get("merge_commit_sha") == expected["source"]
-            and isinstance(pr.get("head"), dict) and matches(r"[0-9a-f]{40}", pr["head"].get("sha")),
-            "PR artifact source cannot be established")
-    head = pr["head"]["sha"]
-    data = api.request("actions/workflows/ci.yml/runs?event=pull_request&head_sha=" + head
-                       + "&status=success&per_page=100", deadline=deadline)
+def successful_runs(api, event, head, deadline):
+    data = api.request(f"actions/workflows/ci.yml/runs?event={event}&head_sha={head}&status=success&per_page=100",
+                       deadline=deadline)
     require(isinstance(data, dict) and isinstance(data.get("workflow_runs"), list), "CI run inventory is malformed")
-    runs = [run for run in data["workflow_runs"] if run.get("event") == "pull_request"
+    return [run for run in data["workflow_runs"] if run.get("event") == event
             and run.get("status") == "completed" and run.get("conclusion") == "success"
             and run.get("head_sha") == head and run.get("path") == ".github/workflows/ci.yml"
             and type(run.get("id")) is int and type(run.get("run_attempt")) is int
             and run.get("repository", {}).get("full_name") == REPOSITORY]
-    if not runs:
+
+
+def queue_run(expected, pr, api, deadline):
+    """The develop merge-queue run whose group commit became this exact source."""
+    # Queued fork code runs in this repository's context. Its CI bytes are
+    # never adopted: a fork-originated source is always rebuilt here.
+    if ((pr.get("head") or {}).get("repo") or {}).get("full_name") != REPOSITORY \
+            or (pr.get("base") or {}).get("ref") != "develop":
         return None
-    run = max(runs, key=lambda item: (item["id"], item["run_attempt"]))
+    branch = rf"gh-readonly-queue/develop/pr-{expected['pr']}-[0-9a-f]{{40}}"
+    runs = [run for run in successful_runs(api, QUEUE_EVENT, expected["source"], deadline)
+            if (run.get("head_repository") or {}).get("full_name") == REPOSITORY
+            and matches(branch, run.get("head_branch"))]
+    return max(runs, key=lambda item: (item["id"], item["run_attempt"])) if runs else None
+
+
+def pull_request_run(pr, api, deadline):
+    runs = successful_runs(api, "pull_request", pr["head"]["sha"], deadline)
+    return max(runs, key=lambda item: (item["id"], item["run_attempt"])) if runs else None
+
+
+def native_artifact(expected, run, api, deadline):
     listing = api.request(f"actions/runs/{run['id']}/artifacts?per_page=100", deadline=deadline)
     require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list)
             and listing.get("total_count") == len(listing["artifacts"]), "CI artifact inventory is incomplete")
     component = deployable_registry()[DEPLOYABLES[expected["component"]]]["component"]
     pattern = rf"ci-native-image-{re.escape(component)}-[0-9a-f]{{40}}-{run['id']}-{run['run_attempt']}"
     artifacts = [item for item in listing["artifacts"] if matches(pattern, item.get("name")) and item.get("expired") is False]
-    if not artifacts:
-        return None
-    require(len(artifacts) == 1, "Native PR artifact is ambiguous")
-    downloader(artifacts[0], archive, token, deadline=deadline)
-    return run
+    require(len(artifacts) <= 1, "Native PR artifact is ambiguous")
+    return artifacts[0] if artifacts else None
+
+
+def fetch(expected, api, archive, token, downloader, deadline):
+    """Download the native image of the newest successful CI run for this source.
+
+    A merge-queue run tested the exact develop commit, so it is preferred. A PR
+    run tested its own merge preview; its manifest qualifies only if it matches.
+    """
+    pr = api.request("pulls/" + str(expected["pr"]), deadline=deadline)
+    require(pr.get("merged") is True and pr.get("merge_commit_sha") == expected["source"]
+            and isinstance(pr.get("head"), dict) and matches(r"[0-9a-f]{40}", pr["head"].get("sha")),
+            "PR artifact source cannot be established")
+    lookups = (lambda: queue_run(expected, pr, api, deadline), lambda: pull_request_run(pr, api, deadline))
+    for lookup in lookups:
+        run = lookup()
+        artifact = None if run is None else native_artifact(expected, run, api, deadline)
+        if artifact is not None:
+            downloader(artifact, archive, token, deadline=deadline)
+            return run
+    return None
 
 
 def try_reuse(expected, directory, api, token, downloader=download, runner=command, *, clock=time.monotonic):
