@@ -115,7 +115,10 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
     if package_section is None:
         require("package_evidence" not in report and "package_evidence_sha256" not in policy)
     else:
-        from image_secrets import elf_nul_key_view, native_json_key_view, nested_certificates, package_receipt, reviewed_literals
+        from image_secrets import (
+            elf_nul_key_view, native_json_key_view, nested_certificates, package_receipt, portable_ownership,
+            reviewed_literals,
+        )
         from image_secrets.gate import (
             ARCH_CERTIFICATE_ADVISORY, CERTIFICATE_ADVISORY, DEBIAN_CONTROL_ADVISORY,
             DIGEST_FRAME_ADVISORY, DISTRIBUTION_ADVISORY,
@@ -144,6 +147,12 @@ def validate_receipt(report, archive_digest, mode, packet, *, component=None, pa
                         and evidence["package_member"]["type"] == "regular")
                 if origin["kind"] == "compiled-executable":
                     require(origin["span"]["sha256"] == evidence["candidate_sha256"])
+            owner = evidence.get("current_owner")
+            if expected_runtime == "runtime-omarchy" and owner is not None:
+                # Signed Arch files name their pacman records; CMA producers their reserved inputs.
+                signed = evidence["package"]["authority_type"] == "arch-signature"
+                require(owner.keys() == ({"pacman"} if signed else {"build_inputs"})
+                        and (signed or portable_ownership.valid_producer_inputs(owner["build_inputs"])))
             if classification in PACKAGE_ADVISORY_RULES:
                 require(package_advisory_allowed(classification, evidence["rule"], expected_runtime, evidence["member"]))
                 if classification == SELF_TEST_ADVISORY:
