@@ -162,6 +162,7 @@ forward!(FaultTriggerStore, TriggerStore, TriggerStoreError, {
 });
 
 forward!(FaultLaunchStore, LaunchStore, LaunchStoreError, {
+    fn visitor_launches_admitted(owner: &SubjectId, utc_day: u64) -> u32;
     fn admit_launch(admission: LaunchAdmission) -> LaunchAdmissionResult;
     fn launch_by_command(
         owner: &SubjectId,

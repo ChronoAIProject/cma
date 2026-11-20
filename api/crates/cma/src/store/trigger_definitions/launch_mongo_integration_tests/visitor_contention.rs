@@ -2,6 +2,9 @@ use super::*;
 use futures_util::future::join_all;
 use layer2_core::trigger_domain::LaunchAdmissionPolicy;
 
+mod faults;
+mod rollout;
+
 // Keep fixed windows beyond the TTL monitor's clock during the campaign.
 const BEFORE_MIDNIGHT: &str = "2099-09-05T23:59:59Z";
 const AFTER_MIDNIGHT: &str = "2099-09-06T00:00:00Z";
