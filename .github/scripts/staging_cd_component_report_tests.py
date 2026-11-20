@@ -19,6 +19,16 @@ def promotion(component, state="controller-verified"):
 
 
 class ComponentReportTests(unittest.TestCase):
+    def assertRow(self, rows, columns, reason="none", cause="-"):
+        """A row keeps its outcome columns and explains the first unproven one."""
+        text = "\n".join(rows) if isinstance(rows, list) else rows
+        matches = [line for line in text.splitlines() if line.startswith(columns + " ")]
+        self.assertEqual(len(matches), 1, columns)
+        explained = matches[0][len(columns) + 1:]
+        self.assertTrue(explained.startswith(f"{reason} | {cause} | "), explained)
+        next_step = explained[len(f"{reason} | {cause} | "):-2]
+        self.assertTrue(next_step == "-" if reason == "none" else len(next_step) > 10, explained)
+
     def env(self):
         return {"CD_PLAN_CHANGED": "true", "CD_ALLOCATION_RESULT": "success",
                 "CD_INFRASTRUCTURE_RESULT": "success", "CD_LANES": '{"web":"web","am":"am"}',
@@ -31,8 +41,8 @@ class ComponentReportTests(unittest.TestCase):
         env.update(CD_PUBLISH_AM="failure", CD_PROMOTE_AM='{"result":"skipped","outputs":{}}')
         rows, passed = summarize(env)
         self.assertFalse(passed)
-        self.assertIn("| web | success | admitted | success | controller-verified |", rows)
-        self.assertIn("| am | failure | skipped | skipped | unreported |", rows)
+        self.assertRow(rows, "| web | success | admitted | success | controller-verified |")
+        self.assertRow(rows, "| am | failure | skipped | skipped | unreported |", "publish-failure", "unknown")
 
     def lanes(self, lanes):
         env = dict(self.env(), CD_LANES=json.dumps(lanes))
@@ -52,11 +62,12 @@ class ComponentReportTests(unittest.TestCase):
                             "CD_PROMOTE_" + suffix: '{"result":"skipped","outputs":{}}'})
                 rows, verified = summarize(env)
                 self.assertIsNone(verified)
-                self.assertIn(f"| {c} | reservation_superseded | skipped | skipped | unreported |", rows)
+                self.assertRow(rows, f"| {c} | reservation_superseded | skipped | skipped | unreported |",
+                               "reservation_superseded", "transient")
                 self.assertIn(f"{c} publication skipped: reservation_superseded. This run has no verified {c} release.",
                               rows)
                 for other in sorted(TARGETS - {c}):
-                    self.assertIn(f"| {other} | success | admitted | success | controller-verified |", rows)
+                    self.assertRow(rows, f"| {other} | success | admitted | success | controller-verified |")
                 with tempfile.TemporaryDirectory() as tmp:
                     output = Path(tmp, "outputs")
                     with patch.dict(os.environ, dict(env, GITHUB_OUTPUT=str(output)), clear=True):
@@ -82,7 +93,8 @@ class ComponentReportTests(unittest.TestCase):
                             "CD_PROMOTE_CONTRACT": '{"result":"skipped","outputs":{}}'})
                 rows, verified = summarize(env)
                 self.assertIsNone(verified)
-                self.assertIn(f"| {c} | reservation_superseded | skipped | skipped | unreported |", rows)
+                self.assertRow(rows, f"| {c} | reservation_superseded | skipped | skipped | unreported |",
+                               "reservation_superseded", "transient")
                 sibling = sorted(GROUP - {c})[0].upper().replace("-", "_")
                 for change in ({"CD_FINALIZED_" + sibling: ""}, {"CD_PUBLISH_" + sibling: "failure"}):
                     self.assertIs(summarize(dict(env, **change))[1], False)
@@ -105,7 +117,8 @@ class ComponentReportTests(unittest.TestCase):
                 rows, verified = summarize(env)
                 # No run is known to deploy this group, at the head or behind it.
                 self.assertIs(verified, False)
-                self.assertIn(f"| {c} | source_already_final | skipped | skipped | unreported |", rows)
+                self.assertRow(rows, f"| {c} | source_already_final | skipped | skipped | unreported |",
+                               "source_already_final", "operator")
                 self.assertIn(f"{c}: an older run finalized this source. The next develop push resumes this "
                               "group's final; push to deploy (a re-run allocates nothing once develop moves on).",
                               rows)
@@ -132,8 +145,9 @@ class ComponentReportTests(unittest.TestCase):
                 env = dict(self.env(), CD_PROMOTE_WEB=json.dumps(web), GITHUB_STEP_SUMMARY=str(summary))
                 with patch.dict(os.environ, env, clear=True):
                     self.assertEqual(main(), 1)
-                self.assertIn("| web | success | admitted | success | unreported |", summary.read_text())
-                self.assertIn("| am | success | admitted | success | controller-verified |", summary.read_text())
+                self.assertRow(summary.read_text(), "| web | success | admitted | success | unreported |",
+                               "controller-unreported", "unknown")
+                self.assertRow(summary.read_text(), "| am | success | admitted | success | controller-verified |")
 
     def test_joint_deployment_requires_a_verified_result_for_each_admitted_peer(self):
         batch = promotion("am")
@@ -142,8 +156,8 @@ class ComponentReportTests(unittest.TestCase):
                    CD_PROMOTE_CONTRACT=json.dumps(batch))
         rows, passed = summarize(env)
         self.assertFalse(passed)
-        self.assertIn("| runtime | success | admitted | success | unreported |", rows)
-        self.assertIn("| am | success | admitted | success | controller-verified |", rows)
+        self.assertRow(rows, "| runtime | success | admitted | success | unreported |", "controller-unreported", "unknown")
+        self.assertRow(rows, "| am | success | admitted | success | controller-verified |")
 
     def test_refusal_or_cancellation_is_a_failed_release(self):
         for key, change in (("admit", "failure"), ("deploy", "cancelled"), ("deploy", "skipped")):
@@ -154,14 +168,15 @@ class ComponentReportTests(unittest.TestCase):
                                                  "failures": '{"am":"superseded-source"}'}}
         rows, passed = summarize(dict(self.env(), CD_PROMOTE_AM=json.dumps(am)))
         self.assertFalse(passed)
-        self.assertIn("superseded-source", "\n".join(rows))
+        self.assertRow(rows, "| am | success | superseded-source | skipped | unreported |", "superseded-source", "transient")
 
     def test_contract_retry_reports_retained_members_and_withheld_outcome(self):
         grouped = promotion("runtime", "withheld")
         grouped["outputs"]["admitted"] = '["am","runtime"]'
         rows, passed = summarize(dict(self.env(), CD_LANES='{"am":"contract"}', CD_PROMOTE_CONTRACT=json.dumps(grouped)))
         self.assertFalse(passed)
-        self.assertIn("| runtime | retained | admitted | success | withheld |", rows)
+        self.assertRow(rows, "| runtime | retained | admitted | success | withheld |",
+                       "deployed-compatibility-unqualified", "change")
 
     def test_skipped_or_failed_allocation_and_empty_queue(self):
         self.assertTrue(summarize({"CD_PLAN_CHANGED": "false", "CD_ALLOCATION_RESULT": "skipped"})[1])
@@ -174,4 +189,28 @@ class ComponentReportTests(unittest.TestCase):
             with patch.dict(os.environ, dict(self.env(), CD_PROMOTE_AM=json.dumps(promotion("unexpected")),
                                              GITHUB_STEP_SUMMARY=str(path)), clear=True):
                 self.assertEqual(main(), 1)
-            self.assertEqual(path.read_text(), "Component outcome evidence is missing or invalid.\n")
+            first, next_step = path.read_text().splitlines()
+            self.assertEqual(first, "Component outcome evidence is missing or invalid.")
+            self.assertTrue(next_step.startswith("Next step: "))
+            self.assertNotIn("unexpected", path.read_text())
+
+    def test_every_reachable_row_is_explained_by_a_catalogue_entry(self):
+        import itertools
+        from ci_outcome import CATALOGUE, entry
+        from staging_cd_component_admission import REASONS
+        from staging_cd_component_report import CODES, diagnosis
+        publishes = ("success", "failure", "skipped", "cancelled", "unknown", "retained", "reservation_superseded",
+                     "source_already_final", "superseded-peer", "finalize-incomplete")
+        admits = ("admitted", "skipped", "unknown", *sorted(REASONS))
+        deploys = ("success", "failure", "skipped", "cancelled", "unknown")
+        states = ("controller-verified", "withheld", "unverified", "unreported", "superseded_by_newer_final")
+        seen = set()
+        for columns in itertools.product(publishes, admits, deploys, states):
+            found = diagnosis(*columns)
+            if found is None:
+                self.assertEqual(columns[1:], ("admitted", "success", "controller-verified"))
+                continue
+            self.assertIsNot(entry(*found), CATALOGUE["uncatalogued"], found)
+            if found[0] == "component-report":
+                seen.add(found[1])
+        self.assertEqual(seen | {"allocation-incomplete", "evidence-invalid"}, set(CODES))

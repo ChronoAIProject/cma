@@ -1158,15 +1158,27 @@
         },
         "reservation_superseded": {
           "title": "Reservation superseded",
-          "meaning": "A newer run took over the AM reservation, so this run intentionally skipped the AM release.",
+          "meaning": "A newer run took over this component's reservation, so this run intentionally skipped its release.",
           "cause": "transient",
-          "next": "No action: the newer run publishes and deploys AM."
+          "next": "No action: the newer run publishes and deploys this component."
+        },
+        "source_already_final": {
+          "title": "Source already finalized",
+          "meaning": "An older run already finalized this source, so this run skipped its group claim before building and no run is known to deploy it.",
+          "cause": "operator",
+          "next": "An older run finalized this source; the next develop push resumes this group's final; push to deploy (a re-run allocates nothing once develop moves on)."
+        },
+        "superseded_by_newer_final": {
+          "title": "Deployment owned by a newer final",
+          "meaning": "A newer final from a later develop source exists for this component, so this run deployed nothing for it.",
+          "cause": "transient",
+          "next": "No action: the newer final's run deploys this component."
         },
         "superseded-peer": {
-          "title": "Held for the newer AM release",
-          "meaning": "The component published and finalized, but its contract group deploys with the newer AM release.",
-          "cause": "transient",
-          "next": "No action: the run that owns the newer AM reservation deploys the group."
+          "title": "Held with a skipped member",
+          "meaning": "The component published and finalized, but its lane was not deployed because another member's publication was skipped.",
+          "cause": "unknown",
+          "next": "Follow the skipped member's row: it names the run or the push that deploys this lane."
         },
         "admit-skipped": {
           "title": "Admission skipped",

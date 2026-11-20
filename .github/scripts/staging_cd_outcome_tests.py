@@ -24,6 +24,7 @@ def vocabularies():
     import staging_cd_allocate as allocate
     import staging_cd_build_cache as build_cache
     import staging_cd_component_admission as admission
+    import staging_cd_component_report as component_report
     import staging_cd_deploy_result as deploy_result
     import staging_cd_finalize_diagnostics as finalize
     import staging_cd_invoke as invoke
@@ -44,6 +45,7 @@ def vocabularies():
         "allocation": set(allocate.REFUSAL_CODES.values()) | allocate.FALLBACK_CODES,
         "admission": set(admission.REASONS),
         "cache-withheld": withheld,
+        "component-report": set(component_report.CODES),
     }
 
 
