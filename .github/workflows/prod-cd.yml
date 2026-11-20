@@ -47,8 +47,20 @@ jobs:
         run: |
           python3 -m venv "$RUNNER_TEMP/prod-cd-select"
           "$RUNNER_TEMP/prod-cd-select/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
+      # Minting a token is safe to repeat. Only the repeat may fail the job.
       - name: Create restricted infrastructure reader token
         id: infra-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - name: Retry restricted infrastructure reader token
+        id: infra-token-retry
+        if: steps.infra-token.outcome == 'failure'
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
         with:
           app-id: ${{ vars.CMA_INFRA_APP_ID }}
@@ -59,15 +71,29 @@ jobs:
       - name: Resolve infrastructure revision once for the release
         id: private
         env:
-          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
+          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
           CD_INFRA_REF: ${{ inputs.infra_ref }}
         run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
+      # A checkout into the same path is safe to repeat; only the repeat may fail the job.
       - name: Check out the production deploy switches
+        id: infra-checkout
+        continue-on-error: true
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: ChronoAIProject/cma-infra
           ref: ${{ steps.private.outputs.revision }}
-          token: ${{ steps.infra-token.outputs.token }}
+          token: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
+          path: .github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}
+          sparse-checkout: prod/chrono-cd
+          persist-credentials: false
+          show-progress: false
+      - name: Retry the production deploy switches checkout
+        if: steps.infra-checkout.outcome == 'failure'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ChronoAIProject/cma-infra
+          ref: ${{ steps.private.outputs.revision }}
+          token: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
           path: .github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}
           sparse-checkout: prod/chrono-cd
           persist-credentials: false
