@@ -425,3 +425,68 @@ async fn another_attachment_on_the_same_root_cannot_supply_the_recording_operati
     drop((error, session, recorder, original, other));
     assert_eq!(root.available_bytes(), root.capacity_bytes());
 }
+
+#[tokio::test]
+async fn data_pressure_refuses_recording_before_initialization_and_preserves_ack_progress() {
+    use layer3_adapter::RuntimeOutputReceipt;
+    let root = IngressBudget::new(256 * 1024);
+    let policy = IngressOwnershipPolicy::new(
+        root.clone(),
+        ClassBounds::new(root.capacity_bytes(), plan(64 * 1024), plan(64 * 1024)).unwrap(),
+    )
+    .unwrap();
+    let recorder = Recorder {
+        policy: policy.clone(),
+        calls: AtomicUsize::new(0),
+        fail: false,
+        block: false,
+    };
+    let (sender, mut acknowledgements) =
+        RuntimeOutputReceipt::admitted_channel_checked(policy.clone(), 1).unwrap();
+    let receipt = RuntimeOutputReceipt::new_admitted(
+        RuntimeOutputSource {
+            stream_id: "00000000-0000-4000-8000-000000000001".into(),
+            cursor: 1,
+            native_conversation_id: "synthetic-conversation".into(),
+            payload_sha256: "b".repeat(64),
+        },
+        sender,
+    );
+    let pressure = policy
+        .admit(IngressClass::Data, plan(policy.bounds().data_bytes()))
+        .unwrap();
+    let available = root.available_bytes();
+    let service: &dyn AgentUpdateRecorder = &recorder;
+    let mut session = service.recording_session();
+    let error = service
+        .record_output_in_session(
+            &AgentId("agt_data_pressure".into()),
+            7,
+            &mut session,
+            &ConversationUpdate::Lost { frames: 3 },
+            std::time::UNIX_EPOCH,
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(*error, AgentConversationError::CapacityExceeded);
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 0);
+    assert_eq!(root.available_bytes(), available);
+    assert_eq!(
+        policy
+            .budget(IngressClass::Transformation)
+            .available_bytes(),
+        policy.bounds().transformation_bytes()
+    );
+    receipt.acknowledge_admitted().unwrap();
+    assert_eq!(*acknowledgements.recv().await.unwrap(), receipt.source);
+    assert_eq!(root.available_bytes(), available);
+    drop((
+        error,
+        session,
+        receipt,
+        acknowledgements,
+        recorder,
+        pressure,
+    ));
+    assert_eq!(root.available_bytes(), root.capacity_bytes());
+}
