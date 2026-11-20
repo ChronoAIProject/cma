@@ -80,13 +80,18 @@ async fn drain<T>(
                 let receipt = delivery.receipt;
                 let recording = async {
                     let outcome = loop {
-                        match recorder.record_session_reopen(agent_id, guard, &mut assembly, &update, now_rfc3339()).await {
+                        match recorder.record_reopen_in_session(agent_id, guard, &mut assembly, &update, std::time::SystemTime::now()).await {
                             Ok(outcome) => break outcome,
                             Err(error) if matches!(&*error, AgentConversationError::Unavailable(_)) => {
                                 drop(error);
                                 tokio::time::sleep(Duration::from_secs(1)).await;
                             },
-                            Err(error) => return Err(AdapterError::Unavailable(format!("durable reopen output was refused: {}", &*error))),
+                            Err(error) => return Err(if assembly.policy().is_some() {
+                                tracing::warn!(error = %*error, "admitted reopen recording refused");
+                                AdapterError::Unavailable(String::new())
+                            } else {
+                                AdapterError::Unavailable(format!("durable reopen output was refused: {}", &*error))
+                            }),
                         }
                     };
                     if let Some(receipt) = receipt {

@@ -1,4 +1,7 @@
 use super::*;
+use layer2_core::sandbox::ingress_ownership::{
+    AdmittedError, AdmittedOperation, AllocationPlan, IngressClass, OwnedWork, RecordingSession,
+};
 use layer2_core::sandbox::store::SandboxMutationGuard;
 use layer2_core::sandbox::{AgentUpdateOutcome, SandboxStatus, SandboxWorkStep};
 use layer3_adapter::{RuntimeOutputReceipt, RuntimeOutputSource, RuntimeOutputUpdate};
@@ -140,6 +143,25 @@ impl AgentUpdateRecorder for OwnedRecorder {
         )
     }
 
+    fn record_session_reopen_operation<'a>(
+        &'a self,
+        id: &'a AgentId,
+        _: &'a AgentReopenGuard,
+        _: &'a mut RecordingSession,
+        _: &'a ConversationUpdate,
+        _: std::time::SystemTime,
+    ) -> Result<
+        AdmittedOperation<'a, Result<AgentUpdateOutcome, AgentConversationError>>,
+        AdmittedError,
+    > {
+        AdmittedOperation::from_owned(
+            &self.policy,
+            IngressClass::Transformation,
+            AllocationPlan::checked("reopen operation fixture", &[1024])?,
+            move |_| async move { Ok(self.outcome(id).unwrap().map(Ok)) },
+        )
+    }
+
     async fn record_update(
         &self,
         _: &AgentId,
@@ -162,9 +184,17 @@ impl AgentUpdateRecorder for OwnedRecorder {
         layer2_core::sandbox::ingress_ownership::OwnedWork<AgentUpdateOutcome>,
         layer2_core::sandbox::ingress_ownership::OwnedWork<AgentConversationError>,
     > {
-        use layer2_core::sandbox::ingress_ownership::{
-            AllocationPlan, IngressClass, IngressWorkScope,
-        };
+        assert!(!self.enabled, "enabled recorder must enter synchronously");
+        self.outcome(id)
+    }
+}
+
+impl OwnedRecorder {
+    fn outcome(
+        &self,
+        id: &AgentId,
+    ) -> Result<OwnedWork<AgentUpdateOutcome>, OwnedWork<AgentConversationError>> {
+        use layer2_core::sandbox::ingress_ownership::IngressWorkScope;
         let scope = IngressWorkScope::new(
             self.policy
                 .admit(

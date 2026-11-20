@@ -2,7 +2,9 @@ use layer3_adapter::ConversationUpdate;
 
 use crate::ids::AgentId;
 
-use super::ingress_ownership::{IngressWorkScope, OwnedWork, RecordingSession};
+use super::ingress_ownership::{
+    AdmittedError, AdmittedOperation, IngressWorkScope, OwnedWork, RecordingSession,
+};
 use super::AgentLogEntry;
 
 pub const MAX_DURABLE_AGENT_MESSAGE_BYTES: usize = 1024 * 1024;
@@ -80,6 +82,85 @@ pub enum AgentConversationError {
 pub trait AgentUpdateRecorder: Send + Sync {
     fn recording_session(&self) -> RecordingSession {
         RecordingSession::new(None)
+    }
+
+    /// Admit storage before constructing an erased future, copying inputs or
+    /// formatting timestamps. Implementations retain each result and error.
+    fn restore_session_operation<'a>(
+        &'a self,
+        _id: &'a AgentId,
+        _runtime_generation: u64,
+        _session: &'a mut RecordingSession,
+    ) -> Result<AdmittedOperation<'a, Result<(), AgentConversationError>>, AdmittedError> {
+        Err(AdmittedError::Unsupported(
+            "admitted assembly restoration is unsupported",
+        ))
+    }
+
+    fn record_session_update_operation<'a>(
+        &'a self,
+        _id: &'a AgentId,
+        _runtime_generation: u64,
+        _session: &'a mut RecordingSession,
+        _update: &'a ConversationUpdate,
+        _appended_at: std::time::SystemTime,
+    ) -> Result<
+        AdmittedOperation<'a, Result<AgentUpdateOutcome, AgentConversationError>>,
+        AdmittedError,
+    > {
+        Err(AdmittedError::Unsupported(
+            "admitted update recording is unsupported",
+        ))
+    }
+
+    fn record_session_output_operation<'a>(
+        &'a self,
+        _id: &'a AgentId,
+        _runtime_generation: u64,
+        _session: &'a mut RecordingSession,
+        _update: &'a ConversationUpdate,
+        _appended_at: std::time::SystemTime,
+    ) -> Result<
+        AdmittedOperation<'a, Result<AgentOutputCommit, AgentConversationError>>,
+        AdmittedError,
+    > {
+        Err(AdmittedError::Unsupported(
+            "admitted output recording is unsupported",
+        ))
+    }
+
+    fn record_session_reopen_operation<'a>(
+        &'a self,
+        _id: &'a AgentId,
+        _guard: &'a super::store::AgentReopenGuard,
+        _session: &'a mut RecordingSession,
+        _update: &'a ConversationUpdate,
+        _appended_at: std::time::SystemTime,
+    ) -> Result<
+        AdmittedOperation<'a, Result<AgentUpdateOutcome, AgentConversationError>>,
+        AdmittedError,
+    > {
+        Err(AdmittedError::Unsupported(
+            "admitted reopen recording is unsupported",
+        ))
+    }
+
+    fn flush_session_output_operation<'a>(
+        &'a self,
+        _id: &'a AgentId,
+        _runtime_generation: u64,
+        _session: &'a mut RecordingSession,
+        _appended_at: std::time::SystemTime,
+    ) -> Result<
+        AdmittedOperation<
+            'a,
+            Result<Option<layer3_adapter::RuntimeOutputSource>, AgentConversationError>,
+        >,
+        AdmittedError,
+    > {
+        Err(AdmittedError::Unsupported(
+            "admitted output flush is unsupported",
+        ))
     }
 
     /// Legacy implementations preserve their algorithm only for an unowned

@@ -5,7 +5,7 @@ use layer2_core::sandbox::ingress_ownership::{IngressWorkScope, OwnedWork, Recor
 #[cfg(test)]
 use layer2_core::sandbox::AgentMessageAssembly;
 use layer2_core::sandbox::{AgentConversationError, AgentUpdateRecorder};
-use layer2_core::{now_rfc3339, AgentId};
+use layer2_core::AgentId;
 use layer3_adapter::ConversationUpdate;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
@@ -164,7 +164,7 @@ async fn restore_assembly(
 ) -> Result<(), OwnedWork<AgentConversationError>> {
     loop {
         match recorder
-            .restore_session(agent_id, runtime_generation, assembly)
+            .restore_recording(agent_id, runtime_generation, assembly)
             .await
         {
             Ok(_) => return Ok(()),
@@ -191,12 +191,12 @@ async fn process_update(
 ) -> Result<(), OwnedWork<AgentConversationError>> {
     let receipt = update.delivery().receipt;
     loop {
-        let attempt = recorder.record_session_output(
+        let attempt = recorder.record_output_in_session(
             agent_id,
             runtime_generation,
             assembly,
             &update,
-            now_rfc3339(),
+            std::time::SystemTime::now(),
         );
         let result = if receipt.is_some() {
             observe_recording(attempt).await
@@ -293,11 +293,11 @@ async fn flush_output(
     pending: &mut Option<PendingReceipt>,
 ) -> Result<(), OwnedWork<AgentConversationError>> {
     loop {
-        match observe_recording(recorder.flush_session_output(
+        match observe_recording(recorder.flush_recording(
             agent_id,
             runtime_generation,
             assembly,
-            now_rfc3339(),
+            std::time::SystemTime::now(),
         ))
         .await
         {

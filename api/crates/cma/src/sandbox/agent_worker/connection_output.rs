@@ -6,7 +6,7 @@ use futures_util::FutureExt as _;
 #[cfg(test)]
 use layer2_core::sandbox::AgentMessageAssembly;
 use layer2_core::sandbox::{Agent, AgentConversationError, AgentUpdateRecorder};
-use layer2_core::{now_rfc3339, AgentId};
+use layer2_core::AgentId;
 use layer3_adapter::ConversationUpdate;
 use tokio::sync::mpsc;
 
@@ -58,9 +58,9 @@ async fn drain<T>(
     tokio::pin!(operation);
     let mut assembly = recorder.recording_session();
     recorder
-        .restore_session(agent_id, generation, &mut assembly)
+        .restore_recording(agent_id, generation, &mut assembly)
         .await
-        .map_err(|_| unavailable())?;
+        .map_err(|error| recording_failure(&error, assembly.policy().is_some()))?;
     if !assembly.assembly().is_empty() {
         return Err(unavailable());
     }
@@ -85,7 +85,7 @@ async fn drain<T>(
                     // Keep driving the opener while this receipt waits for its
                     // transaction, then finish the receipt before handing off.
                     let recorded = {
-                        let recording = recorder.record_session_update(agent_id, generation, &mut assembly, &update, now_rfc3339());
+                        let recording = recorder.record_update_in_session(agent_id, generation, &mut assembly, &update, std::time::SystemTime::now());
                         tokio::pin!(recording);
                         loop {
                             tokio::select! {
@@ -115,7 +115,7 @@ async fn drain<T>(
                             drop(error);
                             tokio::time::sleep(Duration::from_secs(1)).await;
                         },
-                        Err(_) => return recorded_failure(completed, operation.as_mut(), unavailable()),
+                        Err(error) => return recorded_failure(completed, operation.as_mut(), recording_failure(&error, assembly.policy().is_some())),
                     }
                 }
                 if let Some(result) = completed {
@@ -123,6 +123,15 @@ async fn drain<T>(
                 }
             }
         }
+    }
+}
+
+fn recording_failure(error: &AgentConversationError, admitted: bool) -> WorkerFailure {
+    if admitted {
+        tracing::warn!(error = %error, "admitted reconnect recording refused");
+        WorkerFailure::retryable("agent_connection_output_unavailable", String::new())
+    } else {
+        unavailable()
     }
 }
 

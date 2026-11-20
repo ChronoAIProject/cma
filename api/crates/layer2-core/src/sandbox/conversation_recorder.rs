@@ -52,6 +52,7 @@ pub struct DurableAgentUpdateRecorder {
 }
 
 mod configuration;
+mod ingress;
 
 #[cfg(test)]
 mod ingress_cancellation_tests;

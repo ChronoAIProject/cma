@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
 use crate::sandbox::ingress_ownership::{
-    AllocationPlan, ClassBounds, IngressBudget, IngressClass, IngressOwnershipPolicy,
-    IngressWorkScope, RecordingSession,
+    AdmittedError, AllocationPlan, ClassBounds, IngressBudget, IngressClass,
+    IngressOwnershipPolicy, IngressWorkScope, RecordingSession,
 };
 use crate::sandbox::store::{AgentReopenGuard, SandboxMutationGuard};
 use crate::sandbox::{SandboxStatus, SandboxWorkStep};
@@ -128,37 +128,38 @@ fn snapshot_operation_requires_an_explicit_store_implementation() {
 
 #[tokio::test]
 async fn legacy_session_calls_preserve_mutations_and_the_original_error() {
-    let recorder = recorder(false);
+    let implementation = recorder(false);
+    let recorder: &dyn AgentUpdateRecorder = &implementation;
     let id = AgentId("agt_session_contract".into());
     let update = ConversationUpdate::Lost { frames: 3 };
     let mut session = recorder.recording_session();
     assert!(session.policy().is_none());
     let restored = recorder
-        .restore_session(&id, 7, &mut session)
+        .restore_recording(&id, 7, &mut session)
         .await
         .unwrap();
     assert!(!restored.is_admitted());
     assert_eq!(session.assembly().content, "retained prefix");
     recorder
-        .record_session_update(&id, 7, &mut session, &update, String::new())
+        .record_update_in_session(&id, 7, &mut session, &update, std::time::UNIX_EPOCH)
         .await
         .unwrap();
     let output = recorder
-        .record_session_output(&id, 7, &mut session, &update, String::new())
+        .record_output_in_session(&id, 7, &mut session, &update, std::time::UNIX_EPOCH)
         .await
         .unwrap();
     assert!(!output.is_admitted());
     assert!(output.committed.is_none());
     recorder
-        .record_session_reopen(&id, &guard(), &mut session, &update, String::new())
+        .record_reopen_in_session(&id, &guard(), &mut session, &update, std::time::UNIX_EPOCH)
         .await
         .unwrap();
     assert!(recorder
-        .flush_session_output(&id, 7, &mut session, String::new())
+        .flush_recording(&id, 7, &mut session, std::time::UNIX_EPOCH)
         .await
         .unwrap()
         .is_none());
-    assert_eq!(recorder.calls.load(Ordering::SeqCst), 5);
+    assert_eq!(implementation.calls.load(Ordering::SeqCst), 5);
     assert_eq!(
         session.assembly().content,
         "retained prefix / recorded / recorded / recorded"
@@ -168,8 +169,9 @@ async fn legacy_session_calls_preserve_mutations_and_the_original_error() {
         calls: AtomicUsize::new(0),
         fail: true,
     };
+    let failing: &dyn AgentUpdateRecorder = &failing;
     let error = failing
-        .record_session_update(&id, 7, &mut session, &update, String::new())
+        .record_update_in_session(&id, 7, &mut session, &update, std::time::UNIX_EPOCH)
         .await
         .unwrap_err();
     assert!(!error.is_admitted());
@@ -187,6 +189,44 @@ async fn legacy_implementations_refuse_enabled_and_already_owned_sessions_before
     let update = ConversationUpdate::Lost { frames: 3 };
     let (root, policy) = policy();
     let mut enabled = RecordingSession::new(Some(policy));
+    assert!(matches!(
+        recorder.restore_session_operation(&id, 7, &mut enabled),
+        Err(AdmittedError::Unsupported(_))
+    ));
+    assert!(matches!(
+        recorder.record_session_update_operation(
+            &id,
+            7,
+            &mut enabled,
+            &update,
+            std::time::UNIX_EPOCH
+        ),
+        Err(AdmittedError::Unsupported(_))
+    ));
+    assert!(matches!(
+        recorder.record_session_output_operation(
+            &id,
+            7,
+            &mut enabled,
+            &update,
+            std::time::UNIX_EPOCH
+        ),
+        Err(AdmittedError::Unsupported(_))
+    ));
+    assert!(matches!(
+        recorder.record_session_reopen_operation(
+            &id,
+            &guard(),
+            &mut enabled,
+            &update,
+            std::time::UNIX_EPOCH
+        ),
+        Err(AdmittedError::Unsupported(_))
+    ));
+    assert!(matches!(
+        recorder.flush_session_output_operation(&id, 7, &mut enabled, std::time::UNIX_EPOCH),
+        Err(AdmittedError::Unsupported(_))
+    ));
     let mut installed = RecordingSession::new(None);
     installed
         .replace(
