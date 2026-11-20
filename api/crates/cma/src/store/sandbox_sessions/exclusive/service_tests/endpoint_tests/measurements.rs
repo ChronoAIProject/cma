@@ -154,7 +154,7 @@ async fn attempt(f: &Fixture, ingress: usize, diagnostics: Option<&Diagnostics>)
 #[ignore = "requires separate matched desktop-replica fixture windows and preregistered noise"]
 async fn matched_public_desktop_connect_windows() {
     let mode = std::env::var("CMA_DESKTOP_PUBLIC_MODE").expect("explicit measurement mode");
-    assert!(["legacy", "one", "two"].contains(&mode.as_str()));
+    assert!(["one", "two"].contains(&mode.as_str()));
     let diagnostic = std::env::var("CMA_DESKTOP_PUBLIC_PHASES").as_deref() == Ok("1");
     let subscriber = diagnostic.then(|| {
         tracing_subscriber::fmt()
@@ -165,7 +165,7 @@ async fn matched_public_desktop_connect_windows() {
     });
     let _scope = subscriber.map(tracing::subscriber::set_default);
     let diagnostics = diagnostic.then(Diagnostics::start);
-    let f = Fixture::new(mode != "legacy").await;
+    let f = Fixture::new(true).await;
     f.auth.set_provider_timing(diagnostic);
     let mut samples = Vec::new();
     for window in 0..3 {

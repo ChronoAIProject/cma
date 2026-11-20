@@ -1,7 +1,7 @@
 import type { AgentDetail, AgentStatus } from '../api/types';
 import { routePath, type AppRoute } from '../routing/routes';
 import { agentActions } from '../shell/treeActions';
-import type { TreePermissions } from '../shell/Tree';
+import type { TreeAction, TreePermissions } from '../shell/Tree';
 import type { MenuEntry } from '../ui/Menu';
 import type { Crumb } from '../ui/PageHeader';
 
@@ -41,6 +41,21 @@ export function agentHeaderMenu(
   return safe.length > 0 && destructive.length > 0
     ? [...safe, { type: 'separator', id: 'before-destructive' }, ...destructive]
     : [...safe, ...destructive];
+}
+
+export function agentHeaderActionHandler(
+  agentId: string,
+  readOnly: boolean,
+  onAction: ((action: TreeAction) => void) | undefined,
+) {
+  return onAction === undefined || readOnly
+    ? undefined
+    : (id: string) =>
+        onAction({
+          kind: id as
+            'stop_agent' | 'delete_agent' | 'export_history' | 'export_retained_conversation',
+          agentId,
+        });
 }
 
 /** Where an owner's Agent lives, ending at the Agent itself. */

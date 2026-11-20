@@ -206,6 +206,9 @@ mod index_hooks;
 #[path = "management/creation.rs"]
 mod creation;
 
+#[path = "management/recovery.rs"]
+mod recovery;
+
 #[path = "management/reconciliation.rs"]
 mod reconciliation;
 

@@ -20,7 +20,7 @@ it('uses an unfinished image rotation even when the Sandbox still reports Active
   };
   expect(taskPresentation(agent, rotating, 'fresh')).toMatchObject({
     group: 'Updating environment',
-    label: 'Completed',
+    label: 'Turn ended',
     showRunningTime: false,
   });
   expect(taskStatus(agent, rotating)).toBe('starting');

@@ -72,6 +72,15 @@ it('offers Stop, Export and Delete from the header, with the reason Delete is un
   expect(onAgentAction).not.toHaveBeenCalled();
   await actor.click(screen.getByRole('menuitem', { name: 'Stop agent' }));
   expect(onAgentAction).toHaveBeenCalledExactlyOnceWith({ kind: 'stop_agent', agentId: 'agt_1' });
+  for (const [label, kind] of [
+    ['Export raw history', 'export_history'],
+    ['Export retained conversation', 'export_retained_conversation'],
+  ] as const) {
+    onAgentAction.mockClear();
+    await actor.click(screen.getByRole('button', { name: 'More Agent actions' }));
+    await actor.click(screen.getByRole('menuitem', { name: label }));
+    expect(onAgentAction).toHaveBeenCalledExactlyOnceWith({ kind, agentId: 'agt_1' });
+  }
 });
 
 it('holds every header action while another action is being confirmed', async () => {

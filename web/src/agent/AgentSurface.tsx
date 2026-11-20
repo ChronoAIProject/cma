@@ -21,7 +21,7 @@ import './Agent.css';
 import { OwnerAgentHeader } from './OwnerAgentHeader';
 import { Alert } from '../ui/Alert';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
-import { agentBreadcrumb, agentHeaderMenu } from './headerActions';
+import { agentBreadcrumb, agentHeaderMenu, agentHeaderActionHandler } from './headerActions';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
 import { sandboxChildrenAvailable } from '../sandbox/lifecycle';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
@@ -264,19 +264,7 @@ export function AgentSurface({
               );
           }}
           moreActions={headerMenu}
-          onMoreAction={
-            onAgentAction === undefined || readOnly
-              ? undefined
-              : (id) =>
-                  onAgentAction({
-                    kind: id as
-                      | 'stop_agent'
-                      | 'delete_agent'
-                      | 'export_history'
-                      | 'export_retained_conversation',
-                    agentId,
-                  })
-          }
+          onMoreAction={agentHeaderActionHandler(agentId, readOnly, onAgentAction)}
         />
 
         {/*
@@ -450,6 +438,15 @@ export function AgentSurface({
             queueWhileStarting={state.v2 !== undefined}
             starting={starting}
             controlsUnavailable={controller.controlsUnavailable || !controlReady}
+            responseControls={
+              accessUncertain
+                ? 'checking-access'
+                : readOnly
+                  ? 'denied'
+                  : !controlReady
+                    ? 'checking'
+                    : controller.responseControls
+            }
             requestPending={
               controller.pendingMessage !== undefined || controller.pendingControl === true
             }

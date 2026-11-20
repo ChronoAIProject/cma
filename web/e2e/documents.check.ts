@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test';
+import './documents.autolink';
 import { LocalDocuments, documentId } from './documents.fixture';
 for (const width of [1600, 390]) {
   for (const theme of ['light', 'dark']) {
@@ -203,6 +204,7 @@ for (const shortcut of ['Control+s', 'Meta+s']) {
     expect(fixture.writes).toHaveLength(0);
 
     await back.click();
+    await page.getByRole('button', { name: 'Leave without saving', exact: true }).click();
     await page.getByRole('link', { name: /Product brief/ }).click();
     await expect(title).toHaveValue('Draft title');
     await expect(title).toBeEditable();
