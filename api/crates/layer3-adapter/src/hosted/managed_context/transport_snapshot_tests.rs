@@ -1,17 +1,25 @@
 use super::*;
 
 #[test]
-fn installed_transport_can_cross_policy_modes_without_losing_its_authority() {
+fn admitted_context_keeps_transport_authority_and_refuses_legacy_installation() {
     for provider in [false, true] {
         let (root, policy) = super::super::super::guidance_admission::fixture::policy();
-        let (binding, source) = binding(provider, 6, None);
+        let (binding, source) = binding(&policy, provider, 6, None);
         let raw = if provider {
             ToolTransport::Provider(Box::new(source.provider.clone()))
         } else {
             ToolTransport::Access(source.access.clone())
         };
+        assert!(matches!(
+            binding
+                .confirm_transport(&raw, "conversation", 1)
+                .now_or_never()
+                .unwrap(),
+            Err(AdapterError::Unsupported(_))
+        ));
+        assert_eq!(source.confirmations.load(SeqCst), 0);
         binding
-            .confirm_transport(&raw, "conversation", 1)
+            .confirm_transport_admitted(&raw, "conversation", 1, &policy)
             .now_or_never()
             .unwrap()
             .unwrap();
@@ -39,14 +47,17 @@ fn installed_transport_can_cross_policy_modes_without_losing_its_authority() {
             .unwrap()
             .unwrap()
             .unwrap();
-        binding
-            .confirm_transport(&legacy, "conversation", 1)
-            .now_or_never()
-            .unwrap()
-            .unwrap();
-        root.assert_idle();
+        assert!(matches!(
+            binding
+                .confirm_transport(&legacy, "conversation", 1)
+                .now_or_never()
+                .unwrap(),
+            Err(AdapterError::Unsupported(_))
+        ));
         assert_eq!(source.preparations.load(SeqCst), 1);
-        assert_eq!(source.confirmations.load(SeqCst), 1);
+        assert_eq!(source.confirmations.load(SeqCst), 2);
+        drop((binding, source, legacy));
+        root.assert_idle();
     }
 }
 

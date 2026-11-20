@@ -137,6 +137,9 @@ impl Bridge {
             }
             .into());
         }
+        if let Some(context) = &settings.context_refresh {
+            context.require_owner(&policy)?;
+        }
         let scope = IngressWorkScope::new(policy.admit(
             IngressClass::Data,
             AllocationPlan::checked("admitted open scope", &[sizing::shared_owner_bytes::<()>()])?,

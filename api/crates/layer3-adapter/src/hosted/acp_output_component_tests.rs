@@ -203,6 +203,64 @@ async fn admitted_open_refuses_a_subscription_from_another_attachment() {
     root.assert_idle();
 }
 
+#[tokio::test]
+async fn admitted_open_refuses_a_context_from_another_attachment() {
+    use crate::ingress_budget::{AdmissionRefusal, AdmittedError};
+    use futures_util::FutureExt;
+
+    let root = IngressBudget::new(128 * 1024 * 1024);
+    let empty = AllocationPlan::checked("no downstream fixture work", &[]).unwrap();
+    let bounds =
+        IngressOwnershipPolicy::conversation_bounds(root.capacity_bytes(), 2, empty, empty)
+            .unwrap();
+    let policy = IngressOwnershipPolicy::new_admitted(root.clone(), bounds).unwrap();
+    drop(
+        policy
+            .admit(
+                IngressClass::Data,
+                AllocationPlan::checked("release locks", &[1]).unwrap(),
+            )
+            .unwrap(),
+    );
+    let first = policy.admit_attachment().unwrap();
+    let second = policy.admit_attachment().unwrap();
+    let (context, source) =
+        crate::hosted::managed_context::receipt_admission::tests::binding(first.policy(), 0, None);
+    drop(source);
+    let mut settings = super::super::tests::settings(None, false);
+    settings.context_refresh = Some(context);
+    settings.retained_json = true;
+    settings.bounded_raw_output = true;
+    settings.bounded_permission_state = true;
+    settings.shared_runtime_output = true;
+    settings.output_json_budget = true;
+    let (updates, _) = mpsc::channel(1);
+    let socket = Box::new(UnpolledSocket);
+    let cwd = "/synthetic/work".to_owned();
+    let mut probe = AllocationProbe::new();
+    let result = probe.track(|| {
+        Bridge::open_admitted(
+            socket,
+            "agent",
+            cwd,
+            (settings, None, second),
+            None,
+            None,
+            updates,
+        )
+        .now_or_never()
+    });
+    assert!(matches!(
+        result,
+        Some(Err(AdmittedError::Refused(AdmissionRefusal::InvalidPlan {
+            phase: "context binding ownership"
+        })))
+    ));
+    assert_eq!(probe.allocated(), 0);
+    drop(first);
+    root.assert_idle();
+}
+
 struct NeverSubscription;
 
 #[async_trait::async_trait]

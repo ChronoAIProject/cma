@@ -1,6 +1,6 @@
 use super::recovery_tests::{next_request, reply};
 use super::tests::fixture;
-use crate::hosted::managed_context::writer_tests::binding_with_tools;
+use crate::hosted::managed_context::writer_tests::owned_binding_with_tools;
 use crate::ingress_budget::{AllocationPlan, IngressClass};
 use crate::{PermissionLevel, ReasoningEffort};
 use serde_json::json;
@@ -11,7 +11,8 @@ async fn refresh_keeps_request_fields_and_same_identity_confirmation() {
     for same_identity in [true, false] {
         let mut fixture = fixture();
         let tools = json!([{"name":"synthetic","url":"https://example.test","headers":[]}]);
-        let (binding, files) = binding_with_tools(0, tools.as_array().unwrap().clone());
+        let (binding, files) =
+            owned_binding_with_tools(&fixture.policy, 0, tools.as_array().unwrap());
         let receipt = binding.readiness_receipt("conversation", 1).await.unwrap();
         fixture.bridge.context_refresh = Some(binding);
         fixture.activate().await;
@@ -146,9 +147,10 @@ pub(super) fn request_allocations() {
 #[tokio::test]
 async fn refresh_refuses_tool_copy_before_backend_reads_or_writes() {
     let mut fixture = fixture();
-    let (binding, files) = binding_with_tools(
+    let (binding, files) = owned_binding_with_tools(
+        &fixture.policy,
         0,
-        vec![json!({"name":"synthetic",
+        &[json!({"name":"synthetic",
         "url":format!("https://example.test/{}", "x".repeat(65_536))})],
     );
     fixture.bridge.context_refresh = Some(binding);

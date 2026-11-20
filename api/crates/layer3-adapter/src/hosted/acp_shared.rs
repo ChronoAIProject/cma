@@ -6,7 +6,7 @@ use crate::ingress_budget::{
     sizing, AdmissionRefusal, AllocationPlan, IngressClass, IngressOwnershipPolicy, SharedOwned,
 };
 
-pub(in crate::hosted) enum Shared<T> {
+pub(in crate::hosted) enum Shared<T: ?Sized> {
     Legacy(Arc<T>),
     Admitted(SharedOwned<T>),
 }
@@ -42,7 +42,21 @@ impl<T> Shared<T> {
     }
 }
 
-impl<T> Clone for Shared<T> {
+impl<T: ?Sized> Shared<T> {
+    pub(in crate::hosted) fn belongs_to(&self, policy: &IngressOwnershipPolicy) -> bool {
+        matches!(self, Self::Admitted(value) if value.belongs_to(policy))
+    }
+
+    pub(in crate::hosted) fn ptr_eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Legacy(left), Self::Legacy(right)) => Arc::ptr_eq(left, right),
+            (Self::Admitted(left), Self::Admitted(right)) => left.ptr_eq(right),
+            _ => false,
+        }
+    }
+}
+
+impl<T: ?Sized> Clone for Shared<T> {
     fn clone(&self) -> Self {
         match self {
             Self::Legacy(value) => Self::Legacy(value.clone()),
@@ -51,7 +65,7 @@ impl<T> Clone for Shared<T> {
     }
 }
 
-impl<T> Deref for Shared<T> {
+impl<T: ?Sized> Deref for Shared<T> {
     type Target = T;
     fn deref(&self) -> &T {
         match self {

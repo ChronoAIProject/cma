@@ -51,9 +51,16 @@ async fn instruction_recovery_uses_admitted_sources_and_preserves_uncertain_outc
     for fault in [0, 1, 7, 255] {
         let mut fixture = fixture();
         let root = fixture.root.clone();
-        let (context, source) = binding(fault, "exact instructions", None);
-        let (legacy, legacy_source) = crate::hosted::managed_context::writer_tests::binding(0);
-        fixture.bridge.context_refresh = Some(if fault == 255 { legacy } else { context });
+        let (context, source) = binding(&fixture.policy, fault, "exact instructions", None);
+        let (legacy, legacy_source) =
+            crate::hosted::managed_context::writer_tests::owned_binding(&fixture.policy, 0);
+        fixture.bridge.context_refresh = Some(if fault == 255 {
+            drop(context);
+            legacy
+        } else {
+            drop(legacy);
+            context
+        });
         fixture.bridge.instructions_support.store(1, SeqCst);
         fixture.activate().await;
         let scope = IngressWorkScope::new(

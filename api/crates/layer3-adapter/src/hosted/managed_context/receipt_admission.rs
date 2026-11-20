@@ -11,6 +11,7 @@ impl HostedContextRefresh {
         sequence: u64,
         policy: &IngressOwnershipPolicy,
     ) -> Result<AdmittedOperation<'a, Option<String>>, AdmittedError> {
+        self.require_owner(policy)?;
         let owned_policy = policy.clone();
         AdmittedOperation::from_owned(
             policy,
@@ -32,6 +33,7 @@ impl HostedContextRefresh {
         &self,
         policy: &IngressOwnershipPolicy,
     ) -> Result<AdmittedOperation<'_, Option<RuntimeStatus>>, AdmittedError> {
+        self.require_owner(policy)?;
         let owned_policy = policy.clone();
         AdmittedOperation::from_owned(
             policy,

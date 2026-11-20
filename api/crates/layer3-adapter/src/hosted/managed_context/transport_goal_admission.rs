@@ -42,6 +42,7 @@ impl HostedContextRefresh {
         policy: &IngressOwnershipPolicy,
         strict: bool,
     ) -> Result<AdmittedOperation<'a, bool>, AdmittedError> {
+        self.require_owner(policy)?;
         let home = self.0.path.strip_suffix("/AGENTS.md").ok_or_else(invalid)?;
         let home_bytes = home.len().checked_add("/home/".len()).ok_or_else(invalid)?;
         // JSON can escape each UTF-8 input byte to six ASCII bytes. Keys,

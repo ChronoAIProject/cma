@@ -6,7 +6,8 @@ use std::sync::atomic::Ordering::SeqCst;
 #[test]
 fn admitted_guidance_preserves_owner_bytes_and_exact_replay() {
     let (root, policy) = policy();
-    let (binding, source) = binding(0, "Old managed\n\nOwner exact text  \n", None);
+    let (binding, source) = binding(&policy, 0, "Old managed\n\nOwner exact text  \n", None);
+    let baseline = root.available_bytes();
     let receipt = receipt(&binding, &policy);
     let previous = vec!["Old".into(), "Old managed".into()];
     for _ in 0..2 {
@@ -28,8 +29,10 @@ fn admitted_guidance_preserves_owner_bytes_and_exact_replay() {
             "New managed\n\nOwner exact text  \n"
         );
         assert_eq!(source.writes.load(SeqCst), 1);
-        root.assert_idle();
+        assert_eq!(root.available_bytes(), baseline);
     }
+    drop((binding, source));
+    root.assert_idle();
 }
 
 #[test]
@@ -39,7 +42,8 @@ fn admitted_guidance_preserves_cas_lost_ack_and_validation_failures() {
             continue;
         }
         let (root, policy) = policy();
-        let (binding, source) = binding(fault, "Old managed\n\nOwner exact text  \n", None);
+        let (binding, source) =
+            binding(&policy, fault, "Old managed\n\nOwner exact text  \n", None);
         let receipt = if fault >= 15 {
             "stale".into()
         } else {
@@ -117,7 +121,8 @@ fn admitted_guidance_preserves_cas_lost_ack_and_validation_failures() {
 #[test]
 fn admitted_guidance_refuses_invalid_receipts_history_and_unsupported_sources() {
     let (root, policy) = policy();
-    let (binding, source) = binding(0, "owner", None);
+    let (binding, source) = binding(&policy, 0, "owner", None);
+    let baseline = root.available_bytes();
     let receipt = receipt(&binding, &policy);
     for (sequence, proof, guidance, previous) in [
         (0, receipt.as_str(), "new", vec![]),
@@ -145,9 +150,11 @@ fn admitted_guidance_refuses_invalid_receipts_history_and_unsupported_sources() 
         ));
         assert_eq!(source.writes.load(SeqCst), 0);
         drop(error);
-        root.assert_idle();
+        assert_eq!(root.available_bytes(), baseline);
     }
-    let (legacy, files) = super::super::writer_tests::binding(0);
+    drop((binding, source));
+    root.assert_idle();
+    let (legacy, files) = super::super::writer_tests::owned_binding(&policy, 0);
     let error = legacy
         .append_guidance_admitted("conversation", 1, &receipt, "new", &[], &policy)
         .unwrap()
@@ -156,8 +163,10 @@ fn admitted_guidance_refuses_invalid_receipts_history_and_unsupported_sources() 
         .unwrap_err();
     assert!(matches!(error, AdmittedError::Unsupported(_)));
     assert_eq!(files.status_reads.load(SeqCst), 0);
+    drop((legacy, files));
+    root.assert_idle();
     let (_, foreign) = self::policy();
-    let (binding, source) = self::binding(0, "owner", Some(foreign));
+    let (binding, source) = self::binding(&policy, 0, "owner", Some(foreign));
     let error = binding
         .append_guidance_admitted("conversation", 1, &receipt, "new", &[], &policy)
         .unwrap()
@@ -166,13 +175,14 @@ fn admitted_guidance_refuses_invalid_receipts_history_and_unsupported_sources() 
         .unwrap_err();
     assert!(error.refusal().is_some());
     assert_eq!(source.reads.load(SeqCst), 0);
+    drop((binding, source));
     root.assert_idle();
 }
 
 #[test]
 fn pending_guidance_write_retains_data_and_releases_transformation_on_cancellation() {
     let (root, policy) = policy();
-    let (binding, source) = binding(10, "owner", None);
+    let (binding, source) = binding(&policy, 10, "owner", None);
     let receipt = receipt(&binding, &policy);
     let mut operation = Box::pin(
         binding
@@ -189,5 +199,6 @@ fn pending_guidance_write_retains_data_and_releases_transformation_on_cancellati
     );
     assert!(root.available_bytes() < root.capacity_bytes());
     drop(operation);
+    drop((binding, source));
     root.assert_idle();
 }

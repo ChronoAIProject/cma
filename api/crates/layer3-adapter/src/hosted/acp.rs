@@ -47,7 +47,7 @@ type Sink = ingress::BridgeSink;
 type Pending = Shared<Mutex<ingress::identity::PendingCalls>>;
 
 #[path = "acp_shared.rs"]
-mod shared;
+pub(super) mod shared;
 use shared::Shared;
 
 #[path = "acp_mutex.rs"]

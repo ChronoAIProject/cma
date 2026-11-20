@@ -8,7 +8,7 @@ fn guidance_transformation_admits_maximum_overlap_and_refuses_before_decoding() 
     if deallocation::isolated("hosted::managed_context::guidance_admission::allocation_tests::guidance_transformation_admits_maximum_overlap_and_refuses_before_decoding") { return; }
     let (root, policy) = policy();
     let original = format!("old\n\n{}", "x".repeat(MAX_INSTRUCTIONS - 5));
-    let (binding, _) = binding(0, &original, None);
+    let (binding, _) = binding(&policy, 0, &original, None);
     let status = binding
         .ready_status_admitted(&policy)
         .unwrap()
@@ -96,7 +96,7 @@ fn guidance_transformation_admits_maximum_overlap_and_refuses_before_decoding() 
             .available_bytes(),
         0
     );
-    drop((legacy, pressure, status));
+    drop((legacy, pressure, status, binding));
     assert_eq!(probe.live(), 0);
     root.assert_idle();
 }
@@ -104,7 +104,7 @@ fn guidance_transformation_admits_maximum_overlap_and_refuses_before_decoding() 
 #[test]
 fn guidance_retention_refusal_frees_replacement_before_any_write() {
     let (root, policy) = policy();
-    let (binding, source) = binding(0, "owner", None);
+    let (binding, source) = binding(&policy, 0, "owner", None);
     let status = binding
         .ready_status_admitted(&policy)
         .unwrap()
@@ -144,6 +144,6 @@ fn guidance_retention_refusal_frees_replacement_before_any_write() {
             .available_bytes(),
         policy.bounds().transformation_bytes()
     );
-    drop((pressure, status));
+    drop((pressure, status, binding, source));
     root.assert_idle();
 }

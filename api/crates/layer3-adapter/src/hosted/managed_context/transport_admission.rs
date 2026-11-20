@@ -6,7 +6,10 @@ use crate::ingress_budget::{
 };
 
 impl ToolTransport {
-    fn clone_admitted(&self, policy: &IngressOwnershipPolicy) -> Result<Self, AdmittedError> {
+    pub(in crate::hosted::managed_context) fn clone_admitted(
+        &self,
+        policy: &IngressOwnershipPolicy,
+    ) -> Result<Self, AdmittedError> {
         match self {
             Self::Access(binding) => Ok(Self::AdmittedAccess(binding.clone_admitted(policy)?)),
             Self::Provider(binding) => Ok(Self::AdmittedProvider(binding.clone_admitted(policy)?)),
@@ -32,6 +35,7 @@ impl HostedContextRefresh {
         origin: Option<&str>,
         policy: &IngressOwnershipPolicy,
     ) -> Result<Option<ToolTransport>, AdmittedError> {
+        self.require_owner(policy)?;
         let Some(origin) = origin else {
             return Ok(None);
         };
@@ -104,8 +108,9 @@ impl HostedContextRefresh {
         sequence: u64,
         policy: &IngressOwnershipPolicy,
     ) -> Result<(), AdmittedError> {
+        self.require_owner(policy)?;
         let installed = transport.clone_admitted(policy)?;
-        let operation = match (transport, &self.0.access, &self.0.provider) {
+        let operation = match (&installed, &self.0.access, &self.0.provider) {
             (ToolTransport::AdmittedAccess(binding), Some((source, _)), None) => {
                 source.confirm_transport_admitted(binding, session, sequence, policy)
             }

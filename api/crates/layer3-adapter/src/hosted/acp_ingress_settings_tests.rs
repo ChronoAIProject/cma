@@ -11,7 +11,7 @@ use std::sync::atomic::Ordering;
 async fn receipt_query_uses_the_admitted_source_only_after_local_readiness() {
     let mut fixture = fixture();
     let (binding, source) =
-        crate::hosted::managed_context::receipt_admission::tests::binding(0, None);
+        crate::hosted::managed_context::receipt_admission::tests::binding(&fixture.policy, 0, None);
     fixture.bridge.context_refresh = Some(binding);
     fixture.activate().await;
     let result = fixture
@@ -84,7 +84,8 @@ async fn receipt_query_uses_the_admitted_source_only_after_local_readiness() {
 #[tokio::test]
 async fn receipt_query_refuses_an_unsupported_source_without_legacy_io() {
     let mut fixture = fixture();
-    let (binding, files) = crate::hosted::managed_context::writer_tests::binding(0);
+    let (binding, files) =
+        crate::hosted::managed_context::writer_tests::owned_binding(&fixture.policy, 0);
     fixture.bridge.context_refresh = Some(binding);
     fixture.activate().await;
     fixture
@@ -161,7 +162,8 @@ async fn instruction_query_preserves_reply_validation_and_cached_result() {
 #[tokio::test]
 async fn local_readiness_retains_existing_negative_only_evidence_without_source_io() {
     let mut fixture = fixture();
-    let (binding, files) = crate::hosted::managed_context::writer_tests::binding(0);
+    let (binding, files) =
+        crate::hosted::managed_context::writer_tests::owned_binding(&fixture.policy, 0);
     fixture.bridge.context_refresh = Some(binding);
     fixture.activate().await;
     let hint = fixture
@@ -210,7 +212,8 @@ async fn local_readiness_retains_existing_negative_only_evidence_without_source_
 #[tokio::test]
 async fn query_refusal_precedes_bridge_work_and_source_io() {
     let mut fixture = fixture();
-    let (binding, files) = crate::hosted::managed_context::writer_tests::binding(0);
+    let (binding, files) =
+        crate::hosted::managed_context::writer_tests::owned_binding(&fixture.policy, 0);
     fixture.bridge.context_refresh = Some(binding);
     fixture.activate().await;
     let available = fixture.policy.budget(IngressClass::Data).available_bytes();
@@ -326,7 +329,7 @@ fn isolated_readiness_query_admits_the_maximum_identity_before_copying() {
     }
     let mut fixture = fixture();
     fixture.bridge.context_refresh =
-        Some(crate::hosted::managed_context::writer_tests::binding(0).0);
+        Some(crate::hosted::managed_context::writer_tests::owned_binding(&fixture.policy, 0).0);
     let session = "s".repeat(crate::hosted::acp_session_identity::MAX_BYTES);
     let (relay, capture) =
         crate::hosted::update_relay::UpdateRelay::capture_admitted(&fixture.policy).unwrap();

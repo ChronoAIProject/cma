@@ -177,70 +177,81 @@ impl HostedProviderToolSource for Source {
     }
 }
 
-fn binding(
+pub(in crate::hosted) fn binding(
+    policy: &IngressOwnershipPolicy,
     provider: bool,
     fault: u8,
     foreign: Option<IngressOwnershipPolicy>,
-) -> (HostedContextRefresh, Arc<Source>) {
-    let (binding, _) = super::super::writer_tests::binding(0);
-    attach(binding, provider, fault, foreign)
+) -> (HostedContextRefresh, SharedOwned<Source>) {
+    let (binding, _) = super::super::writer_tests::owned_binding(policy, 0);
+    attach(policy, binding, provider, fault, foreign)
 }
 
 pub(in crate::hosted) fn attach(
-    mut binding: HostedContextRefresh,
+    policy: &IngressOwnershipPolicy,
+    binding: HostedContextRefresh,
     provider: bool,
     fault: u8,
     foreign: Option<IngressOwnershipPolicy>,
-) -> (HostedContextRefresh, Arc<Source>) {
-    let request = crate::AgentOpenRequest::new(
-        "synthetic-open",
-        crate::RuntimeOptions {
-            slot: crate::AgentSlot::new("synthetic-agent"),
-            ..Default::default()
-        },
-        None,
-    );
-    let runtime = RuntimeHandle("synthetic-runtime".into());
-    let source = Arc::new(Source {
-        access: HostedAccessToolBinding::new(
-            "https://new.example.test",
-            crate::RuntimeCredential::new(format!("cma_at_{}", "a".repeat(64))),
-            runtime.clone(),
-            &request,
-            1,
-            Some("conversation".into()),
-        )
-        .unwrap(),
-        provider: HostedProviderToolBinding::new(
-            "a".repeat(64),
-            runtime,
-            request,
-            1,
-            crate::ToolProxyRequest {
-                sandbox_id: "synthetic-sandbox".into(),
-                generation: 1,
-                endpoint: "https://gateway.example.test/mcp".into(),
-                credential_generation: 1,
+) -> (HostedContextRefresh, SharedOwned<Source>) {
+    let source = super::super::binding_fixture::source(policy, 16 * 1024, || {
+        let request = crate::AgentOpenRequest::new(
+            "synthetic-open",
+            crate::RuntimeOptions {
+                slot: crate::AgentSlot::new("synthetic-agent"),
+                ..Default::default()
             },
             None,
-        )
-        .unwrap(),
-        fault,
-        foreign,
-        preparations: AtomicUsize::new(0),
-        confirmations: AtomicUsize::new(0),
+        );
+        let runtime = RuntimeHandle("synthetic-runtime".into());
+        Source {
+            access: HostedAccessToolBinding::new(
+                "https://new.example.test",
+                crate::RuntimeCredential::new(format!("cma_at_{}", "a".repeat(64))),
+                runtime.clone(),
+                &request,
+                1,
+                Some("conversation".into()),
+            )
+            .unwrap(),
+            provider: HostedProviderToolBinding::new(
+                "a".repeat(64),
+                runtime,
+                request,
+                1,
+                crate::ToolProxyRequest {
+                    sandbox_id: "synthetic-sandbox".into(),
+                    generation: 1,
+                    endpoint: "https://gateway.example.test/mcp".into(),
+                    credential_generation: 1,
+                },
+                None,
+            )
+            .unwrap(),
+            fault,
+            foreign,
+            preparations: AtomicUsize::new(0),
+            confirmations: AtomicUsize::new(0),
+        }
     });
     let tool = if provider {
         source.provider.acp_server()
     } else {
         source.access.acp_server()
     };
-    Arc::get_mut(&mut binding.0).unwrap().tools = vec![tool];
-    let binding = if provider {
-        binding.with_provider(source.clone(), source.provider.clone())
+    let mut sources = super::super::binding_fixture::sources(&binding);
+    if provider {
+        sources.provider = Some((
+            source.clone().into(),
+            source.provider.clone_admitted(policy).unwrap(),
+        ));
     } else {
-        binding.with_access(source.clone(), source.access.clone())
-    };
+        sources.access = Some((
+            source.clone().into(),
+            source.access.clone_admitted(policy).unwrap(),
+        ));
+    }
+    let binding = super::super::binding_fixture::rebuild(policy, &binding, sources, &[tool]);
     drop(binding.0.installed_transport.write().unwrap());
     (binding, source)
 }
@@ -250,7 +261,7 @@ fn admitted_tool_binding_is_shared_through_installation_and_repeated_preparation
     if deallocation::isolated("hosted::managed_context::transport_admission::tests::admitted_tool_binding_is_shared_through_installation_and_repeated_preparation") { return; }
     for provider in [false, true] {
         let (root, policy) = super::super::guidance_admission::fixture::policy();
-        let (binding, source) = binding(provider, 0, None);
+        let (binding, source) = binding(&policy, provider, 0, None);
         let mut probe = AllocationProbe::new();
         let prepared = probe.track(|| {
             binding
@@ -310,7 +321,7 @@ fn admitted_tool_failures_keep_categories_and_never_install_unconfirmed_bindings
     for provider in [false, true] {
         for fault in [1, 2, 5] {
             let (root, policy) = super::super::guidance_admission::fixture::policy();
-            let (binding, source) = binding(provider, fault, None);
+            let (binding, source) = binding(&policy, provider, fault, None);
             let prepared = binding
                 .prepare_transport_admitted(
                     "conversation",
@@ -357,7 +368,7 @@ fn admitted_tool_foreign_sources_and_cancelled_work_release_without_installation
     for provider in [false, true] {
         let (root, policy) = super::super::guidance_admission::fixture::policy();
         let (foreign_root, foreign) = super::super::guidance_admission::fixture::policy();
-        let (binding, source) = binding(provider, 0, Some(foreign));
+        let (binding, source) = binding(&policy, provider, 0, Some(foreign));
         let error = binding
             .prepare_transport_admitted(
                 "conversation",
@@ -372,8 +383,10 @@ fn admitted_tool_foreign_sources_and_cancelled_work_release_without_installation
         assert!(error.refusal().is_some());
         assert_eq!(source.preparations.load(SeqCst), 0);
         foreign_root.assert_idle();
+        drop((binding, source));
+        root.assert_idle();
         for fault in [3, 4] {
-            let (binding, source) = self::binding(provider, fault, None);
+            let (binding, source) = self::binding(&policy, provider, fault, None);
             if fault == 3 {
                 let mut operation = Box::pin(binding.prepare_transport_admitted(
                     "conversation",
@@ -407,6 +420,7 @@ fn admitted_tool_foreign_sources_and_cancelled_work_release_without_installation
             }
             assert_eq!(source.preparations.load(SeqCst), 1);
             assert!(binding.0.installed_transport.read().unwrap().is_none());
+            drop((binding, source));
             root.assert_idle();
         }
     }

@@ -1,6 +1,10 @@
 //! Existing supervisor file operations bound to one Agent's retained home.
+use super::acp::shared::Shared;
 use crate::ingress_budget::diagnostic::text;
+use binding::Initial;
 use std::sync::Arc;
+
+pub(in crate::hosted) mod binding;
 
 pub(in crate::hosted) mod guidance_admission;
 pub(in crate::hosted) mod instructions_admission;
@@ -15,6 +19,17 @@ mod transport_goal_admission;
 #[path = "managed_context/receipt_tests.rs"]
 mod receipt_tests;
 
+#[cfg(test)]
+#[path = "managed_context/binding_storage_tests.rs"]
+mod binding_storage_tests;
+
+#[cfg(test)]
+#[path = "managed_context/binding_membership_tests.rs"]
+mod binding_membership_tests;
+
+#[cfg(test)]
+pub(in crate::hosted) mod binding_fixture;
+
 use base64::Engine as _;
 use sha2::{Digest as _, Sha256};
 
@@ -23,9 +38,9 @@ use crate::wire::{RequestFrame, ResponseFrame};
 use crate::{AdapterError, RuntimeHandle, RuntimeStatus, RuntimeStatusRequest};
 
 #[derive(Clone)]
-pub struct HostedContextRefresh(Arc<Binding>);
+pub struct HostedContextRefresh(Shared<Binding>);
 struct Binding {
-    backend: Arc<dyn HostedBackend>,
+    backend: Shared<dyn HostedBackend>,
     handle: RuntimeHandle,
     identity: RuntimeStatusRequest,
     path: String,
@@ -33,12 +48,12 @@ struct Binding {
     tools: Vec<serde_json::Value>,
     installed_transport: std::sync::RwLock<Option<transport::ToolTransport>>,
     access: Option<(
-        Arc<dyn super::HostedAccessToolSource>,
-        super::HostedAccessToolBinding,
+        Shared<dyn super::HostedAccessToolSource>,
+        Initial<super::HostedAccessToolBinding>,
     )>,
     provider: Option<(
-        Arc<dyn super::HostedProviderToolSource>,
-        super::HostedProviderToolBinding,
+        Shared<dyn super::HostedProviderToolSource>,
+        Initial<super::HostedProviderToolBinding>,
     )>,
 }
 impl std::fmt::Debug for HostedContextRefresh {
@@ -50,7 +65,7 @@ impl std::fmt::Debug for HostedContextRefresh {
 }
 impl PartialEq for HostedContextRefresh {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.0, &other.0)
+        self.0.ptr_eq(&other.0)
     }
 }
 impl Eq for HostedContextRefresh {}
@@ -73,8 +88,8 @@ impl HostedContextRefresh {
                 ))
             })?;
         identity.validate()?;
-        Ok(Self(Arc::new(Binding {
-            backend,
+        Ok(Self(Shared::Legacy(Arc::new(Binding {
+            backend: Shared::Legacy(backend),
             handle,
             identity,
             path: format!("{path}/AGENTS.md"),
@@ -83,7 +98,7 @@ impl HostedContextRefresh {
             installed_transport: std::sync::RwLock::new(None),
             access: None,
             provider: None,
-        })))
+        }))))
     }
 
     pub(super) fn with_access(
@@ -91,9 +106,7 @@ impl HostedContextRefresh {
         source: Arc<dyn super::HostedAccessToolSource>,
         binding: super::HostedAccessToolBinding,
     ) -> Self {
-        Arc::get_mut(&mut self.0)
-            .expect("new context binding is uniquely owned")
-            .access = Some((source, binding));
+        self.legacy_mut().access = Some((Shared::Legacy(source), Initial::Legacy(binding)));
         self
     }
     pub(super) fn cwd(&self) -> &str {
@@ -105,10 +118,15 @@ impl HostedContextRefresh {
         source: Arc<dyn super::HostedProviderToolSource>,
         binding: super::HostedProviderToolBinding,
     ) -> Self {
-        Arc::get_mut(&mut self.0)
-            .expect("new context binding is uniquely owned")
-            .provider = Some((source, binding));
+        self.legacy_mut().provider = Some((Shared::Legacy(source), Initial::Legacy(binding)));
         self
+    }
+
+    fn legacy_mut(&mut self) -> &mut Binding {
+        let Shared::Legacy(binding) = &mut self.0 else {
+            panic!("admitted context bindings are immutable")
+        };
+        Arc::get_mut(binding).expect("new context binding is uniquely owned")
     }
     pub(super) fn tools(&self) -> Vec<serde_json::Value> {
         self.tools_for_transport(None)
