@@ -38,7 +38,10 @@ async fn erasure_rechecks_parent_fence_and_restore_pins_after_reading_its_snapsh
             })
             .await
             .unwrap();
-        let entered = configured.get_i64("count").unwrap();
+        let entered = configured
+            .get_i64("count")
+            .or_else(|_| configured.get_i32("count").map(i64::from))
+            .unwrap();
         let id = value.id.clone();
         let claim = tokio::spawn(async move {
             contender
