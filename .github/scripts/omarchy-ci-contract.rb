@@ -18,8 +18,8 @@ module OmarchyCIContract
     }, "Omarchy must run on develop, isolated release pushes and ordinary PRs")
     contract.require!(ci["concurrency"] == {
       "group" => "ci-${{ github.workflow }}-${{ github.ref }}",
-      "cancel-in-progress" => true,
-    }, "CI cancellation must remain isolated by the exact workflow and ref")
+      "cancel-in-progress" => "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}",
+    }, "CI cancellation must remain isolated by the exact workflow and ref, and spare develop cache writers")
     row = contract.job(ci, "omarchy", "Images (runtime-omarchy)")
     contract.require!(row.keys.sort == %w[name permissions runs-on steps timeout-minutes].sort,
       "Omarchy cannot acquire conditional, dependency, matrix or deployment authority")
