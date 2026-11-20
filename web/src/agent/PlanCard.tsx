@@ -60,8 +60,10 @@ export function PlanCard({
             <span className="plan-card__summary">
               {outcome === 'completed'
                 ? known && completed === plan.entries.length && plan.entries.length > 0
-                  ? `Completed all ${completed} steps`
-                  : 'Response finished · Plan completion not fully reported'
+                  ? `Turn ended · ${completed} plan ${completed === 1 ? 'step' : 'steps'} reported complete`
+                  : known
+                    ? 'Turn ended · Check unfinished plan steps and output.'
+                    : 'Turn ended · Check plan progress and output.'
                 : outcome === 'failed'
                   ? 'Response failed'
                   : outcome === 'interrupted'

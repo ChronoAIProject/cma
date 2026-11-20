@@ -34,8 +34,7 @@ async fn successful_confirmation_bounds_custody_reads_and_publishes_each_changed
 async fn expired_confirmation_after_join_keeps_the_durable_tombstone() {
     let f = Fixture::new();
     let (release, waiting) = tokio::sync::oneshot::channel();
-    f.receiver
-        .register(None, |_| async move { waiting.await.unwrap() })
+    f.historical_stream(|_| async move { waiting.await.unwrap() })
         .await
         .unwrap();
     let challenge = f.receiver.challenge(f.request(None)).unwrap();
@@ -138,8 +137,7 @@ async fn completed_custody_is_joined_before_single_write_readmission() {
 async fn pending_custody_requires_tombstone_before_join_and_active_floor_after_join() {
     let f = Fixture::new();
     let (release, waiting) = tokio::sync::oneshot::channel();
-    f.receiver
-        .register(None, |_| async move { waiting.await.unwrap() })
+    f.historical_stream(|_| async move { waiting.await.unwrap() })
         .await
         .unwrap();
     let challenge = f.receiver.challenge(f.request(None)).unwrap();
@@ -213,4 +211,41 @@ async fn unchanged_record_still_requires_current_durable_custody() {
         assert_eq!(f.receiver.persisted.load(Ordering::SeqCst), before);
         assert!(persistence::load(&f.receiver.root).is_err());
     }
+}
+
+#[tokio::test]
+async fn ownerless_registration_refuses_before_operation_and_preserves_historical_stream() {
+    let f = Fixture::new();
+    let (release, waiting) = tokio::sync::oneshot::channel();
+    let (done, finished) = tokio::sync::oneshot::channel();
+    f.historical_stream(|session| async move {
+        assert!(session.run(waiting).await.is_ok());
+        done.send(()).unwrap();
+    })
+    .await
+    .unwrap();
+    let invoked = AtomicUsize::new(0);
+    let result = f
+        .receiver
+        .register(None, |_| {
+            invoked.fetch_add(1, Ordering::SeqCst);
+            async {}
+        })
+        .await;
+    assert_eq!(invoked.load(Ordering::SeqCst), 0);
+    assert_eq!(result.unwrap_err().code, "desktop_ownership_stale");
+    assert_eq!(f.receiver.tasks.lock().await.len(), 1);
+    assert!(!f.receiver.state.lock().unwrap().legacy_closed);
+    assert!(!f.receiver.root.exists());
+    release.send(()).unwrap();
+    finished.await.unwrap();
+    f.receiver
+        .tasks
+        .lock()
+        .await
+        .join_next()
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(f.receiver.tasks.lock().await.is_empty());
 }

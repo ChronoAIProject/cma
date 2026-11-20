@@ -71,3 +71,75 @@ describe('plans in the message stream', () => {
     expect(screen.queryByRole('region', { name: 'Plan' })).not.toBeInTheDocument();
   });
 });
+
+it.each(['pending', 'in_progress'])(
+  'asks to check reported %s steps after a turn ends without declaring failure',
+  (status) => {
+    render(
+      <PlanCard
+        active={false}
+        outcome="completed"
+        plan={{
+          id: 'plan:1',
+          runId: '1',
+          entries: [
+            { title: 'Write the answer', status: 'completed' },
+            { title: 'Optional supporting file', status },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'Turn ended · Check unfinished plan steps and output.',
+    );
+    expect(screen.getByRole('button', { name: 'View plan' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+    expect(screen.queryByText(/failed|verified success/i)).not.toBeInTheDocument();
+  },
+);
+
+it.each([
+  { entries: [{ title: 'Unknown step', status: 'blocked' }] },
+  { entries: [{ title: 'Only surviving step', status: 'completed' }], incomplete: true },
+])('asks to check unknown plan progress without inventing a result: %j', (report) => {
+  render(<PlanCard active={false} outcome="completed" plan={{ id: 'plan:1', ...report }} />);
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Turn ended · Check plan progress and output.',
+  );
+  expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+});
+
+it('identifies a fully reported plan as an Agent report rather than verified task acceptance', () => {
+  render(
+    <PlanCard
+      active={false}
+      outcome="completed"
+      plan={{ id: 'plan:1', entries: [{ title: 'Write the answer', status: 'completed' }] }}
+    />,
+  );
+  expect(screen.getByRole('status')).toHaveTextContent(
+    'Turn ended · 1 plan step reported complete',
+  );
+  expect(screen.queryByText(/Check unfinished|Check plan progress/)).not.toBeInTheDocument();
+});
+
+it.each([
+  { active: true, outcome: undefined, expected: 'Current step 1' },
+  { active: false, outcome: undefined, expected: 'Outcome unknown' },
+  { active: false, outcome: 'failed' as const, expected: 'Response failed' },
+  { active: false, outcome: 'interrupted' as const, expected: 'Response cancelled' },
+])('preserves the existing $expected presentation', ({ active, outcome, expected }) => {
+  render(
+    <PlanCard
+      active={active}
+      outcome={outcome}
+      plan={{ id: 'plan:1', entries: [{ title: 'Continue work', status: 'in_progress' }] }}
+    />,
+  );
+  expect(screen.getByRole('status')).toHaveTextContent(expected);
+  expect(
+    screen.queryByText(/Turn ended|Check unfinished|Check plan progress/),
+  ).not.toBeInTheDocument();
+});

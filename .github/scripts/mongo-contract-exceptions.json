@@ -123,7 +123,7 @@
     "kind": "fixture",
     "reason": "Requires the dedicated desktop-replica-contract.py runner with an exact runtime child and owned Mongo; measurement windows additionally require preregistered noise and isolated execution."
   },
-  "store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_legacy_provider_connects_before_receiver_activation": {
+  "store::sandbox_sessions::exclusive::service_tests::endpoint_tests::public_disabled_services_and_ownerless_receiver_refuse_new_streams": {
     "kind": "fixture",
     "reason": "Requires the exact compiled runtime receiver child, local IdP/provider proxy and owned disposable Mongo; selected explicitly by desktop-replica-contract.py."
   },
@@ -135,9 +135,13 @@
     "kind": "fixture",
     "reason": "Requires the exact compiled runtime receiver child, local IdP/provider proxy and owned disposable Mongo; selected explicitly by desktop-replica-contract.py."
   },
+  "store::sandbox_sessions::exclusive::service_tests::endpoint_tests::retained_legacy_rows_block_until_close_or_expiry_and_cannot_release_successor": {
+    "kind": "fixture",
+    "reason": "Requires the exact compiled runtime receiver child, local IdP/provider proxy and owned disposable Mongo; selected explicitly by desktop-replica-contract.py."
+  },
   "store::sandbox_sessions::exclusive::service_tests::latency_tests::repeated_desktop_connect_windows": {
     "kind": "fixture",
-    "reason": "Requires separate matched legacy/owned connection measurements with preregistered noise; never run concurrently with ordinary Mongo partitions."
+    "reason": "Requires separate matched protected one/two-service connection measurements with preregistered noise; never run concurrently with ordinary Mongo partitions."
   },
   "store::sandbox_usage::raw_event::tests::allocation_raw_event_cpu_comparison": {
     "kind": "fixture",
