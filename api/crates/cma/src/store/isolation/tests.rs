@@ -2,6 +2,12 @@ use super::*;
 
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn real_erasure_optional_authority_preserves_disabled_deployments() {
+    crate::store::account_erasure::optional_authority_tests::verify_runtime().await;
+}
+
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
 async fn real_allocation_buckets_activate_only_with_confined_namespace_grants() {
     super::allocation_tests::verify_runtime().await;
 }

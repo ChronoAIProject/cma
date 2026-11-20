@@ -32,8 +32,7 @@ import { AgentSandboxStatus } from './AgentSandboxStatus';
 import { setupEnvironmentRoute } from './setupEnvironment';
 import { agentOriginEntries, useAgentSource } from './source';
 import { useAgentProvenance, useOwnerCreationLabel } from './provenance';
-import { QueuedMessages } from './QueuedMessages';
-import { QueuedInputOutcomes } from './QueuedInputOutcomes';
+import { AgentInputQueue } from './AgentInputQueue';
 import { agentAttachmentUploader } from './attachmentUpload';
 import { AgentAccessRequests } from './AccessRequestDialog';
 import type { CmaWebClient } from '../api/client';
@@ -393,24 +392,17 @@ export function AgentSurface({
           </OwnerMessageStream>
         </div>
         <div className="agent-surface__input">
-          {controller.queuedInputs ? (
-            <QueuedInputOutcomes
-              items={messageQueue.outcomes}
-              onRefresh={controller.queuedInputs.refresh}
-              error={controller.queuedInputs.error}
-            />
-          ) : null}
-          {controller.queuedInputs === undefined ? null : (
-            <QueuedMessages
-              items={messageQueue.items}
-              disabled={readOnly || !controlReady || !controller.inputAvailability.allowed}
-              onEdit={controller.queuedInputs.edit}
-              onRemove={controller.queuedInputs.remove}
-              onRecover={controller.queuedInputs.recover}
-              uploadAttachment={uploadAttachment}
-              user={user}
-            />
-          )}
+          <AgentInputQueue
+            controller={controller}
+            queue={messageQueue}
+            readOnly={readOnly}
+            controlReady={controlReady}
+            verified={verified !== undefined}
+            draftBlocked={draft?.recoveryBlocked}
+            onRestore={editing.restore}
+            uploadAttachment={uploadAttachment}
+            user={user}
+          />
           <Composer
             editorRef={editing.editorRef}
             suggestionScope={
@@ -432,7 +424,7 @@ export function AgentSurface({
             onSteeringModeChange={state.v2 === undefined ? undefined : setSteeringMode}
             draft={draft}
             availableCommands={readOnly ? undefined : conversation.availableCommands}
-            key={`composer:${agentId}`}
+            key={`composer:${viewerId}:${agentId}`}
             quickMessages={
               source.status === 'ready' && source.value.access !== 'shared'
                 ? source.value.trigger?.quick_messages

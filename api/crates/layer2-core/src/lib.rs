@@ -70,7 +70,7 @@ pub use gateway_records::{
 };
 pub use ids::{
     AgentId, AgentProfileId, LaunchId, SandboxId, SandboxProfileId, ServiceHandoffId, ServiceId,
-    SkillId, SubjectId, WorkspaceId, WorkspaceProfileId, WorktreeId,
+    SkillId, SubjectId, WorkspaceId, WorkspaceProfileId, WorktreeId, DELETED_ACCOUNT_SUBJECT,
 };
 pub use inventory::{ProviderInventory, RuntimeEntry, RuntimeInventory, RuntimeStatus};
 pub use limits::CountLimit;

@@ -3,7 +3,7 @@
 use super::*;
 use cma_service_auth::mongodb_authority::{verify_shared_schema, MongoAuthorityMode};
 
-pub(super) const COLLECTIONS: &[&str] = &[
+pub(crate) const COLLECTIONS: &[&str] = &[
     crate::store::agent_ownership::MEMBERS,
     crate::store::agent_ownership::OWNERS,
 ];

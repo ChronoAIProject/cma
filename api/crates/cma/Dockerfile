@@ -122,8 +122,10 @@ RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,shar
     && mkdir /out \
     && cp /build/target/release/cma /out/cma
 # Transfer incremental state only; dependency objects come from the chef layer.
-# After Cargo exits, retain the newest completed compiler session per crate.
-# Rust may leave the preceding session alongside it, doubling archive size.
+# After Cargo exits, retain the newest completed compiler session of every
+# crate. Rust may leave the preceding session alongside it, doubling archive
+# size. The clean above rebuilds every workspace crate, so a crate without
+# retained state is compiled from scratch on every build.
 RUN --mount=type=cache,id=cma-api-target-${TARGETARCH},target=/build/target,sharing=locked <<'CACHE_TRIM'
 set -eu
 if test -d target/release/incremental; then
@@ -148,9 +150,6 @@ for crate in target/release/incremental/*; do
         if test -d "$state" && test "$state" != "$newest"; then rm -rf "$state"; fi
     done
 done
-# The adapter is small enough to rebuild; retain the expensive AM/core/public
-# incremental data without exceeding the shared 1 GiB transfer limit.
-rm -rf target/release/incremental/layer3_adapter-*
 CACHE_TRIM
 # Strip only the shipped ELF, leaving Cargo cache artifacts intact.
 RUN --network=none strip --strip-all /out/cma
