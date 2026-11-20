@@ -96,8 +96,8 @@ export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFe
                         </dd>
                       </div>
                       <div>
-                        <dt>Produced by</dt>
-                        <dd>{consumer.agent_id ?? 'Not reported'}</dd>
+                        <dt>Provider Agent</dt>
+                        <dd>{consumer.agent_id ?? 'Provider Agent identity was not reported'}</dd>
                       </div>
                       {consumer.provider ? (
                         <div>

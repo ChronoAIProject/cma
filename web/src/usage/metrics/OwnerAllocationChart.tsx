@@ -7,6 +7,7 @@ import { OwnerAllocationTable } from './OwnerAllocationTable';
 import { OwnerAllocationName, ownerAllocationText } from './OwnerAllocationName';
 import { MetricsNotice } from './MetricsNotice';
 import { displayQuantity, type Metric, type MetricsClient } from './model';
+import { sandboxCount } from './sandboxCount';
 import type { MetricsFailure } from './failure';
 import { useOwnerAllocations } from './useOwnerAllocations';
 
@@ -166,8 +167,8 @@ export function OwnerAllocationChart({
                       <OwnerAllocationName label={row.label} disambiguator={row.disambiguator} />
                       <span className="usage-owner-allocation__sr">
                         {displayQuantity(row.allocated_hours)} {unit};{' '}
-                        {displayQuantity(row.sandbox_count)} Sandboxes;{' '}
-                        {row.complete ? 'Complete' : 'Partial'} history
+                        {sandboxCount(row.sandbox_count)}; {row.complete ? 'Complete' : 'Partial'}{' '}
+                        history
                       </span>
                     </li>
                   ))}
