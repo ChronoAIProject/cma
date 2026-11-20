@@ -32,7 +32,7 @@ def validate(row, package):
     candidates = key_marker_view.validate_matches(proof["matches"], normalize=True, max_parts=MAX_RECORD_PARTS)
     for item in candidates.values():
         original, detector = item["original"], item["detector"]
-        require(original["size"] <= MAX_MATCH_BYTES and detector["size"] <= 3 * original["size"]
+        require(original["size"] <= MAX_MATCH_BYTES and detector["size"] <= min(MAX_MATCH_BYTES, 3 * original["size"])
                 and original["offset"] + original["size"] <= MAX_BYTES
                 and detector["offset"] + detector["size"] <= 3 * MAX_BYTES)
     return candidates
@@ -44,11 +44,11 @@ def render(data):
 
 
 def verified_view(data, rendered, metadata, rendered_metadata, item):
-    if not key_marker_view.verified_span(data, metadata, item, end_label=PUBLIC_KEY_LABEL):
-        return False
     start, end = reviewed_literals.extent(item["original"])
     left, right = reviewed_literals.extent(item["detector"])
-    if right > len(rendered):
+    if max(end - start, right - left) > MAX_MATCH_BYTES or right > len(rendered):
+        return False
+    if not key_marker_view.verified_span(data, metadata, item, end_label=PUBLIC_KEY_LABEL):
         return False
     candidate = rendered[left:right]
     if (digest_bytes(candidate) != item["detector"]["sha256"] or candidate in rendered_metadata

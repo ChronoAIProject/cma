@@ -27,8 +27,8 @@ class NativeJSONKeyViewTests(unittest.TestCase):
     manifest = packages.PackageTests.manifest
     refused = key_tests.KeyMarkerViewTests.refused
 
-    def fixture(self, *, suffix=SUFFIX):
-        chunks = (key_tests.BEGIN, MIDDLE, key_tests.END)
+    def fixture(self, *, suffix=SUFFIX, middle=MIDDLE):
+        chunks = (key_tests.BEGIN, middle, key_tests.END)
         original = b"".join(chunks)
         normalized = native_json_key_view.render(original)
         contents = PREFIX + original + suffix
@@ -110,3 +110,22 @@ class NativeJSONKeyViewTests(unittest.TestCase):
             report = self.refused(archive, evidence, "expired-render-budget")
         self.assertEqual(report["package_evidence"]["entries"], [])
         self.assertEqual(report["blocking_findings"], raw["blocking_findings"])
+
+    def test_rendered_candidate_limit_applies_after_invalid_byte_expansion(self):
+        base = native_json_key_view.render(key_tests.BEGIN + MIDDLE + key_tests.END)
+        for size in (32768, 32769):
+            with self.subTest(size=size):
+                middle = MIDDLE + b"." * (size - len(base))
+                archive, evidence, raw, proof = self.fixture(middle=middle)
+                original = PREFIX + key_tests.BEGIN + middle + key_tests.END + SUFFIX
+                self.assertEqual(proof["detector"]["size"], size)
+                valid = size == native_json_key_view.MAX_MATCH_BYTES
+                self.assertEqual(native_json_key_view.verified_view(
+                    original, native_json_key_view.render(original), b"", b"", proof), valid)
+                if valid:
+                    report = self.refused(archive, evidence, "exact-rendered-budget")
+                    self.assertEqual(report["findings"], raw["findings"])
+                    self.assertEqual(len(report["package_evidence"]["entries"]), 1)
+                else:
+                    self.assertIsNone(self.refused(archive, evidence, "over-rendered-budget",
+                                                   classification="content_refused"))
