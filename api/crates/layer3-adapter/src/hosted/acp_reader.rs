@@ -1,22 +1,20 @@
 //! Drive native reads and durable acknowledgements on one attachment lifetime.
 
-use futures_util::{stream::SplitStream, StreamExt as _};
-use std::sync::Arc;
-use tokio::sync::mpsc;
+use futures_util::StreamExt as _;
 use tokio_tungstenite::tungstenite::{Error, Message};
 
+use super::ingress::{Ack, AckReceiver, BridgeSource, IncomingFrame};
 use super::{
-    gap_count, unframe, Bridge, Socket, LANE_CONVERSATION, LANE_CONVERSATION_GAP,
-    LANE_RETAINED_OUTPUT,
+    gap_count, unframe, Bridge, LANE_CONVERSATION, LANE_CONVERSATION_GAP, LANE_RETAINED_OUTPUT,
 };
 use crate::hosted::update_relay::UpdateRelay;
-use crate::{ConversationUpdate, RuntimeOutputSource};
+use crate::ConversationUpdate;
 
 pub(super) fn spawn(
-    reader: Arc<Bridge>,
-    mut source: SplitStream<Socket>,
+    reader: impl std::ops::Deref<Target = Bridge> + Clone + Send + Sync + 'static,
+    mut source: BridgeSource,
     reader_updates: UpdateRelay,
-    acknowledged: mpsc::Receiver<RuntimeOutputSource>,
+    acknowledged: AckReceiver,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let mut ack_state = reader.output_ack_state().await;
@@ -31,9 +29,10 @@ pub(super) fn spawn(
             let mut acknowledgements = acknowledged.take().unwrap();
             ack_tasks.spawn(async move {
                 while let Some(ack) = acknowledgements.recv().await {
-                    reader.acknowledge_output(ack, state.as_ref()).await?;
+                    if !acknowledge(&reader, ack, state.as_ref()).await {
+                        return;
+                    }
                 }
-                Ok::<_, crate::AdapterError>(())
             });
         }
         loop {
@@ -47,7 +46,7 @@ pub(super) fn spawn(
                     None => break,
                 },
                 Some(ack) = legacy_ack(&mut acknowledged) => {
-                    if reader.acknowledge_output(ack, ack_state.as_ref()).await.is_err() {
+                    if !acknowledge(&reader, ack, ack_state.as_ref()).await {
                         break;
                     }
                     continue;
@@ -73,9 +72,60 @@ pub(super) fn spawn(
     })
 }
 
-async fn dispatch(reader: &Bridge, frame: Result<Message, Error>, updates: &UpdateRelay) -> bool {
-    match frame {
-        Ok(Message::Binary(bytes)) => match unframe(&bytes) {
+pub(super) async fn dispatch(
+    reader: &Bridge,
+    frame: Result<IncomingFrame, Error>,
+    updates: &UpdateRelay,
+) -> bool {
+    with_diagnostics(reader, dispatch_inner(reader, frame, updates)).await
+}
+
+pub(super) async fn acknowledge(
+    reader: &Bridge,
+    ack: Ack,
+    state: Option<&super::output::OutputAckState>,
+) -> bool {
+    with_diagnostics(reader, async {
+        reader.acknowledge_output(ack, state).await.is_ok()
+    })
+    .await
+}
+
+async fn with_diagnostics(
+    reader: &Bridge,
+    operation: impl std::future::Future<Output = bool>,
+) -> bool {
+    use crate::ingress_budget::{diagnostic, IngressClass, IngressWorkScope};
+    let Some(policy) = &reader.ingress else {
+        return operation.await;
+    };
+    // Reader and ACK tasks do not inherit the opening caller's task locals.
+    // Keep refusal/close diagnostics independent of exhausted data capacity.
+    let plan = diagnostic::scope_entry_plan().expect("fixed diagnostic scope layout");
+    let Ok(storage) = policy.admit(IngressClass::Control, plan) else {
+        return false;
+    };
+    IngressWorkScope::new(storage)
+        .initialize_owned(|| operation)
+        .resolve_diagnostic_bool(policy, IngressClass::Control)
+        .await
+        .unwrap_or(false)
+}
+
+async fn dispatch_inner(
+    reader: &Bridge,
+    frame: Result<IncomingFrame, Error>,
+    updates: &UpdateRelay,
+) -> bool {
+    let frame = match frame {
+        Ok(frame) => frame,
+        Err(error) => {
+            tracing::warn!(%error, "conversation link read failed");
+            return false;
+        }
+    };
+    match &*frame {
+        Message::Binary(bytes) => match unframe(bytes) {
             Some((LANE_CONVERSATION, payload)) => {
                 if reader.output.is_some() {
                     tracing::error!("negotiated runtime output arrived without a receipt");
@@ -109,24 +159,26 @@ async fn dispatch(reader: &Bridge, frame: Result<Message, Error>, updates: &Upda
             }
             _ => {}
         },
-        Ok(Message::Close(_)) => return false,
-        Ok(Message::Text(_)) => {
+        Message::Close(_) => return false,
+        Message::Text(_) => {
             tracing::debug!("text frame ignored after Ready declaration");
         }
-        Ok(_) => {}
-        Err(error) => {
-            tracing::warn!(%error, "conversation link read failed");
-            return false;
-        }
+        _ => {}
     }
     true
 }
 
-async fn legacy_ack(
-    receiver: &mut Option<mpsc::Receiver<RuntimeOutputSource>>,
-) -> Option<RuntimeOutputSource> {
+async fn legacy_ack(receiver: &mut Option<AckReceiver>) -> Option<Ack> {
     match receiver {
         Some(receiver) => receiver.recv().await,
         None => std::future::pending().await,
     }
 }
+
+#[cfg(test)]
+#[path = "acp_reader_control_tests.rs"]
+mod control_tests;
+
+#[cfg(test)]
+#[path = "acp_reader_progress_tests.rs"]
+mod progress_tests;

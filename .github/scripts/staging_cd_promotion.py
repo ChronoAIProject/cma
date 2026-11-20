@@ -130,7 +130,7 @@ def main():
     try:
         # The evidence read runs before allocation and has no write permission.
         io = AllocationIO(seconds=10)
-        evidence = inventory(GitHub(os.environ["GH_TOKEN"], runner=io.read_once).request,
+        evidence = inventory(GitHub(os.environ["GH_TOKEN"], runner=io.read_once, retry=io.retry).request,
                              os.environ["CD_STAGING_ENVIRONMENT"])
     except (OSError, ValueError, KeyError, TypeError, AttributeError, subprocess.SubprocessError):
         # Missing evidence can add a promotion for an independently qualified

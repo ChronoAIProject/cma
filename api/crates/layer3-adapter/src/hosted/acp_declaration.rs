@@ -1,5 +1,6 @@
 //! Validate the runtime identity before admitting a conversation attachment.
 use super::output;
+use crate::ingress_budget::diagnostic::make;
 use crate::AdapterError;
 use serde::Deserialize;
 use tokio_tungstenite::tungstenite::Message;
@@ -25,8 +26,9 @@ pub(super) fn validate_ready(
     pools: Option<&crate::hosted::retained_json::JsonPools>,
 ) -> crate::Result<Option<uuid::Uuid>> {
     let Message::Text(text) = message else {
-        return Err(AdapterError::Rejected(
-            "runtime sent a non-text Ready declaration".into(),
+        return Err(make(
+            AdapterError::Rejected,
+            format_args!("runtime sent a non-text Ready declaration"),
         ));
     };
     let _admission = pools
@@ -36,16 +38,21 @@ pub(super) fn validate_ready(
         super::super::output_json_budget::validate(text.as_bytes())
             .map_err(|error| error.adapter_error())?;
     }
-    let ready: Ready = serde_json::from_str(&text)
-        .map_err(|_| AdapterError::Rejected("runtime Ready declaration is malformed".into()))?;
+    let ready: Ready = serde_json::from_str(&text).map_err(|_| {
+        make(
+            AdapterError::Rejected,
+            format_args!("runtime Ready declaration is malformed"),
+        )
+    })?;
     if ready.t != "ready"
         || ready.wire_version != 1
         || ready.agent_id != expected_agent
         || !ready.lanes.iter().any(|lane| lane == "ctl")
         || !ready.lanes.iter().any(|lane| lane == "conv")
     {
-        return Err(AdapterError::Rejected(
-            "runtime Ready declaration does not match the requested agent".into(),
+        return Err(make(
+            AdapterError::Rejected,
+            format_args!("runtime Ready declaration does not match the requested agent"),
         ));
     }
     if let Some(authority) = crate::owner_protocol::current_authority() {
@@ -54,13 +61,15 @@ pub(super) fn validate_ready(
                 || negotiated.owner != authority.owner()
         }) || ready.output_acknowledgement.is_none()
         {
-            return Err(AdapterError::Rejected(
-                "runtime lacks the exact ownership and durable output capabilities".into(),
+            return Err(make(
+                AdapterError::Rejected,
+                format_args!("runtime lacks the exact ownership and durable output capabilities"),
             ));
         }
     } else if ready.manager_ownership.is_some() {
-        return Err(AdapterError::Rejected(
-            "runtime requires an owned attachment".into(),
+        return Err(make(
+            AdapterError::Rejected,
+            format_args!("runtime requires an owned attachment"),
         ));
     }
     let output = ready
@@ -68,8 +77,9 @@ pub(super) fn validate_ready(
         .map(|capability| capability.validate())
         .transpose()?;
     if json_budget && output.is_none() {
-        return Err(AdapterError::Rejected(
-            "bounded output JSON requires retained runtime output".into(),
+        return Err(make(
+            AdapterError::Rejected,
+            format_args!("bounded output JSON requires retained runtime output"),
         ));
     }
     Ok(output)

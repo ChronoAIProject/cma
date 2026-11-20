@@ -159,6 +159,14 @@ impl PoolTargetStore for Memory {
         let target = self.target.lock().unwrap();
         Ok((target.id == id && !target.retiring && !target.retired).then(|| target.clone()))
     }
+    async fn claim_retirement(&self, id: &str) -> Result<Option<PoolTarget>, WarmPoolError> {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("claim-retire:{id}"));
+        let target = self.target.lock().unwrap();
+        Ok((target.id == id && !target.retired).then(|| target.clone()))
+    }
     async fn bind(&self, _: &PoolTarget, binding: &NativePoolBinding) -> Result<(), WarmPoolError> {
         self.calls.lock().unwrap().push("persist-binding".into());
         self.target.lock().unwrap().binding = Some(binding.clone());

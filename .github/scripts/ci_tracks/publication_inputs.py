@@ -18,6 +18,7 @@ FILES = frozenset({
     '.github/workflows/staging-release.yml',
     '.github/scripts/install-image-gitleaks.sh',
     '.github/scripts/api-cargo-cache.py',
+    '.github/scripts/ci_retry.py',
     '.github/scripts/release_image_publication.py',
     '.github/scripts/staging_cd_artifacts.py',
     '.github/scripts/staging_cd_cache_context.py',

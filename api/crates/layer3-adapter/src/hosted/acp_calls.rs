@@ -3,9 +3,10 @@ use std::time::Duration;
 
 use super::{Bridge, CALL_DEADLINE, RETAINED_HISTORY_IDLE_DEADLINE, SIGN_IN_DEADLINE};
 use crate::hosted::retained_json::JsonFrame;
+use crate::ingress_budget::diagnostic::make;
 use crate::AdapterError;
 
-struct RetainedLoad<'a>(&'a tokio::sync::watch::Sender<Option<tokio::time::Instant>>);
+struct RetainedLoad<'a>(&'a super::progress::ProgressSender<Option<tokio::time::Instant>>);
 
 impl Drop for RetainedLoad<'_> {
     fn drop(&mut self) {
@@ -14,6 +15,22 @@ impl Drop for RetainedLoad<'_> {
 }
 
 impl Bridge {
+    pub(in crate::hosted) async fn call_prepared(
+        &self,
+        method: &str,
+        params: &(impl serde::Serialize + Sync),
+        deadline: Duration,
+    ) -> crate::Result<JsonFrame> {
+        let _storage = super::ingress::identity::json_storage(self.ingress.as_ref(), params)?;
+        let params = serde_json::to_value(params).map_err(|_| {
+            make(
+                AdapterError::Rejected,
+                format_args!("runtime request could not be prepared"),
+            )
+        })?;
+        self.call_within(method, params, deadline).await
+    }
+
     pub(in crate::hosted) async fn load_retained_session(
         &self,
         params: serde_json::Value,
@@ -22,6 +39,17 @@ impl Bridge {
             .send_replace(Some(tokio::time::Instant::now() + SIGN_IN_DEADLINE));
         let _loading = RetainedLoad(&self.retained_history_deadline);
         self.call_within("session/load", params, RETAINED_HISTORY_IDLE_DEADLINE)
+            .await
+    }
+
+    pub(in crate::hosted) async fn load_retained_prepared(
+        &self,
+        params: &(impl serde::Serialize + Sync),
+    ) -> crate::Result<JsonFrame> {
+        self.retained_history_deadline
+            .send_replace(Some(tokio::time::Instant::now() + SIGN_IN_DEADLINE));
+        let _loading = RetainedLoad(&self.retained_history_deadline);
+        self.call_prepared("session/load", params, RETAINED_HISTORY_IDLE_DEADLINE)
             .await
     }
 
@@ -51,17 +79,27 @@ impl Bridge {
         deadline: Duration,
     ) -> crate::Result<JsonFrame> {
         let progress = if matches!(method, "initialize" | "session/load") {
-            self.output_progress().await
+            self.output_observation().await
         } else {
             None
         };
         let mut waiting = self.begin(method, params).await?;
         let waiting = async {
-            let lost = |_| AdapterError::Unavailable(format!("{method} lost its answer"));
+            let lost = |_| {
+                make(
+                    AdapterError::Unavailable,
+                    format_args!("{method} lost its answer"),
+                )
+            };
             let Some(mut progress) = progress else {
                 return tokio::time::timeout(deadline, waiting)
                     .await
-                    .map_err(|_| AdapterError::Unavailable(format!("{method} was never answered")))?
+                    .map_err(|_| {
+                        make(
+                            AdapterError::Unavailable,
+                            format_args!("{method} was never answered"),
+                        )
+                    })?
                     .map_err(lost);
             };
             let idle = tokio::time::sleep(deadline);
@@ -69,7 +107,7 @@ impl Bridge {
             loop {
                 tokio::select! {
                     result = &mut waiting => return result.map_err(lost),
-                    _ = &mut idle => return Err(AdapterError::Unavailable(format!("{method} made no durable output progress"))),
+                    _ = &mut idle => return Err(make(AdapterError::Unavailable, format_args!("{method} made no durable output progress"))),
                     result = progress.changed() => {
                         if result.is_err() { return waiting.await.map_err(lost); }
                         idle.as_mut().reset(tokio::time::Instant::now() + deadline);
@@ -82,14 +120,24 @@ impl Bridge {
         tokio::time::timeout(SIGN_IN_DEADLINE, waiting)
             .await
             .map_err(|_| {
-                AdapterError::Unavailable(format!("{method} exceeded its recovery deadline"))
+                make(
+                    AdapterError::Unavailable,
+                    format_args!("{method} exceeded its recovery deadline"),
+                )
             })?
     }
 }
 
 pub(in crate::hosted) fn rpc_result(method: &str, frame: JsonFrame) -> crate::Result<JsonFrame> {
     if let Some(error) = frame.get("error") {
-        return Err(AdapterError::Rejected(format!("{method}: {error}")));
+        return Err(make(
+            AdapterError::Rejected,
+            format_args!("{method}: {error}"),
+        ));
     }
     Ok(frame.into_result())
 }
+
+#[cfg(test)]
+#[path = "acp_error_tests.rs"]
+mod error_tests;

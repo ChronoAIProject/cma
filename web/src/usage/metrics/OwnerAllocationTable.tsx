@@ -4,6 +4,7 @@ import { Button } from '../../ui/Button';
 import { Table, TableCell } from '../../ui/Table';
 import { displayQuantity } from './model';
 import { ownerAllocationText } from './OwnerAllocationName';
+import { AllocationCoverageStatus } from './AllocationCoverageStatus';
 
 /** Keyboard-readable values use bounded pages even when All has thousands of owners. */
 export function OwnerAllocationTable({
@@ -31,7 +32,7 @@ export function OwnerAllocationTable({
               { header: 'Owner' },
               { header: `Allocation (${unit})`, align: 'end' },
               { header: 'Sandboxes', align: 'end' },
-              { header: 'History' },
+              { header: 'Coverage' },
             ]}
           >
             {rows.map((row) => (
@@ -42,7 +43,9 @@ export function OwnerAllocationTable({
                 </TableCell>
                 <TableCell align="end">{displayQuantity(row.allocated_hours)}</TableCell>
                 <TableCell align="end">{displayQuantity(row.sandbox_count)}</TableCell>
-                <TableCell>{row.complete ? 'Complete' : 'Partial'}</TableCell>
+                <TableCell>
+                  <AllocationCoverageStatus value={row} />
+                </TableCell>
               </tr>
             ))}
           </Table>

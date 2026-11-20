@@ -77,8 +77,20 @@ jobs:
           key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
       - name: Prepare isolated deployment tools
         run: python3 -B .github/scripts/staging_cd_tools.py install
+      # Minting a token is safe to repeat. Only the repeat may fail the job.
       - name: Create restricted infrastructure reader token
         id: infra-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - name: Retry restricted infrastructure reader token
+        id: infra-token-retry
+        if: steps.infra-token.outcome == 'failure'
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
         with:
           app-id: ${{ vars.CMA_INFRA_APP_ID }}
@@ -89,15 +101,28 @@ jobs:
       - name: Resolve infrastructure commit and mask private metadata
         id: private
         env:
-          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
+          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
           CD_INFRA_REF: ${{ inputs.infra_ref }}
         run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
+      # A checkout into the same path is safe to repeat; only the repeat may fail the job.
       - name: Check out resolved infrastructure commit
+        id: infra-checkout
+        continue-on-error: true
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           repository: ChronoAIProject/cma-infra
           ref: ${{ steps.private.outputs.revision }}
-          token: ${{ steps.infra-token.outputs.token }}
+          token: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
+          path: .github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}
+          persist-credentials: false
+          show-progress: false
+      - name: Retry resolved infrastructure checkout
+        if: steps.infra-checkout.outcome == 'failure'
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          repository: ChronoAIProject/cma-infra
+          ref: ${{ steps.private.outputs.revision }}
+          token: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
           path: .github/.cd-private/${{ github.run_id }}-${{ github.run_attempt }}
           persist-credentials: false
           show-progress: false
@@ -137,10 +162,23 @@ jobs:
           CD_COMPONENT_RESULT: ${{ needs.deploy.outputs.component_result }}
           CD_RELEASE_SET: ${{ inputs.release_set }}
         run: python3 -B .github/scripts/staging_cd_deploy_result.py
+      # The same evidence may be uploaded again; overwrite replaces a partial first attempt.
       - name: Retain sanitized component deployment outcomes
+        id: evidence
+        continue-on-error: true
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: staging-deployment-${{ github.run_id }}-${{ github.run_attempt }}${{ inputs.evidence_suffix }}
           path: ${{ runner.temp }}/public-deployment/deployment.json
           if-no-files-found: error
           retention-days: 90
+          overwrite: true
+      - name: Retry retaining sanitized component deployment outcomes
+        if: steps.evidence.outcome == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: staging-deployment-${{ github.run_id }}-${{ github.run_attempt }}${{ inputs.evidence_suffix }}
+          path: ${{ runner.temp }}/public-deployment/deployment.json
+          if-no-files-found: error
+          retention-days: 90
+          overwrite: true

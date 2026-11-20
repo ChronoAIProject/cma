@@ -129,9 +129,7 @@ test('LOCAL scoped environment refresh withdraws existing output and reports bro
     await computer.getByRole('tab', { name: 'Operations' }).click();
     await expect(computer.locator('pre')).toHaveText('environment-proof');
     await computer.getByRole('tab', { name: 'Screen', exact: true }).click();
-    await expect(
-      computer.getByText('Live screen is not enabled for this environment.', { exact: true }),
-    ).toBeVisible();
+    await expect(computer.getByText('Live screen is not enabled', { exact: true })).toBeVisible();
     availability = 'forbidden';
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await expect(
@@ -463,9 +461,7 @@ test('LOCAL capability checks recover Files, Screen and Operations after 503 wit
       await computer.getByRole('tab', { name: 'Operations', exact: true }).click();
       await expect(computer.getByText('capability-proof', { exact: true })).toBeVisible();
       await computer.getByRole('tab', { name: 'Screen', exact: true }).click();
-      await expect(
-        computer.getByText('Live screen is not enabled for this environment.', { exact: true }),
-      ).toBeVisible();
+      await expect(computer.getByText('Live screen is not enabled', { exact: true })).toBeVisible();
       await expect(computer.getByRole('button', { name: 'Try again' })).toHaveCount(0);
       await expect(computer.locator('iframe, video, canvas')).toHaveCount(0);
     };
