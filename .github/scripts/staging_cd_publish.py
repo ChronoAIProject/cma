@@ -9,6 +9,7 @@ from image_secret_gate import checksum, scan_staging_archive
 from staging_cd_admission import event_identity
 from staging_cd_artifacts import try_reuse
 from staging_cd_build import build, command, identity, inspect, snapshot
+from staging_cd_build_profile import AM_PROFILE, from_environment
 from staging_cd_common import require
 from staging_cd_github import GitHub
 from staging_cd_release_tags import local_tag_reader
@@ -102,6 +103,7 @@ def main():
     def operation(_masker, diagnostics):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Image publication only accepts develop pushes")
+        profile = from_environment(env, env["CD_COMPONENT"])
         tasks = json.loads(env["CD_TASKS"])
         require(isinstance(tasks, list) and tasks, "Image publication tasks are missing")
         receipts = []
@@ -132,10 +134,14 @@ def main():
                     with timings.stage("source"):
                         snapshot(root, reservation["source"], source)
                         diagnostics.mark("validate")
-                        release, _, _ = identity(reservation, source)
+                        release, _, arguments = identity(reservation, source, staging_am_opt_level=profile)
                     diagnostics.mark("reuse")
                     with timings.stage("reuse"):
-                        archive = try_reuse(release, directory, api, env.get("GH_TOKEN"))
+                        if AM_PROFILE in arguments:
+                            print(f"AM staging-only package optimization is {arguments[AM_PROFILE]}", flush=True)
+                            archive = None  # PR images are compiled with the default release profile.
+                        else:
+                            archive = try_reuse(release, directory, api, env.get("GH_TOKEN"))
                     qualified = archive is not None
                     if archive is None:
                         if env.get("CD_BUILD_CACHE") == "enabled":
@@ -156,7 +162,7 @@ def main():
                                     Reservations(lookup, credential, root).check_build_owner(reservation)
                                 guard["check_owner"] = check_owner
                             archive, release = build(root, reservation, directory, source=source, cache=cache,
-                                                     progress=progress, **guard)
+                                                     progress=progress, staging_am_opt_level=profile, **guard)
                     try:
                         receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
                                           env.get("GITHUB_ACTOR"), qualified=qualified, source=source,

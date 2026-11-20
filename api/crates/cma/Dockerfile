@@ -106,12 +106,16 @@ COPY api/ ./
 ARG TARGETARCH
 ARG CHRONO_BUILD=development
 ARG CHRONO_BUILD_SHA=development
+# Staging CD may lower optimization for the cma package alone.
+ARG CMA_STAGING_AM_OPT_LEVEL
 # Archived source can predate restored Cargo fingerprints. Rebuild workspace
 # artifacts, retaining Rust's incremental state for its source checks.
 RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,id=cma-api-target-${TARGETARCH},target=/build/target,sharing=locked \
     --mount=type=bind,from=dependencies,source=/build/target,target=/dependency-target \
-    cp -a /dependency-target/. /build/target/ \
+    case "$CMA_STAGING_AM_OPT_LEVEL" in ""|0|1) ;; \
+      *) printf '%s\n' 'AM staging optimization level must be empty, 0 or 1' >&2; exit 1 ;; esac \
+    && cp -a /dependency-target/. /build/target/ \
     && if test -d target/release/incremental; then rm -rf target/release-incremental; mv target/release/incremental target/release-incremental; fi \
     && cargo clean --release --workspace --locked \
     && if test -d target/release-incremental; then mkdir -p target/release; rm -rf target/release/incremental; mv target/release-incremental target/release/incremental; fi \
@@ -119,6 +123,8 @@ RUN --mount=type=cache,id=cma-api-registry,target=/usr/local/cargo/registry,shar
     CHRONO_BUILD_SHA="${CHRONO_BUILD_SHA}" \
     cargo build --release --locked --bin cma \
       --config profile.release.package.cma.codegen-units=256 \
+      ${CMA_STAGING_AM_OPT_LEVEL:+--config} \
+      ${CMA_STAGING_AM_OPT_LEVEL:+"profile.release.package.cma.opt-level=$CMA_STAGING_AM_OPT_LEVEL"} \
     && mkdir /out \
     && cp /build/target/release/cma /out/cma
 # Transfer incremental state only; dependency objects come from the chef layer.

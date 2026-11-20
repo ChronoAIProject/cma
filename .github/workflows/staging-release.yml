@@ -9,6 +9,9 @@ on:
       tasks:
         required: true
         type: string
+      staging_am_opt_level:
+        type: string
+        default: ''
     outputs:
       disposition:
         value: ${{ jobs.publish.outputs.disposition }}
@@ -24,6 +27,8 @@ jobs:
     if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'
     runs-on: ubuntu-24.04
     timeout-minutes: 300
+    env:
+      CMA_STAGING_AM_OPT_LEVEL: ${{ inputs.staging_am_opt_level }}
     permissions:
       contents: read
       pull-requests: read

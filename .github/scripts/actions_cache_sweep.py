@@ -14,6 +14,7 @@ from actions_cache_retention import BUDGET, DEVELOP, PULL, Entry, Policies, Read
 from actions_cache_run_history import IncompleteHistory, cargo_reader_hold
 from actions_cache_report import publish_result, retained_family
 from staging_cd_github import GitHub
+from staging_cd_build_profile import AM_PROFILE
 from staging_cd_versions import REPOSITORY
 
 
@@ -241,7 +242,8 @@ def main():
         if (args.apply_recovery or env.get("GITHUB_EVENT_NAME") == "workflow_run") and not authorized_completion(env):
             parser.error("This mode requires a trusted completed develop build")
         api = Actions(env["GH_TOKEN"], int(env["GITHUB_RUN_ID"]))
-        result = sweep(api, Policies.from_source(Path(__file__).resolve().parents[2]), args.apply_recovery,
+        policy = Policies.from_source(Path(__file__).resolve().parents[2], staging_am_opt_level=env.get(AM_PROFILE, ""))
+        result = sweep(api, policy, args.apply_recovery,
                        env.get("GITHUB_SHA"), recovery_only=args.apply_recovery or args.preview_recovery)
     except (OSError, KeyError, TypeError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
         result = {"status": "execution-error", "phase": "apply" if args.apply_recovery else "preview",

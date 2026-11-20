@@ -11,6 +11,7 @@ from pathlib import Path
 
 from staging_cd_build import snapshot
 from staging_cd_build_cargo_keys import identity
+from staging_cd_build_profile import for_source as source_profile, from_environment
 from staging_cd_common import require
 from staging_cd_cache_context import context
 from staging_cd_reservations import validate_reservation
@@ -30,7 +31,7 @@ def bridge():
     return module
 
 
-def layer_options(env, component):
+def layer_options(env, component, *, staging_am_opt_level=""):
     require(env.get("GITHUB_REPOSITORY") == "ChronoAIProject/cma" and component in SCOPES,
             "Build cache repository or component is invalid")
     # GitHub authorizes cache entries by ref. A PR can restore the protected
@@ -38,11 +39,15 @@ def layer_options(env, component):
     # registry exporter or copy a PR artifact into the development namespace.
     def cache(scope):
         return "type=gha,version=2,scope=" + scope + ",timeout=2m"
+    scope = SCOPES[component]
+    if staging_am_opt_level:
+        require(component == "am" and staging_am_opt_level in ("0", "1"), "Invalid staging cache profile")
+        scope += "-staging-opt-" + staging_am_opt_level
     args = []
-    for scope in (SCOPES[component], *EXTRA_IMPORTS.get(component, ())):
-        args.extend(("--cache-from", cache(scope)))
+    for reader in (scope, *EXTRA_IMPORTS.get(component, ())):
+        args.extend(("--cache-from", cache(reader)))
     if env.get("GITHUB_EVENT_NAME") == "push" and env.get("GITHUB_REF") == "refs/heads/develop":
-        args += ["--cache-to", cache(SCOPES[component]) + ",mode=max,ignore-error=true"]
+        args += ["--cache-to", cache(scope) + ",mode=max,ignore-error=true"]
     return args
 
 
@@ -55,7 +60,10 @@ class BuildCache:
         require(not self.root.is_symlink(), "Build cache root is invalid")
         self.root.mkdir(mode=0o700, exist_ok=True)
         self.accepted, self.pending = self.root / "accepted", self.root / "pending"
-        self.key = identity(source, component) if component in ("am", "eg") else None
+        requested = from_environment(env, component)
+        self.staging_am_opt_level = source_profile(source, component, requested)
+        self.key = (identity(source, component, staging_am_opt_level=self.staging_am_opt_level)
+                    if component in ("am", "eg") else None)
         self.namespace = uuid.uuid4().hex
         self.restore_result = "miss"
 
@@ -80,7 +88,8 @@ class BuildCache:
         return True
 
     def build_options(self):
-        args = layer_options(self.env, self.component) if self.build_environment() else []
+        args = (layer_options(self.env, self.component, staging_am_opt_level=self.staging_am_opt_level)
+                if self.build_environment() else [])
         if self.key is not None:
             args += ["--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace]
         return args
@@ -116,6 +125,7 @@ def lookup_key(root, component, env):
     # The release controller can publish a reserved source older than its checkout.
     # One Actions restore seeds the first build. Each later build validates its own family.
     tasks = json.loads(env["CD_TASKS"])
+    profile = from_environment(env, component)
     require(isinstance(tasks, list) and tasks, "Cargo cache publication tasks are missing")
     for task in tasks:
         require(isinstance(task, dict) and task.get("component") == component
@@ -127,9 +137,9 @@ def lookup_key(root, component, env):
                 with tempfile.TemporaryDirectory(dir=env["RUNNER_TEMP"]) as directory:
                     source = Path(directory) / "source"
                     snapshot(root, reservation["source"], source)
-                    return identity(source, component)
+                    return identity(source, component, staging_am_opt_level=profile)
             break
-    return identity(root, component)
+    return identity(root, component, staging_am_opt_level=profile)
 
 
 def prepare(root, env):

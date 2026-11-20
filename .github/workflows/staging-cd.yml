@@ -123,6 +123,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           CARGO_PUBLICATIONS: ${{ needs.allocate.outputs.publications }}
+          CMA_STAGING_AM_OPT_LEVEL: ${{ vars.CMA_STAGING_AM_OPT_LEVEL }}
         run: python3 -B .github/scripts/actions_cargo_admission.py reserve
   infrastructure:
     needs: allocate
@@ -191,6 +192,7 @@ jobs:
     with:
       component: am
       tasks: ${{ fromJSON(needs.allocate.outputs.publications)['am'] }}
+      staging_am_opt_level: ${{ vars.CMA_STAGING_AM_OPT_LEVEL }}
   release_eg:
     name: Release eg
     needs: allocate
