@@ -17,7 +17,7 @@ export function taskSubmission(
     draft.machineIncluded && !support.machine
       ? 'A shared desktop requires a new Sandbox. Keep the task and clear Shared desktop in the Cloud computer menu.'
       : draft.template && support.template !== true
-        ? 'Template tasks are unavailable on this service. Your fields are saved; you can also write a task without a template.'
+        ? 'Template tasks are unavailable on this service. You can keep editing your fields or switch to a task without a template.'
         : !compiled.text.trim() && !compiled.issue
           ? 'Describe a task before starting.'
           : new TextEncoder().encode(compiled.text).length > 262144

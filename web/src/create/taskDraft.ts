@@ -13,6 +13,7 @@ import { requireTaskStorage } from './taskIdentity';
 interface TaskDraft {
   readonly text: string;
   readonly template?: TaskTemplate;
+  readonly templates?: readonly TaskTemplate[];
   readonly repositoryUrl: string;
   readonly repositoryRef: string;
   readonly machineIncluded: boolean;
@@ -29,6 +30,7 @@ function parse(raw: string): TaskDraft {
     version?: unknown;
     text?: unknown;
     template?: unknown;
+    templates?: unknown;
     repositoryUrl?: unknown;
     repositoryRef?: unknown;
     desktop?: unknown;
@@ -43,18 +45,46 @@ function parse(raw: string): TaskDraft {
     (value.machineIncluded !== undefined && typeof value.machineIncluded !== 'boolean')
   )
     throw new Error('Invalid task draft');
+  const template =
+    value.version === 1
+      ? legacyTemplate(value.text)
+      : value.template === undefined
+        ? undefined
+        : parseTaskTemplate(value.template);
+  if (value.templates !== undefined && !Array.isArray(value.templates))
+    throw new Error('Invalid template drafts');
+  const templates = (value.templates as unknown[] | undefined)?.map(parseTaskTemplate);
+  if (
+    templates &&
+    (templates.length > 5 || new Set(templates.map(({ id }) => id)).size !== templates.length)
+  )
+    throw new Error('Invalid template drafts');
   return {
-    text: value.text,
-    template:
-      value.version === 1
-        ? legacyTemplate(value.text)
-        : value.template === undefined
-          ? undefined
-          : parseTaskTemplate(value.template),
+    text: value.version === 1 && template ? '' : value.text,
+    template,
+    ...(templates ? { templates } : {}),
     repositoryUrl: value.repositoryUrl ?? '',
     repositoryRef: value.repositoryRef ?? '',
     machineIncluded: value.machineIncluded ?? false,
   };
+}
+
+function keepTemplate(draft: TaskDraft, template: TaskTemplate): TaskDraft {
+  return {
+    ...draft,
+    template,
+    templates: [...(draft.templates ?? []).filter(({ id }) => id !== template.id), template],
+  };
+}
+
+function remainingDraft(draft: TaskDraft): TaskDraft {
+  const templates = draft.templates?.filter(
+    (template) =>
+      template.id !== draft.template?.id &&
+      Object.values(template.fields).some((value) => value.length),
+  );
+  const text = draft.template ? draft.text : '';
+  return text || templates?.length ? { ...draft, text, template: undefined, templates } : empty;
 }
 
 function matches(draft: TaskDraft, body: AgentLifecycleCreateInput) {
@@ -75,8 +105,12 @@ export function discardSubmittedTaskDraft(owner: string, body: AgentLifecycleCre
     requireTaskStorage();
     const key = taskDraftStorageKey(owner, body.workspace_id, body.sandbox_id);
     const raw = sessionStorage.getItem(key);
-    if (raw === null || !matches(parse(raw), body)) return;
-    sessionStorage.removeItem(key);
+    if (raw === null) return;
+    const draft = parse(raw);
+    if (!matches(draft, body)) return;
+    const remaining = remainingDraft(draft);
+    if (remaining === empty) sessionStorage.removeItem(key);
+    else sessionStorage.setItem(key, JSON.stringify({ version: 2, ...remaining }));
     // sessionStorage does not emit a storage event in the document that changed it.
     for (const notify of discarded) notify(key, body);
   } catch {
@@ -96,7 +130,7 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
       return {
         draft: empty,
         error:
-          'Your saved task could not be read. Restore browser session storage before starting a task.',
+          'Your saved task could not be read. Copy your text and restore browser session storage, then reload before starting a task.',
       };
     }
   });
@@ -106,8 +140,9 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
   useEffect(() => {
     const notify = (discardedKey: string, body: AgentLifecycleCreateInput) => {
       if (discardedKey !== key || !matches(current.current, body)) return;
-      current.current = empty;
-      setDraft(empty);
+      const remaining = remainingDraft(current.current);
+      current.current = remaining;
+      setDraft(remaining);
       setError(undefined);
     };
     discarded.add(notify);
@@ -116,9 +151,16 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
     };
   }, [key]);
   const persist = (value: TaskDraft) => {
+    if (initial.error) {
+      setError(initial.error);
+      return false;
+    }
     try {
       requireTaskStorage();
       if (!owner) throw new Error();
+      const stored = sessionStorage.getItem(key);
+      // A failed read must not turn a corrupt or newer draft into an empty overwrite.
+      if (stored !== null) parse(stored);
       sessionStorage.setItem(key, JSON.stringify({ version: 2, ...value }));
       setError(undefined);
       return true;
@@ -134,16 +176,30 @@ export function useTaskDraft(owner?: string, workspaceId?: string, sandboxId?: s
     setDraft(value);
     persist(value);
   };
+  const switchDraft = (value: TaskDraft) => {
+    if (!persist(value)) return false;
+    current.current = value;
+    setDraft(value);
+    return true;
+  };
   return {
     ...draft,
-    selectTemplate: (id: TaskTemplateId) =>
-      change({ ...current.current, template: emptyTemplate(id) }),
-    changeTemplate: (template: TaskTemplate) => change({ ...current.current, template }),
+    selectTemplate: (id: TaskTemplateId) => {
+      const draft = current.current;
+      const retained = draft.template ? keepTemplate(draft, draft.template) : draft;
+      return switchDraft(
+        keepTemplate(
+          retained,
+          retained.templates?.find((template) => template.id === id) ?? emptyTemplate(id),
+        ),
+      );
+    },
+    changeTemplate: (template: TaskTemplate) => change(keepTemplate(current.current, template)),
     clearTemplate: () => {
       const template = current.current.template;
       const compiled = template ? compileTaskTemplate(template) : undefined;
-      change({
-        ...current.current,
+      return switchDraft({
+        ...(template ? keepTemplate(current.current, template) : current.current),
         template: undefined,
         text: compiled && !compiled.issue ? compiled.text : current.current.text,
       });

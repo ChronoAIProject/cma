@@ -120,6 +120,7 @@ it('restores fields, isolates owner/context, and returns to free text without gu
   restored.rerender(<TaskHome {...restored.props} />);
   expect(screen.getByLabelText('Subject')).toHaveValue('Retained subject');
   fireEvent.click(screen.getByRole('button', { name: 'Write a task without a template' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Switch and keep draft' }));
   expect(screen.getByLabelText('Your task')).toHaveValue(
     'Discuss [topic], [1, 2] and [label](https://example.com)',
   );

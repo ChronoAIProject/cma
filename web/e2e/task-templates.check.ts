@@ -166,3 +166,125 @@ test('LOCAL unsupported template support preserves input and ordinary bracket te
   await expect.poll(() => writes.length).toBe(1);
   expect(writes[0]!.body).not.toHaveProperty('template');
 });
+
+for (const width of [1440, 390]) {
+  test(`LOCAL ${width}px partial template drafts survive switching, reload and resume`, async ({
+    page,
+    baseURL,
+  }, info) => {
+    const { writes, boundary } = await fixture(page, baseURL!, false);
+    await page.setViewportSize({ width, height: 900 });
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.goto('/');
+    await settle(page);
+    await page.getByLabel('Your task').fill('My separate free-text draft');
+    await page.getByRole('button', { name: 'Write a document', exact: true }).click();
+    await page.getByLabel('Document type', { exact: true }).fill(' report ');
+    await page.getByLabel('Subject', { exact: true }).fill('草稿 [subject]');
+    const switchMode = page.getByRole('button', { name: 'Write a task without a template' });
+    await switchMode.focus();
+    await switchMode.press('Enter');
+    const dialog = page.getByRole('dialog', { name: 'Keep this template draft?' });
+    await expect(dialog).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeHidden();
+    await expect(switchMode).toBeFocused();
+    await expect(page.getByLabel('Subject', { exact: true })).toHaveValue('草稿 [subject]');
+    await switchMode.press('Enter');
+    await expect(dialog).toBeVisible();
+    await page.screenshot({
+      path: info.outputPath(`template-switch-${width}.png`),
+      animations: 'disabled',
+    });
+    await dialog.getByRole('button', { name: 'Switch and keep draft' }).click();
+    await expect(page.getByLabel('Your task')).toHaveValue('My separate free-text draft');
+    await expect(page.getByLabel('Your task')).toBeFocused();
+    await page.reload();
+    await settle(page);
+    await page.getByRole('button', { name: 'Resume document template' }).click();
+    await expect(page.getByLabel('Document type', { exact: true })).toHaveValue(' report ');
+    await expect(page.getByLabel('Subject', { exact: true })).toHaveValue('草稿 [subject]');
+    await expect(page.getByLabel('Audience', { exact: true })).toHaveValue('');
+    await expect(page.getByRole('button', { name: 'Start task' })).toBeDisabled();
+    await page.getByLabel('Subject', { exact: true }).press('Control+Enter');
+    await expect(page.getByLabel('Audience', { exact: true })).toBeFocused();
+    await page.getByRole('button', { name: 'Write code', exact: true }).click();
+    await page.getByLabel('Language', { exact: true }).fill('Python');
+    await page.getByRole('button', { name: 'Write a document', exact: true }).click();
+    await expect(page.getByLabel('Subject', { exact: true })).toHaveValue('草稿 [subject]');
+    await page.getByRole('button', { name: 'Write code', exact: true }).click();
+    await expect(page.getByLabel('Language', { exact: true })).toHaveValue('Python');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1)).toBe(
+      true,
+    );
+    expect(writes).toEqual([]);
+    expect(boundary.writes).toEqual([]);
+    expect(boundary.unexpected).toEqual([]);
+  });
+}
+
+test('LOCAL complete conversion confirms replacement and keeps the template fields', async ({
+  page,
+  baseURL,
+}) => {
+  const { writes } = await fixture(page, baseURL!);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await settle(page);
+  await page.getByLabel('Your task').fill('Keep the existing draft until confirmation');
+  await page.getByRole('button', { name: 'Research a topic', exact: true }).click();
+  await page.getByLabel('Topic', { exact: true }).fill('  Synthetic topic  ');
+  const preview = await page.getByLabel('Task preview').inputValue();
+  await page.getByRole('button', { name: 'Write a task without a template' }).click();
+  const dialog = page.getByRole('dialog', { name: 'Replace your free-text draft?' });
+  await dialog.getByRole('button', { name: 'Keep editing template' }).click();
+  await expect(page.getByLabel('Topic', { exact: true })).toHaveValue('  Synthetic topic  ');
+  await page.getByRole('button', { name: 'Write a task without a template' }).click();
+  await dialog.getByRole('button', { name: 'Replace free-text draft' }).click();
+  await expect(page.getByLabel('Your task')).toHaveValue(preview);
+  await page.reload();
+  await settle(page);
+  await expect(page.getByLabel('Your task')).toHaveValue(preview);
+  await page.getByRole('button', { name: 'Resume research template' }).click();
+  await expect(page.getByLabel('Topic', { exact: true })).toHaveValue('  Synthetic topic  ');
+  expect(writes).toEqual([]);
+});
+
+test('LOCAL a storage refusal keeps the partial template and the prior saved draft', async ({
+  page,
+  baseURL,
+}) => {
+  const { writes } = await fixture(page, baseURL!);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto('/');
+  await settle(page);
+  await page.getByRole('button', { name: 'Write a document', exact: true }).click();
+  await page.getByLabel('Subject', { exact: true }).fill('Saved subject');
+  const stored = await page.evaluate(() =>
+    Object.entries(sessionStorage).filter(([key]) => key.startsWith('cma:task-draft:')),
+  );
+  await page.evaluate(() => {
+    const write = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith('cma:task-draft:'))
+        throw new DOMException('Synthetic refusal', 'QuotaExceededError');
+      write.call(this, key, value);
+    };
+  });
+  await page.getByLabel('Subject', { exact: true }).fill('Keep the newer in-memory subject');
+  await page.getByRole('button', { name: 'Write a task without a template' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('button', { name: 'Switch and keep draft' }).click();
+  await expect(dialog.getByRole('alert')).toContainText('could not be saved');
+  await expect(dialog.getByRole('button', { name: 'Copy filled details' })).toBeVisible();
+  await dialog.getByRole('button', { name: 'Keep editing template' }).click();
+  await expect(page.getByLabel('Subject', { exact: true })).toHaveValue(
+    'Keep the newer in-memory subject',
+  );
+  expect(
+    await page.evaluate(() =>
+      Object.entries(sessionStorage).filter(([key]) => key.startsWith('cma:task-draft:')),
+    ),
+  ).toEqual(stored);
+  expect(writes).toEqual([]);
+});
