@@ -153,6 +153,31 @@ class SupersededTests(unittest.TestCase):
         self.assertTrue(real.require_current(web[-1], build_started=True))
         real.runner.assert_not_called()
 
+    def test_finalize_of_a_started_am_build_passes_pending_successors_but_not_a_higher_final(self):
+        class Pushed(Exception):
+            pass
+        queue, api, store, pending = self.fixture()
+        allocate_queue(queue, api, store, 99, 1)
+        older = pending[0]
+        receipt = fixture_receipt(**{k: v for k, v in older.items() if k != 'schema'})
+        newest = fixture_tag(fixture_receipt(**{k: v for k, v in pending[-1].items() if k != 'schema'}))
+        for finals in ([], [newest]):
+            with self.subTest(higher_final=bool(finals)):
+                real = Reservations(api, 'fixture', Path.cwd(), runner=Mock())
+                real.list = lambda _component=None: copy.deepcopy(pending if not finals else pending[:-1])
+                api.tags.return_value = finals
+                real.command = Mock(side_effect=Pushed())
+                if finals:
+                    with self.assertRaisesRegex(Refusal, 'superseded and burned') as error:
+                        real.finalize(receipt, lambda _repository, _digest: True)
+                    self.assertNotIsInstance(error.exception, ReservationSuperseded)
+                    real.command.assert_not_called()
+                else:
+                    # Higher pending successors no longer fence the finalizer: it reaches the push.
+                    with self.assertRaises(Pushed):
+                        real.finalize(receipt, lambda _repository, _digest: True)
+                    self.assertEqual(real.command.call_args.args[0], 'mktag')
+
     def test_current_owner_can_build_but_superseded_owner_never_snapshots(self):
         identity = fixture_identity()
         reservation = dict(identity, schema='cma-version-reservation-v1')

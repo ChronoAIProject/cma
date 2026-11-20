@@ -31,7 +31,7 @@ def owned(env, root, *, github=GitHub, reservations=Reservations):
             # A resumed receipt is already published; finishing it needs no build.
             return True
         try:
-            authority.require_current(value)
+            authority.require_current(value, build_started=False)
         except ReservationSuperseded:
             continue
         return True
