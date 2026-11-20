@@ -49,9 +49,9 @@ class DeployResultTests(unittest.TestCase):
                 def process(args, *_args, **_kwargs):
                     release = Path(args[args.index("--release-set") + 1])
                     fixture_result(release)
-                    clock[0] = 1601
+                    clock[0] = 1991
                     if timeout:
-                        raise invoke.ProcessTimeout("fixture", 580, 0)
+                        raise invoke.ProcessTimeout("fixture", 970, 0)
                     return 0
 
                 def operation(values, masker, **callbacks):
@@ -81,7 +81,7 @@ class DeployResultTests(unittest.TestCase):
             def runner(_script, path, *_args):
                 fixture_result(path)
                 return 0
-            with patch.object(invoke, 'elapsed', return_value=601), patch.object(invoke, 'require_current_versions'):
+            with patch.object(invoke, 'elapsed', return_value=991), patch.object(invoke, 'require_current_versions'):
                 self.assertEqual(invoke.deploy(env, Mock(), lambda _: root / 'deploy_set.py', runner,
                                  policy_reader=lambda *_args, **_kwargs: ['am']), 20)
             self.assertFalse(Path(env['GITHUB_OUTPUT']).exists())

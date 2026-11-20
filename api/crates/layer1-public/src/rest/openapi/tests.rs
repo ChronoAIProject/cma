@@ -4,6 +4,85 @@ use super::identity::operation_id;
 use super::*;
 
 #[test]
+fn usage_and_agent_pagination_document_runtime_limits_and_problem_responses() {
+    let document = serde_json::to_value(document()).unwrap();
+    for (path, default, query_names) in [
+        (
+            "/api/v1/agents",
+            200,
+            vec![
+                "organization",
+                "sandbox",
+                "workspace",
+                "status",
+                "cursor",
+                "limit",
+            ],
+        ),
+        (
+            "/api/v1/usage/sandboxes",
+            50,
+            vec!["owner", "cursor", "limit"],
+        ),
+        (
+            "/api/v1/admin/usage/sandboxes",
+            50,
+            vec!["owner", "cursor", "limit"],
+        ),
+        (
+            "/api/v1/usage/sandboxes/{id}/events",
+            50,
+            vec!["owner", "cursor", "limit"],
+        ),
+    ] {
+        let operation = operation(&document, "get", path);
+        let parameters = operation["parameters"].as_array().unwrap();
+        let mut expected: BTreeSet<_> = query_names
+            .into_iter()
+            .map(|name| (name, "query", false))
+            .collect();
+        if path.contains("{id}") {
+            expected.insert(("id", "path", true));
+        }
+        assert_eq!(parameters.len(), expected.len(), "{path}");
+        assert_eq!(
+            parameters
+                .iter()
+                .map(|param| (
+                    param["name"].as_str().unwrap(),
+                    param["in"].as_str().unwrap(),
+                    param["required"].as_bool().unwrap(),
+                ))
+                .collect::<BTreeSet<_>>(),
+            expected,
+            "{path}"
+        );
+        let schema = &parameters
+            .iter()
+            .find(|param| param["name"] == "limit")
+            .unwrap()["schema"];
+        assert_eq!(schema["minimum"].as_f64(), Some(1.0), "{path}");
+        assert_eq!(schema["maximum"].as_f64(), Some(200.0), "{path}");
+        assert_eq!(schema["default"], default, "{path}");
+        assert_eq!(
+            operation["responses"]["400"]["content"]["application/problem+json"]["schema"]["$ref"],
+            "#/components/schemas/ProblemDocument",
+            "{path}"
+        );
+    }
+    let summary = operation(&document, "get", "/api/v1/admin/usage");
+    assert!(summary["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|param| param["in"] == "query"));
+    assert_eq!(
+        summary["responses"]["400"]["content"]["application/problem+json"]["schema"]["$ref"],
+        "#/components/schemas/ProblemDocument"
+    );
+}
+
+#[test]
 fn event_worker_list_documents_optional_query_parameters() {
     let document = serde_json::to_value(document()).expect("OpenAPI serializes");
     let parameters = operation(&document, "get", "/api/v1/event-worker-profiles")["parameters"]

@@ -72,13 +72,27 @@ impl App {
     }
     /// [`App::standard`] whose delivery engine reports to `observer`.
     pub async fn observed(ack_ms: u32, observer: Arc<dyn ActivityObserver>) -> Self {
+        Self::observed_with(
+            ack_ms,
+            DeliveryConfig::default(),
+            FakeProviderConfig::default(),
+            observer,
+        )
+        .await
+    }
+    pub async fn observed_with(
+        ack_ms: u32,
+        config: DeliveryConfig,
+        provider_config: FakeProviderConfig,
+        observer: Arc<dyn ActivityObserver>,
+    ) -> Self {
         Self::build(
             "telegram",
             (false, false),
             vec![],
             ack_ms,
-            DeliveryConfig::default(),
-            FakeProviderConfig::default(),
+            config,
+            provider_config,
             observer,
         )
         .await

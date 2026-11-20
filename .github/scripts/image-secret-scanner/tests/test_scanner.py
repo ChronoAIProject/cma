@@ -11,8 +11,16 @@ from pathlib import Path
 from unittest.mock import patch
 
 import scan_image_secrets as cli
-from image_secrets.common import digest_file
-from tests.fixtures import digest, docker_archive, fake_key, oci_archive, tar_bytes
+from image_secrets.common import digest_file, tar_metadata
+from tests.fixtures import (
+    CAPABILITY_BYTES,
+    CAPABILITY_XATTR,
+    digest,
+    docker_archive,
+    fake_key,
+    oci_archive,
+    tar_bytes,
+)
 
 
 class ScannerTests(unittest.TestCase):
@@ -51,6 +59,47 @@ class ScannerTests(unittest.TestCase):
             self.assertTrue(report["complete"])
             self.assertEqual(report["inventory"]["archive_format"], kind)
             self.assertEqual(report["inventory"]["layers"][0]["files"], 1)
+
+    def test_binary_pax_attributes_are_preserved_and_scanned(self):
+        fixture_value = b"ScanFixture" + bytes(range(48, 58)) + b"ABCDEfghijklmnop"
+        fixture_assignment = b" ".join((b"", b"pass" + b"word", b"=", fixture_value, b""))
+        private_der = subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt",
+                                      "ec_paramgen_curve:prime256v1", "-outform", "DER"],
+                                     check=True, capture_output=True, timeout=15).stdout
+        for original, rule in (
+            (CAPABILITY_BYTES, None),
+            (CAPABILITY_BYTES + fake_key(), "content.private-key-header"),
+            (CAPABILITY_BYTES + fixture_assignment, "gitleaks.image-secret-assignment"),
+            (private_der, "content.binary-private-key"),
+            (b"\xc5\x03\x04\x00\x00", "content.openpgp-private-key"),
+        ):
+            path = "usr/bin/fixture"
+            pax = {path: {CAPABILITY_XATTR: original.decode("utf-8", "surrogateescape")}}
+            data = tar_bytes([(path, b"fixture")], pax_headers=pax)
+            with tarfile.open(fileobj=io.BytesIO(data), mode="r:") as source:
+                [member] = source.getmembers()
+                restored = json.loads(tar_metadata(member.name, member))["pax"][CAPABILITY_XATTR]
+                self.assertEqual(restored.encode("utf-8", "surrogateescape"), original)
+            for nested, layer in ((False, data), (True, tar_bytes([("payload.tar", data)]))):
+                with self.subTest(rule=rule, nested=nested):
+                    archive = self.root / "binary-pax.tar"
+                    docker_archive(archive, [layer])
+                    report, _ = self.scan(archive, int(rule is not None))
+                    self.assertTrue(report["complete"])
+                    if rule:
+                        self.assertIn(rule, {row["rule"] for row in report["findings"]})
+                    if rule in ("content.binary-private-key", "content.openpgp-private-key"):
+                        self.assertTrue(any(row["rule"] == rule and row.get("view") == "pax-xattr"
+                                            and type(row.get("xattr")) is int for row in report["findings"]))
+
+    def test_posix_tar_member_keeps_literal_backslash_in_finding_identity(self):
+        escaped = r"usr/lib/systemd/system/example\x2dunit.pem"
+        plain = "usr/lib/systemd/system/example-unit.pem"
+        archive = self.root / "posix.tar"
+        docker_archive(archive, [tar_bytes([(name, b"public fixture") for name in (escaped, plain)])])
+        report, _ = self.scan(archive, 1)
+        paths = {f["path"] for f in report["findings"] if f["rule"] == "path.key-or-certificate"}
+        self.assertEqual(paths, {"path-sha256:" + digest(name.encode()) for name in (escaped, plain)})
 
     def test_deleted_key_and_duplicate_paths_still_detected(self):
         key = fake_key()

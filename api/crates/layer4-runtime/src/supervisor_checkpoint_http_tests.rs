@@ -62,6 +62,71 @@ async fn serve(supervisor: Arc<Supervisor>) -> (SocketAddr, tokio::task::JoinHan
     (address, server)
 }
 
+async fn control(address: SocketAddr, request: &RequestFrame) -> ResponseFrame {
+    reqwest::Client::new()
+        .post(format!("http://{address}/runtime/control"))
+        .json(request)
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap()
+}
+
+#[test]
+fn checkpoint_retirement_failure_keeps_hold_and_archive_until_exact_retry() {
+    runtime().block_on(async {
+        let (config, supervisor) = fixture("retirement-retry").await;
+        let (address, server) = serve(Arc::clone(&supervisor)).await;
+        let hold = RequestFrame::CheckpointForTeardown(CheckpointHoldRequest {
+            checkpoint: CheckpointRequest { epoch: 74, exclusions: Vec::new() },
+            writer_resume_token: "a".repeat(64),
+        });
+        let first = control(address, &hold).await;
+        let ResponseFrame::CheckpointForTeardown(receipt) = &first else {
+            panic!("expected a held checkpoint");
+        };
+        assert_eq!(receipt.checkpoint.writers, layer3_adapter::WriterState::Held);
+        let archive = config.checkpoint_root.join(&receipt.checkpoint.object_reference);
+        let archive_size = std::fs::metadata(&archive).unwrap().len();
+        let obstruction = config.checkpoint_root.join("checkpoint-writer-state");
+        std::fs::write(&obstruction, b"not a directory").unwrap();
+        let wrong = RequestFrame::ResumeCheckpointWriters(CheckpointWriterResumeRequest {
+            writer_resume_token: "b".repeat(64),
+        });
+        assert!(matches!(control(address, &wrong).await,
+            ResponseFrame::Failure(failure) if failure.code == "checkpoint_hold_conflict"));
+        let resume = RequestFrame::ResumeCheckpointWriters(CheckpointWriterResumeRequest {
+            writer_resume_token: "a".repeat(64),
+        });
+        for _ in 0..2 {
+            assert!(matches!(control(address, &resume).await,
+                ResponseFrame::Failure(failure) if failure.code == "checkpoint_writer_state_invalid"));
+            assert_eq!(supervisor.held_checkpoint.lock().await.as_ref().unwrap().receipt, *receipt);
+            assert_eq!(std::fs::metadata(&archive).unwrap().len(), archive_size);
+            assert!(matches!(control(address, &hold).await,
+                ResponseFrame::Failure(failure) if failure.code == "checkpoint_writer_state_invalid"));
+            assert!(matches!(control(address, &RequestFrame::Checkpoint(CheckpointRequest {
+                epoch: 75, exclusions: Vec::new(),
+            })).await, ResponseFrame::Failure(failure) if failure.code == "checkpoint_writers_held"));
+        }
+        std::fs::remove_file(obstruction).unwrap();
+        assert_eq!(control(address, &hold).await, first);
+        let resumed = control(address, &resume).await;
+        assert!(matches!(&resumed, ResponseFrame::ResumeCheckpointWriters(receipt)
+            if receipt.writers_resumed && receipt.writer_resume_token == "a".repeat(64)));
+        assert!(supervisor.held_checkpoint.lock().await.is_none());
+        assert!(!archive.exists());
+        assert_eq!(control(address, &resume).await, resumed);
+        assert!(matches!(control(address, &hold).await,
+            ResponseFrame::Failure(failure) if failure.code == "checkpoint_hold_retired"));
+        server.abort();
+        let _ = server.await;
+        cleanup(&config);
+    });
+}
+
 async fn pause_archive_worker() -> (std::sync::mpsc::Sender<()>, tokio::task::JoinHandle<()>) {
     let (release, waiting) = std::sync::mpsc::channel();
     let (started, observed) = tokio::sync::oneshot::channel();

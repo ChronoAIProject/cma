@@ -220,7 +220,14 @@ async fn periodic(service: &AgentObservationService, hint: bool) {
         .await;
         let rows = match refreshed {
             Ok(Ok(rows)) if rows.len() == tokens.len() => rows,
-            _ => {
+            failure => {
+                let reason = match failure {
+                    Ok(Ok(_)) => "incomplete_cohort",
+                    Ok(Err(_)) => "store_error",
+                    Err(_) => "worker_deadline",
+                };
+                tracing::warn!(target: "cma.agent_observation", reason,
+                    agents = cohort.len(), hint, "Revoking Agent observation cohort");
                 for authority in cohort {
                     fail(service, authority);
                 }

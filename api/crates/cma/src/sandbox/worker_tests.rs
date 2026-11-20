@@ -121,3 +121,4 @@ mod base_credential_rotation;
 mod base_failures;
 mod base_lease;
 mod base_retirement;
+mod retirement_credentials_tests;

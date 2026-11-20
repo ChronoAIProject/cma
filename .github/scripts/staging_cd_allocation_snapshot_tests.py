@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 from staging_cd_allocate import allocate_queue
 from staging_cd_allocation_fixture import AllocationServer
-from staging_cd_allocation_io import AllocationIO
+from staging_cd_allocation_io import ALLOCATION_SECONDS, AllocationIO
 from staging_cd_allocation_snapshot import AllocationSnapshot, SnapshotAPI
 from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
@@ -142,7 +142,7 @@ class AllocationSnapshotTests(unittest.TestCase):
             if args[1] == "mktag":
                 created.append(args)
                 if len(created) == 5:
-                    now[0] = 29
+                    now[0] = ALLOCATION_SECONDS - 1
             return server.command(args, **kwargs)
         store.io = AllocationIO(runner, clock=lambda: now[0])
         with self.assertRaisesRegex(Refusal, "deadline"):

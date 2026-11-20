@@ -1,6 +1,6 @@
 # Vendor the reviewed complete scanner bundle at .github/scripts/scan-image-secrets.
 # Prerequisites: Docker, Python >=3.9, Gitleaks >=8.25,<9 (validated: 8.30.1),
-# zstd if using zstd layers, and registry login using the repository's approved action.
+# libarchive for ar and zstd for zstd content, and registry login using the repository's approved action.
 # PUBLIC_STAGING_IMAGE_REPOSITORY is a repository path WITHOUT a tag.
 - name: Build, save, scan, and publish the same image artifact
   shell: bash

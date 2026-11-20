@@ -14,6 +14,7 @@ import { retainDocumentShareToken } from '../documents/shareToken';
 import { retainAgentShareForSignIn } from '../resources/agentShareToken';
 import { retainTaskViewer } from '../create/taskIdentity';
 import { retainAgentDraftOwner } from '../agent/draftIdentity';
+import { releaseNavigationGuard } from '../routing/navigationGuard';
 
 /**
  * Wires an AuthProvider into React. Components consume `useAuth()` and never
@@ -66,7 +67,10 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         .then((next) => {
           if (live && version === currentRead.current) {
             if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
-            else if (next.status === 'anonymous') retainAgentDraftOwner();
+            else if (next.status === 'anonymous') {
+              releaseNavigationGuard();
+              retainAgentDraftOwner();
+            }
             if (next.status !== 'error') last = next;
             let leavingSilently = false;
             if (mayNavigate && next.status === 'anonymous') {
@@ -189,6 +193,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   );
 
   const signOut = useCallback(async () => {
+    releaseNavigationGuard();
     const version = ++currentRead.current;
     try {
       retainTaskViewer();

@@ -14,9 +14,9 @@ fn selection() -> Value {
 async fn owner_save_forwards_exact_removal_and_returns_durable_accepted_receipt() {
     let (router, service) = app();
     for _ in 0..2 {
-        let (status, value) =
-            agents_tests::json_response(&router, scope_request(Some("owner-save"), selection()))
-                .await;
+        let request = scope_request(Some("owner-save"), selection());
+        assert!(!request.headers().contains_key(header::COOKIE));
+        let (status, value) = agents_tests::json_response(&router, request).await;
         assert_eq!(status, StatusCode::ACCEPTED);
         assert_eq!(value["status"], "connecting");
         assert_eq!(
@@ -88,6 +88,10 @@ async fn owner_save_cas_conflict_and_unavailable_keep_public_problem_semantics()
     let (router, service) = app();
     for (error, expected) in [
         (AgentAccessError::Conflict, 409),
+        (AgentAccessError::Forbidden, 403),
+        (AgentAccessError::NotFound, 404),
+        (AgentAccessError::OwnerAuthorityRequired, 403),
+        (AgentAccessError::ServiceConnectionRequired, 409),
         (AgentAccessError::Unavailable, 503),
     ] {
         *service.error.lock().unwrap() = Some(error);

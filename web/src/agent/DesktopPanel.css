@@ -174,6 +174,9 @@
   border: 0;
   border-radius: 0;
 }
+.agent-desktop[hidden] {
+  display: none;
+}
 .agent-desktop[data-embedded] .agent-desktop__header {
   flex-wrap: nowrap;
   gap: 8px;

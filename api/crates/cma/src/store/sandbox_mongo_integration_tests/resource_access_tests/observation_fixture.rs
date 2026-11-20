@@ -5,6 +5,7 @@ pub(super) struct Server {
     pub relay: Arc<Relay>,
     pub updates: Arc<DurableAgentUpdateRecorder>,
     pub observation: Arc<MongoAgentObservation>,
+    pub reads: Arc<AgentReadService>,
     pub stall: Arc<std::sync::atomic::AtomicBool>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
 }
@@ -118,7 +119,7 @@ pub(super) async fn servers_with_capacity(
                 .with_updates(updates.clone())
                 .with_event_wake(false, Duration::from_secs(1)),
         );
-        let agui = super::agui_budget_tests::app_with_reads(f, reads, updates.clone());
+        let agui = super::agui_budget_tests::app_with_reads(f, reads.clone(), updates.clone());
         let router = relay.authenticated_routes(v2.merge(agui).merge(responses), replica_auth);
         let stall = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let delay = stall.clone();
@@ -147,6 +148,7 @@ pub(super) async fn servers_with_capacity(
             relay,
             updates,
             observation: store,
+            reads,
             stall,
             tasks: vec![server, heartbeat],
         });

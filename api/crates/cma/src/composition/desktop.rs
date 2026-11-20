@@ -1,4 +1,5 @@
 //! Compose the public desktop transport with its owner-authorized domain service.
+use layer2_core::sandbox::DesktopAdmission;
 use std::sync::Arc;
 
 pub(crate) fn router(
@@ -22,8 +23,13 @@ pub(crate) fn router(
     }
     layer1_public::rest::desktop_router_with_origins(
         Arc::new(
-            layer2_core::sandbox::DesktopService::new(reads, adapter)
-                .with_replicas_enabled(config.agent_manager_replicas.is_some()),
+            layer2_core::sandbox::DesktopService::new(reads, adapter).with_admission(
+                if config.agent_manager_replicas.is_some() {
+                    DesktopAdmission::Protected
+                } else {
+                    DesktopAdmission::Disabled
+                },
+            ),
         ),
         origins,
     )
