@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { execFileSync, spawn } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
 import './mongo-contract-completeness.test.mjs';
+import './mongo-contract-registry.test.mjs';
 import { registerSelectionTests } from './mongo-contract-selection-tests.mjs';
 import { registerShardTests } from './mongo-contract-shards.test.mjs';
 
@@ -29,9 +30,10 @@ function fixture(scenario, reuse = false) {
   const scripts = join(root, '.github/scripts');
   mkdirSync(scripts, {recursive: true});
   mkdirSync(join(root, 'api/target/nextest'), {recursive: true});
-  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-partitions.py', 'mongo-contract-schedule.py', 'mongo-contract-timings.json', 'mongo-contract-completeness.py', 'mongo-contract-exceptions.json', 'backend-nextest.sh']) {
+  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-registry.py', 'mongo-contract-partitions.py', 'mongo-contract-schedule.py', 'mongo-contract-timings.json', 'mongo-contract-completeness.py', 'mongo-contract-exceptions.json', 'backend-nextest.sh']) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
+  cpSync(new URL('mongo-contract-suites', import.meta.url), join(scripts, 'mongo-contract-suites'), {recursive: true});
   const metadata = join(root, 'api/target/nextest');
   writeFileSync(join(metadata, 'cargo-metadata.json'), JSON.stringify({workspace_root: join(root, 'api'), target_directory: join(root, 'api/target')}));
   writeFileSync(join(metadata, 'binaries-metadata.json'), JSON.stringify({'rust-build-meta': {'target-directory': join(root, 'api/target')}}));
@@ -212,6 +214,39 @@ if (command === 'cargo') {
 
 for (const reuse of [false, true]) {
   const mode = reuse ? 'archive' : 'source';
+  test(`${mode}: adding one suite file extends the runner without shared-file edits`, () => {
+    const f = fixture('success', reuse);
+    try {
+      const prefix = 'new_independent_suite::mongo_tests::';
+      writeFileSync(join(f.directory, 'repo/.github/scripts/mongo-contract-suites/new-suite.json'),
+        JSON.stringify({prefix}));
+      execFileSync('bash', [...f.args, '--list'], {env: f.env, timeout: 10000, stdio: 'pipe'});
+      const calls = f.calls();
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].command, 'cargo');
+      const filter = calls[0].args[calls[0].args.indexOf('-E') + 1];
+      assert.ok(filter.endsWith(`(${[...requiredPrefixes, prefix].sort().map(value => `test(${value})`).join(' | ')})`));
+      assert.equal(f.containers().length, 0);
+      assert.equal(f.volumes().length, 0);
+    } finally { f.close(); }
+  });
+
+  test(`${mode}: invalid registrations fail before Cargo or fixture allocation`, () => {
+    for (const entry of [{prefix: requiredPrefixes[0]}, {prefix: 'bad) or all()'}]) {
+      const f = fixture('success', reuse);
+      try {
+        writeFileSync(join(f.directory, 'repo/.github/scripts/mongo-contract-suites/invalid.json'),
+          JSON.stringify(entry));
+        assert.throws(() => execFileSync('bash', [...f.args, 'count:1/1'], {
+          env: f.env, timeout: 10000, stdio: 'pipe',
+        }), error => error.status === 1 && /Mongo suite registry failed:/.test(error.stderr));
+        assert.equal(existsSync(f.log), false);
+        assert.equal(f.containers().length, 0);
+        assert.equal(f.volumes().length, 0);
+      } finally { f.close(); }
+    }
+  });
+
   test(`${mode}: CPU profiles retain the shared runner, selection and failure policy`, () => {
     for (const scenario of ['success', 'cpu-error', 'cpu-empty']) {
       const f = fixture(scenario, reuse);
