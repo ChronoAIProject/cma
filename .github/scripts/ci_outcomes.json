@@ -1,0 +1,1252 @@
+{
+  "schema": "cma-ci-outcomes-v1",
+  "causes": {
+    "change": "The change under test: source, workflow or configuration in the pushed commit.",
+    "transient": "Transient infrastructure. Re-run the failed jobs, or the next push retries.",
+    "operator": "An owner or operator must act; re-running alone will not fix it.",
+    "unknown": "The code alone does not decide it; start at the reported check or stage."
+  },
+  "components": ["am", "eg", "runtime", "runtime-omarchy", "web"],
+  "uncatalogued": {
+    "title": "Uncatalogued failure code",
+    "meaning": "The step reported a code that the failure catalogue does not describe, so no explanation is available.",
+    "cause": "unknown",
+    "next": "Add the code to ci_outcomes.json (staging_cd_outcome_tests.py should have required it), then read the step's source at the reported check."
+  },
+  "families": {
+    "step": {
+      "line": "FAIL {subject} reason={code}",
+      "codes": {
+        "refused": {
+          "title": "Input check refused",
+          "meaning": "A fixed check in this step refused its input, a remote read or a precondition; the condition is the require or Refusal at the reported line.",
+          "cause": "unknown",
+          "next": "Open the reported line at this commit: its message states the failed condition. Fix the input it names, or re-run if it rejects a remote read."
+        },
+        "timeout": {
+          "title": "Step timed out",
+          "meaning": "A command or remote call exceeded its time bound.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs. If it repeats, the reported line shows which bound to investigate."
+        },
+        "os-error": {
+          "title": "System or network call failed",
+          "meaning": "A file, process or network operation failed; its error text is withheld because it can contain private data.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs. If it repeats, check the service or file used at the reported line."
+        },
+        "error": {
+          "title": "Unexpected error",
+          "meaning": "The step raised an exception that no check anticipated, which usually means malformed input or a script defect.",
+          "cause": "unknown",
+          "next": "Reproduce the step from the reported line with the same inputs, then fix the script or the input and add a test."
+        },
+        "declined": {
+          "title": "Step did not confirm success",
+          "meaning": "The step finished without returning success, for example because it was invoked with an unknown command.",
+          "cause": "change",
+          "next": "Check that the workflow invokes this script with a supported command and environment."
+        }
+      }
+    },
+    "publication": {
+      "line": "FAIL publication stage={stage} reason={code}",
+      "stages": "publication-stage",
+      "codes": {
+        "registry_denied": {
+          "title": "Registry access denied",
+          "meaning": "The container registry rejected the publisher credential with HTTP 401 or 403.",
+          "cause": "operator",
+          "next": "Confirm the workflow token may write packages and the package grants this repository write access, then re-run the failed jobs."
+        },
+        "build_failed": {
+          "title": "Image build failed",
+          "meaning": "The image build exited unsuccessfully; its output is withheld because it can contain private data.",
+          "cause": "change",
+          "next": "Build the component's Dockerfile locally at the reserved commit to see the error, fix it and push."
+        },
+        "command_failed": {
+          "title": "Image tool failed",
+          "meaning": "An image or registry command other than the build exited unsuccessfully.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs. If it repeats at the same stage, run that stage's tool locally against the built image."
+        },
+        "build_timeout": {
+          "title": "Image build timed out",
+          "meaning": "The image build exceeded its one-hour bound.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs. If builds keep growing, check the cache restore and the slowest build layers."
+        },
+        "command_timeout": {
+          "title": "Image tool timed out",
+          "meaning": "An image or registry command exceeded its time bound.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; repeated timeouts at the same stage point to registry or runner capacity."
+        },
+        "scan_refused": {
+          "title": "Image scan refused",
+          "meaning": "The layer scan found content or packages that the image policy forbids; the findings stay in the job's retained evidence.",
+          "cause": "change",
+          "next": "Read the SCAN_EVIDENCE line and the retained package decisions of this job, remove the flagged file or package from the image, and push."
+        },
+        "registry_read_failed": {
+          "title": "Registry read failed",
+          "meaning": "A registry read returned an error other than access denied.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; if it persists, check the registry's availability."
+        },
+        "validation_refused": {
+          "title": "Input check refused",
+          "meaning": "A fixed check refused the release input; its condition is the require or Refusal at the reported line.",
+          "cause": "unknown",
+          "next": "Open the reported line at this commit: its message states the failed condition. Fix the input it names, or re-run if it rejects a remote read."
+        },
+        "io_failed": {
+          "title": "File or process error",
+          "meaning": "A local file, directory or process operation failed on the runner.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; repeated failures point to runner disk space or the path used at the reported line."
+        },
+        "unexpected_error": {
+          "title": "Unexpected error",
+          "meaning": "An exception outside the publication vocabulary stopped the stage.",
+          "cause": "unknown",
+          "next": "Reproduce the stage from the reported line, then fix the script or its input and add a test."
+        },
+        "reservation_owner_mismatch": {
+          "title": "Reservation owned by another attempt",
+          "meaning": "The version reservation belongs to a different run attempt, which happens when only the publish job is re-run.",
+          "cause": "operator",
+          "next": "Re-run all jobs of the workflow run, or push again, so allocation reserves a version for the new attempt."
+        },
+        "reservation_superseded": {
+          "title": "Reservation superseded",
+          "meaning": "A newer develop source took this component's version reservation, so this publication stopped.",
+          "cause": "transient",
+          "next": "No action: the newer run publishes this component."
+        }
+      }
+    },
+    "publication-stage": {
+      "codes": {
+        "validate": {
+          "title": "Validate inputs",
+          "meaning": "checks the publication tasks, the reservation and the source identity.",
+          "cause": "change",
+          "next": "Compare the publication task and reservation with this run's allocation output."
+        },
+        "resume": {
+          "title": "Resume a published receipt",
+          "meaning": "confirms that an already published digest still exists before reusing it.",
+          "cause": "transient",
+          "next": "Re-run; if the digest is gone, the version must be published again from a new push."
+        },
+        "snapshot": {
+          "title": "Snapshot the reserved source",
+          "meaning": "exports the reserved source commit into a clean build directory.",
+          "cause": "transient",
+          "next": "Re-run; check that the reserved commit is still reachable from develop."
+        },
+        "reuse": {
+          "title": "Reuse a qualified archive",
+          "meaning": "looks for an already qualified image archive with identical inputs.",
+          "cause": "transient",
+          "next": "Re-run; reuse is an optimisation and a miss falls back to a build."
+        },
+        "build": {
+          "title": "Build the image",
+          "meaning": "builds the component image from the reserved source.",
+          "cause": "change",
+          "next": "Build the same Dockerfile locally at the reserved commit."
+        },
+        "registry_preflight": {
+          "title": "Check the registry slot",
+          "meaning": "confirms that the reserved version tag is still absent from the registry.",
+          "cause": "operator",
+          "next": "If the tag already exists, it was published outside this pipeline and an operator must reconcile it."
+        },
+        "inspect": {
+          "title": "Inspect the image",
+          "meaning": "checks the built image's labels, platform and identity.",
+          "cause": "change",
+          "next": "Compare the image labels with the release identity that the reported check expects."
+        },
+        "scan": {
+          "title": "Scan image layers",
+          "meaning": "scans every layer for secrets and checks packages against the image policy.",
+          "cause": "change",
+          "next": "Remove the flagged content from the image."
+        },
+        "runtime_smoke": {
+          "title": "Runtime smoke test",
+          "meaning": "starts the runtime image in a canary and checks that it boots.",
+          "cause": "change",
+          "next": "Run the runtime image locally and check its startup."
+        },
+        "archive_check": {
+          "title": "Check archive integrity",
+          "meaning": "confirms that the image archive did not change between scan and push.",
+          "cause": "transient",
+          "next": "Re-run; a repeated change points to runner disk corruption."
+        },
+        "registry_login": {
+          "title": "Log in to the registry",
+          "meaning": "authenticates the publisher to the registry.",
+          "cause": "operator",
+          "next": "Check the workflow token's package permissions."
+        },
+        "registry_copy": {
+          "title": "Push the image",
+          "meaning": "copies the exact scanned archive to the registry.",
+          "cause": "transient",
+          "next": "Re-run; check the registry's status if it repeats."
+        },
+        "registry_verify": {
+          "title": "Verify the pushed digest",
+          "meaning": "reads back the pushed tag and checks its digest.",
+          "cause": "transient",
+          "next": "Re-run; a lasting mismatch needs an operator to inspect the registry tag."
+        },
+        "receipt": {
+          "title": "Write the receipt",
+          "meaning": "records the published receipt for finalization.",
+          "cause": "unknown",
+          "next": "Check the receipt field that the reported line validates."
+        },
+        "cache_restore": {
+          "title": "Restore the build cache",
+          "meaning": "restores the Cargo cache bundle before the build.",
+          "cause": "transient",
+          "next": "Re-run; a cold cache only slows the build."
+        },
+        "cache_export": {
+          "title": "Export the build cache",
+          "meaning": "saves the Cargo cache bundle after a successful publication.",
+          "cause": "transient",
+          "next": "A re-run is optional: the image is already published."
+        }
+      }
+    },
+    "finalize": {
+      "line": "FAIL finalize stage={stage} reason={code}",
+      "stages": "finalize-stage",
+      "codes": {
+        "artifact_unavailable": {
+          "title": "Receipt artifact unavailable",
+          "meaning": "The publish job's receipt artifact is missing, oversized or not a regular file.",
+          "cause": "transient",
+          "next": "Re-run all jobs so publication uploads the receipt again."
+        },
+        "recovery_oid_unverified": {
+          "title": "Earlier final tag differs",
+          "meaning": "A final tag from an earlier attempt does not match the object this attempt expected.",
+          "cause": "operator",
+          "next": "An operator must compare the final tag with the published receipt before any retry."
+        },
+        "attempt_burned": {
+          "title": "Version burned by a failed attempt",
+          "meaning": "An earlier attempt pushed this version without finalizing it, so the version cannot be reused.",
+          "cause": "transient",
+          "next": "Push again or re-run all jobs: allocation reserves a new version."
+        },
+        "receipt_order_invalid": {
+          "title": "Receipts reordered or duplicated",
+          "meaning": "The published receipts do not match the publication tasks one to one.",
+          "cause": "unknown",
+          "next": "Compare the publish job's receipts with its tasks; a mismatch indicates a script defect."
+        },
+        "resume_mismatch": {
+          "title": "Resumed receipt changed",
+          "meaning": "A resumed receipt differs from the receipt recorded for its task.",
+          "cause": "operator",
+          "next": "An operator must reconcile the published version before retrying."
+        },
+        "allocation_mismatch": {
+          "title": "Receipt differs from its allocation",
+          "meaning": "The published identity differs from the reservation that allocation owns.",
+          "cause": "unknown",
+          "next": "Compare the receipt with this run's allocation output, then re-run all jobs."
+        },
+        "digest_unverified": {
+          "title": "Published digest unverified",
+          "meaning": "The registry does not show the published digest.",
+          "cause": "transient",
+          "next": "Re-run; if the digest stays missing, publish again from a new push."
+        },
+        "final_conflict": {
+          "title": "Final version conflict",
+          "meaning": "A different immutable final release already exists for this source or tag.",
+          "cause": "operator",
+          "next": "An operator must inspect the existing final tag; final tags are never overwritten."
+        },
+        "reservation_missing": {
+          "title": "Reservation missing",
+          "meaning": "The version reservation for this publication no longer exists.",
+          "cause": "operator",
+          "next": "Check whether another run finalized or removed the reservation; push again to allocate a new version."
+        },
+        "reservation_superseded": {
+          "title": "Reservation superseded",
+          "meaning": "A newer source took over this component's reservation.",
+          "cause": "transient",
+          "next": "No action: the newer run finalizes this component."
+        },
+        "annotation_failed": {
+          "title": "Final tag object not created",
+          "meaning": "Git could not create the annotated final tag object.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "final_unverified": {
+          "title": "Final tag unverified",
+          "meaning": "After the push, the final tag could not be read back as expected.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; finalization settles an already pushed tag before it retries."
+        },
+        "unexpected_existing_ref": {
+          "title": "Final tag already present",
+          "meaning": "The tag push reported the ref as already up to date instead of newly created.",
+          "cause": "operator",
+          "next": "An operator must check who created the final tag."
+        },
+        "cleanup_final_unverified": {
+          "title": "Cleanup lacks a verified final",
+          "meaning": "The pending reservation cannot be deleted because its matching final tag was not verified.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "cleanup_owner_mismatch": {
+          "title": "Pending version owned elsewhere",
+          "meaning": "The pending reservation for this version belongs to another source.",
+          "cause": "operator",
+          "next": "An operator must inspect the pending tag before it is deleted."
+        },
+        "cleanup_unverified": {
+          "title": "Reservation cleanup unverified",
+          "meaning": "The pending reservation still exists after its deletion.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; the final tag is already published."
+        },
+        "github_read_failed": {
+          "title": "GitHub read failed",
+          "meaning": "A GitHub API read failed.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; check GitHub's status if it repeats."
+        },
+        "history_unverified": {
+          "title": "Develop history unverified",
+          "meaning": "The develop first-parent history could not be verified.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "source_history_invalid": {
+          "title": "Source not on develop",
+          "meaning": "The release source is not on verified develop first-parent history.",
+          "cause": "operator",
+          "next": "Check develop for a force push or rewritten history; an operator must reconcile it."
+        },
+        "registry_read_failed": {
+          "title": "Registry read failed",
+          "meaning": "A registry read returned an error other than access denied.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "registry_denied": {
+          "title": "Registry access denied",
+          "meaning": "The registry rejected the read credential with HTTP 401 or 403.",
+          "cause": "operator",
+          "next": "Confirm the workflow token may read packages, then re-run the failed jobs."
+        },
+        "validation_refused": {
+          "title": "Input check refused",
+          "meaning": "A fixed check refused finalization; its condition is the require or Refusal at the reported line.",
+          "cause": "unknown",
+          "next": "Open the reported line at this commit: its message states the failed condition. Fix the input it names, or re-run if it rejects a remote read."
+        },
+        "command_timeout": {
+          "title": "Command timed out",
+          "meaning": "A git or registry command exceeded its time bound.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "io_failed": {
+          "title": "File or process error",
+          "meaning": "A local file, directory or process operation failed on the runner.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "unexpected_error": {
+          "title": "Unexpected error",
+          "meaning": "An exception outside the finalization vocabulary stopped the stage.",
+          "cause": "unknown",
+          "next": "Reproduce the stage from the reported line, then fix the script or its input and add a test."
+        }
+      }
+    },
+    "finalize-stage": {
+      "codes": {
+        "event": {
+          "title": "Check the event",
+          "meaning": "confirms that the run is an authorized develop push.",
+          "cause": "change",
+          "next": "Finalization runs only for develop pushes; check the workflow trigger."
+        },
+        "artifact": {
+          "title": "Read the receipt artifact",
+          "meaning": "reads the publish job's receipt artifact.",
+          "cause": "transient",
+          "next": "Re-run all jobs."
+        },
+        "attempt": {
+          "title": "Check earlier attempts",
+          "meaning": "checks receipts produced by earlier attempts of this run.",
+          "cause": "operator",
+          "next": "Compare earlier-attempt receipts with the final tags."
+        },
+        "receipt": {
+          "title": "Validate receipts",
+          "meaning": "validates each published receipt.",
+          "cause": "unknown",
+          "next": "Check the receipt field named at the reported line."
+        },
+        "allocation": {
+          "title": "Match the allocation",
+          "meaning": "matches each receipt to its allocated reservation.",
+          "cause": "unknown",
+          "next": "Compare the receipts with this run's allocation output."
+        },
+        "registry_verify": {
+          "title": "Verify the registry digest",
+          "meaning": "confirms that the published digest exists in the registry.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "final_read": {
+          "title": "Read final tags",
+          "meaning": "reads the component's existing final tags.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "reservation_read": {
+          "title": "Read the reservation",
+          "meaning": "confirms that the reservation is still current.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "tag_create": {
+          "title": "Create the final tag",
+          "meaning": "creates the annotated final tag object.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "tag_push": {
+          "title": "Push the final tag",
+          "meaning": "pushes the final tag and its outcome ref atomically.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "final_verify": {
+          "title": "Verify the final tag",
+          "meaning": "reads the pushed final tag back.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "cleanup_verify": {
+          "title": "Verify before cleanup",
+          "meaning": "checks the final tag before the pending reservation is deleted.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "cleanup_delete": {
+          "title": "Delete the reservation",
+          "meaning": "deletes the pending reservation tag.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "cleanup_read": {
+          "title": "Confirm the cleanup",
+          "meaning": "confirms that the pending reservation is gone.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "output": {
+          "title": "Write job outputs",
+          "meaning": "writes the final receipt to the job outputs.",
+          "cause": "unknown",
+          "next": "Check the output value that the reported line validates."
+        }
+      }
+    },
+    "allocation": {
+      "line": "FAIL allocation {code}",
+      "codes": {
+        "RESERVATION_OWNER_UNREADABLE": {
+          "title": "Reservation owner unreadable",
+          "meaning": "The workflow run that owns an existing reservation could not be read.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "RESERVATION_OWNER_INVALID": {
+          "title": "Reservation owner invalid",
+          "meaning": "An existing reservation names a run that is not a develop push of this repository.",
+          "cause": "operator",
+          "next": "An operator must inspect the pending reservation tag."
+        },
+        "RESERVATION_OWNER_UNCERTAIN": {
+          "title": "Reservation owner state uncertain",
+          "meaning": "The run that owns an existing reservation reported an unexpected status.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "RESERVATION_OWNER_INCONSISTENT": {
+          "title": "Reservation run and attempt disagree",
+          "meaning": "The run that owns a reservation exists, but its recorded attempt does not.",
+          "cause": "operator",
+          "next": "An operator must inspect the pending reservation tag."
+        },
+        "QUEUE_INVALID": {
+          "title": "Release queue invalid",
+          "meaning": "The plan job's release queue is malformed.",
+          "cause": "unknown",
+          "next": "Check the plan job's output; a malformed queue indicates a planner defect."
+        },
+        "CHANGE_INVALID": {
+          "title": "Release change invalid",
+          "meaning": "A queued change has an invalid source, tree or component list.",
+          "cause": "unknown",
+          "next": "Check the plan job's output; an invalid change indicates a planner defect."
+        },
+        "FINAL_VERSION_CONFLICT": {
+          "title": "Conflicting final versions",
+          "meaning": "The source already has final versions that disagree with each other.",
+          "cause": "operator",
+          "next": "An operator must reconcile the final tags for this source."
+        },
+        "MERGED_PR_NOT_UNIQUE": {
+          "title": "Merged pull request not unique",
+          "meaning": "The source does not belong to exactly one merged develop pull request.",
+          "cause": "change",
+          "next": "Land changes on develop only through one merged pull request per commit."
+        },
+        "MERGED_PR_IDENTITY_CHANGED": {
+          "title": "Merged pull request changed",
+          "meaning": "The pull request associated with the source changed between reads.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "VERSION_LABEL_REQUIRED": {
+          "title": "Version label required",
+          "meaning": "The merged pull request does not carry exactly one of version-upgrade:major, version-upgrade:minor or version-upgrade:patch.",
+          "cause": "change",
+          "next": "Add exactly one version-upgrade label to the merged pull request, then re-run the failed jobs."
+        },
+        "VERSION_LABELS_INVALID": {
+          "title": "Version labels malformed",
+          "meaning": "The pull request's labels could not be read as names.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "SOURCE_HISTORY_INVALID": {
+          "title": "Source not on develop",
+          "meaning": "The release source is not on verified develop first-parent history.",
+          "cause": "operator",
+          "next": "Check develop for a force push or rewritten history; an operator must reconcile it."
+        },
+        "GITHUB_READ_FAILED": {
+          "title": "GitHub read failed",
+          "meaning": "A GitHub API read failed.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; check GitHub's status if it repeats."
+        },
+        "GITHUB_RESPONSE_INVALID": {
+          "title": "GitHub response invalid",
+          "meaning": "A GitHub API response did not have the expected shape.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; a repeat suggests the API response changed."
+        },
+        "RESERVATION_COLLISION_LIMIT": {
+          "title": "Too many reservation collisions",
+          "meaning": "Concurrent runs repeatedly took the planned version slot.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs after the concurrent runs finish."
+        },
+        "RESERVATION_PUSH_FAILED": {
+          "title": "Reservation push failed",
+          "meaning": "Pushing the reservation tag failed without a collision.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "RESERVATION_VERIFY_FAILED": {
+          "title": "Reservation not verified",
+          "meaning": "The pushed reservation could not be read back as this run's claim.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "FINAL_SETTLEMENT_UNCERTAIN": {
+          "title": "Final settlement uncertain",
+          "meaning": "A terminal reservation could not be settled against its final receipt.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "FINAL_SETTLEMENT_CONFLICT": {
+          "title": "Final settlement conflict",
+          "meaning": "A terminal reservation differs from its final receipt.",
+          "cause": "operator",
+          "next": "An operator must reconcile the reservation with the final tag."
+        },
+        "DEADLINE_EXCEEDED": {
+          "title": "Allocation deadline exceeded",
+          "meaning": "Allocation exceeded its 120 second budget.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "READ_FAILED": {
+          "title": "Allocation read failed",
+          "meaning": "A reservation or tag read failed.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "WRITE_UNCERTAIN": {
+          "title": "Allocation write uncertain",
+          "meaning": "A reservation write timed out and may already have committed.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; allocation settles the earlier write first."
+        },
+        "INVENTORY_INCOMPLETE": {
+          "title": "Tag inventory incomplete",
+          "meaning": "The version tag inventory was incomplete, or a claim had no durable version.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "RESERVATION_COLLISION": {
+          "title": "Reservation collision",
+          "meaning": "Another run claimed the planned version slot first.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; the next allocation plans a new version."
+        },
+        "RESERVATION_NOT_VISIBLE": {
+          "title": "Reservation not yet visible",
+          "meaning": "The pushed reservation was not yet visible when read back.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "UNEXPECTED_ERROR": {
+          "title": "Unexpected error",
+          "meaning": "An exception outside the allocation vocabulary stopped allocation.",
+          "cause": "unknown",
+          "next": "Reproduce allocation from the reported line, then fix the script or its input and add a test."
+        },
+        "UNCLASSIFIED_REFUSAL": {
+          "title": "Unclassified refusal",
+          "meaning": "A fixed check refused allocation with a message outside the allocation vocabulary; its condition is at the reported line.",
+          "cause": "unknown",
+          "next": "Open the reported line to read the condition. If it recurs, add its message to REFUSAL_CODES in staging_cd_allocate.py and to this catalogue."
+        }
+      }
+    },
+    "admission": {
+      "line": "FAIL component={component} reason={code}",
+      "codes": {
+        "publication-unqualified": {
+          "title": "Publication unqualified",
+          "meaning": "The component's published receipt failed verification or is not finalized.",
+          "cause": "unknown",
+          "next": "Open the component's Release job: its FAIL publication or FAIL finalize line explains why."
+        },
+        "publication-read-failed": {
+          "title": "Publication read failed",
+          "meaning": "Reading the component's published receipt or registry state failed.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        },
+        "superseded-source": {
+          "title": "Superseded source",
+          "meaning": "A newer develop source has already published this component.",
+          "cause": "transient",
+          "next": "No action: the newer run deploys this component."
+        },
+        "contract-group-incomplete": {
+          "title": "Contract group incomplete",
+          "meaning": "AM and runtime images that share a contract change must deploy together, and a member is missing.",
+          "cause": "unknown",
+          "next": "Fix the failed Release job of the missing member; the group deploys once every member qualifies."
+        },
+        "contract-group-mismatch": {
+          "title": "Contract group mismatch",
+          "meaning": "The AM and runtime images do not share a compatible contract.",
+          "cause": "change",
+          "next": "Land the AM and runtime sides of a contract change together, then push."
+        },
+        "contract-analysis-unavailable": {
+          "title": "Contract analysis unavailable",
+          "meaning": "The compatibility of the AM and runtime contract could not be evaluated.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs."
+        }
+      }
+    },
+    "deploy-precondition": {
+      "title": "Deployment not admitted",
+      "line": "FAIL precondition={code}",
+      "effect": "Nothing. The private controller was not started.",
+      "codes": {
+        "mode": {
+          "title": "Deployment mode invalid",
+          "meaning": "The mode is not release or bootstrap, an automatic run asked for bootstrap, or bootstrap lacked a component.",
+          "cause": "change",
+          "next": "Check the dispatch inputs or the workflow's deployment mode."
+        },
+        "checkout": {
+          "title": "Private checkout invalid",
+          "meaning": "The private infrastructure checkout is absent, differs from the resolved commit or links its entry point.",
+          "cause": "operator",
+          "next": "An operator must check the infrastructure revision resolved for this run."
+        },
+        "policy": {
+          "title": "Deployment policy unreadable",
+          "meaning": "The private deployment policy could not be read or is invalid.",
+          "cause": "operator",
+          "next": "An operator must check the private deployment policy."
+        },
+        "credentials-format": {
+          "title": "Deployment credentials malformed",
+          "meaning": "The deployment credentials are missing, empty or contain whitespace.",
+          "cause": "operator",
+          "next": "An operator must check the deployment client credential secrets."
+        },
+        "budget": {
+          "title": "Admission budget expired",
+          "meaning": "Deployment started too long after admission: the budget is 120 seconds for a release and 45 for bootstrap.",
+          "cause": "transient",
+          "next": "Re-run the deployment; persistent expiry means runner queueing exceeds the budget."
+        },
+        "authority": {
+          "title": "Deployment authority refused",
+          "meaning": "The release set was superseded, would split the contract group, or could not be written for the controller.",
+          "cause": "transient",
+          "next": "Usually a newer push supersedes this one and no action is needed; otherwise re-run the deployment."
+        },
+        "input": {
+          "title": "Deployment input invalid",
+          "meaning": "The release set, event or environment failed validation before the controller started.",
+          "cause": "unknown",
+          "next": "Open the reported line to see which input failed validation."
+        }
+      }
+    },
+    "deploy-private": {
+      "title": "Deployment refused",
+      "line": "FAIL precondition=private-{code}",
+      "effect": "Nothing. The private controller refused before any mutation.",
+      "codes": {
+        "permit": {
+          "title": "Deployment permit refused",
+          "meaning": "The private controller did not grant this run a deployment permit.",
+          "cause": "operator",
+          "next": "An operator must check the private deployment permit for this repository."
+        },
+        "authentication": {
+          "title": "Deployment authentication failed",
+          "meaning": "The deployment service rejected the deployment credential.",
+          "cause": "operator",
+          "next": "An operator must rotate or restore the deployment client credentials."
+        },
+        "authorization": {
+          "title": "Deployment authorization refused",
+          "meaning": "The deployment credential lacks permission for this deployment.",
+          "cause": "operator",
+          "next": "An operator must grant the deployment client its required permission."
+        },
+        "clock": {
+          "title": "Controller clock refused",
+          "meaning": "The controller's timing check refused the admission time.",
+          "cause": "transient",
+          "next": "Re-run the deployment."
+        },
+        "inventory": {
+          "title": "Deployment inventory unreadable",
+          "meaning": "The controller could not read or validate the current deployment inventory.",
+          "cause": "transient",
+          "next": "Re-run the deployment; if it repeats, an operator must check the staging deployment state."
+        },
+        "compatibility": {
+          "title": "Compatibility refused",
+          "meaning": "The controller found the release incompatible with the deployed components.",
+          "cause": "change",
+          "next": "Check the contract compatibility of the components in this release."
+        },
+        "image-version": {
+          "title": "Image version refused",
+          "meaning": "The controller refused the image version, for example because it is not newer than the deployed one.",
+          "cause": "transient",
+          "next": "No action while a newer release deploys; otherwise compare the released and deployed versions."
+        },
+        "image-identity": {
+          "title": "Image identity refused",
+          "meaning": "The controller could not verify the image's identity labels or digest.",
+          "cause": "change",
+          "next": "Check the identity labels that the image build records."
+        },
+        "baseline": {
+          "title": "Deployed baseline differs",
+          "meaning": "The deployed baseline differs from what the controller expected.",
+          "cause": "operator",
+          "next": "An operator must reconcile the staging deployment with its recorded state."
+        },
+        "readiness": {
+          "title": "Target not ready",
+          "meaning": "The staging target was not ready to accept a deployment.",
+          "cause": "transient",
+          "next": "Re-run the deployment after the current rollout settles."
+        },
+        "transport": {
+          "title": "Deployment service unreachable",
+          "meaning": "The controller could not reach the deployment service.",
+          "cause": "transient",
+          "next": "Re-run the deployment."
+        },
+        "acceptance": {
+          "title": "Acceptance precondition refused",
+          "meaning": "A pre-deployment acceptance check failed.",
+          "cause": "unknown",
+          "next": "An operator must check the acceptance prerequisites in the controller log."
+        },
+        "schema": {
+          "title": "Request schema refused",
+          "meaning": "The controller does not support this release request's schema.",
+          "cause": "operator",
+          "next": "Align the private controller and this repository on one release request schema."
+        },
+        "fence": {
+          "title": "Deployment fence held",
+          "meaning": "Another deployment holds the staging fence.",
+          "cause": "transient",
+          "next": "Re-run after the other deployment finishes."
+        },
+        "interrupted": {
+          "title": "Controller interrupted",
+          "meaning": "The controller was interrupted before it changed anything.",
+          "cause": "transient",
+          "next": "Re-run the deployment."
+        },
+        "preflight": {
+          "title": "Preflight refused",
+          "meaning": "The controller's preflight checks failed.",
+          "cause": "unknown",
+          "next": "An operator must check the controller's preflight requirements in its log."
+        },
+        "unreported": {
+          "title": "Refusal reason unreported",
+          "meaning": "The controller refused before any mutation but reported no reason.",
+          "cause": "unknown",
+          "next": "An operator must read the private controller's log for this run."
+        },
+        "unrecognized": {
+          "title": "Refusal reason unrecognized",
+          "meaning": "The controller reported a refusal reason that this repository does not know; the token is withheld.",
+          "cause": "operator",
+          "next": "Add the controller's new reason to REASONS in staging_cd_refusal.py and to this catalogue."
+        }
+      }
+    },
+    "deploy-verification": {
+      "title": "Deployment unverified",
+      "line": "FAIL verification={code} recovery={recovery}",
+      "effect": "Staging may have changed and its state is unproven. An operator must reconcile it before staging is trusted again.",
+      "codes": {
+        "write-timeout": {
+          "title": "Deployment write timed out",
+          "meaning": "Applying the deployment did not complete within its bound.",
+          "cause": "transient",
+          "next": "Check the deployment service's status; re-run once staging is reconciled."
+        },
+        "write-response": {
+          "title": "Deployment write rejected",
+          "meaning": "The deployment service returned an unexpected response to the change.",
+          "cause": "unknown",
+          "next": "An operator must read the private controller's log for the response."
+        },
+        "read-timeout": {
+          "title": "Status read timed out",
+          "meaning": "Reading the deployment status did not complete within its bound.",
+          "cause": "transient",
+          "next": "Re-run once staging is reconciled."
+        },
+        "read-response": {
+          "title": "Status read invalid",
+          "meaning": "The deployment status response was invalid.",
+          "cause": "unknown",
+          "next": "An operator must read the private controller's log for the response."
+        },
+        "status-reconcile": {
+          "title": "Status not reconciled",
+          "meaning": "The deployment service did not report the new state as reconciled.",
+          "cause": "transient",
+          "next": "Re-run once staging is reconciled."
+        },
+        "status-counts": {
+          "title": "Replica counts differ",
+          "meaning": "Ready or updated replica counts did not reach their expected values.",
+          "cause": "change",
+          "next": "Check the component's staging pods for failing readiness probes, fix the cause and push."
+        },
+        "status-inventory": {
+          "title": "Deployed inventory differs",
+          "meaning": "The deployed resources differ from the release inventory.",
+          "cause": "operator",
+          "next": "An operator must check for resources changed outside this pipeline."
+        },
+        "status-pods": {
+          "title": "Pods not ready",
+          "meaning": "Pods of the new release were not running and ready.",
+          "cause": "change",
+          "next": "Check the component's staging pod events and logs, fix the cause and push."
+        },
+        "pod-restarts": {
+          "title": "Pods restarted",
+          "meaning": "Pods of the new release restarted during verification, usually from a crash or a failing liveness probe.",
+          "cause": "change",
+          "next": "Read the component's staging pod logs for the crash, fix it and push."
+        },
+        "rollout-ownership": {
+          "title": "Rollout ownership unproven",
+          "meaning": "The rollout could not be attributed to this deployment.",
+          "cause": "operator",
+          "next": "An operator must check for a concurrent manual or second deployment."
+        },
+        "rollout-timeout": {
+          "title": "Rollout timed out",
+          "meaning": "The rollout did not complete within its budget.",
+          "cause": "change",
+          "next": "Check the component's staging pods for slow startup or readiness, fix the cause and push."
+        },
+        "rollout-failed": {
+          "title": "Rollout failed",
+          "meaning": "The deployment service reported the rollout as failed.",
+          "cause": "change",
+          "next": "Check the component's staging pod events, fix the cause and push."
+        },
+        "image-digest": {
+          "title": "Running digest differs",
+          "meaning": "Running pods do not use the released image digest.",
+          "cause": "operator",
+          "next": "An operator must check for a concurrent deployment or an image override."
+        },
+        "ownership": {
+          "title": "Resource ownership differs",
+          "meaning": "The deployed resources are not owned by this pipeline.",
+          "cause": "operator",
+          "next": "An operator must check who changed the staging resources."
+        },
+        "recovery-ownership": {
+          "title": "Recovery ownership unproven",
+          "meaning": "The rollback could not prove that it owns the resources it restored.",
+          "cause": "operator",
+          "next": "An operator must reconcile staging manually."
+        },
+        "recovery-revision": {
+          "title": "Recovery revision unproven",
+          "meaning": "The rollback could not restore or prove the previous revision.",
+          "cause": "operator",
+          "next": "An operator must restore the previous release manually."
+        },
+        "phase-budget": {
+          "title": "Controller time budget exceeded",
+          "meaning": "The controller ran past its time budget, so its result cannot be trusted.",
+          "cause": "transient",
+          "next": "An operator must confirm the staging state; then re-run the deployment."
+        },
+        "image-identity": {
+          "title": "Image identity differs",
+          "meaning": "The running image's identity labels differ from the release.",
+          "cause": "operator",
+          "next": "An operator must check for a concurrent deployment or an image override."
+        },
+        "served-identity": {
+          "title": "Served identity differs",
+          "meaning": "The running service reports a different build identity from the release.",
+          "cause": "unknown",
+          "next": "Check that the component serves this release's build identity and that no older pod still answers."
+        },
+        "status-shape": {
+          "title": "Status shape invalid",
+          "meaning": "The deployment status document had an unexpected shape.",
+          "cause": "unknown",
+          "next": "An operator must read the private controller's log."
+        },
+        "pod-evidence": {
+          "title": "Pod evidence missing",
+          "meaning": "Evidence about the new pods could not be collected or validated.",
+          "cause": "transient",
+          "next": "Re-run once staging is reconciled."
+        },
+        "cohort": {
+          "title": "Serving cohort unproven",
+          "meaning": "The serving AM and runtime cohort could not be proven compatible.",
+          "cause": "operator",
+          "next": "An operator must confirm which AM and runtime versions serve staging."
+        },
+        "serving": {
+          "title": "Service not serving",
+          "meaning": "The new release did not serve requests successfully.",
+          "cause": "change",
+          "next": "Check the component's health endpoint and logs in staging, fix the cause and push."
+        },
+        "acceptance": {
+          "title": "Acceptance check failed",
+          "meaning": "The post-deployment acceptance check failed.",
+          "cause": "change",
+          "next": "Reproduce the acceptance check against this release, fix the cause and push."
+        },
+        "startup-observation": {
+          "title": "Startup not observed",
+          "meaning": "The controller could not observe the new release starting.",
+          "cause": "unknown",
+          "next": "Check the component's staging pod logs for startup errors."
+        },
+        "startup-schema": {
+          "title": "Startup evidence invalid",
+          "meaning": "The startup evidence did not match its expected schema.",
+          "cause": "unknown",
+          "next": "Check that the component's startup output still matches the expected schema."
+        },
+        "namespace-fence": {
+          "title": "Namespace fence unconfirmed",
+          "meaning": "The staging namespace fence could not be confirmed.",
+          "cause": "operator",
+          "next": "An operator must check the staging namespace fence."
+        },
+        "interrupted": {
+          "title": "Controller interrupted",
+          "meaning": "The controller was interrupted, for example by cancellation or a runner shutdown.",
+          "cause": "transient",
+          "next": "An operator must confirm the staging state; then re-run the deployment."
+        },
+        "result": {
+          "title": "Controller result invalid",
+          "meaning": "The controller's component result was missing or failed validation.",
+          "cause": "unknown",
+          "next": "An operator must read the private controller's log for this run."
+        },
+        "unreported": {
+          "title": "Reason unreported",
+          "meaning": "The controller reported no reason for this check.",
+          "cause": "unknown",
+          "next": "An operator must read the private controller's log for this run."
+        },
+        "unrecognized": {
+          "title": "Reason unrecognized",
+          "meaning": "The controller reported a reason that this repository does not know; the token is withheld.",
+          "cause": "operator",
+          "next": "Add the controller's new reason to VERIFICATION_REASONS in staging_cd_refusal.py and to this catalogue."
+        }
+      }
+    },
+    "deploy-release": {
+      "title": "Release rolled back",
+      "line": "FAIL release={code} recovery=verified",
+      "effect": "Staging changed, the release failed this check, and the controller restored and verified the previous release.",
+      "codes_from": "deploy-verification"
+    },
+    "deploy-component": {
+      "line": "FAIL component={component} reason={code}",
+      "codes": {
+        "deployed-compatibility-unqualified": {
+          "title": "Withheld: compatibility unqualified",
+          "meaning": "The component was withheld because it is not proven compatible with the AM and runtime versions deployed in staging.",
+          "cause": "change",
+          "next": "Release the AM and runtime sides of the contract together so the group can be proven compatible."
+        },
+        "deployment-unverified": {
+          "title": "Deployment unverified",
+          "meaning": "The controller could not verify this component's deployment.",
+          "cause": "operator",
+          "next": "An operator must reconcile the component in staging."
+        }
+      }
+    },
+    "deploy-clock": {
+      "line": "FAIL: deployment not admitted; invalid or expired admission time",
+      "effect": "Nothing. Deployment setup did not start.",
+      "codes": {
+        "admission-time": {
+          "title": "Admission time invalid or expired",
+          "meaning": "The admission timestamp is missing, malformed, in the future, or older than the budget of 120 seconds for a release and 45 for bootstrap.",
+          "cause": "transient",
+          "next": "Re-run the deployment; persistent expiry means runner queueing exceeds the admission budget."
+        }
+      }
+    },
+    "component-result": {
+      "line": "FAIL component-result reason={code}",
+      "codes": {
+        "invalid-public-evidence": {
+          "title": "Component result invalid",
+          "meaning": "The deploy job's component result failed validation against the admitted release set.",
+          "cause": "unknown",
+          "next": "Compare the deploy job's component_result output with the admitted release set; an operator must confirm the staging state."
+        }
+      }
+    },
+    "release-outcome": {
+      "line": "FAIL release-outcome reason={code}",
+      "codes": {
+        "evidence-invalid": {
+          "title": "Outcome evidence invalid",
+          "meaning": "The job results or component failures could not be validated, so no deployment acceptance is claimed.",
+          "cause": "unknown",
+          "next": "Check the admission and deployment jobs of this run, then re-run the redeployment."
+        },
+        "deployment-not-accepted": {
+          "title": "Deployment not accepted",
+          "meaning": "The deployment job failed, was cancelled, or was skipped although a release set was expected.",
+          "cause": "unknown",
+          "next": "Open the Deploy set job: its FAIL line names the precondition, verification or release reason."
+        },
+        "publication-failed": {
+          "title": "Publication or qualification failed",
+          "meaning": "One or more components failed publication or qualification.",
+          "cause": "unknown",
+          "next": "Read each FAIL component line of this step: its reason names the next step."
+        }
+      }
+    },
+    "component-report": {
+      "line": "FAIL component={component} reason={code}",
+      "codes": {
+        "allocation-incomplete": {
+          "title": "Allocation incomplete",
+          "meaning": "Allocation did not succeed, so no component deployment is proven.",
+          "cause": "unknown",
+          "next": "Open the allocate job: its FAIL allocation line names the code and the next step."
+        },
+        "evidence-invalid": {
+          "title": "Outcome evidence invalid",
+          "meaning": "The component outcome evidence is missing or invalid, so no deployment is proven.",
+          "cause": "unknown",
+          "next": "Check the Release and Promote jobs of this run for a failure that left no outputs."
+        },
+        "publish-failure": {
+          "title": "Publication failed",
+          "meaning": "The component's publication or finalization job failed.",
+          "cause": "unknown",
+          "next": "Open the component's Release job: its FAIL publication or FAIL finalize line names the stage, reason and check."
+        },
+        "publish-cancelled": {
+          "title": "Publication cancelled",
+          "meaning": "The component's publication was cancelled, usually by a newer push or by hand.",
+          "cause": "transient",
+          "next": "No action if a newer push is running; otherwise re-run the failed jobs."
+        },
+        "publish-skipped": {
+          "title": "Publication skipped",
+          "meaning": "Publication did not run, usually because an earlier job of this run failed.",
+          "cause": "unknown",
+          "next": "Fix the first failed job of this run."
+        },
+        "publish-unknown": {
+          "title": "Publication result unknown",
+          "meaning": "No publication result was recorded for the component.",
+          "cause": "unknown",
+          "next": "Check whether the component's Release job was scheduled in this run."
+        },
+        "finalize-incomplete": {
+          "title": "Finalization incomplete",
+          "meaning": "The component published but its final version tag was not confirmed.",
+          "cause": "unknown",
+          "next": "Open the component's Finalize job: its FAIL finalize line names the stage and reason."
+        },
+        "reservation_superseded": {
+          "title": "Reservation superseded",
+          "meaning": "A newer run took over the AM reservation, so this run intentionally skipped the AM release.",
+          "cause": "transient",
+          "next": "No action: the newer run publishes and deploys AM."
+        },
+        "superseded-peer": {
+          "title": "Held for the newer AM release",
+          "meaning": "The component published and finalized, but its contract group deploys with the newer AM release.",
+          "cause": "transient",
+          "next": "No action: the run that owns the newer AM reservation deploys the group."
+        },
+        "admit-skipped": {
+          "title": "Admission skipped",
+          "meaning": "The admission job did not run for this component.",
+          "cause": "unknown",
+          "next": "Fix the first failed job of this run."
+        },
+        "admit-unknown": {
+          "title": "Admission unreported",
+          "meaning": "The admission job ran but reported no decision for this component.",
+          "cause": "unknown",
+          "next": "Open the component's Admit job and check its outputs."
+        },
+        "deploy-failure": {
+          "title": "Deployment failed",
+          "meaning": "The deployment job failed.",
+          "cause": "unknown",
+          "next": "Open the Deploy job: its FAIL line names the precondition, verification or release reason."
+        },
+        "deploy-cancelled": {
+          "title": "Deployment cancelled",
+          "meaning": "The deployment job was cancelled.",
+          "cause": "transient",
+          "next": "No action if a newer push is deploying; otherwise an operator must confirm the staging state and re-run."
+        },
+        "deploy-skipped": {
+          "title": "Deployment skipped",
+          "meaning": "The deployment job did not run, usually because admission or infrastructure resolution failed.",
+          "cause": "unknown",
+          "next": "Fix the first failed job of this run."
+        },
+        "deploy-unknown": {
+          "title": "Deployment result unknown",
+          "meaning": "No deployment result was recorded for the component.",
+          "cause": "unknown",
+          "next": "Check whether the Deploy job was scheduled in this run."
+        },
+        "controller-unreported": {
+          "title": "Controller outcome unreported",
+          "meaning": "The deployment finished without a verified controller outcome for this component.",
+          "cause": "unknown",
+          "next": "Open the Deploy job: its FAIL line and summary state what the controller proved."
+        }
+      }
+    },
+    "cache-withheld": {
+      "line": "WITHHELD build-cache reason={code}",
+      "level": "warning",
+      "codes": {
+        "oversize-compressed": {
+          "title": "Cache bundle too large",
+          "meaning": "The compressed Cargo cache bundle exceeds its bound, so it was not saved.",
+          "cause": "change",
+          "next": "Reduce cached build output, or raise the bound in staging_cd_cargo_artifact.py after review."
+        },
+        "oversize-expanded": {
+          "title": "Expanded cache too large",
+          "meaning": "The expanded Cargo cache exceeds its bound, so it was not saved.",
+          "cause": "change",
+          "next": "Reduce cached build output, or raise the bound in staging_cd_cargo_artifact.py after review."
+        },
+        "empty": {
+          "title": "Cache mount empty",
+          "meaning": "A Cargo cache mount was empty after the build, so nothing was saved.",
+          "cause": "unknown",
+          "next": "Check that the build still uses its Cargo cache mounts."
+        },
+        "transfer-failed": {
+          "title": "Cache transfer failed",
+          "meaning": "Exporting the cache mounts from the builder failed or timed out.",
+          "cause": "transient",
+          "next": "No action: the next build restores the previous bundle."
+        },
+        "invalid": {
+          "title": "Cache export invalid",
+          "meaning": "The exported cache failed validation.",
+          "cause": "unknown",
+          "next": "Check the cache exporter in staging_cd_build_cache.py."
+        }
+      }
+    }
+  }
+}

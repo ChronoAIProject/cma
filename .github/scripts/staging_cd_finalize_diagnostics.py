@@ -35,6 +35,9 @@ REASONS = {
     "Release source is not on verified develop first-parent history": "source_history_invalid",
     "Registry request failed": "registry_read_failed",
 }
+# Codes classified from the exception type rather than a fixed message.
+FALLBACK_REASONS = frozenset({"validation_refused", "unexpected_error", "registry_denied", "command_timeout",
+                              "io_failed"})
 
 
 class FinalizeDiagnostics:
@@ -73,8 +76,7 @@ def run_finalization(operation):
     status = run_private(guarded, None)
     if status:
         stage = diagnostics.stage if diagnostics.stage in STAGES else "event"
-        allowed = set(REASONS.values()) | {"validation_refused", "unexpected_error", "registry_denied",
-                                         "command_timeout", "io_failed"}
+        allowed = set(REASONS.values()) | FALLBACK_REASONS
         reason = diagnostics.reason if diagnostics.reason in allowed else "unexpected_error"
         print(f"FAIL finalize stage={stage} reason={reason}")
     return status

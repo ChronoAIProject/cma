@@ -48,6 +48,7 @@ REFUSAL_CODES = {
     "Allocation reservation readback differs": "RESERVATION_VERIFY_FAILED",
     "Allocation reservation readback is unavailable": "RESERVATION_NOT_VISIBLE",
 }
+FALLBACK_CODES = frozenset({"UNEXPECTED_ERROR", "UNCLASSIFIED_REFUSAL"})
 
 
 def run_allocation(operation):

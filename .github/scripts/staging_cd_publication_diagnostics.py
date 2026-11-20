@@ -13,6 +13,9 @@ from staging_cd_runtime import SKIPPED, run_private
 STAGES = frozenset({"validate", "resume", "snapshot", "reuse", "build", "registry_preflight",
                     "inspect", "scan", "runtime_smoke", "archive_check", "registry_login", "registry_copy",
                     "registry_verify", "receipt", "cache_restore", "cache_export"})
+REASONS = frozenset({"registry_denied", "build_failed", "command_failed", "build_timeout", "command_timeout",
+                     "scan_refused", "registry_read_failed", "validation_refused", "io_failed", "unexpected_error",
+                     "reservation_owner_mismatch", "reservation_superseded"})
 
 
 class ImageCommandRefusal(Refusal):
@@ -88,10 +91,7 @@ def run_publication(operation, *, on_superseded=None):
     if status:
         # No exception text, paths, identifiers or scanner findings cross here.
         stage = diagnostics.stage if diagnostics.stage in STAGES else "validate"
-        reasons = {"registry_denied", "build_failed", "command_failed", "build_timeout", "command_timeout",
-                   "scan_refused", "registry_read_failed", "validation_refused", "io_failed", "unexpected_error",
-                   "reservation_owner_mismatch", "reservation_superseded"}
-        reason = diagnostics.reason if diagnostics.reason in reasons else "unexpected_error"
+        reason = diagnostics.reason if diagnostics.reason in REASONS else "unexpected_error"
         print(f"FAIL publication stage={stage} reason={reason}")
         if diagnostics.scan_evidence is not None:
             print("SCAN_EVIDENCE " + json.dumps(diagnostics.scan_evidence, sort_keys=True))
