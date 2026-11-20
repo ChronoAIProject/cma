@@ -2,12 +2,12 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, create_autospec, patch
 
 import staging_cd_am_ownership as ownership
 from staging_cd_common import Refusal
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt
-from staging_cd_reservations import ReservationSuperseded
+from staging_cd_reservations import ReservationSuperseded, Reservations
 
 
 def reservation(**changes):
@@ -27,7 +27,8 @@ class OwnershipTests(unittest.TestCase):
 
     def owned(self, tasks, require_current, component="am"):
         env = dict(self.env, CD_COMPONENT=component, CD_TASKS=json.dumps(tasks))
-        authority = Mock()
+        # Autospec enforces the real signature, including its required keyword.
+        authority = create_autospec(Reservations, instance=True)
         authority.require_current.side_effect = require_current
         with patch.object(ownership, "event_identity"):
             result = ownership.owned(env, Path(self.temp.name), github=Mock(),
@@ -36,9 +37,9 @@ class OwnershipTests(unittest.TestCase):
 
     def test_current_reservation_keeps_the_build_and_superseded_one_skips_restores(self):
         task = {"component": "am", "mode": "publish", "reservation": reservation()}
-        result, authority = self.owned([task], lambda value: True)
+        result, authority = self.owned([task], lambda value, **_kwargs: True)
         self.assertTrue(result)
-        authority.require_current.assert_called_once_with(task["reservation"])
+        authority.require_current.assert_called_once_with(task["reservation"], build_started=False)
         result, _ = self.owned([task], ReservationSuperseded())
         self.assertFalse(result)
 
@@ -56,10 +57,10 @@ class OwnershipTests(unittest.TestCase):
         web = {"component": "web", "mode": "publish",
                "reservation": dict(reservation(), component="web")}
         with self.assertRaises(Refusal):
-            self.owned([web], lambda value: True, component="web")
+            self.owned([web], lambda value, **_kwargs: True, component="web")
         foreign = {"component": "am", "mode": "publish", "reservation": reservation(run_id=99)}
         with self.assertRaises(Refusal):
-            self.owned([foreign], lambda value: True)
+            self.owned([foreign], lambda value, **_kwargs: True)
 
     def test_main_reports_the_decision_as_a_step_output(self):
         for decision, expected in ((True, "false"), (False, "true")):

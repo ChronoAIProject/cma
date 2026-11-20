@@ -399,7 +399,7 @@ class GitPublicationTests(unittest.TestCase):
         queue["event_source"] = older
         self.assertEqual(allocate_queue(queue, self.api, self.publisher, 11, 1), {"include": []})
         with self.assertRaisesRegex(Refusal, "superseded and burned"):
-            self.publisher.require_current(pending)
+            self.publisher.require_current(pending, build_started=True)
         with self.assertRaisesRegex(Refusal, "superseded and burned"):
             self.publisher.finalize(self.receipt(pending), registry.exists)
         self.assertEqual(self.publisher.list(), [pending])
