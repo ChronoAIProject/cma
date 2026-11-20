@@ -28,7 +28,10 @@ def validate(row, package):
             and row["path"] == PATHS.get(package["name"])
             and valid_digest(proof["archive_sha256"]) and matches(LAYER_ID, proof["image_config"])
             and (proof["image_manifest"] is None or matches(LAYER_ID, proof["image_manifest"])))
-    entries = proof["matches"]
+    return validate_matches(proof["matches"])
+
+
+def validate_matches(entries, *, normalize=False, max_parts=128):
     require(isinstance(entries, list) and 0 < len(entries) <= 8)
     candidates = {}
     for item in entries:
@@ -38,9 +41,10 @@ def validate(row, package):
         for span in (original, detector):
             fields(span, {"offset", "size", "sha256"})
             reviewed_literals.extent(span)
-        require(original == detector and 0 < original["size"] <= MAX_MATCH)
+        require((original != detector if normalize else original == detector)
+                and 0 < original["size"] <= MAX_MATCH)
         parts = item["parts"]
-        require(isinstance(parts, list) and 3 <= len(parts) <= 128)
+        require(isinstance(parts, list) and 3 <= len(parts) <= max_parts)
         for part in parts:
             fields(part, {"kind", "size", "sha256", "source", "line", "proof_sha256"})
             require(type(part["size"]) is int and 0 < part["size"] <= original["size"]
@@ -50,8 +54,8 @@ def validate(row, package):
         require(parts[0]["kind"] == "begin" and parts[-1]["kind"] == "end"
                 and any(part["kind"] == "records" for part in parts[1:-1])
                 and sum(part["size"] for part in parts) == original["size"])
-        require(original["sha256"] not in candidates)
-        candidates[original["sha256"]] = item
+        require(detector["sha256"] not in candidates)
+        candidates[detector["sha256"]] = item
     return candidates
 
 
@@ -60,7 +64,7 @@ def acceptable_match(match, candidates):
             and valid_digest(match["candidate_sha256"]) and match["candidate_sha256"] in candidates)
 
 
-def verified_span(data, metadata, item):
+def verified_span(data, metadata, item, *, end_label=None):
     start, end = reviewed_literals.extent(item["original"])
     if end > len(data):
         return False
@@ -79,7 +83,8 @@ def verified_span(data, metadata, item):
         if digest_bytes(body) != part["sha256"]:
             return False
         frame = FRAME.get(part["kind"])
-        if frame is not None and frame.fullmatch(body) is None:
+        if (frame is not None and frame.fullmatch(body) is None
+                and not (part["kind"] == "end" and body == end_label)):
             return False
         cursor = part_end
     if cursor != len(candidate):
@@ -90,15 +95,18 @@ def verified_span(data, metadata, item):
             and b"dek-info:" not in between.lower())
 
 
+def public_subject(data, path):
+    return (data[:4] != b"\x7fELF" and next(binary_key_spans(data), None) is None
+            and not (data[0] & 0x80 and secret_key_stream(path)) and reviewed_literals.encoded_material_absent(data))
+
+
 def verify(path, metadata, proof):
     if not 0 < path.stat().st_size <= reviewed_literals.MAX_BYTES:
         return {}
     with path.open("rb") as source, mmap.mmap(source.fileno(), 0, access=mmap.ACCESS_READ) as data:
         # This policy covers the two native data formats. An ELF-rendered,
         # decoded, normalized, or metadata candidate needs a different proof.
-        if (data[:4] == b"\x7fELF" or next(binary_key_spans(data), None) is not None
-                or (data[0] & 0x80 and secret_key_stream(path))
-                or not reviewed_literals.encoded_material_absent(data)):
+        if not public_subject(data, path):
             return {}
         return {item["original"]["sha256"]: item for item in proof["matches"]
                 if verified_span(data, metadata, item)}

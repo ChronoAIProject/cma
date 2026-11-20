@@ -150,12 +150,18 @@ def exact_match(report, finding, component, evidence, occurrence, database_check
         extra["reviewed_literal"] = dict({key: binding[key] for key in ("archive_sha256", "image_config", "image_manifest")},
                                          **claim)
     if explanation == KEY_MARKER_VIEW_ADVISORY:
-        claim = verified.get("key_marker_view", {}).get(finding.get("candidate_sha256"))
-        proof = expected["key_marker_view"]
-        if claim is None or claim["finding_id"] != finding["finding_id"] or not matches_image(proof, report, config, image):
+        candidate = finding.get("candidate_sha256")
+        for key in ("key_marker_view", "native_json_key_view"):
+            claim = verified.get(key, {}).get(candidate)
+            if claim is not None:
+                break
+        if claim is None or claim["finding_id"] != finding["finding_id"]:
+            return None
+        proof = expected[key]
+        if not matches_image(proof, report, config, image):
             return None
         classification = explanation
-        extra["key_marker_view"] = {**claim, **{key: proof[key] for key in ("archive_sha256", "image_config", "image_manifest")}}
+        extra[key] = {**claim, **{field: value for field, value in proof.items() if field != "matches"}}
     raw_checksum = finding.get("file_sha256")
     aggregate = (explanation in TEST_VECTOR_ADVISORIES | reviewed_literals.CLASSES | {DIGEST_FRAME_ADVISORY}
                  and finding["rule"] != "gitleaks.private-key")

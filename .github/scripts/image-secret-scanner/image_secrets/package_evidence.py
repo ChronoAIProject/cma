@@ -100,6 +100,7 @@ class PackageEvidence:
             distribution_config,
             key_marker_view,
             library_vectors,
+            native_json_key_view,
             reviewed_literals,
         )
 
@@ -125,7 +126,7 @@ class PackageEvidence:
         entries = {}
         for row in raw["entries"]:
             require(isinstance(row, dict))
-            shape = row.keys() - {"derived_payload", "reviewed_literals", "key_marker_view"}
+            shape = row.keys() - {"derived_payload", "reviewed_literals", "key_marker_view", "native_json_key_view"}
             require(shape in (ENTRY_FIELDS, ENTRY_FIELDS | {"self_test"}, ENTRY_FIELDS | {"digest_frames"},
                               ENTRY_FIELDS | {"nested_certificate"}, ENTRY_FIELDS | {"distribution_config"},
                               ENTRY_FIELDS | {"debian_control"}, ENTRY_FIELDS | {"distribution_config", "self_test"}))
@@ -134,6 +135,7 @@ class PackageEvidence:
             derived = "derived_payload" in row
             require(not derived or not {"self_test", "distribution_config", "digest_frames", "debian_control"}.intersection(row))
             require("key_marker_view" not in row or (not derived and shape == ENTRY_FIELDS))
+            require("native_json_key_view" not in row or shape == ENTRY_FIELDS)
             require(row["component"] in SCOPES and matches(PLATFORM, row["platform"])
                     and matches(LAYER_ID, row["diff_id"]) and ordinal(row["layer"])
                     and ordinal(row["entry"]) and valid_digest(row["file_sha256"])
@@ -166,6 +168,9 @@ class PackageEvidence:
             if derived:
                 derived_payload.validate(row, package)
             key_views = key_marker_view.validate(row, package) if "key_marker_view" in row else {}
+            normalized_views = native_json_key_view.validate(row, package) if "native_json_key_view" in row else {}
+            require(not key_views.keys() & normalized_views.keys())
+            key_views.update(normalized_views)
             if "nested_certificate" in row:
                 entries[key] = (row, validate_nested_certificate(row, package))
                 continue

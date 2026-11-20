@@ -15,6 +15,7 @@ from . import (
     distribution_config,
     key_marker_view,
     library_vectors,
+    native_json_key_view,
     nested_certificates,
     reviewed_literals,
     wheel_record,
@@ -171,7 +172,7 @@ def read_entry(layer, member, requested, workspace, budget, reviewed_payloads, d
                 if "debian_control" in expected:
                     return read_control_candidate(stream, member, path, expected)
                 if ({"distribution_config", "digest_frames", "reviewed_literals", "derived_payload",
-                     "key_marker_view"}.intersection(expected)
+                     "key_marker_view", "native_json_key_view"}.intersection(expected)
                         or "executable" in expected.get("self_test", {})):
                     return read_payload_candidate(stream, member, path, workspace, *reviewed_payload)
             vectors = reviewed_payload if member.size <= library_vectors.MAX_LIBRARY_BYTES else None
@@ -263,6 +264,9 @@ def read_payload_candidate(stream, member, path, workspace, expected, reviews):
                 verify_literals(verified, payload, metadata, expected)
             if "key_marker_view" in expected:
                 verified["key_marker_view"] = key_marker_view.verify(payload, metadata, expected["key_marker_view"])
+            if "native_json_key_view" in expected and (origin is None or verified.get("derived_payload")):
+                verified["native_json_key_view"] = native_json_key_view.verify(
+                    payload, metadata, expected["native_json_key_view"])
             vector = expected.get("self_test")
             eligible = vector is not None and (member.mode & 0o111 if "executable" in vector
                                                else member.size <= library_vectors.MAX_LIBRARY_BYTES)
@@ -352,7 +356,7 @@ def requested_occurrences(report, component, evidence):
             row, _ = record
             if any(key in row for key in ("self_test", "digest_frames", "nested_certificate",
                                           "distribution_config", "debian_control", "reviewed_literals",
-                                          "derived_payload", "key_marker_view")):
+                                          "derived_payload", "key_marker_view", "native_json_key_view")):
                 reviewed_payloads[platform_id, layer, diff_id][entry][locator] = record
             for key in ("self_test", "distribution_config"):
                 if key in row:
