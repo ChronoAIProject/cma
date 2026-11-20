@@ -64,11 +64,15 @@ def qualify(archive, identity, digest, scanned, directory, runner, *, source=Non
         require(isinstance(imported, list) and len(imported) == 1
                 and imported[0].get("Id") == manifest["config"]["digest"],
                 "Imported runtime differs from scanned image config")
+        # The Omarchy desktop image carries the desktop Codex pins and probes; the
+        # default runtime keeps the unchanged default contract.
+        profile = {"CMA_RUNTIME_EVIDENCE_PROFILE": "omarchy"} if identity["component"] == "runtime-omarchy" else {}
         try:
             runner(["node", str(Path(__file__).resolve().with_name("runtime-image-evidence.mjs")),
                     "run", local, identity["source"], str(evidence.resolve())], timeout=300,
                    env={"CMA_RUNTIME_EVIDENCE_ID": campaign,
-                        "CMA_RUNTIME_EVIDENCE_DOCKERFILE": str(source / "api/crates/layer4-runtime/Dockerfile")})
+                        "CMA_RUNTIME_EVIDENCE_DOCKERFILE": str(source / "api/crates/layer4-runtime/Dockerfile"),
+                        **profile})
         except BaseException as error:
             interrupted = True
             quiesced = isinstance(error, CanaryProcessFailure) and error.quiesced
