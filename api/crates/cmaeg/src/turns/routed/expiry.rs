@@ -45,6 +45,9 @@ impl Journal {
         // reservation or a confirmed hierarchy receipt. Neither is cancelled
         // or retried by terminalizing the never-started Responses target.
         self.transition(lease, phase.clone()).await?;
+        if let Some(measurement) = &self.start_measurement {
+            measurement.terminal(&lease.state.root, true);
+        }
         Ok(Some(phase))
     }
 }
