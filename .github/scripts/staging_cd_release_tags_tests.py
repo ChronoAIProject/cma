@@ -3,6 +3,7 @@ import hashlib
 import json
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -154,6 +155,24 @@ class ReleaseTagTests(unittest.TestCase):
                 self.assertIsNone(read_local_tag(oid, self.root))
         with self.assertRaisesRegex(Refusal, "Invalid release tag"):
             read_local_tag("refs/heads/develop", self.root)
+
+    def test_local_reads_and_fetches_stay_within_the_callers_budget(self):
+        value, row = self.pending(1)
+        oid = row["object"]["sha"]
+        calls = []
+        def runner(args, **kwargs):
+            calls.append((args[1:], kwargs["timeout"]))
+            return subprocess.run(args, **kwargs)
+        reader = LocalTags(self.root, remote=REMOTE, runner=runner, deadline=time.monotonic() + 10)
+        self.assertEqual(json.loads(reader.read([oid])[0][oid]["message"]), value)
+        self.assertTrue(calls and all(0 < timeout <= 10 for _, timeout in calls))
+        # With the budget spent no local Git starts; the API reads instead.
+        calls.clear()
+        spent = LocalTags(self.root, remote=REMOTE, runner=runner, deadline=time.monotonic() - 1)
+        self.assertEqual(spent.read([oid]), ({}, []))
+        self.assertEqual(spent.load({"refs/tags/cma-web/pending/v9.9.9": "b" * 40}), {})
+        self.assertFalse(spent.fetch(["refs/tags/cma-web/pending/v9.9.9"]))
+        self.assertEqual(calls, [])
 
     def test_local_mismatch_failure_or_timeout_defers_to_the_verified_api(self):
         value, row = self.pending(1)

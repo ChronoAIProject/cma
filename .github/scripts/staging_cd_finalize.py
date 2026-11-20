@@ -17,6 +17,9 @@ from staging_cd_resolve import output
 # The job allows fifteen minutes, including checkout and the receipt download.
 # GitHub and registry reads share this budget and refuse cleanly once it is spent.
 FINALIZE_READ_SECONDS = 600
+# Pruning starts only with this much of that budget left: one advertisement,
+# local reads or one bounded fetch, one push and its readback.
+PRUNE_MIN_SECONDS = 60
 
 
 def finalize(tasks, receipts, publisher, registry, *, recovery_oids=None, mark=lambda _stage: None):
@@ -41,15 +44,18 @@ def finalize(tasks, receipts, publisher, registry, *, recovery_oids=None, mark=l
     return receipts[-1]
 
 
-def prune(publisher, receipt):
+def prune(publisher, receipt, deadline=None, *, clock=time.monotonic):
     """Remove burned reservations a new final has fenced, without risking the release.
 
     The final is published and verified by now. A failed pruning keeps every
     burned tag, which only costs later reads, so no error of it may fail
-    finalization. An interrupt or exit still stops the job.
+    finalization. An interrupt or exit still stops the job. Pruning shares
+    the finalization budget and is skipped when too little of it remains.
     """
+    if deadline is not None and deadline - clock() < PRUNE_MIN_SECONDS:
+        return "skipped", 0
     try:
-        removed = publisher.prune_burned(receipt)
+        removed = publisher.prune_burned(receipt, deadline=deadline, clock=clock)
     except Exception:  # noqa: BLE001 - reported as fixed text; the published final stands.
         return "retained", 0
     return "complete", removed if type(removed) is int else 0
@@ -62,7 +68,7 @@ def main():
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Final version tags only accept develop pushes")
         deadline = time.monotonic() + FINALIZE_READ_SECONDS
-        api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(Path.cwd()),
+        api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(Path.cwd(), deadline=deadline),
                      deadline=deadline)
         publisher = Reservations(api, env.get("GH_TOKEN"), Path.cwd(), mark=diagnostics.mark)
         diagnostics.mark("artifact")
@@ -91,7 +97,7 @@ def main():
         diagnostics.mark("output")
         output(env, "receipt", canonical(receipt))
         output(env, "component", receipt["identity"]["component"])
-        pruned.append((receipt["identity"]["component"], *prune(publisher, receipt)))
+        pruned.append((receipt["identity"]["component"], *prune(publisher, receipt, deadline)))
         return True
     status = run_finalization(operation)
     # Only fixed fields cross the private output boundary.

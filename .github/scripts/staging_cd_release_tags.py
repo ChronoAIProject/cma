@@ -6,6 +6,7 @@ objects those refs name, and only when their bytes hash to the advertised ID.
 import os
 import re
 import subprocess
+import time
 
 from staging_cd_common import require
 from staging_cd_receipts import git_tag_oid
@@ -18,6 +19,8 @@ RELEASE_REF = r"refs/tags/[a-z0-9-]+(?:/pending)?/v[0-9]+\.[0-9]+\.[0-9]+"
 # One exact-ref fetch per inventory. Any further absent objects use the API.
 MAX_FETCH_REFS = 256
 REMOTE = f"https://github.com/{REPOSITORY}.git"
+# A local Git call never starts with less of the caller's budget than this.
+MIN_GIT_SECONDS = 2
 
 
 class Unreadable(Exception):
@@ -48,13 +51,19 @@ class LocalTags:
     In every other case the remote API stays authoritative.
     """
 
-    def __init__(self, root, *, remote=None, runner=None):
+    def __init__(self, root, *, remote=None, runner=None, deadline=None, clock=time.monotonic):
         self.root, self.remote, self.runner = root, remote, runner
+        # An absolute budget on clock(), shared with the job's other reads.
+        self.deadline, self.clock = deadline, clock
         self.env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
         self.env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0",
                         GIT_NO_REPLACE_OBJECTS="1")
 
     def run(self, args, *, data=None, timeout=30):
+        if self.deadline is not None:
+            timeout = min(timeout, self.deadline - self.clock())
+            if timeout < MIN_GIT_SECONDS:
+                raise subprocess.TimeoutExpired(["git", *args], timeout)
         return (self.runner or subprocess.run)(["git", *args], input=data, cwd=self.root, env=self.env,
                                                capture_output=True, timeout=timeout, check=True).stdout
 
@@ -148,6 +157,6 @@ def read_local_tag(oid, root):
     return LocalTags(root).read([oid])[0].get(oid)
 
 
-def local_tag_reader(root):
+def local_tag_reader(root, *, deadline=None):
     """Every release lane reads tag objects from its checkout after a live ref read."""
-    return LocalTags(root, remote=REMOTE)
+    return LocalTags(root, remote=REMOTE, deadline=deadline)

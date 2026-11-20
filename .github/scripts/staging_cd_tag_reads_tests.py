@@ -4,6 +4,7 @@ import io
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -186,6 +187,29 @@ class BurnedReservationPruningTests(unittest.TestCase):
         self.assertEqual(store.list("web"), [own, queued])
         self.assertEqual(commands, ["ls-remote", "push", "ls-remote"])
 
+    def test_every_pruning_git_call_is_bounded_by_the_finalization_budget(self):
+        f = self.fixture
+        _, _, own, current, queued = self.lane()
+        receipt = f.receipt(current)
+        self.assertTrue(f.publisher.finalize(receipt, lambda *_: True))
+        before = f.publisher.list("web")
+        timeouts, runner = [], f.publisher.runner
+        def observe(args, **kwargs):
+            timeouts.append((args[1], kwargs["timeout"]))
+            return runner(args, **kwargs)
+        f.publisher.runner = observe
+        # The push would start with three seconds left, so it never starts.
+        ticks = iter([0, 97])
+        with self.assertRaisesRegex(Refusal, "Pruning budget expired"):
+            f.publisher.prune_burned(receipt, deadline=100, clock=lambda: next(ticks))
+        self.assertEqual([name for name, _ in timeouts], ["ls-remote"])
+        self.assertEqual(f.publisher.list("web"), before)
+        timeouts.clear()
+        self.assertEqual(f.publisher.prune_burned(receipt, deadline=time.monotonic() + 40), 4)
+        self.assertEqual([name for name, _ in timeouts], ["ls-remote", "push", "ls-remote"])
+        self.assertTrue(all(0 < seconds <= 40 for _, seconds in timeouts))
+        self.assertEqual(f.publisher.list("web"), [own, queued])
+
     @staticmethod
     def annotated(request):
         def read(path, **_kwargs):
@@ -241,10 +265,28 @@ class BurnedReservationPruningTests(unittest.TestCase):
                         patch.object(staging_cd_finalize, "output"), contextlib.redirect_stdout(stdout):
                     store.return_value.prune_burned.side_effect = [outcome]
                     self.assertEqual(staging_cd_finalize.main(), 0)
-                store.return_value.prune_burned.assert_called_once_with(receipt)
+                store.return_value.prune_burned.assert_called_once()
+                self.assertEqual(store.return_value.prune_burned.call_args.args, (receipt,))
                 self.assertIn("PRUNE finalize component=web " + line + "\n", stdout.getvalue())
                 self.assertEqual("::warning" in stdout.getvalue(), isinstance(outcome, Exception))
                 self.assertNotIn("private", stdout.getvalue())
+        # Too little of the finalization budget left: no pruning starts at all.
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "receipts.json"
+            path.write_text("[]")
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": "1", "GITHUB_RUN_ATTEMPT": "1",
+                   "CD_RECEIPTS_PATH": str(path), "CD_TASKS": "[]", "GH_TOKEN": "fixture", "CD_COMPONENT": "web"}
+            stdout = io.StringIO()
+            with patch.dict(os.environ, env, clear=True), patch.object(staging_cd_finalize, "event_identity"), \
+                    patch.object(staging_cd_finalize, "FINALIZE_READ_SECONDS", staging_cd_finalize.PRUNE_MIN_SECONDS - 1), \
+                    patch.object(staging_cd_finalize, "GitHub"), patch.object(staging_cd_finalize, "Registry"), \
+                    patch.object(staging_cd_finalize, "Reservations") as store, \
+                    patch.object(staging_cd_finalize, "finalize", return_value=receipt), \
+                    patch.object(staging_cd_finalize, "output"), contextlib.redirect_stdout(stdout):
+                self.assertEqual(staging_cd_finalize.main(), 0)
+            store.return_value.prune_burned.assert_not_called()
+            self.assertIn("PRUNE finalize component=web result=skipped removed=0\n", stdout.getvalue())
+            self.assertIn("::warning title=Burned reservations retained::", stdout.getvalue())
         for interrupt in (KeyboardInterrupt, SystemExit):
             with self.subTest(interrupt=interrupt), self.assertRaises(interrupt):
                 staging_cd_finalize.prune(Mock(prune_burned=Mock(side_effect=interrupt)), receipt)

@@ -17,6 +17,8 @@ FIELDS = {"schema", "component", "version", "previous", "source", "tree", "pr", 
 OWNER = ("source", "run_id", "run_attempt", "version", "pr")
 # One finalization prunes at most this many burned reservations; the next prunes the rest.
 PRUNE_LIMIT = 128
+# No pruning Git call starts with less of the finalization budget than this.
+PRUNE_STEP_SECONDS = 5
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
 
 
@@ -128,7 +130,7 @@ class Reservations:
             result.append((value, row["object"]["sha"]))
         return result
 
-    def advertised(self, component):
+    def advertised(self, component, *, timeout=60):
         """One lane's pending tags and allocation successor claims, from one live advertisement.
 
         Allocation pushes a reservation and its claim atomically, so a single
@@ -137,7 +139,7 @@ class Reservations:
         """
         prefixes = ("refs/tags/" + DEPLOYABLES[component] + "/pending/v",
                     "refs/tags/cma-allocation/" + component + "/after-v")
-        result = self.command("ls-remote", "--refs", REMOTE, *(prefix + "*" for prefix in prefixes))
+        result = self.command("ls-remote", "--refs", REMOTE, *(prefix + "*" for prefix in prefixes), timeout=timeout)
         require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024,
                 "Burned reservation inventory is unavailable")
         pending, claims = {}, {}
@@ -148,9 +150,9 @@ class Reservations:
             (pending if ref.startswith(prefixes[0]) else claims)[ref] = oid
         return pending, claims
 
-    def command(self, *args, data=None):
+    def command(self, *args, data=None, timeout=60):
         return self.runner(["git", *args], cwd=self.root, env=self.env, input=data, text=True,
-                           capture_output=True, timeout=60, check=False)
+                           capture_output=True, timeout=timeout, check=False)
 
     def insert(self, value):
         validate_reservation(value)
@@ -258,7 +260,7 @@ class Reservations:
         remaining = [item for item in self.list(component) if item["version"] == receipt["identity"]["version"]]
         require(not remaining, "Published reservation cleanup failed")
 
-    def prune_burned(self, receipt):
+    def prune_burned(self, receipt, *, deadline=None, clock=time.monotonic):
         """Remove this lane's reservations that its verified finals have made unusable.
 
         Runs after finalization verified the lane's new final and its own
@@ -273,15 +275,23 @@ class Reservations:
         remain. Each removed tag takes the cma-allocation/ successor claim only
         it backs, both read in one advertisement and deleted in one atomic push
         leased to the observed objects, so every claim left stays backed.
-        Returns the number of reservations removed.
+        Every Git call is bounded by the absolute deadline on clock(), and none
+        starts once too little of it remains. Returns the number removed.
         """
+        def within(seconds):
+            if deadline is None:
+                return seconds
+            remaining = deadline - clock()
+            require(remaining >= PRUNE_STEP_SECONDS, "Pruning budget expired")
+            return min(seconds, remaining)
+
         identity = receipt["identity"]
         component = identity["component"]
         require(component in DEPLOYABLES, "Retired image tags must remain unchanged")
         finals = self.settled.get(component)
         finals = [tag["receipt"]["identity"] for tag in (self.api.tags(component) if finals is None else finals)]
         history = self.api.history()
-        pending, claims = self.advertised(component)
+        pending, claims = self.advertised(component, timeout=within(30))
         backed = {claim_ref(final) for final in finals}
         # Objects are read for the refs of that advertisement, never a later listing.
         rows = [{"ref": ref, "object": {"type": "tag", "sha": oid}} for ref, oid in pending.items()]
@@ -310,8 +320,9 @@ class Reservations:
         # above; a moved ref rejects the whole transaction, claims included.
         self.command("push", "--atomic", "--porcelain",
                      *("--force-with-lease=" + ref + ":" + oid for ref, oid in doomed.items()),
-                     REMOTE, *(":" + ref for ref in doomed))
-        pending, claims = self.advertised(component)
+                     REMOTE, *(":" + ref for ref in doomed), timeout=within(60))
+        # A push cut short may still have landed; only the advertisement settles it.
+        pending, claims = self.advertised(component, timeout=within(30))
         require(not (pending.keys() | claims.keys()) & doomed.keys(), "Burned reservation pruning failed")
         return removed
 
