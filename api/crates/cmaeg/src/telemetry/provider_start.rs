@@ -44,6 +44,7 @@ pub struct Sample {
     pub accepted_attempt_post_ns: Option<u64>,
     pub completed_ns: Option<u64>,
     pub expired_before_start_ns: Option<u64>,
+    pub expired_after_post_ns: Option<u64>,
     pub cancellations: u64,
     pub unknown: Option<&'static str>,
 }
@@ -116,6 +117,7 @@ impl Measurement {
                     accepted_attempt_post_ns: None,
                     completed_ns: None,
                     expired_before_start_ns: None,
+                    expired_after_post_ns: None,
                     cancellations: 0,
                     unknown: None,
                 },
@@ -162,20 +164,36 @@ impl Measurement {
             written: Arc::new(OnceLock::new()),
         }
     }
-    pub(crate) fn terminal(&self, id: &str, expired: bool) {
+    pub(crate) fn completed(&self, id: &str) {
         self.update(id, |row, now| {
-            let field = if expired {
-                &mut row.expired_before_start_ns
+            if row.completed_ns.is_none() {
+                row.completed_ns = Some(now);
+                count("completed");
+            }
+        });
+    }
+    pub(crate) fn expired(&self, id: &str, never_prepared: bool) {
+        self.update(id, |row, now| {
+            let (field, outcome) = if row.first_post_ns.is_some() {
+                (&mut row.expired_after_post_ns, "expired_after_post")
+            } else if never_prepared
+                && row.commit_lower_ns.is_some()
+                && row.admission_confirmed_ns.is_some()
+                && row.unknown.is_none()
+            {
+                (&mut row.expired_before_start_ns, "expired_before_start")
             } else {
-                &mut row.completed_ns
+                row.unknown
+                    .get_or_insert(if row.admission_confirmed_ns.is_some() {
+                        "first_post_observation_missing"
+                    } else {
+                        "retained_or_uncertain_admission"
+                    });
+                return;
             };
             if field.is_none() {
                 *field = Some(now);
-                count(if expired {
-                    "expired_before_start"
-                } else {
-                    "completed"
-                });
+                count(outcome);
             }
         });
     }
@@ -214,7 +232,7 @@ impl Measurement {
         let mut samples: Vec<_> = state.rows.values().cloned().collect();
         samples.sort_by_key(|row| row.sample);
         Snapshot {
-            schema_version: 1,
+            schema_version: 2,
             measurement_enabled: true,
             clock: "process_monotonic_ns",
             clock_resolution_ns: 1_000_000,

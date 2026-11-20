@@ -9,11 +9,12 @@ const intervalStats = (values) => ({ lower: stats(values.map((s) => s.lower_ms))
 
 function reduceCohort(row, workload) {
   const m = row.measurement, samples = m.samples, reasons = new Set(), lags = [], acceptance = [], completion = [], ages = [];
-  const denominator = (key) => samples.filter((s) => s[key] !== null).length;
+  const denominator = (key) => samples.filter((s) => (s[key] ?? null) !== null).length;
   const counts = { offered: denominator('offered_ns'), admitted: samples.filter((s) => s.admitted).length,
     executor_started: denominator('executor_started_ns'), first_started: denominator('first_post_ns'),
     accepted: denominator('accepted_ns'), completed: denominator('completed_ns'),
     expired_before_start: denominator('expired_before_start_ns'),
+    expired_after_post: denominator('expired_after_post_ns'),
     post_attempts: samples.reduce((n, s) => n + s.post_attempts, 0) };
   if (!m.measurement_enabled) reasons.add('measurement_disabled');
   if (m.overflow || m.window_exceeded) reasons.add('observation_bound_exceeded');
@@ -44,14 +45,15 @@ function reduceCohort(row, workload) {
       lags.push(interval);
       if (s.accepted_ns !== null && s.accepted_attempt_post_ns !== null) {
         acceptance.push((s.accepted_ns - s.accepted_attempt_post_ns) / 1e6);
-      } else reasons.add('http_acceptance_unknown');
+      } else if ((s.expired_after_post_ns ?? null) === null) reasons.add('http_acceptance_unknown');
       if (s.accepted_ns !== null && s.completed_ns !== null) completion.push((s.completed_ns - s.accepted_ns) / 1e6);
     }
   }
   const lag = intervalStats(lags);
   const p95Breached = lags.filter((s) => s.lower_ms > 2000).length
     > row.expected_offered - Math.ceil(row.expected_offered * 0.95);
-  const failed = counts.expired_before_start > 0 || p95Breached || lag.lower.max_ms > 10000;
+  if (counts.expired_after_post > 0) reasons.add('expired_after_post');
+  const failed = counts.expired_before_start > 0 || counts.expired_after_post > 0 || p95Breached || lag.lower.max_ms > 10000;
   if (!lags.length || lag.upper.p95_ms > 2000 || lag.upper.max_ms > 10000) reasons.add('lag_not_proven_within_limit');
   return {
     cohort: row.cohort, status: failed ? 'FAIL' : reasons.size ? 'BLOCKED' : 'PASS',

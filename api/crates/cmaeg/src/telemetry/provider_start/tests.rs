@@ -1,6 +1,22 @@
 use super::*;
 
 #[test]
+fn expiry_without_original_process_evidence_cannot_claim_no_post() {
+    for retained in [false, true] {
+        let m = Measurement::new(1).unwrap();
+        if retained {
+            m.admitted("retained", 123, 1, None);
+        }
+        m.expired("retained", true);
+        let row = m.snapshot().samples.remove(0);
+        assert!(row.expired_before_start_ns.is_none());
+        assert!(row.expired_after_post_ns.is_none());
+        assert!(row.completed_ns.is_none());
+        assert_eq!(row.unknown, Some("retained_or_uncertain_admission"));
+    }
+}
+
+#[test]
 fn retry_and_replay_preserve_original_admission_and_first_socket_write() {
     let m = Measurement::new(2).unwrap();
     m.offered("synthetic");
