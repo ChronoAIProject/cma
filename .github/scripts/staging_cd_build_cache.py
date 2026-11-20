@@ -13,7 +13,7 @@ from staging_cd_build import snapshot
 from staging_cd_build_cargo_keys import identity
 from staging_cd_common import require
 from staging_cd_cache_context import context
-from staging_cd_cargo_artifact import MAX_BUNDLE_BYTES
+from staging_cd_cargo_artifact import MAX_BUNDLE_BYTES, MAX_EXPANDED_BYTES
 from staging_cd_reservations import validate_reservation
 
 SCOPES = {"am": "cma-am", "eg": "cma-eg", "web": "cma-web",
@@ -60,6 +60,7 @@ class BuildCache:
         self.namespace = uuid.uuid4().hex
         self.restore_result = "miss"
         self.export_reason = None
+        self.export_headroom = None
 
     def restore(self):
         self.restore_result = "miss"
@@ -71,10 +72,11 @@ class BuildCache:
                     "Build cache accepted root is invalid")
             tool = bridge()
             manifest = tool.validate_bundle(self.accepted, self.key.prefix, family=self.key.family,
-                                            max_archive=MAX_BUNDLE_BYTES)
+                                            max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
             exact = manifest["prefix"] == self.key.prefix
             # A different graph must let Cargo resolve and verify its own registry.
-            tool.transfer("inject" if exact else "inject-target", self.accepted, namespace=self.namespace)
+            tool.transfer("inject" if exact else "inject-target", self.accepted, namespace=self.namespace,
+                          timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES)
             self.restore_result = "hit" if exact else "partial"
         except (OSError, ValueError, KeyError, TypeError, EOFError, tarfile.TarError, subprocess.SubprocessError):
             # Extraction can fail after writing some files. Abandon that namespace.
@@ -99,13 +101,18 @@ class BuildCache:
         # Refresh after exact hits too. Restoring the first bundle of the day all
         # day long made each build recompile everything merged since that seed.
         self.export_reason = None
+        self.export_headroom = None
         if self.key is None:
             return False
         require(not self.pending.exists(), "Cargo cache export must be fresh")
         try:
             tool = bridge()
-            tool.transfer("extract", self.pending, namespace=self.namespace)
-            tool.seal(self.pending, self.key.prefix, family=self.key.family, max_archive=MAX_BUNDLE_BYTES)
+            tool.transfer("extract", self.pending, namespace=self.namespace,
+                          timeout=TRANSFER_SECONDS, max_content=MAX_EXPANDED_BYTES)
+            tool.seal(self.pending, self.key.prefix, family=self.key.family,
+                      max_archive=MAX_BUNDLE_BYTES, max_content=MAX_EXPANDED_BYTES)
+            size = sum((self.pending / name).lstat().st_size for name in ("registry.tar.gz", "target.tar.gz"))
+            self.export_headroom = "low" if size > HEADROOM_WARNING * MAX_BUNDLE_BYTES else "ok"
             if self.accepted.exists():
                 require(not self.accepted.is_symlink(), "Build cache accepted root is invalid")
                 shutil.rmtree(self.accepted)
@@ -134,6 +141,13 @@ def withheld_reason(error):
             if marker in text:
                 return reason
     return "invalid"
+
+
+# BuildKit restores and extracts take about 60-70 s per GiB-sized bundle; a timed
+# out restore silently becomes a cold build, so leave room for 2x growth.
+TRANSFER_SECONDS = 360
+# Warn while there is still room, before a growing bundle starts being withheld.
+HEADROOM_WARNING = 0.75
 
 
 def lookup_key(root, component, env):

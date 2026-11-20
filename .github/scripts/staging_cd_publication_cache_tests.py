@@ -101,7 +101,10 @@ class CacheTests(unittest.TestCase):
         import staging_cd_build_cache as module
         import staging_cd_cargo_artifact as transport
         self.assertEqual(transport.MAX_BUNDLE_BYTES, 2 * 1024 ** 3)
+        self.assertEqual(transport.MAX_EXPANDED_BYTES, 6 * 1024 ** 3)
         self.assertEqual(transport.MAX_ARTIFACT_BYTES, transport.MAX_BUNDLE_BYTES + 4096 + 1024 ** 2)
+        self.assertEqual((transport.DOWNLOAD_SECONDS, transport.DEADLINE_SECONDS, module.TRANSFER_SECONDS),
+                         (360, 420, 360))
         cache = self.cache()
         self.populate(cache.accepted)
         tool = bridge()
@@ -116,6 +119,13 @@ class CacheTests(unittest.TestCase):
                 transfer.side_effect = lambda op, directory, **kwargs: self.populate(directory)
                 self.assertTrue(cache.export_mounts())
                 self.assertIsNone(cache.export_reason)
+                self.assertEqual(cache.export_headroom, "low")
+                for call in transfer.call_args_list:
+                    self.assertEqual((call.kwargs["timeout"], call.kwargs["max_content"]),
+                                     (module.TRANSFER_SECONDS, module.MAX_EXPANDED_BYTES))
+            with patch.object(module, 'MAX_BUNDLE_BYTES', 100 * size):
+                self.assertTrue(cache.export_mounts())
+                self.assertEqual(cache.export_headroom, "ok")
             with patch.object(module, 'MAX_BUNDLE_BYTES', size - 1):
                 self.assertFalse(cache.export_mounts())
                 self.assertEqual(cache.export_reason, "oversize-compressed")
@@ -129,6 +139,22 @@ class CacheTests(unittest.TestCase):
             self.assertFalse(cache.export_mounts())
             self.assertEqual(cache.export_reason, "oversize-expanded")
         self.assertEqual(module.withheld_reason(ValueError("unexpected cache files")), "invalid")
+        from staging_cd_publish import emit_cache_metrics
+        for metric, warning in (({"operation": "export", "result": "accepted"}, None),
+                                ({"operation": "export", "result": "accepted", "headroom": "low"}, "above 75% of"),
+                                ({"operation": "export", "result": "withheld", "reason": "oversize-compressed"}, "over"),
+                                ({"operation": "export", "result": "withheld", "reason": "transfer-failed"}, None),
+                                ({"operation": "restore", "result": "hit"}, None)):
+            with self.subTest(metric=metric):
+                stream = io.StringIO()
+                emit_cache_metrics("am", [metric], stream)
+                lines = stream.getvalue().splitlines()
+                self.assertEqual(json.loads(lines[0]), {"event": "publication-cache", **metric})
+                if warning is None:
+                    self.assertEqual(len(lines), 1)
+                else:
+                    self.assertEqual(lines[1], "::warning title=Cargo cache bound::am Cargo bundle is "
+                                     f"{warning} its bound in staging_cd_cargo_artifact.py")
         self.assertEqual(module.withheld_reason(OSError("disk")), "invalid")
 
     def test_validated_mounts_restore_and_corrupt_content_builds_cold(self):
@@ -139,7 +165,8 @@ class CacheTests(unittest.TestCase):
         tool.seal(cache.accepted, cache.key.prefix)
         with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
             self.assertTrue(cache.restore())
-            transfer.assert_called_once_with('inject', cache.accepted, namespace=cache.namespace)
+            transfer.assert_called_once_with('inject', cache.accepted, namespace=cache.namespace,
+                                             timeout=360, max_content=6 * 1024 ** 3)
             # A hit now refreshes the bundle; an empty extraction is withheld and
             # leaves the accepted bundle untouched.
             self.assertFalse(cache.export_mounts())
@@ -158,7 +185,8 @@ class CacheTests(unittest.TestCase):
         with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
             self.assertTrue(cache.restore())
             self.assertEqual(cache.restore_result, "partial")
-            transfer.assert_called_once_with("inject-target", cache.accepted, namespace=cache.namespace)
+            transfer.assert_called_once_with("inject-target", cache.accepted, namespace=cache.namespace,
+                                             timeout=360, max_content=6 * 1024 ** 3)
             transfer.side_effect = lambda op, directory, **kwargs: self.populate(directory)
             self.assertTrue(cache.export_mounts())
             self.assertEqual(tool.validate_bundle(cache.accepted, cache.key.prefix)["prefix"], cache.key.prefix)

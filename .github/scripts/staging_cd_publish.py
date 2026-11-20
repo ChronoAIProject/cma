@@ -148,6 +148,17 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
     return receipt
 
 
+def emit_cache_metrics(component, cache_metrics, stream):
+    for metrics in cache_metrics:
+        print(json.dumps({"event": "publication-cache", **metrics}, sort_keys=True), file=stream, flush=True)
+        oversize = metrics.get("result") == "withheld" and metrics.get("reason", "").startswith("oversize")
+        if metrics.get("operation") == "export" and (oversize or metrics.get("headroom") == "low"):
+            # Fixed text only: surface the bound before builds quietly slow down.
+            print(f"::warning title=Cargo cache bound::{component} Cargo bundle is "
+                  + ("over" if oversize else "above 75% of") + " its bound in staging_cd_cargo_artifact.py",
+                  file=stream, flush=True)
+
+
 def main():
     env, root = os.environ, Path.cwd()
     timings = Timings()
@@ -228,6 +239,8 @@ def main():
                 metric = {"operation": "export", "result": "accepted" if accepted else "withheld"}
                 if not accepted and isinstance(cache.export_reason, str):
                     metric["reason"] = cache.export_reason
+                if accepted and cache.export_headroom == "low":
+                    metric["headroom"] = "low"
                 cache_metrics.append(metric)
                 with Path(env["GITHUB_OUTPUT"]).open("a") as status:
                     if accepted:
@@ -248,8 +261,7 @@ def main():
         for metrics in build_metrics:
             value = metrics or {"complete": False, "reason": "progress-unavailable"}
             print(json.dumps({"event": "publication-build", **value}, sort_keys=True), flush=True)
-        for metrics in cache_metrics:
-            print(json.dumps({"event": "publication-cache", **metrics}, sort_keys=True), flush=True)
+        emit_cache_metrics(component, cache_metrics, sys.stdout)
     return result
 
 
