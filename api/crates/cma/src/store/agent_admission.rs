@@ -22,14 +22,15 @@ use super::workspaces::workspace_replacement_fields;
 pub(in crate::store) mod initial_integrity;
 
 pub(in crate::store) mod attribution;
-pub(in crate::store) mod parent_fences;
 mod commit;
+pub(in crate::store) mod parent_fences;
 mod retry;
 pub(in crate::store) mod trigger_protocol;
 
-use super::agent_log_segments::{
-    admission::apply_catalogue as apply_admission, transaction_scope::TransactionScope,
-};
+use super::agent_log_segments::{admission::apply_catalogue, transaction_scope::TransactionScope};
+
+#[cfg(test)]
+use super::agent_log_segments::admission::apply as apply_admission;
 
 pub(in crate::store) enum ApplyError {
     Domain(SandboxStoreError),

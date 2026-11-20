@@ -27,6 +27,7 @@ pub(in crate::store) mod replay;
 mod reuse;
 use reuse::reuse_profile_agent;
 
+#[cfg(test)]
 pub(in crate::store) async fn apply(
     store: &MongoSandboxStore,
     admission: &AgentAdmission,
@@ -51,7 +52,9 @@ pub(in crate::store) async fn apply_catalogue(
         .await
         .map_err(ApplyError::Domain)?;
     let persisted_launch = trigger_protocol::selected(store, admission, scope.session()).await?;
-    let common_launch = persisted_launch.as_ref().filter(|launch| launch.input_protocol.is_some());
+    let common_launch = persisted_launch
+        .as_ref()
+        .filter(|launch| launch.input_protocol.is_some());
     if let Some(launch) = common_launch {
         if launch.initiation.as_ref() != initiation {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
@@ -77,8 +80,13 @@ pub(in crate::store) async fn apply_catalogue(
 
     if let Some(launch) = &persisted_launch {
         let database = store.client.database(&store.agents.namespace().db);
-        if !crate::store::trigger_definitions::fence_new_agent_publisher(&database, launch, scope.session())
-            .await.map_err(ApplyError::Driver)?
+        if !crate::store::trigger_definitions::fence_new_agent_publisher(
+            &database,
+            launch,
+            scope.session(),
+        )
+        .await
+        .map_err(ApplyError::Driver)?
         {
             return Err(ApplyError::Domain(SandboxStoreError::Conflict));
         }
@@ -166,11 +174,26 @@ pub(in crate::store) async fn apply_catalogue(
         let profile = &admission.profile;
         let database = store.client.database(&store.agents.namespace().db);
         if !crate::store::profile_pin_admission::agent(
-            &database, profile.id.as_str(), profile.revision, Some(&profile.digest), scope.session(),
-        ).await.map_err(ApplyError::Driver)? {
+            &database,
+            profile.id.as_str(),
+            profile.revision,
+            Some(&profile.digest),
+            scope.session(),
+        )
+        .await
+        .map_err(ApplyError::Driver)?
+        {
             crate::store::profile_pin_admission::frozen::agent(
-                &database, admission, &sandbox, &workspace, scope.session(),
-            ).await.map_err(ApplyError::Driver)?.require().map_err(ApplyError::Domain)?;
+                &database,
+                admission,
+                &sandbox,
+                &workspace,
+                scope.session(),
+            )
+            .await
+            .map_err(ApplyError::Driver)?
+            .require()
+            .map_err(ApplyError::Domain)?;
         }
     }
 

@@ -10,7 +10,12 @@ impl MongoSandboxStore {
         initiation: Option<layer2_core::trigger_domain::LaunchInitiation>,
     ) -> impl std::future::Future<Output = Result<AgentAdmissionResult, SandboxStoreError>> + '_
     {
-        Box::pin(self.admit_agent_with_reuse_inner(admission, reuse_existing, catalogue, initiation))
+        Box::pin(self.admit_agent_with_reuse_inner(
+            admission,
+            reuse_existing,
+            catalogue,
+            initiation,
+        ))
     }
 
     async fn admit_agent_with_reuse_inner(
@@ -36,7 +41,12 @@ impl MongoSandboxStore {
         initiation: Option<layer2_core::trigger_domain::LaunchInitiation>,
     ) -> impl std::future::Future<Output = Result<AgentAdmissionResult, SandboxStoreError>> + '_
     {
-        Box::pin(self.commit_agent_admission_inner(admission, reuse_existing, catalogue, initiation))
+        Box::pin(self.commit_agent_admission_inner(
+            admission,
+            reuse_existing,
+            catalogue,
+            initiation,
+        ))
     }
 
     async fn commit_agent_admission_inner(
@@ -67,7 +77,7 @@ impl MongoSandboxStore {
                     return Err(SandboxStoreError::Unavailable(error.to_string()));
                 }
             };
-            let applied = Box::pin(apply_admission(
+            let applied = Box::pin(apply_catalogue(
                 self,
                 &admission,
                 reuse_existing,
@@ -191,4 +201,3 @@ impl MongoSandboxStore {
         )))
     }
 }
-
