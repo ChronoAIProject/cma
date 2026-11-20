@@ -37,33 +37,32 @@ class StagingWorkflowTest < Minitest::Test
     refute jobs.fetch('plan').key?('needs')
     assert_equal 'plan', jobs.fetch('allocate').fetch('needs')
     %w[web am eg runtime runtime_omarchy].each do |component|
-      release = jobs.fetch("release_#{component}")
-      assert_equal 'allocate', release.fetch('needs')
-      next if component == 'am'
-
-      refute release.key?('concurrency')
+      assert_equal 'allocate', jobs.fetch("release_#{component}").fetch('needs')
     end
     workflow('staging-release').fetch('jobs').each_value { |job| refute job.key?('concurrency') }
     refute jobs['allocate']['steps'].any? { |step| step['run'].to_s.match?(/buildx|skopeo|deploy\.py/) }
   end
 
-  def test_agent_manager_releases_run_one_at_a_time_and_queued_ones_skip_restores
+  def test_each_lane_runs_one_release_at_a_time_and_queued_ones_skip_restores
     jobs = workflow('staging-cd')['jobs']
-    assert_equal({ 'group' => 'cma-staging-am-release', 'queue' => 'max', 'cancel-in-progress' => false },
-                 jobs.fetch('release_am').fetch('concurrency'))
     groups = jobs.values.map { |job| job.dig('concurrency', 'group') }.compact
-    assert_equal 1, groups.count('cma-staging-am-release')
+    %w[web am eg runtime runtime-omarchy].each do |component|
+      lock = "cma-staging-#{component}-release"
+      assert_equal({ 'group' => lock, 'queue' => 'max', 'cancel-in-progress' => false },
+                   jobs.fetch("release_#{component.tr('-', '_')}").fetch('concurrency'))
+      assert_equal 1, groups.count(lock)
+    end
 
     steps = workflow('staging-release')['jobs']['publish']['steps']
     index = ->(name) { steps.index { |step| step['name'] == name } }
-    ownership = steps[index.call('Check Agent Manager release ownership')]
+    ownership = steps[index.call('Check release ownership')]
     assert_equal 'ownership', ownership['id']
-    assert_equal "inputs.component == 'am'", ownership['if']
+    refute ownership.key?('if'), 'every component checks ownership before its restores'
     assert_equal true, ownership['continue-on-error']
-    assert_equal 'python3 -B .github/scripts/staging_cd_am_ownership.py', ownership['run']
+    assert_equal 'python3 -B .github/scripts/staging_cd_release_ownership.py', ownership['run']
     restores = ['Restore compatible Cargo mounts', 'Restore authenticated layer detector evidence']
     restores.each do |name|
-      assert_operator index.call('Check Agent Manager release ownership'), :<, index.call(name)
+      assert_operator index.call('Check release ownership'), :<, index.call(name)
       assert_includes steps[index.call(name)]['if'], "steps.ownership.outputs.superseded != 'true'"
     end
     publication = steps[index.call('Build once, scan every layer, and publish exact bytes')]
@@ -249,15 +248,17 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal '${{ runner.temp }}/public-admission/admission.json', evidence['with']['path']
   end
 
-  def test_proven_am_takeover_skips_finalize_and_reaches_the_component_report
+  def test_proven_takeover_in_any_lane_skips_finalize_and_reaches_the_component_report
     release = workflow('staging-release')
     assert_equal '${{ steps.publication.outputs.disposition }}', release.dig('jobs', 'publish', 'outputs', 'disposition')
     trigger = release['on'] || release.fetch(true)
     assert_equal '${{ jobs.publish.outputs.disposition }}', trigger.dig('workflow_call', 'outputs', 'disposition', 'value')
-    assert_includes release.dig('jobs', 'finalize', 'if'), "needs.publish.outputs.disposition != 'reservation_superseded'"
+    # Any skip disposition, including an older run's same-source final, skips finalize.
+    assert_includes release.dig('jobs', 'finalize', 'if'), "needs.publish.outputs.disposition == ''"
     report = workflow('staging-cd').dig('jobs', 'recheck', 'steps').last.fetch('env')
-    assert_equal '${{ needs.release_am.outputs.disposition }}', report['CD_AM_DISPOSITION']
-    %w[am runtime runtime_omarchy].each do |key|
+    refute report.key?('CD_AM_DISPOSITION')
+    %w[web am eg runtime runtime_omarchy].each do |key|
+      assert_equal "${{ needs.release_#{key}.outputs.disposition }}", report["CD_DISPOSITION_#{key.upcase}"]
       assert_equal "${{ needs.release_#{key}.outputs.finalized }}", report["CD_FINALIZED_#{key.upcase}"]
     end
   end
@@ -386,6 +387,77 @@ class StagingWorkflowTest < Minitest::Test
     refute step.key?('continue-on-error')
     assert_includes step['run'].lines.map(&:strip),
                     '"$RUNNER_TEMP/staging-cd-tests/bin/python" -B .github/scripts/image-secret-gate-tests.py'
+  end
+
+  # Safe-to-repeat third-party steps: workflow => job => ids of the optional first attempt.
+  REPEATED = {
+    'redeploy-staging' => { 'resolve' => %w[infra-token] },
+    'staging-cd' => { 'infrastructure' => %w[infra-token] },
+    'staging-deploy' => { 'deploy' => %w[infra-token infra-checkout], 'report' => %w[evidence] },
+    'staging-release' => { 'publish' => %w[receipts], 'finalize' => %w[receipts-download] }
+  }.freeze
+  # Optional steps whose failure only costs time; publication decides the outcome later.
+  OPTIONAL = ['Expose cache runtime to the Buildx client', 'Check release ownership',
+              'Restore compatible Cargo mounts', 'Retain accepted Cargo mounts'].freeze
+
+  def test_safe_actions_repeat_once_and_only_the_repeat_can_fail_the_job
+    optional = []
+    REPEATED.each do |name, jobs|
+      jobs.each do |job_id, ids|
+        steps = workflow(name)['jobs'].fetch(job_id)['steps']
+        ids.each do |id|
+          index = steps.index { |step| step['id'] == id }
+          first, repeat = steps[index], steps[index + 1]
+          optional << first
+          assert_equal true, first['continue-on-error'], "#{name}/#{id}"
+          assert_equal first['uses'], repeat['uses']
+          assert_equal first['with'], repeat['with']
+          refute repeat.key?('continue-on-error'), "#{name}/#{id}: the repeat must be able to fail the job"
+          condition = "steps.#{id}.outcome == 'failure'"
+          assert_equal first.key?('if') ? "#{first['if']} && #{condition}" : condition, repeat['if']
+          if first['uses'].start_with?('actions/upload-artifact@')
+            assert_equal true, first['with']['overwrite'], 'a repeat replaces a partial first upload'
+          end
+        end
+      end
+    end
+    assert_equal 7, optional.size
+    # A job is never repeated or made optional, and no other step may hide its failure.
+    REPEATED.each_key do |name|
+      workflow(name)['jobs'].each do |job_id, job|
+        refute job.key?('continue-on-error'), "#{name}/#{job_id}"
+        refute job.key?('strategy'), "#{name}/#{job_id}"
+        job.fetch('steps', []).select { |step| step['continue-on-error'] }.each do |step|
+          assert(optional.include?(step) || OPTIONAL.include?(step['name']), "#{name}/#{job_id}: #{step['name']}")
+        end
+      end
+    end
+    # Consumers accept the output of whichever attempt succeeded.
+    %w[redeploy-staging staging-cd staging-deploy].each do |name|
+      text = File.read(File.join(ROOT, 'workflows', name + '.yml'))
+      uses = text.scan(/steps\.infra-token\.outputs\.token[^}]*/)
+      refute_empty uses
+      uses.each { |use| assert_equal 'steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token ', use }
+    end
+    # An overwriting repeat replaces the first attempt's artifact, so its id wins.
+    assert_equal '${{ steps.receipts-retry.outputs.artifact-id || steps.receipts.outputs.artifact-id }}',
+                 workflow('staging-release').dig('jobs', 'publish', 'outputs', 'artifact')
+  end
+
+  def test_package_and_download_tools_repeat_transient_network_failures
+    env = workflow('staging-cd').fetch('env')
+    %w[CARGO_NET_RETRY PIP_RETRIES RUSTUP_MAX_RETRIES].each { |key| assert_operator env.fetch(key).to_i, :>=, 3 }
+    transport = File.read(File.join(__dir__, 'staging_cd_transport.sh'))
+    assert_equal 2, transport.scan('sudo apt-get -o Acquire::Retries=5 ').size
+    refute_match(/apt-get (?!-o Acquire::Retries)/, transport)
+    gitleaks = workflow('ci-repo')['jobs']['secrets']['steps'].find { |step| step['name'] == 'gitleaks' }['run']
+    [File.read(File.join(__dir__, 'install-image-gitleaks.sh')), gitleaks].each do |script|
+      assert_equal 1, script.scan(/\bcurl\b/).size
+      %w[--fail --location --retry --retry-all-errors].each { |flag| assert_includes script, " #{flag} " }
+      assert_includes script, '551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb'
+      # Only the pinned bytes are ever unpacked.
+      assert_operator script.index('sha256sum --check --status'), :<, script.index(/\btar /)
+    end
   end
 
   def test_selection_cache_has_only_a_develop_push_writer_after_successful_selection

@@ -6,6 +6,7 @@ import subprocess
 import tarfile
 from pathlib import Path
 
+import ci_retry
 from ci_tracks.deployable_manifest import validate_names
 from eg_schema import labels as schema_labels
 from staging_cd_common import require
@@ -33,7 +34,9 @@ def command(args, *, cwd=None, env=None, data=None, timeout=3600, progress=None)
     if progress is not None:
         progress.update(summarize(result.stderr))
     if result.returncode != 0:
-        raise ImageCommandRefusal(args, result.stderr)
+        # The cause marks transport failures, so only a caller's explicit retry
+        # policy can repeat this command; the refusal itself stays fixed text.
+        raise ImageCommandRefusal(args, result.stderr) from ci_retry.cli_cause(result.stderr)
     return result.stdout
 
 

@@ -1,4 +1,4 @@
-"""A later web push must leave the original run able to deploy Event Gateway."""
+"""A later web push leaves the original run able to deploy, withholding web only for a higher final."""
 import fnmatch
 import json
 from pathlib import Path
@@ -23,7 +23,7 @@ from staging_cd_watermark import SupersededVersions, eligible_receipts, require_
 
 
 class TakeoverDeployTests(unittest.TestCase):
-    def exercise(self, *, timing, unreadable=False):
+    def exercise(self, *, timing, successor="final", unreadable=False):
         server = AllocationServer(1, reserved=False)
         older, newer = server.sources
         receipts = {key: fixture_receipt(component=key, source=older) for key in ("eg", "web")}
@@ -61,11 +61,17 @@ class TakeoverDeployTests(unittest.TestCase):
             reservation = web["reservation"]
             reservations.insert.assert_called_once_with(reservation)
             self.assertEqual(reservation["version"], "0.10.2")
-            refs.add("refs/tags/" + pending_name(reservation))
+            # A started web build finishes past its successor's pending
+            # reservation; only the successor's final withholds this release.
+            if successor == "pending":
+                refs.add("refs/tags/" + pending_name(reservation))
+            else:
+                refs.add("refs/tags/" + DEPLOYABLES["web"] + "/v" + reservation["version"])
+        expected = {"eg"} if successor == "final" else {"eg", "web"}
         if timing == "before-lock":
             next_merge()
         verified = verify_set(frozen, api, registry, automatic=True)
-        self.assertEqual(set(verified["receipts"]), {"eg"} if timing == "before-lock" else {"eg", "web"})
+        self.assertEqual(set(verified["receipts"]), expected if timing == "before-lock" else {"eg", "web"})
         if timing == "during-setup":
             next_merge()
         if unreadable:
@@ -76,7 +82,7 @@ class TakeoverDeployTests(unittest.TestCase):
             env["CD_RELEASE_SET"] = canonical(verified)
             def controller(_script, path, *_args):
                 result = fixture_result(path)
-                self.assertEqual(set(result["components"]), {"eg"})
+                self.assertEqual(set(result["components"]), expected)
                 self.assertEqual(result["components"]["eg"]["source_sha"], older)
                 return 0
             runner = Mock(side_effect=controller)
@@ -93,10 +99,14 @@ class TakeoverDeployTests(unittest.TestCase):
                     runner.assert_called_once()
 
     def test_successor_after_admission_preserves_the_other_components_controller(self):
-        self.exercise(timing="before-lock")
+        for successor in ("pending", "final"):
+            with self.subTest(successor=successor):
+                self.exercise(timing="before-lock", successor=successor)
 
     def test_successor_after_lock_verification_preserves_the_other_components_controller(self):
-        self.exercise(timing="during-setup")
+        for successor in ("pending", "final"):
+            with self.subTest(successor=successor):
+                self.exercise(timing="during-setup", successor=successor)
 
     def test_malformed_or_missing_authority_prevents_even_partial_controller_launch(self):
         self.exercise(timing="during-setup", unreadable=True)

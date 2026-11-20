@@ -59,6 +59,11 @@ impl Fixture {
                 response_input_tier_enabled: false,
                 control_tier_enabled: false,
                 default_lease_enabled: false,
+                anonymous_public: crate::config::AnonymousPublicConfig {
+                    enabled: false,
+                    per_minute: n(1200),
+                    concurrency: n(16),
+                },
             },
             crate::config::TrustedProxyConfig {
                 cidrs: vec![],
