@@ -333,3 +333,98 @@ test('LOCAL browser clipboard screenshot and dropped file preview, persist, and 
     await fixture.close(page);
   }
 });
+
+for (const action of ['button', 'Escape'] as const) {
+  test(`LOCAL response Stop: ${action} submits one fenced cancellation and retains its outcome`, async ({
+    page,
+    baseURL,
+  }) => {
+    const fixture = new LocalAgentV2();
+    fixture.append(
+      { type: 'turn_started', turn_sequence: 1 },
+      {
+        response_id: 'resp_1',
+        command_id: 'cmd_1',
+        turn_sequence: 1,
+      },
+    );
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let attempts = 0;
+    try {
+      await fixture.route(page, baseURL!);
+      await page.route('**/responses/resp_1/controls', async (route) => {
+        if (route.request().method() === 'POST') {
+          attempts += 1;
+          await pending;
+        }
+        await route.fallback();
+      });
+      await page.goto('/agents/agt_contract');
+      const field = page.getByRole('textbox', { name: 'Message', exact: true });
+      const stop = page.getByRole('button', { name: 'Stop response', exact: true });
+      await expect(stop).toBeEnabled();
+      await field.focus();
+      await expect(page.getByText('Esc to stop', { exact: true })).toBeVisible();
+      if (action === 'Escape') await field.press('Escape');
+      else await stop.click();
+      await expect.poll(() => attempts).toBe(1);
+      await expect(page.getByRole('button', { name: 'Stopping response' })).toBeDisabled();
+      await field.press('Escape');
+      await field.press('Escape');
+      expect(attempts).toBe(1);
+      await expect(page.getByText('Esc to stop', { exact: true })).toHaveCount(0);
+      release();
+      await expect.poll(() => fixture.writes.length).toBe(1);
+      expect(fixture.writes[0]).toMatchObject({
+        path: '/api/v2/agents/agt_contract/responses/resp_1/controls',
+        body: { turn_sequence: 1, expected_agent_revision: 10, command: { type: 'cancel' } },
+      });
+      expect(fixture.writes[0]!.key).toBeTruthy();
+      fixture.append({ type: 'turn_cancelled', turn_sequence: 1 });
+      await expect(page.getByRole('button', { name: /Stop.*response/ })).toHaveCount(0);
+      await page.reload();
+      await expect(field).toBeVisible();
+      await field.press('Escape');
+      expect(fixture.writes).toHaveLength(1);
+      expect(fixture.boundary.unexpected).toEqual([]);
+      expect(fixture.boundary.writes).toEqual([]);
+      expect(fixture.errors).toEqual([]);
+    } finally {
+      release();
+      await fixture.close(page);
+    }
+  });
+}
+
+test('LOCAL unbound response never advertises Stop; focus outside the composer cannot cancel it', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalAgentV2();
+  fixture.append({ type: 'turn_started', turn_sequence: 1 });
+  try {
+    await fixture.route(page, baseURL!);
+    await page.goto('/agents/agt_contract');
+    const field = page.getByRole('textbox', { name: 'Message', exact: true });
+    await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeDisabled();
+    await expect(
+      page.getByText('Stop is unavailable for this response.', { exact: true }),
+    ).toBeVisible();
+    await field.press('Escape');
+    await expect(page.getByText('Esc to stop', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Show Agent details', exact: true }).focus();
+    await page.keyboard.press('Escape');
+    expect(fixture.writes).toEqual([]);
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeDisabled();
+    await expect(page.getByText('Esc to stop', { exact: true })).toHaveCount(0);
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.boundary.unexpected).toEqual([]);
+    expect(fixture.errors).toEqual([]);
+  } finally {
+    await fixture.close(page);
+  }
+});
