@@ -1,4 +1,5 @@
 import { Presence } from '../ui/Presence';
+import { useConversationFocus } from './environment/useConversationFocus';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { AgentStatus } from '../api/types';
 import { Button } from '../ui/Button';
@@ -150,10 +151,14 @@ export function Composer({
   // Outside a turn both steering modes send ordinary input, so the choice is
   // only offered while there is a turn to queue behind or interrupt.
   const steering = running && queueWhileRunning && onSteeringModeChange !== undefined;
+  const canEdit = usable && !inputBlocked && !busy && !submitting && !requestPending;
+  const controlsBlocked =
+    running && (!queueWhileRunning || (steeringMode === 'interrupt' && controlsUnavailable));
+  useConversationFocus(inputRef, canEdit && !controlsBlocked && !starting);
   const commands = useComposerCommands(
     visibleContent,
     availableCommands,
-    usable && !inputBlocked && !busy && !submitting && !requestPending,
+    canEdit,
     inputRef,
     (value) => {
       editorRef?.current?.discardUndo();

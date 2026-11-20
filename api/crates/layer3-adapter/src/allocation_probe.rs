@@ -6,8 +6,7 @@ use tracking_allocator::{
     AllocationGroupId, AllocationGroupToken, AllocationRegistry, AllocationTracker, Allocator,
 };
 
-#[global_allocator]
-static ALLOCATOR: Allocator<std::alloc::System> = Allocator::system();
+static TRACKED_ALLOCATOR: Allocator<std::alloc::System> = Allocator::system();
 static LOCK: Mutex<()> = Mutex::new(());
 static INITIALIZED: Once = Once::new();
 static GROUP: AtomicUsize = AtomicUsize::new(0);
@@ -17,8 +16,9 @@ static ALLOCATED: AtomicUsize = AtomicUsize::new(0);
 
 struct Tracker;
 impl AllocationTracker for Tracker {
-    fn allocated(&self, _: usize, bytes: usize, _: usize, group: AllocationGroupId) {
+    fn allocated(&self, address: usize, bytes: usize, _: usize, group: AllocationGroupId) {
         if group.as_usize().get() == GROUP.load(SeqCst) {
+            deallocation::allocated(address, bytes);
             ALLOCATED.fetch_add(bytes, SeqCst);
             let live = LIVE.fetch_add(bytes, SeqCst) + bytes;
             PEAK.fetch_max(live, SeqCst);
@@ -84,3 +84,6 @@ impl Drop for AllocationProbe {
         GROUP.store(0, SeqCst);
     }
 }
+
+#[path = "allocation_probe_deallocation.rs"]
+pub(crate) mod deallocation;

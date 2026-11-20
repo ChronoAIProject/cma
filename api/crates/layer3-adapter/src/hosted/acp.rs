@@ -1,10 +1,11 @@
+use crate::ingress_budget::diagnostic::text;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use futures_util::{stream::SplitSink, SinkExt as _, StreamExt as _};
-use tokio::sync::{mpsc, Mutex};
+use futures_util::{SinkExt as _, StreamExt as _};
+use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message;
 
 use super::update_relay::UpdateRelay;
@@ -42,15 +43,35 @@ impl<T> ConversationSocket for T where
 {
 }
 pub(super) type Socket = Box<dyn ConversationSocket>;
-type Sink = SplitSink<Socket, Message>;
-type Pending = Arc<Mutex<HashMap<String, PendingCall>>>;
+type Sink = ingress::BridgeSink;
+type Pending = Shared<Mutex<ingress::identity::PendingCalls>>;
+
+#[path = "acp_shared.rs"]
+pub(super) mod shared;
+use shared::Shared;
+
+#[path = "acp_mutex.rs"]
+mod mutex;
+use mutex::BridgeMutex as Mutex;
 
 #[path = "acp_declaration.rs"]
 mod declaration;
 use declaration::validate_ready;
 
+#[path = "acp_ingress.rs"]
+pub(in crate::hosted) mod ingress;
+
+#[path = "acp_watch.rs"]
+mod progress;
+
+#[path = "acp_settings_admitted.rs"]
+mod admitted_settings;
+
 #[path = "acp_open.rs"]
 mod open;
+
+#[path = "acp_open_channel.rs"]
+mod channel;
 
 #[path = "acp_calls.rs"]
 mod calls;
@@ -71,6 +92,7 @@ mod ownership;
 pub(super) struct PendingCall {
     pub(super) answer: tokio::sync::oneshot::Sender<super::retained_json::JsonFrame>,
     pub(super) prompt: bool,
+    pub(super) _storage: Option<crate::ingress_budget::IngressWorkScope>,
 }
 
 pub(super) struct Blocked {
@@ -84,9 +106,11 @@ struct ConversationState {
     active: Option<String>,
     startup: Vec<(String, ConversationUpdate)>,
     startup_lost: u64,
+    active_storage: Option<crate::ingress_budget::ReservationBundle>,
 }
 
 pub(super) struct Bridge {
+    pub(super) ingress: Option<crate::ingress_budget::IngressOwnershipPolicy>,
     authority: Option<Arc<dyn crate::owner_protocol::TransportAuthority>>,
     pub(super) json_pools: Option<super::retained_json::JsonPools>,
     pub(super) bounded_raw_output: bool,
@@ -94,8 +118,8 @@ pub(super) struct Bridge {
     output_json_budget: bool,
     shared_runtime_output: bool,
     pub(super) agent_correlation_digest: String,
-    pub(super) subscription: Option<super::subscriptions::HostedSubscriptionBinding>,
-    sink: Arc<Mutex<Sink>>,
+    pub(super) subscription: Option<super::subscriptions::SubscriptionBinding>,
+    sink: Shared<Mutex<Sink>>,
     pub(super) pending: Pending,
     request_namespace: String,
     next_id: AtomicI64,
@@ -103,32 +127,33 @@ pub(super) struct Bridge {
     conversation: Mutex<ConversationState>,
     output: Option<Mutex<output::ReliableOutput>>,
     pub(super) blocked: Mutex<HashMap<String, Blocked>>,
-    pub(super) answered: Arc<Mutex<HashMap<String, serde_json::Value>>>,
-    pub(super) owned_prompt_waiters: Arc<AtomicUsize>,
+    pub(super) answered: Shared<Mutex<HashMap<String, serde_json::Value>>>,
+    pub(super) owned_prompt_waiters: Shared<AtomicUsize>,
     pub(super) orphaned_prompt_response: AtomicBool,
     retired: AtomicBool,
     pub(super) instructions_support: AtomicU8,
     pub(super) context_refresh: Option<super::managed_context::HostedContextRefresh>,
     pub(super) context_goal: Mutex<Option<super::context_goal::ContextGoal>>,
     pub(super) recovering_context: AtomicU64,
-    pub(super) retained_history_deadline: tokio::sync::watch::Sender<Option<tokio::time::Instant>>,
+    pub(super) retained_history_deadline: progress::ProgressSender<Option<tokio::time::Instant>>,
+    _identity_storage: Option<crate::ingress_budget::ReservationBundle>,
 }
 
-pub(super) struct OpenedBridge {
-    pub(super) channel: ConversationChannel,
-    pub(super) bridge: Arc<Bridge>,
+pub(super) struct OpenedBridge<C = ConversationChannel, B = Arc<Bridge>> {
+    pub(super) channel: C,
+    pub(super) bridge: B,
     pub(super) reader: tokio::task::JoinHandle<()>,
     pub(super) relay: tokio::task::JoinHandle<()>,
 }
 
-struct OpeningTasks {
-    bridge: Arc<Bridge>,
+struct OpeningTasks<B: std::ops::Deref<Target = Bridge>> {
+    bridge: B,
     reader: tokio::task::AbortHandle,
     relay: tokio::task::AbortHandle,
     armed: bool,
 }
 
-impl Drop for OpeningTasks {
+impl<B: std::ops::Deref<Target = Bridge>> Drop for OpeningTasks<B> {
     fn drop(&mut self) {
         if self.armed {
             // Do not suspend error publication on socket/task cleanup: a startup
@@ -142,13 +167,27 @@ impl Drop for OpeningTasks {
 }
 
 impl Bridge {
+    pub(super) async fn matches_session(&self, session: &str) -> bool {
+        self.conversation.lock().await.active.as_deref() == Some(session)
+    }
+
+    pub(super) async fn matches_active_session(&self, session: &str) -> crate::Result<bool> {
+        self.conversation
+            .lock()
+            .await
+            .active
+            .as_deref()
+            .map(|active| active == session)
+            .ok_or_else(|| AdapterError::Unavailable(text("runtime holds no conversation")))
+    }
+
     pub(super) async fn session(&self) -> crate::Result<String> {
         self.conversation
             .lock()
             .await
             .active
             .clone()
-            .ok_or_else(|| AdapterError::Unavailable("runtime holds no conversation".into()))
+            .ok_or_else(|| AdapterError::Unavailable(text("runtime holds no conversation")))
     }
 
     pub(super) async fn activate_session(
@@ -157,17 +196,31 @@ impl Bridge {
         updates: &UpdateRelay,
     ) -> crate::Result<()> {
         super::acp_session_identity::validate(&session)?;
+        let storage = self
+            .ingress
+            .as_ref()
+            .map(|policy| {
+                policy.reserve(
+                    crate::ingress_budget::IngressClass::Data,
+                    crate::ingress_budget::AllocationPlan::new(
+                        "active conversation identity",
+                        &[session.len()],
+                    )?,
+                )
+            })
+            .transpose()?;
         let mut state = self.conversation.lock().await;
         if state
             .active
             .as_ref()
             .is_some_and(|active| active != &session)
         {
-            return Err(AdapterError::Rejected(
-                "bridge changed the active conversation identifier".into(),
-            ));
+            return Err(AdapterError::Rejected(text(
+                "bridge changed the active conversation identifier",
+            )));
         }
         state.active = Some(session.clone());
+        state.active_storage = storage;
         for (candidate, update) in std::mem::take(&mut state.startup) {
             if candidate == session {
                 updates.send(update.without_prompt_evidence()).await;
@@ -189,7 +242,7 @@ impl Bridge {
         session: &str,
         update: ConversationUpdate,
         updates: &UpdateRelay,
-    ) {
+    ) -> crate::Result<()> {
         let mut state = self.conversation.lock().await;
         match state.active.as_deref() {
             Some(active) if active == session => {
@@ -197,11 +250,19 @@ impl Bridge {
                 updates.send(self.scope_activity(update)).await;
             }
             Some(_) => tracing::warn!("discarding update for another conversation"),
+            // Admitted startup frames stay in ReliableOutput until identity
+            // acceptance. Never copy them into the legacy unowned queue.
+            None if self.ingress.is_some() => {
+                return Err(AdapterError::Rejected(text(
+                    "admitted update preceded conversation identity acceptance",
+                )));
+            }
             None if state.startup.len() < STARTUP_UPDATE_LIMIT => {
                 state.startup.push((session.to_string(), update));
             }
             None => state.startup_lost = state.startup_lost.saturating_add(1),
         }
+        Ok(())
     }
 
     fn scope_activity(&self, update: ConversationUpdate) -> ConversationUpdate {
@@ -213,7 +274,7 @@ impl Bridge {
         &self,
         method: &str,
         params: serde_json::Value,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
+    ) -> crate::Result<ingress::identity::PendingReply> {
         self.begin_inner(method, params, false).await
     }
 
@@ -221,7 +282,7 @@ impl Bridge {
         &self,
         params: serde_json::Value,
         prompt_id: Option<PromptIdentity>,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
+    ) -> crate::Result<ingress::identity::PendingReply> {
         self.begin_with_id("session/prompt", params, true, prompt_id)
             .await
     }
@@ -231,7 +292,7 @@ impl Bridge {
         method: &str,
         params: serde_json::Value,
         prompt: bool,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
+    ) -> crate::Result<ingress::identity::PendingReply> {
         self.begin_with_id(method, params, prompt, None).await
     }
 
@@ -241,10 +302,17 @@ impl Bridge {
         params: serde_json::Value,
         prompt: bool,
         prompt_id: Option<PromptIdentity>,
-    ) -> crate::Result<tokio::sync::oneshot::Receiver<super::retained_json::JsonFrame>> {
+    ) -> crate::Result<ingress::identity::PendingReply> {
         if self.retired.load(Ordering::SeqCst) {
             return Err(write::retired_before_write(prompt));
         }
+        let _request_storage = self
+            .ingress
+            .as_ref()
+            .map(|policy| {
+                ingress::identity::request_scope(policy, &params, method, &self.request_namespace)
+            })
+            .transpose()?;
         let remembered_prompt = prompt_id.clone();
         let id = prompt_id.map_or_else(
             || {
@@ -256,17 +324,13 @@ impl Bridge {
             },
             |identity| identity.as_str().to_owned(),
         );
-        let (answer, waiting) = tokio::sync::oneshot::channel();
         let frame = serde_json::json!({
             "jsonrpc": "2.0",
             "id": id,
             "method": method,
             "params": params,
         });
-        self.pending
-            .lock()
-            .await
-            .insert(id.clone(), PendingCall { answer, prompt });
+        let waiting = self.pending.lock().await.register(&id, prompt)?;
         if prompt {
             if let Some(state) = &self.permission_state {
                 state.lock().await.begin_prompt(&id);

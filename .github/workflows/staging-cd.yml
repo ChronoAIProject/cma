@@ -7,6 +7,12 @@ on:
 permissions:
   contents: read
 
+# Package tools repeat transient network failures before failing a step.
+env:
+  CARGO_NET_RETRY: '10'
+  PIP_RETRIES: '10'
+  RUSTUP_MAX_RETRIES: '10'
+
 jobs:
   plan:
     if: github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'
@@ -128,8 +134,20 @@ jobs:
         with:
           path: ${{ runner.temp }}/cma-public-tool-cache
           key: deploy-tools-linux-amd64-py312-${{ hashFiles('.github/scripts/staging_cd_tools.py', '.github/scripts/staging_cd_wheels.json') }}
+      # Minting a token is safe to repeat. Only the repeat may fail the job.
       - name: Create restricted infrastructure reader token
         id: infra-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - name: Retry restricted infrastructure reader token
+        id: infra-token-retry
+        if: steps.infra-token.outcome == 'failure'
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
         with:
           app-id: ${{ vars.CMA_INFRA_APP_ID }}
@@ -140,13 +158,21 @@ jobs:
       - name: Resolve infrastructure revision once for this release
         id: private
         env:
-          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
+          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
           CD_INFRA_REF: main
         run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
   release_web:
     name: Release web
     needs: allocate
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['web'] != ''
+    # Each release_* job runs one release of its component at a time. Newer
+    # pushes queue behind the running build, which finishes; a queued job that
+    # a newer reservation already owns skips in seconds, so the newest source
+    # always builds next.
+    concurrency:
+      group: cma-staging-web-release
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-release.yml
     permissions:
       contents: write
@@ -160,9 +186,6 @@ jobs:
     name: Release am
     needs: allocate
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['am'] != ''
-    # One AM release at a time. Newer pushes queue behind the running build
-    # instead of each starting one; a queued job that a newer reservation
-    # already owns skips in seconds, so the newest source always builds next.
     concurrency:
       group: cma-staging-am-release
       queue: max
@@ -180,6 +203,10 @@ jobs:
     name: Release eg
     needs: allocate
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['eg'] != ''
+    concurrency:
+      group: cma-staging-eg-release
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-release.yml
     permissions:
       contents: write
@@ -193,6 +220,10 @@ jobs:
     name: Release runtime
     needs: allocate
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['runtime'] != ''
+    concurrency:
+      group: cma-staging-runtime-release
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-release.yml
     permissions:
       contents: write
@@ -206,6 +237,10 @@ jobs:
     name: Release runtime-omarchy
     needs: allocate
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['runtime-omarchy'] != ''
+    concurrency:
+      group: cma-staging-runtime-omarchy-release
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-release.yml
     permissions:
       contents: write
@@ -375,13 +410,19 @@ jobs:
           CD_LANES: ${{ needs.allocate.outputs.lanes }}
           CD_PUBLISH_WEB: ${{ needs.release_web.result }}
           CD_PUBLISH_AM: ${{ needs.release_am.result }}
-          CD_AM_DISPOSITION: ${{ needs.release_am.outputs.disposition }}
-          CD_FINALIZED_AM: ${{ needs.release_am.outputs.finalized }}
-          CD_FINALIZED_RUNTIME: ${{ needs.release_runtime.outputs.finalized }}
-          CD_FINALIZED_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.outputs.finalized }}
           CD_PUBLISH_EG: ${{ needs.release_eg.result }}
           CD_PUBLISH_RUNTIME: ${{ needs.release_runtime.result }}
           CD_PUBLISH_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.result }}
+          CD_DISPOSITION_WEB: ${{ needs.release_web.outputs.disposition }}
+          CD_DISPOSITION_AM: ${{ needs.release_am.outputs.disposition }}
+          CD_DISPOSITION_EG: ${{ needs.release_eg.outputs.disposition }}
+          CD_DISPOSITION_RUNTIME: ${{ needs.release_runtime.outputs.disposition }}
+          CD_DISPOSITION_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.outputs.disposition }}
+          CD_FINALIZED_WEB: ${{ needs.release_web.outputs.finalized }}
+          CD_FINALIZED_AM: ${{ needs.release_am.outputs.finalized }}
+          CD_FINALIZED_EG: ${{ needs.release_eg.outputs.finalized }}
+          CD_FINALIZED_RUNTIME: ${{ needs.release_runtime.outputs.finalized }}
+          CD_FINALIZED_RUNTIME_OMARCHY: ${{ needs.release_runtime_omarchy.outputs.finalized }}
           CD_PROMOTE_WEB: ${{ toJSON(needs.promote_web) }}
           CD_PROMOTE_AM: ${{ toJSON(needs.promote_am) }}
           CD_PROMOTE_EG: ${{ toJSON(needs.promote_eg) }}

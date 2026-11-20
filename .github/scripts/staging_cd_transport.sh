@@ -15,5 +15,6 @@ sys.exit(0 if name and hasattr(ctypes.CDLL(name), "archive_read_support_format_a
   exit 0
 fi
 
-sudo apt-get update -qq
-sudo apt-get install -y -qq skopeo libarchive-tools zstd
+# Mirrors drop connections now and then; apt repeats each failed fetch first.
+sudo apt-get -o Acquire::Retries=5 update -qq
+sudo apt-get -o Acquire::Retries=5 install -y -qq skopeo libarchive-tools zstd

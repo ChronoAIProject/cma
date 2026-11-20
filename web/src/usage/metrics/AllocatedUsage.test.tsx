@@ -57,7 +57,7 @@ it.each([false, true])(
     const period = screen.getByRole('region', { name: 'Allocated resource-hours' });
     for (const text of ['24', '48', '480'])
       expect(within(period).getByText(text)).toBeInTheDocument();
-    expect(within(period).getByText(/Some allocation history is missing/)).toBeInTheDocument();
+    expect(within(period).getByText(/Missing intervals confirmed/)).toBeInTheDocument();
     expect(screen.getByText(/Allocation period:/)).toBeInTheDocument();
     expect(
       screen.queryByText(

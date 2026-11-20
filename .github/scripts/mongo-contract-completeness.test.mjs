@@ -146,6 +146,8 @@ test('prefix inventory includes task-home and agrees with the runner without dup
   assert.ok(requiredPrefixes.includes('store::migrations::index_toolkit::tests::'));
   assert.ok(requiredPrefixes.includes('store::sandbox_usage::interval_index::tests::'));
   assert.ok(requiredPrefixes.includes('rate_limit::lease::mongo_tests::'));
+  assert.ok(requiredPrefixes.includes('rate_limit::anonymous_mongo_tests::'));
+  assert.ok(requiredPrefixes.includes('store::resource_access::execution::mongo_tests::'));
   assert.ok(requiredPrefixes.includes('store::worker_observations::parked::tests::'));
   assert.ok(line.includes(`not test(=${child})`));
 });
