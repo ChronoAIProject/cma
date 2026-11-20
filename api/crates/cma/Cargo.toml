@@ -47,6 +47,7 @@ tracing-subscriber = { workspace = true }
 # state and PKCE verifiers are drawn from. Already a workspace dependency.
 uuid = { workspace = true }
 zeroize = { workspace = true }
+serde_json_canonicalizer = "=0.3.2"
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true, features = ["json"] }

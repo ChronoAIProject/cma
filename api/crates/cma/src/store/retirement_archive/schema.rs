@@ -5,6 +5,8 @@ use std::collections::BTreeSet;
 
 #[path = "legacy_census.rs"]
 mod legacy;
+#[path = "pre_usage_capture_census.rs"]
+mod pre_capture;
 
 #[cfg(test)]
 pub(super) const LEGACY_COLLECTIONS: &[&str] = legacy::COLLECTIONS;
@@ -22,11 +24,13 @@ pub(crate) fn schema_sha256() -> String {
     )
 }
 
-fn collections(schema: &str) -> Result<&'static [&'static str]> {
+fn collections(schema: &str) -> Result<Vec<&'static str>> {
     if schema == schema_sha256() {
-        Ok(super::super::isolation::COLLECTIONS)
+        Ok(super::super::isolation::COLLECTIONS.to_vec())
+    } else if schema == pre_capture::SHA256 {
+        Ok(pre_capture::COLLECTIONS.to_vec())
     } else if schema == legacy::SHA256 {
-        Ok(legacy::COLLECTIONS)
+        Ok(legacy::COLLECTIONS.to_vec())
     } else {
         Err(REFUSED)
     }
@@ -57,9 +61,10 @@ pub(crate) fn matches_current(manifest: &Manifest, mut current: Manifest) -> Res
     if current.schema_sha256 != schema_sha256() {
         return Err(REFUSED);
     }
-    if manifest.schema_sha256 == legacy::SHA256 {
+    if manifest.schema_sha256 != current.schema_sha256 {
+        let prior = collections(&manifest.schema_sha256)?;
         for record in &current.database {
-            if !legacy::COLLECTIONS.contains(&record.collection.as_str())
+            if !prior.contains(&record.collection.as_str())
                 && (record.documents != 0
                     || record.bytes != 0
                     || record.sha256 != digest(&[])
@@ -70,8 +75,8 @@ pub(crate) fn matches_current(manifest: &Manifest, mut current: Manifest) -> Res
         }
         current
             .database
-            .retain(|r| legacy::COLLECTIONS.contains(&r.collection.as_str()));
-        current.schema_sha256 = legacy::SHA256.into();
+            .retain(|r| prior.contains(&r.collection.as_str()));
+        current.schema_sha256 = manifest.schema_sha256.clone();
     }
     Ok(&current == manifest)
 }

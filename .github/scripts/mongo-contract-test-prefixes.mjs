@@ -20,6 +20,7 @@ export const requiredPrefixes = [
   'rate_limit::control_tests::mongo::',
   'store::sandbox_mongo_integration_tests::sandbox_usage_tests::',
   'store::sandbox_usage::interval_index::tests::',
+  'store::sandbox_usage_export::mongo_tests::',
   'document_artifacts::mongo_integration_tests::',
   'agent_access::tests::tenant_isolation::',
   'store::message_feedback::tests::',
