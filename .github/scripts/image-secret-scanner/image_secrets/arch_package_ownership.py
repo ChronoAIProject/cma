@@ -99,10 +99,16 @@ class ArchOwnership:
         self.invalid = set()
         for row in rows:
             path = row["path"]
-            package = packages[row["package_sha256"]]
-            directory = f'{package["name"]}-{package["version"]}'
             self.targets.add(path)
-            self.verified_members[directory].append((path, row["file_sha256"], row["ownership"]["mtree_sha256"]))
+            origin = row.get("derived_payload")
+            # A generated index has no package owner; each of its sources has one.
+            claims = ([(source["package_sha256"], source["path"], source["sha256"], source["mtree_sha256"])
+                       for source in origin["sources"]] if origin is not None else
+                      [(row["package_sha256"], path, row["file_sha256"], row["ownership"]["mtree_sha256"])])
+            for artifact, member, sha256, mtree in claims:
+                package = packages[artifact]
+                self.targets.add(member)
+                self.verified_members[f'{package["name"]}-{package["version"]}'].append((member, sha256, mtree))
 
     def observe(self, layer, member, path, coordinate, budget):
         scope = coordinate[:2]
@@ -160,10 +166,10 @@ class ArchOwnership:
             entries.update(records)
             yield scope, entries
 
-    def prove(self, rows_by_layer):
-        eligible = {}
+    def views(self, scopes):
+        """Index each requested layer's complete installed-package database."""
         for scope, entries in self.snapshots():
-            if scope not in rows_by_layer:
+            if scope not in scopes:
                 continue
             version = entries.get(VERSION)
             if version is None or not version.value:
@@ -185,16 +191,30 @@ class ArchOwnership:
             files = {name.removesuffix("/files") for name in entries if name.endswith("/files")}
             if not complete or files != descriptions.keys() or len({d[0] for d in descriptions.values()}) != len(files):
                 continue
+            # Later layers keep updating the snapshot; a view must stay at its own layer.
+            yield scope, (dict(entries), owners, descriptions)
+
+    @staticmethod
+    def owner(scope, view, row, package, *, physical=True):
+        """Unique owner of the exact file; a physical claim also needs its records in that layer."""
+        entries, owners, descriptions = view
+        key = (package["name"], package["version"], package["architecture"])
+        directory = f"{ROOT}/{key[0]}-{key[1]}"
+        if owners.get(row["path"]) != [directory] or descriptions.get(directory) != key:
+            return None
+        database = {name: entries.get(f"{directory}/{name}") for name in sorted(METADATA)}
+        mtree = database["mtree"]
+        if (mtree is None or mtree.sha256 != row["ownership"]["mtree_sha256"]
+                or (row["path"], row["file_sha256"]) not in mtree.value
+                or any(record is None or physical and record.layer != scope[1] for record in database.values())):
+            return None
+        return {"pacman": {name: record.receipt() for name, record in database.items()}}
+
+    def prove(self, rows_by_layer):
+        eligible = {}
+        for scope, view in self.views(rows_by_layer):
             for coordinate, row, package in rows_by_layer[scope]:
-                key = (package["name"], package["version"], package["architecture"])
-                directory = f"{ROOT}/{key[0]}-{key[1]}"
-                if owners[row["path"]] != [directory] or descriptions.get(directory) != key:
-                    continue
-                database = {name: entries.get(f"{directory}/{name}") for name in sorted(METADATA)}
-                mtree = database["mtree"]
-                if (mtree is None or mtree.sha256 != row["ownership"]["mtree_sha256"]
-                        or (row["path"], row["file_sha256"]) not in mtree.value
-                        or any(record is None or record.layer != scope[1] for record in database.values())):
-                    continue
-                eligible[coordinate] = {"pacman": {name: record.receipt() for name, record in database.items()}}
+                owner = self.owner(scope, view, row, package)
+                if owner is not None:
+                    eligible[coordinate] = owner
         return eligible

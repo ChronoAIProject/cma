@@ -157,8 +157,12 @@ class PackageEvidence:
             require(shape in (entry_fields, entry_fields | {"self_test"}, entry_fields | {"digest_frames"},
                               entry_fields | {"nested_certificate"}, entry_fields | {"distribution_config"},
                               entry_fields | {"debian_control"}, entry_fields | {"distribution_config", "self_test"}))
+            origin = row.get("derived_payload")
+            # Native generated proofs are limited to the MIME index and its signed sources.
+            mime_index = isinstance(origin, dict) and origin.get("kind") == "mime-index"
             if portable:
-                unsupported = ({"nested_certificate", "derived_payload"} if native_arch else {
+                unsupported = ({"nested_certificate"} | ({"derived_payload"} if not mime_index else set())
+                               if native_arch else {
                     "nested_certificate", "elf_nul_key_view", "distribution_config", "key_marker_view",
                     "native_json_key_view",
                 })
@@ -173,7 +177,8 @@ class PackageEvidence:
             require(not portable or row["occurrences"] == 1 or derived)
             require(not derived or not {"self_test", "distribution_config", "digest_frames", "debian_control"}.intersection(row))
             marker_views = {"key_marker_view", "elf_nul_key_view"}
-            require(not marker_views.intersection(row) or (not derived and shape == entry_fields))
+            require(not marker_views.intersection(row) or (shape == entry_fields and (
+                not derived or mime_index and "elf_nul_key_view" not in row)))
             require("native_json_key_view" not in row or shape == entry_fields)
             require(not {"npm_help_template", "nyxid_format_labels"}.intersection(row)
                     or (not derived and literals and shape == entry_fields))
@@ -196,8 +201,11 @@ class PackageEvidence:
                 normalized(part)
             if native_arch:
                 owner = row["ownership"]
-                fields(owner, {"mtree_sha256"})
-                require(valid_digest(owner["mtree_sha256"]) and package["authority_type"] == "arch-signature"
+                # A generated index binds its producer to the reserved build source instead of an mtree.
+                fields(owner, {"build_inputs"} if derived else {"mtree_sha256"})
+                require((portable_ownership.valid_producer_inputs(owner["build_inputs"]) if derived
+                         else valid_digest(owner["mtree_sha256"]))
+                        and package["authority_type"] == "arch-signature"
                         and package["architecture"] in {"x86_64", "any"} and row["platform"] == "linux/amd64")
             elif portable:
                 owner = row["ownership"]
@@ -228,7 +236,8 @@ class PackageEvidence:
             key = ((row["platform"], path, row["file_sha256"]) if portable else
                    (row["component"], row["platform"], row["layer"], row["diff_id"], row["entry"], locator))
             require(key not in entries)
-            go_strings = derived_payload.validate(row, package, portable=portable) if derived else None
+            go_strings = (derived_payload.validate(row, package, portable=portable,
+                                                   packages=packages if native_arch else None) if derived else None)
             if "npm_help_template" in row:
                 npm_help_template.validate(row, package)
             if "nyxid_format_labels" in row:

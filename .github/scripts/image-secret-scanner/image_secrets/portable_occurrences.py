@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 
+from . import mime_sources
 from .arch_package_ownership import ArchOwnership
 from .common import archive_path
 from .portable_ownership import STATUS_PATH, check_reserved_inputs, dpkg_identity, hides_status, status_entry
@@ -19,6 +20,7 @@ class PortableOccurrences:
         self.masked_status = set()
         self.arch = (ArchOwnership((row for row, _ in entries.values()), packages)
                      if component == "runtime-omarchy" else None)
+        self.mime = None
         for (platform, path, sha256), record in entries.items():
             row, _ = record
             self.by_path[platform, path][sha256] = record
@@ -26,13 +28,19 @@ class PortableOccurrences:
                 if name in row:
                     database = row[name]["database"]
                     self.databases[platform, database["path"]].append((path, database))
-            if row.get("derived_payload", {}).get("kind") == "mime-index":
+            origin = row.get("derived_payload", {})
+            if origin.get("kind") == "mime-index":
                 self.inputs.add((platform, row["package_member"]["path"][-1]))
+                if "sources" in origin:
+                    self.mime = self.mime or mime_sources.VisibleSources()
+                    self.inputs.update((platform, source["path"]) for source in origin["sources"])
 
     def select(self, platform, layer, member, budget, stream_digest, coordinate):
         path = archive_path(member.name, posix_tar=True)
         if self.arch is not None and platform == "linux/amd64":
             self.arch.observe(layer, member, path, coordinate, budget)
+            if self.mime is not None:
+                self.mime.observe(member, path, coordinate)
         elif hides_status(path, member):
             self.masked_status.add(coordinate[:2])
         if self.arch is None and path == STATUS_PATH:
@@ -66,23 +74,80 @@ class PortableOccurrences:
         result = {}
         source_checks = {}
         arch_candidates = defaultdict(list)
+        generated = []
         for (_, key), coordinates in matching.items():
             row, reviews = self.entries[key]
             if len(coordinates) != row["occurrences"]:
                 continue
             for coordinate in coordinates:
                 if self.arch is not None:
-                    arch_candidates[coordinate[:2]].append((coordinate, row, self.packages[row["package_sha256"]]))
+                    if "derived_payload" in row:
+                        generated.append((coordinate, row))
+                    else:
+                        arch_candidates[coordinate[:2]].append((coordinate, row, self.packages[row["package_sha256"]]))
                     continue
                 owner = self.owner(row, coordinate, installed, source_checks)
                 if owner is not None:
                     result[coordinate] = (row, reviews, owner)
         if self.arch is not None:
-            for coordinate, owner in self.arch.prove(arch_candidates).items():
+            proved = self.arch.prove(arch_candidates)
+            proved.update(self.generated_owners(generated, observations, source_checks))
+            for coordinate, owner in proved.items():
                 platform, _, _, _, (path, sha256, _) = observations[coordinate]
                 row, reviews = self.entries[platform, path, sha256]
                 result[coordinate] = (row, reviews, owner)
         return result
+
+    def generated_owners(self, rows, observations, source_checks):
+        """Prove each generated index from the authenticated sources visible at its own layer."""
+        if not rows:
+            return {}
+        visible = {coordinate: self.mime.visible(coordinate[:2]) for coordinate, _ in rows}
+        scopes = {coordinate[:2] for coordinate, _ in rows}
+        scopes.update((coordinate[0], layer) for coordinate, state in visible.items() if state
+                      for layer, _ in state.values())
+        views = dict(self.arch.views(scopes))
+        result = {}
+        for coordinate, row in rows:
+            owner = self.generated_owner(coordinate, row, visible[coordinate], views, observations, source_checks)
+            if owner is not None:
+                result[coordinate] = owner
+        return result
+
+    def generated_owner(self, coordinate, row, state, views, observations, source_checks):
+        image, layer = coordinate[:2]
+        current = views.get((image, layer))
+        sources = row["derived_payload"]["sources"]
+        # Every visible generator input is pinned, and no package claims the index itself.
+        if (state is None or current is None or current[1].get(row["path"])
+                or {path for path in state if mime_sources.is_input(path)}
+                != {source["path"] for source in sources if mime_sources.is_input(source["path"])}):
+            return None
+        proved = []
+        for source in sources:
+            path = source["path"]
+            if path not in state:
+                return None
+            source_layer, entry = state[path]
+            observed = observations.get((image, source_layer, entry))
+            installed = views.get((image, source_layer))
+            if observed is None or installed is None or observed[0] != "linux/amd64" or observed[4][:2] != (
+                    path, source["sha256"]):
+                return None
+            claim = {"path": path, "file_sha256": source["sha256"], "ownership": {"mtree_sha256": source["mtree_sha256"]}}
+            package = self.packages[source["package_sha256"]]
+            owner = ArchOwnership.owner((image, source_layer), installed, claim, package)
+            # The writing layer proves the member; the generator's layer must still install it.
+            if owner is None or ArchOwnership.owner((image, layer), current, claim, package, physical=False) is None:
+                return None
+            proved.append({"path": path, "layer": source_layer, "entry": entry, "sha256": source["sha256"], **owner})
+        expected = row["ownership"]["build_inputs"]
+        key = tuple(sorted(expected.items()))
+        if key not in source_checks:
+            source_checks[key] = check_reserved_inputs(self.source, expected)
+        if not source_checks[key]:
+            return None
+        return {"sources": proved, "build_inputs": expected}
 
     def owner(self, row, coordinate, installed, source_checks):
         package = self.packages[row["package_sha256"]]
