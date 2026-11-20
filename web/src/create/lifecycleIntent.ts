@@ -1,3 +1,4 @@
+import { refreshSandboxCapacity } from '../sandbox/useSandboxCapacity';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { ApiError, ProtocolError } from '@cma/client';
 import { AgentLifecycleCreateError } from '../api/client';
@@ -170,6 +171,8 @@ export function useLifecycleIntent(
           phaseStartedAt = Date.now();
         }
         setOperation(value);
+        if (owner && value.status === 'failed' && value.failure?.code === 'sandbox_limit_reached')
+          void refreshSandboxCapacity(client, owner);
         setFailure(undefined);
         retryDelay = 500;
         setConnection(value.status === 'waiting_for_connection' ? value.connection : undefined);
@@ -205,7 +208,7 @@ export function useLifecycleIntent(
       abort.abort();
       if (timer !== undefined) clearTimeout(timer);
     };
-  }, [client, receipt, pollVersion]);
+  }, [client, receipt, pollVersion, owner]);
   const submit = async (body?: AgentLifecycleCreateInput) => {
     if (active.current || !client.createAgentLifecycle || saved.error) return;
     const intent = current.current ?? (body ? { key: crypto.randomUUID(), body } : undefined);
@@ -233,10 +236,18 @@ export function useLifecycleIntent(
         setFailure(lifecycleFailure(error, 'submit', intent.body.initial_message !== undefined));
         if (
           error instanceof AgentLifecycleCreateError &&
-          [400, 422].includes(error.status) &&
+          ([400, 422].includes(error.status) ||
+            (error.status === 429 && error.failure !== undefined)) &&
           !intent.receipt
         )
           retain();
+        if (
+          owner &&
+          error instanceof AgentLifecycleCreateError &&
+          error.status === 429 &&
+          error.failure
+        )
+          void refreshSandboxCapacity(client, owner);
       }
     } finally {
       active.current = undefined;

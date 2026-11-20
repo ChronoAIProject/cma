@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { EventGateway } from './EventGateway';
@@ -99,12 +99,25 @@ it('retains an uncertain create across navigation and removes a freshly created 
     return json({ items: [existing] });
   });
   vi.stubGlobal('fetch', fetcher);
-  render(<EventGateway session={session} denied={vi.fn()} />);
-  await select('Existing');
-  await screen.findByRole('heading', { name: 'Existing' });
-  if (screen.queryByRole('dialog'))
-    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
-  await userEvent.click(screen.getByRole('button', { name: 'New channel' }));
+  vi.stubGlobal('EventSource', undefined);
+  await act(async () => {
+    render(<EventGateway session={session} denied={vi.fn()} />);
+  });
+  const openExisting = () => {
+    const channels = within(screen.getByRole('region', { name: 'Channels' }));
+    fireEvent.click(channels.getByRole('button', { name: /^Existing/ }));
+  };
+  // Each mocked response settles in React's async act, so the next assertion
+  // observes the committed UI without pointer timers or polling the workspace.
+  const submit = async (button: HTMLElement) => {
+    expect(button).toBeEnabled();
+    await act(async () => {
+      fireEvent.click(button);
+    });
+  };
+  openExisting();
+  expect(screen.getByRole('heading', { name: 'Existing' })).toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
   const form = screen.getByRole('button', { name: 'Create channel' }).closest('form')!;
   fireEvent.change(within(form).getByLabelText('Channel name'), {
     target: { value: 'Created' },
@@ -121,25 +134,26 @@ it('retains an uncertain create across navigation and removes a freshly created 
   fireEvent.change(within(form).getByLabelText('Route IDs 1'), {
     target: { value: 'fixture-route' },
   });
-  await userEvent.click(screen.getByRole('button', { name: 'Create channel' }));
-  await screen.findByRole('button', { name: 'Retry same request' });
-  await select('Existing');
-  if (screen.queryByRole('dialog'))
-    await userEvent.click(screen.getByRole('button', { name: 'Close' }));
-  await userEvent.click(screen.getByRole('button', { name: 'New channel' }));
+  await submit(within(form).getByRole('button', { name: 'Create channel' }));
+  expect(screen.getByRole('button', { name: 'Retry same request' })).toBeVisible();
+  openExisting();
+  expect(form).not.toBeVisible();
+  fireEvent.click(screen.getByRole('button', { name: 'New channel' }));
   expect(within(form).getByLabelText('Channel name')).toBeDisabled();
-  await userEvent.click(screen.getByRole('button', { name: 'Retry same request' }));
-  await screen.findByRole('heading', { name: 'Created' });
+  await submit(screen.getByRole('button', { name: 'Retry same request' }));
+  const details = within(screen.getByRole('region', { name: 'Created details' }));
+  expect(details.getByRole('heading', { name: 'Created' })).toBeVisible();
   const requests = fetcher.mock.calls.filter(([, init]) => init?.method === 'POST');
   expect(requests).toHaveLength(2);
   expect(requests[1]?.[1]?.body).toBe(requests[0]?.[1]?.body);
   expect(requests[1]?.[1]?.headers).toEqual(requests[0]?.[1]?.headers);
-  await userEvent.click(await screen.findByRole('button', { name: /Channel: Created/ }));
-  await userEvent.click(screen.getByRole('button', { name: 'Delete channel' }));
-  await userEvent.click(screen.getByRole('button', { name: 'Confirm delete' }));
-  await waitFor(() =>
-    expect(screen.queryByRole('heading', { name: 'Created' })).not.toBeInTheDocument(),
-  );
+  // The delivery graph is lazy-loaded. Wait for its control in the new map.
+  const map = within(details.getByRole('region', { name: 'Delivery map' }));
+  fireEvent.click(await map.findByRole('button', { name: /Channel: Created/ }));
+  const settings = within(screen.getByRole('dialog', { name: 'Channel settings' }));
+  fireEvent.click(settings.getByRole('button', { name: 'Delete channel' }));
+  await submit(settings.getByRole('button', { name: 'Confirm delete' }));
+  expect(screen.queryByRole('heading', { name: 'Created' })).not.toBeInTheDocument();
   expect(screen.getByRole('region', { name: 'Channel workspace' })).toBeVisible();
   expect(
     within(screen.getByRole('region', { name: 'Channels' })).queryByRole('button', {

@@ -46,7 +46,7 @@ pub(super) fn role(database: &str, access: Access) -> Document {
         grants.push(
             doc! {"resource":{"db":database,"collection":"agents"},"actions":["find","update"]},
         );
-        grants.push(doc! {"resource":{"db":database,"collection":"agent_log"},"actions":["find"]});
+        grants.push(doc! {"resource":{"db":database,"collection":"agent_log"},"actions":["find","listIndexes"]});
     } else {
         let actions = if access == Access::GateWrite {
             vec!["find", "insert", "update"]

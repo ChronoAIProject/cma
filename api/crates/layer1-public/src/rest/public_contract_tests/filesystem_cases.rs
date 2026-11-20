@@ -170,6 +170,19 @@ async fn scenario_with_runtime_boot(
     adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
     boot: &str,
 ) -> Option<Scenario> {
+    scenario_with_runtime_store(name, adapter, boot)
+        .await
+        .map(|(scenario, _)| scenario)
+}
+
+async fn scenario_with_runtime_store(
+    name: &str,
+    adapter: Arc<dyn layer3_adapter::SandboxAdapter>,
+    boot: &str,
+) -> Option<(
+    Scenario,
+    Arc<layer2_core::sandbox::store::InMemorySandboxStore>,
+)> {
     let kind = name.strip_prefix("filesystem_")?;
     assert!([
         "owner",
@@ -296,10 +309,13 @@ async fn scenario_with_runtime_boot(
             crate::DelegatedCredential::new("request-credential".into()),
         ));
     }
-    Some(Scenario {
-        router,
-        subject: (kind != "anonymous").then_some(subject),
-        authorization: caller.caller.authorization,
-        symbols: Default::default(),
-    })
+    Some((
+        Scenario {
+            router,
+            subject: (kind != "anonymous").then_some(subject),
+            authorization: caller.caller.authorization,
+            symbols: Default::default(),
+        },
+        fixture.store,
+    ))
 }
