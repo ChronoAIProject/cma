@@ -98,7 +98,12 @@ it('creates the Agent in the Workspace whose row opened New agent', async () => 
   );
   const actor = userEvent.setup();
   await expandNavigationFilters(actor);
-  await actor.click(screen.getByRole('button', { name: 'Manage environments' }));
+  await actor.click(
+    within(screen.getByRole('complementary', { name: 'Application navigation' })).getByRole(
+      'button',
+      { name: 'Manage environments' },
+    ),
+  );
   await actor.click(
     await screen.findByRole('button', { name: 'Options for /workspaces/chrono-bot' }),
   );
