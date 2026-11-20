@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { AgentTranscript } from '../api/types';
 import { agentHistoryJsonl, downloadAgentHistory } from './historyExport';
 
+const answer = '**检查日期：**2026 年\n\n**检查范围：**仅对当前本地工作区';
 const transcript: AgentTranscript = {
   agentId: 'agt_123',
   throughSeq: 8,
@@ -10,7 +11,7 @@ const transcript: AgentTranscript = {
       turnSequence: 1,
       startedAt: '2026-10-12T00:00:00Z',
       ownerMessage: 'Hello',
-      agentMessages: ['Hi'],
+      agentMessages: [answer],
       messages: [
         {
           sequence: 7,
@@ -21,7 +22,7 @@ const transcript: AgentTranscript = {
         {
           sequence: 8,
           role: 'assistant',
-          content: 'Hi',
+          content: answer,
           appendedAt: '2026-10-12T00:00:02Z',
         },
       ],
@@ -37,7 +38,12 @@ it('serializes one valid JSON object per transcript message', () => {
   expect(lines).toHaveLength(2);
   expect(lines.map((line) => JSON.parse(line))).toEqual([
     expect.objectContaining({ agent_id: 'agt_123', sequence: 7, role: 'user' }),
-    expect.objectContaining({ agent_id: 'agt_123', sequence: 8, role: 'assistant' }),
+    expect.objectContaining({
+      agent_id: 'agt_123',
+      sequence: 8,
+      role: 'assistant',
+      content: answer,
+    }),
   ]);
 });
 

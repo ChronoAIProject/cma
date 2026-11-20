@@ -365,6 +365,8 @@ test('LOCAL composer and Details use model and skill catalogs in responsive cont
     .getByRole('button', { name: /Options for/ })
     .click();
   await page.getByRole('menuitem', { name: 'Stop', exact: true }).click();
+  expect(stops).toBe(0);
+  await page.getByRole('button', { name: 'Stop Agent', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Stopping Agent' })).toBeVisible();
   await expect(page.getByText('Accepted', { exact: true })).toBeVisible();
   expect(stops).toBe(1);

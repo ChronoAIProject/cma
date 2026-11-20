@@ -27,7 +27,9 @@ it('sends one request in StrictMode and waits for observed stopped status after 
       />
     </StrictMode>,
   );
-  expect(screen.getByRole('dialog', { name: 'Stopping Agent' })).toBeVisible();
+  expect(screen.getByRole('dialog', { name: 'Stop Agent' })).toBeVisible();
+  expect(stop).not.toHaveBeenCalled();
+  await userEvent.dblClick(screen.getByRole('button', { name: 'Stop Agent' }));
   await waitFor(() => expect(stop).toHaveBeenCalledOnce());
   await act(async () => accept());
   expect(screen.getByText('Accepted')).toBeVisible();
@@ -57,10 +59,31 @@ it('retains the stop command key after uncertainty and never treats an inaccessi
       onClose={vi.fn()}
     />,
   );
+  await userEvent.click(screen.getByRole('button', { name: 'Stop Agent' }));
   await screen.findByText('Lost stop response');
   expect(screen.getByText(/Completion is not yet confirmed/)).toBeVisible();
   await userEvent.click(screen.getByRole('button', { name: 'Retry stop request' }));
   await waitFor(() => expect(stop).toHaveBeenCalledTimes(2));
   expect(stop.mock.calls[1]).toEqual(stop.mock.calls[0]);
   expect(screen.queryByRole('dialog', { name: 'Agent stopped' })).not.toBeInTheDocument();
+});
+
+it('cancels Stop without a write or a completion claim', async () => {
+  const stop = vi.fn();
+  const close = vi.fn();
+  const stopped = vi.fn();
+  render(
+    <StopAgentDialog
+      client={agentClient({ stopAgent: stop })}
+      agentId="agt_1"
+      requestKey="cancel-stop"
+      onChanged={vi.fn()}
+      onStopped={stopped}
+      onClose={close}
+    />,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(close).toHaveBeenCalledOnce();
+  expect(stop).not.toHaveBeenCalled();
+  expect(stopped).not.toHaveBeenCalled();
 });
