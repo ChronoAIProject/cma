@@ -38,8 +38,8 @@ export default defineConfig({
   use: {
     baseURL: preview.origin,
     serviceWorkers: 'block',
-    trace: 'off',
+    trace: 'retain-on-failure',
     video: 'off',
-    screenshot: 'off',
+    screenshot: 'only-on-failure',
   },
 });

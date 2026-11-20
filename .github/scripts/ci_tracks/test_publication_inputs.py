@@ -44,6 +44,7 @@ class PublicationInputsTests(unittest.TestCase):
             '.github/scripts/staging_cd_compatibility.py',
             'api/crates/layer3-adapter/runtime-versions.json',
             '.github/scripts/api-cargo-cache.py',
+            '.github/scripts/ci_retry.py',
             '.github/workflows/staging-release.yml',
         ):
             with self.subTest(path=path):

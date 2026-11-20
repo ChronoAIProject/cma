@@ -71,7 +71,7 @@ it.each([
   });
   render(<OwnerAllocationChart {...props} />);
   expect(await screen.findByRole('listitem')).toHaveTextContent(
-    `1 core-hours; ${label}; Partial history`,
+    `1 core-hours; ${label}; Coverage unverified`,
   );
   await userEvent.click(screen.getByText('View owner allocation chart data'));
   const table = screen.getByRole('table', { name: 'Owner allocation chart data' });

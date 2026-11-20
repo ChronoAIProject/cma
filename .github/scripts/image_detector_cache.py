@@ -9,6 +9,8 @@ import subprocess
 import time
 import zipfile
 
+import ci_retry
+
 REPO = "ChronoAIProject/cma"
 WORKFLOW = ".github/workflows/staging-cd.yml"
 COMPONENTS = {"am", "eg", "web", "runtime", "runtime-omarchy"}
@@ -65,7 +67,10 @@ def github(path, *, binary=False, timeout=10):
     require(path.startswith("repos/" + REPO + "/") and ".." not in path)
     result = subprocess.run(["gh", "api", "--hostname", "github.com", "--method", "GET", path],
                             capture_output=True, timeout=timeout, check=False)
-    require(result.returncode == 0 and len(result.stdout) <= MAX_BYTES)
+    if result.returncode != 0:
+        # The cause marks a transport failure as repeatable; the message stays fixed.
+        raise ValueError("Layer detector cache refused") from ci_retry.cli_cause(result.stderr)
+    require(len(result.stdout) <= MAX_BYTES)
     return result.stdout if binary else json.loads(result.stdout)
 
 
@@ -126,15 +131,19 @@ def unpack(raw, artifact):
     return data
 
 
-def restore(env, root, get=github, match_source=source_matches):
+def restore(env, root, get=github, match_source=source_matches, sleep=time.sleep):
     destination, _ = paths(env)
     require(not destination.exists() and not destination.is_symlink())
     deadline = time.monotonic() + 30
 
     def read(path, **kwargs):
-        remaining = deadline - time.monotonic()
-        require(remaining > 0)
-        return get(path, timeout=min(10, remaining), **kwargs)
+        # Every read is a GET; transport failures repeat inside the restore deadline.
+        def attempt():
+            remaining = deadline - time.monotonic()
+            require(remaining > 0)
+            return get(path, timeout=min(10, remaining), **kwargs)
+        return ci_retry.call(attempt, name="detector-cache-read", classify=ci_retry.classify,
+                             deadline=deadline, sleep=sleep)
 
     # A finished component can supply evidence while sibling jobs are still running.
     # Request one extra run because the newest result is usually this consumer.

@@ -102,6 +102,13 @@ impl HostedChannelToolBinding {
         ));
         serde_json::to_value(server).expect("typed MCP HTTP descriptor serializes")
     }
+
+    pub(super) fn acp_server_plan(&self) -> crate::Result<crate::ingress_budget::AllocationPlan> {
+        super::acp::ingress::identity::http_descriptor_plan(
+            self.endpoint.len(),
+            Some(self.credential.expose().len()),
+        )
+    }
 }
 
 /// Resolve from current retained creation/allocation/authority records. Manual,
