@@ -1,4 +1,4 @@
-//! Reader floor for explicit home replacement. No restore admission or writer.
+//! Reader preparation for explicit home replacement. No restore admission or writer.
 use serde::{Deserialize, Serialize};
 
 use super::{SandboxHome, SandboxModelError};

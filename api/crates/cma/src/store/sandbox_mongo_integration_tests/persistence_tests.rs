@@ -7,6 +7,19 @@ async fn home_restore_reader_preserves_nested_shapes_and_refuses_unknown_fields(
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let original = sandbox("sbx_restore_reader");
     store.create_sandbox(original.clone()).await.unwrap();
+    let raw = client.database(&name).collection::<Document>(SANDBOXES);
+    let legacy = raw
+        .find_one(doc! {"_id": original.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    let lifecycle = legacy
+        .get_document("record")
+        .unwrap()
+        .get_document("lifecycle")
+        .unwrap();
+    assert!(!lifecycle.contains_key("home_restore"));
+    assert!(!lifecycle.contains_key("superseded_homes"));
     assert_eq!(
         store.get_sandbox(&original.id).await.unwrap(),
         Some(original.clone())
@@ -69,6 +82,17 @@ async fn home_restore_reader_preserves_nested_shapes_and_refuses_unknown_fields(
     // A fresh store exercises the actual Mongo serializer/strict reader and a
     // subsequent whole-record replacement must preserve the retained pin.
     let reopened = MongoSandboxStore::open(&client, &name).await.unwrap();
+    assert_eq!(
+        reopened.get_sandbox(&next.id).await.unwrap(),
+        Some(next.clone())
+    );
+    let mut stale = original.clone();
+    stale.revision += 1;
+    stale.name = "stale-writer".into();
+    assert!(matches!(
+        reopened.save_sandbox(original.revision, stale).await,
+        Err(SandboxStoreError::Conflict)
+    ));
     assert_eq!(
         reopened.get_sandbox(&next.id).await.unwrap(),
         Some(next.clone())
