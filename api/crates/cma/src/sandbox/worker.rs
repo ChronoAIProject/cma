@@ -28,6 +28,7 @@ mod provision_timing;
 mod provisioning;
 mod retained_retirement;
 mod retirement;
+mod retirement_credentials;
 mod retry;
 mod scheduling;
 mod startup_hold;
