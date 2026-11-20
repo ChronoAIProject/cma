@@ -10,6 +10,8 @@ from .package_evidence import fields, normalized, ordinal, require
 PATH = "usr/local/bin/gh"
 MAX_ELF_BYTES = 128 * 1024 * 1024
 EXTENT_FIELDS = {"offset", "size", "sha256"}
+REFERENCES = {"word-pair": elf_constants.word_pair, "instruction-pair": elf_constants.instruction_pair,
+              "stack-pair": elf_constants.stack_pair}
 
 
 def extent(value, maximum):
@@ -25,6 +27,10 @@ def validate_reference(reference):
         fields(reference, {"kind", "offset", "sha256"})
         require(type(reference["offset"]) is int and 0 <= reference["offset"] <= MAX_ELF_BYTES - 16
                 and valid_digest(reference["sha256"]))
+    elif reference.get("kind") == "stack-pair":
+        fields(reference, {"kind", "code"})
+        extent(reference["code"], 21)
+        require(reference["code"]["size"] == 21)
     else:
         fields(reference, {"kind", "address", "length"})
         require(reference["kind"] == "instruction-pair")
@@ -86,8 +92,7 @@ def verify_case(data, segments, metadata, case):
                 or digest_bytes(data[max(left, start):min(right, end)]) != part["contribution_sha256"]):
             return False
         reference = part["reference"]
-        verify_reference = elf_constants.word_pair if reference["kind"] == "word-pair" else elf_constants.instruction_pair
-        if not verify_reference(data, segments, reference, address, right - left):
+        if not REFERENCES[reference["kind"]](data, segments, reference, address, right - left):
             return False
     return True
 
