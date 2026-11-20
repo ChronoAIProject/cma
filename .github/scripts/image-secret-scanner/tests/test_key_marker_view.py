@@ -11,7 +11,6 @@ from unittest.mock import patch
 from image_secrets import key_marker_view
 from image_secrets.common import digest_bytes
 from image_secrets.gate import FORMAT_MARKER_ADVISORY, KEY_MARKER_VIEW_ADVISORY, KEY_MARKER_VIEW_RULE
-
 from tests import fixtures
 from tests import test_package_policy as packages
 

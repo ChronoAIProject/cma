@@ -17,7 +17,6 @@ from unittest.mock import patch
 
 from image_secrets import derived_payload, mime_markers, nested_certificates, reviewed_literals
 from image_secrets.common import digest_bytes
-
 from tests import fixtures
 from tests import test_executable_vectors as executable
 from tests import test_package_policy as packages
