@@ -255,7 +255,7 @@ class PackageEvidence:
                    (row["component"], row["platform"], row["layer"], row["diff_id"], row["entry"], locator))
             require(key not in entries)
             go_strings = (derived_payload.validate(row, package, portable=portable,
-                                                   packages=packages if native_arch else None) if derived else None)
+                                                   packages=packages if native_arch and not producer else None) if derived else None)
             if "npm_help_template" in row:
                 npm_help_template.validate(row, package)
             if "nyxid_format_labels" in row:

@@ -48,7 +48,7 @@
     {"path": "image_secrets/npm_help_template.py", "sha256": "6449a00a8613f6146f1f04af02f6a99640fcb23ee2c4c067a1d4f02123b49a54", "bytes": 3228, "lines": 72, "mode": "0o644"},
     {"path": "image_secrets/nyxid_format_labels.py", "sha256": "98a215fc1350341c74a54c29e33bee9b12f8ff1610eabd835160f57f4ef0c5c4", "bytes": 3586, "lines": 72, "mode": "0o644"},
     {"path": "image_secrets/openpgp.py", "sha256": "f4710d01307b488543e7fb3d018a29acd43bd5a0f409d983d023d2f3d0a6987b", "bytes": 2485, "lines": 73, "mode": "0o644"},
-    {"path": "image_secrets/package_evidence.py", "sha256": "0f30b3be7348f6497f46af20028fbecc93595f0cb8c0b047c1609117f8491691", "bytes": 19940, "lines": 336, "mode": "0o644"},
+    {"path": "image_secrets/package_evidence.py", "sha256": "5de91d86003254018c606a86388a262bfd132aca252deead261b5f92934b90b9", "bytes": 19957, "lines": 336, "mode": "0o644"},
     {"path": "image_secrets/package_occurrences.py", "sha256": "fda0fed4e7e2bd63b69626adf446b92456963c27b0a6af89300ab052d71f01d3", "bytes": 25728, "lines": 477, "mode": "0o644"},
     {"path": "image_secrets/package_receipt.py", "sha256": "61e6c81a11d1548e69dcf900774780194e676a60f45ce13f89db4c19fd98a289", "bytes": 21670, "lines": 419, "mode": "0o644"},
     {"path": "image_secrets/policy.py", "sha256": "a6392bd8713b46959368bf482f3c38951a6a959f41be1d86d2505f6756966120", "bytes": 6864, "lines": 157, "mode": "0o644"},
