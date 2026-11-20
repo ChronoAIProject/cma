@@ -230,6 +230,23 @@ export async function downloadBrowser(attempt, log, wait = delay) {
   );
 }
 
+const ubuntuPlatform = /^ubuntu(\d+)\.(\d+)-(x64|arm64)$/;
+
+// Playwright names an Ubuntu release newer than its tables after itself and
+// then has no download for it (1.58.2: "does not support chromium on
+// ubuntu26.04-x64"). For each architecture its Ubuntu Chromium archive is the
+// same generic Linux build on every release, so select the newest Ubuntu
+// table it knows. The launch/render probe still decides whether it is usable.
+export function downloadHostPlatform(hostPlatform, known) {
+  const host = ubuntuPlatform.exec(hostPlatform);
+  if (!host || known.includes(hostPlatform)) return undefined;
+  const release = (match) => Number(match[1]) * 100 + Number(match[2]);
+  return known
+    .map((platform) => ubuntuPlatform.exec(platform))
+    .filter((match) => match && match[3] === host[3] && release(match) < release(host))
+    .sort((left, right) => release(right) - release(left))[0]?.[0];
+}
+
 export async function ensureBrowser(ops) {
   let repair;
   const failures = [];
@@ -311,6 +328,10 @@ export async function main() {
     DEBIAN_FRONTEND: 'noninteractive',
     PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: '30000',
   };
+  const tables = () => ({
+    hostPlatform: require(join(core, 'lib/server/utils/hostPlatform.js')).hostPlatform,
+    deps: require(join(core, 'lib/server/registry/nativeDeps.js')).deps,
+  });
   const run = (command, args, options = {}) =>
     execFileSync(command, args, {
       cwd: web,
@@ -351,8 +372,7 @@ export async function main() {
     },
     mapping: () => {
       // Reuse the locked Playwright version's distro-specific t64/package map.
-      const { hostPlatform } = require(join(core, 'lib/server/utils/hostPlatform.js'));
-      const { deps } = require(join(core, 'lib/server/registry/nativeDeps.js'));
+      const { hostPlatform, deps } = tables();
       const mapping = deps[hostPlatform]?.lib2package;
       if (!mapping) throw new Error(`No browser package mapping for ${hostPlatform}`);
       return mapping;
@@ -360,11 +380,21 @@ export async function main() {
     download: () => {
       console.log('No usable installed browser; download locked Playwright Chromium without apt.');
       const cli = join(dirname(require.resolve('playwright/package.json')), 'cli.js');
+      const { hostPlatform, deps } = tables();
+      const fallback = env.PLAYWRIGHT_HOST_PLATFORM_OVERRIDE
+        ? undefined
+        : downloadHostPlatform(hostPlatform, Object.keys(deps));
+      if (fallback) {
+        console.log(
+          `Locked Playwright has no Chromium download for ${hostPlatform}; using its newest ` +
+            `Ubuntu build (${fallback}), the same generic Linux archive. The probe still decides.`,
+        );
+      }
       return downloadBrowser(
         (timeoutMs) =>
           runBounded(process.execPath, [cli, 'install', '--no-shell', 'chromium'], {
             cwd: web,
-            env,
+            env: fallback ? { ...env, PLAYWRIGHT_HOST_PLATFORM_OVERRIDE: fallback } : env,
             timeoutMs,
           }),
         console.log,

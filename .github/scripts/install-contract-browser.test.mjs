@@ -4,6 +4,7 @@ import {
   downloadAttempts,
   downloadBackoffMs,
   downloadBrowser,
+  downloadHostPlatform,
   downloadTimeoutMs,
   ensureBrowser,
   missingLibraries,
@@ -418,4 +419,29 @@ test('a non-network downloader failure says so and shows that it printed nothing
     /after 3 bounded attempts.*shows no network failure.*Re-run the job/s,
   );
   assert.equal(run.logs.at(-1), 'Browser downloader printed no output.');
+});
+
+test('newer Ubuntu hosts download the newest Ubuntu build the locked Playwright knows', () => {
+  // Object.keys(deps) from Playwright 1.58.2 nativeDeps.
+  const known = [
+    'ubuntu20.04-x64',
+    'ubuntu22.04-x64',
+    'ubuntu24.04-x64',
+    'debian11-x64',
+    'debian12-x64',
+    'debian13-x64',
+    'ubuntu20.04-arm64',
+    'ubuntu22.04-arm64',
+    'ubuntu24.04-arm64',
+    'debian11-arm64',
+    'debian12-arm64',
+    'debian13-arm64',
+  ];
+  assert.equal(downloadHostPlatform('ubuntu26.04-x64', known), 'ubuntu24.04-x64');
+  assert.equal(downloadHostPlatform('ubuntu26.10-arm64', known), 'ubuntu24.04-arm64');
+  assert.equal(downloadHostPlatform('ubuntu24.04-x64', known), undefined);
+  assert.equal(downloadHostPlatform('ubuntu18.04-x64', known), undefined);
+  assert.equal(downloadHostPlatform('debian14-x64', known), undefined);
+  assert.equal(downloadHostPlatform('mac15-arm64', known), undefined);
+  assert.equal(downloadHostPlatform('ubuntu26.04-x64', ['debian13-x64']), undefined);
 });
