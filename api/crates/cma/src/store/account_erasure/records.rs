@@ -99,14 +99,22 @@ async fn run(
         now,
         options,
     } = input;
-    let receipt = super::optional::inspect(db, options.allocation_rollups_enabled).await?;
-    if cursor.allocation_absent != Some(receipt.allocation_absent) {
+    let receipt = super::optional::inspect(
+        db,
+        options.allocation_rollups_enabled,
+        options.agent_shared_observation,
+    )
+    .await?;
+    if cursor.allocation_absent != Some(receipt.allocation_absent)
+        || cursor.observer_absent != Some(receipt.observer_absent)
+    {
         // A persisted absence marker cannot hide a namespace created later.
         cursor.operation = 0;
         cursor.after = None;
         cursor.selector = None;
         cursor.indexes_ready = false;
         cursor.allocation_absent = Some(receipt.allocation_absent);
+        cursor.observer_absent = Some(receipt.observer_absent);
     }
     if !cursor.indexes_ready {
         super::indexes::ensure_with_receipt(db, &receipt).await?;

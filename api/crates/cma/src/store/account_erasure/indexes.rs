@@ -10,7 +10,7 @@ use std::collections::BTreeMap;
 
 #[cfg(test)]
 pub(super) async fn ensure(db: &Database) -> Result<(), Error> {
-    let receipt = super::optional::inspect(db, Some(false)).await?;
+    let receipt = super::optional::inspect(db, Some(false), Some(false)).await?;
     ensure_with_receipt(db, &receipt).await
 }
 
@@ -177,9 +177,13 @@ async fn ensure_effect_keysets(
     Ok(())
 }
 
-fn effect_error(collection: &str, error: mongodb::error::Error, operation: &'static str) -> Error {
-    if collection == crate::store::allocation_buckets::COLLECTION {
-        super::optional::failure(error, operation)
+fn effect_error(
+    collection: &'static str,
+    error: mongodb::error::Error,
+    operation: &'static str,
+) -> Error {
+    if crate::store::isolation::OPTIONAL_COLLECTIONS.contains(&collection) {
+        super::optional::failure(error, collection, operation)
     } else {
         error.into()
     }

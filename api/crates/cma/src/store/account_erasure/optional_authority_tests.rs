@@ -10,93 +10,14 @@ use std::sync::{Arc, Mutex};
 
 const OPTIONAL: &str = crate::store::allocation_buckets::COLLECTION;
 
-struct Fixture {
-    admin: Database,
-    runtime: Database,
-    commands: Arc<Mutex<Vec<Document>>>,
-}
-impl Fixture {
-    async fn new(optional: bool, omit: Option<&str>) -> Self {
-        Self::with_missing_action(optional, omit, None).await
-    }
-    async fn with_missing_action(
-        optional: bool,
-        omit: Option<&str>,
-        missing: Option<&str>,
-    ) -> Self {
-        let uri = std::env::var("CMA_IM_TEST_MONGODB_URI").unwrap();
-        let client = Client::with_uri_str(&uri).await.unwrap();
-        let name = format!("erasure_authority_{}", uuid::Uuid::new_v4().simple());
-        let admin = client.database(&name);
-        let mut role = crate::store::isolation::replicas::role(&name, true);
-        role.get_array_mut("privileges").unwrap().retain(|grant| {
-            let name = grant
-                .as_document()
-                .unwrap()
-                .get_document("resource")
-                .unwrap()
-                .get_str("collection")
-                .unwrap();
-            (optional || name != OPTIONAL) && omit != Some(name)
-        });
-        if let Some(missing) = missing {
-            for grant in role.get_array_mut("privileges").unwrap() {
-                let grant = grant.as_document_mut().unwrap();
-                if grant
-                    .get_document("resource")
-                    .unwrap()
-                    .get_str("collection")
-                    .unwrap()
-                    == OPTIONAL
-                {
-                    grant
-                        .get_array_mut("actions")
-                        .unwrap()
-                        .retain(|action| action.as_str() != Some(missing));
-                }
-            }
-        }
-        admin.run_command(role).await.unwrap();
-        let password = uuid::Uuid::new_v4().to_string();
-        admin
-            .run_command(doc! {"createUser":"erasure-runtime","pwd":&password,
-            "roles":[{"role":"cma_am_runtime","db":&name}]})
-            .await
-            .unwrap();
-        let commands = Arc::new(Mutex::new(vec![]));
-        let captured = commands.clone();
-        let mut options = ClientOptions::parse(&uri).await.unwrap();
-        options.credential = Some(
-            Credential::builder()
-                .username("erasure-runtime".to_owned())
-                .password(password)
-                .source(name.clone())
-                .build(),
-        );
-        options.command_event_handler = Some(EventHandler::callback(move |event| {
-            if let CommandEvent::Started(event) = event {
-                captured.lock().unwrap().push(event.command);
-            }
-        }));
-        let runtime = Client::with_options(options).unwrap().database(&name);
-        Self {
-            admin,
-            runtime,
-            commands,
-        }
-    }
-    async fn absent(&self) {
-        assert!(!self
-            .admin
-            .list_collection_names()
-            .await
-            .unwrap()
-            .iter()
-            .any(|name| name == OPTIONAL));
-    }
-}
+#[path = "optional_authority_fixture.rs"]
+mod fixture;
+use fixture::Fixture;
+#[path = "observer_authority_tests.rs"]
+mod observers;
 
 pub(crate) async fn verify_runtime() {
+    observers::verify().await;
     disabled_absent().await;
     present_without_grants().await;
     read_without_cleanup().await;
@@ -222,6 +143,7 @@ async fn once_with(
         Options {
             billing_enabled: false,
             allocation_rollups_enabled: mode,
+            agent_shared_observation: Some(false),
         },
     )
     .await

@@ -296,7 +296,7 @@ pub(super) async fn load_cohort(
     db: &Database,
     targets: &[Target<'_>],
 ) -> Result<Vec<Context>, Error> {
-    let receipt = super::optional::inspect(db, Some(false)).await?;
+    let receipt = super::optional::inspect(db, Some(false), Some(false)).await?;
     load_cohort_with_receipt(db, targets, &receipt).await
 }
 

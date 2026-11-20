@@ -32,15 +32,18 @@ use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Options {
+    /// Delivery to NyxID's existing provider, independent of prepaid funding.
     pub billing_enabled: bool,
     /// Only an explicitly disabled deployment can omit an absent projection.
     pub allocation_rollups_enabled: Option<bool>,
+    pub agent_shared_observation: Option<bool>,
 }
 impl Options {
-    pub fn from_config(config: &crate::config::Config, billing_enabled: bool) -> Self {
+    pub fn from_config(config: &crate::config::Config) -> Self {
         Self {
-            billing_enabled,
+            billing_enabled: config.usage_billing.is_some(),
             allocation_rollups_enabled: Some(config.usage_metrics.views.allocation_rollups_enabled),
+            agent_shared_observation: Some(config.features.agent_shared_observation),
         }
     }
 }
@@ -61,6 +64,7 @@ pub(crate) async fn erase_records(
         Options {
             billing_enabled: false,
             allocation_rollups_enabled: Some(false),
+            agent_shared_observation: Some(false),
         },
     )
     .await
@@ -166,6 +170,7 @@ pub(crate) struct Cursor {
     indexes_ready: bool,
     // A rescan marker only: authorization always requires a fresh receipt.
     allocation_absent: Option<bool>,
+    observer_absent: Option<bool>,
 }
 impl Cursor {
     fn advance(&mut self) {
@@ -180,6 +185,8 @@ mod batch_tests;
 mod catalog_fixture_tests;
 #[cfg(test)]
 mod history_tests;
+#[cfg(test)]
+mod observer_tests;
 #[cfg(test)]
 pub(crate) mod optional_authority_tests;
 #[cfg(test)]

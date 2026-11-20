@@ -27,6 +27,7 @@ async fn invalid_worker_clock_is_retryable_without_attributing_the_first_cohort_
         "invalid-worker-clock",
         Options {
             allocation_rollups_enabled: Some(false),
+            agent_shared_observation: Some(false),
             billing_enabled: false,
         },
     )

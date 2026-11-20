@@ -56,6 +56,20 @@ pub(super) async fn remove(
         return Ok(());
     }
     let filter = match entry.collection {
+        crate::store::agent_observation::COLLECTION => {
+            // Lease creation writes its source Agent in the same transaction.
+            // Once the source is gone, no delayed acquisition can recreate a
+            // deleted observer. Retained sources are not erasure authority.
+            let present: Vec<_> = majority_collection::<Document>(db, "agents")
+                .find(doc! {"_id":{"$in":ids}})
+                .projection(doc! {"_id":1})
+                .limit(500)
+                .await?
+                .try_collect::<Vec<_>>()
+                .await?;
+            let retained: Vec<_> = present.iter().filter_map(|row| row.get("_id")).collect();
+            doc! {"_id":{"$in":ids,"$nin":retained}}
+        }
         "sandboxes" => guards::sandbox_filter(contexts, ids, now)?,
         "sandbox_usage_events" => {
             doc! {"$and":[{"_id":{"$in":ids}},guards::usage_filter(options.billing_enabled)]}

@@ -126,6 +126,7 @@ fn command() -> AdmittedAgentCommand {
                 correlation_id: "foreign-command".into(),
                 request_fingerprint: command.fingerprint().unwrap(),
                 authorization: AgentAuthorizationRevision {
+                    replay_principal: None,
                     authority_id: "foreign-authority".into(),
                     policy_revision: 1,
                     grant_revision: None,

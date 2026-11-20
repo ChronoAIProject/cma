@@ -23,6 +23,7 @@ fn rank(name: &str) -> u8 {
     match name {
         "trigger_definitions" => 0,
         "agents" => 2,
+        "agent_read_observers_v1" => 3,
         "worktrees" => 3,
         "workspaces" => 4,
         "trigger_launches" | "cma_document_artifacts" | "sandbox_usage_reports" => 5,
@@ -78,8 +79,8 @@ pub(super) fn prepare(
 ) {
     let digest = layer2_core::document_artifacts::digest(
         format!(
-            "account-record-effects-c1:{operations:?}:{:?}",
-            options.allocation_rollups_enabled
+            "account-record-effects-c1:{operations:?}:{:?}:{:?}",
+            options.allocation_rollups_enabled, options.agent_shared_observation
         )
         .as_bytes(),
     );

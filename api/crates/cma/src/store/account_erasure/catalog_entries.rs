@@ -1,4 +1,4 @@
-//! Explicit policies; writer and index evidence lives in CMA_Account_Erasure_Catalog.md.
+//! Explicit account record erasure policies.
 use super::{Entry, Erasure::*, InventorySet::*, KeyRule::*, ReferenceRule, Rule};
 
 const LEGACY_OWNER_PATHS: &[&str] = &[
@@ -76,6 +76,7 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("native_warm_pool_targets", Global => true),
     entry!("cma_agent_manager_members", Global => true),
     entry!("cma_agent_manager_owners", Retained("agent-ownership-fence") => true),
+    entry!("agent_read_observers_v1", Linked(Agents, &["_id"]) => true),
     entry!("native_prepared_sandboxes", Owner(&["record.ownership.owner"]) => false),
     entry!("runtime_backend_routes", Linked(Sandboxes, &["sandbox_id"]) => false),
     entry!("activity", Owner(&["record.actor"]) => true, Reference(ReferenceRule::ActivityTargets) => false, Reference(ReferenceRule::Identities) => false),
