@@ -59,6 +59,7 @@ export function AgentHeader({
   const [open, setOpen] = useState(false);
   const sidebar = useContext(SidebarContext);
   const remove = moreActions.find((item) => item.id === 'delete_agent');
+  const stop = moreActions.find((item) => item.id === 'stop_agent' && !('type' in item));
   const action = (id: string, label: string, reason: string): MenuEntry => {
     const item = [...menu, ...moreActions].find((item) => item.id === id && !('type' in item));
     return item ? { ...item, label } : { id, label, disabled: true, reason };
@@ -79,6 +80,7 @@ export function AgentHeader({
       reason: !onViewDeletionStatus ? 'No deletion is in progress.' : undefined,
     },
     { type: 'separator', id: 'before-delete' },
+    ...(stop ? [stop] : []),
     remove && !('type' in remove)
       ? { ...remove, label: 'Delete task', danger: true }
       : {
@@ -155,7 +157,8 @@ export function AgentHeader({
           onSelect={(id) => {
             setOpen(false);
             if (id === 'deletion-status') onViewDeletionStatus?.();
-            else if (id === 'delete_agent' || id === 'export_history') onMoreAction?.(id);
+            else if (id === 'stop_agent' || id === 'delete_agent' || id === 'export_history')
+              onMoreAction?.(id);
             else onMenuSelect?.(id);
           }}
         />
