@@ -255,6 +255,7 @@ export async function ensureBrowser(ops) {
       const version = await ops.probe(path);
       return { path, version };
     } catch (error) {
+      ops.log(`Browser candidate rejected: ${path}: ${describe(error)}`);
       failures.push(`${path}: ${error.message}`);
       const libraries = ops.missing(path);
       if (libraries.length && !repair) repair = { path, libraries };
@@ -302,7 +303,18 @@ export async function ensureBrowser(ops) {
 }
 
 // Separate process bounds both launch and close; a broken browser cannot hold CI.
+// The probe exits at its own deadline, before the parent's kill, so Playwright's
+// exit handler stops the browser instead of leaving it to slow the next probe.
+const probeDeadlineMs = 25_000;
+
 async function probe(path) {
+  const deadline = setTimeout(() => {
+    process.stderr.write(
+      `Browser probe exceeded ${probeDeadlineMs / 1000}s; closing its browser.\n`,
+    );
+    process.exit(1);
+  }, probeDeadlineMs);
+  deadline.unref();
   const require = createRequire(join(web, 'package.json'));
   const { chromium } = require('playwright');
   const browser = await chromium.launch({ executablePath: path, headless: true, timeout: 15_000 });
@@ -315,6 +327,7 @@ async function probe(path) {
     process.stdout.write(browser.version());
   } finally {
     await browser.close();
+    clearTimeout(deadline);
   }
 }
 
@@ -358,7 +371,7 @@ export async function main() {
     },
     probe: async (path) =>
       run(process.execPath, [fileURLToPath(import.meta.url), '--probe', path], {
-        timeout: 25_000,
+        timeout: probeDeadlineMs + 5_000,
       }).trim(),
     missing: (path) => {
       if (process.platform !== 'linux') return [];

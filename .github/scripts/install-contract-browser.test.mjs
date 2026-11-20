@@ -445,3 +445,21 @@ test('newer Ubuntu hosts download the newest Ubuntu build the locked Playwright 
   assert.equal(downloadHostPlatform('mac15-arm64', known), undefined);
   assert.equal(downloadHostPlatform('ubuntu26.04-x64', ['debian13-x64']), undefined);
 });
+
+test('each rejected candidate is logged with its reason before a later browser is used', async () => {
+  const ops = fixture({
+    probe: async (path) => {
+      if (path === '/cached/chrome')
+        throw new Error(
+          'Command failed: node install-contract-browser.mjs --probe /cached/chrome\n' +
+            '::error::Browser probe exceeded 25s; closing its browser.',
+        );
+      return 'working';
+    },
+  });
+  assert.equal((await ensureBrowser(ops)).path, '/installed/chrome');
+  assert.deepEqual(ops.logs.slice(0, 1), [
+    'Browser candidate rejected: /cached/chrome: Browser probe exceeded 25s; closing its browser.',
+  ]);
+  assert.ok(ops.logs.every((row) => !row.startsWith('::')));
+});
