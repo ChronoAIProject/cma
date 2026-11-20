@@ -10,6 +10,7 @@ import unittest
 from unittest.mock import Mock, patch
 import zipfile
 
+import ci_retry as cache_retry
 import image_detector_cache as cache
 
 
@@ -78,6 +79,25 @@ class DetectorTransportTests(unittest.TestCase):
                 job.update(status=status, conclusion=conclusion)
                 result = cache.restore(self.env, self.root, get, Mock(return_value=True))
                 self.assertEqual(result["state"], "RESTORED" if conclusion == "success" else "MISS_FULL_SCAN")
+
+    def test_transport_failures_repeat_before_falling_back_to_a_full_scan(self):
+        reset = ValueError("Layer detector cache refused")
+        reset.__cause__ = cache_retry.TransientError()
+        failures = {"/jobs?": [reset], "/zip": [subprocess.TimeoutExpired("gh", 10)]}
+        def get(path, **kwargs):
+            for key, pending in failures.items():
+                if key in path and pending:
+                    raise pending.pop(0)
+            return self.get(path, **kwargs)
+        sleeps = []
+        result = cache.restore(self.env, self.root, get, Mock(return_value=True), sleep=sleeps.append)
+        self.assertEqual(result["state"], "RESTORED")
+        self.assertEqual(len(sleeps), 2)
+        with patch.object(cache.subprocess, "run",
+                          return_value=subprocess.CompletedProcess([], 1, b"", b"gh: HTTP 502")), \
+                self.assertRaises(ValueError) as raised:
+            cache.github(f"repos/{cache.REPO}/actions/runs/1")
+        self.assertEqual(cache_retry.classify(raised.exception), cache_retry.TRANSIENT)
 
     def test_current_run_cannot_seed_itself(self):
         result = cache.restore(dict(self.env, GITHUB_RUN_ID="11"), self.root, self.get)
