@@ -156,7 +156,7 @@
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
           "title": "forbidden",
           "status": 403,
-          "detail": "This caller is not allowed to manage profiles.",
+          "detail": "Reading your catalog requires permission to use your own Sandboxes or manage your own profiles.",
           "code": "forbidden"
         },
         "bodyKind": "json"
@@ -181,7 +181,7 @@
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
           "title": "forbidden",
           "status": 403,
-          "detail": "This caller is not allowed to manage profiles.",
+          "detail": "Reading your catalog requires permission to use your own Sandboxes or manage your own profiles.",
           "code": "forbidden"
         },
         "bodyKind": "json"
@@ -610,7 +610,7 @@
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
           "title": "forbidden",
           "status": 403,
-          "detail": "This caller is not allowed to manage profiles.",
+          "detail": "Reading your catalog requires permission to use your own Sandboxes or manage your own profiles.",
           "code": "forbidden"
         },
         "bodyKind": "json"
@@ -691,7 +691,7 @@
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
           "title": "forbidden",
           "status": 403,
-          "detail": "This caller is not allowed to manage profiles.",
+          "detail": "Reading your catalog requires permission to use your own Sandboxes or manage your own profiles.",
           "code": "forbidden"
         },
         "bodyKind": "json"
@@ -1435,7 +1435,7 @@
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
           "title": "forbidden",
           "status": 403,
-          "detail": "This caller is not allowed to manage profiles.",
+          "detail": "Reading your catalog requires permission to use your own Sandboxes or manage your own profiles.",
           "code": "forbidden"
         },
         "bodyKind": "json"
@@ -2066,6 +2066,236 @@
           "status": 401,
           "detail": "This operation requires an authenticated subject.",
           "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-sandbox-owner-bounds-owner",
+      "operation": "GET /api/v1/profile-authoring/bounds",
+      "scenario": "authoring_sandbox_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/bounds",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-sandbox-owner-bounds-owner",
+      "operation": "GET /api/v1/profile-authoring/bounds",
+      "scenario": "authoring_credential_sandbox_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/bounds",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-sandbox-owner-services-owner",
+      "operation": "GET /api/v1/profile-authoring/services",
+      "scenario": "authoring_sandbox_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/services",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": [
+          {
+            "id": "analytics",
+            "name": "Analytics"
+          },
+          {
+            "id": "research",
+            "name": "Research",
+            "description": "Research service"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-sandbox-owner-services-owner",
+      "operation": "GET /api/v1/profile-authoring/services",
+      "scenario": "authoring_credential_sandbox_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/services",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": [
+          {
+            "id": "analytics",
+            "name": "Analytics"
+          },
+          {
+            "id": "research",
+            "name": "Research",
+            "description": "Research service"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-sandbox-owner-skills-owner",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_sandbox_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "versions": [
+                "10.2",
+                "2.10",
+                "2.9"
+              ]
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-sandbox-owner-skills-owner",
+      "operation": "GET /api/v1/profile-authoring/skills",
+      "scenario": "authoring_credential_sandbox_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/profile-authoring/skills",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "research",
+              "name": "Research",
+              "versions": [
+                "10.2",
+                "2.10",
+                "2.9"
+              ]
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-sandbox-owner-resolve-owner",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_sandbox_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "authoring-credential-sandbox-owner-resolve-owner",
+      "operation": "POST /api/v1/profile-authoring/repositories/resolve",
+      "scenario": "authoring_credential_sandbox_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/profile-authoring/repositories/resolve",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "url": "https://github.com/example/research.git/"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to manage profiles.",
+          "code": "forbidden"
         },
         "bodyKind": "json"
       },

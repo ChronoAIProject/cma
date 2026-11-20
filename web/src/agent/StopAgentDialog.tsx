@@ -21,8 +21,9 @@ export function StopAgentDialog({
   readonly onStopped: () => void;
   readonly onClose: () => void;
 }) {
+  const [confirmed, setConfirmed] = useState(false);
   const [accepted, setAccepted] = useState(false);
-  const [sending, setSending] = useState(true);
+  const [sending, setSending] = useState(false);
   const [complete, setComplete] = useState(false);
   const [commandError, setCommandError] = useState<string>();
   const [readError, setReadError] = useState<string>();
@@ -33,6 +34,7 @@ export function StopAgentDialog({
     callbacks.current = { onChanged, onStopped };
   }, [onChanged, onStopped]);
   useEffect(() => {
+    if (!confirmed) return;
     let active = true;
     command.current ??= client.stopAgent(agentId, { idempotencyKey: requestKey });
     void command.current
@@ -54,9 +56,9 @@ export function StopAgentDialog({
     return () => {
       active = false;
     };
-  }, [agentId, client, requestKey, revision]);
+  }, [agentId, client, confirmed, requestKey, revision]);
   useEffect(() => {
-    if (complete) return;
+    if (!confirmed || complete) return;
     let failures = 0;
     const observer = observeRead(async (signal) => {
       try {
@@ -85,7 +87,34 @@ export function StopAgentDialog({
       return { next: 1000, cooldown: 1000 };
     });
     return () => observer.dispose();
-  }, [agentId, client, complete, revision]);
+  }, [agentId, client, complete, confirmed, revision]);
+  if (!confirmed)
+    return (
+      <Modal
+        open
+        title="Stop Agent"
+        onClose={onClose}
+        footer={
+          <>
+            <Button onClick={onClose}>Cancel</Button>
+            <Button
+              variant="primary"
+              onClick={() => {
+                setSending(true);
+                setConfirmed(true);
+              }}
+            >
+              Stop Agent
+            </Button>
+          </>
+        }
+      >
+        <p>
+          Stop this Agent and end its active work. Its conversation history and Worktree are
+          retained. Delete remains a separate action.
+        </p>
+      </Modal>
+    );
   return (
     <Modal
       open

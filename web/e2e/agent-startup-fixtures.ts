@@ -253,6 +253,15 @@ export class LocalStartup {
           });
         case '/api/v1/sandboxes':
           return reply({ items: [this.sandbox] });
+        case '/api/v1/sandboxes/capacity':
+          return reply({
+            resource: 'sandbox',
+            limit: 10,
+            live: this.sandbox.status === 'retired' ? 0 : 1,
+            available: this.sandbox.status === 'retired' ? 10 : 9,
+            counts_by_status: this.sandbox.status === 'retired' ? {} : { [this.sandbox.status]: 1 },
+            observed_at: localTime,
+          });
         case '/api/v1/sandboxes/sbx_route':
           return reply(this.sandbox);
         case '/api/v1/sandboxes/sbx_route/workspaces':

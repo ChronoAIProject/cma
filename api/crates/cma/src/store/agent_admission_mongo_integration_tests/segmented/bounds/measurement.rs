@@ -3,6 +3,7 @@ use super::*;
 #[derive(Clone, Debug, Default)]
 pub(super) struct Trace {
     pub commands: usize,
+    pub index_inventories: usize,
     pub source_rows: usize,
     pub source_bytes: usize,
     pub max_source_batch: usize,
@@ -22,6 +23,12 @@ pub(super) async fn observed(database: &str) -> (MongoSandboxStore, Arc<Mutex<Tr
             trace.max_reply_bytes = trace
                 .max_reply_bytes
                 .max(mongodb::bson::serialize_to_vec(&event.reply).unwrap().len());
+            if event.command_name == "listIndexes" {
+                trace.index_inventories += 1;
+            }
+            if !matches!(event.command_name.as_str(), "find" | "getMore") {
+                return;
+            }
             if let Ok(cursor) = event.reply.get_document("cursor") {
                 if cursor
                     .get_str("ns")

@@ -165,3 +165,27 @@ it('reloads a stale scope only after a definite conflict, never after an uncerta
   await waitFor(() => expect(sessionStorage.length).toBe(0));
   expect(replace).toHaveBeenCalledOnce();
 });
+
+it.each([503, 403])(
+  'does not claim a grant on HTTP %s and retains the exact original command',
+  async (status) => {
+    const replace = vi
+      .spyOn(accessRequests, 'replace')
+      .mockRejectedValueOnce(new AgentAccessError(status, 'Scope update was not confirmed.'))
+      .mockResolvedValue(request);
+    const first = show();
+    await userEvent.click(await screen.findByRole('checkbox', { name: 'Chrono Storage' }));
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save scope' })).toBeEnabled());
+    await userEvent.click(screen.getByRole('button', { name: 'Save scope' }));
+    await screen.findByText('Scope update was not confirmed.');
+    expect(
+      screen.queryByText('Agent key updated. Your Agent has been notified.'),
+    ).not.toBeInTheDocument();
+    first.unmount();
+    show();
+    expect(replace).toHaveBeenCalledOnce();
+    await userEvent.click(screen.getByRole('button', { name: 'Retry scope update' }));
+    await waitFor(() => expect(replace).toHaveBeenCalledTimes(2));
+    expect(replace.mock.calls[1]?.slice(0, 4)).toEqual(replace.mock.calls[0]?.slice(0, 4));
+  },
+);

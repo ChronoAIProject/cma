@@ -29,6 +29,7 @@ async fn append(f: &Fixture, agent: &Agent, key: &str) {
 async fn adopt(f: &Fixture, agent: &Agent) {
     let db = f.seed.client.database(&f.seed.database);
     schema::migrate(&db).await.unwrap();
+    crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;
     let mut session = f.seed.client.start_session().await.unwrap();
     for (revision, enabled) in [(0, true), (1, false)] {
         crate::store::sandbox_mongo::start_transaction(&mut session)
