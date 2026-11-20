@@ -231,7 +231,7 @@ async fn initial_task_environment(
             credentials,
             workspaces: Arc::new(DurableProfileWorkspaceProvisioner::new(
                 WorkspaceService::new(harness.store.clone(), profiles),
-                workspace_worker.clone(),
+                workspace_worker,
             )),
             agents: Arc::new(DurableLiveAgentStopper::new(
                 harness.store.clone(),
@@ -297,58 +297,51 @@ async fn initial_task_environment(
     assert_eq!(admitted["first_message"]["purpose"], "task");
     let sandbox_id = SandboxId(admitted["sandbox"]["id"].as_str().unwrap().into());
     assert_ne!(sandbox_id, harness.workspace.sandbox_id);
-    if let Some(code) = source_failure {
-        harness.backend.fail_next(
-            WireOperation::PrepareWorkspace,
-            code,
-            "External failure detail must not leak",
-        );
-    }
     let retry_unavailable = store_retry::StoreRetry::default();
-    let environment_driver =
-        retry_unavailable.spawn_environment(sandbox_worker.clone(), sandbox_id);
-    let workspace_driver = retry_unavailable.spawn_workspace(workspace_worker);
     let transcript_path = format!("{agent_path}/transcript");
     if let Some(code) = source_failure {
-        // Allow protected parent/child lease handoff before observing the public result.
-        tokio::time::timeout(Duration::from_secs(60), async {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        let failed_agent = super::environment_workers::drive_source_failure(
+            &harness,
+            &agent_id,
+            &sandbox_id,
+            &sandbox_worker,
+            &retry_unavailable,
+            code,
+            deadline,
+        )
+        .await;
+        // The HTTP lifecycle task publishes its terminal operation separately
+        // from the Agent worker's committed failure.
+        let operation: Value = tokio::time::timeout_at(deadline, async {
+            let mut tick = tokio::time::interval(Duration::from_millis(20));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
             loop {
-                // Keep the source refusal present across protected claim retries.
-                harness.backend.fail_next(
-                    WireOperation::PrepareWorkspace,
-                    code,
-                    "External failure detail must not leak",
-                );
-                if retry_unavailable
-                    .should_retry(harness.worker.run_one(&agent_id, SystemTime::now()).await)
-                {
-                    tokio::time::sleep(Duration::from_millis(20)).await;
-                    continue;
-                }
+                tick.tick().await;
                 let operation: Value = serde_json::from_str(
                     &cross_interface_tests::read(&service, &operation_path).await,
                 )
                 .unwrap();
-                if operation["status"] == "failed" {
-                    assert!(
-                        operation["error"]
-                            .as_str()
-                            .is_some_and(|detail| detail.contains(code)),
-                        "{operation}"
-                    );
-                    assert!(!operation.to_string().contains("External failure detail"));
-                    break;
+                match operation["status"].as_str() {
+                    Some("failed") => break operation,
+                    Some("running" | "pending") => {}
+                    status => panic!("source case {code}: unexpected public status {status:?}"),
                 }
-                tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
         .await
-        .unwrap();
+        .unwrap_or_else(|_| panic!("source case {code}: terminal failure was not projected"));
+        assert!(
+            operation["error"]
+                .as_str()
+                .is_some_and(|detail| detail.contains(code)),
+            "public operation lost the source failure code: {code}"
+        );
+        assert!(!operation.to_string().contains("External failure detail"));
         let transcript: Value =
             serde_json::from_str(&cross_interface_tests::read(&service, &transcript_path).await)
                 .unwrap();
         assert_eq!(transcript["turns"], json!([]));
-        let failed_agent = harness.stored(&agent_id).await;
         let first = failed_agent.conversation.first_message.as_ref().unwrap();
         assert_eq!(first.text, original);
         assert!(first.dispatch_fenced_at.is_none() && first.turn_sequence.is_none());
@@ -373,10 +366,6 @@ async fn initial_task_environment(
         assert_eq!(retained.workspace_id, failed_agent.workspace_id);
         assert_eq!(retained.worktree_id, failed_agent.worktree_id);
         assert_eq!(retained.conversation.first_message.as_ref(), Some(first));
-        environment_driver.abort();
-        workspace_driver.abort();
-        assert!(environment_driver.await.unwrap_err().is_cancelled());
-        assert!(workspace_driver.await.unwrap_err().is_cancelled());
         super::repository_connection_tests::retire_failed_environment(
             &harness,
             &failed_agent,
@@ -388,7 +377,19 @@ async fn initial_task_environment(
         database.drop().await.unwrap();
         return;
     }
+    let mut phase = String::from("reading admitted Sandbox");
     let completion = tokio::time::timeout(Duration::from_secs(60), async {
+        super::environment_workers::drive_environment(
+            &harness,
+            &agent_id,
+            &sandbox_id,
+            &sandbox_worker,
+            &retry_unavailable,
+            None,
+            &mut phase,
+        )
+        .await;
+        phase = String::from("waiting for the first task to be delivered");
         loop {
             if retry_unavailable
                 .should_retry(harness.worker.run_one(&agent_id, SystemTime::now()).await)
@@ -416,13 +417,9 @@ async fn initial_task_environment(
         }
     })
     .await;
-    environment_driver.abort();
-    workspace_driver.abort();
-    assert!(environment_driver.await.unwrap_err().is_cancelled());
-    assert!(workspace_driver.await.unwrap_err().is_cancelled());
     assert!(
         completion.is_ok(),
-        "{}",
+        "timed out at {phase}: {}",
         cross_interface_tests::read(&service, &agent_path).await
     );
     if let Some(repository) = repository {
