@@ -4,7 +4,7 @@ import { Thinking } from './Thinking';
 import { ActiveThinking } from './ActiveThinking';
 import { conversationFromTranscript } from './conversation';
 import { expect, it } from 'vitest';
-import { elapsedTime } from './workspaceTime';
+import { elapsedTime, toolDuration, durationLabel } from './workspaceTime';
 import { runningTaskTime } from '../shell/taskGroups';
 it.each([
   [-1000, '0s'],
@@ -56,4 +56,24 @@ it('renders compact hours in Thinking and days in the stopped-turn status', () =
     />,
   );
   expect(screen.getByRole('status')).toHaveTextContent('Stopped after 2d 3h');
+});
+
+it.each([
+  [undefined, '2026-11-05T14:33:00Z'],
+  ['2026-11-05T14:33:00Z', undefined],
+  ['invalid', '2026-11-05T14:33:00Z'],
+  ['2026-11-05T14:33:00Z', 'invalid'],
+  ['2026-11-05T14:33:00Z', '2026-11-05T14:33:00Z'],
+  ['2026-11-05T14:33:01Z', '2026-11-05T14:33:00Z'],
+])('does not infer tool time from unusable endpoints %s -> %s', (start, end) => {
+  expect(toolDuration(start, end)).toBeUndefined();
+});
+
+it.each([
+  [20, '<0.1s'],
+  [99, '<0.1s'],
+  [100, '0.1s'],
+  [550, '0.6s'],
+])('preserves positive recorded time without rounding %i ms to zero', (value, label) => {
+  expect(durationLabel(value)).toBe(label);
 });

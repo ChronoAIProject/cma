@@ -290,8 +290,16 @@ fn retired_state(job: &Document) -> &'static str {
     }
 }
 fn row_document(report: &Report, row: &Row) -> Result<Document> {
+    let (sorts, nulls) = row_sort_keys(row);
+    Ok(
+        doc! {"_id":format!("{}:{}",report.report_id,row.sandbox_id),"document_schema_version":1_i64,"report_id":&report.report_id,
+        "sandbox_id":&row.sandbox_id,"owner":&row.owner.subject,"sorts":sorts,"nulls":nulls,"expires_at":expires(report.expires_at+60),"record":encode(row)?},
+    )
+}
+pub(super) fn row_sort_keys(row: &Row) -> (Document, Document) {
     let mut sorts = Document::new();
     let mut nulls = Document::new();
+    let allocated = |value: f64| value.is_finite().then_some(value.into());
     for sort in Sort::ALL {
         let value = match sort {
             Sort::Name => Some(row.name.to_lowercase().into()),
@@ -301,24 +309,12 @@ fn row_document(report: &Report, row: &Row) -> Result<Document> {
             Sort::CpuMeanCores => row.measured.cpu.mean.map(Into::into),
             Sort::MemoryMeanBytes => row.measured.memory.mean.map(Into::into),
             Sort::DiskLatestBytes => row.measured.disk.latest.map(Into::into),
-            Sort::AllocatedCpuCoreHours => row
-                .allocated_period
-                .complete
-                .then(|| row.allocated_period.cpu_core_hours.into()),
-            Sort::AllocatedMemoryGibHours => row
-                .allocated_period
-                .complete
-                .then(|| row.allocated_period.memory_gib_hours.into()),
-            Sort::AllocatedDiskGibHours => row
-                .allocated_period
-                .complete
-                .then(|| row.allocated_period.disk_gib_hours.into()),
+            Sort::AllocatedCpuCoreHours => allocated(row.allocated_period.cpu_core_hours),
+            Sort::AllocatedMemoryGibHours => allocated(row.allocated_period.memory_gib_hours),
+            Sort::AllocatedDiskGibHours => allocated(row.allocated_period.disk_gib_hours),
         };
         nulls.insert(sort.key(), value.is_none());
         sorts.insert(sort.key(), value.unwrap_or(mongodb::bson::Bson::Null));
     }
-    Ok(
-        doc! {"_id":format!("{}:{}",report.report_id,row.sandbox_id),"document_schema_version":1_i64,"report_id":&report.report_id,
-        "sandbox_id":&row.sandbox_id,"owner":&row.owner.subject,"sorts":sorts,"nulls":nulls,"expires_at":expires(report.expires_at+60),"record":encode(row)?},
-    )
+    (sorts, nulls)
 }

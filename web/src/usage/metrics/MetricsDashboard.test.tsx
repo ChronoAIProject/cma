@@ -29,6 +29,50 @@ function renderDashboard(api = metricsClient(true), admin = true) {
   );
   return { ...view, api, onSelection, history };
 }
+
+for (const admin of [false, true]) {
+  it.each([
+    [0, '0 Sandboxes'],
+    [1, '1 Sandbox'],
+    ['1', '1 Sandbox'],
+    [2, '2 Sandboxes'],
+    [51, '51 Sandboxes'],
+    ['9007199254740993', '9,007,199,254,740,993 Sandboxes'],
+  ] as const)(
+    `uses the exact count %s in overview and pagination (admin=${admin})`,
+    async (count, label) => {
+      const api = metricsClient(admin);
+      const report = reportFixture(admin);
+      api.create.mockResolvedValue({
+        ...report,
+        summary: { ...report.summary!, sandbox_count: count, running_count: 0 },
+      });
+      api.sandboxes.mockResolvedValue({
+        report_id: report.report_id,
+        as_of: asOf,
+        items: count === 0 ? [] : [metricRow],
+        next: null,
+        total_count: count,
+      });
+      renderDashboard(api, admin);
+      expect(await screen.findByText(`${label} · 0 running`)).toBeVisible();
+      expect(await screen.findByText(`${label} · 50 per page · page 1`)).toBeVisible();
+      expect(screen.getByRole('heading', { name: 'Sandboxes' })).toBeVisible();
+      if (count === 0 && !admin)
+        expect(
+          screen.queryByRole('region', { name: 'Allocation comparison chart' }),
+        ).not.toBeInTheDocument();
+      else
+        expect(screen.getByText(`${count === 0 ? 0 : 1} of ${label} on this page.`)).toBeVisible();
+      expect(api.create).toHaveBeenCalledTimes(1);
+      expect(api.sandboxes).toHaveBeenCalledExactlyOnceWith(
+        report.report_id,
+        expect.objectContaining({ limit: 50, cursor: undefined }),
+      );
+    },
+  );
+}
+
 it('uses one report for whole-cohort cards, charts, globally sorted 50-row pages and drilldown', async () => {
   const actor = userEvent.setup();
   const { api } = renderDashboard();

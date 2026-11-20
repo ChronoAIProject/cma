@@ -178,7 +178,7 @@ it('folds operations by default while keeping failures and approvals discoverabl
     },
   });
   const view = render(<MessageStream conversation={conversation} onApproval={() => {}} />);
-  const operation = screen.getByRole('button', { name: 'Read instructions' });
+  const operation = screen.getByRole('button', { name: 'Read instructions Duration unavailable' });
   expect(operation).toHaveAttribute('aria-expanded', 'false');
   expect(
     screen.queryByRole('article', { name: 'Tool call: Read instructions' }),
@@ -279,7 +279,9 @@ it('keeps operation disclosures in their own turns', () => {
     });
   });
   render(<MessageStream conversation={conversation} onApproval={() => {}} />);
-  const disclosures = screen.getAllByRole('button', { name: /^(First|Second) turn operation$/ });
+  const disclosures = screen.getAllByRole('button', {
+    name: /^(First|Second) turn operation Duration unavailable$/,
+  });
   expect(disclosures).toHaveLength(2);
   fireEvent.click(disclosures[0]!);
   expect(screen.getByRole('article', { name: 'Tool call: First turn operation' })).toBeVisible();
