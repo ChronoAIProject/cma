@@ -1,5 +1,6 @@
 use super::*;
 use layer2_core::sandbox::ingress_ownership::{AdmissionRefusal, AdmittedError};
+use layer2_core::sandbox::AgentConversationError;
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
@@ -90,7 +91,18 @@ async fn synchronous_snapshot_preserves_corruption_and_missing_row_outcomes() {
         .await
         .unwrap();
     let error = result.transpose().unwrap_err();
-    assert!(matches!(&**error, SandboxStoreError::Corrupt(detail) if !detail.is_empty()));
+    let SandboxStoreError::Corrupt(detail) = &*error else {
+        panic!("expected snapshot corruption");
+    };
+    assert!(!detail.is_empty());
+    let address = detail.as_ptr();
+    let error = error.map(|error| match error {
+        SandboxStoreError::Corrupt(detail) => AgentConversationError::Corrupt(detail),
+        _ => panic!("snapshot error category changed"),
+    });
+    assert!(
+        matches!(&*error, AgentConversationError::Corrupt(detail) if detail.as_ptr() == address)
+    );
     assert!(error.belongs_to(&policy));
     assert!(root.available_bytes() < root.capacity_bytes());
     drop(error);
@@ -148,8 +160,17 @@ async fn synchronous_snapshot_keeps_the_original_unavailable_error_owned() {
         .await
         .unwrap();
     let error = result.transpose().unwrap_err();
+    let SandboxStoreError::Unavailable(message) = &*error else {
+        panic!("expected snapshot unavailability");
+    };
+    assert_eq!(message, "conversation snapshot read failed");
+    let address = message.as_ptr();
+    let error = error.map(|error| match error {
+        SandboxStoreError::Unavailable(message) => AgentConversationError::Unavailable(message),
+        _ => panic!("snapshot error category changed"),
+    });
     assert!(
-        matches!(&**error, SandboxStoreError::Unavailable(message) if message == "conversation snapshot read failed")
+        matches!(&*error, AgentConversationError::Unavailable(message) if message.as_ptr() == address)
     );
     assert!(error.belongs_to(&policy));
     assert!(root.available_bytes() < root.capacity_bytes());

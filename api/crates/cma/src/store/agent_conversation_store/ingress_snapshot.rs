@@ -15,10 +15,8 @@ use mongodb::bson::{doc, Document, RawDocumentBuf};
 use super::ingress::SnapshotRefusal;
 use super::{checkpoint, ingress, read_agent, MongoSandboxStore};
 
-pub(super) type SnapshotOperation<'a> = AdmittedOperation<
-    'a,
-    Result<Option<SharedOwned<AgentMessageSnapshot>>, OwnedWork<SandboxStoreError>>,
->;
+pub(super) type SnapshotOperation<'a> =
+    AdmittedOperation<'a, Result<Option<SharedOwned<AgentMessageSnapshot>>, SandboxStoreError>>;
 
 pub(super) fn operation<'a>(
     store: &'a MongoSandboxStore,
@@ -29,7 +27,15 @@ pub(super) fn operation<'a>(
         policy,
         IngressClass::Transformation,
         AllocationPlan::checked("conversation snapshot operation", &[])?,
-        move |scope| async move { Ok(scope.run(load(store, id, policy)).await) },
+        move |scope| async move {
+            Ok(match load_inner(store, id, policy).await {
+                Ok(snapshot) => scope.initialize_owned(|| Ok(snapshot)),
+                Err(SnapshotError::Owned(error)) => error.map(Err),
+                Err(SnapshotError::Refused(refusal)) => {
+                    scope.initialize_owned(|| Err(refusal.into_error()))
+                }
+            })
+        },
     )
 }
 

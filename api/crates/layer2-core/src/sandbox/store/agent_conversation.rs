@@ -5,12 +5,12 @@ use crate::sandbox::{Agent, AgentLogEntry, AgentLogKind, Sandbox, SandboxStatus}
 
 use super::{SandboxMutationGuard, SandboxStoreError};
 use crate::sandbox::ingress_ownership::{
-    AdmittedError, AdmittedOperation, IngressOwnershipPolicy, OwnedWork, SharedOwned,
+    AdmittedError, AdmittedOperation, IngressOwnershipPolicy, SharedOwned,
 };
 
 type SnapshotOperation<'a> = AdmittedOperation<
     'a,
-    Result<Option<SharedOwned<super::AgentMessageSnapshot>>, OwnedWork<SandboxStoreError>>,
+    Result<Option<SharedOwned<super::AgentMessageSnapshot>>, SandboxStoreError>,
 >;
 
 /// One generation-fenced, all-or-nothing conversation mutation.
