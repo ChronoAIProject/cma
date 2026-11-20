@@ -1,7 +1,33 @@
-import { expect, test, type Locator, type Page } from '@playwright/test';
+import { expect, test as base, type Locator, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 
+const test = base.extend({
+  page: async ({ page, browserName, hasTouch }, runTest) => {
+    // Chromium can lose initial touch emulation while creating the mobile page.
+    const emulation =
+      browserName === 'chromium' && hasTouch ? await page.context().newCDPSession(page) : undefined;
+    try {
+      await emulation?.send('Emulation.setTouchEmulationEnabled', { enabled: true });
+      await runTest(page);
+    } finally {
+      // Detaching resets native touch emulation, so keep it through all interactions.
+      await emulation?.detach();
+    }
+  },
+});
+
+async function pointerMode(page: Page, mobile: boolean) {
+  expect(
+    await page.evaluate(() => ({
+      coarse: matchMedia('(pointer: coarse)').matches,
+      hover: matchMedia('(hover: hover)').matches,
+      touch: navigator.maxTouchPoints > 0,
+    })),
+  ).toEqual({ coarse: mobile, hover: !mobile, touch: mobile });
+}
+
 async function fixture(page: Page, baseURL: string, mobile: boolean, actions = true) {
+  await pointerMode(page, mobile);
   const boundary = new LocalStartup();
   boundary.agent = { ...boundary.agent, status: 'ready', title: 'Menu fixture task' };
   boundary.workspace = {
@@ -34,6 +60,7 @@ async function fixture(page: Page, baseURL: string, mobile: boolean, actions = t
     .getByRole('tree', { name: 'Personal Agents', exact: true })
     .locator(`[data-node-id="agent:${boundary.agent.id}"]`);
   await expect(row).toBeVisible();
+  await pointerMode(page, mobile);
   return { boundary, row };
 }
 
@@ -122,6 +149,7 @@ for (const touch of [true, false]) {
       noEffects(boundary);
       await confirmation.getByRole('button', { name: 'Cancel', exact: true }).click();
       await expect(confirmation).toHaveCount(0);
+      await pointerMode(page, touch);
       noEffects(boundary);
     });
 
@@ -137,6 +165,7 @@ for (const touch of [true, false]) {
       await expect(
         row.getByRole('button', { name: /^Options for/, includeHidden: true }),
       ).toHaveCount(0);
+      await pointerMode(page, touch);
       noEffects(boundary);
     });
   });
