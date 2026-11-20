@@ -80,6 +80,19 @@ class RegistryTests(unittest.TestCase):
             Registry(opener, retry=NO_WAIT).manifest("ghcr.io/chronoaiproject/cma-web", "0.10.1")
         self.assertEqual(opener.open.call_count, 2)
 
+    def test_read_budget_shortens_each_read_and_refuses_once_spent(self):
+        now = [0.0]
+        opener = Mock()
+        opener.open.side_effect = lambda _request, timeout: self.response({"token": "fixture"})
+        registry = Registry(opener, retry={"clock": lambda: now[0]}, deadline=50.0)
+        now[0] = 35.0
+        self.assertEqual(registry.token("ghcr.io/chronoaiproject/cma-web"), "fixture")
+        self.assertEqual(opener.open.call_args.kwargs["timeout"], 15.0)
+        now[0] = 50.0
+        with self.assertRaisesRegex(Refusal, "budget expired"):
+            registry.token("ghcr.io/chronoaiproject/cma-web")
+        self.assertEqual(opener.open.call_count, 1)
+
     def test_digest_mismatch_large_response_and_registry_redirect_fail_closed(self):
         opener = Mock()
         opener.open.side_effect = [self.response({"token": "fixture"}), self.response(b"{}", {"Docker-Content-Digest": "sha256:" + "a" * 64})]

@@ -1,7 +1,16 @@
 """An unreserved displaced source has no version to burn."""
+import contextlib
+import io
 import json
+import os
+import time
 import unittest
-from unittest.mock import Mock
+from pathlib import Path
+from unittest.mock import Mock, patch
+
+import yaml
+
+import staging_cd_recheck
 
 from staging_cd_allocate import allocate_queue, run_active
 from staging_cd_common import Refusal
@@ -29,6 +38,21 @@ class QueueTests(unittest.TestCase):
             api.request.side_effect = [reference, {"workflow_runs": runs}]
             with self.assertRaises(Refusal):
                 recheck(SECOND, api)
+
+    def test_recheck_reads_refuse_before_the_job_timeout(self):
+        jobs = yaml.safe_load((Path(__file__).resolve().parents[1] / "workflows/staging-cd.yml").read_text())["jobs"]
+        # Checkout and interpreter start keep at least a minute of the job.
+        self.assertLessEqual(staging_cd_recheck.RECHECK_SECONDS + 60, jobs["recheck"]["timeout-minutes"] * 60)
+        env = {"CD_QUEUE": json.dumps({"head": THIRD}), "GH_TOKEN": "fixture"}
+        with patch.dict(os.environ, env, clear=True), patch.object(staging_cd_recheck, "event_identity"), \
+                patch.object(staging_cd_recheck, "GitHub") as github, \
+                patch.object(staging_cd_recheck, "recheck", return_value=True), \
+                contextlib.redirect_stdout(io.StringIO()):
+            started = time.monotonic()
+            self.assertEqual(staging_cd_recheck.main(), 0)
+        deadline = github.call_args.kwargs["deadline"]
+        self.assertLessEqual(started + staging_cd_recheck.RECHECK_SECONDS, deadline)
+        self.assertLessEqual(deadline, time.monotonic() + staging_cd_recheck.RECHECK_SECONDS)
 
     def queue(self):
         return {"head": THIRD, "event_source": THIRD, "changes": [

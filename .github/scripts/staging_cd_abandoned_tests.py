@@ -89,6 +89,34 @@ class AbandonedTests(unittest.TestCase):
             github(runner).request("actions/runs/9", allow_not_found=True)
         self.assertEqual(runner.call_count, 2)
 
+    def test_read_budget_shortens_attempts_and_refuses_once_spent(self):
+        now = [0.0]
+        timeouts = []
+        def runner(args, **kwargs):
+            timeouts.append(kwargs["timeout"])
+            now[0] += kwargs["timeout"]
+            raise subprocess.TimeoutExpired("gh", kwargs["timeout"])
+        policy = {"clock": lambda: now[0], "sleep": lambda seconds: now.__setitem__(0, now[0] + seconds),
+                  "rand": lambda: 1.0}
+        # 60 s, a 1 s wait, then only the 39 s left; no wait may reach the budget.
+        with self.assertRaisesRegex(Refusal, "GitHub API request failed"):
+            GitHub("fixture", runner, retry=policy, deadline=100).request("actions/runs/9")
+        self.assertEqual((timeouts, now[0]), ([60, 39], 100))
+        # A per-read budget can only shorten the instance budget.
+        timeouts.clear()
+        now[0] = 0.0
+        with self.assertRaises(Refusal):
+            GitHub("fixture", runner, retry=policy, deadline=100).request("actions/runs/9", deadline=25)
+        self.assertEqual(timeouts, [25])
+        # A spent budget refuses without starting gh, and never at a write.
+        now[0] = 100.0
+        runner = Mock(return_value=subprocess.CompletedProcess([], 0, "{}", ""))
+        with self.assertRaisesRegex(Refusal, "budget expired"):
+            GitHub("fixture", runner, retry=policy, deadline=100).request("actions/runs/9")
+        runner.assert_not_called()
+        GitHub("fixture", runner, retry=policy, deadline=100).request("git/refs", {"ref": "fixture"})
+        self.assertEqual(runner.call_args.kwargs["timeout"], 60)
+
     def test_404_is_not_optional_for_writes_or_default_reads(self):
         runner = Mock(return_value=response(404))
         api = github(runner)

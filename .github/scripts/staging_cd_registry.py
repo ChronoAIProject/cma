@@ -3,6 +3,7 @@ import hashlib
 import base64
 import http.client
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -20,7 +21,7 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class Registry:
-    def __init__(self, opener=None, *, credential=None, actor=None, retry=None):
+    def __init__(self, opener=None, *, credential=None, actor=None, retry=None, deadline=None):
         self.opener = opener or urllib.request.build_opener(NoRedirect())
         require(credential is None or (isinstance(credential, str) and bool(credential)
                                       and isinstance(actor, str) and bool(actor)),
@@ -28,11 +29,18 @@ class Registry:
         self.credential, self.actor = credential, actor
         # Keyword arguments for ci_retry.call; reads are idempotent GETs.
         self.retry = dict(retry or {})
+        # An absolute budget on the retry clock: it shortens each read and ends repeats.
+        self.deadline = deadline
 
     def read(self, url, headers, *, absent=False):
+        policy = ci_retry.bounded(self.retry, self.deadline)
+
         def once():
+            timeout = ci_retry.attempt_timeout(30, self.deadline, policy.get("clock", time.monotonic))
+            if timeout is None:
+                raise Refusal("Registry read budget expired") from ci_retry.TransientError()
             try:
-                with self.opener.open(urllib.request.Request(url, headers=headers), timeout=30) as response:
+                with self.opener.open(urllib.request.Request(url, headers=headers), timeout=timeout) as response:
                     data = response.read(16 * 1024 * 1024 + 1)
                     require(len(data) <= 16 * 1024 * 1024, "Registry response exceeds limit")
                     return data, response.headers
@@ -43,7 +51,7 @@ class Registry:
             except (OSError, urllib.error.URLError, http.client.HTTPException) as error:
                 # A truncated body or dropped connection is a transport failure too.
                 raise Refusal("Registry request failed") from error
-        return ci_retry.call(once, name="registry-read", classify=ci_retry.classify, **self.retry)
+        return ci_retry.call(once, name="registry-read", classify=ci_retry.classify, **policy)
 
     def token(self, repository):
         require(repository in {"ghcr.io/chronoaiproject/" + name for name in DEPLOYABLES.values()},

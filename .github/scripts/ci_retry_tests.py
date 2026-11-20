@@ -119,6 +119,23 @@ class CallTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+class BudgetTests(unittest.TestCase):
+    def test_attempts_are_shortened_to_the_budget_and_refused_once_it_is_spent(self):
+        clock = Clock(10.0)
+        self.assertEqual(ci_retry.attempt_timeout(60, None, clock), 60)
+        self.assertEqual(ci_retry.attempt_timeout(60, 100.0, clock), 60)
+        self.assertEqual(ci_retry.attempt_timeout(60, 25.0, clock), 15.0)
+        self.assertIsNone(ci_retry.attempt_timeout(60, 10.0, clock))
+
+    def test_a_budget_only_ever_shortens_the_retry_deadline(self):
+        self.assertEqual(ci_retry.bounded(None, None), {})
+        self.assertEqual(ci_retry.bounded({"base": 0.5}, 30.0), {"base": 0.5, "deadline": 30.0})
+        self.assertEqual(ci_retry.bounded({"deadline": 20.0}, 30.0), {"deadline": 20.0})
+        policy = {"deadline": 40.0}
+        self.assertEqual(ci_retry.bounded(policy, 30.0), {"deadline": 30.0})
+        self.assertEqual(policy, {"deadline": 40.0})
+
+
 class ClassifierTests(unittest.TestCase):
     def test_http_statuses(self):
         for code in (408, 425, 429, 500, 502, 503, 504):

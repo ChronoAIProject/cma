@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+import time
 
 import ci_retry
 from staging_cd_common import Refusal, matches, require
@@ -19,7 +20,7 @@ class GitHub:
     def require_current_versions(self, receipts):
         require_current_versions(receipts, runner=self.runner)
 
-    def __init__(self, token, runner=subprocess.run, *, local_tags=None, retry=None):
+    def __init__(self, token, runner=subprocess.run, *, local_tags=None, retry=None, deadline=None):
         require(isinstance(token, str) and token and not any(c.isspace() for c in token),
                 "GitHub credential is missing or malformed")
         self.env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "LC_ALL")}
@@ -28,6 +29,9 @@ class GitHub:
         self.local_tags = local_tags
         # Keyword arguments for ci_retry.call: a caller's deadline, clock and sleep.
         self.retry = dict(retry or {})
+        # An absolute budget on the retry clock for every read. It shortens each
+        # attempt and ends repeats, so a step refuses before its job is killed.
+        self.deadline = deadline
         self._history = None
 
     def history_at(self, head, *, root):
@@ -50,7 +54,8 @@ class GitHub:
         history.position(source)
         return history
 
-    def request(self, path, payload=None, *, allow_not_found=False, runner=None, method=None, attempts=3):
+    def request(self, path, payload=None, *, allow_not_found=False, runner=None, method=None, attempts=3,
+                deadline=None):
         require(isinstance(path, str) and not path.startswith(("/", "http"))
                 and ".." not in path and "\n" not in path, "GitHub API path is invalid")
         require(method is None or method == "PATCH" and payload is not None, "GitHub mutation method is invalid")
@@ -66,10 +71,11 @@ class GitHub:
         if payload is not None:
             args += ["--method", method or "POST", "--input", "-"]
 
-        def once():
+        def once(timeout=60):
             try:
                 result = (runner or self.runner)(args, input=None if payload is None else json.dumps(payload),
-                                                 env=self.env, text=True, capture_output=True, timeout=60, check=False)
+                                                 env=self.env, text=True, capture_output=True, timeout=timeout,
+                                                 check=False)
             except (OSError, subprocess.SubprocessError) as error:
                 raise Refusal("GitHub API request failed") from error
             return self.response(path, payload, result, allow_not_found)
@@ -77,7 +83,16 @@ class GitHub:
         if payload is not None:
             # A write runs once. Its caller settles an uncertain outcome by reading back.
             return once()
-        return ci_retry.call(once, name="github-read", classify=ci_retry.classify, attempts=attempts, **self.retry)
+        budget = min((value for value in (self.deadline, deadline) if value is not None), default=None)
+        policy = ci_retry.bounded(self.retry, budget)
+
+        def attempt():
+            timeout = ci_retry.attempt_timeout(60, budget, policy.get("clock", time.monotonic))
+            if timeout is None:
+                # A slow network spent the budget; GitHub refused nothing.
+                raise Refusal("GitHub read budget expired") from ci_retry.TransientError()
+            return once(timeout)
+        return ci_retry.call(attempt, name="github-read", classify=ci_retry.classify, attempts=attempts, **policy)
 
     @staticmethod
     def response(path, payload, result, allow_not_found):

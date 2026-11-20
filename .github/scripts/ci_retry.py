@@ -149,6 +149,26 @@ def emit(line):
     os.write(_PUBLIC, (line + "\n").encode("utf-8"))
 
 
+def attempt_timeout(cap, deadline, clock=time.monotonic):
+    """One attempt's timeout: `cap`, shortened to what remains before an absolute `deadline`.
+
+    None means the deadline has passed; the caller refuses instead of starting.
+    """
+    if deadline is None:
+        return cap
+    left = deadline - clock()
+    return min(cap, left) if left > 0 else None
+
+
+def bounded(policy, deadline):
+    """A copy of a retry policy whose repeats also end at an absolute `deadline`."""
+    policy = dict(policy or {})
+    if deadline is not None:
+        current = policy.get("deadline")
+        policy["deadline"] = deadline if current is None else min(current, deadline)
+    return policy
+
+
 def backoff(attempt, base, cap, rand):
     """Full jitter: a uniform wait up to the capped exponential bound for this attempt."""
     jitter = rand()
