@@ -96,7 +96,8 @@ export function AllocatedPeriod({ value }: { readonly value: UsageMetricRow['all
     <section className="usage-allocation-period" aria-label="Allocated resource-hours">
       <h3>Allocated resource-hours</h3>
       <p className="usage-section-description">
-        Capacity reserved over the report period. This is the basis for billing.
+        Capacity reserved over the report period. Resource-hours describe allocation; billing is
+        separate.
       </p>
       <dl className="usage-metric-totals">
         <div>
@@ -148,7 +149,7 @@ export function MetricSummary({
           )}
           {!report.report_complete && (
             <p role="status">
-              This report is incomplete. Review coverage and allocation-history gaps.
+              This report is incomplete. Review measurement and allocation coverage.
             </p>
           )}
           <div className="usage-metric-cards">

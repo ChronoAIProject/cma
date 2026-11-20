@@ -88,8 +88,10 @@ function ConsoleContent({
   const client = reads.client;
   const computerObservation = useMemo(
     () =>
-      new AgentComputerObservation({ client, subject: user.id, agentId: selectedAgent }, () =>
-        setPanel('activity'),
+      new AgentComputerObservation(
+        { client, subject: user.id, agentId: selectedAgent },
+        () => setPanel('activity'),
+        () => setPanel(undefined),
       ),
     [client, user.id, selectedAgent, setPanel],
   );

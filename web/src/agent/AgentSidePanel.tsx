@@ -25,7 +25,11 @@ import {
   FeatureAvailability,
   useAgentEnvironment,
 } from './environment/availability';
-import { useComputerObservation, type AgentComputerObservation } from './environment/observation';
+import {
+  useComputerObservation,
+  useConversationReturn,
+  type AgentComputerObservation,
+} from './environment/observation';
 import { agentInitialized } from './modelReadiness';
 
 export type AgentPanel = 'details' | 'files' | 'activity' | 'browser' | undefined;
@@ -127,13 +131,14 @@ export function AgentSidePanel({
     setScreenError(undefined);
   }
   const select = (tab: AgentPanel) => onSelect?.(tab);
-  const observed = useComputerObservation(
+  const currentObservation =
     observation?.scope.client === client &&
-      observation.scope.subject === subject &&
-      observation.scope.agentId === agentId
+    observation.scope.subject === subject &&
+    observation.scope.agentId === agentId
       ? observation
-      : undefined,
-  );
+      : undefined;
+  const observed = useComputerObservation(currentObservation);
+  const onReturnToConversation = useConversationReturn(currentObservation);
   const operations = shared ? observed : (conversation ?? observed);
   const workingDirectory = agentWorkingDirectory(
     conversation?.runtimeMetadata?.workingDirectory,
@@ -193,6 +198,7 @@ export function AgentSidePanel({
       access={access}
       environment={environment}
       reported={!!client.files?.environment}
+      onReturnToConversation={onReturnToConversation}
     />
   );
   return (
@@ -275,7 +281,10 @@ export function AgentSidePanel({
           <div className="agent-computer__actions">
             {panel === 'browser' ? (
               <>
-                {!lifecycleHeld ? (
+                {!lifecycleHeld &&
+                ((!shared && detail?.desktop === true) ||
+                  !features ||
+                  ['available', 'temporarily_unavailable'].includes(features.browser.state)) ? (
                   <Button
                     size="sm"
                     icon={<IconRefreshOutline14 />}
@@ -409,6 +418,7 @@ export function AgentSidePanel({
         >
           {lifecycleNotice}
           <ComputerScreen
+            onReturnToConversation={onReturnToConversation}
             agentId={agentId}
             detail={detail}
             shared={shared}

@@ -136,12 +136,12 @@ pub(super) fn is_rest_path(path: &str) -> bool {
         && path != "/api/v1/responses"
 }
 
-fn is_public_trigger_preview(path: &str) -> bool {
+pub(super) fn is_public_trigger_preview(path: &str) -> bool {
     exact_path_segments(path, &["api", "v1", "triggers", "public", "*"])
         || exact_path_segments(path, &["api", "v1", "triggers", "public", "*", "badge.svg"])
 }
 
-fn exact_path_segments(path: &str, expected: &[&str]) -> bool {
+pub(super) fn exact_path_segments(path: &str, expected: &[&str]) -> bool {
     let mut segments = path.split('/').filter(|segment| !segment.is_empty());
     expected.iter().all(|expected| {
         segments

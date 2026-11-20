@@ -2,6 +2,7 @@
 import json
 import urllib.request
 
+import ci_retry
 from staging_cd_common import matches, require
 
 REPOSITORY = "ChronoAIProject/cma-infra"
@@ -12,12 +13,17 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def github_reader(token):
+def github_reader(token, *, retry=None):
     require(isinstance(token, str) and bool(token) and not any(c.isspace() for c in token),
             "Private checkout credential is malformed")
     opener = urllib.request.build_opener(NoRedirect)
 
     def read(path):
+        # Metadata reads are idempotent GETs; transport failures repeat under the shared policy.
+        return ci_retry.call(lambda: read_once(path), name="app-metadata-read", classify=ci_retry.classify,
+                             **(retry or {}))
+
+    def read_once(path):
         # Callers supply only fixed installation endpoints or a validated SHA.
         request = urllib.request.Request("https://api.github.com/" + path, headers={
             "Authorization": "Bearer " + token, "Accept": "application/vnd.github+json",

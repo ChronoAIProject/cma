@@ -51,7 +51,7 @@ pub(super) struct Admission(IngressReservation);
 
 impl Admission {
     pub(super) fn wrap(self, update: ConversationUpdate) -> ConversationUpdate {
-        ConversationUpdate::RetainedEffect(RuntimeOutputUpdate::accounted(update, Arc::new(self.0)))
+        ConversationUpdate::RetainedEffect(RuntimeOutputUpdate::accounted(update, self.0))
     }
 }
 

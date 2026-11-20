@@ -19,11 +19,14 @@ mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
 mod account_deletion;
 mod admission_log;
+mod anonymous_public;
 mod auth_mode;
 mod debug;
 mod global_admission;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
+#[cfg(test)]
+pub(crate) use anonymous_public::AnonymousPublicConfig;
 pub(crate) use provider_tool_relay::ProviderToolRelay;
 mod agent_manager;
 mod agent_sandbox;

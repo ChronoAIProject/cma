@@ -96,19 +96,66 @@ for (const theme of ['light', 'dark']) {
       await expect(first).toBeFocused();
       const start = page.getByRole('button', { name: 'Start task', exact: true });
       await expect(start).toBeDisabled();
+      const preview = page.getByRole('region', { name: 'Task preview · read-only' });
+      await expect(page.getByRole('heading', { name: 'Task preview · read-only' })).toBeVisible();
+      await expect(preview).toHaveText(
+        'Fill in the required fields above to generate the task preview.',
+      );
+      await expect(page.getByPlaceholder('What would you like your Agent to do?')).toHaveCount(0);
+      await expect(page.getByText(/↵ to run/)).toHaveCount(0);
+      if (item.id === 'document')
+        await page.screenshot({
+          path: info.outputPath(`empty-${theme}.png`),
+          animations: 'disabled',
+        });
       await first.press('Control+Enter');
       await expect(first).toHaveAttribute('aria-invalid', 'true');
       await first.press('Meta+Enter');
       await first.evaluate((element: HTMLInputElement) => element.form!.requestSubmit());
       expect(writes).toEqual([]);
-      for (const [label, value] of item.fields)
-        await page.getByLabel(label, { exact: true }).fill(value);
+      for (const [index, [label, value]] of item.fields.entries()) {
+        const field = page.getByLabel(label, { exact: true });
+        await field.fill(value);
+        await expect(field).toBeFocused();
+        if (index < item.fields.length - 1) {
+          await expect(preview).toHaveText(
+            'Fill in the required fields above to generate the task preview.',
+          );
+          await expect(start).toBeDisabled();
+          await expect(page.getByText(/↵ to run/)).toHaveCount(0);
+          if (item.id === 'document' && index === 1)
+            await page.screenshot({
+              path: info.outputPath(`partial-${theme}.png`),
+              animations: 'disabled',
+            });
+        }
+      }
       await page.reload();
       await settle(page);
       for (const [label, value] of item.fields)
         await expect(page.getByLabel(label, { exact: true })).toHaveValue(value);
       await expect(start).toBeEnabled();
-      const preview = await page.getByLabel('Task preview', { exact: true }).inputValue();
+      const previewText = await preview.textContent();
+      await expect(page.getByText(/↵ to run/)).toBeVisible();
+      await expect(preview).not.toHaveAttribute('aria-live');
+      expect(
+        await preview.evaluate(
+          (node) => node.closest('[aria-live], [role="status"], [role="alert"]') === null,
+        ),
+      ).toBe(true);
+      await preview.focus();
+      await expect(preview).toBeFocused();
+      expect(
+        await preview.evaluate((node) => {
+          const range = document.createRange();
+          range.selectNodeContents(node);
+          const selection = getSelection()!;
+          selection.removeAllRanges();
+          selection.addRange(range);
+          return selection.toString();
+        }),
+      ).toBe(previewText);
+      await preview.evaluate(() => getSelection()?.removeAllRanges());
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1),
       ).toBe(true);
@@ -120,12 +167,14 @@ for (const theme of ['light', 'dark']) {
         path: info.outputPath(`${item.id}-${theme}.png`),
         animations: 'disabled',
       });
-      await first.press(theme === 'dark' ? 'Meta+Enter' : 'Control+Enter');
+      await (theme === 'dark' ? preview : first).press(
+        theme === 'dark' ? 'Meta+Enter' : 'Control+Enter',
+      );
       await expect(page.getByRole('button', { name: 'Recover original task' })).toBeVisible();
       expect(writes).toHaveLength(1);
       expect(writes[0]!.body).toEqual({
         name: 'New task',
-        initial_message: preview,
+        initial_message: previewText,
         template: {
           id: item.id,
           version: 1,
@@ -148,13 +197,23 @@ for (const theme of ['light', 'dark']) {
 test('LOCAL unsupported template support preserves input and ordinary bracket text', async ({
   page,
   baseURL,
-}) => {
+}, info) => {
   const { writes } = await fixture(page, baseURL!, false);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto('/');
   await settle(page);
   await page.getByRole('button', { name: 'Research a topic', exact: true }).click();
   await page.getByLabel('Topic', { exact: true }).fill('Synthetic');
+  await expect(page.getByRole('heading', { name: 'Task preview · read-only' })).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Task preview · read-only' })).toHaveText(
+    'Research Synthetic and summarize the key findings, with links to sources.',
+  );
+  await expect(page.getByText(/Template tasks are not available on this service/)).toBeVisible();
+  await expect(page.getByText(/↵ to run/)).toHaveCount(0);
+  await page.screenshot({
+    path: info.outputPath('unsupported-template.png'),
+    animations: 'disabled',
+  });
   await expect(page.getByRole('button', { name: 'Start task' })).toBeDisabled();
   await page.getByLabel('Topic', { exact: true }).press('Control+Enter');
   expect(writes).toEqual([]);
