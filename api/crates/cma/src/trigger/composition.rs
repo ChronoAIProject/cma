@@ -90,6 +90,7 @@ impl TriggerComposition {
             dependencies.credentials,
         )
         .with_common_first_messages(dependencies.common_first_messages)
+        .with_admission_policy(definitions.launch_admission_policy())
         .with_account_standing(dependencies.standing.clone());
         let connections =
             ServiceConnectionService::new(definitions.clone(), dependencies.broker.clone());

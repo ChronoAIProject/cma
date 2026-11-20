@@ -1,7 +1,6 @@
 mod replay;
 use std::sync::Arc;
 
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use crate::profiles::{SandboxProfileStore, WorkspaceProfileStore};
@@ -13,6 +12,7 @@ use super::launch_service_support::{
     require_launcher, store_error, trigger_error, validate_create_request,
     validate_requirement_identity,
 };
+pub use super::launch_service_support::{LaunchPolicy, LaunchPolicySource};
 use super::launch_trust::LaunchTrustManifest;
 use super::{
     ExistingAgentChoice, Launch, LaunchAdmission, LaunchAuthorityClass, LaunchConfirmation,
@@ -56,24 +56,6 @@ pub struct LaunchCreateResult {
 impl LaunchCreateResult {
     pub const fn accepted(&self) -> bool {
         !matches!(self.launch.state, LaunchState::Draft)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LaunchPolicy {
-    pub enabled: bool,
-    pub orchestration_paused: bool,
-}
-
-#[async_trait]
-pub trait LaunchPolicySource: Send + Sync {
-    async fn current_launch_policy(&self) -> Result<LaunchPolicy, LaunchServiceError>;
-}
-
-#[async_trait]
-impl LaunchPolicySource for LaunchPolicy {
-    async fn current_launch_policy(&self) -> Result<LaunchPolicy, LaunchServiceError> {
-        Ok(*self)
     }
 }
 
@@ -157,7 +139,9 @@ impl LaunchServiceError {
     }
 }
 
+#[derive(Clone)]
 pub struct LaunchService {
+    pub(super) admission_policy: super::LaunchAdmissionPolicy,
     pub(super) standing: Arc<dyn crate::account_deletion::AccountStanding>,
     pub(super) common_first_messages: bool,
     pub(super) definitions: Arc<dyn TriggerStore>,
@@ -193,6 +177,7 @@ impl LaunchService {
         let sandbox_profiles: Arc<dyn SandboxProfileStore> = profiles.clone();
         let workspace_profiles: Arc<dyn WorkspaceProfileStore> = profiles;
         Arc::new(Self {
+            admission_policy: Default::default(),
             common_first_messages: false,
             standing: Arc::new(crate::account_deletion::AvailableAccounts),
             definitions,
@@ -274,10 +259,13 @@ impl LaunchService {
             return Ok(replay);
         }
         let result = async {
-            if !self.policy.current_launch_policy().await?.enabled {
+            let policy = self.policy.current_launch_policy().await?;
+            if !policy.enabled {
                 return Err(LaunchServiceError::Disabled);
             }
             let trigger = self.public_trigger(public_id).await?;
+            self.check_visitor_allowance(caller, policy.visitor_launches_per_day)
+                .await?;
             let profiles = self
                 .profile_reader
                 .read_trigger_profiles(&trigger.revision.content.target)
