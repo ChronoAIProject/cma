@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Browser preparation only: callers must still run their complete contract suite.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
@@ -86,6 +86,126 @@ export function repairDependencies(packages, run, log) {
   }
 }
 
+// Successful CI downloads of the locked Chromium (167 MiB) take 3-5s.
+export const downloadTimeoutMs = 60_000;
+const downloadTailLines = 40;
+const unsupportedHost = /does not support \S+ on (\S+)/;
+const networkFailure =
+  /timed out|Download failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ENETUNREACH|socket hang up|getaddrinfo/i;
+const progressRow = /^\|[^|]*\|\s+\d+% of /;
+
+function describe(error) {
+  const lines = String(error?.message ?? error)
+    .split('\n')
+    .map((line) => line.replace(/^::error::/, '').trim())
+    .filter(Boolean);
+  return (
+    lines.find((line) => !line.startsWith('Command failed')) ??
+    lines[0] ??
+    'unknown error'
+  ).slice(0, 300);
+}
+
+// Playwright prints progress, paths, URLs and errors. Keep only the last
+// progress row of each run, redact URL credentials, and indent every row so
+// downloader output can never start a workflow command.
+export function outputTail(output, limit = downloadTailLines) {
+  const rows = [];
+  for (const raw of String(output ?? '').split(/\r?\n|\r/)) {
+    const row = raw.trimEnd();
+    if (!row) continue;
+    if (progressRow.test(row) && progressRow.test(rows.at(-1) ?? '')) rows.pop();
+    rows.push(row);
+  }
+  return rows.slice(-limit).map((row) => `  ${row.replace(/\/\/[^/\s@]+@/g, '//***@')}`);
+}
+
+// The downloader forks a worker that writes the archive. Running it as its
+// own process group lets a timeout stop that worker too, so nothing it leaves
+// behind can keep writing the browser directory.
+export function runBounded(command, args, { timeoutMs, ...options }) {
+  return new Promise((resolveRun, rejectRun) => {
+    let output = '',
+      timedOut = false,
+      settled = false;
+    const child = spawn(command, args, {
+      ...options,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const stopGroup = () => {
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        // The whole group has already exited.
+      }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stopGroup();
+    }, timeoutMs);
+    const settle = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!error) return resolveRun(output);
+      error.output = output;
+      rejectRun(error);
+    };
+    for (const stream of [child.stdout, child.stderr]) {
+      stream.setEncoding('utf8');
+      stream.on('data', (chunk) => {
+        output = (output + chunk).slice(-65_536);
+      });
+    }
+    child.on('error', settle);
+    child.on('exit', stopGroup);
+    child.on('close', (code, signal) => {
+      if (code === 0 && !timedOut) return settle();
+      const error = new Error(
+        timedOut
+          ? `Command timed out after ${timeoutMs / 1000}s: ${command} ${args.join(' ')}`
+          : `Command failed with ${signal ? `signal ${signal}` : `exit code ${code}`}: ${command} ${args.join(' ')}`,
+      );
+      if (timedOut) error.code = 'ETIMEDOUT';
+      settle(error);
+    });
+  });
+}
+
+export async function downloadBrowser(attempt, log) {
+  try {
+    await attempt(downloadTimeoutMs);
+    return;
+  } catch (error) {
+    const tail = outputTail(error.output);
+    log(
+      tail.length
+        ? `Browser downloader output, last ${tail.length} lines:\n${tail.join('\n')}`
+        : 'Browser downloader printed no output.',
+    );
+    const output = String(error.output ?? '');
+    const host = unsupportedHost.exec(output)?.[1];
+    if (host) {
+      throw new Error(
+        `Pinned Playwright Chromium download refused: the locked Playwright has no Chromium build for ${host}. ` +
+          'This is not a network failure. Update the locked Playwright version in web/package-lock.json ' +
+          `or run on a supported runner. Browser contract tests remain required. ${describe(error)}`,
+      );
+    }
+    const network = error.code === 'ETIMEDOUT' || networkFailure.test(output);
+    throw new Error(
+      `Pinned Playwright Chromium download failed (${downloadTimeoutMs / 1000}s limit); ` +
+        (network
+          ? 'likely a network or CDN failure. '
+          : 'the downloader output above shows no network failure. ') +
+        'Re-run the job; if it persists, check runner access to cdn.playwright.dev or the configured proxy, ' +
+        'and the locked Playwright version in web/package-lock.json. ' +
+        `Browser contract tests remain required. ${describe(error)}`,
+    );
+  }
+}
+
 export async function ensureBrowser(ops) {
   let repair;
   const failures = [];
@@ -110,7 +230,7 @@ export async function ensureBrowser(ops) {
   }
   if (!repair) {
     // Use the locked Playwright package, without its unconditional apt installer.
-    ops.download();
+    await ops.download();
     if (!ops.exists(ops.pinned))
       throw new Error('Pinned Playwright browser is absent after download');
     const browser = await inspect(ops.pinned);
@@ -162,17 +282,18 @@ export async function main() {
   const { chromium } = require('playwright');
   const core = dirname(require.resolve('playwright-core/package.json'));
   const pinned = chromium.executablePath();
+  const env = {
+    ...process.env,
+    DEBIAN_FRONTEND: 'noninteractive',
+    PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: '30000',
+  };
   const run = (command, args, options = {}) =>
     execFileSync(command, args, {
       cwd: web,
       stdio: 'pipe',
       encoding: 'utf8',
       killSignal: 'SIGKILL',
-      env: {
-        ...process.env,
-        DEBIAN_FRONTEND: 'noninteractive',
-        PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: '30000',
-      },
+      env,
       ...options,
     });
   const result = await ensureBrowser({
@@ -215,7 +336,15 @@ export async function main() {
     download: () => {
       console.log('No usable installed browser; download locked Playwright Chromium without apt.');
       const cli = join(dirname(require.resolve('playwright/package.json')), 'cli.js');
-      run(process.execPath, [cli, 'install', '--no-shell', 'chromium'], { timeout: 120_000 });
+      return downloadBrowser(
+        (timeoutMs) =>
+          runBounded(process.execPath, [cli, 'install', '--no-shell', 'chromium'], {
+            cwd: web,
+            env,
+            timeoutMs,
+          }),
+        console.log,
+      );
     },
   });
   if (/[\r\n]/.test(result.path)) throw new Error('Invalid browser executable path');

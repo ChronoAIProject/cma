@@ -1,11 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  downloadBrowser,
+  downloadTimeoutMs,
   ensureBrowser,
   missingLibraries,
+  outputTail,
   requiredPackages,
   repairDependencies,
+  runBounded,
 } from './install-contract-browser.mjs';
+
+const unsupportedOutput =
+  'Failed to install browsers\nError: ERROR: Playwright does not support chromium on ubuntu26.04-x64\n';
+
+function downloaderError(message, output, code) {
+  return Object.assign(new Error(message), { output, code });
+}
+
+function gone(pid) {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return error.code === 'ESRCH';
+  }
+}
 
 function fixture(overrides = {}) {
   const calls = [],
@@ -257,4 +277,111 @@ test('non-library browser failure cannot trigger arbitrary apt installation', as
     /Refusing unrelated apt changes.*protocol incompatible/s,
   );
   assert.deepEqual(ops.calls, [['download']]);
+});
+
+test('downloader tail keeps the last rows, one progress row per run, and redacts URL credentials', () => {
+  const progress = [0, 50, 100].map((p) => `|■■■■                | ${p}% of 167.3 MiB`).join('\n');
+  const output = `Downloading Chrome from https://user:token@proxy.test/cft.zip\n${progress}\r\n\nError: Download failed: server closed connection.\n`;
+  assert.deepEqual(outputTail(output), [
+    '  Downloading Chrome from https://***@proxy.test/cft.zip',
+    '  |■■■■                | 100% of 167.3 MiB',
+    '  Error: Download failed: server closed connection.',
+  ]);
+  const long = Array.from({ length: 50 }, (_, index) => `::error::row ${index}`).join('\n');
+  const tail = outputTail(long);
+  assert.equal(tail.length, 40);
+  assert.equal(tail[0], '  ::error::row 10');
+  assert.ok(tail.every((row) => row.startsWith('  ')));
+});
+
+test('bounded downloader returns combined output and reports a failing exit', async () => {
+  const script = "console.log('stdout row'); console.error('stderr row');";
+  assert.match(
+    await runBounded(process.execPath, ['-e', script], { timeoutMs: 10_000 }),
+    /stdout row[\s\S]*stderr row|stderr row[\s\S]*stdout row/,
+  );
+  const failure = await runBounded(process.execPath, ['-e', `${script} process.exit(3)`], {
+    timeoutMs: 10_000,
+  }).catch((error) => error);
+  assert.match(failure.message, /exit code 3/);
+  assert.match(failure.output, /stdout row/);
+  assert.match(failure.output, /stderr row/);
+});
+
+test(
+  'a timed-out downloader is stopped together with the worker it forked',
+  { timeout: 20_000 },
+  async () => {
+    const worker = 'setInterval(() => {}, 1000)';
+    const script =
+      `const child = require('node:child_process').spawn(process.execPath, ['-e', ${JSON.stringify(worker)}], { stdio: 'inherit' });` +
+      "console.log('worker ' + child.pid); setInterval(() => {}, 1000);";
+    const started = Date.now();
+    const failure = await runBounded(process.execPath, ['-e', script], { timeoutMs: 2_000 }).catch(
+      (error) => error,
+    );
+    assert.equal(failure.code, 'ETIMEDOUT');
+    assert.ok(Date.now() - started < 10_000);
+    const pid = Number(/worker (\d+)/.exec(failure.output)?.[1]);
+    assert.ok(pid > 0, failure.output);
+    for (let wait = 0; wait < 50 && !gone(pid); wait += 1)
+      await new Promise((done) => setTimeout(done, 100));
+    assert.ok(gone(pid), `forked worker ${pid} survived the timeout`);
+  },
+);
+
+test('an unsupported host is reported as such, with the downloader output', async () => {
+  const logs = [];
+  await assert.rejects(
+    downloadBrowser(
+      () =>
+        Promise.reject(
+          downloaderError(
+            'Command failed with exit code 1: node cli.js install',
+            unsupportedOutput,
+          ),
+        ),
+      (message) => logs.push(message),
+    ),
+    /no Chromium build for ubuntu26\.04-x64.*not a network failure.*web\/package-lock\.json.*remain required/s,
+  );
+  assert.match(
+    logs.join('\n'),
+    /last 2 lines:\n {2}Failed to install browsers\n {2}Error: ERROR: Playwright does not support/,
+  );
+});
+
+test('a downloader timeout is reported as likely network with owner guidance', async () => {
+  const logs = [];
+  let limit;
+  await assert.rejects(
+    downloadBrowser(
+      (timeoutMs) => {
+        limit = timeoutMs;
+        throw downloaderError(
+          'Command timed out after 60s: node cli.js install',
+          '|■ | 10% of 167.3 MiB\n',
+          'ETIMEDOUT',
+        );
+      },
+      (message) => logs.push(message),
+    ),
+    /likely a network or CDN failure.*Re-run the job.*cdn\.playwright\.dev.*web\/package-lock\.json.*timed out after 60s/s,
+  );
+  assert.equal(limit, downloadTimeoutMs);
+  assert.match(logs.join('\n'), /10% of 167\.3 MiB/);
+});
+
+test('a non-network downloader failure says so and still shows that it printed nothing', async () => {
+  const logs = [];
+  await assert.rejects(
+    downloadBrowser(
+      () => {
+        throw downloaderError('Command failed with exit code 1: node cli.js install', '');
+      },
+      (message) => logs.push(message),
+    ),
+    /shows no network failure.*Re-run the job/s,
+  );
+  assert.deepEqual(logs, ['Browser downloader printed no output.']);
 });
