@@ -67,7 +67,7 @@ class Ledger:
 class Admission(unittest.TestCase):
     def setUp(self):
         self.ledger = Ledger()
-        self.api = Inventory(entry(1, "unmanaged", size=7 * GIB + 3 * GIB // 4))
+        self.api = Inventory(entry(1, "unmanaged", size=BUDGET - GIB // 4))
         self.am, self.eg = seed(4, "am").key, seed(6, "eg").key
 
     def reserve(self, keys):
@@ -98,7 +98,7 @@ class Admission(unittest.TestCase):
         self.assertEqual(self.ledger.state.charges, {})
 
     def test_grant_committed_during_census_defers_the_older_writer(self):
-        self.api.rows[1] = entry(1, "external", size=13 * GIB // 2)
+        self.api.rows[1] = entry(1, "external", size=BUDGET - 3 * GIB // 2)
         self.assertEqual(self.reserve([self.am])["grants"], 1)
         am = authority() | {"CD_COMPONENT": "am"}
         eg = authority() | {"CD_COMPONENT": "eg", "GITHUB_RUN_ID": "6"}
@@ -120,8 +120,8 @@ class Admission(unittest.TestCase):
             stable = save_decision(self.api, self.ledger, am, ".", self.am)
         self.assertEqual((changed["allowed"], changed["reason"]), (False, "budget-revision-changed"))
         self.assertEqual((stable["allowed"], stable["reason"]), (False, "repository-headroom"))
-        self.assertEqual(changed["inventory_bytes"], 15 * GIB // 2)
-        self.assertEqual(stable["inventory_bytes"] + stable["outstanding_bytes"], 15 * GIB // 2 + MAX_CHARGE)
+        self.assertEqual(changed["inventory_bytes"], BUDGET - GIB // 2)
+        self.assertEqual(stable["inventory_bytes"] + stable["outstanding_bytes"], BUDGET - GIB // 2 + MAX_CHARGE)
 
     def test_positive_skip_releases_grant_and_both_services_fit_when_space_exists(self):
         self.api.rows[1] = replace(self.api.rows[1], size=GIB)
@@ -346,17 +346,13 @@ class Contracts(unittest.TestCase):
         runner.assert_called_once()
 
     def test_job_permissions_failure_isolation_and_authority(self):
+        # The release workflows no longer call the cache budget; the entrypoint
+        # itself must still refuse any caller outside the develop release.
         cd = yaml.safe_load((ROOT / ".github/workflows/staging-cd.yml").read_text())["jobs"]
-        budget = cd["cargo_budget"]
-        self.assertTrue(budget["continue-on-error"])
-        self.assertEqual(budget["permissions"], {"actions": "read", "contents": "write"})
-        self.assertFalse(any("cargo_budget" in j.get("needs", []) for j in cd.values()))
-        self.assertEqual(budget["needs"], "allocate")
+        self.assertNotIn("cargo_budget", cd)
         publish_job = yaml.safe_load((ROOT / ".github/workflows/staging-release.yml").read_text())["jobs"]["publish"]
         self.assertEqual(publish_job["permissions"]["contents"], "read")
-        gate = next(s for s in publish_job["steps"] if s.get("id") == "cargo-headroom")
-        self.assertTrue(gate["continue-on-error"])
-        self.assertIn("publication.outputs.build-cache-key", gate["env"]["CARGO_SAVE_KEY"])
+        self.assertFalse(any(s.get("id") == "cargo-headroom" for s in publish_job["steps"]))
         for altered in (
             {"GITHUB_REPOSITORY": "other"},
             {"GITHUB_EVENT_NAME": "pull_request"},

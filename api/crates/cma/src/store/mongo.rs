@@ -17,6 +17,7 @@ pub(crate) struct MongoConnectionPolicy {
     pub agent_manager_replicas: bool,
     pub startup_schema: crate::config::StartupSchemaMode,
     pub shared_observation: bool,
+    pub initial_settings: super::settings_defaults::InitialSettings,
 }
 
 /// Aggregate-neutral stores opened atomically at process startup.
@@ -52,6 +53,7 @@ pub struct MongoStores {
     pub(crate) agent_lifecycle: Arc<super::MongoAgentLifecycleStore>,
     client: Client,
     database: String,
+    initial_settings: super::settings_defaults::InitialSettings,
 }
 
 impl MongoStores {
@@ -61,10 +63,11 @@ impl MongoStores {
         writes_enabled: bool,
     ) -> Result<Self, StoreError> {
         self.admission_ceilings = Arc::new(
-            super::MongoAdmissionCeilingsStore::open(
+            super::MongoAdmissionCeilingsStore::open_with_defaults(
                 &self.client,
                 &self.database,
                 deployment_limit,
+                self.initial_settings,
             )
             .await?,
         );
@@ -140,6 +143,7 @@ impl MongoStores {
                 agent_manager_replicas: false,
                 startup_schema: Default::default(),
                 shared_observation: false,
+                initial_settings: Default::default(),
             },
         )
         .await
@@ -176,6 +180,7 @@ impl MongoStores {
                 checkpoint_storage: Arc::new(super::checkpoint_storage::RetiredCheckpointStorage),
                 runtime,
                 schema: super::schema::StartupObserver::new(policy.startup_schema),
+                initial_settings: policy.initial_settings,
             },
         )
         .await
@@ -201,6 +206,7 @@ impl MongoStores {
                 checkpoint_storage,
                 runtime,
                 schema: super::schema::StartupObserver::new(Default::default()),
+                initial_settings: Default::default(),
             },
         )
         .await
@@ -221,6 +227,7 @@ impl MongoStores {
             database,
             startup.checkpoint_storage,
             &mut startup.schema,
+            startup.initial_settings,
         )
         .await?
         .with_managed_runtime_version(startup.runtime.0.into());
@@ -251,11 +258,31 @@ impl MongoStores {
             .await?,
         );
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
-        let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
-        let admission_control =
-            Arc::new(MongoAdmissionControlStore::open(&client, database).await?);
-        let admission_ceilings =
-            Arc::new(super::MongoAdmissionCeilingsStore::open(&client, database, 0).await?);
+        let settings = Arc::new(
+            MongoPlatformSettingsStore::open_with_defaults(
+                &client,
+                database,
+                startup.initial_settings,
+            )
+            .await?,
+        );
+        let admission_control = Arc::new(
+            MongoAdmissionControlStore::open_with_defaults(
+                &client,
+                database,
+                startup.initial_settings,
+            )
+            .await?,
+        );
+        let admission_ceilings = Arc::new(
+            super::MongoAdmissionCeilingsStore::open_with_defaults(
+                &client,
+                database,
+                0,
+                startup.initial_settings,
+            )
+            .await?,
+        );
         let registration_capacity =
             Arc::new(super::MongoRegistrationCapacityStore::open(&client, database, false).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
@@ -347,6 +374,7 @@ impl MongoStores {
             agent_lifecycle,
             client,
             database: database.to_owned(),
+            initial_settings: startup.initial_settings,
         };
         stores.ping().await?;
         Ok(stores)
@@ -380,4 +408,5 @@ struct StoreStartup<'a> {
     checkpoint_storage: Arc<dyn super::CheckpointBlobStore>,
     runtime: (&'a str, Option<&'a layer3_adapter::HomeVolumePolicy>),
     schema: super::schema::StartupObserver,
+    initial_settings: super::settings_defaults::InitialSettings,
 }

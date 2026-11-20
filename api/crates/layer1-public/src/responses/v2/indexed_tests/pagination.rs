@@ -56,6 +56,34 @@ async fn oversized_result_is_explicit_and_every_output_page_remains_accessible()
         .await
         .unwrap();
     assert!(terminal.pagination_required && terminal.events.is_empty() && !terminal.terminal);
+
+    use crate::stream_telemetry::{BodyEnd, CloseReason, Contract};
+    let response = crate::responses::stream::open_authorized(
+        f.state,
+        crate::AuthenticatedResourceCaller {
+            context: context("owner-a"),
+            credential: None,
+        },
+        f.agent,
+        3,
+        None,
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let evidence = response.extensions().get::<Contract>().unwrap().clone();
+    let mut body = response.into_body().into_data_stream();
+    let mut pagination = false;
+    while let Some(frame) = body.next().await {
+        let frame = frame.unwrap();
+        pagination |= events(&frame)
+            .iter()
+            .any(|event| event["code"] == "response_pagination_required");
+    }
+    assert!(pagination);
+    assert_eq!(
+        evidence.close_reason(BodyEnd::Eof),
+        CloseReason::PaginationRequired
+    );
 }
 
 #[tokio::test]

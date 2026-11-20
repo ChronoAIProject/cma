@@ -19,6 +19,9 @@ pub(super) async fn connect(config: &Config) -> Result<Arc<MongoStores>, String>
             shared_observation: config.features.agent_shared_observation,
             agent_manager_replicas: config.agent_manager_replicas.is_some(),
             startup_schema: config.startup_schema_mode,
+            initial_settings: crate::store::settings_defaults::InitialSettings::new(
+                config.features.visitor_two_sandbox_defaults,
+            ),
         },
     )
     .await

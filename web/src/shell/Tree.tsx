@@ -1,3 +1,4 @@
+import { useTreeFocus } from './useTreeFocus';
 import { Presence } from '../ui/Presence';
 import { useId, useState } from 'react';
 import {
@@ -32,7 +33,11 @@ import type { ResourceViewsClient } from '../resources/client';
 import { useChannelFacts } from '../resources/useChannelFacts';
 import { ChannelBadge, TreeFactsSummary, treeAgentIds } from './treeChannel';
 import { agentDisplayTitle } from '../agent/presentation';
-import { sandboxFilterEmpty, sandboxNavigationGroups } from './navigationStatuses';
+import {
+  sandboxFilterEmpty,
+  sandboxNavigationGroup,
+  sandboxNavigationGroups,
+} from './navigationStatuses';
 
 export interface TreePermissions {
   readonly createWorkspace: boolean;
@@ -113,15 +118,19 @@ export function Tree({
   onAgentIntent,
   onAction,
 }: TreeProps) {
+  const navigationGroups = new Map(
+    items.map(({ sandbox }) => [
+      sandbox.id,
+      sandboxNavigationGroup(sandbox, deletingSandboxIds?.has(sandbox.id)),
+    ]),
+  );
   const deletingItems = items.filter(
-    ({ sandbox }) =>
-      sandbox.status !== 'retired' &&
-      (sandbox.status === 'retiring' || deletingSandboxIds?.has(sandbox.id)),
+    ({ sandbox }) => navigationGroups.get(sandbox.id) === 'deleting',
   );
   const visibleItems = items.filter(
     (item) =>
-      item.sandbox.status !== 'retired' &&
-      !deletingItems.includes(item) &&
+      navigationGroups.get(item.sandbox.id) !== 'hidden' &&
+      navigationGroups.get(item.sandbox.id) !== 'deleting' &&
       (view === 'agent' || statusFilter === 'all' || item.sandbox.status === statusFilter),
   );
   const facts = useTreeCreation(viewerId, visibleItems, active && refreshError === undefined);
@@ -133,12 +142,11 @@ export function Tree({
     viewerId,
   );
   const groupId = useId();
+  const focus = useTreeFocus();
   const groups = sandboxNavigationGroups(statusFilter).map((group) => ({
     ...group,
     items: visibleItems.filter(
-      ({ sandbox }) =>
-        statusFilter !== 'all' ||
-        (sandboxLifecycleLabel(sandbox) === 'Paused') === (group.id === 'paused'),
+      ({ sandbox }) => statusFilter !== 'all' || navigationGroups.get(sandbox.id) === group.id,
     ),
   }));
   const [collapsed, setCollapsed] = useState(() => restored(viewerId));
@@ -153,7 +161,7 @@ export function Tree({
   };
 
   return (
-    <div className="resource-tree">
+    <div className="resource-tree" {...focus}>
       <DeletionProgressList
         sandboxes={deletingItems.map(({ sandbox }) => sandbox)}
         onViewStatus={(id) =>

@@ -17,6 +17,7 @@ it.each(['loading', 'unavailable'] as const)(
     };
     const queuedInputs = {
       items: [row],
+      outcomes: [],
       managedCommandIds: new Set(['queued-command']),
       edit: vi.fn(),
       remove: vi.fn(),

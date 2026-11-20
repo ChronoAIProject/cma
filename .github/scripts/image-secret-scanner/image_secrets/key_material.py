@@ -19,6 +19,9 @@ LIMIT = 1024 * 1024
 HASH_SIZES = {bytes.fromhex(oid): size for oid, size in {
     "2a864886f70d0202": 16, "2a864886f70d0204": 16, "2a864886f70d0205": 16,  # MD2/4/5
     "55080365": 16, "2b24030201": 20, "2b0e03021a": 20,  # MDC2, RIPEMD-160, SHA-1
+    # OpenSSL crypto/rsa/rsa_sign.c also emits SM3 (1.2.156.10197.1.401) and
+    # encodes its MD4 DigestInfo with arc 1.2.840.113549.2.3.
+    "2a811ccf55018378": 32, "2a864886f70d0203": 16,
 }.items()}
 NIST_HASH = bytes.fromhex("6086480165030402")
 HASH_SIZES.update({NIST_HASH + bytes([i]): size for i, size in

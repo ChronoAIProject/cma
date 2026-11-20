@@ -13,3 +13,4 @@ mod launch_initiation;
 mod inline_image_routes;
 
 mod visitor_admission;
+mod visitor_boundaries;

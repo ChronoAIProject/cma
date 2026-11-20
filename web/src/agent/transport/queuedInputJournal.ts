@@ -62,7 +62,7 @@ export class QueuedInputJournal {
     return new Set(value as string[]);
   }
 
-  /** Presentation tombstones prevent a cancelled accepted input reappearing after reload. */
+  /** Known command IDs seed status reconciliation after reload; absence is not an outcome. */
   remember(commandIds: readonly string[]): void {
     const known = new Set(this.managedCommands());
     for (const id of commandIds) known.add(id);
