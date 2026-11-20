@@ -56,7 +56,14 @@ it('does not capture setup data on unrelated routes or erase unrelated URL param
   window.history.replaceState(null, '', `/profiles${search(draft)}`);
   retainFatherDraftForSignIn();
   expect(sessionStorage.length).toBe(0);
-  window.history.replaceState(null, '', `/bots/new${search(draft)}&from=telegram`);
+  const state = {
+    cmaNavigation: { session: 'prepared-document', index: 2, documentBoundary: true },
+    usageBackground: '/artifacts',
+    unrelated: { retained: true },
+  };
+  window.history.replaceState(state, '', `/bots/new${search(draft)}&from=telegram#review`);
   clearFatherDraft();
   expect(window.location.search).toBe('?from=telegram');
+  expect(window.location.hash).toBe('#review');
+  expect(window.history.state).toEqual(state);
 });

@@ -1,5 +1,6 @@
 import { test, expect, type Dialog } from '@playwright/test';
 import { LocalDocuments, documentId } from './documents.fixture';
+import { routeHistoryBot } from './bot-history.fixture';
 
 test('LOCAL legacy history without a native index preserves Stay, Back, Forward and every entry', async ({
   page,
@@ -149,4 +150,95 @@ test('LOCAL app-indexed Back and Forward still use Stay without a native index',
   await page.evaluate(() => history.forward());
   await expect(title).toHaveValue('Indexed draft');
   expect(fixture.writes).toEqual([]);
+});
+
+test('LOCAL successful Bot creation preserves dirty-document history without a native index', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalDocuments();
+  await fixture.route(page, baseURL!);
+  const creations = await routeHistoryBot(page);
+  await page.addInitScript(() => Object.defineProperty(window, 'navigation', { value: undefined }));
+  await page.goto('/bots');
+  await expect(page.getByRole('region', { name: 'Consumer workspace', exact: true })).toBeVisible();
+  const entry = () => page.evaluate(() => ({ path: location.pathname, state: history.state }));
+  const entries = [await entry()];
+  await page
+    .getByRole('region', { name: 'Consumer workspace', exact: true })
+    .getByRole('button', { name: 'New consumer', exact: true })
+    .click();
+  const wizard = page.getByRole('region', { name: 'New consumer', exact: true });
+  await wizard.getByLabel('Consumer name', { exact: true }).fill('History consumer');
+  await page.evaluate(() =>
+    history.replaceState({ ...history.state, unrelated: { retained: true } }, ''),
+  );
+  entries.push(await entry());
+  await wizard.getByRole('button', { name: 'Event Gateway connection', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Research channel', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Continue', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Continue', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Admission policy', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'Private chats only', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Continue', exact: true }).click();
+  await wizard.getByRole('button', { name: 'Create consumer', exact: true }).click();
+  await expect(page).toHaveURL(/\/bots\/bot_history$/);
+  await expect(page.getByRole('heading', { name: 'History consumer', exact: true })).toBeVisible();
+  entries.push(await entry());
+  await page.evaluate(() =>
+    window.dispatchEvent(
+      new CustomEvent('cma:route-request', { detail: '/artifacts', cancelable: true }),
+    ),
+  );
+  await expect(page.getByRole('link', { name: /Product brief/ })).toBeVisible();
+  entries.push(await entry());
+  await page.getByRole('link', { name: /Product brief/ }).click();
+  const title = page.getByRole('textbox', { name: 'Document title' });
+  await title.fill('Draft after creation');
+  entries.push(await entry());
+  const original = await title.elementHandle();
+  const length = await page.evaluate(() => history.length);
+  const modal = page.getByRole('dialog', { name: 'Leave without saving?' });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.evaluate(() => history.go(-4));
+    await modal.getByRole('button', { name: 'Stay', exact: true }).click();
+    await expect(title).toHaveValue('Draft after creation');
+    expect(await title.evaluate((node, old) => node === old, original)).toBe(true);
+    expect(await entry()).toEqual(entries[4]);
+    await title.fill('Product brief');
+    await page.evaluate(() => history.forward());
+    // With no dirty guard to hide a misplaced cursor, Forward at the newest entry is a no-op.
+    await page.waitForTimeout(100);
+    expect(await entry()).toEqual(entries[4]);
+    await title.fill('Draft after creation');
+  }
+  await page.evaluate(() => history.go(-4));
+  await modal.getByRole('button', { name: 'Leave without saving', exact: true }).click();
+  await expect(page).toHaveURL(/\/bots$/);
+  expect(await entry()).toEqual(entries[0]);
+  for (const expected of entries.slice(1)) {
+    await page.evaluate(() => history.forward());
+    await expect.poll(entry).toEqual(expected);
+  }
+  await expect(title).toHaveValue('Draft after creation');
+  expect(await page.evaluate(() => history.length)).toBe(length);
+  await title.fill('Product brief');
+  await page.getByRole('button', { name: 'Back to artifacts' }).click();
+  const last = await entry();
+  await page.evaluate(() => history.back());
+  await title.fill('Forward draft');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await page.evaluate(() => history.forward());
+    await modal.getByRole('button', { name: 'Stay', exact: true }).click();
+    await expect(title).toHaveValue('Forward draft');
+    expect(await entry()).toEqual(entries[4]);
+  }
+  await page.evaluate(() => history.forward());
+  await modal.getByRole('button', { name: 'Leave without saving', exact: true }).click();
+  await expect.poll(entry).toEqual(last);
+  expect(await page.evaluate(() => history.length)).toBe(length + 1);
+  expect(creations).toEqual(['/api/v1/bots']);
+  expect(fixture.writes).toEqual([]);
+  expect(fixture.boundary.unexpected).toEqual([]);
+  expect(fixture.boundary.errors).toEqual([]);
 });
