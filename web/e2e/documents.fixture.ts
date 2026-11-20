@@ -36,6 +36,10 @@ export class LocalDocuments {
   links: { id: string; permission: string; created_at: string }[] = [];
   exists = true;
   saveFailures = 0;
+  registryDocuments?: readonly LocalDocuments['document'][];
+  registryPageSize = 50;
+  registryFailures = 0;
+  registryGate?: { readonly query: string; readonly wait: Promise<void> };
   async route(page: Page, baseURL: string) {
     await this.boundary.route(page, baseURL);
     await page.route('**/api/v1/documents**', async (route) => {
@@ -64,7 +68,26 @@ export class LocalDocuments {
           this.document.title = String(body.title);
           return reply(this.document);
         }
-        return reply({ items: this.exists ? [this.document] : [], next: null });
+        const scope = url.searchParams.get('scope');
+        const query = url.searchParams.get('q') ?? '';
+        if (this.registryGate?.query === query) await this.registryGate.wait;
+        if (this.registryFailures > 0) {
+          this.registryFailures--;
+          return reply({ detail: 'Artifacts are unavailable' }, 503);
+        }
+        const documents = this.registryDocuments ?? (this.exists ? [this.document] : []);
+        const matches = documents.filter(
+          (document) =>
+            (scope !== 'owned' || document.access === 'owner') &&
+            (scope !== 'shared' || document.access !== 'owner') &&
+            document.title.toLowerCase().includes(query.toLowerCase()),
+        );
+        const offset = Number(url.searchParams.get('cursor') ?? 0);
+        const end = offset + this.registryPageSize;
+        return reply({
+          items: matches.slice(offset, end),
+          next: end < matches.length ? String(end) : null,
+        });
       }
       if (url.pathname.endsWith('/source'))
         return reply({

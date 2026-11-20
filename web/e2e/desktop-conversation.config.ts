@@ -11,6 +11,8 @@ export default defineConfig({
     'desktop-conversation.check.ts',
     'desktop-reconnect.check.ts',
     'deletion-progress.check.ts',
+    'parked-update-deletion.check.ts',
+    'agent-stop-deletion.check.ts',
   ],
   workers: 1,
   retries: 0,

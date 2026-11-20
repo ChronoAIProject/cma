@@ -9,6 +9,7 @@ mod key_order;
 mod opening;
 mod segments;
 mod segments_runtime;
+mod source_keys;
 pub(super) mod startup_ddl;
 
 fn identity() -> ledger::Identity {

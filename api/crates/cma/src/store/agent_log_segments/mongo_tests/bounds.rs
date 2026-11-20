@@ -1,11 +1,13 @@
 use super::*;
 use crate::store::mongo_read_telemetry::{isolated_test, snapshot};
+use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::{event::command::CommandEvent, event::EventHandler, options::ClientOptions};
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Default)]
 struct Trace {
-    bound_probe: Option<Document>,
+    probes: Vec<Document>,
+    catalog_commands: usize,
     read_commands: usize,
     source_rows: usize,
     source_bytes: usize,
@@ -16,11 +18,30 @@ struct Trace {
 impl Trace {
     fn observe(&mut self, event: CommandEvent) {
         if let CommandEvent::Started(event) = &event {
-            if event.command.get_str("find").ok() == Some("agent_log") {
-                let filter = event.command.get_document("filter").unwrap();
-                if filter.contains_key("$or") {
-                    self.bound_probe = Some(filter.clone());
+            if event.command.get_str("listIndexes").ok() == Some("agent_log") {
+                self.catalog_commands += 1;
+            }
+            if event.command.get_str("find").ok() == Some("agent_log")
+                && event
+                    .command
+                    .get_document("projection")
+                    .is_ok_and(|p| p.contains_key("found"))
+            {
+                let mut command = event.command.clone();
+                // Explain the actual query options, excluding transport/session
+                // context: explain is a separate operation after the timed read.
+                for key in [
+                    "$db",
+                    "$clusterTime",
+                    "lsid",
+                    "readConcern",
+                    "txnNumber",
+                    "autocommit",
+                    "startTransaction",
+                ] {
+                    command.remove(key);
                 }
+                self.probes.push(command);
             }
         }
         if let CommandEvent::Succeeded(event) = event {
@@ -74,7 +95,18 @@ async fn sealed_pages_and_audit_units_have_bounded_work_as_history_grows() {
         let db = client.database(&name);
         schema::migrate(&db).await.unwrap();
         let store = MongoSandboxStore::open(&client, &name).await.unwrap();
-        let (agent, _) = segmented_with_width(&store, closed, 200, 2).await;
+        let (agent, entries) = segmented_with_width(&store, closed, 200, 2).await;
+        certify(&store, &agent, &entries).await;
+        store
+            .agent_log
+            .insert_many((0..1000).map(|i| {
+                doc! {
+                    "_id":format!("foreign:{i}"),"agent_id":format!("foreign:{i}"),"seq":null,
+                }
+            }))
+            .bypass_document_validation(true)
+            .await
+            .unwrap();
         for (index, limit) in [20_u16, 100, 200].into_iter().enumerate() {
             *trace.lock().unwrap() = Trace::default();
             let started = std::time::Instant::now();
@@ -101,31 +133,22 @@ async fn sealed_pages_and_audit_units_have_bounded_work_as_history_grows() {
                 snapshot("agent_log")
             })
             .await;
+            let page_elapsed = started.elapsed();
             let reading = trace.lock().unwrap().clone();
-            assert!(reading.read_commands <= 12);
+            assert!(reading.read_commands <= 15);
+            assert_eq!(reading.catalog_commands, 2);
+            assert_eq!(reading.probes.len(), 4);
             assert_eq!(&consumed[..3], &[1, 0, u64::from(limit)]);
             assert_eq!(reading.source_rows, usize::from(limit));
             assert_eq!(reading.source_bytes as u64, consumed[3]);
             assert!(reading.max_source_batch <= 64);
             assert!(reading.max_reply_bytes < 16 * 1024 * 1024 + 1024);
-            // Explain the actual observed production probe. A constant reply
-            // size alone would conceal a server-side lifetime scan.
-            let explain = db
-                .run_command(doc! {
-                    "explain":{"find":"agent_log", "filter":reading.bound_probe.unwrap(),
-                        "projection":{"_id":1}, "limit":1_i64},
-                    "verbosity":"executionStats",
-                })
-                .await
-                .unwrap();
-            let stats = explain.get_document("executionStats").unwrap();
-            assert_eq!(stats.get_i32("totalDocsExamined").unwrap(), 0);
-            let keys = stats.get_i32("totalKeysExamined").unwrap();
-            assert!(keys <= 2, "{stats:?}");
+            let explain_started = std::time::Instant::now();
+            let (keys, docs) = explain_probes(&db, &reading).await;
             eprintln!(
-                "sealed_page_bounds segments={closed} page={limit} source_rows={} source_bytes={} read_commands={} max_source_batch={} max_reply_bytes={} probe_keys={keys} elapsed_us={}",
-                consumed[2], consumed[3], reading.read_commands, reading.max_source_batch,
-                reading.max_reply_bytes, started.elapsed().as_micros(),
+                "sealed_page_bounds segments={closed} page={limit} source_rows={} source_bytes={} read_commands={} catalog_commands={} max_source_batch={} max_reply_bytes={} probe_keys={keys} probe_docs={docs} elapsed_us={} explain_us={}",
+                consumed[2], consumed[3], reading.read_commands, reading.catalog_commands, reading.max_source_batch,
+                reading.max_reply_bytes, page_elapsed.as_micros(), explain_started.elapsed().as_micros(),
             );
             if let Some(previous) = baselines[index] {
                 assert_eq!(consumed, previous);
@@ -134,6 +157,31 @@ async fn sealed_pages_and_audit_units_have_bounded_work_as_history_grows() {
             }
         }
         *trace.lock().unwrap() = Trace::default();
+        let started = std::time::Instant::now();
+        let mut session = client.start_session().snapshot(true).await.unwrap();
+        let proof = segments::capture::capture(
+            &store,
+            &agent,
+            &mut session,
+            segments::capture::CaptureMode::Snapshot,
+        )
+        .await
+        .unwrap();
+        assert_eq!(proof.latest_entry(), entries.last());
+        let elapsed = started.elapsed();
+        let reading = trace.lock().unwrap().clone();
+        assert_eq!(reading.source_rows, 2);
+        assert_eq!(reading.catalog_commands, 1);
+        assert_eq!(reading.probes.len(), 2);
+        assert!(reading.read_commands <= 12);
+        let explain_started = std::time::Instant::now();
+        let (keys, docs) = explain_probes(&db, &reading).await;
+        eprintln!("capture_key_bounds segments={closed} source_rows={} source_bytes={} read_commands={} catalog_commands={} max_reply_bytes={} probe_keys={keys} probe_docs={docs} elapsed_us={} explain_us={}",
+            reading.source_rows, reading.source_bytes, reading.read_commands, reading.catalog_commands, reading.max_reply_bytes,
+            elapsed.as_micros(), explain_started.elapsed().as_micros());
+        drop(session);
+        *trace.lock().unwrap() = Trace::default();
+        let audit_started = std::time::Instant::now();
         let consumed = isolated_test(async {
             assert_eq!(
                 segments::audit::run_unit(&client, &db, agent.id.as_str(), "scale", false)
@@ -144,13 +192,19 @@ async fn sealed_pages_and_audit_units_have_bounded_work_as_history_grows() {
             snapshot("agent_log")
         })
         .await;
+        let audit_elapsed = audit_started.elapsed();
         let reading = trace.lock().unwrap().clone();
+        assert_eq!(reading.catalog_commands, 1);
+        assert_eq!(reading.probes.len(), 2);
+        let explain_started = std::time::Instant::now();
+        let (keys, docs) = explain_probes(&db, &reading).await;
+        let explain_elapsed = explain_started.elapsed();
         assert_eq!(&consumed[..3], &[1, 0, 200]);
         assert_eq!(reading.source_rows, 200);
         assert_eq!(reading.source_bytes as u64, consumed[3]);
         assert!(reading.max_source_batch <= 512);
         assert!(reading.max_reply_bytes < 16 * 1024 * 1024 + 1024);
-        assert!(reading.read_commands <= 30);
+        assert!(reading.read_commands <= 32);
         let work = (consumed, reading.read_commands, reading.max_reply_bytes);
         if let Some(previous) = audit_baseline {
             assert_eq!(work, previous);
@@ -166,9 +220,9 @@ async fn sealed_pages_and_audit_units_have_bounded_work_as_history_grows() {
         assert_eq!(completed.get_i64("next_ordinal").unwrap(), 1);
         assert_eq!(completed.get_i64("checked_entries").unwrap(), 200);
         eprintln!(
-            "audit_unit_bounds segments={closed} source_rows={} source_bytes={} read_commands={} max_source_batch={} max_reply_bytes={}",
-            consumed[2], consumed[3], reading.read_commands, reading.max_source_batch,
-            reading.max_reply_bytes,
+            "audit_unit_bounds segments={closed} source_rows={} source_bytes={} read_commands={} catalog_commands={} max_source_batch={} max_reply_bytes={} probe_keys={keys} probe_docs={docs} elapsed_us={} explain_us={}",
+            consumed[2], consumed[3], reading.read_commands, reading.catalog_commands, reading.max_source_batch,
+            reading.max_reply_bytes, audit_elapsed.as_micros(), explain_elapsed.as_micros(),
         );
         db.drop().await.unwrap();
     }
@@ -237,4 +291,132 @@ async fn global_history_exceeds_physical_segment_budget_without_a_lifetime_vecto
         Err(layer2_core::sandbox::store::SandboxStoreError::AgentLogCapacityExceeded),
     ));
     client.database(&name).drop().await.unwrap();
+}
+
+async fn explain_probes(db: &mongodb::Database, reading: &Trace) -> (i32, i32) {
+    let (mut keys, mut docs) = (0, 0);
+    for command in &reading.probes {
+        let explain = db
+            .run_command(doc! {"explain":command,"verbosity":"executionStats"})
+            .await
+            .unwrap();
+        let stats = explain.get_document("executionStats").unwrap();
+        let examined = stats.get_i32("totalKeysExamined").unwrap();
+        assert_eq!(stats.get_i32("totalDocsExamined").unwrap(), 0, "{stats:?}");
+        if command.get_str("hint").unwrap()
+            == crate::store::migrations::agent_log_source_keys::INDEX
+        {
+            assert_eq!(
+                examined, 0,
+                "foreign malformed rows must not be scanned: {stats:?}"
+            );
+        } else {
+            assert!(examined <= 2, "{stats:?}");
+        }
+        keys += examined;
+        docs += stats.get_i32("totalDocsExamined").unwrap();
+    }
+    (keys, docs)
+}
+
+#[tokio::test]
+#[ignore = "requires a disposable replica set"]
+async fn malformed_probe_has_exact_string_bounds_and_constant_witness_bytes() {
+    let trace = Arc::new(Mutex::new(Trace::default()));
+    let observed = trace.clone();
+    let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        observed.lock().unwrap().observe(event)
+    }));
+    let client = Client::with_options(options).unwrap();
+    let name = format!("cma_key_bounds_{}", uuid::Uuid::new_v4().simple());
+    let db = client.database(&name);
+    schema::migrate(&db).await.unwrap();
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    segmented(&store, 1).await;
+    let mut head = Head::read(
+        collection(&store, HEADS)
+            .find_one(doc! {})
+            .await
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    store
+        .agent_log
+        .insert_many((0..1000).map(|i| {
+            doc! {
+                "_id":format!("foreign:{i}"),"agent_id":format!("foreign:{i}"),"seq":null,
+            }
+        }))
+        .bypass_document_validation(true)
+        .await
+        .unwrap();
+    for id in ["", "a", "a\0", "a\0b", "é", "😀", "prefix"] {
+        head.agent_id = id.into();
+        store
+            .agent_log
+            .insert_many([
+                doc! {"_id":"neighbor-null","agent_id":format!("{id}\0"),"seq":null},
+                doc! {"_id":"neighbor-suffix","agent_id":format!("{id}x"),"seq":null},
+            ])
+            .bypass_document_validation(true)
+            .await
+            .unwrap();
+        *trace.lock().unwrap() = Trace::default();
+        let mut session = client.start_session().snapshot(true).await.unwrap();
+        segments::source_keys::prove(&db, &head, &mut session, true)
+            .await
+            .unwrap();
+        let reading = trace.lock().unwrap().clone();
+        assert_eq!(reading.probes.len(), 2);
+        assert_eq!(reading.source_rows, 0);
+        explain_probes(&db, &reading).await;
+        drop(session);
+        // Neither a huge malformed source ID nor payload may enter the reply.
+        let bad_id = "x".repeat(1024 * 1024);
+        store
+            .agent_log
+            .insert_one(
+                doc! {"_id":&bad_id,"agent_id":id,"seq":null,"payload":"x".repeat(1024*1024)},
+            )
+            .bypass_document_validation(true)
+            .await
+            .unwrap();
+        *trace.lock().unwrap() = Trace::default();
+        let mut session = client.start_session().snapshot(true).await.unwrap();
+        let result = segments::source_keys::prove(&db, &head, &mut session, true).await;
+        assert!(matches!(
+            result,
+            Err(
+                crate::store::agent_log_integrity::TransactionLogError::Domain(
+                    SandboxStoreError::Corrupt(_)
+                )
+            )
+        ));
+        let reading = trace.lock().unwrap().clone();
+        assert_eq!(reading.probes.len(), 1);
+        assert_eq!(reading.read_commands, 1);
+        assert_eq!(reading.catalog_commands, 1);
+        assert_eq!(reading.source_rows, 1);
+        assert!(reading.source_bytes <= 32);
+        assert!(reading.max_reply_bytes < 1024);
+        let explain = db
+            .run_command(doc! {"explain":&reading.probes[0],"verbosity":"executionStats"})
+            .await
+            .unwrap();
+        let stats = explain.get_document("executionStats").unwrap();
+        assert_eq!(stats.get_i32("totalKeysExamined").unwrap(), 1);
+        assert_eq!(stats.get_i32("totalDocsExamined").unwrap(), 1);
+        eprintln!("malformed_witness id={id:?} keys=1 docs=1 source_bytes={} read_commands=1 catalog_commands=1 max_reply_bytes={}", reading.source_bytes, reading.max_reply_bytes);
+        drop(session);
+        store
+            .agent_log
+            .delete_many(doc! {"_id":{"$in":[bad_id,"neighbor-null","neighbor-suffix"]}})
+            .await
+            .unwrap();
+    }
+    db.drop().await.unwrap();
 }

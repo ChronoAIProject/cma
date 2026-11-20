@@ -41,10 +41,10 @@ async fn detached_result_remains_charged_after_parent_and_future_finish() {
     while !result.is_finished() {
         tokio::task::yield_now().await;
     }
-    assert_eq!(root.available_bytes(), 4096);
+    assert_eq!(root.available_bytes(), 4096 - root.metadata_bytes());
     // Dropping the completed task's handle drops its still-owned output.
     drop(result);
-    assert_eq!(root.available_bytes(), 8192);
+    assert_eq!(root.available_bytes(), 8192 - root.metadata_bytes());
 }
 
 #[tokio::test]
@@ -71,14 +71,14 @@ async fn caller_cancellation_does_not_release_detached_work() {
     ready.await.unwrap();
     parent.abort();
     assert!(parent.await.unwrap_err().is_cancelled());
-    assert_eq!(root.available_bytes(), 4096);
+    assert_eq!(root.available_bytes(), 4096 - root.metadata_bytes());
     release.send(()).unwrap();
     let output = child.await.unwrap();
     assert!(output.is_admitted());
     assert_eq!(output[2047], 23);
-    assert_eq!(root.available_bytes(), 4096);
+    assert_eq!(root.available_bytes(), 4096 - root.metadata_bytes());
     drop(output);
-    assert_eq!(root.available_bytes(), 8192);
+    assert_eq!(root.available_bytes(), 8192 - root.metadata_bytes());
 }
 
 #[tokio::test]
@@ -97,7 +97,7 @@ async fn abort_and_panic_release_custody_after_owned_storage() {
     ready.await.unwrap();
     task.abort();
     assert!(task.await.unwrap_err().is_cancelled());
-    assert_eq!(root.available_bytes(), 8192);
+    assert_eq!(root.available_bytes(), 8192 - root.metadata_bytes());
     let (root, scope) = fixture();
     let task = tokio::spawn(async move {
         scope
@@ -108,7 +108,7 @@ async fn abort_and_panic_release_custody_after_owned_storage() {
             .await
     });
     assert!(task.await.unwrap_err().is_panic());
-    assert_eq!(root.available_bytes(), 8192);
+    assert_eq!(root.available_bytes(), 8192 - root.metadata_bytes());
 }
 
 #[tokio::test]
@@ -139,11 +139,45 @@ async fn result_transfer_releases_work_only_after_retained_admission() {
     let retained = policy.reserve(IngressClass::Data, plan(4096)).unwrap();
     let result = result.retain(retained).unwrap().into_shared().unwrap();
     assert_eq!(work.available_bytes(), 4096);
-    assert_eq!(root.available_bytes(), 12288);
+    assert_eq!(root.available_bytes(), 12288 - root.metadata_bytes());
     assert_eq!(result[2047], 19);
     let (_, other) = fixture();
     let foreign = other.run(async { 42 }).await;
     assert!(!foreign.belongs_to(&policy));
     drop(result);
-    assert_eq!(root.available_bytes(), 16384);
+    assert_eq!(root.available_bytes(), 16384 - root.metadata_bytes());
+}
+
+#[test]
+fn admitted_retention_rejects_foreign_storage_without_allocating_a_diagnostic() {
+    let plan = |n| AllocationPlan::checked("foreign retention", &[n]).unwrap();
+    let make_policy = || {
+        let root = IngressBudget::new(16384);
+        let policy = IngressOwnershipPolicy::new(
+            root.clone(),
+            ClassBounds::new(16384, plan(1024), plan(4096)).unwrap(),
+        )
+        .unwrap();
+        // The probe isolates diagnostic allocation from the policy's lazy
+        // semaphore backing, which lives with the fixture's root.
+        drop(policy.admit(IngressClass::Data, plan(1)).unwrap());
+        (root, policy)
+    };
+    let (root, policy) = make_policy();
+    let scope = IngressWorkScope::new(policy.admit(IngressClass::Data, plan(2048)).unwrap());
+    let result = scope.initialize_owned(|| vec![19u8; 1024]);
+    drop(scope);
+    let (foreign, policy) = make_policy();
+    let storage = policy.admit(IngressClass::Data, plan(2048)).unwrap();
+    let mut probe = crate::allocation_probe::AllocationProbe::new();
+    let error = probe.track(|| result.retain_admitted(storage).unwrap_err());
+    assert_eq!(
+        error,
+        crate::ingress_budget::AdmissionRefusal::InvalidPlan {
+            phase: "result retention ownership"
+        }
+    );
+    assert_eq!(probe.allocated(), 0);
+    root.assert_idle();
+    foreign.assert_idle();
 }

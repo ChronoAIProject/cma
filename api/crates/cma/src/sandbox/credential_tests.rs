@@ -18,6 +18,12 @@ use layer2_core::{SandboxId, SandboxProfileId, ServiceId, SubjectId};
 
 use super::*;
 
+#[path = "credential/legacy_admission_tests.rs"]
+mod legacy_admission_tests;
+#[path = "credential/protected_fixture.rs"]
+mod protected_fixture;
+use protected_fixture::protected_issue;
+
 #[path = "credential/model_catalog_tests.rs"]
 mod model_catalog_tests;
 #[path = "credential/node_access_tests.rs"]
@@ -43,17 +49,44 @@ struct MemoryCustody {
     values: Mutex<BTreeMap<(SandboxId, u64), CredentialMaterial>>,
     revocations: Mutex<BTreeMap<(SandboxId, String), CredentialRevocation>>,
     corrupt: AtomicBool,
+    intent: Mutex<Option<CredentialIssuance>>,
 }
 
 #[async_trait::async_trait]
 impl SandboxCredentialCustody for MemoryCustody {
     async fn insert(&self, material: CredentialMaterial) -> Result<(), CredentialCustodyError> {
-        let key = (material.sandbox_id.clone(), material.authority.generation);
-        let mut values = self.values.lock().expect("custody lock");
-        if values.contains_key(&key) {
-            return Err(CredentialCustodyError::Duplicate);
+        if material.source.is_managed() {
+            return Err(CredentialCustodyError::Unavailable(
+                "protected issuance required".into(),
+            ));
         }
-        values.insert(key, material);
+        self.seed_retained(material)
+    }
+
+    async fn issuance(
+        &self,
+        _: &Sandbox,
+    ) -> Result<Option<CredentialIssuance>, CredentialCustodyError> {
+        Ok(self.intent.lock().unwrap().clone())
+    }
+    async fn begin_issuance(
+        &self,
+        _: &Sandbox,
+        intent: &CredentialIssuance,
+    ) -> Result<bool, CredentialCustodyError> {
+        *self.intent.lock().unwrap() = Some(intent.clone());
+        Ok(true)
+    }
+    async fn accept_issuance(
+        &self,
+        _: &Sandbox,
+        intent: &CredentialIssuance,
+        material: &CredentialMaterial,
+    ) -> Result<(), CredentialCustodyError> {
+        self.seed_retained(material.clone())?;
+        let mut accepted = intent.clone();
+        accepted.state = IssuanceState::Accepted;
+        *self.intent.lock().unwrap() = Some(accepted);
         Ok(())
     }
 
@@ -98,82 +131,6 @@ impl SandboxCredentialCustody for MemoryCustody {
             .lock()
             .expect("custody lock")
             .remove(&(sandbox_id.clone(), generation));
-        Ok(())
-    }
-
-    async fn queue_revocation(
-        &self,
-        revocation: CredentialRevocation,
-    ) -> Result<(), CredentialCustodyError> {
-        self.revocations.lock().expect("revocation lock").insert(
-            (
-                revocation.sandbox_id.clone(),
-                revocation.provider_key_id.clone(),
-            ),
-            revocation,
-        );
-        Ok(())
-    }
-
-    async fn revocations(
-        &self,
-        sandbox_id: &SandboxId,
-    ) -> Result<Vec<CredentialRevocation>, CredentialCustodyError> {
-        Ok(self
-            .revocations
-            .lock()
-            .expect("revocation lock")
-            .iter()
-            .filter(|((id, _), _)| id == sandbox_id)
-            .map(|(_, revocation)| revocation.clone())
-            .collect())
-    }
-
-    async fn delete_revocation(
-        &self,
-        sandbox_id: &SandboxId,
-        provider_key_id: &str,
-    ) -> Result<(), CredentialCustodyError> {
-        self.revocations
-            .lock()
-            .expect("revocation lock")
-            .remove(&(sandbox_id.clone(), provider_key_id.to_string()));
-        Ok(())
-    }
-}
-
-struct DuplicateCustody {
-    winner: CredentialMaterial,
-    reads: AtomicUsize,
-    revocations: Mutex<BTreeMap<(SandboxId, String), CredentialRevocation>>,
-}
-
-#[async_trait::async_trait]
-impl SandboxCredentialCustody for DuplicateCustody {
-    async fn insert(&self, _material: CredentialMaterial) -> Result<(), CredentialCustodyError> {
-        Err(CredentialCustodyError::Duplicate)
-    }
-
-    async fn get(
-        &self,
-        _sandbox_id: &SandboxId,
-        _generation: u64,
-    ) -> Result<Option<CredentialMaterial>, CredentialCustodyError> {
-        Ok((self.reads.fetch_add(1, Ordering::SeqCst) > 0).then(|| self.winner.clone()))
-    }
-
-    async fn list(
-        &self,
-        _sandbox_id: &SandboxId,
-    ) -> Result<Vec<CredentialMaterial>, CredentialCustodyError> {
-        Ok(vec![self.winner.clone()])
-    }
-
-    async fn delete(
-        &self,
-        _sandbox_id: &SandboxId,
-        _generation: u64,
-    ) -> Result<(), CredentialCustodyError> {
         Ok(())
     }
 
@@ -381,10 +338,7 @@ async fn service_access_never_reuses_pregrant_or_stale_worker_custody() {
         custody,
     );
     let mut before = sandbox();
-    let initial = controller
-        .issue(&before, 1, SystemTime::UNIX_EPOCH)
-        .await
-        .unwrap();
+    let initial = protected_issue(&controller, &before, 1).await.unwrap();
     before.credential.key_generation = 1;
     before.credential.current = Some(initial.authority.clone());
     before.credential.delivered = true;
@@ -411,10 +365,7 @@ async fn service_access_never_reuses_pregrant_or_stale_worker_custody() {
             before.updated_at.clone(),
         )
         .unwrap();
-    let stale = controller
-        .issue(&before, 2, SystemTime::UNIX_EPOCH)
-        .await
-        .unwrap();
+    let stale = protected_issue(&controller, &before, 2).await.unwrap();
     for generation in [1, 2] {
         assert!(matches!(
             controller
@@ -423,10 +374,7 @@ async fn service_access_never_reuses_pregrant_or_stale_worker_custody() {
             Err(CredentialError::Security(_))
         ));
     }
-    let fresh = controller
-        .issue(&granted, 3, SystemTime::UNIX_EPOCH)
-        .await
-        .unwrap();
+    let fresh = protected_issue(&controller, &granted, 3).await.unwrap();
     assert_ne!(
         fresh.authority.provider_key_id,
         stale.authority.provider_key_id
@@ -440,145 +388,9 @@ async fn service_access_never_reuses_pregrant_or_stale_worker_custody() {
         provider.mint_requests.lock().unwrap()[2]["allowed_service_ids"],
         serde_json::json!(["provider-github-id", "provider-service-id"])
     );
-    let replay = controller
-        .issue(&granted, 3, SystemTime::UNIX_EPOCH)
-        .await
-        .unwrap();
+    let replay = protected_issue(&controller, &granted, 3).await.unwrap();
     assert_eq!(replay.authority, fresh.authority);
     assert_eq!(provider.mints.load(Ordering::SeqCst), 3);
-    server.abort();
-}
-
-#[tokio::test]
-async fn recreated_controller_recovers_custodied_generation_without_reminting() {
-    let (base_url, provider, server) = provider().await;
-    let issuer = Arc::new(KeyIssuer::new(reqwest::Client::new(), base_url, "test"));
-    let tokens = Arc::new(Tokens::default());
-    let custody = Arc::new(MemoryCustody::default());
-    let first = ManagedSandboxCredentials::new(
-        Arc::clone(&issuer),
-        Arc::clone(&tokens),
-        Arc::clone(&custody),
-    )
-    .issue(&sandbox(), 1, SystemTime::UNIX_EPOCH)
-    .await
-    .unwrap();
-    let recreated = ManagedSandboxCredentials::new(issuer, Arc::clone(&tokens), custody)
-        .issue(&sandbox(), 1, SystemTime::UNIX_EPOCH)
-        .await
-        .unwrap();
-
-    assert_eq!(recreated.authority, first.authority);
-    assert_eq!(recreated.value.expose(), first.value.expose());
-    assert_eq!(provider.mints.load(Ordering::SeqCst), 1);
-    assert_eq!(tokens.calls.load(Ordering::SeqCst), 1);
-    server.abort();
-}
-
-#[tokio::test]
-async fn duplicate_mint_loser_is_revoked_before_the_winner_is_returned() {
-    let (base_url, provider, server) = provider().await;
-    let winner = material(SubjectId::new("owner"), "provider-key-winner");
-    let custody = Arc::new(DuplicateCustody {
-        winner: winner.clone(),
-        reads: AtomicUsize::new(0),
-        revocations: Mutex::new(BTreeMap::new()),
-    });
-    let controller = ManagedSandboxCredentials::new(
-        Arc::new(KeyIssuer::new(reqwest::Client::new(), base_url, "test")),
-        Arc::new(Tokens::default()),
-        Arc::clone(&custody),
-    );
-
-    let issued = controller
-        .issue(&sandbox(), 1, SystemTime::UNIX_EPOCH)
-        .await
-        .unwrap();
-
-    assert_eq!(issued.authority.provider_key_id, "provider-key-winner");
-    assert_eq!(
-        provider.revoked.lock().expect("revoked lock").as_slice(),
-        ["provider-key-1"]
-    );
-    assert!(custody
-        .revocations(&SandboxId("sbx_credential_test".into()))
-        .await
-        .unwrap()
-        .is_empty());
-    server.abort();
-}
-
-#[tokio::test]
-async fn failed_duplicate_loser_revocation_is_durable_and_retried() {
-    let (base_url, provider, server) = provider().await;
-    provider.revoke_failures.store(1, Ordering::SeqCst);
-    let custody = Arc::new(DuplicateCustody {
-        winner: material(SubjectId::new("owner"), "provider-key-winner"),
-        reads: AtomicUsize::new(0),
-        revocations: Mutex::new(BTreeMap::new()),
-    });
-    let controller = ManagedSandboxCredentials::new(
-        Arc::new(KeyIssuer::new(reqwest::Client::new(), base_url, "test")),
-        Arc::new(Tokens::default()),
-        Arc::clone(&custody),
-    );
-
-    assert!(matches!(
-        controller
-            .issue(&sandbox(), 1, SystemTime::UNIX_EPOCH)
-            .await,
-        Err(CredentialError::Unavailable(_))
-    ));
-    assert_eq!(
-        custody
-            .revocations(&SandboxId("sbx_credential_test".into()))
-            .await
-            .unwrap()
-            .iter()
-            .map(|debt| debt.provider_key_id.as_str())
-            .collect::<Vec<_>>(),
-        ["provider-key-1"]
-    );
-
-    let recovered = controller
-        .issue(&sandbox(), 1, SystemTime::UNIX_EPOCH)
-        .await
-        .unwrap();
-    assert_eq!(recovered.authority.provider_key_id, "provider-key-winner");
-    assert!(custody
-        .revocations(&SandboxId("sbx_credential_test".into()))
-        .await
-        .unwrap()
-        .is_empty());
-    assert_eq!(provider.mints.load(Ordering::SeqCst), 1);
-    assert_eq!(
-        provider.revoked.lock().expect("revoked lock").as_slice(),
-        ["provider-key-1", "provider-key-1"]
-    );
-    server.abort();
-}
-
-#[tokio::test]
-async fn idempotent_provider_key_is_not_revoked_as_a_duplicate_loser() {
-    let (base_url, provider, server) = provider().await;
-    let custody = Arc::new(DuplicateCustody {
-        winner: material(SubjectId::new("owner"), "provider-key-1"),
-        reads: AtomicUsize::new(0),
-        revocations: Mutex::new(BTreeMap::new()),
-    });
-    let controller = ManagedSandboxCredentials::new(
-        Arc::new(KeyIssuer::new(reqwest::Client::new(), base_url, "test")),
-        Arc::new(Tokens::default()),
-        custody,
-    );
-
-    let issued = controller
-        .issue(&sandbox(), 1, SystemTime::UNIX_EPOCH)
-        .await
-        .unwrap();
-
-    assert_eq!(issued.authority.provider_key_id, "provider-key-1");
-    assert!(provider.revoked.lock().expect("revoked lock").is_empty());
     server.abort();
 }
 
