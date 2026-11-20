@@ -444,6 +444,42 @@ class StagingWorkflowTest < Minitest::Test
                  workflow('staging-release').dig('jobs', 'publish', 'outputs', 'artifact')
   end
 
+  def test_catch_up_only_re_runs_the_develop_push_run_and_staging_stays_push_only
+    staging = workflow('staging-cd')
+    assert_equal 'Staging CD', staging['name'], 'the catch-up trigger names this workflow'
+    assert_equal({ 'push' => { 'branches' => ['develop'] } }, staging['on'] || staging[true])
+    staging['jobs'].each do |id, job|
+      refute_equal 'write', job.dig('permissions', 'actions'), "#{id} must not re-run or dispatch staging"
+    end
+    check = workflow('staging-cd-catch-up')
+    events = check['on'] || check[true]
+    assert_equal %w[schedule workflow_run], events.keys.sort
+    assert_equal({ 'workflows' => ['Staging CD'], 'types' => ['completed'], 'branches' => ['develop'] },
+                 events['workflow_run'])
+    assert_equal [{ 'cron' => '23 * * * *' }], events['schedule']
+    assert_equal({}, check['permissions'])
+    refute check.key?('concurrency')
+    assert_equal ['catch_up'], check['jobs'].keys
+    job = check['jobs']['catch_up']
+    assert_equal({ 'contents' => 'read', 'actions' => 'write' }, job['permissions'])
+    # At most one check runs and one waits; each decides from fresh state.
+    assert_equal({ 'group' => 'cma-staging-cd-catch-up', 'cancel-in-progress' => false }, job['concurrency'])
+    %w[github.repository\ ==\ 'ChronoAIProject/cma' github.ref\ ==\ 'refs/heads/develop'
+       github.event.workflow_run.event\ ==\ 'push' github.event.workflow_run.head_branch\ ==\ 'develop'
+       github.event.workflow_run.head_repository.full_name\ ==\ github.repository].each do |guard|
+      assert_includes job['if'], guard
+    end
+    refute job.key?('environment')
+    refute job.to_s.include?('secrets.')
+    job['steps'].each do |step|
+      refute step.key?('continue-on-error')
+      assert_match(/\A[^@]+@[a-f0-9]{40}\z/, step['uses']) if step['uses']
+    end
+    assert_equal false, job['steps'].first.dig('with', 'persist-credentials')
+    assert_equal ['python3 -B .github/scripts/staging_cd_catch_up.py'], job['steps'].map { |step| step['run'] }.compact
+    assert_equal({ 'GH_TOKEN' => '${{ github.token }}' }, job['steps'].last['env'])
+  end
+
   def test_package_and_download_tools_repeat_transient_network_failures
     env = workflow('staging-cd').fetch('env')
     %w[CARGO_NET_RETRY PIP_RETRIES RUSTUP_MAX_RETRIES].each { |key| assert_operator env.fetch(key).to_i, :>=, 3 }
