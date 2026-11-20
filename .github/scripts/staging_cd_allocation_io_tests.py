@@ -4,7 +4,7 @@ import subprocess
 import unittest
 from unittest.mock import Mock
 
-from staging_cd_allocation_io import AllocationGitHub, AllocationIO, parallel_read
+from staging_cd_allocation_io import ALLOCATION_SECONDS, AllocationGitHub, AllocationIO, parallel_read
 from staging_cd_allocation_snapshot import AllocationSnapshot
 from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
@@ -36,9 +36,20 @@ class AllocationIOTests(unittest.TestCase):
 
     def test_deadline_refuses_without_starting_subprocess(self):
         runner = Mock()
-        io = AllocationIO(runner, clock=Mock(side_effect=[0, 31]))
+        io = AllocationIO(runner, clock=Mock(side_effect=[0, ALLOCATION_SECONDS + 1]))
         with self.assertRaisesRegex(Refusal, "deadline"):
             io.read(["fixture"])
+        runner.assert_not_called()
+
+    def test_push_after_slow_inventory_keeps_its_settlement_margin(self):
+        # Hosted allocation reached the push after 23-28 s of inventory reads.
+        runner = Mock(return_value=Mock(returncode=0, stdout=""))
+        AllocationIO(runner, clock=Mock(side_effect=[0, 28])).write(["git", "push", "fixture"])
+        self.assertEqual(runner.call_args.kwargs["timeout"], 10)
+        runner.reset_mock()
+        late = AllocationIO(runner, clock=Mock(side_effect=[0, ALLOCATION_SECONDS - 6.5]))
+        with self.assertRaisesRegex(Refusal, "deadline"):
+            late.write(["git", "push", "fixture"])
         runner.assert_not_called()
 
     def test_retries_exhaust_and_uncertain_write_is_never_repeated(self):
