@@ -11,6 +11,7 @@ pub(in crate::store) mod agent_log_source_keys;
 mod agent_owner_index;
 mod binding_indexes;
 mod collection_indexes;
+pub(in crate::store) mod command_cohort_index;
 mod index_inventory;
 mod index_plan;
 mod index_toolkit;
