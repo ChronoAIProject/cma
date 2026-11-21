@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -17,6 +18,19 @@ from staging_cd_github import GitHub
 from staging_cd_versions import REPOSITORY
 
 
+class InconsistentInventory(ValueError):
+    """GitHub's count and pages disagreed; the listing changed while it was read."""
+
+
+# A listing is re-read from its first page this many times before the sweep
+# refuses. Runs change state, and caches are saved, while a listing is read:
+# GitHub computes total_count apart from each page. With the develop merge
+# queue, a single read of the run states disagreed with itself often enough
+# that every sweep from 01:27 to 02:20 UTC on 21 Nov 2026 failed.
+INVENTORY_READS = 4
+INVENTORY_BACKOFF_SECONDS = (1, 3, 9)
+
+
 def pages(fetch, field):
     rows = []
     total = None
@@ -24,25 +38,38 @@ def pages(fetch, field):
     while True:
         doc = fetch(page)
         count, values = doc["total_count"], doc[field]
-        if (type(count) is not int or count < 0 or not isinstance(values, list)
-                or total is not None and total != count):
-            raise ValueError("inventory changed or is incomplete")
+        if type(count) is not int or count < 0 or not isinstance(values, list):
+            raise ValueError("inventory page is invalid")
+        if total is not None and total != count:
+            raise InconsistentInventory("inventory changed while it was read")
         rows.extend(values)
         total = count
         if len(rows) == total:
             break
         if len(rows) > total or len(values) != 100:
-            raise ValueError("incomplete inventory page")
+            raise InconsistentInventory("incomplete inventory page")
         page += 1
     if len({row["id"] for row in rows}) != total:
-        raise ValueError("duplicate inventory IDs")
+        raise InconsistentInventory("duplicate inventory IDs")
     return rows
 
 
+def consistent(read, sleep=time.sleep):
+    """One self-consistent listing, or the last disagreement after bounded re-reads."""
+    for attempt in range(INVENTORY_READS):
+        try:
+            return read()
+        except InconsistentInventory:
+            if attempt == INVENTORY_READS - 1:
+                raise
+            sleep(INVENTORY_BACKOFF_SECONDS[attempt])
+
+
 class Actions:
-    def __init__(self, token, run_id):
+    def __init__(self, token, run_id, sleep=time.sleep):
         self.api = GitHub(token)
         self.run_id = run_id
+        self.sleep = sleep
 
     def list(self, resource, field, **filters):
         def fetch(page):
@@ -51,7 +78,8 @@ class Actions:
             if field == "workflow_runs" and filters and doc["total_count"] >= 1000:
                 raise IncompleteHistory("filtered workflow history reached the result limit")
             return doc
-        return pages(fetch, field)
+        # Every re-read starts at page one, so rows from two listings never mix.
+        return consistent(lambda: pages(fetch, field), self.sleep)
 
     def entries(self, **filters):
         return [Entry.parse(row) for row in self.list("caches", "actions_caches", **filters)]
