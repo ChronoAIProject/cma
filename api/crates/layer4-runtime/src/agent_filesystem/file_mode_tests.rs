@@ -1,5 +1,5 @@
 use super::*;
-use std::{collections::BTreeMap, process::Command};
+use std::{collections::BTreeMap, os::unix::fs::FileExt as _, process::Command};
 
 const MODE_TEST_UMASK: &str = "CMA_FILE_MODE_TEST_UMASK";
 const MODE_CHILD: &str = "agent_filesystem::tests::file_mode::write_under_child_umask";
@@ -73,7 +73,7 @@ fn write_under_child_umask() {
                 .code,
             "file_conflict"
         );
-        fixture
+        let written = fixture
             .write("edit", b"after", Some(original.sha256))
             .unwrap();
         let ordinary = mode & 0o777;
@@ -81,12 +81,58 @@ fn write_under_child_umask() {
             mode_of(&fixture, "edit"),
             if enabled { ordinary } else { ordinary & !mask }
         );
-        assert_eq!(
-            fixture.read("edit", 20).unwrap().content().unwrap(),
-            b"after"
-        );
+        let published = fixture.read("edit", 20).unwrap().content().unwrap();
+        assert_eq!(published, b"after");
+        assert_eq!(written.size_bytes, published.len() as u64);
+        assert_eq!(written.sha256, digest(&published));
         assert_no_staging(&fixture);
     }
+}
+
+#[test]
+fn shared_writable_files_and_directories_refuse_mode_preservation() {
+    for (file_mode, directory_mode) in [(0o664, 0o755), (0o606, 0o755), (0o755, 0o775)] {
+        let mut fixture = Fixture::new();
+        fixture.0.preserve_file_mode = true;
+        let original = fixture.write("edit", b"before", None).unwrap();
+        set_test_mode(&fixture, "edit", file_mode);
+        set_test_mode(&fixture, "", directory_mode);
+        assert_eq!(fixture.write("edit", b"before", None).unwrap(), original);
+        let request = fixture.request("edit", b"after", Some(original.sha256));
+        let error = write_with_mode_change(&fixture.0, request, |_, _| {
+            panic!("a writable stage could become visible before publication")
+        })
+        .unwrap_err();
+        assert_eq!(error.detail, "cannot preserve existing file access policy");
+        assert_eq!(
+            std::fs::read(fixture.0.home.join("edit")).unwrap(),
+            b"before"
+        );
+        assert_eq!(mode_of(&fixture, "edit"), file_mode);
+        assert_no_staging(&fixture);
+    }
+}
+
+#[test]
+fn changed_staged_bytes_refuse_publication_with_the_original_intact() {
+    let mut fixture = Fixture::new();
+    fixture.0.preserve_file_mode = true;
+    let original = fixture.write("edit", b"before", None).unwrap();
+    set_test_mode(&fixture, "edit", 0o755);
+    let request = fixture.request("edit", b"after", Some(original.sha256));
+    let error = write_with_mode_change(&fixture.0, request, |stage, mode| {
+        existing_file::set_mode(stage, mode)?;
+        stage.write_all_at(b"other", 0).unwrap();
+        Ok(())
+    })
+    .unwrap_err();
+    assert_eq!(error.code, "file_conflict");
+    assert_eq!(
+        std::fs::read(fixture.0.home.join("edit")).unwrap(),
+        b"before"
+    );
+    assert_eq!(mode_of(&fixture, "edit"), 0o755);
+    assert_no_staging(&fixture);
 }
 
 #[test]

@@ -169,6 +169,7 @@ fn write_with_mode_change(
             sha256: digest(&[]),
         });
     }
+    let content_sha256 = digest(&bytes);
     let mut verified = None;
     let previous = match stat(&parent, &name) {
         Ok(metadata) => {
@@ -185,7 +186,7 @@ fn write_with_mode_change(
             } else {
                 digest(&read_regular(&parent, &name, MAX_AGENT_FILE_BYTES)?)
             };
-            if current == digest(&bytes) {
+            if current == content_sha256 {
                 return Ok(AgentFileWriteReceipt {
                     path: request.path,
                     size_bytes: bytes.len() as u64,
@@ -207,6 +208,9 @@ fn write_with_mode_change(
         Err(error) => return Err(error),
     };
     let stage_name = format!(".cma-write-{}", uuid::Uuid::new_v4().simple());
+    if let Some(original) = &verified {
+        original.require_staging_policy(&parent)?;
+    }
     let mode = if verified.is_some() {
         0o600
     } else {
@@ -214,10 +218,15 @@ fn write_with_mode_change(
             .as_ref()
             .map_or(0o600, |metadata| metadata.st_mode & 0o777)
     };
+    let access = if verified.is_some() {
+        libc::O_RDWR
+    } else {
+        libc::O_WRONLY
+    };
     let mut stage = open_at(
         &parent,
         &stage_name,
-        libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
+        access | libc::O_CREAT | libc::O_EXCL,
         mode,
     )?;
     let result = (|| {
@@ -229,7 +238,7 @@ fn write_with_mode_change(
         stage.sync_all().map_err(io_error)?;
         if let Some(original) = &verified {
             existing_file::check_parent_binding(&root, &request.path, &parent)?;
-            original.publish(&parent, &name, &stage_name, &stage)?;
+            original.publish(&parent, &name, &stage_name, &stage, &content_sha256)?;
         } else if let Some(original) = previous {
             let current = stat(&parent, &name)?;
             if current.st_ino != original.st_ino
@@ -263,7 +272,7 @@ fn write_with_mode_change(
         Ok(AgentFileWriteReceipt {
             path: request.path,
             size_bytes: bytes.len() as u64,
-            sha256: digest(&bytes),
+            sha256: content_sha256,
         })
     })();
     if result.is_err() {

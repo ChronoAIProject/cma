@@ -42,6 +42,22 @@ impl Original {
         &self.version
     }
 
+    pub(super) fn require_staging_policy(&self, parent: &File) -> Result<()> {
+        // A named stage must stay inaccessible to other writers through rename.
+        // SAFETY: geteuid reads only the effective identity of this process.
+        let effective_owner = unsafe { libc::geteuid() };
+        if self.metadata.st_mode & 0o022 != 0
+            || self.directory.st_uid != effective_owner
+            || self.directory.st_mode & 0o022 != 0
+        {
+            return Err(policy_refused());
+        }
+        if !same_security(&self.directory, &descriptor_stat(parent)?) {
+            return Err(conflict());
+        }
+        require_no_acl(parent)
+    }
+
     pub(super) fn restore_mode(
         &self,
         parent: &File,
@@ -64,11 +80,21 @@ impl Original {
         name: &str,
         stage_name: &str,
         stage: &File,
+        content_sha256: &str,
     ) -> Result<()> {
         self.revalidate(parent, name)?;
         let metadata = self.revalidate_stage(parent, stage_name, stage)?;
         if metadata.st_mode & 0o7777 != self.metadata.st_mode & 0o777 {
             return Err(policy_refused());
+        }
+        if read_digest(stage)? != content_sha256
+            || !same_file(&metadata, &descriptor_stat(stage)?)
+            || !same_file(
+                &metadata,
+                &stat(parent, stage_name).map_err(|_| conflict())?,
+            )
+        {
+            return Err(conflict());
         }
         rename(parent, stage_name, name)
     }
@@ -80,6 +106,7 @@ impl Original {
         {
             return Err(conflict());
         }
+        require_no_acl(parent)?;
         require_no_acl(&self.descriptor)?;
         if !same_file(&self.metadata, &stat(parent, name).map_err(|_| conflict())?) {
             return Err(conflict());
