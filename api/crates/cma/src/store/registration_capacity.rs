@@ -192,6 +192,7 @@ impl MongoRegistrationCapacityStore {
         if !active {
             return Ok(limit.is_none());
         }
+        self.activated.store(true, Ordering::Relaxed);
         // The counter is O(1) and lives in the fence itself. Every successful
         // first registration, including unlimited admission, increments it.
         let mut filter = capacity_key();
@@ -232,19 +233,6 @@ impl MongoRegistrationCapacityStore {
 
 #[async_trait::async_trait]
 impl RegistrationCapacity for MongoRegistrationCapacityStore {
-    async fn tracking_active(&self) -> Result<bool, StoreError> {
-        if self.activated.load(Ordering::Relaxed) {
-            return Ok(true);
-        }
-        let active = activation::read(&self.admissions, None)
-            .await
-            .map_err(activation::Error::into_store_error)?;
-        if active {
-            self.activated.store(true, Ordering::Relaxed);
-        }
-        Ok(active)
-    }
-
     async fn existing_subject(&self, subject: &SubjectId) -> Result<bool, StoreError> {
         self.known_subject(subject, None)
             .await
