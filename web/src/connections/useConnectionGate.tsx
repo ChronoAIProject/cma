@@ -109,6 +109,7 @@ export function useConnectionGate(enabled = true, scope?: object, description?: 
   return {
     run,
     checkAndRun,
+    cancel,
     dialog,
     pending: enabled && pending !== undefined,
     error,
