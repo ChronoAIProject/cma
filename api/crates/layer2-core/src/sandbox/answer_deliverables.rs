@@ -1,3 +1,4 @@
+mod media;
 mod runtime;
 mod task_receipts;
 mod types;
@@ -43,6 +44,12 @@ pub struct AnswerDeliverableService {
     documents: Option<Arc<DocumentService>>,
     files: Option<Arc<AgentFileService>>,
     task_store: Option<Arc<dyn super::store::AgentStore>>,
+}
+
+struct VerifiedContent {
+    bytes: Vec<u8>,
+    status: DeliverableStatus,
+    native_media_type: Option<&'static str>,
 }
 
 impl AnswerDeliverableService {
@@ -98,14 +105,15 @@ impl AnswerDeliverableService {
         self.reads.read(access.caller, agent).await?;
         let reference = match &resource {
             DeliverableResource::LiveFile { path } => {
-                let receipt = self
+                let (receipt, bytes) = self
                     .file(access, agent, path, layer3_adapter::MAX_AGENT_FILE_BYTES)
                     .await?;
+                let media_type = media::verified(path, &bytes).into();
                 DeliverableReference {
                     agent_id: agent.clone(),
                     name: types::file_name(path.rsplit('/').next().unwrap_or("deliverable")),
                     resource,
-                    media_type: "application/octet-stream".into(),
+                    media_type,
                     size_bytes: receipt.size_bytes,
                     sha256: receipt.sha256,
                 }
@@ -211,7 +219,7 @@ impl AnswerDeliverableService {
         let status = status(if verify {
             self.bytes(access, agent, &reference)
                 .await
-                .map(|(_, status)| status)
+                .map(|content| content.status)
         } else {
             self.metadata(access, agent, &reference).await
         });
@@ -315,13 +323,16 @@ impl AnswerDeliverableService {
         delivery: &str,
     ) -> Result<(DeliverableReference, Vec<u8>), DeliverableError> {
         let (reading, references) = self.references(access, agent, answer).await?;
-        let reference = references
+        let mut reference = references
             .into_iter()
             .find(|reference| reference.id().is_ok_and(|id| id == delivery))
             .ok_or(DeliverableError::NotFound)?;
-        let (bytes, _) = self.bytes(access, agent, &reference).await?;
+        let content = self.bytes(access, agent, &reference).await?;
+        if let Some(media_type) = content.native_media_type {
+            reference.media_type = media_type.into();
+        }
         self.reads.validate_final_answer(&reading).await?;
-        Ok((reference, bytes))
+        Ok((reference, content.bytes))
     }
 
     async fn references(
@@ -355,10 +366,10 @@ impl AnswerDeliverableService {
         access: &DeliverableAccess<'_>,
         agent: &AgentId,
         reference: &DeliverableReference,
-    ) -> Result<(Vec<u8>, DeliverableStatus), DeliverableError> {
+    ) -> Result<VerifiedContent, DeliverableError> {
         let (bytes, status) = match &reference.resource {
             DeliverableResource::LiveFile { path } => {
-                let receipt = self
+                let (_, bytes) = self
                     .file(access, agent, path, reference.size_bytes.max(1))
                     .await
                     .map_err(|error| match error {
@@ -367,10 +378,7 @@ impl AnswerDeliverableService {
                         }
                         error => error,
                     })?;
-                (
-                    receipt.content().map_err(AgentFileError::from)?,
-                    DeliverableStatus::Ready,
-                )
+                (bytes, DeliverableStatus::Ready)
             }
             DeliverableResource::AgentArtifact { id } => {
                 let (_, bytes) = self
@@ -401,7 +409,21 @@ impl AnswerDeliverableService {
         if bytes.len() as u64 != reference.size_bytes || types::digest(&bytes) != reference.sha256 {
             return Err(DeliverableError::Changed);
         }
-        Ok((bytes, status))
+        let native_media_type = if let DeliverableResource::LiveFile { path } = &reference.resource
+        {
+            let verified = media::verified(path, &bytes);
+            if reference.media_type != media::OPAQUE && reference.media_type != verified {
+                return Err(DeliverableError::Changed);
+            }
+            Some(verified)
+        } else {
+            None
+        };
+        Ok(VerifiedContent {
+            bytes,
+            status,
+            native_media_type,
+        })
     }
 
     async fn file(
@@ -410,7 +432,7 @@ impl AnswerDeliverableService {
         agent: &AgentId,
         path: &str,
         max_bytes: u64,
-    ) -> Result<layer3_adapter::AgentFileReadReceipt, DeliverableError> {
+    ) -> Result<(layer3_adapter::AgentFileReadReceipt, Vec<u8>), DeliverableError> {
         let files = self.files.as_ref().ok_or(DeliverableError::Unavailable)?;
         let receipt = files
             .read(
@@ -425,8 +447,8 @@ impl AnswerDeliverableService {
         if receipt.path != path {
             return Err(DeliverableError::Invalid);
         }
-        receipt.content().map_err(AgentFileError::from)?;
-        Ok(receipt)
+        let bytes = receipt.content().map_err(AgentFileError::from)?;
+        Ok((receipt, bytes))
     }
 }
 

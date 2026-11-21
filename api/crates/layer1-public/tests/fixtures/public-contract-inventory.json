@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 302,
+  "openapi_operations": 303,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3145,6 +3145,18 @@
         "not_authenticated"
       ]
     },
+    "GET /api/v1/documents/{id}/share-recipients": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Owner-authorized bounded search returns public document recipient identities.",
+      "required_problems": [
+        "account_deletion_in_progress",
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated",
+        "recipient_directory_unavailable"
+      ]
+    },
     "PUT /api/v1/documents/{id}/shares/{subject}": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
@@ -3156,9 +3168,11 @@
         "idempotency_key_reused",
         "invalid_idempotency_key",
         "invalid_json",
+        "invalid_share_recipient",
         "json_content_type_required",
         "missing_idempotency_key",
         "not_authenticated",
+        "recipient_directory_unavailable",
         "share_recipient_unavailable"
       ]
     },

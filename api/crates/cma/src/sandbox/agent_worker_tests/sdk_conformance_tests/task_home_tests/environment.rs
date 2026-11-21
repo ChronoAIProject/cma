@@ -17,7 +17,7 @@ use ring::rand::{SecureRandom, SystemRandom};
 
 pub(super) struct LocalIdentity;
 
-use super::repository_connection_tests::RepositoryConnection;
+use super::repository_connection_tests::{RepositoryConnection, RepositoryRefusal};
 
 #[async_trait::async_trait]
 impl OwnerTokenSource for LocalIdentity {
@@ -81,42 +81,19 @@ async fn initial_task_public_default_environment_delivers_exact_task_after_prepa
     initial_task_environment(None, None, true).await;
 }
 
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
-async fn repository_task_public_preparation_pins_checkout_before_exact_task_and_replays_identity() {
-    initial_task_environment(
-        Some(json!({"url":"https://github.com/example/project", "ref":"proof/fixed"})),
-        None,
-        false,
-    )
-    .await;
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
-async fn repository_task_public_source_failure_preserves_identity_without_dispatching_task() {
-    for failure in [
-        "repository_connection_required",
-        "repository_ref_not_found",
-        "repository_unavailable",
-        "repository_source_invalid",
-    ] {
-        initial_task_environment(
-            Some(json!({"url":"https://github.com/example/project", "ref":"proof/fixed"})),
-            Some(failure),
-            false,
-        )
-        .await;
-    }
-}
-
-async fn initial_task_environment(
+pub(super) async fn initial_task_environment(
     repository: Option<Value>,
-    source_failure: Option<&str>,
+    source_failure: Option<RepositoryRefusal>,
     desktop: bool,
 ) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
-    let database_client = mongodb::Client::with_uri_str(&uri).await.unwrap();
+    let marker = source_failure
+        .filter(|failure| failure.before_marker)
+        .map(|_| Arc::new(super::repository_marker::MarkerPause::default()));
+    let database_client = match &marker {
+        Some(marker) => marker.client(&uri).await,
+        None => mongodb::Client::with_uri_str(&uri).await.unwrap(),
+    };
     let database = database_client.database(&format!(
         "cma_task_default_{}",
         uuid::Uuid::new_v4().simple()
@@ -224,25 +201,31 @@ async fn initial_task_environment(
     .with_replicas(true)
     .with_home_policy(desktop.then(super::desktop::home_policy));
     sandbox_config.retry_delay = Duration::from_secs(1);
-    let sandbox_worker = SandboxWorker::new(
-        SandboxWorkerDependencies {
-            store: harness.store.clone(),
-            adapter: harness.adapter.clone(),
-            credentials,
-            workspaces: Arc::new(DurableProfileWorkspaceProvisioner::new(
-                WorkspaceService::new(harness.store.clone(), profiles),
-                workspace_worker,
-            )),
-            agents: Arc::new(DurableLiveAgentStopper::new(
-                harness.store.clone(),
-                harness.registry.clone(),
-            )),
-            registry: harness.registry.clone(),
-            updates: harness.updates.clone(),
-            operations: AgentOperationService::new(harness.store.clone(), harness.registry.clone()),
-        },
-        sandbox_config,
-    );
+    let worker = |config| {
+        SandboxWorker::new(
+            SandboxWorkerDependencies {
+                store: harness.store.clone(),
+                adapter: harness.adapter.clone(),
+                credentials: credentials.clone(),
+                workspaces: Arc::new(DurableProfileWorkspaceProvisioner::new(
+                    WorkspaceService::new(harness.store.clone(), profiles.clone()),
+                    workspace_worker.clone(),
+                )),
+                agents: Arc::new(DurableLiveAgentStopper::new(
+                    harness.store.clone(),
+                    harness.registry.clone(),
+                )),
+                registry: harness.registry.clone(),
+                updates: harness.updates.clone(),
+                operations: AgentOperationService::new(
+                    harness.store.clone(),
+                    harness.registry.clone(),
+                ),
+            },
+            config,
+        )
+    };
+    let sandbox_worker = worker(sandbox_config.clone());
     let original = "  比较三个工具\n保留原文。  ";
     let mut input = json!({"name":"New task", "initial_message":original});
     if desktop {
@@ -277,6 +260,32 @@ async fn initial_task_environment(
             .allow_after_blocked_states(&service, &harness, &input, &receipt, &operation_path)
             .await;
     }
+    if let Some(marker) = marker {
+        let operation_id = receipt["id"].as_str().unwrap();
+        let refusal = source_failure.unwrap();
+        let sandbox = marker
+            .fail_before_marker(
+                &database,
+                operation_id,
+                &harness,
+                &sandbox_worker,
+                refusal.code,
+            )
+            .await;
+        sandbox_config.holder = "task-cleanup-before-marker-restarted".into();
+        let resumed = worker(sandbox_config);
+        super::repository_connection_tests::complete_failed_environment_retirement(
+            &harness,
+            &sandbox,
+            None,
+            &resumed,
+            &store_retry::StoreRetry::default(),
+        )
+        .await;
+        provider_task.abort();
+        database.drop().await.unwrap();
+        return;
+    }
     let agent_id = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             let operation: Value =
@@ -299,7 +308,8 @@ async fn initial_task_environment(
     assert_ne!(sandbox_id, harness.workspace.sandbox_id);
     let retry_unavailable = store_retry::StoreRetry::default();
     let transcript_path = format!("{agent_path}/transcript");
-    if let Some(code) = source_failure {
+    if let Some(refusal) = source_failure {
+        let code = refusal.code;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         let failed_agent = super::environment_workers::drive_source_failure(
             &harness,
@@ -307,12 +317,11 @@ async fn initial_task_environment(
             &sandbox_id,
             &sandbox_worker,
             &retry_unavailable,
-            code,
+            refusal,
             deadline,
         )
         .await;
-        // The HTTP lifecycle task publishes its terminal operation separately
-        // from the Agent worker's committed failure.
+        // Workspace failure publishes the operation and its teardown obligation together.
         let operation: Value = tokio::time::timeout_at(deadline, async {
             let mut tick = tokio::time::interval(Duration::from_millis(20));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -366,13 +375,24 @@ async fn initial_task_environment(
         assert_eq!(retained.workspace_id, failed_agent.workspace_id);
         assert_eq!(retained.worktree_id, failed_agent.worktree_id);
         assert_eq!(retained.conversation.first_message.as_ref(), Some(first));
-        super::repository_connection_tests::retire_failed_environment(
-            &harness,
-            &failed_agent,
-            &sandbox_worker,
-            &retry_unavailable,
-        )
-        .await;
+        if refusal.sibling {
+            super::repository_connection_tests::assert_other_workspace_preserved(
+                &harness,
+                &failed_agent,
+            )
+            .await;
+        } else {
+            sandbox_config.holder = "task-cleanup-restarted".into();
+            let resumed = worker(sandbox_config);
+            super::repository_connection_tests::complete_failed_environment_retirement(
+                &harness,
+                &failed_agent.sandbox_id,
+                Some(&failed_agent),
+                &resumed,
+                &retry_unavailable,
+            )
+            .await;
+        }
         provider_task.abort();
         database.drop().await.unwrap();
         return;

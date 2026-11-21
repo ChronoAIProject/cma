@@ -75,6 +75,7 @@
   {"operation":"GET /api/v1/documents/{id}/comments","positive":"document-comments-success","negative":"document-comments-foreign","proof":"probe"},
   {"operation":"GET /api/v1/documents/{id}/revisions","positive":"document-revisions-success","negative":"document-revisions-foreign","proof":"probe"},
   {"operation":"GET /api/v1/documents/{id}/share-links","positive":"document-links-success","negative":"document-links-foreign","proof":"probe"},
+  {"operation":"GET /api/v1/documents/{id}/share-recipients","positive":"document-share-recipients-success","negative":"document-share-recipients-foreign","proof":"probe"},
   {"operation":"GET /api/v1/documents/{id}/shares","positive":"document-shares-success","negative":"document-shares-foreign","proof":"probe"},
   {"operation":"GET /api/v1/documents/{id}/source","positive":"document-source-success","negative":"document-source-foreign","proof":"probe"},
   {"operation":"GET /api/v1/resource-access/{kind}/{id}","positive":"share-effective-success","negative":"share-effective-not-found","proof":"contract"},

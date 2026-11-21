@@ -38,6 +38,8 @@ mod prepared_open_ready;
 mod prepared_replay;
 mod reconcile;
 mod startup;
+mod startup_hold_work;
+mod startup_holds;
 mod startup_open;
 mod startup_publication;
 mod startup_support;
@@ -74,6 +76,7 @@ pub(crate) struct AgentWorkerConfig {
     pub ownership_retry_hints: Option<Arc<dyn super::ownership_retry_hint::OwnershipRetryHints>>,
     pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub parent_not_ready_pacing_enabled: bool,
+    startup_sibling_hold_enabled: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
     pub cleanup_continuation_enabled: bool,
@@ -94,6 +97,7 @@ impl AgentWorkerConfig {
             ownership: None,
             ownership_retry_hints: None,
             parent_not_ready_pacing_enabled: false,
+            startup_sibling_hold_enabled: false,
             retry_single_marker_enabled: false,
             work_retry_policy_enabled: false,
             cleanup_continuation_enabled: false,
@@ -138,6 +142,11 @@ impl AgentWorkerConfig {
         self
     }
 
+    pub(crate) fn with_startup_sibling_hold(mut self, enabled: bool) -> Self {
+        self.startup_sibling_hold_enabled = enabled;
+        self
+    }
+
     pub(crate) fn with_retry_single_marker(mut self, enabled: bool) -> Self {
         self.retry_single_marker_enabled = enabled;
         self
@@ -162,6 +171,7 @@ impl AgentWorkerConfig {
 pub(crate) struct AgentWorker {
     dependencies: AgentWorkerDependencies,
     config: AgentWorkerConfig,
+    startup_holds: Option<startup_holds::StartupHolds>,
     maintenance: reconcile::MaintenanceChecks,
     capacity_restart: Arc<OnceLock<Arc<dyn CapacityRecoveryReconnect>>>,
     startup_timings: Mutex<HashMap<AgentId, startup_timing::StartupPhaseDurations>>,
@@ -181,6 +191,9 @@ impl AgentWorker {
         );
         Arc::new(Self {
             dependencies,
+            startup_holds: config
+                .startup_sibling_hold_enabled
+                .then(startup_holds::StartupHolds::default),
             config,
             maintenance: reconcile::MaintenanceChecks::default(),
             capacity_restart,
@@ -237,9 +250,7 @@ impl AgentWorker {
             Some(coordinator) => coordinator.background_cleanup_holds().await,
             None => Default::default(),
         };
-        self.dependencies
-            .store
-            .due_agent_work_with_cleanup_holds(&rfc3339_at(now), limit, &holds)
+        self.due_with_startup_holds(&rfc3339_at(now), limit, &holds)
             .await
     }
 

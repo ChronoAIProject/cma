@@ -28,6 +28,7 @@ use super::{
 
 /// One client pool per allowlisted provider.
 pub struct ProviderClient {
+    pub(crate) execution_verifiers: Arc<crate::turns::execution_receipt::ExecutionVerifiers>,
     providers: BTreeMap<ProviderSlug, ProviderHandle>,
     pub(super) request_timeout: Duration,
     pub(super) management_auth: Option<super::management_auth::CmaManagementAuth>,
@@ -84,6 +85,7 @@ impl ProviderClient {
             );
         }
         Ok(Self {
+            execution_verifiers: Arc::default(),
             providers,
             request_timeout,
             management_auth: None,
@@ -102,6 +104,10 @@ impl ProviderClient {
             config.provider_max_inflight,
         )?;
         client.context_diagnostics_enabled = super::context_retry::diagnostics::config::enabled()?;
+        client.execution_verifiers =
+            Arc::new(crate::turns::execution_receipt::ExecutionVerifiers::new(
+                config.turns.provider_execution_attribution_enabled,
+            ));
         client.turn_trace_enabled =
             crate::telemetry::turn_trace::config::enabled().map_err(|_| {
                 ProviderError::InvalidRequest("invalid turn trace configuration".into())
@@ -123,6 +129,13 @@ impl ProviderClient {
 
     pub fn provider_count(&self) -> usize {
         self.providers.len()
+    }
+    pub fn with_execution_verifiers(
+        mut self,
+        verifiers: Arc<crate::turns::execution_receipt::ExecutionVerifiers>,
+    ) -> Self {
+        self.execution_verifiers = verifiers;
+        self
     }
     pub(crate) fn with_worker_credentials(
         mut self,

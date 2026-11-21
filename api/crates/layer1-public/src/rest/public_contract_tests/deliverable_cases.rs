@@ -1,7 +1,7 @@
 use super::{super::resource_access_tests::context, Scenario};
 use axum::Extension;
 use layer2_core::document_artifacts::{
-    memory::{MemoryDocumentBlobs, MemoryDocuments},
+    memory::{recipient_directory, MemoryDocumentBlobs, MemoryDocuments},
     CreateDocument, DocumentPermission, DocumentService, GrantDocument, UpdateDocument,
 };
 use layer2_core::sandbox::{
@@ -70,7 +70,8 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let documents = DocumentService::new(
         Arc::new(MemoryDocuments::default()),
         Arc::new(MemoryDocumentBlobs::default()),
-    );
+    )
+    .with_directory(recipient_directory(&["recipient"]));
     let document = documents
         .create(
             &owner.caller,

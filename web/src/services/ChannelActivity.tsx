@@ -99,6 +99,12 @@ export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFe
                         <dt>Provider Agent</dt>
                         <dd>{consumer.agent_id ?? 'Provider Agent identity was not reported'}</dd>
                       </div>
+                      {consumer.execution_reference ? (
+                        <div>
+                          <dt>Provider execution reference</dt>
+                          <dd>{consumer.execution_reference}</dd>
+                        </div>
+                      ) : null}
                       {consumer.provider ? (
                         <div>
                           <dt>Provider</dt>

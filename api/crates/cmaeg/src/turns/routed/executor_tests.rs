@@ -20,7 +20,7 @@ use std::{
     time::Duration,
 };
 use tokio::sync::mpsc;
-pub(super) fn executor(
+pub(crate) fn executor(
     setup: &Setup,
     http: &HttpServer,
 ) -> (

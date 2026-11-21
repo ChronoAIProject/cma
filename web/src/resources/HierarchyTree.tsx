@@ -1,5 +1,9 @@
 import { useCallback, useMemo } from 'react';
-import { ApiError, type AccessibleSandboxSummary } from '@cma/client';
+import {
+  ApiError,
+  type AccessibleSandboxSummary,
+  type AccessibleWorkspaceSummary,
+} from '@cma/client';
 import type { AppRoute } from '../routing/routes';
 import { TreeRow } from '../shell/TreeRow';
 import { stateMeta } from '../shell/treePresentation';
@@ -12,6 +16,8 @@ import { loadSandbox, loadWorkspace } from './loadHierarchy';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { useChannelFacts } from './useChannelFacts';
 import { channelLabel } from './channelLabels';
+import { sandboxStatusPresentation } from '../sandbox/presentation';
+import { sandboxChildStatus } from '../sandbox/lifecycle';
 
 export interface TreeExpansion {
   readonly collapsed: ReadonlySet<string>;
@@ -47,6 +53,7 @@ export function SandboxBranch({
   readonly accessSummary?: AccessSummary;
 }) {
   const node = `sandbox:${sandbox.id}`;
+  const { status } = sandboxStatusPresentation(sandbox);
   const open = !expansion.collapsed.has(node);
   const collapse = expansion.collapse;
   const accessChanged = useCallback(() => {
@@ -63,9 +70,9 @@ export function SandboxBranch({
         route={{ kind: 'sandbox', sandboxId: sandbox.id }}
         selected={route.kind === 'sandbox' && route.sandboxId === sandbox.id}
         expanded={open}
-        reviving={sandbox.status === 'reviving'}
+        reviving={status === 'reviving'}
         meta={stateMeta(
-          sandbox.status,
+          status,
           <>
             <span>{resourceCount(sandbox.agent_count, 'Agent')}</span>
             <ResourceAccessSummary compact value={accessSummary} />
@@ -77,7 +84,7 @@ export function SandboxBranch({
       {open ? (
         <SandboxChildren
           client={client}
-          id={sandbox.id}
+          sandbox={sandbox}
           route={route}
           onNavigate={onNavigate}
           onAccessChanged={accessChanged}
@@ -91,13 +98,14 @@ export function SandboxBranch({
 function SandboxChildren({
   client,
   expansion,
-  id,
+  sandbox,
   route,
   onNavigate,
   onAccessChanged,
 }: BranchProps & {
-  readonly id: string;
+  readonly sandbox: AccessibleSandboxSummary;
 }) {
+  const { id } = sandbox;
   const read = useMemo(
     () => async (signal: AbortSignal) => {
       try {
@@ -129,7 +137,7 @@ function SandboxChildren({
           key={workspace.id}
           client={client}
           id={workspace.id}
-          sandboxId={id}
+          sandbox={sandbox}
           name={workspace.name}
           status={workspace.status}
           route={route}
@@ -149,7 +157,7 @@ function WorkspaceTreeBranch({
   client,
   expansion,
   id,
-  sandboxId,
+  sandbox,
   name,
   status,
   route,
@@ -157,9 +165,9 @@ function WorkspaceTreeBranch({
   onAccessChanged,
 }: BranchProps & {
   readonly id: string;
-  readonly sandboxId: string;
+  readonly sandbox: AccessibleSandboxSummary;
   readonly name: string;
-  readonly status: Parameters<typeof stateMeta>[0];
+  readonly status: AccessibleWorkspaceSummary['status'];
 }) {
   const node = `workspace:${id}`;
   const open = !expansion.collapsed.has(node);
@@ -172,14 +180,14 @@ function WorkspaceTreeBranch({
     <div className="resource-tree__branch">
       <TreeRow
         nodeId={`workspace:${id}`}
-        parentId={`sandbox:${sandboxId}`}
+        parentId={`sandbox:${sandbox.id}`}
         level={2}
         label={name}
         icon={<IconFolderOpenOutline16 />}
         route={{ kind: 'workspace', workspaceId: id }}
         selected={route.kind === 'workspace' && route.workspaceId === id}
         expanded={open}
-        meta={stateMeta(status)}
+        meta={stateMeta(sandboxChildStatus(sandbox, status))}
         onNavigate={onNavigate}
         onToggle={() => expansion.toggle(node)}
       />
@@ -187,7 +195,7 @@ function WorkspaceTreeBranch({
         <WorkspaceChildren
           client={client}
           id={id}
-          sandboxId={sandboxId}
+          sandbox={sandbox}
           route={route}
           onNavigate={onNavigate}
           onAccessChanged={accessChanged}
@@ -200,14 +208,15 @@ function WorkspaceTreeBranch({
 function WorkspaceChildren({
   client,
   id,
-  sandboxId,
+  sandbox,
   route,
   onNavigate,
   onAccessChanged,
 }: Omit<BranchProps, 'expansion'> & {
   readonly id: string;
-  readonly sandboxId: string;
+  readonly sandbox: AccessibleSandboxSummary;
 }) {
+  const sandboxId = sandbox.id;
   const read = useMemo(
     () => async (signal: AbortSignal) => {
       try {
@@ -253,7 +262,10 @@ function WorkspaceChildren({
             icon={<IconAgentPresetOutline16 />}
             route={{ kind: 'agent', agentId: agent.id }}
             selected={route.kind === 'agent' && route.agentId === agent.id}
-            meta={stateMeta(agent.status, <span>{channelLabel(channelFacts.get(agent.id))}</span>)}
+            meta={stateMeta(
+              sandboxChildStatus(sandbox, agent.status),
+              <span>{channelLabel(channelFacts.get(agent.id))}</span>,
+            )}
             onNavigate={onNavigate}
           />
         ))}

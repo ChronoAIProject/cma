@@ -342,10 +342,9 @@ test('LOCAL capability checks recover Files, Screen and Operations after 503 wit
   let peakReads = 0;
   let fileReads = 0;
   let release!: () => void;
-  const pending = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  let status = 503;
+  let releaseRecovery!: () => void;
+  const pending = new Promise<void>((resolve) => (release = resolve));
+  const pendingRecovery = new Promise<void>((resolve) => (releaseRecovery = resolve));
   const unsupported = {
     state: 'unsupported',
     reason: 'not_supported_by_contract',
@@ -408,15 +407,25 @@ test('LOCAL capability checks recover Files, Screen and Operations after 503 wit
     );
     await page.route('**/api/v1/agents/agt_contract/environment', async (route) => {
       expect(route.request().method()).toBe('GET');
-      reads++;
+      const attempt = ++reads;
       activeReads++;
       peakReads = Math.max(peakReads, activeReads);
-      if (reads === 1) await pending;
-      await route.fulfill({
-        status,
-        json:
-          status === 200 ? capabilities : { code: 'unavailable', detail: 'Private upstream error' },
-      });
+      if (attempt === 1) await pending;
+      if (attempt === 2) await pendingRecovery;
+      await route.fulfill(
+        attempt > 1
+          ? { json: capabilities }
+          : {
+              status: 503,
+              headers: { 'content-type': 'application/problem+json', 'retry-after': '1' },
+              json: {
+                type: 'about:blank',
+                title: 'Agent owner unavailable',
+                status: 503,
+                code: 'agent_owner_unavailable',
+              },
+            },
+      );
       activeReads--;
     });
     await page.route('**/api/v1/agents/agt_contract/files/tree**', (route) => {
@@ -435,7 +444,6 @@ test('LOCAL capability checks recover Files, Screen and Operations after 503 wit
         name === 'Files' ? 'Checking file access…' : 'Checking operation availability…',
       );
     }
-    expect(reads).toBe(1);
     expect(fileReads).toBe(0);
     release();
     for (const name of ['Operations', 'Screen', 'Files']) {
@@ -445,13 +453,18 @@ test('LOCAL capability checks recover Files, Screen and Operations after 503 wit
       await expect(tab).toContainText(`We couldn’t check ${subject} availability.`);
       await expect(tab.getByRole('status')).toHaveCount(1);
       await expect(tab.getByRole('button', { name: 'Try again' })).toBeVisible();
-      await expect(tab).not.toContainText('Private upstream error');
     }
     expect(fileReads).toBe(0);
-    status = 200;
-    await page.clock.fastForward(30_000);
-    await expect.poll(() => reads).toBeGreaterThan(1);
+    const retry = computer.getByRole('button', { name: 'Try again', exact: true });
+    await retry.click({ clickCount: 2 });
+    await page.clock.runFor(999);
+    expect(reads).toBe(1);
+    await page.clock.runFor(300);
+    await expect.poll(() => reads).toBe(2);
+    await retry.click({ clickCount: 2 });
+    releaseRecovery();
     await expect.poll(() => fileReads).toBe(1);
+    expect(reads).toBe(2);
     const assertRecovered = async () => {
       await computer.getByRole('tab', { name: 'Files', exact: true }).click();
       await expect(
@@ -481,6 +494,7 @@ test('LOCAL capability checks recover Files, Screen and Operations after 503 wit
     expect(peakReads).toBe(1);
   } finally {
     release();
+    releaseRecovery();
     await fixture.close(page);
   }
 });

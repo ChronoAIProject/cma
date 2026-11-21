@@ -24,7 +24,8 @@ fn fixture() -> (Arc<DocumentService>, Arc<memory::MemoryDocuments>) {
         DocumentService::new(
             store.clone(),
             Arc::new(memory::MemoryDocumentBlobs::default()),
-        ),
+        )
+        .with_directory(memory::recipient_directory(&["guest"])),
         store,
     )
 }
@@ -283,7 +284,8 @@ async fn revoking_while_source_is_in_flight_prevents_delivery() {
         entered: Default::default(),
         release: Default::default(),
     });
-    let service = DocumentService::new(Arc::new(memory::MemoryDocuments::default()), blobs.clone());
+    let service = DocumentService::new(Arc::new(memory::MemoryDocuments::default()), blobs.clone())
+        .with_directory(memory::recipient_directory(&["guest"]));
     let owner = caller("owner");
     let guest = caller("guest");
     let doc = service.create(&owner, "create", body()).await.unwrap();

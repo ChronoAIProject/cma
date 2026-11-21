@@ -34,8 +34,37 @@ describe('native warm pool controls', () => {
       });
       const list = await t.client.admin.listWarmPools();
       expect(list.default_config_sha256).toBeUndefined();
+      expect(list.machine_image).toBeUndefined();
       expect(list.items).toEqual(items);
       expect(list.items[0]?.config_sha256).toBeUndefined();
+      expect(list.items[0]?.machine).toBeUndefined();
+    }
+  });
+  it('names the shared desktop pool and its image, and rejects malformed desktop fields', async () => {
+    const t = transport();
+    const desktop = { ...pool, id: 'wp_desktop', machine: true, image: 'registry/desktop' };
+    const inventory = {
+      items: [{ ...pool, machine: false }, desktop],
+      default_image: 'next-image',
+      default_cpu_millis: 1000,
+      default_memory_mib: 1024,
+      default_config_sha256: 'd'.repeat(64),
+      available: true,
+      machine_image: 'registry/desktop',
+    };
+    t.answer(inventory);
+    const list = await t.client.admin.listWarmPools();
+    expect(list.machine_image).toBe('registry/desktop');
+    expect(list.items.map((item) => item.machine)).toEqual([false, true]);
+    t.answer({ ...inventory, machine_image: null });
+    expect((await t.client.admin.listWarmPools()).machine_image).toBeNull();
+    for (const value of [null, 'true', 1]) {
+      t.answer({ ...inventory, items: [{ ...desktop, machine: value }] });
+      await expect(t.client.admin.listWarmPools()).rejects.toBeInstanceOf(ProtocolError);
+    }
+    for (const value of [42, false, {}]) {
+      t.answer({ ...inventory, machine_image: value });
+      await expect(t.client.admin.listWarmPools()).rejects.toBeInstanceOf(ProtocolError);
     }
   });
   it('preserves unavailable default digests and rejects malformed present digest fields', async () => {

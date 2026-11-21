@@ -5,9 +5,8 @@ import {
   sandboxChildrenAvailable,
   sandboxChildrenReadable,
   sandboxChildStatus,
-  sandboxLifecycleLabel,
-  sandboxTone,
 } from '../sandbox/lifecycle';
+import { sandboxStatusPresentation } from '../sandbox/presentation';
 import type { AppRoute } from '../routing/routes';
 import { toneDot } from '../ui/Badge';
 import {
@@ -34,11 +33,7 @@ import type { ResourceViewsClient } from '../resources/client';
 import { useChannelFacts } from '../resources/useChannelFacts';
 import { ChannelBadge, TreeFactsSummary, treeAgentIds } from './treeChannel';
 import { agentDisplayTitle } from '../agent/presentation';
-import {
-  sandboxFilterEmpty,
-  sandboxNavigationGroup,
-  sandboxNavigationGroups,
-} from './navigationStatuses';
+import { sandboxFilterEmpty, sandboxNavigation } from './navigationStatuses';
 
 export interface TreePermissions {
   readonly createWorkspace: boolean;
@@ -120,20 +115,15 @@ export function Tree({
   onAgentIntent,
   onAction,
 }: TreeProps) {
-  const navigationGroups = new Map(
-    items.map(({ sandbox }) => [
-      sandbox.id,
-      sandboxNavigationGroup(sandbox, deletingSandboxIds?.has(sandbox.id)),
-    ]),
-  );
-  const deletingItems = items.filter(
-    ({ sandbox }) => navigationGroups.get(sandbox.id) === 'deleting',
-  );
-  const visibleItems = items.filter(
-    (item) =>
-      navigationGroups.get(item.sandbox.id) !== 'hidden' &&
-      navigationGroups.get(item.sandbox.id) !== 'deleting' &&
-      (view === 'agent' || statusFilter === 'all' || item.sandbox.status === statusFilter),
+  const {
+    groups,
+    visible: visibleItems,
+    deleting: deletingItems,
+  } = sandboxNavigation(
+    items,
+    ({ sandbox }) => sandbox,
+    view === 'agent' ? 'all' : statusFilter,
+    deletingSandboxIds,
   );
   const facts = useTreeCreation(viewerId, visibleItems, active && refreshError === undefined);
   const channelIds = treeAgentIds(visibleItems);
@@ -145,12 +135,6 @@ export function Tree({
   );
   const groupId = useId();
   const focus = useTreeFocus();
-  const groups = sandboxNavigationGroups(statusFilter).map((group) => ({
-    ...group,
-    items: visibleItems.filter(
-      ({ sandbox }) => statusFilter !== 'all' || navigationGroups.get(sandbox.id) === group.id,
-    ),
-  }));
   const [collapsed, setCollapsed] = useState(() => restored(viewerId));
   const toggle = (node: string) => {
     setCollapsed((current) => {
@@ -231,7 +215,8 @@ export function Tree({
                       const runtimeAvailable =
                         !sandboxBusy && !refreshError && sandboxChildrenAvailable(sandbox);
                       const sandboxExpanded = childrenAvailable && !collapsed.has(sandboxNode);
-                      const paused = sandbox.status === 'paused';
+                      const presentation = sandboxStatusPresentation(sandbox);
+                      const paused = presentation.status === 'paused';
                       return (
                         <div className="resource-tree__branch" key={sandbox.id}>
                           <TreeRow
@@ -242,15 +227,13 @@ export function Tree({
                             route={{ kind: 'sandbox', sandboxId: sandbox.id }}
                             selected={route.kind === 'sandbox' && route.sandboxId === sandbox.id}
                             expanded={childrenAvailable ? sandboxExpanded : undefined}
-                            reviving={sandbox.status === 'reviving'}
+                            reviving={presentation.status === 'reviving'}
                             meta={
                               <>
-                                <span className="tree-row__state" data-tone={sandboxTone(sandbox)}>
+                                <span className="tree-row__state" data-tone={presentation.tone}>
                                   {/* A stale status draws no dot: it may no longer be true. */}
-                                  {refreshError === undefined
-                                    ? toneDot(sandboxTone(sandbox))
-                                    : null}
-                                  {sandboxLifecycleLabel(sandbox)}
+                                  {refreshError === undefined ? toneDot(presentation.tone) : null}
+                                  {presentation.label}
                                 </span>
                                 <TreeFactsSummary
                                   channelFacts={channelFacts}
@@ -411,11 +394,15 @@ export function Tree({
                                                       )}
                                                     </>,
                                                   )}
-                                                  actions={agentActions(
-                                                    agent.status,
-                                                    permissions,
-                                                    runtimeAvailable,
-                                                  )}
+                                                  actions={agentActions(agent.status, permissions, {
+                                                    sandbox:
+                                                      agent.sandboxId === sandbox.id
+                                                        ? sandbox
+                                                        : undefined,
+                                                    viewerId,
+                                                    busy: sandboxBusy,
+                                                    stale: !!refreshError,
+                                                  })}
                                                   onNavigate={onNavigate}
                                                   onAction={(kind) =>
                                                     onAction({
