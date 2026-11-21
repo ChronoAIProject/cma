@@ -224,5 +224,27 @@ class CIEventSelectionTests(unittest.TestCase):
                 selection.determine_ci(self.root, pull('main', 'develop'), 'pull_request', repository)
 
 
+    def test_release_branches_into_main_run_full_ci_and_others_refuse(self):
+        from ci_events import full_ci_required
+        repository = 'example/repository'
+        sha = self.third
+
+        def pull(head_ref, head_repo=repository, base_ref='main'):
+            return {'number': 11, 'repository': {'full_name': repository}, 'pull_request': {
+                'base': {'ref': base_ref, 'sha': sha, 'repo': {'full_name': repository}},
+                'head': {'ref': head_ref, 'sha': sha, 'repo': {'full_name': head_repo}}}}
+
+        for ref in ('develop', 'release/2026-11-22', 'release/v1.rc-2'):
+            with self.subTest(ref=ref):
+                self.assertTrue(full_ci_required(pull(ref), 'pull_request', repository))
+        self.assertFalse(full_ci_required(pull('release/2026-11-22', base_ref='develop'), 'pull_request', repository))
+        for ref in ('feature', 'release/', 'release/-x', 'release/a/b', 'release/a b', 'releases/x', 'release/' + 'x' * 64):
+            with self.subTest(ref=ref):
+                with self.assertRaises(ValueError):
+                    full_ci_required(pull(ref), 'pull_request', repository)
+        with self.assertRaises(ValueError):
+            full_ci_required(pull('release/2026-11-22', head_repo='fork/repository'), 'pull_request', repository)
+
+
 if __name__ == '__main__':
     unittest.main()
