@@ -9,7 +9,7 @@ from pathlib import Path
 import ci_retry
 from ci_tracks.deployable_manifest import validate_names
 from eg_schema import labels as schema_labels
-from staging_cd_common import require
+from staging_cd_common import Refusal, require
 from staging_cd_canary_process import run as canary_run
 from staging_cd_publication_diagnostics import ImageCommandRefusal
 from staging_cd_receipts import IDENTITY_LABEL, canonical, sha256, validate_identity
@@ -17,6 +17,7 @@ from staging_cd_reservations import validate_reservation
 from staging_cd_versions import DEPLOYABLES
 from staging_cd_build_progress import summarize
 from staging_cd_contract import from_source, labels as contract_labels, verify_labels
+from os_refresh_key import SnapshotPinError, refresh_key
 
 ALLOWED_ARGUMENTS = {"RUNTIME_DESKTOP", "OMARCHY_CMA_BASE", "CHRONO_WEB_REPLICA_RECOVERY_ENABLED"}
 PROCESS_KEYS = ("PATH", "HOME", "LANG", "LC_ALL", "DOCKER_HOST", "DOCKER_CONFIG", "BUILDX_BUILDER")
@@ -66,8 +67,12 @@ def recipe(source, component):
 def identity(reservation, source):
     validate_reservation(reservation)
     value = recipe(source, reservation["component"])
+    try:
+        os_refresh = refresh_key(reservation["component"], (source / value["dockerfile"]).read_text(), reservation["source"])
+    except SnapshotPinError as error:
+        raise Refusal(str(error)) from error
     arguments = dict(value["build_args"], CHRONO_BUILD=reservation["version"], CHRONO_BUILD_SHA=reservation["source"],
-                     OS_SECURITY_REFRESH=reservation["source"])
+                     OS_SECURITY_REFRESH=os_refresh)
     if reservation["component"] in {"runtime", "runtime-omarchy"}:
         arguments["SOURCE_DATE_EPOCH"] = "0"
     inputs = {"tree": reservation["tree"], "dockerfile": hashlib.sha256((source / value["dockerfile"]).read_bytes()).hexdigest(),
