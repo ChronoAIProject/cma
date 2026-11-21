@@ -129,11 +129,21 @@ export function agentActions(
           ? 'Stop this Agent before deleting it and its Worktree.'
           : undefined,
     });
-  if (permissions.exportHistory)
+  if (permissions.exportHistory) {
     actions.push({
-      id: 'export_history',
-      label: 'Export history',
+      id: 'export_retained_conversation',
+      label: 'Export retained conversation',
       icon: <IconDownloadOutline16 />,
     });
+    actions.push({
+      id: 'export_history',
+      label: 'Export raw history',
+      icon: <IconDownloadOutline16 />,
+      disabled: !runtimeAvailable,
+      reason: !runtimeAvailable
+        ? 'Raw history requires an available runtime. Use Export retained conversation.'
+        : undefined,
+    });
+  }
   return actions;
 }

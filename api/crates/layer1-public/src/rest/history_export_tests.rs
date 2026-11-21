@@ -30,6 +30,7 @@ struct Exporter {
     resume: Notify,
     calls: AtomicUsize,
     blocked: bool,
+    failure: Option<AgentHistoryExportError>,
 }
 
 #[async_trait::async_trait]
@@ -40,7 +41,97 @@ impl AgentHistoryExporter for Exporter {
         if self.blocked {
             self.resume.notified().await;
         }
-        Ok(NATIVE.to_vec())
+        match self.failure {
+            Some(error) => Err(error),
+            None => Ok(NATIVE.to_vec()),
+        }
+    }
+}
+
+#[tokio::test]
+async fn raw_history_failures_have_safe_codes_without_native_bytes() {
+    for (failure, code) in [
+        (
+            AgentHistoryExportError::Unavailable,
+            "history_export_unavailable",
+        ),
+        (
+            AgentHistoryExportError::Unsupported,
+            "history_export_unsupported",
+        ),
+        (AgentHistoryExportError::Rejected, "history_export_rejected"),
+    ] {
+        let (fixture, _, _, _) = fixture(Reply::Member).await;
+        let exporter = Arc::new(Exporter {
+            failure: Some(failure),
+            ..Default::default()
+        });
+        let router = agent_router(fixture.state.with_history_exporter(exporter));
+        let response = router.oneshot(request("owner-a", true)).await.unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let body = to_bytes(response.into_body(), 8192).await.unwrap();
+        let problem: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(problem["code"], code);
+        assert!(!String::from_utf8_lossy(&body).contains("private-native-sentinel"));
+    }
+}
+
+#[tokio::test]
+async fn retained_transcript_survives_stopped_failed_and_paused_without_runtime_io() {
+    use layer2_core::sandbox::{AgentStatus, SandboxStatus};
+    for status in [
+        AgentStatus::Ready,
+        AgentStatus::Stopped,
+        AgentStatus::Failed,
+    ] {
+        let (fixture, _, _, _) = fixture(Reply::Missing).await;
+        let mut agent = fixture
+            .store
+            .get_agent(&AgentId("agt_shared_read".into()))
+            .await
+            .unwrap()
+            .unwrap();
+        let revision = agent.revision;
+        agent.status = status;
+        agent.revision += 1;
+        fixture
+            .store
+            .save_agent(revision, agent.clone())
+            .await
+            .unwrap();
+        let mut sandbox = fixture
+            .store
+            .get_sandbox(&agent.sandbox_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let revision = sandbox.revision;
+        sandbox.status = SandboxStatus::Paused;
+        sandbox.runtime = None;
+        sandbox.revision += 1;
+        fixture.store.save_sandbox(revision, sandbox).await.unwrap();
+        let exporter = Arc::new(Exporter {
+            failure: Some(AgentHistoryExportError::Unavailable),
+            ..Default::default()
+        });
+        let router = agent_router(fixture.state.with_history_exporter(exporter.clone()));
+        for subject in ["owner-a", "foreign"] {
+            let mut read = request(subject, true);
+            *read.uri_mut() = "/api/v1/agents/agt_shared_read/transcript?limit=32"
+                .parse()
+                .unwrap();
+            let response = router.clone().oneshot(read).await.unwrap();
+            if subject == "owner-a" {
+                assert_eq!(response.status(), StatusCode::OK, "{status:?}");
+                let body = to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+                let data: serde_json::Value = serde_json::from_slice(&body).unwrap();
+                assert_eq!(data["agent_id"], "agt_shared_read");
+                assert!(!data["turns"].as_array().unwrap().is_empty());
+            } else {
+                assert!(response.status().is_client_error());
+            }
+        }
+        assert_eq!(exporter.calls.load(Ordering::SeqCst), 0);
     }
 }
 
