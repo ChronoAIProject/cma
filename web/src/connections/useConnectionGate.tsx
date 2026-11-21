@@ -1,11 +1,19 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { ConnectionWizard } from './ConnectionWizard';
-import { connectionClient, type ConnectionReport, type ConnectionTarget } from './client';
+import {
+  connectionClient,
+  isConnectionReport,
+  type ConnectionReport,
+  type ConnectionTarget,
+} from './client';
+import { readWithConnectionCooldown } from './readCooldown';
+
+const ACTION_CHECK_TIMEOUT_MS = 15_000;
 
 interface PendingAction {
   readonly id: number;
   readonly target: ConnectionTarget;
-  readonly action: () => void;
+  readonly action: (report: ConnectionReport) => void;
   readonly forceSubscription: boolean;
   readonly owner?: string;
   readonly request?: AbortController;
@@ -28,32 +36,38 @@ export function useConnectionGate(enabled = true, scope?: object, description?: 
     },
     [enabled, scope],
   );
-  const run = (target: ConnectionTarget, action: () => void, forceSubscription = false) => {
+  const run = (
+    target: ConnectionTarget,
+    action: (report: ConnectionReport) => void,
+    forceSubscription = false,
+    owner?: string,
+  ) => {
     if (!enabled || active.current !== undefined) return;
-    const value = { id: ++serial.current, target, action, forceSubscription };
+    const value = { id: ++serial.current, target, action, forceSubscription, owner };
     active.current = value;
     setError(undefined);
     setInteractive(true);
     setPending(value);
   };
-  const cancel = () => {
+  const cancel = useCallback(() => {
     active.current?.request?.abort();
     active.current?.onCancelled?.();
     active.current = undefined;
     setPending(undefined);
-  };
-  const complete = (value: PendingAction) => {
+  }, []);
+  const complete = (value: PendingAction, report: ConnectionReport) => {
     if (active.current !== value) return;
     active.current = undefined;
     setPending(undefined);
-    value.action();
+    value.action(report);
   };
   const checkAndRun = async (
     target: ConnectionTarget,
     owner: string,
-    action: () => void,
+    action: (report: ConnectionReport) => void,
     prepared?: () => ConnectionReport | undefined,
     onCancelled?: () => void,
+    readContext?: object,
   ) => {
     if (!enabled || active.current !== undefined) {
       onCancelled?.();
@@ -73,12 +87,22 @@ export function useConnectionGate(enabled = true, scope?: object, description?: 
     setInteractive(false);
     setPending(value);
     try {
+      const signal =
+        readContext === undefined
+          ? value.request!.signal
+          : AbortSignal.any([value.request!.signal, AbortSignal.timeout(ACTION_CHECK_TIMEOUT_MS)]);
+      const read = () => connectionClient.check(target, undefined, signal);
       const report =
-        prepared?.() ?? (await connectionClient.check(target, undefined, value.request!.signal));
+        prepared?.() ??
+        (await (readContext === undefined
+          ? read()
+          : readWithConnectionCooldown(readContext, owner, signal, read)));
       if (active.current !== value) return;
+      if (readContext !== undefined && !isConnectionReport(report))
+        throw new Error('The connections could not be verified. Please try sending again.');
       if (report.owner !== owner)
         throw new Error('Your CMA account changed. Open the Agent again to continue.');
-      if (report.ready) complete(value);
+      if (report.ready) complete(value, report);
       else if (report.services.some((row) => row.state === 'missing' || row.state === 'inactive'))
         setInteractive(true);
       else throw new Error('The connections could not be verified. Please try sending again.');
@@ -86,9 +110,11 @@ export function useConnectionGate(enabled = true, scope?: object, description?: 
       if (active.current !== value) return;
       cancel();
       setError(
-        cause instanceof Error
-          ? cause.message
-          : 'The connections could not be verified. Please try sending again.',
+        cause instanceof DOMException && cause.name === 'TimeoutError'
+          ? 'The connection check timed out. Please try sending again.'
+          : cause instanceof Error
+            ? cause.message
+            : 'The connections could not be verified. Please try sending again.',
       );
     }
   };
@@ -102,7 +128,7 @@ export function useConnectionGate(enabled = true, scope?: object, description?: 
         forceSubscription={pending.forceSubscription}
         expectedOwner={pending.owner}
         description={description}
-        onReady={() => complete(pending)}
+        onReady={(report) => complete(pending, report)}
         onCancel={cancel}
       />
     );
