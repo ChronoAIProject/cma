@@ -546,7 +546,7 @@ class BindingTests(unittest.TestCase):
 
 
 class AnnotationTests(unittest.TestCase):
-    def test_annotations_print_only_valid_names_and_at_most_ten(self):
+    def test_annotations_print_only_valid_names_within_the_bound(self):
         rows = [{"step": STEP, "file": f"f{n}.test.cjs", "test": f"title {n}"} for n in range(12)]
         hostile = [{"step": STEP, "test": "x\n::warning::injected"}, {"step": "runtime-tools 1/2", "test": "x"},
                    {"step": STEP}, {"step": STEP, "test": "x", "error": "private"}, {"step": STEP, "test": 7},
@@ -555,10 +555,13 @@ class AnnotationTests(unittest.TestCase):
         failures.annotate("runtime", {"failed_tests": hostile + rows}, output)
         lines = output.getvalue().splitlines()
         self.assertEqual(lines, [f"::error title=Image test failed::runtime {STEP}: f{n}.test.cjs › title {n}"
-                                 for n in range(3)])
+                                 for n in range(failures.MAX_NAMES - len(hostile))])
         output = io.StringIO()
         failures.annotate("runtime", {"failed_tests": rows + [{"step": STEP, "file": "only.cjs"}]}, output)
-        self.assertEqual(len(output.getvalue().splitlines()), 10)
+        self.assertEqual(len(output.getvalue().splitlines()), failures.MAX_NAMES)
+        self.assertEqual(failures.public_summary({"complete": True, "failed_tests": hostile}), {"complete": True})
+        self.assertEqual(failures.public_summary({"failed_tests": hostile + rows})["failed_tests"],
+                         rows[:failures.MAX_NAMES - len(hostile)])
         for summary in ({}, {"failed_tests": "private"}, None, {"failed_tests": [{"step": STEP, "test": "x" * 121}]}):
             output = io.StringIO()
             failures.annotate("runtime", summary, output)
@@ -567,10 +570,44 @@ class AnnotationTests(unittest.TestCase):
         failures.annotate("eg", {"failed_tests": [{"step": "media-self-test 7/7", "file": "voice.ogg"}]}, output)
         self.assertEqual(output.getvalue(), "::error title=Image test failed::eg media-self-test 7/7: voice.ogg\n")
 
-    def test_publication_annotates_test_names_only_when_it_stopped_in_that_build(self):
+    def publish(self, summary, build_fails, publish_fails=False):
         identity = fixture_identity()
         reservation = {k: v for k, v in identity.items() if k != "build"}
         reservation["schema"] = "cma-version-reservation-v1"
+        with tempfile.TemporaryDirectory() as directory:
+            env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": "100", "GITHUB_RUN_ATTEMPT": "1",
+                   "RUNNER_TEMP": directory, "CD_COMPONENT": "web",
+                   "CD_RECEIPTS_PATH": str(Path(directory) / "receipts.json"),
+                   "CD_TASKS": json.dumps([{"component": "web", "mode": "publish", "reservation": reservation}])}
+
+            def fake_build(*_args, progress, **_kwargs):
+                progress.update(summary)
+                if build_fails:
+                    raise subprocess.CalledProcessError(1, "private build")
+                return Path(directory) / "image.tar", identity
+
+            def fake_publish(*_args, diagnostics, **_kwargs):
+                if publish_fails:
+                    diagnostics.mark("scan")
+                    raise OSError("private")
+                return fixture_receipt()
+
+            output = io.StringIO()
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(patch.dict(os.environ, env, clear=True))
+                for name in ("event_identity", "Registry", "GitHub", "Reservations", "snapshot"):
+                    stack.enter_context(patch.object(publication, name))
+                stack.enter_context(patch.object(publication, "identity", return_value=(identity, {}, {})))
+                stack.enter_context(patch.object(publication, "try_reuse", return_value=None))
+                stack.enter_context(patch.object(publication, "build", side_effect=fake_build))
+                stack.enter_context(patch.object(publication, "publish", side_effect=fake_publish))
+                stack.enter_context(contextlib.redirect_stdout(output))
+                status = publication.main()
+        text = output.getvalue()
+        builds = [json.loads(line) for line in text.splitlines() if '"publication-build"' in line]
+        return status, text, builds
+
+    def test_publication_annotates_test_names_only_when_it_stopped_in_that_build(self):
         summary = failed_qualification(stdout=SPEC)
         expected = [f"::error title=Image test failed::web {STEP}: sample.test.cjs › "
                     "reopens the original conversation after restart",
@@ -583,41 +620,30 @@ class AnnotationTests(unittest.TestCase):
         cases = {"stopped-in-build": (True, False, expected), "failed-after-build": (False, True, []),
                  "published": (False, False, [])}
         for mode, (build_fails, publish_fails, annotations) in cases.items():
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
-                env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": "100", "GITHUB_RUN_ATTEMPT": "1",
-                       "RUNNER_TEMP": directory, "CD_COMPONENT": "web",
-                       "CD_RECEIPTS_PATH": str(Path(directory) / "receipts.json"),
-                       "CD_TASKS": json.dumps([{"component": "web", "mode": "publish", "reservation": reservation}])}
-
-                def fake_build(*_args, progress, **_kwargs):
-                    progress.update(summary)
-                    if build_fails:
-                        raise subprocess.CalledProcessError(1, "private build")
-                    return Path(directory) / "image.tar", identity
-
-                def fake_publish(*_args, diagnostics, **_kwargs):
-                    if publish_fails:
-                        diagnostics.mark("scan")
-                        raise OSError("private")
-                    return fixture_receipt()
-
-                output = io.StringIO()
-                with contextlib.ExitStack() as stack:
-                    stack.enter_context(patch.dict(os.environ, env, clear=True))
-                    for name in ("event_identity", "Registry", "GitHub", "Reservations", "snapshot"):
-                        stack.enter_context(patch.object(publication, name))
-                    stack.enter_context(patch.object(publication, "identity", return_value=(identity, {}, {})))
-                    stack.enter_context(patch.object(publication, "try_reuse", return_value=None))
-                    stack.enter_context(patch.object(publication, "build", side_effect=fake_build))
-                    stack.enter_context(patch.object(publication, "publish", side_effect=fake_publish))
-                    stack.enter_context(contextlib.redirect_stdout(output))
-                    status = publication.main()
-                text = output.getvalue()
+            with self.subTest(mode=mode):
+                status, text, builds = self.publish(summary, build_fails, publish_fails)
                 self.assertEqual(status, 1 if build_fails or publish_fails else 0)
-                builds = [json.loads(line) for line in text.splitlines() if '"publication-build"' in line]
                 self.assertEqual(builds, [{"event": "publication-build", **summary}])
                 self.assertEqual([line for line in text.splitlines() if "Image test failed" in line], annotations)
                 self.assertNotIn("private", text)
+
+    def test_published_summary_and_annotations_fit_the_step_and_are_rechecked(self):
+        rows = [{"step": STEP, "file": f"f{n}.test.cjs", "test": f"title {n}"} for n in range(12)]
+        hostile = [{"step": STEP, "test": "x\n::warning::injected"}, {"step": STEP, "test": "private", "error": "x"}]
+        summary = {"complete": True, "failed_steps": [STEP], "failed_tests": hostile + rows}
+        status, text, builds = self.publish(summary, build_fails=True)
+        self.assertEqual(status, 1)
+        kept = rows[:failures.MAX_NAMES - len(hostile)]
+        self.assertEqual(builds, [{"event": "publication-build", "complete": True, "failed_steps": [STEP],
+                                   "failed_tests": kept}])
+        errors = [line for line in text.splitlines() if line.startswith("::error ")]
+        self.assertLessEqual(len(errors), 10, "GitHub shows at most 10 error annotations per step")
+        self.assertEqual(len([line for line in errors if "Image test failed" in line]), len(kept))
+        self.assertNotIn("injected", text)
+        self.assertNotIn("private", text)
+        # With every name valid, the failure, its step and the names still fit.
+        status, text, _ = self.publish(dict(summary, failed_tests=rows), build_fails=True)
+        self.assertEqual(len([line for line in text.splitlines() if line.startswith("::error ")]), 10)
 
 
 if __name__ == "__main__":

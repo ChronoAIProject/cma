@@ -25,7 +25,7 @@ from staging_cd_timing import Timings
 from staging_cd_build_cache import BuildCache
 from staging_cd_runtime_smoke import CleanupIncomplete, qualify as qualify_runtime
 from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS, TARGETS
-from staging_cd_test_failures import annotate as annotate_failed_tests
+from staging_cd_test_failures import annotate as annotate_failed_tests, public_summary
 from staging_cd_contract import GROUP, from_source
 
 
@@ -321,7 +321,8 @@ def main():
     label = component if component in DEPLOYABLES else "image"
     stopped_in_build = bool(result) and outcome.get("stage") == "build"
     for metrics in build_metrics:
-        value = metrics or {"complete": False, "reason": "progress-unavailable"}
+        # Failing test names are re-checked here too, like their annotations.
+        value = public_summary(metrics) if metrics else {"complete": False, "reason": "progress-unavailable"}
         print(json.dumps({"event": "publication-build", **value}, sort_keys=True), flush=True)
         for step in value.get("failed_steps", ())[:1] if stopped_in_build else ():
             print(f"::error title=Image build step failed::{label} stopped at Dockerfile step {step}; "

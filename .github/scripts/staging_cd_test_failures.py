@@ -36,7 +36,9 @@ STREAM = {"tap": 1, "spec": 1, "unittest": 2, "media": 1}
 HEAD = TAIL = 256 * 1024
 YAML_LINES = 400
 TRACE_LINES = 400
-MAX_NAMES = 10
+# GitHub shows at most 10 error annotations per step. A publication stopped
+# in its build already prints two: its failure report and its Dockerfile step.
+MAX_NAMES = 8
 MAX_NAME = 120
 STREAMS = (1, 2)
 
@@ -308,13 +310,19 @@ def public(row):
                      and not secret_like(test)))
 
 
+def public_summary(summary):
+    """`summary` keeping only failing test names that pass `public()` again."""
+    value = dict(summary)
+    rows = value.pop("failed_tests", None)
+    kept = [row for row in rows[:MAX_NAMES] if public(row)] if isinstance(rows, list) else []
+    if kept:
+        value["failed_tests"] = kept
+    return value
+
+
 def annotate(component, summary, stream):
     """One annotation per failing test of the build where publication stopped."""
-    rows = summary.get("failed_tests") if isinstance(summary, dict) else None
-    if not isinstance(rows, list):
-        return
-    for row in rows[:MAX_NAMES]:
-        if not public(row):
-            continue
+    rows = public_summary(summary).get("failed_tests", ()) if isinstance(summary, dict) else ()
+    for row in rows:
         name = " › ".join(row[key] for key in ("file", "test") if key in row)
         print(f"::error title=Image test failed::{component} {row['step']}: {name}", file=stream, flush=True)
