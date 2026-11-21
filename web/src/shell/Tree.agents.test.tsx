@@ -6,6 +6,38 @@ import { activityLabel } from './Tree';
 import { agentSignal } from './treePresentation';
 import { renderTree } from './Tree.test-support';
 
+it.each(['agent', 'sandbox'] as const)(
+  'withholds recovery in the %s view when the Agent identifies a different parent',
+  async (view) => {
+    const onNavigate = vi.fn();
+    const [item] = navigationFixture('paused', 'stopped');
+    const [workspace] = item!.workspaces;
+    renderTree({
+      view,
+      items: [
+        {
+          sandbox: { ...item!.sandbox, owner: 'viewer-one' },
+          workspaces: [
+            {
+              ...workspace!,
+              agents: workspace!.agents.map((agent) => ({ ...agent, sandboxId: 'sbx_other' })),
+            },
+          ],
+        },
+      ],
+      onNavigate,
+    });
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Options for Agent one' }));
+    expect(
+      screen.getByRole('menuitem', { name: /^Delete Sandbox status is unavailable/ }),
+    ).toHaveAttribute('aria-disabled', 'true');
+    expect(
+      screen.queryByRole('menuitem', { name: 'Open Sandbox to resume' }),
+    ).not.toBeInTheDocument();
+    expect(onNavigate).not.toHaveBeenCalled();
+  },
+);
+
 it.each([
   ['agent', 'stopped'],
   ['agent', 'failed'],

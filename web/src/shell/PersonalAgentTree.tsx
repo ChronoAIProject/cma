@@ -192,7 +192,7 @@ export function PersonalAgentTree({
                   }
                   actions={[
                     ...agentActions(agent.status, permissions, {
-                      sandbox,
+                      sandbox: agent.sandboxId === sandbox.id ? sandbox : undefined,
                       viewerId,
                       busy: lifecycleBusy || busySandboxIds?.has(sandbox.id),
                       stale: refreshError !== undefined,

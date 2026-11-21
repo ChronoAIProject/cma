@@ -412,7 +412,10 @@ export function Tree({
                                                     </>,
                                                   )}
                                                   actions={agentActions(agent.status, permissions, {
-                                                    sandbox,
+                                                    sandbox:
+                                                      agent.sandboxId === sandbox.id
+                                                        ? sandbox
+                                                        : undefined,
                                                     viewerId,
                                                     busy: sandboxBusy,
                                                     stale: !!refreshError,
