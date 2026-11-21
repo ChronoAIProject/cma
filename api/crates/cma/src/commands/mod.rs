@@ -5,6 +5,7 @@ pub(crate) mod ownership;
 mod preparation;
 mod production;
 mod reconcile_schedule;
+mod resource_execution;
 mod sandbox_scheduler;
 mod scheduler;
 mod trigger_execution;
