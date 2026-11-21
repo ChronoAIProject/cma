@@ -7,7 +7,7 @@ use layer2_core::agent_ownership::{
 use layer2_core::sandbox::store::SandboxStoreError;
 use layer3_adapter::owner_protocol::{ReceiverRevocation, TransportAuthority};
 #[path = "lifecycle_failure_store.rs"]
-mod fixture;
+pub(super) mod fixture;
 
 fn runner(
     h: &Harness,

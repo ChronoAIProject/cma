@@ -86,6 +86,7 @@ impl SandboxTransactionStore for InMemorySandboxStore {
                 workspace,
                 event_at,
                 event,
+                ..
             } => {
                 let id = workspace.id.clone();
                 let sandbox_id = workspace.sandbox_id.clone();

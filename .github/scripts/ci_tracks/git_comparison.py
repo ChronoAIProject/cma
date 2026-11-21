@@ -43,10 +43,16 @@ def comparison_details(root, event, event_name, *, allow_shallow_parent=False):
             return base, head, 'shallow-history'
         git(root, 'cat-file', '-e', base + '^{commit}')
         return base, head, None
-    if event_name != 'pull_request':
+    if event_name == 'merge_group':
+        # The group's parent is develop or the queue entry ahead of it, so the
+        # comparison is this entry's own change, tested on the cumulative tree.
+        group = event['merge_group']
+        head, target = check_sha(group['head_sha']), check_sha(group['base_sha'])
+    elif event_name == 'pull_request':
+        pull = event['pull_request']
+        head, target = check_sha(pull['head']['sha']), check_sha(pull['base']['sha'])
+    else:
         raise ValueError('unsupported selector event')
-    pull = event['pull_request']
-    head, target = check_sha(pull['head']['sha']), check_sha(pull['base']['sha'])
     git(root, 'cat-file', '-e', head + '^{commit}')
     if shallow(root):
         return target, head, 'shallow-history'

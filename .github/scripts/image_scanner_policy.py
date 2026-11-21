@@ -8,7 +8,7 @@ from pathlib import Path
 BUNDLE = Path(".github/scripts/image-secret-scanner")
 # Exact candidate source binding, including detector policy and cache tests.
 # Adoption of changed bytes requires independent review before merge.
-MANIFEST_SHA256 = "791cef403329aa642586b3d3d937109524b98f87a3b09064c303c4aadbcc0051"
+MANIFEST_SHA256 = "a3eb9041f1b920bda1f8b2bd63241ea5ed0c890f60841a7303670b35dbb384c3"
 CLASSIFICATION_DIR = Path(".github/image-secret-classifications")
 # Archive SHA256 -> (packet SHA256, SA-01 review SHA256). Add an entry only
 # from an exact SA-01 verdict; a packet's self-declared reviewer is not approval.
@@ -24,12 +24,12 @@ OMARCHY_PACKAGE_EVIDENCE = Path(".github/scripts/image-omarchy-package-evidence.
 # Independently reviewed evidence and verdict digests. Evidence gathered from
 # the candidate image cannot supply either pin.
 APPROVED_PACKAGE_EVIDENCE = (
-    "3b4115e6f0102ed37a9c14079acfa0f8e980cae0a5226c4e721f4ef344ca2797",
-    "c1c3a4eaaf72c2a5fbfe7fb1ecc7549fdae06d26f8f80a4c42c217ae639f0542",
+    "6ded51680dcec4fe4d8d9d1046dbd3bd51b7a3f05a6c0fa22520d0178f4026d9",
+    "a67ebb416b97f74659bf8f62476f5705f3ff9e55d7782ff90da7cadd9ef71829",
 )
 APPROVED_OMARCHY_PACKAGE_EVIDENCE = (
-    "83ba28c39f7514b757dcedb655898f4273669cb948c9ce3b04354c84f2af0de4",
-    "3b1988abdbf0cd306afc058461e342d4d78d1347a94a182b0889032aca486d70",
+    "18d75ea3281dda89b594a36b5d4245ff15863bff9dc484074dcc258a411e8cab",
+    "a67ebb416b97f74659bf8f62476f5705f3ff9e55d7782ff90da7cadd9ef71829",
 )
 # Runtime scope requires a new exact-manifest review before activation.
 CONTENT_FILES = frozenset({"image_content_policy.py", "image_content_identity.py", "image-content-policy.json",

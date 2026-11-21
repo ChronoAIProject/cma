@@ -57,6 +57,17 @@ it('uses the live target for Stop while later history is held, without replaying
   const view = renderHook(() => useAgentController(h.client, 'agt_1'));
   await waitFor(() => expect(h.snapshot).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(h.streaming).toBe(true));
+  await waitFor(() => {
+    expect(view.result.current.inputAvailability.allowed).toBe(true);
+    expect(view.result.current.responseControls).toBe('available');
+    expect(view.result.current.state).toMatchObject({
+      historyLoading: true,
+      conversation: {
+        activeRunId: '1',
+        responseBinding: { responseId: 'resp_1', commandId: 'cmd_1', turnSequence: 1 },
+      },
+    });
+  });
   await act(() => view.result.current.interrupt());
   expect(h.control).toHaveBeenCalledOnce();
   expect(h.control.mock.calls[0]![0]).toBe('resp_1');

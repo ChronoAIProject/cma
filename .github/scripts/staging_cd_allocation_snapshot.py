@@ -5,7 +5,7 @@ from staging_cd_allocation_io import TransientRead, UncertainPush, parallel_read
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical, parse_annotation
-from staging_cd_reservations import Reservations, pending_name, validate_reservation
+from staging_cd_reservations import Reservations, claim_ref, pending_name, validate_reservation
 from staging_cd_versions import DEPLOYABLES, version_tuple
 
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
@@ -13,12 +13,6 @@ REMOTE = "https://github.com/ChronoAIProject/cma.git"
 
 class AllocationConflict(Refusal):
     """A verified competing transaction consumed the planned predecessor."""
-
-
-def claim_ref(value):
-    # Bumps from one predecessor can have different version names (minor vs
-    # patch). Both must compete for the same immutable successor slot.
-    return "refs/tags/cma-allocation/" + value["component"] + "/after-v" + value["previous"]
 
 
 def verify_final_owner(item, tag):

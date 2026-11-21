@@ -5,10 +5,29 @@ use std::collections::BTreeSet;
 
 #[path = "legacy_census.rs"]
 mod legacy;
+#[path = "pre_backup_census.rs"]
+mod pre_backup;
+#[path = "pre_backup_account_census.rs"]
+mod pre_backup_accounts;
 #[path = "pre_usage_capture_census.rs"]
 mod pre_capture;
 #[path = "pre_usage_capture_account_census.rs"]
 mod pre_capture_accounts;
+#[path = "pre_usage_capture_backup_census.rs"]
+mod pre_capture_backups;
+
+#[cfg(test)]
+pub(super) const PRE_BACKUP_COLLECTIONS: &[&str] = pre_backup::COLLECTIONS;
+#[cfg(test)]
+pub(super) const PRE_BACKUP_SHA256: &str = pre_backup::SHA256;
+#[cfg(test)]
+pub(super) const PRE_BACKUP_ACCOUNT_COLLECTIONS: &[&str] = pre_backup_accounts::COLLECTIONS;
+#[cfg(test)]
+pub(super) const PRE_BACKUP_ACCOUNT_SHA256: &str = pre_backup_accounts::SHA256;
+#[cfg(test)]
+pub(super) const PRE_CAPTURE_BACKUP_COLLECTIONS: &[&str] = pre_capture_backups::COLLECTIONS;
+#[cfg(test)]
+pub(super) const PRE_CAPTURE_BACKUP_SHA256: &str = pre_capture_backups::SHA256;
 
 #[cfg(test)]
 pub(super) const LEGACY_COLLECTIONS: &[&str] = legacy::COLLECTIONS;
@@ -26,15 +45,21 @@ pub(crate) fn schema_sha256() -> String {
     )
 }
 
-fn collections(schema: &str) -> Result<Vec<&'static str>> {
+fn collections(schema: &str) -> Result<&'static [&'static str]> {
     if schema == schema_sha256() {
-        Ok(super::super::isolation::COLLECTIONS.to_vec())
+        Ok(super::super::isolation::COLLECTIONS)
     } else if schema == pre_capture::SHA256 {
-        Ok(pre_capture::COLLECTIONS.to_vec())
+        Ok(pre_capture::COLLECTIONS)
     } else if schema == pre_capture_accounts::SHA256 {
-        Ok(pre_capture_accounts::COLLECTIONS.to_vec())
+        Ok(pre_capture_accounts::COLLECTIONS)
+    } else if schema == pre_capture_backups::SHA256 {
+        Ok(pre_capture_backups::COLLECTIONS)
+    } else if schema == pre_backup::SHA256 {
+        Ok(pre_backup::COLLECTIONS)
+    } else if schema == pre_backup_accounts::SHA256 {
+        Ok(pre_backup_accounts::COLLECTIONS)
     } else if schema == legacy::SHA256 {
-        Ok(legacy::COLLECTIONS.to_vec())
+        Ok(legacy::COLLECTIONS)
     } else {
         Err(REFUSED)
     }
@@ -66,9 +91,9 @@ pub(crate) fn matches_current(manifest: &Manifest, mut current: Manifest) -> Res
         return Err(REFUSED);
     }
     if manifest.schema_sha256 != current.schema_sha256 {
-        let prior = collections(&manifest.schema_sha256)?;
+        let previous = collections(&manifest.schema_sha256)?;
         for record in &current.database {
-            if !prior.contains(&record.collection.as_str())
+            if !previous.contains(&record.collection.as_str())
                 && (record.documents != 0
                     || record.bytes != 0
                     || record.sha256 != digest(&[])
@@ -79,7 +104,7 @@ pub(crate) fn matches_current(manifest: &Manifest, mut current: Manifest) -> Res
         }
         current
             .database
-            .retain(|r| prior.contains(&r.collection.as_str()));
+            .retain(|r| previous.contains(&r.collection.as_str()));
         current.schema_sha256 = manifest.schema_sha256.clone();
     }
     Ok(&current == manifest)

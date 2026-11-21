@@ -439,7 +439,7 @@ export class Agents {
     return readAgentEvents(this.config, id, options);
   }
 
-  transcript(id: string, options: OperationOptions = {}) {
+  transcript(id: string, options: import('./agents/transcript.js').TranscriptReadOptions = {}) {
     return readTranscript(this.config, id, options);
   }
   transcriptPage(id: string, options: TranscriptPageOptions = {}) {

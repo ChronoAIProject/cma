@@ -18,6 +18,8 @@ pub enum RecoveryError {
     Unauthorized,
     #[error("capacity recovery authority changed")]
     Conflict,
+    #[error("capacity recovery needs a free Workspace slot (limit {limit}, live {live})")]
+    WorkspaceCapacityFull { limit: u8, live: u8 },
     #[error("capacity recovery evidence is invalid")]
     InvalidEvidence,
     #[error("capacity recovery disposition: {0:?}")]

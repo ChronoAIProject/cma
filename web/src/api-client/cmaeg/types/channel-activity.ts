@@ -82,6 +82,7 @@ export const ActivityConsumerSchema = object({
   consumer_id: text,
   display_name: optional(nullable(text)),
   agent_id: optional(nullable(text)),
+  execution_reference: optional(nullable(text)),
   provider: optional(nullable(text)),
   conversation_id: optional(nullable(text)),
   state: ConsumerStateSchema,

@@ -46,6 +46,8 @@ pub enum ResponsesEvent {
     },
     Completed {
         response: ResponseObject,
+        /// A terminal snapshot must agree with any explicit frame response ID.
+        matching_response_identity: bool,
     },
     Failed {
         error: ResponseError,
@@ -182,9 +184,18 @@ pub(crate) fn parse_event_with_trace(
         "response.mcp_call.failed" => Ok(ResponsesEvent::McpCallFailed {
             item_id: string_field(object, "item_id")?,
         }),
-        "response.completed" => Ok(ResponsesEvent::Completed {
-            response: object.get("response").cloned().unwrap_or(value),
-        }),
+        "response.completed" => {
+            let response = object.get("response").unwrap_or(&value);
+            let id = response.get("id").and_then(Value::as_str);
+            let matching_response_identity = id.is_some()
+                && object
+                    .get("response_id")
+                    .is_none_or(|field| field.as_str() == id);
+            Ok(ResponsesEvent::Completed {
+                response: response.clone(),
+                matching_response_identity,
+            })
+        }
         "response.failed" => {
             let error = object
                 .get("error")

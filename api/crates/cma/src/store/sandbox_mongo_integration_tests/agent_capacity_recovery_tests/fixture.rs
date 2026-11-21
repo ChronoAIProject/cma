@@ -5,46 +5,52 @@ use layer2_core::sandbox::{RuntimeBinding, SandboxHome};
 use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
 
 pub(super) async fn capacity_fixture(store: &MongoSandboxStore) -> Agent {
-    let mut agent = ready_with_created(store, "activation").await;
+    let agent = ready_with_created(store, "activation").await;
+    prepare_capacity(store, agent).await
+}
+
+pub(super) async fn prepare_capacity(store: &MongoSandboxStore, mut agent: Agent) -> Agent {
     let mut sandbox = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
-    sandbox.runtime = Some(RuntimeBinding {
-        runtime_id: "retained-runtime".into(),
-        runtime_version: "fixture".into(),
-        boot_id: Some("a".repeat(32)),
-        provision_generation: Some(1),
-        bound_at: NOW.into(),
-    });
-    sandbox.lifecycle.runtime_generation_high_water = 1;
-    let mut home = SandboxHome::reserve(
-        &sandbox.id,
-        HomeVolumePolicy {
-            mode: Default::default(),
-            storage_class: "storage".into(),
-            capacity_gib: 64,
-            template_name: "empty".into(),
-            template_generation: "seed".into(),
-        },
-    )
-    .unwrap();
-    home.bind(HomeVolumeReceipt {
-        native_authority: None,
-        volume_id: home.request.volume_id.clone(),
-        request_sha256: home.request.computed_sha256(),
-        storage_reference: "retained-home".into(),
-        storage_generation: "original".into(),
-    })
-    .unwrap();
-    sandbox.lifecycle.home = Some(Box::new(home));
-    sandbox.revision += 1;
-    store
-        .sandboxes
-        .update_one(
-            doc! {"_id": sandbox.id.as_str()},
-            doc! {"$set":
-            crate::store::sandboxes::sandbox_replacement_fields(&sandbox).unwrap()},
+    if sandbox.lifecycle.home.is_none() {
+        sandbox.runtime = Some(RuntimeBinding {
+            runtime_id: "retained-runtime".into(),
+            runtime_version: "fixture".into(),
+            boot_id: Some("a".repeat(32)),
+            provision_generation: Some(1),
+            bound_at: NOW.into(),
+        });
+        sandbox.lifecycle.runtime_generation_high_water = 1;
+        let mut home = SandboxHome::reserve(
+            &sandbox.id,
+            HomeVolumePolicy {
+                mode: Default::default(),
+                storage_class: "storage".into(),
+                capacity_gib: 64,
+                template_name: "empty".into(),
+                template_generation: "seed".into(),
+            },
         )
-        .await
         .unwrap();
+        home.bind(HomeVolumeReceipt {
+            native_authority: None,
+            volume_id: home.request.volume_id.clone(),
+            request_sha256: home.request.computed_sha256(),
+            storage_reference: "retained-home".into(),
+            storage_generation: "original".into(),
+        })
+        .unwrap();
+        sandbox.lifecycle.home = Some(Box::new(home));
+        sandbox.revision += 1;
+        store
+            .sandboxes
+            .update_one(
+                doc! {"_id": sandbox.id.as_str()},
+                doc! {"$set":
+                crate::store::sandboxes::sandbox_replacement_fields(&sandbox).unwrap()},
+            )
+            .await
+            .unwrap();
+    }
     let workspace = store
         .get_workspace(&agent.workspace_id)
         .await
@@ -110,19 +116,16 @@ pub(super) async fn capacity_fixture(store: &MongoSandboxStore) -> Agent {
         writer_gate::GateName::Segments,
         writer_gate::GateName::CapacityRecovery,
     ] {
-        writer_gate::replace(
-            &db,
-            name,
-            0,
-            writer_gate::Policy {
-                enabled: true,
-                agents: vec![agent.id.to_string()],
-                ..Default::default()
-            },
-            &mut session,
-        )
-        .await
-        .unwrap();
+        let (revision, mut policy) = match writer_gate::read(&db, name, &mut session).await.unwrap()
+        {
+            Some(current) => (current.revision, current.policy),
+            None => (0, writer_gate::Policy::default()),
+        };
+        policy.enabled = true;
+        policy.agents.push(agent.id.to_string());
+        writer_gate::replace(&db, name, revision, policy, &mut session)
+            .await
+            .unwrap();
     }
     session.commit_transaction().await.unwrap();
     agent
@@ -131,7 +134,7 @@ pub(super) async fn capacity_fixture(store: &MongoSandboxStore) -> Agent {
 // Adoption must prove the original Created row. The generic worker fixture
 // deliberately starts at ConversationOpened and cannot qualify this contract.
 pub(super) async fn ready_with_created(store: &MongoSandboxStore, suffix: &str) -> Agent {
-    let (_, mut worktree, claimed) = claimed_agent_work_fixture(store, suffix).await;
+    let (_, worktree, claimed) = claimed_agent_work_fixture(store, suffix).await;
     store
         .append_agent_log(
             &claimed.id,
@@ -144,6 +147,15 @@ pub(super) async fn ready_with_created(store: &MongoSandboxStore, suffix: &str) 
         .await
         .unwrap();
     let current = store.get_agent(&claimed.id).await.unwrap().unwrap();
+    ready_claimed(store, worktree, current, suffix).await
+}
+
+pub(super) async fn ready_claimed(
+    store: &MongoSandboxStore,
+    mut worktree: Worktree,
+    current: Agent,
+    suffix: &str,
+) -> Agent {
     let conversation_id = format!("conversation-{suffix}");
     let mut claimed = ready_publication_claim(current, &conversation_id);
     // Simulated preceding work steps change state and must advance revision;

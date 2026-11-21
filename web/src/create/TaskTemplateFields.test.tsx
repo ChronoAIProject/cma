@@ -4,7 +4,11 @@ import { unavailableClient, type CmaWebClient } from '../api/client';
 import { taskExperience } from '../test/taskExperience';
 import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { TaskHome } from './TaskHome';
-import { taskDraftStorageKey, discardSubmittedTaskDraft } from './taskDraft';
+import {
+  taskDraftStorageKey,
+  legacyTaskDraftStorageKey,
+  discardSubmittedTaskDraft,
+} from './taskDraft';
 import { lifecycleStorageKey } from './lifecycleIntent';
 import { compileTaskTemplate, parseTaskTemplate, taskTemplates } from './taskTemplateModel';
 
@@ -121,6 +125,7 @@ it('restores fields, isolates owner/context, and returns to free text without gu
   restored.rerender(<TaskHome {...restored.props} />);
   expect(screen.getByLabelText('Subject')).toHaveValue('Retained subject');
   fireEvent.click(screen.getByRole('button', { name: 'Write a task without a template' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Switch and keep draft' }));
   expect(screen.getByLabelText('Your task')).toHaveValue(
     'Discuss [topic], [1, 2] and [label](https://example.com)',
   );
@@ -169,7 +174,7 @@ it.each(['ctrlKey', 'metaKey'])(
 
 it('restores exact untouched version-1 template drafts as unfilled fields', async () => {
   sessionStorage.setItem(
-    taskDraftStorageKey('owner'),
+    legacyTaskDraftStorageKey('owner'),
     JSON.stringify({ version: 1, text: taskTemplates[0].legacy }),
   );
   const { create } = setup();
@@ -226,7 +231,15 @@ it.each([false, true])(
       expect(sessionStorage.getItem(taskDraftStorageKey('owner'))).not.toBeNull();
       expect(screen.getByLabelText('Topic')).toHaveValue(' Synthetic topic ');
     } else {
-      expect(sessionStorage.getItem(taskDraftStorageKey('owner'))).toBeNull();
+      expect(JSON.parse(sessionStorage.getItem(taskDraftStorageKey('owner'))!)).toEqual({
+        version: 3,
+        text: '',
+        repositoryUrl: '',
+        repositoryRef: '',
+        machineIncluded: false,
+        legacyObserved: null,
+        recoverable: [],
+      });
       await waitFor(() => expect(screen.getByLabelText('Your task')).toHaveValue(''));
     }
   },

@@ -72,6 +72,25 @@ pub enum ErasureFailureCode {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ErasureBlock {
     OwnerAuthorityUnavailable,
+    /// Permanent bounded-input refusal; isolate the attributed cohort member.
+    CapacityExceeded {
+        class: String,
+        limit: u64,
+    },
+    /// The attributed record requires repair of its ownership evidence.
+    CorruptRecord {
+        collection: String,
+    },
+    /// Historical C1 record/event format; keep the exact wire name and fields.
+    /// The C2 publisher executor no longer emits this refusal.
+    RetainedReferencePending {
+        collection: String,
+    },
+    /// Keep the C1/C2 record/event format when replacing identity handling.
+    /// C2 still emits this refusal; later identity executors retain only its reader.
+    IdentityRedactionPending {
+        collection: String,
+    },
     RetirementArchiveHold {
         sandbox_id: String,
     },

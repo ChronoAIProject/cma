@@ -90,6 +90,7 @@ export function OwnerAgentHeader({
           {dialog === 'rename' || dialog === 'prompt' ? (
             <AgentPreferencesDialog
               agentId={detail.id}
+              viewerId={header.viewerId}
               mode={dialog}
               currentTitle={header.title}
               active={dialog === 'prompt' && configBusy}

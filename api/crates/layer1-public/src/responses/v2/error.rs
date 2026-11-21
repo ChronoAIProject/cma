@@ -169,6 +169,30 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
         | CommandAdmissionError::Input(
             layer2_core::sandbox::AgentOperationError::AdmissionPaused,
         ) => admission_paused(),
+        CommandAdmissionError::Input(
+            layer2_core::sandbox::AgentOperationError::ModelFundingUnsupported,
+        ) => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "model_funding_unsupported",
+            "Guaranteed model funding is unavailable for this turn.",
+            None,
+        ),
+        CommandAdmissionError::Input(layer2_core::sandbox::AgentOperationError::ModelFunding(
+            layer2_core::sandbox::model_credit::FundingError::Insufficient,
+        )) => error(
+            StatusCode::PAYMENT_REQUIRED,
+            "model_funding_insufficient",
+            "Model funding is insufficient for this turn.",
+            None,
+        ),
+        CommandAdmissionError::Input(layer2_core::sandbox::AgentOperationError::ModelFunding(
+            _,
+        )) => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "model_funding_unavailable",
+            "Model funding could not be verified for this turn.",
+            None,
+        ),
         CommandAdmissionError::ModelMismatch => field(
             "model",
             "model_mismatch",

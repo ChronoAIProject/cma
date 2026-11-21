@@ -155,6 +155,8 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "sandbox_retained_availability",
     "sandbox_sessions",
     "sandboxes",
+    super::home_backups::SCHEDULES_COLLECTION,
+    super::home_backups::BACKUPS_COLLECTION,
     "service_connection_handoffs",
     "trigger_definition_revisions",
     "trigger_definitions",
@@ -177,6 +179,8 @@ pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
     super::sandbox_usage_export::OUTBOX,
     super::sandbox_usage_export::STREAMS,
     super::sandbox_usage_export::INVENTORY,
+    super::home_backups::SCHEDULES_COLLECTION,
+    super::home_backups::BACKUPS_COLLECTION,
     super::allocation_buckets::COLLECTION,
     super::agent_observation::COLLECTION,
 ];

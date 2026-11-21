@@ -26,11 +26,14 @@ SCAN_COOPERATION_TEST = ("store::agent_log_telemetry::tests::cooperation::benchm
 BSON_CEILING_TEST = ("store::sandbox_mongo_integration_tests::resource_access_tests::"
                      "personal_inventory::failures::"
                      "personal_agent_list_preserves_sources_near_the_bson_document_ceiling")
+FIRST_RESPONSE_TEST = ("store::usage_reports::tests::submission::"
+                       "default_day_report_serves_four_hundred_sandboxes_without_polling")
 # The audit keeps its 30-second bound; competing fixtures must not consume its
 # resource window while it validates and promotes a full 10,000-row unit.
 ISOLATED_TESTS = (("--scale", SCALE_TEST), ("--owner-allocation", OWNER_ALLOCATION_TEST),
                   ("--audit-bounds", AUDIT_BOUNDS_TEST), ("--diagnostics", DIAGNOSTICS_TEST),
-                  ("--scan-cooperation", SCAN_COOPERATION_TEST), ("--bson-ceiling", BSON_CEILING_TEST))
+                  ("--scan-cooperation", SCAN_COOPERATION_TEST), ("--bson-ceiling", BSON_CEILING_TEST),
+                  ("--first-response", FIRST_RESPONSE_TEST))
 CLEANUP_FAILURE = 125
 SCHEDULE = runpy.run_path(str(Path(__file__).with_name("mongo-contract-schedule.py")))
 

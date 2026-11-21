@@ -63,6 +63,7 @@ impl WorkspaceService {
                 operation_id: operation_id.into(),
             },
             WorkspaceAdmissionKind::Lifecycle,
+            true,
         )
         .await
     }

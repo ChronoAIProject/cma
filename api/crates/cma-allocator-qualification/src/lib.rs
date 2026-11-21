@@ -10,7 +10,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-const WORKERS: usize = 18;
+// Staging gives AM and EG few CPUs, and CI runners have four. Eighteen
+// persistent workers on four CPUs made the RSS measurement noisy enough to
+// fail unrelated changes (24.6 and 26.6 MiB against the 24 MiB limit on
+// 21 Nov 2026) while frees on foreign threads stay exercised with four.
+const WORKERS: usize = 4;
 const BLOCKS: usize = 128;
 const WARMUP: usize = 256;
 const ROUNDS: usize = 4096;
@@ -119,6 +123,32 @@ fn sample(boundary: &str, started: Instant) -> io::Result<usize> {
     Ok(rss)
 }
 
+fn handoff_round(
+    round: usize,
+    mut send: impl FnMut(usize, Vec<Block>) -> io::Result<()>,
+) -> io::Result<()> {
+    // Warm the same peak live working set regardless of how quickly workers free.
+    // Handing off during allocation lets scheduling inflate RSS only after warmup.
+    let mut batches = Vec::with_capacity(WORKERS);
+    for worker in 0..WORKERS {
+        let mut blocks = Vec::with_capacity(BLOCKS);
+        for item in 0..BLOCKS {
+            let size = [31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16351, 32735]
+                [(item + worker + round) % 11];
+            blocks.push(Block::new(
+                size,
+                if item % 7 == 0 { 64 } else { 8 },
+                item % 3 == 0,
+            )?);
+        }
+        batches.push(blocks);
+    }
+    for (worker, blocks) in batches.into_iter().enumerate() {
+        send(worker, blocks)?;
+    }
+    Ok(())
+}
+
 fn exercise(
     senders: &[mpsc::SyncSender<Vec<Block>>],
     done: &mpsc::Receiver<()>,
@@ -128,21 +158,11 @@ fn exercise(
     let mut retained = 0;
     for round in 0..ROUNDS {
         check_deadline(started.elapsed())?;
-        for (worker, sender) in senders.iter().enumerate() {
-            let mut blocks = Vec::with_capacity(BLOCKS);
-            for item in 0..BLOCKS {
-                let size = [31, 63, 127, 255, 511, 1023, 2047, 4095, 8191, 16351, 32735]
-                    [(item + worker + round) % 11];
-                blocks.push(Block::new(
-                    size,
-                    if item % 7 == 0 { 64 } else { 8 },
-                    item % 3 == 0,
-                )?);
-            }
-            sender
+        handoff_round(round, |worker, blocks| {
+            senders[worker]
                 .send(blocks)
-                .map_err(|_| io::Error::other("allocator worker exited before handoff"))?;
-        }
+                .map_err(|_| io::Error::other("allocator worker exited before handoff"))
+        })?;
         // An acknowledgement follows Drop of the complete batch, including its
         // vector. No payload allocation remains live at any measured boundary.
         for _ in 0..WORKERS {

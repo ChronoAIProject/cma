@@ -10,6 +10,7 @@ import urllib.request
 from pathlib import Path
 
 import ci_retry
+from cd_target import controller
 from staging_cd_cache import cached, warm, wheels
 from staging_cd_clock import remaining
 from staging_cd_checkout import checkout_path
@@ -101,7 +102,10 @@ def install(env, fetch=download, runner=subprocess.run):
 
 def install_requirements(env, runner=subprocess.run):
     root = tools_path(env)
-    staging = checkout_path(env) / "staging"
+    staging = checkout_path(env)
+    for part in controller(env):  # staging/, or prod/chrono-cd/ for production
+        staging = staging / part
+        require(not staging.is_symlink(), "Private controller requirements are unavailable")
     requirements = staging / "requirements.txt"
     require(staging.is_dir() and not staging.is_symlink() and requirements.is_file()
             and not requirements.is_symlink() and requirements.stat().st_size <= 4096,
@@ -158,7 +162,7 @@ def main():
         if command == ["cleanup"]:
             return cleanup(env)
         return False
-    return run_private(operation, None)
+    return run_private(operation, None, subject="deploy-tools")
 
 
 if __name__ == "__main__":

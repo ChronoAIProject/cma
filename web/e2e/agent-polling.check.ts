@@ -1,7 +1,26 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import { binding, LocalAgentV2 } from './agent-v2.fixture';
 import { StartupDiagnostics } from './startup-diagnostics';
+
+async function openPollingAgent(page: Page, diagnostics: StartupDiagnostics) {
+  diagnostics.mark('navigation-started');
+  // Polling needs the initial snapshot because this older server has no live head.
+  const [snapshot] = await Promise.all([
+    page.waitForResponse(
+      (response) =>
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname === '/api/v2/agents/agt_contract/events/snapshot',
+    ),
+    page.goto('/agents/agt_contract'),
+  ]);
+  expect(snapshot.ok()).toBe(true);
+  expect(await snapshot.finished()).toBeNull();
+  diagnostics.mark('initial-snapshot-received');
+  diagnostics.mark('textbox-assertion-started');
+  await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
+  diagnostics.mark('textbox-enabled');
+}
 
 test('LOCAL queue discovery resumes after an older server returns 404', async ({
   page,
@@ -39,11 +58,7 @@ test('LOCAL queue discovery resumes after an older server returns 404', async ({
             },
       );
     });
-    diagnostics.mark('navigation-started');
-    await page.goto('/agents/agt_contract');
-    diagnostics.mark('textbox-assertion-started');
-    await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
-    diagnostics.mark('textbox-enabled');
+    await openPollingAgent(page, diagnostics);
     await expect.poll(() => reads).toBeGreaterThan(0);
     legacy = false;
     fixture.append({
@@ -121,11 +136,7 @@ for (const fail of [false, true]) {
               },
         );
       });
-      diagnostics.mark('navigation-started');
-      await page.goto('/agents/agt_contract');
-      diagnostics.mark('textbox-assertion-started');
-      await expect(page.getByRole('textbox', { name: 'Message', exact: true })).toBeEnabled();
-      diagnostics.mark('textbox-enabled');
+      await openPollingAgent(page, diagnostics);
       await expect.poll(() => fixture.streams.size).toBe(1);
       await expect.poll(() => reads).toBeGreaterThan(0);
       let tokens = 0;

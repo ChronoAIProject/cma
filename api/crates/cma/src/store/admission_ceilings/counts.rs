@@ -9,7 +9,8 @@ impl MongoAdmissionCeilingsStore {
         &self,
         ceilings: &AdmissionCeilings,
         session: &mut ClientSession,
-    ) -> Result<(AdmissionCeilings, AdmissionCapacityCounts), ApplyError> {
+        readiness: &Result<(), layer2_core::admission::PendingHomesObservation>,
+    ) -> Result<(AdmissionCeilings, AdmissionCapacityCounts), history::ReadError> {
         let mut effective = ceilings.clone();
         effective.retained_homes = ceilings.effective_retained_homes(self.deployment_limit);
         let mut counts = AdmissionCapacityCounts::default();
@@ -24,6 +25,20 @@ impl MongoAdmissionCeilingsStore {
         counts.pending_launch_homes =
             super::super::launch_home_capacity::pending_homes(fence.as_ref())
                 .map_err(ApplyError::Domain)?;
+        counts.pending_homes = match readiness {
+            Err(state) => state.clone(),
+            Ok(()) => {
+                let observation = self
+                    .pending_homes
+                    .observe_in(session)
+                    .await
+                    .map_err(history::ReadError::Census)?;
+                layer2_core::admission::PendingHomesObservation::Verified {
+                    expected_pending_launch_homes: observation.expected,
+                    pending_launch_homes_drift: observation.drift,
+                }
+            }
+        };
         if let Some(limit) = ceilings.registrations {
             let row = self
                 .database
