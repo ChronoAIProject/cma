@@ -72,6 +72,11 @@ pub(crate) struct DocumentShare {
     permission: DocumentPermission,
 }
 #[derive(ToSchema)]
+pub(crate) struct DocumentShareRecipient {
+    subject: String,
+    display_name: Option<String>,
+}
+#[derive(ToSchema)]
 pub(crate) struct DocumentLink {
     id: String,
     permission: DocumentPermission,
