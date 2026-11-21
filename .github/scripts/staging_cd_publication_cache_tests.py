@@ -539,6 +539,13 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(result['failed_steps'], ['other', 'base-image-metadata'])
         self.assertNotIn('private', json.dumps(result))
         self.assertNotIn('failed_steps', summarize(b'\n'.join(json.dumps(row).encode() for row in rows[2:])))
+        # BuildKit pads the position to the width of the total in longer stages.
+        padded = [{'id': '7', 'name': '[media-self-test  7/11] RUN private-value', 'error': 'private'},
+                  {'id': '8', 'name': '[build   9/120] RUN private-value', 'error': 'private',
+                   'completed': '2026-01-01T00:00:01Z'}]
+        result = summarize(b'\n'.join(json.dumps(row).encode() for row in padded))
+        self.assertEqual(result['failed_steps'], ['media-self-test 7/11', 'build 9/120'])
+        self.assertNotIn('private', json.dumps(result))
 
 
 if __name__ == '__main__':
