@@ -1,5 +1,5 @@
 import type { AgentStatus, SandboxSummary, WorkspaceStatus } from '../api/types';
-import { sandboxStatusPresentation } from './presentation';
+import { sandboxStatusPresentation, type SandboxStatusObservation } from './presentation';
 
 export function transitionRefreshDelay(startedAt: number): number {
   return Date.now() - startedAt < 10_000 ? 250 : 1500;
@@ -25,7 +25,10 @@ export function sandboxChildrenReadable(sandbox: SandboxSummary): boolean {
   );
 }
 
-export function sandboxChildStatus(sandbox: SandboxSummary, status: AgentStatus | WorkspaceStatus) {
+export function sandboxChildStatus(
+  sandbox: SandboxStatusObservation,
+  status: AgentStatus | WorkspaceStatus,
+) {
   if (['stopped', 'failed', 'deleted', 'removed', 'removing'].includes(status)) return status;
   const parent = sandboxStatusPresentation(sandbox).status;
   return parent === 'active' || parent === 'credential_rotating' ? status : parent;

@@ -95,6 +95,91 @@ it('names the selected status when the authorized page itself is empty', async (
 });
 
 it.each([true, false])(
+  'shows Sandbox runtime updates on authorized child rows through completion (shared=%s)',
+  async (shared) => {
+    const sandbox = {
+      ...row('sbx_update', 'rotating'),
+      name: 'Review Sandbox',
+      workspace_count: 1,
+      worktree_count: 2,
+      agent_count: 2,
+    };
+    const workspace = {
+      access: 'shared',
+      id: 'wsp_review',
+      sandbox_id: sandbox.id,
+      name: 'Review Workspace',
+      status: 'ready',
+      created_at: sandbox.created_at,
+      worktree_count: 2,
+      agent_count: 2,
+    };
+    const parent = { sandbox_id: sandbox.id, workspace_id: workspace.id };
+    const agents = ['ready', 'stopped'].map((status) => ({
+      ...parent,
+      id: `agt_${status}`,
+      worktree_id: `wkt_${status}`,
+      title: `${status} conversation`,
+      status,
+      updated_at: sandbox.updated_at,
+    }));
+    const worktrees = agents.map((agent) => ({
+      ...parent,
+      access: 'shared',
+      id: agent.worktree_id,
+      name: agent.title,
+      status: 'ready',
+      agent_id: agent.id,
+    }));
+    const client = createClient({
+      baseUrl: 'https://fixture.invalid',
+      fetch: async (input) => {
+        const { pathname } = new URL(String(input));
+        if (pathname === '/api/v1/sandboxes') return Response.json({ items: [sandbox] });
+        if (pathname.startsWith('/api/v1/resource-access/'))
+          return Response.json({
+            capabilities: ['view_details'],
+            revalidate_at: null,
+            policy_revision: 1,
+          });
+        if (pathname === `/api/v1/sandboxes/${sandbox.id}`)
+          return Response.json({ ...sandbox, workspaces: [workspace] });
+        if (pathname === `/api/v1/workspaces/${workspace.id}`)
+          return Response.json({ ...workspace, worktrees, agents });
+        expect(pathname).toMatch(/^\/api\/v1\/agents\/agt_(ready|stopped)\/channel-usage$/);
+        return new Response(null, { status: 404 });
+      },
+    });
+    const props = {
+      client,
+      shared,
+      organization: shared ? undefined : 'research',
+      onNavigate: vi.fn(),
+    };
+    const view = render(<SandboxTree {...props} statusFilter="rotating" />);
+    const rowStatus = async (name: string) =>
+      (await screen.findByRole('treeitem', { name: new RegExp(name) })).querySelector(
+        '.tree-row__state',
+      );
+    expect(await rowStatus(workspace.name)).toHaveTextContent('Updating runtime');
+    expect(await rowStatus('ready conversation')).toHaveTextContent('Updating runtime');
+    expect(await rowStatus('stopped conversation')).toHaveTextContent('Stopped');
+
+    sandbox.status = 'active';
+    await userEvent.setup().click(
+      screen.getByRole('button', {
+        name: shared ? 'Refresh shared Sandboxes' : 'Refresh organization',
+      }),
+    );
+    await screen.findByText('No Sandboxes match Updating runtime on this page.');
+    view.rerender(<SandboxTree {...props} statusFilter="active" />);
+    expect(await rowStatus(workspace.name)).toHaveTextContent('Ready');
+    expect(await rowStatus('ready conversation')).toHaveTextContent('Ready');
+    expect(await rowStatus('stopped conversation')).toHaveTextContent('Stopped');
+  },
+);
+
+it.each([true, false])(
   'agrees with the row label and respects the lifecycle fields exposed to the scope (shared=%s)',
   async (shared) => {
     const wire = (id: string, name: string, status: string) => ({
