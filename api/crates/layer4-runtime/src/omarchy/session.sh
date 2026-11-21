@@ -21,9 +21,17 @@ fi
 [[ $(stat -c '%a' /tmp/.X11-unix) == 1777 ]]
 exec 9>"$HOME/.cma/desktop.lock"
 flock -n 9
-desktop_token_file=${CMA_DESKTOP_TOKEN_FILE:-/tmp/cma-desktop-token}
+desktop_token_file=/tmp/cma-desktop-token
+desktop_listener=(127.0.0.1:6080)
+desktop_ready_file=
+legacy_ready_dir=
+if [[ -n ${CMA_DESKTOP_GENERATION_DIR:-} ]]; then
+  desktop_token_file="$CMA_DESKTOP_GENERATION_DIR/token"
+  desktop_listener=(--unix-listen="$CMA_DESKTOP_GENERATION_DIR/display.sock")
+  desktop_ready_file="$CMA_DESKTOP_GENERATION_DIR/omarchy-ready"
+fi
 printf '%s: 127.0.0.1:5900\n' "$CMA_DESKTOP_TOKEN" >"$desktop_token_file"
-unset CMA_DESKTOP_TOKEN CMA_DESKTOP_TOKEN_FILE
+unset CMA_DESKTOP_TOKEN CMA_DESKTOP_GENERATION_DIR
 # Reuse the baseline's guarded stale-browser-lock recovery.
 python3 - <<'PY'
 import os
@@ -42,6 +50,10 @@ for name in ('SingletonLock', 'SingletonCookie', 'SingletonSocket'):
     if (p / name).is_symlink():
         (p / name).unlink()
 PY
+if [[ -z "$desktop_ready_file" ]]; then
+  legacy_ready_dir=$(mktemp -d /tmp/cma-omarchy-ready.XXXXXXXX)
+  desktop_ready_file="$legacy_ready_dir/ready"
+fi
 children=()
 # shellcheck disable=SC2329 # Invoked by the desktop signal/exit traps.
 stop() {
@@ -57,6 +69,10 @@ stop() {
   fi
   kill "${children[@]}" 2>/dev/null || true
   wait "${children[@]}" 2>/dev/null || true
+  if [[ -n "$legacy_ready_dir" ]]; then
+    rm -f -- "$desktop_ready_file"
+    rmdir -- "$legacy_ready_dir"
+  fi
 }
 trap stop EXIT INT TERM
 Xvfb :99 -screen 0 1280x800x24 -nolisten tcp -ac -noreset -s 0 >/tmp/cma-xvfb.log 2>&1 &
@@ -64,15 +80,15 @@ children+=("$!")
 for ((i=0;i<100;i++)); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
 xdpyinfo >/dev/null
 export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe LP_NUM_THREADS=2
-CMA_DESKTOP_OWNER_PID=$$ dbus-run-session -- /usr/local/bin/cma-omarchy-inner-session >/tmp/cma-omarchy.log 2>&1 &
+CMA_DESKTOP_OWNER_PID=$$ dbus-run-session -- /usr/local/bin/cma-omarchy-inner-session "$desktop_ready_file" >/tmp/cma-omarchy.log 2>&1 &
 children+=("$!")
 for ((i=0;i<600;i++)); do
-  [[ -f /tmp/cma-omarchy-ready ]] && break
+  [[ -f "$desktop_ready_file" ]] && break
   kill -0 "${children[1]}"
   sleep 0.1
 done
-[[ -f /tmp/cma-omarchy-ready ]]
-websockify --host-token --token-plugin=TokenFile --token-source="$desktop_token_file" 127.0.0.1:6080 >/tmp/cma-websockify.log 2>&1 &
+[[ -f "$desktop_ready_file" ]]
+websockify --host-token --token-plugin=TokenFile --token-source="$desktop_token_file" "${desktop_listener[@]}" >/tmp/cma-websockify.log 2>&1 &
 children+=("$!")
 wait -n "${children[@]}"
 exit 1

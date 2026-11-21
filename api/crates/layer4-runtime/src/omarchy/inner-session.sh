@@ -1,5 +1,6 @@
 #!/bin/bash
 set -euo pipefail
+desktop_ready_file=$1
 export OMARCHY_PATH=/usr/share/omarchy
 export PATH=/home/cma/.local/bin:/usr/local/bin:/usr/share/omarchy/bin:/usr/bin
 export XDG_CURRENT_DESKTOP=Hyprland XDG_SESSION_TYPE=wayland LANG=en_US.UTF-8
@@ -129,6 +130,6 @@ for ((i=0;i<300;i++)); do
 done
 hyprctl -j clients | jq -e 'any(.[]; .class | ascii_downcase | contains("chromium"))' >/dev/null
 xdotool windowfocus --sync "$window"
-touch /tmp/cma-omarchy-ready
+touch -- "$desktop_ready_file"
 wait -n "${children[@]}" "$browser_manager"
 exit 1

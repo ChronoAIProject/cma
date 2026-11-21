@@ -1,14 +1,47 @@
 use std::time::Duration;
 
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 
+use super::DesktopGeneration;
+
+#[cfg(target_os = "linux")]
+mod owned_listener;
+#[cfg(target_os = "linux")]
+pub(super) use owned_listener::OwnedListener;
+
 pub(crate) const DISPLAY_URL: &str = "ws://127.0.0.1:6080/websockify";
 
-pub(crate) type Display =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+pub(crate) trait DisplayIo: AsyncRead + AsyncWrite + Send + Unpin {}
+impl<T: AsyncRead + AsyncWrite + Send + Unpin> DisplayIo for T {}
 
-pub(crate) async fn connect(token: &str, display: &str) -> Result<Display, ()> {
+pub(crate) type Display = tokio_tungstenite::WebSocketStream<Box<dyn DisplayIo>>;
+
+pub(crate) async fn connect(generation: &DesktopGeneration, display: &str) -> Result<Display, ()> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        #[cfg(target_os = "linux")]
+        if let Some(listener) = &generation.listener {
+            let socket = listener.connect().await.map_err(|_| ())?;
+            return handshake(socket, generation.token(), DISPLAY_URL).await;
+        }
+        let uri: axum::http::Uri = display.parse().map_err(|_| ())?;
+        let authority = uri.authority().ok_or(())?;
+        let socket = tokio::net::TcpStream::connect(authority.as_str())
+            .await
+            .map_err(|_| ())?;
+        socket.set_nodelay(true).map_err(|_| ())?;
+        handshake(socket, generation.token(), display).await
+    })
+    .await
+    .map_err(|_| ())?
+}
+
+async fn handshake(
+    socket: impl DisplayIo + 'static,
+    token: &str,
+    display: &str,
+) -> Result<Display, ()> {
     let config = WebSocketConfig {
         max_message_size: Some(8 * 1024 * 1024),
         max_frame_size: Some(8 * 1024 * 1024),
@@ -18,24 +51,41 @@ pub(crate) async fn connect(token: &str, display: &str) -> Result<Display, ()> {
     let mut credential: axum::http::HeaderValue = token.parse().map_err(|_| ())?;
     credential.set_sensitive(true);
     request.headers_mut().insert("host", credential);
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        tokio_tungstenite::connect_async_with_config(request, Some(config), true),
+    tokio_tungstenite::client_async_with_config(
+        request,
+        Box::new(socket) as Box<dyn DisplayIo>,
+        Some(config),
     )
     .await
-    .map_err(|_| ())?
     .map(|(upstream, _)| upstream)
     .map_err(|_| ())
 }
 
+#[cfg(target_os = "linux")]
+pub(super) async fn authenticate(
+    token: &str,
+    path: &std::path::Path,
+    leader: i32,
+) -> Result<OwnedListener, ()> {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        let (listener, socket) = OwnedListener::discover(path, leader)
+            .await
+            .map_err(|_| ())?;
+        let mut stream = handshake(socket, token, DISPLAY_URL).await?;
+        display_greeting(&mut stream).await?;
+        Ok(listener)
+    })
+    .await
+    .map_err(|_| ())?
+}
+
 #[cfg(any(target_os = "linux", test))]
-pub(super) async fn authenticate(token: &str, display: &str) -> Result<(), ()> {
+async fn display_greeting(stream: &mut Display) -> Result<(), ()> {
     use futures_util::StreamExt as _;
     use tokio_tungstenite::tungstenite::Message;
 
-    let mut stream = connect(token, display).await?;
-    // The VNC version greeting proves the authenticated upgrade reached the
-    // display behind websockify. An unrelated TCP listener cannot supply it.
+    // The peer is already verified. The VNC greeting confirms that its
+    // authenticated proxy can also reach the display it serves.
     let mut banner = [0; 12];
     let mut received = 0;
     while received < banner.len() {
@@ -113,9 +163,19 @@ mod tests {
                 }
             }
         });
-        assert!(authenticate("previous", &target).await.is_err());
-        assert!(authenticate("current", &target).await.is_err());
-        assert!(authenticate("current", &target).await.is_ok());
+        let old = DesktopGeneration::legacy("previous".into());
+        let current = DesktopGeneration::legacy("current".into());
+        assert!(connect(&old, &target).await.is_err());
+        assert!(
+            display_greeting(&mut connect(&current, &target).await.unwrap())
+                .await
+                .is_err()
+        );
+        assert!(
+            display_greeting(&mut connect(&current, &target).await.unwrap())
+                .await
+                .is_ok()
+        );
         listener.await.unwrap();
     }
 }

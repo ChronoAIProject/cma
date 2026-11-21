@@ -1,11 +1,11 @@
 use std::time::Duration;
 
-use tokio::sync::{watch, Mutex};
+use tokio::sync::{oneshot, watch, Mutex};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use super::restart_budget::RestartBudget;
-use super::transport::{authenticate, DISPLAY_URL};
+use super::transport::authenticate;
 use super::{DesktopGeneration, DesktopProcess, DesktopUnavailable, STARTUP_LIMIT};
 use crate::config::RuntimeConfig;
 
@@ -47,10 +47,10 @@ impl Supervision {
         }
     }
 
-    pub(super) async fn ready(&self) {
+    pub(super) async fn ready(&self) -> bool {
         let mut owner = self.owner.lock().await;
         if !matches!(*owner, ProcessOwner::Starting(_)) {
-            return;
+            return self.generation().is_ok();
         }
         let ProcessOwner::Starting(initial) = std::mem::replace(&mut *owner, ProcessOwner::Stopped)
         else {
@@ -62,15 +62,17 @@ impl Supervision {
             shutdown: self.shutdown.subscribe(),
             budget: RestartBudget::new(),
         };
+        let (first_ready, confirmed) = oneshot::channel();
         *owner = ProcessOwner::Running(tokio::spawn(async move {
             driver
-                .run(*initial, || DesktopProcess::start(&config), DISPLAY_URL)
+                .run(
+                    *initial,
+                    || DesktopProcess::start(&config),
+                    Some(first_ready),
+                )
                 .await;
         }));
-        let mut state = self.state.subscribe();
-        let _ = state
-            .wait_for(|state| !matches!(state, State::Starting))
-            .await;
+        confirmed.await.is_ok()
     }
 
     pub(super) async fn shutdown(&self) {
@@ -117,16 +119,23 @@ impl Recovery {
         &mut self,
         initial: DesktopProcess,
         mut launch: impl FnMut() -> crate::failure::Result<DesktopProcess>,
-        display: &str,
+        mut first_ready: Option<oneshot::Sender<()>>,
     ) {
         let mut next = Ok(initial);
         let mut attempt = 0_u64;
         loop {
             let retry = match next {
                 Ok(mut child) => {
-                    let (end, ready_since) = self.drive(&mut child, attempt, display).await;
+                    let (end, ready_since) =
+                        self.drive(&mut child, attempt, first_ready.take()).await;
                     let failed_at = Instant::now();
                     let delay = match &end {
+                        End::Exit | End::StartupTimeout
+                            if attempt == 0 && ready_since.is_none() =>
+                        {
+                            self.state.send_replace(State::Failed);
+                            None
+                        }
                         End::Exit | End::StartupTimeout => {
                             self.record_failure(failed_at, ready_since)
                         }
@@ -156,7 +165,7 @@ impl Recovery {
                             "desktop generation exited"
                         ),
                         End::StartupTimeout => {
-                            tracing::warn!(attempt, "replacement desktop failed readiness")
+                            tracing::warn!(attempt, "desktop generation failed readiness")
                         }
                         End::Uncertain(_) => unreachable!("uncertain cleanup already fenced"),
                     }
@@ -198,29 +207,29 @@ impl Recovery {
         &mut self,
         child: &mut DesktopProcess,
         attempt: u64,
-        display: &str,
+        first_ready: Option<oneshot::Sender<()>>,
     ) -> (End, Option<Instant>) {
-        if attempt != 0 {
-            let start = Instant::now();
-            let token = child.websocket_token().to_owned();
-            let readiness = tokio::time::timeout(STARTUP_LIMIT, async {
-                loop {
-                    if authenticate(&token, display).await.is_ok() {
-                        return;
-                    }
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+        let start = Instant::now();
+        let token = child.websocket_token().to_owned();
+        let (path, leader) = child.display_socket();
+        let readiness = tokio::time::timeout(STARTUP_LIMIT, async {
+            loop {
+                if let Ok(listener) = authenticate(&token, &path, leader).await {
+                    return listener;
                 }
-            });
-            tokio::select! {
-                biased;
-                () = stopped(self.shutdown.clone()) => return (End::Shutdown, None),
-                result = child.stopped() => return (observed(result), None),
-                result = readiness => {
-                    if result.is_err() {
-                        return (End::StartupTimeout, None);
-                    }
-                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
             }
+        });
+        let listener = tokio::select! {
+            biased;
+            () = stopped(self.shutdown.clone()) => return (End::Shutdown, None),
+            result = child.stopped() => return (observed(result), None),
+            result = readiness => match result {
+                Ok(listener) => listener,
+                Err(_) => return (End::StartupTimeout, None),
+            }
+        };
+        if attempt != 0 {
             tracing::info!(
                 attempt,
                 elapsed_ms = start.elapsed().as_millis(),
@@ -228,13 +237,16 @@ impl Recovery {
             );
         }
         let ready_since = Instant::now();
-        let (generation, owner) = DesktopGeneration::supervised(child.websocket_token().into());
+        let (generation, owner) = DesktopGeneration::supervised(token, listener);
         {
             let shutdown = self.shutdown.borrow();
             if *shutdown {
                 return (End::Shutdown, None);
             }
             self.state.send_replace(State::Ready(generation));
+            if let Some(confirmed) = first_ready {
+                let _ = confirmed.send(());
+            }
         }
         let result = tokio::select! {
             biased;

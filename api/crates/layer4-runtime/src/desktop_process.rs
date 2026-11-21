@@ -7,7 +7,7 @@ use crate::failure::{Result, RuntimeError};
 use crate::writer_fence::{ManagedChild, ManagedSpawnPermit};
 
 const LAUNCHER: &str = "/usr/local/bin/cma-desktop-session";
-const TOKEN_FILE_ENV: &str = "CMA_DESKTOP_TOKEN_FILE";
+const GENERATION_DIR_ENV: &str = "CMA_DESKTOP_GENERATION_DIR";
 
 #[cfg(target_os = "linux")]
 pub(crate) mod guardian;
@@ -23,6 +23,8 @@ pub(crate) const STARTUP_LIMIT: std::time::Duration = std::time::Duration::from_
 pub(crate) struct DesktopGeneration {
     token: String,
     invalidation: Option<watch::Receiver<()>>,
+    #[cfg(target_os = "linux")]
+    listener: Option<std::sync::Arc<transport::OwnedListener>>,
 }
 
 impl DesktopGeneration {
@@ -30,19 +32,23 @@ impl DesktopGeneration {
         Self {
             token,
             invalidation: None,
+            #[cfg(target_os = "linux")]
+            listener: None,
         }
     }
 
+    #[cfg(target_os = "linux")]
+    fn supervised(token: String, listener: transport::OwnedListener) -> (Self, watch::Sender<()>) {
+        let mut generation = Self::legacy(token);
+        generation.listener = Some(std::sync::Arc::new(listener));
+        generation.with_invalidation()
+    }
+
     #[cfg(any(target_os = "linux", test))]
-    pub(crate) fn supervised(token: String) -> (Self, watch::Sender<()>) {
+    pub(crate) fn with_invalidation(mut self) -> (Self, watch::Sender<()>) {
         let (owner, invalidation) = watch::channel(());
-        (
-            Self {
-                token,
-                invalidation: Some(invalidation),
-            },
-            owner,
-        )
+        self.invalidation = Some(invalidation);
+        (self, owner)
     }
 
     pub(crate) fn token(&self) -> &str {
@@ -99,9 +105,21 @@ impl DesktopSession {
         }
     }
 
-    pub(crate) async fn ready(&self) {
+    pub(crate) async fn ready(&self) -> bool {
         match self {
-            Self::Legacy(_) => {}
+            Self::Legacy(_) => tokio::time::timeout(STARTUP_LIMIT, async {
+                loop {
+                    if tokio::net::TcpStream::connect("127.0.0.1:6080")
+                        .await
+                        .is_ok()
+                    {
+                        return;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            })
+            .await
+            .is_ok(),
             #[cfg(target_os = "linux")]
             Self::Supervised(process) => process.ready().await,
         }
@@ -121,7 +139,7 @@ pub(crate) struct DesktopProcess {
     _managed: ManagedChild,
     token: String,
     #[cfg(target_os = "linux")]
-    guard_files: Option<TokenDirectory>,
+    guard_files: Option<GenerationDirectory>,
 }
 
 impl DesktopProcess {
@@ -149,7 +167,7 @@ impl DesktopProcess {
     }
 
     fn spawn(mut command: Command) -> std::io::Result<Self> {
-        command.env_remove(TOKEN_FILE_ENV);
+        command.env_remove(GENERATION_DIR_ENV);
         Self::spawn_in_group(command, true)
     }
 
@@ -190,13 +208,13 @@ impl DesktopProcess {
     fn start_guarded(config: &RuntimeConfig) -> std::io::Result<Self> {
         use std::process::Stdio;
 
-        let files = TokenDirectory::create()?;
+        let files = GenerationDirectory::create()?;
         let mut command = Command::new(std::env::current_exe()?);
         command
             .arg(guardian::COMMAND)
             .env_clear()
             .envs(&config.install_env)
-            .env(TOKEN_FILE_ENV, files.0.join("token"))
+            .env(GENERATION_DIR_ENV, &files.0)
             .current_dir(&config.home)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped());
@@ -281,6 +299,16 @@ impl DesktopProcess {
     pub(crate) fn websocket_token(&self) -> &str {
         &self.token
     }
+
+    #[cfg(target_os = "linux")]
+    fn display_socket(&self) -> (std::path::PathBuf, i32) {
+        let files = self
+            .guard_files
+            .as_ref()
+            .expect("supervised desktop directory");
+        let leader = self.child.id().expect("unreaped desktop guardian PID") as i32;
+        (files.0.join("display.sock"), leader)
+    }
 }
 
 impl Drop for DesktopProcess {
@@ -302,10 +330,10 @@ impl Drop for DesktopProcess {
 }
 
 #[cfg(target_os = "linux")]
-struct TokenDirectory(std::path::PathBuf);
+struct GenerationDirectory(std::path::PathBuf);
 
 #[cfg(target_os = "linux")]
-impl TokenDirectory {
+impl GenerationDirectory {
     fn create() -> std::io::Result<Self> {
         use std::os::unix::fs::DirBuilderExt as _;
 
@@ -317,15 +345,17 @@ impl TokenDirectory {
 }
 
 #[cfg(target_os = "linux")]
-impl Drop for TokenDirectory {
+impl Drop for GenerationDirectory {
     fn drop(&mut self) {
         for result in [
             std::fs::remove_file(self.0.join("token")),
+            std::fs::remove_file(self.0.join("display.sock")),
+            std::fs::remove_file(self.0.join("omarchy-ready")),
             std::fs::remove_dir(&self.0),
         ] {
             match result {
                 Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                    tracing::warn!(%error, "could not remove desktop token files");
+                    tracing::warn!(%error, "could not remove desktop generation files");
                 }
                 _ => {}
             }

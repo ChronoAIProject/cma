@@ -63,9 +63,7 @@ async fn upgrade(
     if let Err(error) = receiver
         .register(owner, move |session| async move {
             let transfer = async {
-                let upstream = session
-                    .run(connect(registered_generation.token(), &display))
-                    .await;
+                let upstream = session.run(connect(&registered_generation, &display)).await;
                 let Ok(Ok(upstream)) = upstream else {
                     return;
                 };

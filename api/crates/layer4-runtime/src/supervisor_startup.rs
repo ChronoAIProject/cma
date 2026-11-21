@@ -62,24 +62,10 @@ impl Supervisor {
     pub(super) async fn finish_startup(supervisor: Arc<Self>) -> Result<Arc<Self>> {
         if let Some(desktop) = &supervisor.desktop_process {
             let started = tokio::time::Instant::now();
-            let ready = async {
-                loop {
-                    if tokio::net::TcpStream::connect("127.0.0.1:6080")
-                        .await
-                        .is_ok()
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                }
-            };
-            if tokio::time::timeout(crate::desktop_process::STARTUP_LIMIT, ready)
-                .await
-                .is_err()
-            {
+            if !desktop.ready().await {
                 tracing::error!(
                     elapsed_ms = started.elapsed().as_millis(),
-                    "initial desktop readiness timed out"
+                    "initial desktop did not become ready"
                 );
                 desktop.shutdown().await;
                 return Err(RuntimeError::unavailable(
@@ -91,7 +77,6 @@ impl Supervisor {
                 elapsed_ms = started.elapsed().as_millis(),
                 "initial desktop ready"
             );
-            desktop.ready().await;
         }
         supervisor.recover_journals().await?;
         Ok(supervisor)

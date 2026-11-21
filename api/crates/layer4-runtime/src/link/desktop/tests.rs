@@ -165,7 +165,8 @@ async fn invalidated_generation_cancels_pending_upgrades_and_active_relays() {
         ];
         let sandbox_id = config.sandbox_id.clone();
         let access = uuid::Uuid::new_v4().simple().to_string().repeat(2);
-        let (generation, lifetime) = DesktopGeneration::supervised("current".into());
+        let (generation, lifetime) =
+            DesktopGeneration::legacy("current".into()).with_invalidation();
         let (accepted, handshake) = tokio::sync::oneshot::channel();
         let fixture = test_support::Fixture::with_generation(
             config,
