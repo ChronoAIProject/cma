@@ -442,7 +442,8 @@ fn interface_feature_flags_are_strict_independent_booleans() {
     assert!(!config.features.model_request_budget_writes_enabled);
     assert!(!config.features.platform_spend_writes_enabled);
     assert!(!config.features.platform_counter_shards);
-    assert!(!config.features.v2_ui_transport);
+    // Graduated: unset enables the V2 transport.
+    assert!(config.features.v2_ui_transport);
     assert!(!config.features.trigger_command_admission);
     assert!(!config.features.nyxid_resource_request);
     assert!(!config.features.document_revocation_reserve);
@@ -497,9 +498,13 @@ fn interface_feature_flags_are_strict_independent_booleans() {
             .unwrap()
             .features
             .model_budget_writes_enabled);
+        assert!(config.features.v2_ui_transport);
         assert_eq!(
-            config.features.v2_ui_transport,
-            key == "CHRONO_V2_UI_TRANSPORT_ENABLED"
+            configured(&[(key, "false")])
+                .unwrap()
+                .features
+                .v2_ui_transport,
+            key != "CHRONO_V2_UI_TRANSPORT_ENABLED"
         );
         assert_eq!(
             config.features.trigger_command_admission,
