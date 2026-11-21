@@ -267,6 +267,29 @@ pub struct AgentCreateAdmission {
     pub machine_included: Option<bool>,
 }
 
+/// Compare-and-set proof for the parents observed while rebuilding a publication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AgentWorkPublicationParents {
+    pub sandbox_revision: u64,
+    pub workspace_revision: u64,
+    pub worktree_revision: u64,
+    pub lineage: AgentWorkPublicationLineage,
+}
+
+/// A preflight rejection carries the exact versions that demonstrated invalid lineage.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentWorkPublicationLineage {
+    Authorized,
+    Rejected { workspace_foreign: bool },
+}
+
+/// Publication disposition before authorizing a fresh mutation body.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentWorkPublication {
+    Published,
+    KnownAborted,
+}
+
 /// Durable agent work discovery, lease fencing, and atomic publication.
 #[async_trait]
 pub trait AgentWorkerStore: Send + Sync {
@@ -298,6 +321,17 @@ pub trait AgentWorkerStore: Send + Sync {
         _observed: AgentRetryObservation,
     ) -> Result<(), SandboxStoreError> {
         self.commit_agent_work(mutation).await
+    }
+
+    /// A classified store may positively report that an attempt never committed.
+    /// The default propagates ordinary errors without authorizing a rebuild.
+    async fn try_publish_agent_work(
+        &self,
+        mutation: AgentWorkMutation,
+        _parents: AgentWorkPublicationParents,
+    ) -> Result<AgentWorkPublication, SandboxStoreError> {
+        self.commit_agent_work(mutation).await?;
+        Ok(AgentWorkPublication::Published)
     }
 
     /// Publish a metadata-only retry after verifying the supplied marker in the
