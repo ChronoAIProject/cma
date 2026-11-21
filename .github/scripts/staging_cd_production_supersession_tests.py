@@ -138,16 +138,16 @@ class MainHeadTests(unittest.TestCase):
 class ProductionDeployTests(unittest.TestCase):
     """Under the production set lock, with every receipt at OLDER and this run releasing R."""
 
-    def deploy(self, keys, *finals, newest=RELEASED, target="production", policy=None):
+    def deploy(self, keys, *finals, newest=RELEASED, target="production", policy=None, event="push"):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             env = invoke_fixtures.InvokeTests().environment(root)
             env["CD_RELEASE_SET"] = canonical(release_set({key: receipt(key) for key in keys}))
             if target is not None:
+                payload = ({"after": MERGE, "deleted": False} if event == "push" else {"inputs": {"infra_ref": ""}})
                 Path(env["GITHUB_EVENT_PATH"]).write_text(json.dumps(
-                    {"ref": "refs/heads/main", "after": MERGE, "deleted": False,
-                     "repository": {"full_name": "ChronoAIProject/cma"}}))
-                env.update(CD_TARGET=target, GITHUB_REF="refs/heads/main", GITHUB_SHA=MERGE)
+                    {"ref": "refs/heads/main", "repository": {"full_name": "ChronoAIProject/cma"}, **payload}))
+                env.update(CD_TARGET=target, GITHUB_REF="refs/heads/main", GITHUB_SHA=MERGE, GITHUB_EVENT_NAME=event)
             deployed, named, reads = [], [], []
 
             def controller(_script, path, *_args):
@@ -198,6 +198,14 @@ class ProductionDeployTests(unittest.TestCase):
         # An unchanged member is the very version the newer release deploys; the older web is withheld.
         code, deployed, named, *_ = self.deploy(["eg", "web"], ("web", "0.10.2", AFTER), newest=NEWEST)
         self.assertEqual((code, deployed, named), (0, [["eg"]], []))
+
+    def test_a_dispatch_retry_is_bounded_like_the_release_it_retries(self):
+        later = [(key, "0.10.2", AFTER) for key in ALL]
+        code, deployed, named, *_ = self.deploy(ALL, *later, event="workflow_dispatch")
+        self.assertEqual((code, deployed, named), (0, [ALL], []))
+        # A retry approved or re-run after a newer release deployed hands over to it.
+        code, deployed, named, *_ = self.deploy(ALL, *later, newest=NEWEST, event="workflow_dispatch")
+        self.assertEqual((code, deployed, named), (invoke.SUPERSEDED_BY_NEWER_FINAL, [], ALL))
 
     def test_contract_group_rules_read_the_release_history(self):
         for transition, expected in ((True, [["web"]]), (False, [["runtime", "runtime-omarchy", "web"]])):

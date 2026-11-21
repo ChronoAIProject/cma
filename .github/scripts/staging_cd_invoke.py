@@ -256,7 +256,8 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     with tempfile.TemporaryDirectory(prefix="cma-release-set-", dir=env["RUNNER_TEMP"]) as directory:
         path = Path(directory) / "release-set.json"
         with precondition("authority"):
-            if automatic:
+            # A production dispatch also deploys main's release, so it must never undo a newer one.
+            if automatic or env.get("CD_TARGET") == PRODUCTION:
                 selected_keys = sorted(receipts)
                 receipts, group_outcome = controller_receipts(
                     receipts, value.get("contract_transition"), script, directory, started, env, child_env)
