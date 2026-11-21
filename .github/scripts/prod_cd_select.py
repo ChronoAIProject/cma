@@ -19,7 +19,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from staging_cd_common import matches, require
+from staging_cd_common import Refusal, matches, require
+from staging_cd_history import DevelopHistory
 
 EVIDENCE_PREFIX = "staging-deployment-"
 EVIDENCE_WORKFLOWS = (".github/workflows/staging-cd.yml", ".github/workflows/redeploy-staging.yml")
@@ -28,6 +29,7 @@ VERIFIED = "controller-verified"
 MAX_ARTIFACT_PAGES = 10
 MAX_DOWNLOADS = 40
 MAX_EVIDENCE_BYTES = 65536
+MAIN = "refs/heads/main"
 
 
 def git(root, *args, runner=subprocess.run):
@@ -50,6 +52,42 @@ def release_commit(merge, root, *, runner=subprocess.run):
             == git(root, "rev-parse", released + "^{tree}", runner=runner),
             "Main differs from the qualified develop commit it merged")
     return released
+
+
+def main_head(*, runner=subprocess.run):
+    """Main's current head from one credential-free public ref advertisement."""
+    env = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL")}
+    env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
+    try:
+        result = runner(["git", "-c", "credential.helper=", "ls-remote", "--refs",
+                         "https://github.com/ChronoAIProject/cma.git", MAIN],
+                        env=env, capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise Refusal("Main head could not be verified") from error
+    heads = [line.partition("\t")[0] for line in result.stdout.splitlines() if line.partition("\t")[2] == MAIN]
+    require(result.returncode == 0 and len(heads) == 1 and matches(r"[0-9a-f]{40}", heads[0]),
+            "Main head could not be verified")
+    return heads[0]
+
+
+def release_bounds(env, root, *, head=main_head, runner=subprocess.run):
+    """Return this run's release commit R and develop's first parents from main's newest release.
+
+    Main is the release of record, so production converges to its newest
+    release. A higher final supersedes a receipt only when its source is on
+    that release's develop history; a later develop final belongs to a later
+    release's run. Measuring from the newest release, not from R, means a
+    deployment for an older merge that was approved late or re-run hands
+    over to the newer release's run instead of rolling production back.
+    """
+    released = release_commit(env["GITHUB_SHA"], root, runner=runner)
+    newest = head()
+    # The fetch makes main's head readable; this merge must be on its first parents.
+    require(env["GITHUB_SHA"] in DevelopHistory.from_head(newest, root=root).positions,
+            "Production release is not on main's first-parent history")
+    history = DevelopHistory.from_head(release_commit(newest, root, runner=runner), root=root)
+    require(released in history.positions, "Production release is not on the newest release's develop history")
+    return released, history
 
 
 def enabled_components(policy, targets, runtime_targets):
