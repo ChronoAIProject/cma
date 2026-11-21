@@ -33,7 +33,7 @@ pub(super) fn access(store: &MongoSandboxStore) -> Arc<ResourceAccessService> {
     ))
 }
 
-async fn authority(store: &MongoSandboxStore, agent: &Agent) -> AuthorizedResource {
+pub(super) async fn authority(store: &MongoSandboxStore, agent: &Agent) -> AuthorizedResource {
     access(store)
         .authorize_personal(
             &Caller::new(

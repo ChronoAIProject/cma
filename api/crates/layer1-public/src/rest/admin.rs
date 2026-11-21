@@ -27,6 +27,7 @@ pub(crate) use activity::{__path_activity, activity, ActivityPageView, ActivityV
 pub(super) mod admission;
 pub(super) mod auto_pause;
 pub(super) mod ceilings;
+mod pending_homes;
 pub(super) mod profiles;
 pub(super) mod runtime_update;
 pub(super) mod sandboxes;

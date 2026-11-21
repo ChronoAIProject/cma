@@ -492,6 +492,7 @@ owner to manually restart an Agent after deployment.
 
 Everything above, plus:
 
+- The PR is merged with a merge commit, never squashed or rebased. Production CD treats the merge's second parent as the released `develop` commit and refuses a merge whose tree differs from it.
 - Exactly one of the labels `release:major`, `release:minor`, `release:patch`. The merge derives the version from it; a PR that declares nothing cannot be released.
 - A mandatory `## Release Notes` section in the PR body, in exactly this shape:
 
@@ -533,8 +534,18 @@ The merge is the release. Nothing is tagged or published before it, and nothing 
 
 The tag is the version of record. `api/Cargo.toml` and `web/package.json` are not bumped: a bot writing to `main` would put it ahead of `develop` for no gain, and the version those files carry is not what anything deploys.
 
-Publishing is not deploying. Deployment configuration is maintained privately; a new image
-becomes live only when someone changes a manifest to name it.
+Publishing is not deploying. `prod-cd.yml` deploys a release, and only after a required
+approval in the `production` environment. It never deploys an image rebuilt for the tag:
+for each component production enables, it promotes the newest published version whose
+source is the merged `develop` commit or one of its ancestors, and only if staging deployment
+evidence recorded that exact image as controller-verified. The same deployment helpers and
+private controller design as staging do the write. Deployment configuration, including
+which components production enables, is maintained privately.
+Production selects only the application components (`am`, `eg`, `web`), never the
+`runtime` or `runtime-omarchy` images: until a reviewed production runtime-promotion
+design exists, runtime images stay pinned in Agent Manager's privately maintained
+configuration, and an approved release set that holds one is refused rather than
+narrowed. Staging still deploys runtime images together with Agent Manager.
 `CHRONO_SANDBOX_IMAGE` is the single released default for new allocations,
 managed-runtime updates and owner-requested revival under §5. It is pinned to a
 verified CI artifact by explicit release promotion; publishing a CI tag alone

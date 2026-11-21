@@ -83,6 +83,7 @@ impl PoolTarget {
             error: self.error.clone().or_else(|| {
                 (!available).then(|| "Native warm pool inventory is unavailable.".into())
             }),
+            machine: self.machine,
         }
     }
 }
@@ -278,6 +279,7 @@ impl WarmPoolAdministration for NativeWarmPools {
             default_memory_mib: self.default_capacity.memory_mib,
             default_config_sha256: self.default_config_sha256(),
             available,
+            machine_image: self.machine.as_ref().map(|(image, _)| image.uri.clone()),
         })
     }
 

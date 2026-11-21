@@ -304,7 +304,7 @@ impl RoutedDelivery {
             return Ok(FrameDelivery::Unknown);
         }
         self.journal
-            .acknowledge_delivery(lease, &frame.response_id, frame.sequence_number)
+            .acknowledge_frame(plan, target, lease, frame)
             .await?;
         Ok(FrameDelivery::Settled {
             cursor: frame.sequence_number,

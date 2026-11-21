@@ -306,10 +306,10 @@ class OvertakenReportTests(unittest.TestCase):
     def test_an_overtaken_deployment_is_handled_but_never_a_deployed_release(self):
         rows, verified = summarize(self.env(self.overtaken()))
         self.assertIsNone(verified)
-        self.assertIn(f"| web | success | admitted | success | {OVERTAKEN} |", rows)
+        self.assertIn(f"| web | success | admitted | success | {OVERTAKEN} | {OVERTAKEN} | transient | ", "\n".join(rows))
         self.assertIn(f"web deployment skipped: {OVERTAKEN}. A newer final's run owns this deployment; "
                       "this run has no verified web release.", rows)
-        self.assertIn("| am | success | admitted | success | controller-verified |", rows)
+        self.assertIn("| am | success | admitted | success | controller-verified | none | - | - |", rows)
 
     def test_overtaken_evidence_must_be_consistent(self):
         failed = self.overtaken()
@@ -337,7 +337,8 @@ class OvertakenReportTests(unittest.TestCase):
     def test_an_overtaken_admission_is_handled_but_never_a_deployed_release(self):
         rows, verified = summarize(self.env(self.admission()))
         self.assertIsNone(verified)
-        self.assertIn(f"| web | success | superseded-source | skipped | {OVERTAKEN} |", rows)
+        self.assertIn(f"| web | success | superseded-source | skipped | {OVERTAKEN} | superseded-source | transient | ",
+                      "\n".join(rows))
         self.assertIn(f"web admission skipped: {OVERTAKEN}. A newer final's run owns this deployment; "
                       "this run has no verified web release.", rows)
         # Without the handled disposition the same admission stays red.

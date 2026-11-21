@@ -140,13 +140,7 @@ pub(super) async fn verify_process_recovery(
         String::from_utf8_lossy(&result.stderr)
     );
     assert!(output.contains("1 passed"), "{output}");
-    let recovered: Value = serde_json::from_str(
-        output
-            .lines()
-            .find_map(|line| line.strip_prefix("TASK_HOME_RECEIPT="))
-            .unwrap(),
-    )
-    .unwrap();
+    let recovered = super::receipt_output::parse_task_home_receipt(&output);
     assert_eq!(recovered["receipt"]["id"], receipt["id"]);
     assert_eq!(recovered["agent_id"], agent.id.as_str());
     if let Ok(binary) = std::env::var("CMA_DESKTOP_OLD_READER") {

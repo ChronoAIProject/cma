@@ -3,7 +3,9 @@ import json
 import os
 from pathlib import Path
 
+from ci_outcome import error_site, report
 from staging_cd_admission import event_identity
+from staging_cd_baselines import durable_baselines
 from staging_cd_compatibility import GROUP
 from staging_cd_transition import complete_group
 from staging_cd_allocate_progress import allocation_progress
@@ -48,24 +50,27 @@ REFUSAL_CODES = {
     "Allocation reservation readback differs": "RESERVATION_VERIFY_FAILED",
     "Allocation reservation readback is unavailable": "RESERVATION_NOT_VISIBLE",
 }
+FALLBACK_CODES = frozenset({"UNEXPECTED_ERROR", "UNCLASSIFIED_REFUSAL"})
 
 
 def run_allocation(operation):
     # Never echo exception text or private output. Only this closed vocabulary
     # crosses the existing output boundary; unknown failures remain generic.
-    reason = "UNEXPECTED_ERROR"
+    reason, site = "UNEXPECTED_ERROR", None
 
     def guarded(masker):
-        nonlocal reason
+        nonlocal reason, site
         try:
             return operation(masker)
-        except Refusal as error:
-            reason = REFUSAL_CODES.get(str(error), "UNCLASSIFIED_REFUSAL")
+        except Exception as error:
+            site = error_site(error)
+            if isinstance(error, Refusal):
+                reason = REFUSAL_CODES.get(str(error), "UNCLASSIFIED_REFUSAL")
             raise
 
-    status = run_private(guarded, None)
+    status = run_private(guarded, None, subject="allocation", explain=False)
     if status:
-        print("FAIL allocation " + reason)
+        report("allocation", reason, subject="allocation", site=site)
     return status
 
 
@@ -118,7 +123,8 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, ma
                 "Release change identity is invalid")
         seen.add(source)
         history.position(source)
-    changes = sorted(queue["changes"], key=lambda change: history.position(change["source"]))
+    changes = durable_baselines(sorted(queue["changes"], key=lambda change: history.position(change["source"])),
+                                pending, finals, history)
     newest = {name: change["source"] for change in changes for name in change["deployables"]}
     owners, busy = {}, set()
     group_sources = [newest[DEPLOYABLES[key]] for key in GROUP if DEPLOYABLES[key] in newest]

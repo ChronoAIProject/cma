@@ -207,14 +207,15 @@ impl ProbeStore {
 
 #[async_trait::async_trait]
 impl AgentWorkerStore for ProbeStore {
-    async fn due_agent_work_with_cleanup_holds(
+    async fn due_agent_work_filtered(
         &self,
         now: &str,
         limit: u16,
         holds: &std::collections::BTreeSet<AgentId>,
+        startup: StartupWorkFilter<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
         self.inner
-            .due_agent_work_with_cleanup_holds(now, limit, holds)
+            .due_agent_work_filtered(now, limit, holds, startup)
             .await
     }
     async fn live_agent_connections(

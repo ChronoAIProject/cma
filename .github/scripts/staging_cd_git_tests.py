@@ -20,6 +20,7 @@ from image_scanner_policy import MANIFEST_SHA256
 from staging_cd_receipts import published_receipt
 from staging_cd_reservations import Reservations, next_reservation
 from staging_cd_resolve import resolve, verify
+from staging_cd_outcome_tests import legacy
 
 
 class GitPublicationTests(unittest.TestCase):
@@ -39,7 +40,12 @@ class GitPublicationTests(unittest.TestCase):
         self.git("push", str(self.remote), self.source + ":refs/heads/develop")
         self.api = GitHub("fixture", self.runner)
         self.api.request = self.request
-        self.api.history = lambda: DevelopHistory.load(self.request, root=self.work, runner=self.runner)
+        # Each call re-reads develop, but under the client's lock: annotation reads
+        # run on several threads, and concurrent fetches into one work tree race.
+        def history():
+            with self.api._history_lock:
+                return DevelopHistory.load(self.request, root=self.work, runner=self.runner)
+        self.api.history = history
         self.publisher = Reservations(self.api, "fixture", self.work, self.runner)
 
     def git(self, *args, data=None, remote=False):
@@ -272,7 +278,7 @@ class GitPublicationTests(unittest.TestCase):
             return True
         with contextlib.redirect_stdout(output):
             self.assertEqual(run_finalization(operation), 1)
-        self.assertEqual(output.getvalue(), "FAIL\nFAIL finalize stage=final_verify reason=final_unverified\n")
+        self.assertEqual(legacy(output.getvalue()), "FAIL finalize\nFAIL finalize stage=final_verify reason=final_unverified\n")
         self.assertEqual(self.api.tags.call_count, 5)  # Initial/current-authority reads plus three settlement reads.
         self.assertEqual(self.publisher.sleep.call_count, 2)
         self.assertEqual(self.publisher.list(), [value])
@@ -303,8 +309,8 @@ class GitPublicationTests(unittest.TestCase):
                 return True
             with contextlib.redirect_stdout(output):
                 self.assertEqual(run_finalization(operation), 1)
-            self.assertEqual(output.getvalue(),
-                             f"FAIL\nFAIL finalize stage=reservation_read reason=reservation_{failure}\n")
+            self.assertEqual(legacy(output.getvalue()),
+                             f"FAIL finalize\nFAIL finalize stage=reservation_read reason=reservation_{failure}\n")
             self.publisher.command.assert_not_called()
             self.publisher.sleep.assert_not_called()
             self.assertEqual(self.publisher.list(), before)

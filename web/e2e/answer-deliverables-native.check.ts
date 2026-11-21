@@ -1,4 +1,4 @@
-import { mkdir, readFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { expect, test } from '@playwright/test';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
@@ -44,34 +44,48 @@ test('NATIVE receipts reach answer cards and authenticated public downloads with
   );
   await page.route(`**${root}/answers/**`, async (route) => {
     const url = new URL(route.request().url());
-    const response = await request.get(origin + url.pathname + url.search);
+    const prefer = route.request().headers().prefer;
+    expect(prefer).toBe('cma-native-attachment-media');
+    const response = await request.get(origin + url.pathname + url.search, {
+      headers: { Prefer: prefer ?? '' },
+    });
     await route.fulfill({ response });
   });
   await page.goto(`/agents/${agentId}`);
   const answer = page
     .getByRole('article')
-    .filter({ hasText: 'Delivered the file and persistent document.' });
+    .filter({ hasText: 'Delivered the native files and persistent document.' });
   await expect(answer.getByRole('list', { name: 'Answer deliverables' })).toBeVisible();
   await expect(page.getByText('Your CMA account changed.', { exact: false })).toHaveCount(0);
-  for (const [name, digest] of [
-    ['report.txt', 'f6c042409c945c141af65759a07055f9589a486941a285d38d361db0bf3f8400'],
-    ['Native document.md', '6f09a58c411f877c6926b5f4d711df6fb6c8229335bd77d3de54b95021130e92'],
-  ]) {
+  const listed = await request.get(origin + root + '/answers/event:5/deliverables');
+  expect(listed.status()).toBe(200);
+  const { items } = (await listed.json()) as {
+    items: { reference: { name: string; size_bytes: number; sha256: string } }[];
+  };
+  expect(items.map(({ reference }) => reference.name).sort()).toEqual(
+    [
+      'Native document.md',
+      'readme.md',
+      'report.csv',
+      'report.docx',
+      'report.xlsx',
+      'report.zip',
+      'report.json',
+    ].sort(),
+  );
+  await expect(answer.getByRole('button', { name: /^Download / })).toHaveCount(items.length);
+  await page.reload();
+  await expect(answer.getByRole('button', { name: /^Download / })).toHaveCount(items.length);
+  for (const { reference } of items) {
+    const { name, sha256, size_bytes } = reference;
     const downloaded = page.waitForEvent('download');
     await answer.getByRole('button', { name: `Download ${name}` }).click();
     const file = await downloaded;
     expect(file.suggestedFilename()).toBe(name);
     const bytes = await readFile((await file.path())!);
-    expect(createHash('sha256').update(bytes).digest('hex')).toBe(digest);
+    expect(bytes.length).toBe(size_bytes);
+    expect(createHash('sha256').update(bytes).digest('hex')).toBe(sha256);
   }
-  await page.reload();
-  await expect(answer.getByRole('button', { name: 'Download report.txt' })).toBeEnabled();
-  await expect(answer.getByRole('button', { name: 'Download Native document.md' })).toBeEnabled();
-  await mkdir('/tmp/cma-ticket07-evidence', { recursive: true });
-  await page.screenshot({
-    path: '/tmp/cma-ticket07-evidence/native-api-cards.png',
-    fullPage: true,
-  });
   expect(boundary.errors).toEqual([]);
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.writes).toEqual([]);

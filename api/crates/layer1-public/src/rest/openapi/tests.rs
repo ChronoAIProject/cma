@@ -293,7 +293,7 @@ fn every_admin_route_is_documented_and_authenticated() {
         .iter()
         .filter(|(path, _)| path.starts_with("/api/v1/admin/"))
         .collect();
-    assert_eq!(admin.len(), 35);
+    assert_eq!(admin.len(), 36);
     for (_, item) in admin {
         for operation in [
             item.get.as_ref(),
@@ -308,7 +308,7 @@ fn every_admin_route_is_documented_and_authenticated() {
             assert_eq!(operation.security.as_ref().map(Vec::len), Some(2));
         }
     }
-    assert_eq!(operation_ids.len(), 38);
+    assert_eq!(operation_ids.len(), 39);
     assert!(document.paths.paths["/api/v1/admin/admission/ceilings"]
         .put
         .is_some());
@@ -326,6 +326,7 @@ fn every_admin_route_is_documented_and_authenticated() {
     for path in [
         "/api/v1/admin/admission/stop",
         "/api/v1/admin/admission/resume",
+        "/api/v1/admin/admission/pending-homes/reconcile",
     ] {
         assert!(document.paths.paths[path].post.is_some());
     }

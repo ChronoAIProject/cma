@@ -223,6 +223,12 @@ def validate(documents, actions)
   ['Image normalization budgets', 'Gateway socket latency budget', 'Enforce the production budgets (one retry)'].each do |name|
     require_check(timing.find { |s| s['name'] == name }&.fetch('if') == "inputs.track == 'eg'", 'Gateway timing ownership differs')
   end
+  allocator_selector = 'package(=cma) and binary(=allocator_cli) and test(=actual_api_allocator_completes_without_configuration)'
+  allocator = timing.select { |s| s.fetch('run', '').include?(allocator_selector) }
+  require_check(allocator.length == 1 && allocator[0]['if'] == "inputs.track == 'am'" &&
+    allocator[0]['run'] == "bash ../.github/scripts/backend-nextest.sh run -E '#{allocator_selector}' --test-threads 1 --success-output final" &&
+    !allocator[0].key?('continue-on-error'), 'API allocator must run exactly once in required sequential AM timing steps')
+  require_check(rust.fetch('timing').fetch('env')['CMA_NEXTEST_REUSE'] == '1', 'Allocator must use the shared Rust archive')
   steps = documents.values.flat_map { |doc| doc.fetch('jobs').values.flat_map { |job| job.fetch('steps', []) } }
   archives = steps.select { |s| s.fetch('run', '').include?('cargo nextest archive') }
   require_check(archives.length == 1 && archives[0]['run'].include?('--workspace --locked'), 'one locked workspace archive required')
@@ -247,6 +253,22 @@ def validate(documents, actions)
   require_check(!serialized.match?(%r{ci-contract\.rb|staging-authority\.mjs|deployment-observer\.mjs|gh workflow run|gh api[^\n]*dispatches|kubectl}),
     'live authority, observer or mutation tooling retained')
   check_omarchy_archive(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
+  check_os_refresh(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'), 'Omarchy')
+  check_os_refresh(documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps'), 'Images')
+end
+
+# Runtime images install from one pinned Debian snapshot, so their OS refresh is
+# keyed on that snapshot and their package layers come from cache until it is
+# bumped. A per-run key here would rebuild them against the archive every run.
+def check_os_refresh(steps, label)
+  key = steps.find { |s| s['id'] == 'os-refresh' }
+  builds = steps.select { |s| s.fetch('uses', '').start_with?('docker/build-push-action@') }
+  args = builds.map { |b| b.fetch('with').fetch('build-args', '').lines.map(&:strip).grep(/\AOS_SECURITY_REFRESH=/) }
+  require_check(key && key['run'].to_s.start_with?('python3 .github/scripts/os_refresh_key.py ') &&
+    !key.key?('if') && !key.key?('continue-on-error') && !builds.empty? &&
+    args.all? { |a| a == ['OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}'] } &&
+    steps.index(key) < steps.index(builds.first),
+    "#{label} image builds must take OS_SECURITY_REFRESH from the snapshot-aware refresh key")
 end
 
 def check_omarchy_archive(steps)
@@ -307,6 +329,10 @@ check_merge_group_triggers(workflows)
 end
 before_queue = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
 mutations = [
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].reject! { |s| s['name'] == 'API allocator qualification' } },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'] << d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }.dup },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['continue-on-error'] = true },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['run'].sub!('--test-threads 1', '--test-threads 2') },
   ->(d) { d['ci'][true].delete('merge_group') },
   ->(d) { d['ci'][true]['merge_group']['types'] = ['destroyed'] },
   ->(d) { d['ci'][true]['merge_group']['branches'] = ['main'] },
@@ -370,6 +396,10 @@ mutations = [
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['outputs'] = 'type=docker' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['build-args'].sub!('SOURCE_DATE_EPOCH=0', 'SOURCE_DATE_EPOCH=1') },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-cache-restore' }['if'] = "github.event_name == 'push'" },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['build-args'].sub!('${{ steps.os-refresh.outputs.value }}', '${{ github.run_id }}-${{ github.run_attempt }}') },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].reject! { |s| s['id'] == 'os-refresh' } },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Load native image for scanning' }['with']['build-args'].sub!('${{ steps.os-refresh.outputs.value }}', '${{ github.run_id }}-${{ github.run_attempt }}') },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['id'] == 'os-refresh' }['continue-on-error'] = true },
 ]
 synthetic_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic authority and observer regressions' }
 restore_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic home restore evidence regressions' }

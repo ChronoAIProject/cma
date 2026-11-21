@@ -75,9 +75,17 @@ class SupersededTests(unittest.TestCase):
     def test_stale_queue_never_allocates_over_newer_pending_source(self):
         queue, api, store, pending = self.fixture()
         queue['changes'] = queue['changes'][:1]
-        self.assertEqual(allocate_queue(queue, api, store, 99, 1), {'include': []})
-        store.insert.assert_not_called()
-        self.assertEqual(len(pending), 3)
+        # The lane has no final. Its newest failed attempt stays its baseline
+        # though the queue no longer selects that source: retry exactly there.
+        matrix = allocate_queue(queue, api, store, 99, 1)
+        task, = json.loads(matrix['include'][0]['tasks'])
+        self.assertEqual(task['mode'], 'publish')
+        self.assertEqual(task['reservation']['source'], pending[2]['source'])
+        self.assertEqual(task['reservation']['previous'], pending[2]['version'])
+        # The newer pending source still fences the older selected source.
+        self.assertNotEqual(task['reservation']['source'], queue['changes'][0]['source'])
+        store.insert.assert_called_once()
+        self.assertEqual(len(pending), 4)
 
     def test_active_old_owner_is_superseded_without_waiting(self):
         queue, api, store, pending = self.fixture()

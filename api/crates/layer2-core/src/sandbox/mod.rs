@@ -128,6 +128,7 @@ pub mod task_activity;
 mod task_status;
 pub use task_status::AgentTaskStatus;
 mod home;
+pub mod home_backup;
 mod home_native;
 pub use home_native::SandboxNativePool;
 mod home_recovery;
@@ -462,3 +463,4 @@ mod always_on_tests;
 
 mod runtime_capacity;
 pub use runtime_capacity::RuntimeCapacityError;
+pub mod model_credit;

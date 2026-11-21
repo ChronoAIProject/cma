@@ -52,13 +52,43 @@ def web_inputs(root, files, exclusions):
     retained = candidates - tests
     # Follow references transitively: a retained fixture can itself import a
     # second test-named file. CSS/HTML references count as well as JS imports.
+    # A test is referenced when its stem occurs in the text of every retained
+    # file joined by b'\n'. Rescanning that corpus per test per round is slow,
+    # so each round answers the same question exactly from less text:
+    # - Tests sharing a stem share the answer, so each stem is searched once.
+    # - A match of a stem without b'\n' cannot cross a join separator, so it
+    #   lies inside one file. A stem not found yet is absent from every file
+    #   retained in earlier rounds, so only the files added since are searched.
+    # - Such a match consists of bytes that some stem contains. Turning every
+    #   other byte into b'\n' and searching each distinct piece once keeps every
+    #   match and creates none.
+    # An empty stem, or one containing b'\n' (legal in a file name), can match
+    # across a separator, where file adjacency follows set order. It is searched
+    # in the corpus joined exactly as before; the sets are built by the same
+    # operations as before, so they iterate in the same order.
+    stems = {p: Path(p).stem.encode(errors='surrogatepass') for p in tests}
+    plain = {s for s in stems.values() if s and b'\n' not in s}
+    alphabet = {byte for stem in plain for byte in stem}
+    table = bytes(byte if byte in alphabet else ord('\n') for byte in range(256))
+    texts, read, found = {}, set(), set()
     while True:
-        # UTF-8 preserves substring matches and keeps a single non-BMP
-        # character from widening the entire corpus for every stem search.
-        text = b'\n'.join((root / p).read_text(errors='replace').encode()
-                           for p in retained if Path(p).suffix in text_suffixes)
-        referenced = {p for p in tests - retained
-                      if Path(p).stem.encode(errors='surrogatepass') in text}
+        # Read each file once, in the order the joined corpus lists it.
+        added = [p for p in retained if p not in read]
+        read.update(added)
+        for p in added:
+            if Path(p).suffix in text_suffixes:
+                # UTF-8 preserves substring matches and keeps a single non-BMP
+                # character from widening the entire corpus for every stem search.
+                texts[p] = (root / p).read_text(errors='replace').encode()
+        pieces = b'\n'.join(texts[p] for p in added if p in texts).translate(table).split(b'\n')
+        corpus = b'\n'.join(set(pieces))
+        found.update(s for s in plain - found if s in corpus)
+        remaining = tests - retained
+        spanning = {stems[p] for p in remaining} - plain
+        if spanning:
+            text = b'\n'.join(texts[p] for p in retained if p in texts)
+            found.update(s for s in spanning if s in text)
+        referenced = {p for p in remaining if stems[p] in found}
         if not referenced:
             return retained
         retained.update(referenced)

@@ -15,7 +15,8 @@ pub(super) async fn fixture() -> (Arc<DocumentService>, Arc<memory::MemoryDocume
         rows.clone(),
         Arc::new(memory::MemoryDocumentBlobs::default()),
         true,
-    );
+    )
+    .with_directory(memory::recipient_directory(&["guest", "new-reader"]));
     let doc = service
         .create(
             &caller("owner"),

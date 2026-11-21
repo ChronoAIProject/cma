@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 import os
 import time
 
+from cd_target import branch as target_branch, workflows as target_workflows
+from ci_outcome import error_site, report
 from staging_cd_common import matches, require
 
 ADMISSION_SECONDS = 120
@@ -12,6 +14,7 @@ RELEASE_TOTAL_SECONDS = 990
 CONTROLLER_TOTAL_ENV = "CD_CONTROLLER_TOTAL_SECONDS"
 TERMINATION_GRACE_SECONDS = 15
 WATCHDOG_SECONDS = RELEASE_TOTAL_SECONDS + TERMINATION_GRACE_SECONDS
+ADMISSION_FAILURE = "admission-time"
 
 
 def controller_seconds(mode):
@@ -43,12 +46,12 @@ def remaining(started, limit=None, now=None, *, mode="release"):
 
 def run_created(env, request):
     require(matches(r"[1-9][0-9]*", env.get("GITHUB_RUN_ID")), "Deployment run identity is invalid")
-    workflows = {"push": "staging-cd.yml", "workflow_dispatch": "redeploy-staging.yml"}
+    workflows, branch = target_workflows(env), target_branch(env)
     event = env.get("GITHUB_EVENT_NAME")
     require(event in workflows, "Deployment event cannot supply an admission clock")
     run = request("actions/runs/" + env["GITHUB_RUN_ID"])
     require(isinstance(run, dict) and run.get("id") == int(env["GITHUB_RUN_ID"])
-            and run.get("event") == event and run.get("head_branch") == "develop"
+            and run.get("event") == event and run.get("head_branch") == branch
             and run.get("head_sha") == env["GITHUB_SHA"]
             and run.get("path") == ".github/workflows/" + workflows[event]
             and isinstance(run.get("repository"), dict)
@@ -69,8 +72,9 @@ def dispatch_started(env, request, mode="release"):
 def main():
     try:
         remaining(os.environ.get("CD_STARTED_AT"), mode=os.environ.get("CD_DEPLOY_MODE", "release"))
-    except (ValueError, TypeError, OverflowError):
-        print("FAIL: deployment not admitted; invalid or expired admission time")
+    except (ValueError, TypeError, OverflowError) as error:
+        # The line is unchanged; the reported check says which bound refused.
+        report("deploy-clock", ADMISSION_FAILURE, subject="deploy-admission", site=error_site(error))
         return 30
     return 0
 

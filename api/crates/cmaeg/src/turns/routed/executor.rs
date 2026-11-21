@@ -137,6 +137,9 @@ impl RoutedTargetExecutor {
             Err(_) => return Ok(Disposition::Retry(RETRY)),
         };
         if projection.terminal_acknowledged(lease) {
+            journal
+                .project_execution(&work.identity, body.delivery.consumer.as_str(), lease)
+                .await?;
             journal.complete(lease, &response_id).await?;
             journal
                 .observe(
@@ -278,6 +281,9 @@ impl RoutedTargetExecutor {
                     FrameDelivery::Settled { .. } => {}
                 }
                 if projection.terminal_acknowledged(lease) {
+                    journal
+                        .project_execution(&work.identity, body.delivery.consumer.as_str(), lease)
+                        .await?;
                     journal.complete(lease, &response_id).await?;
                     journal
                         .observe(

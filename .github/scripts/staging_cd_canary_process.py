@@ -13,7 +13,7 @@ from staging_cd_common import Refusal
 
 class CanaryProcessFailure(Refusal):
     def __init__(self, reason, quiesced):
-        super().__init__("Runtime canary process failed: " + reason)
+        super().__init__("Runtime canary process failed")
         self.reason = reason
         self.quiesced = quiesced
 

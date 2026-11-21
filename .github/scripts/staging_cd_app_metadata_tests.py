@@ -72,10 +72,10 @@ class AppMetadataTests(unittest.TestCase):
             def resolve(token, revision, masker):
                 return metadata.resolve_app_commit(token, revision, masker, lambda _: read)
             with contextlib.redirect_stdout(output):
-                self.assertEqual(run_private(lambda mask: checkout.prepare_app(env, mask, resolve), None), 0)
+                self.assertEqual(run_private(lambda mask: checkout.prepare_app(env, mask, resolve), None, subject="private-checkout"), 0)
 
         lines = output.getvalue().splitlines()
-        self.assertEqual(lines[-1], "PASS")
+        self.assertEqual(lines[-1], "PASS private-checkout")
         self.assertTrue(all(line.startswith("::add-mask::") for line in lines[:-1]))
         masks = {line[len("::add-mask::"):] for line in lines[:-1]}
         required = {"z", metadata.REPOSITORY, "xy", "ab", "Li", "12345678", "who@example.invalid",
@@ -170,10 +170,11 @@ class AppMetadataTests(unittest.TestCase):
                 return "a" * 40
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
-                self.assertEqual(run_private(lambda masker: checkout.prepare_app(env, masker, resolve), None), 0)
+                self.assertEqual(run_private(lambda masker: checkout.prepare_app(env, masker, resolve), None,
+                                             subject="private-checkout"), 0)
             public = output.getvalue()
             self.assertNotIn("private response", public)
-            self.assertTrue(public.endswith("PASS\n"))
+            self.assertTrue(public.endswith("PASS private-checkout\n"))
             for field, value in [("CD_INFRA_REF", "develop"), ("GITHUB_RUN_ID", "0")]:
                 with self.subTest(field=field), self.assertRaises(Refusal):
                     checkout.prepare_app(dict(env, **{field: value}), Mock(), Mock())

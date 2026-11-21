@@ -79,7 +79,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
   return {
     usageViews: createUsageClient(sdk),
     deliverables: sdk.agents,
-    documents: documentsClient(),
+    documents: documentsClient(sdk.documents),
     browser: sdk.agentBrowser,
     browserControl: computer.browserControl,
     taskExperience: sdk.taskExperience,
@@ -119,6 +119,8 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       (await sdk.readOpenApi(options))['x-cma-task-templates-v1'] === true,
     readTaskRepositorySupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-repository'] === true,
+    readTaskTitleModeSupport: async (options) =>
+      (await sdk.readOpenApi(options))['x-cma-agent-title-mode'] === true,
     readTaskCreationSupport: async (options) => {
       const document = await sdk.readOpenApi(options);
       const components = document.components as

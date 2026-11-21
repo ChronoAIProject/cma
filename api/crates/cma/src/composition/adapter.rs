@@ -2,6 +2,7 @@ use crate::config::Config;
 use std::sync::Arc;
 
 pub(super) struct ProductionAdapters {
+    pub model_funding: Option<Arc<layer2_core::sandbox::model_credit::AgentTurnFunding>>,
     pub runtime_capacity: Arc<layer3_adapter::agent_sandbox::RuntimeCapacityAuthority>,
     pub owned: Arc<dyn layer3_adapter::SandboxAdapter>,
     pub owner_controls: layer3_adapter::owner_control::ControlRoutes,
@@ -234,6 +235,8 @@ pub(super) async fn production_adapter(
         adapter = adapter.with_home_volumes(homes);
     }
     Ok(ProductionAdapters {
+        // None until the model gateway can attest to the paying credential and enforce phase limits.
+        model_funding: None,
         runtime_capacity,
         owner_controls,
         owned: Arc::new(adapter),

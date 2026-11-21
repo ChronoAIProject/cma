@@ -28,7 +28,8 @@ async fn standing_gate_denies_document_owner_share_and_link_reads() {
         Arc::new(memory::MemoryDocuments::default()),
         Arc::new(memory::MemoryDocumentBlobs::default()),
     )
-    .with_account_standing(standing.clone());
+    .with_account_standing(standing.clone())
+    .with_directory(memory::recipient_directory(&["reader"]));
     let owner = caller("owner");
     let reader = caller("reader");
     let doc = service

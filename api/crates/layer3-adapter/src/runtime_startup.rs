@@ -1,5 +1,8 @@
 //! Bounded, content-free evidence of repeated runtime startup failure.
 
+use crate::RuntimeHandle;
+use tokio::time::Instant;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RuntimeStartupFailureClass {
     ExitedBeforeServing,
@@ -23,10 +26,47 @@ impl std::fmt::Display for RuntimeStartupFailureClass {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RuntimeStartupFailure {
     pub class: RuntimeStartupFailureClass,
     pub consecutive: u32,
+    probe: Option<RuntimeStartupProbe>,
+}
+
+/// Advisory scheduling evidence from the process that owns the startup breaker.
+/// The deadline uses that process's monotonic clock and is never persisted.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RuntimeStartupProbe {
+    pub runtime: RuntimeHandle,
+    pub sandbox_id: String,
+    pub generation: u64,
+    pub next_probe_at: Instant,
+}
+
+impl std::fmt::Debug for RuntimeStartupProbe {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RuntimeStartupProbe")
+            .finish_non_exhaustive()
+    }
+}
+
+impl RuntimeStartupFailure {
+    pub fn new(class: RuntimeStartupFailureClass, consecutive: u32) -> Self {
+        Self {
+            class,
+            consecutive,
+            probe: None,
+        }
+    }
+
+    pub fn with_probe(mut self, probe: RuntimeStartupProbe) -> Self {
+        self.probe = Some(probe);
+        self
+    }
+
+    pub fn probe(&self) -> Option<&RuntimeStartupProbe> {
+        self.probe.as_ref()
+    }
 }
 
 impl std::fmt::Display for RuntimeStartupFailure {
@@ -66,10 +106,7 @@ mod tests {
             (RuntimeStartupFailureClass::OutOfMemory, "out_of_memory"),
             (RuntimeStartupFailureClass::Terminated, "terminated"),
         ] {
-            let failure = RuntimeStartupFailure {
-                class,
-                consecutive: 3,
-            };
+            let failure = RuntimeStartupFailure::new(class, 3);
             assert_eq!(class.as_str(), label);
             let error = AdapterError::RuntimeStartupHold(failure);
             assert!(error.is_runtime_loss());

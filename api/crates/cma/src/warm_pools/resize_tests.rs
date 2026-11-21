@@ -205,6 +205,35 @@ async fn machine_pool_survives_reconciliation_beside_a_different_agent_image() {
 }
 
 #[tokio::test]
+async fn warm_pool_list_names_the_machine_pool_and_its_configured_image() {
+    let mut original = original_target();
+    original.machine = true;
+    original.document_schema_version = 2;
+    let (mut service, _) = service(original.clone(), original.plan.clone());
+    let service_mut = Arc::get_mut(&mut service).unwrap();
+    service_mut.machine = Some((service_mut.image.clone(), 2));
+    service_mut.image =
+        deployment_image(format!("registry.example/agent@sha256:{}", "b".repeat(64)));
+    // Which pool is the desktop pool is durable target data, not inventory;
+    // without a home policy the list skips both inventory and default planning.
+    service_mut.home = None;
+    let list = service.list(&operator()).await.unwrap();
+    assert!(!list.available);
+    assert!(list.items[0].machine);
+    assert_eq!(list.items[0].image, original.plan.spec.image.uri);
+    assert_eq!(
+        list.machine_image.as_deref(),
+        Some(original.plan.spec.image.uri.as_str())
+    );
+    assert_ne!(list.default_image, original.plan.spec.image.uri);
+    let service_mut = Arc::get_mut(&mut service).unwrap();
+    service_mut.machine = None;
+    let list = service.list(&operator()).await.unwrap();
+    assert!(list.items[0].machine);
+    assert_eq!(list.machine_image, None);
+}
+
+#[tokio::test]
 async fn target_fencing_defaults_off_and_preserves_legacy_provider_calls() {
     let original = original_target();
     let (worker, store) = service(original.clone(), original.plan.clone());

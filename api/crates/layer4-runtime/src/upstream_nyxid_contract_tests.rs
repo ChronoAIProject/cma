@@ -56,7 +56,7 @@ impl Peer {
             .await
             .unwrap();
         Self {
-            proxy: proxy_router(target, credential, None, true),
+            proxy: proxy_router(target, credential, None, true, false),
             inbox,
             count,
             server,

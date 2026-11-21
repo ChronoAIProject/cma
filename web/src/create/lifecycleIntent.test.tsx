@@ -86,3 +86,37 @@ it('abandons only the response of a request whose location was left', async () =
   expect(result.current.intent).toBeUndefined();
   expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toContain('"name":"New agent"');
 });
+
+it.each([undefined, 'automatic', 'named'] as const)(
+  'restores the exact %s title request only for its original owner',
+  (title_mode) => {
+    const body = {
+      name: 'New task',
+      initial_message: 'Original task',
+      ...(title_mode ? { title_mode } : {}),
+    };
+    sessionStorage.setItem(lifecycleStorageKey('owner'), retained('original-key', body));
+    const client = agentClient();
+    const { result, rerender } = renderHook(({ owner }) => useLifecycleIntent(client, owner), {
+      initialProps: { owner: 'owner' },
+    });
+    expect(result.current.intent).toEqual({ key: 'original-key', body });
+    rerender({ owner: 'other-owner' });
+    expect(result.current.intent).toBeUndefined();
+    rerender({ owner: 'owner' });
+    expect(result.current.intent).toEqual({ key: 'original-key', body });
+  },
+);
+
+it('retains an unreadable title mode without issuing a request', () => {
+  const raw = retained('original-key', { name: 'New task', title_mode: 'inferred' });
+  sessionStorage.setItem(lifecycleStorageKey('owner'), raw);
+  const create = vi.fn();
+  const { result } = renderHook(() =>
+    useLifecycleIntent(agentClient({ createAgentLifecycle: create }), 'owner'),
+  );
+  expect(result.current.intent).toBeUndefined();
+  expect(result.current.blocked).toBe(true);
+  expect(sessionStorage.getItem(lifecycleStorageKey('owner'))).toBe(raw);
+  expect(create).not.toHaveBeenCalled();
+});
