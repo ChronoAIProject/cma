@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import sys
 
 from ci_outcome import error_site, report
 from staging_cd_admission import event_identity
@@ -51,9 +52,18 @@ REFUSAL_CODES = {
     "Allocation reservation readback is unavailable": "RESERVATION_NOT_VISIBLE",
 }
 FALLBACK_CODES = frozenset({"UNEXPECTED_ERROR", "UNCLASSIFIED_REFUSAL"})
+# The codes ci_outcomes.json catalogues as transient; a test keeps them equal.
+# Such a refusal stops allocation at its settlement gate, the step catch-up
+# re-runs a head run for, once. Every other refusal fails the allocation step.
+TRANSIENT_CODES = frozenset({
+    "RESERVATION_OWNER_UNREADABLE", "RESERVATION_OWNER_UNCERTAIN", "MERGED_PR_IDENTITY_CHANGED",
+    "VERSION_LABELS_INVALID", "GITHUB_RESPONSE_INVALID", "RESERVATION_COLLISION_LIMIT", "RESERVATION_PUSH_FAILED",
+    "RESERVATION_VERIFY_FAILED", "FINAL_SETTLEMENT_UNCERTAIN", "DEADLINE_EXCEEDED", "READ_FAILED",
+    "WRITE_UNCERTAIN", "INVENTORY_INCOMPLETE", "RESERVATION_COLLISION", "RESERVATION_NOT_VISIBLE",
+})
 
 
-def run_allocation(operation):
+def run_allocation(operation, env=None):
     # Never echo exception text or private output. Only this closed vocabulary
     # crosses the existing output boundary; unknown failures remain generic.
     reason, site = "UNEXPECTED_ERROR", None
@@ -69,9 +79,26 @@ def run_allocation(operation):
             raise
 
     status = run_private(guarded, None, subject="allocation", explain=False)
+    if status and reason in TRANSIENT_CODES:
+        # No matrix is emitted, so nothing downstream runs. The step succeeds
+        # so that its settlement gate, the next step, reports the refusal and
+        # fails the job: that is the stop catch-up re-runs.
+        env = os.environ if env is None else env
+        output(env, "transient", "true")
+        output(env, "refused", reason)
+        if site is not None:
+            output(env, "site", site)
+        return 0
     if status:
         report("allocation", reason, subject="allocation", site=site)
     return status
+
+
+def require_settled(code, site):
+    """Fail the job for the transient refusal the allocation step recorded."""
+    report("allocation", code if code in TRANSIENT_CODES else "UNCLASSIFIED_REFUSAL", subject="allocation",
+           site=site or None)
+    return 1
 
 
 def run_active(api, reservation):
@@ -246,8 +273,13 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, ma
     return {"include": grouped}
 
 
-def main():
-    env = os.environ
+def main(argv=()):
+    env, argv = os.environ, list(argv)
+    if argv == ["--require-settled"]:
+        return require_settled(env.get("CD_ALLOCATION_REFUSED"), env.get("CD_ALLOCATION_SITE"))
+    if argv:
+        report("step", "refused", subject="allocation")
+        return 1
     def operation(_masker):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Version allocation only accepts develop pushes")
@@ -262,7 +294,7 @@ def main():
         output(env, "changed", "true" if matrix["include"] else "false")
         return True
     with allocation_progress() as mark:
-        return run_allocation(operation)
+        return run_allocation(operation, env)
 
 
 def allocate_current(queue, env, io, mark):
@@ -293,4 +325,4 @@ def allocate_current(queue, env, io, mark):
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(sys.argv[1:]))

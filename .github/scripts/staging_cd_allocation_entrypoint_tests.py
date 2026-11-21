@@ -16,9 +16,9 @@ from staging_cd_outcome_tests import legacy
 
 
 class AllocationEntrypointTests(unittest.TestCase):
-    def execute(self, *, fail_after_first=False):
+    def execute(self, *, fail_after_first=False, unlabelled=False):
         server = AllocationServer(0, components=("am", "web"))
-        stores, output, events = [], io.StringIO(), []
+        stores, output, events, outputs = [], io.StringIO(), [], {}
         request = server.request
 
         def read(path, **kwargs):
@@ -27,6 +27,8 @@ class AllocationEntrypointTests(unittest.TestCase):
             result = request(path, **kwargs)
             if fail_after_first and "/cma-web/pending/" in path:
                 return dict(result, object={"type": "tag", "sha": "0" * 40})
+            if unlabelled and path.startswith("pulls/"):
+                return dict(result, labels=[])
             return result
 
         def store(api, token, root, bounded_io, *, mark):
@@ -37,6 +39,7 @@ class AllocationEntrypointTests(unittest.TestCase):
 
         def emit(_env, key, value):
             events.append(key)
+            outputs[key] = value
             if key == "matrix":
                 self.assertEqual(len(json.loads(value)["include"]), 2)
 
@@ -47,8 +50,18 @@ class AllocationEntrypointTests(unittest.TestCase):
                 patch.object(allocation, "event_identity"), patch.object(allocation, "GitHub", return_value=server), \
                 patch.object(allocation, "Reservations", side_effect=store), \
                 patch.object(allocation, "output", side_effect=emit) as emitted:
-            status = allocation.main()
+            status = allocation.main([])
+        self.outputs = outputs
         return status, server, stores[0], legacy(output.getvalue()), events, emitted
+
+    def gate(self, outputs):
+        """The settlement gate step, given the allocation step's outputs as the workflow passes them."""
+        output = io.StringIO()
+        env = {"CD_ALLOCATION_REFUSED": outputs.get("refused", ""), "CD_ALLOCATION_SITE": outputs.get("site", "")}
+        with patch.dict(os.environ, env, clear=True), contextlib.redirect_stdout(output):
+            status = allocation.main(["--require-settled"])
+        legacy(output.getvalue())  # One explained line and its annotation.
+        return status, output.getvalue().splitlines()[0]
 
     def test_success_emits_matrix_after_both_exact_ref_readbacks(self):
         status, server, store, output, events, emitted = self.execute()
@@ -60,18 +73,54 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertTrue(output.endswith("PASS allocation\n"))
         self.assertEqual(emitted.call_count, 2)
 
-    def test_partial_settlement_fails_without_output_or_repeating_prior_push(self):
+    def test_partial_settlement_stops_at_the_gate_without_a_matrix_or_repeating_prior_push(self):
         status, server, store, output, events, emitted = self.execute(fail_after_first=True)
-        self.assertEqual(status, 1)
-        self.assertEqual(events, ["readback", "readback"])
-        emitted.assert_not_called()
+        # A transient refusal ends the allocation step successfully, without a
+        # matrix, so that only its settlement gate fails the job.
+        self.assertEqual(status, 0)
+        self.assertEqual(events, ["readback", "readback", "transient", "refused", "site"])
+        self.assertEqual({key: value for key, value in self.outputs.items() if key != "site"},
+                         {"transient": "true", "refused": "RESERVATION_VERIFY_FAILED"})
+        self.assertRegex(self.outputs["site"], r"\Astaging_cd_allocation_snapshot\.py:\d+\Z")
         self.assertEqual(len(store.list()), 0)
         self.assertEqual(len(server.refs), 4)
         self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertNotIn("phase=complete", output)
         self.assertIn("phase=readback-conflict count=1", output)
-        self.assertTrue(output.endswith("FAIL allocation\nFAIL allocation RESERVATION_VERIFY_FAILED\n"))
+        self.assertTrue(output.endswith("phase=readback-conflict count=1 elapsed_seconds=0\nFAIL allocation\n"))
         self.assertNotIn("fixture", output)
+        self.assertEqual(self.gate(self.outputs),
+                         (1, f"FAIL allocation RESERVATION_VERIFY_FAILED at={self.outputs['site']} cause=transient"))
+
+    def test_a_refusal_that_needs_a_person_fails_the_allocation_step_itself(self):
+        status, server, store, output, events, emitted = self.execute(unlabelled=True)
+        self.assertEqual(status, 1)
+        emitted.assert_not_called()
+        self.assertEqual(server.refs, {})
+        self.assertTrue(output.endswith("FAIL allocation\nFAIL allocation VERSION_LABEL_REQUIRED\n"))
+        self.assertNotIn("VERSION_LABEL_REQUIRED", allocation.TRANSIENT_CODES)
+
+    def test_the_gate_reports_only_a_transient_code_and_refuses_unknown_arguments(self):
+        for outputs, line in (({"refused": "WRITE_UNCERTAIN", "site": "staging_cd_allocation_snapshot.py:9"},
+                               "FAIL allocation WRITE_UNCERTAIN at=staging_cd_allocation_snapshot.py:9 cause=transient"),
+                              ({"refused": "READ_FAILED"}, "FAIL allocation READ_FAILED cause=transient"),
+                              # Only a transient code can reach the gate; anything else is reported as unknown.
+                              ({"refused": "VERSION_LABEL_REQUIRED"}, "FAIL allocation UNCLASSIFIED_REFUSAL cause=unknown"),
+                              ({}, "FAIL allocation UNCLASSIFIED_REFUSAL cause=unknown")):
+            with self.subTest(outputs=outputs):
+                self.assertEqual(self.gate(outputs), (1, line))
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(allocation.main(["--unknown"]), 1)
+        self.assertTrue(output.getvalue().startswith("FAIL allocation reason=refused"))
+
+    def test_transient_codes_are_exactly_the_catalogued_transient_allocation_codes(self):
+        catalogued = json.loads(Path(__file__).with_name("ci_outcomes.json").read_text())
+        codes = catalogued["families"]["allocation"]["codes"]
+        self.assertEqual(allocation.TRANSIENT_CODES, {code for code, entry in codes.items() if entry["cause"] == "transient"})
+        self.assertLessEqual(allocation.TRANSIENT_CODES, set(allocation.REFUSAL_CODES.values()))
+        # The incident codes of an uncertain push and a spent budget are among them.
+        self.assertLessEqual({"WRITE_UNCERTAIN", "READ_FAILED", "DEADLINE_EXCEEDED"}, allocation.TRANSIENT_CODES)
 
     def test_replan_keeps_controller_proof_for_current_final(self):
         head = "a" * 40
