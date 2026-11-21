@@ -4,6 +4,7 @@ from pathlib import Path
 import stat
 import sys
 
+import ci_outcome
 from staging_cd_common import require
 from staging_cd_receipts import canonical, sha256
 from staging_cd_set import document, private_document, release_set, validate_set
@@ -11,6 +12,7 @@ from staging_cd_set import document, private_document, release_set, validate_set
 SCHEMA = "cma-private-deployment-result-v1"
 STATES = {"controller-verified": "none", "withheld": "deployed-compatibility-unqualified",
           "unverified": "deployment-unverified"}
+INVALID_EVIDENCE = "invalid-public-evidence"
 
 
 def validate(result, request, code):
@@ -93,8 +95,9 @@ def report(env):
 def main():
     try:
         report(os.environ)
-    except (OSError, ValueError, TypeError, KeyError):
-        print("FAIL component-result reason=invalid-public-evidence")
+    except (OSError, ValueError, TypeError, KeyError) as error:
+        ci_outcome.report("component-result", INVALID_EVIDENCE, subject="component-result",
+                          site=ci_outcome.error_site(error))
         return 1
     return 0
 

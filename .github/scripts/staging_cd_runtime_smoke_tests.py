@@ -18,6 +18,7 @@ from staging_cd_receipts import validate_receipt
 from staging_cd_receipts_tests import fixture_identity, fixture_runtime_receipt
 from staging_cd_runtime_smoke import CleanupIncomplete, qualify, validate_smoke
 from staging_cd_set import release_set
+from staging_cd_outcome_tests import legacy
 
 
 class RuntimeSmokeTests(unittest.TestCase):
@@ -146,8 +147,8 @@ class RuntimeSmokeTests(unittest.TestCase):
             public = io.StringIO()
             with redirect_stdout(public):
                 self.assertEqual(main(), 1)
-            self.assertEqual(public.getvalue(),
-                             "FAIL\nFAIL publication stage=runtime_smoke reason=validation_refused\n")
+            self.assertEqual(legacy(public.getvalue()),
+                             "FAIL publication\nFAIL publication stage=runtime_smoke reason=validation_refused\n")
             self.assertEqual(json.loads(output.with_name("runtime-cleanup.json").read_text()), error.receipt)
             self.assertFalse(output.exists())
             self.assertEqual(list(root.glob("cma-publication-*")), [])

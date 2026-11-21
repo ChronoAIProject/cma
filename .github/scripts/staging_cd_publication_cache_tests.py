@@ -142,16 +142,25 @@ class CacheTests(unittest.TestCase):
         from staging_cd_publish import emit_cache_metrics
         for metric, warning in (({"operation": "export", "result": "accepted"}, None),
                                 ({"operation": "export", "result": "accepted", "headroom": "low"}, "above 75% of"),
-                                ({"operation": "export", "result": "withheld", "reason": "oversize-compressed"}, "over"),
-                                ({"operation": "export", "result": "withheld", "reason": "transfer-failed"}, None),
+                                ({"operation": "export", "result": "withheld", "reason": "oversize-compressed"},
+                                 "WITHHELD build-cache reason=oversize-compressed component=am cause=change"),
+                                ({"operation": "export", "result": "withheld", "reason": "transfer-failed"},
+                                 "WITHHELD build-cache reason=transfer-failed component=am cause=transient"),
                                 ({"operation": "restore", "result": "hit"}, None)):
             with self.subTest(metric=metric):
                 stream = io.StringIO()
-                emit_cache_metrics("am", [metric], stream)
+                with patch.dict(os.environ, {}, clear=True):
+                    emit_cache_metrics("am", [metric], stream)
                 lines = stream.getvalue().splitlines()
                 self.assertEqual(json.loads(lines[0]), {"event": "publication-cache", **metric})
                 if warning is None:
                     self.assertEqual(len(lines), 1)
+                elif warning.startswith("WITHHELD "):
+                    # Every withheld export explains its reason and next step.
+                    self.assertEqual(lines[1], warning)
+                    self.assertTrue(lines[2].startswith("::warning title=build-cache%3A "))
+                    self.assertIn("Next step: ", lines[2])
+                    self.assertEqual(len(lines), 3)
                 else:
                     self.assertEqual(lines[1], "::warning title=Cargo cache bound::am Cargo bundle is "
                                      f"{warning} its bound in staging_cd_cargo_artifact.py")

@@ -99,7 +99,7 @@ def main():
         output(env, "queue", payload)
         output(env, "changed", "true" if queue["changes"] else "false")
         return True
-    status = run_private(operation, None)
+    status = run_private(operation, None, subject="release-queue")
     if status == 0 and metrics:
         print(json.dumps({'event': 'selection-cache', **metrics}, sort_keys=True))
     return status
