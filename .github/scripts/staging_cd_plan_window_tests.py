@@ -22,6 +22,7 @@ from staging_cd_contract_tests import fixture_source
 from staging_cd_history import DevelopHistory
 from staging_cd_plan_window import (MANIFEST, PROPAGATION_SECONDS, PlanRefused, Window, newest_finals, plan_window,
                                     read_finals, window_line, window_warning)
+import staging_cd_plan_window as window
 import staging_cd_queue as queue
 from staging_cd_queue import release_queue
 from staging_cd_receipts import annotation, final_tag_oid, final_tag_text, git_tag_oid, parse_annotation
@@ -211,7 +212,7 @@ class NewestFinalTests(unittest.TestCase):
         self.assertEqual(len(clock.waits), 1)
         self.assertGreaterEqual(clock.waits[0], 45)
 
-    def test_only_a_rejected_credential_is_denied_and_a_lasting_404_is_untrusted(self):
+    def test_only_a_rejected_credential_is_denied(self):
         oid = self.tags().refs["refs/tags/cma-web/v0.10.2"]
         invalid = Refusal("GitHub API response is invalid")  # No status, nothing transient: a body that did not parse.
         for name, errors, kind, retried in (
@@ -226,12 +227,6 @@ class NewestFinalTests(unittest.TestCase):
                 self.assertEqual(self.read(tags, clock)["web"], (None, kind))
                 self.assertEqual(bool(clock.waits), retried)
                 self.assertLessEqual(clock.now, 240)
-        # A 404 is propagation only for a short while; after it the final is not a tag GitHub serves.
-        tags, clock = self.tags(), Clock()
-        tags.failures[oid] = [failure(404)] * 50
-        self.assertEqual(self.read(tags, clock)["web"], (None, "untrusted"))
-        self.assertGreater(len(clock.waits), 0)
-        self.assertLess(sum(clock.waits[:-1]), PROPAGATION_SECONDS)
         # A requested wait past the deadline ends the read instead of sleeping; one wait is capped.
         tags, clock = self.tags(), Clock()
         tags.failures[oid] = [failure(503, {"retry-after": "600"})] * 6
@@ -242,6 +237,25 @@ class NewestFinalTests(unittest.TestCase):
         tags.failures[oid] = [failure(503, {"retry-after": "600"})]
         self.assertEqual(self.read(tags, clock)["web"], (COMMITS[7], "final"))
         self.assertEqual(clock.waits, [ci_retry.RETRY_AFTER_CAP])
+
+    def test_only_a_404_that_outlasts_its_propagation_window_is_untrusted(self):
+        # Full-jitter waits are the draw times 2, 4, 8, 16 and 30 seconds.
+        oid = self.tags().refs["refs/tags/cma-web/v0.10.2"]
+        for name, draw, policy, deadline, kind, ended in (
+                # The fifth 404 arrives exactly when the window closes: the final is not served.
+                ("window closed", 1.0, {"attempts": 5}, 240, "untrusted", 30),
+                # Attempts run out 1.5 s before the window closes: an outage catch-up retries.
+                ("attempts spent just short", 0.95, {"attempts": 5}, 240, "unreadable", 28.5),
+                # The window closes between the fifth and sixth 404s.
+                ("window closed during the wait", 0.95, {}, 240, "untrusted", 57),
+                # The budget ends 6 s in, before the next wait could finish.
+                ("budget spent", 1.0, {}, 10, "unreadable", 6)):
+            with self.subTest(name), patch.dict(window.READ_POLICY, rand=lambda draw=draw: draw, **policy):
+                tags, clock = self.tags(), Clock()
+                tags.failures[oid] = [failure(404)] * 50
+                result = newest_finals(tags, tags.refs, deadline=deadline, clock=clock, sleep=clock.sleep)
+                self.assertEqual(result["web"], (None, kind))
+                self.assertAlmostEqual(clock.now, ended)
 
     def test_any_failed_listing_repeats_and_only_a_malformed_one_is_untrusted(self):
         chain, tags = history(), Tags()  # No finals: only the listing is read.

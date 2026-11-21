@@ -81,9 +81,10 @@ def object_reader(clock):
 
     Only a 401 refuses the credential. A 403 can be a secondary rate limit
     without its headers, so it is repeated like any outage. A 404 is repeated
-    for a short propagation window, then the advertised final is not a tag
-    object GitHub serves (deleted, or lightweight). Anything else that does
-    not pass is unreadable.
+    for a short propagation window, and only a 404 that outlasted the whole
+    window means the advertised final is not a tag object GitHub serves
+    (deleted, or lightweight). Reads that end sooner, when attempts or the
+    budget run out, are unreadable, like anything else that does not pass.
     """
     first = {}
 
@@ -96,7 +97,11 @@ def object_reader(clock):
 
     def kind(error):
         status = getattr(error, "status", None)
-        return "denied" if status == 401 else "untrusted" if status == 404 else "unreadable"
+        if status == 401:
+            return "denied"
+        if status == 404 and 404 in first and clock() - first[404] >= PROPAGATION_SECONDS:
+            return "untrusted"
+        return "unreadable"
     return classify, kind
 
 
