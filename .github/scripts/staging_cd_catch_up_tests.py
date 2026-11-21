@@ -148,6 +148,23 @@ class CatchUpTests(unittest.TestCase):
         self.assertEqual((reason, run["run_attempt"], lanes), ("exhausted", catch_up.ATTEMPTS, behind))
         self.assertEqual(develop.posts, [])
 
+    def test_a_cancelled_head_is_never_re_run_automatically(self):
+        develop = Develop()
+        develop.push({"runtime-omarchy"})
+        develop.finalize(develop.push({"web"})["web"])
+        develop.deploy(802, "web", "failed")
+        develop.complete(801, 802)
+        self.assertEqual(decide(develop)[0], "rerun")
+        develop.runs[802]["attempts"][-1]["conclusion"] = "cancelled"
+        for event in ("workflow_run", "schedule"):
+            self.assertEqual(decide(develop, event=event), ("cancelled", None, []))
+        # A maintainer's re-run of it is a new attempt that may be caught up again.
+        develop.start(802)
+        develop.allocate(802)
+        develop.complete(802)
+        self.assertEqual(decide(develop)[0], "rerun")
+        self.assertEqual(develop.posts, [])
+
     def test_owner_without_a_run_is_settled_and_an_unknown_head_waits(self):
         develop = Develop()
         develop.push({"runtime-omarchy"})
@@ -456,6 +473,9 @@ class EntryTests(unittest.TestCase):
         self.assertEqual(self.run_main(lambda *_, **__: ("final-waiting", None, lanes[1:2]), every=True), (0, [
             "PASS catch-up", "CATCH-UP lane=runtime-omarchy reason=unproven-final version=0.18.12",
             "CATCH-UP final-waiting"]))
+
+    def test_a_cancelled_head_is_reported_as_a_stop(self):
+        self.assertEqual(self.run_main(lambda *_, **__: ("cancelled", None, [])), (0, "CATCH-UP stop reason=cancelled"))
 
     def test_the_check_decides_with_its_own_trigger(self):
         for event in ("workflow_run", "schedule"):

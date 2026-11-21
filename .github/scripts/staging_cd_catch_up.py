@@ -19,7 +19,8 @@ though those alone never trigger a re-run.
 The re-run is automatic once per head: its attempt is triggered by the bot,
 which never earns another, and no head runs ATTEMPTS times. A lane still
 behind after that is reported as exhausted until a push or a maintainer acts.
-An unreadable controller outcome is reported as unknown and never re-runs.
+An unreadable controller outcome is reported as unknown and never re-runs,
+and a cancelled head run is never re-run automatically.
 """
 import collections
 from datetime import datetime
@@ -264,6 +265,8 @@ def decide(api, read_refs, read_controller, *, event=None, now=None):
     require(len(runs) == 1 and push_run(runs[0]) and runs[0].get("path") == WORKFLOW,
             "Develop head run identity is invalid")
     run = runs[0]
+    if run.get("conclusion") == "cancelled":
+        return "cancelled", None, []  # Someone stopped it; only a person resumes it.
     actor = run.get("triggering_actor")
     # The bot's attempt was this head's automatic re-run; a maintainer's earns one more.
     spent = (isinstance(actor, dict) and actor.get("login") == BOT) or run["run_attempt"] >= ATTEMPTS
@@ -362,6 +365,8 @@ def main():
               f"{outcome['attempt']} of run {outcome['run']}; a push or a maintainer re-run retries them")
         for component in late:
             print(f"CATCH-UP exhausted lane={component} attempts={outcome['attempt']}")
+    elif reason == "cancelled":
+        print("CATCH-UP stop reason=cancelled")
     else:
         print("CATCH-UP " + reason)
     return 0

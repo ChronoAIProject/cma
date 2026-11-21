@@ -59,7 +59,7 @@ class Develop:
         return {"id": run_id, "run_attempt": number, "event": "push", "head_branch": "develop",
                 "head_sha": run["head"], "path": WORKFLOW, "status": state["status"],
                 "triggering_actor": state["actor"], "run_started_at": state["started"],
-                "updated_at": state.get("updated", state["started"]),
+                "updated_at": state.get("updated", state["started"]), "conclusion": state.get("conclusion"),
                 "repository": {"full_name": REPOSITORY}, "head_repository": {"full_name": REPOSITORY}}
 
     def serve(self, path, payload=None, **kwargs):
