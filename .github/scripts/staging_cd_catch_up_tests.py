@@ -128,6 +128,12 @@ class CatchUpTests(unittest.TestCase):
         develop.deploy(802, "contract")
         develop.complete(801, 802)
         self.assertEqual(decide(develop), ("nothing-behind", None, []))
+        # The yielded claims stay current once a later push owns the head.
+        third = develop.push({"web"})
+        develop.finalize(third["web"])
+        develop.deploy(803, "web")
+        develop.complete(803)
+        self.assertEqual(decide(develop), ("nothing-behind", None, []))
 
     def test_unallocated_or_already_caught_up_head_is_not_re_run(self):
         develop = Develop()
@@ -136,9 +142,12 @@ class CatchUpTests(unittest.TestCase):
         develop.complete(801, 802)
         develop.runs[802]["attempts"][-1]["allocate"] = "failure"
         self.assertEqual(decide(develop), ("head-unallocated", None, []))
-        develop.runs[802]["attempts"][-1]["allocate"] = "success"
         develop.runs[802]["attempts"][-1]["actor"] = BOT
         behind = [("runtime-omarchy", "unfinalized-reservation")]
+        # A spent head is reported whatever its allocation did.
+        reason, run, lanes = decide(develop)
+        self.assertEqual((reason, run["run_attempt"], lanes), ("exhausted", 1, behind))
+        develop.runs[802]["attempts"][-1]["allocate"] = "success"
         reason, run, lanes = decide(develop)
         self.assertEqual((reason, run["run_attempt"], lanes), ("exhausted", 1, behind))
         # A maintainer's later re-run may be caught up once more, within the cap.
@@ -383,6 +392,16 @@ class UnprovenFinalTests(unittest.TestCase):
         with patch.object(catch_up, "TARGETS", TARGETS - {"web"}):
             self.assertEqual(decide(develop), ("nothing-behind", None, []))
         self.assertEqual(decide(develop)[::2], ("rerun", [("web", "unproven-final")]))
+
+    def test_an_undeployed_final_needs_an_owner_strictly_newer_than_the_oldest_listed_writer(self):
+        since = "2026-11-21T13:20:00Z"
+        self.assertTrue(catch_up.undeployed(None, None))  # The listing holds every deployment.
+        for started, expected in ((None, False), ("2026-11-21T13:19:59Z", False), (since, False),
+                                  ("2026-11-21T13:20:01Z", True), ("13:20:01", False)):
+            with self.subTest(started=started):
+                owner = None if started is None else {"run_started_at": started}
+                self.assertIs(catch_up.undeployed(owner, since), expected)
+        self.assertFalse(catch_up.undeployed({"run_started_at": "2026-11-21T13:20:01Z"}, "unknown"))
 
     def test_final_no_writer_covered_since_its_owner_started_is_undeployed(self):
         develop = Develop()

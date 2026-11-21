@@ -152,6 +152,14 @@ class PromotionTests(unittest.TestCase):
         self.writer(2, name="Unidentified writer")
         self.assertEqual(self.plan()[0]["receipt"], self.receipt)
 
+    def test_a_cancelled_writer_cannot_confirm_a_final_even_after_coordinating(self):
+        job, _ = self.writer(1, stamp=self.stamp, conclusion="cancelled")
+        job["steps"][0]["conclusion"] = "success"
+        self.assertEqual(self.plan()[0]["mode"], "resume")
+        self.assertEqual(snapshot(self.read, ENVIRONMENT).proofs, {})
+        job["conclusion"] = "success"
+        self.assertEqual(self.plan(), [])
+
     def test_unknown_or_running_outcome_cannot_confirm_a_final(self):
         self.writer(1, stamp=self.stamp)
         job, _ = self.writer(2, stamp=self.stamp, status="in_progress")
