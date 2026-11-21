@@ -1438,7 +1438,31 @@
           "title": "Selection budget exhausted",
           "meaning": "The selection cache did not cover the plan window, usually after a selector policy change, and analysing the rest exceeded the plan's budget. Analysed revisions were saved; INCOMPLETE gives the count.",
           "cause": "transient",
-          "next": "Re-run or wait for the next push; planning continues from the saved revisions. PLAN window names the lane bounding the start; if a lane without a verified final holds it at CMA_CD_ADOPTION_SHA, an operator can advance that variable."
+          "next": "Re-run this workflow or wait for the next develop push; planning continues from the saved revisions. The PLAN window line names the lane whose newest final release bounds the window."
+        },
+        "finals-unreadable": {
+          "title": "Lane releases unreadable",
+          "meaning": "A current lane's newest final release tag could not be read, so the oldest revision a lane can still need is unknown. Nothing was planned.",
+          "cause": "transient",
+          "next": "Re-run this workflow or wait for the next develop push; the next plan reads the tags again."
+        },
+        "finals-untrusted": {
+          "title": "Lane release tag untrusted",
+          "meaning": "A current lane's newest final release tag, or the tag inventory, failed verification. Allocation would refuse it too, so nothing was planned.",
+          "cause": "unknown",
+          "next": "Check the lanes the PLAN refused line names: each newest final must be the canonical bot tag its receipt describes."
+        },
+        "floor-required": {
+          "title": "Adoption floor required",
+          "meaning": "A current lane's newest final is not on the last 2,000 develop first-parent merges, so its window needs CMA_CD_ADOPTION_SHA on that history.",
+          "cause": "operator",
+          "next": "Set CMA_CD_ADOPTION_SHA to a recent develop merge after which the lanes the PLAN refused line names need nothing older."
+        },
+        "anchor-unselected": {
+          "title": "Window anchor unselected",
+          "meaning": "The selector did not select its lanes at a merge the window relies on: an older contract transition, or the merge that added a new lane.",
+          "cause": "change",
+          "next": "Review the selector change; a contract transition must select its group and a new lane's addition must select that lane."
         }
       }
     },

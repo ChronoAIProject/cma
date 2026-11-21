@@ -598,6 +598,8 @@ class StagingWorkflowTest < Minitest::Test
     assert_operator save, :<, gate
     assert_operator gate, :<, promotions
     assert_equal "steps.plan.outputs.complete != 'true'", steps[gate]['if']
+    # A refused plan names its reason through the same gate.
+    assert_equal({ 'CD_PLAN_REFUSED' => '${{ steps.plan.outputs.refused }}' }, steps[gate]['env'])
     assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete',
                  steps[gate]['run']
     [steps[restore], steps[save]].each do |step|
