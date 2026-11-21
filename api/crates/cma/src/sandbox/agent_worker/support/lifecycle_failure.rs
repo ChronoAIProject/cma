@@ -193,6 +193,26 @@ impl AgentWorker {
         now: SystemTime,
         parents: Option<PublicationParents>,
     ) -> Result<(), SandboxStoreError> {
+        let rejected_lineage = parents.is_none() && failure.class == "agent_lineage_invalid";
+        if rejected_lineage {
+            if agent
+                .work
+                .cleanup_debt
+                .iter()
+                .any(|debt| debt.step == agent.work.step)
+            {
+                return Err(SandboxStoreError::Conflict);
+            }
+            let sandbox = self
+                .dependencies
+                .store
+                .get_sandbox(&agent.sandbox_id)
+                .await?
+                .ok_or(SandboxStoreError::NotFound)?;
+            if sandbox.owner != agent.owner {
+                return Err(SandboxStoreError::Conflict);
+            }
+        }
         let typed = failure.typed();
         let mut worktree = match &parents {
             Some(parents) => parents.worktree.clone(),
@@ -218,7 +238,9 @@ impl AgentWorker {
         let id = agent.id.clone();
         let runtime_generation = agent.conversation.runtime_generation;
         let fence = claimed_fence(&agent, &self.config.holder)?;
-        if !can_rebuild(agent.work.step) {
+        // A preflight rejection can be recorded under the Agent claim even
+        // though the rejected parent cannot authorize a native publication.
+        if rejected_lineage || !can_rebuild(agent.work.step) {
             let mutation = self.startup_failure_proposal(agent, typed, versioned, now)?;
             self.dependencies
                 .registry
