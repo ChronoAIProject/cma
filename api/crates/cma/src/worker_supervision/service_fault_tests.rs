@@ -295,9 +295,23 @@ async fn exercise(probe: &Probe, worker: &'static str, fault: Fault) -> serde_js
     result
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "requires explicitly isolated Mongo configuration"]
-async fn startup_recovery_with_owned_completion() {
+struct MongoReadiness(mongodb::Database);
+
+#[async_trait::async_trait]
+impl crate::health::ReadinessProbe for MongoReadiness {
+    async fn ping(&self) -> Result<(), layer2_core::StoreError> {
+        self.0
+            .run_command(mongodb::bson::doc! { "ping": 1 })
+            .await
+            .map(|_| ())
+            .map_err(|error| layer2_core::StoreError::Unavailable(error.to_string()))
+    }
+}
+
+pub(crate) async fn startup_recovery_with_owned_completion(
+    database: mongodb::Database,
+    operations: crate::store::MongoOperationStore,
+) {
     use layer2_core::{OperationClaim, OperationReservation, OperationStore, SubjectId};
     use std::time::SystemTime;
     use tokio::{
@@ -305,24 +319,7 @@ async fn startup_recovery_with_owned_completion() {
         task::JoinSet,
     };
 
-    let config = fixture_config();
     let client = probe_client();
-    let stores = Arc::new(
-        crate::store::MongoStores::connect_with_authority(
-            &config.mongodb_uri,
-            &config.mongodb_database,
-            &config.deployment_id,
-            &config.auth_encryption_key,
-            config.activity_retention,
-            (
-                &config.runtime.sandbox_image,
-                config.runtime.home_policy.as_ref(),
-            ),
-            config.mongodb_authority,
-        )
-        .await
-        .unwrap(),
-    );
     let claim = OperationClaim::new(
         SubjectId::new("worker-supervision-fixture"),
         "complete-owned-work",
@@ -331,7 +328,7 @@ async fn startup_recovery_with_owned_completion() {
         SystemTime::now() + Duration::from_secs(60),
         Duration::from_secs(60),
     );
-    let operations = stores.operations.clone();
+    let operations = Arc::new(operations);
     assert_eq!(
         operations.reserve(&claim).await.unwrap(),
         OperationReservation::Acquired
@@ -386,7 +383,7 @@ async fn startup_recovery_with_owned_completion() {
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let http = format!("http://{}", listener.local_addr().unwrap());
-    let router = crate::health::router_with_workers(stores, workers);
+    let router = crate::health::router_with_workers(Arc::new(MongoReadiness(database)), workers);
     let server = tokio::spawn(async move {
         axum::serve(listener, router)
             .with_graceful_shutdown(crate::shutdown::signalled(signal))

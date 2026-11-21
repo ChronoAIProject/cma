@@ -349,4 +349,6 @@ pub(crate) fn stall_next_poll(activity: &Activity) {
 #[cfg(test)]
 mod service_fault_tests;
 #[cfg(test)]
+pub(crate) use service_fault_tests::startup_recovery_with_owned_completion;
+#[cfg(test)]
 mod tests;
