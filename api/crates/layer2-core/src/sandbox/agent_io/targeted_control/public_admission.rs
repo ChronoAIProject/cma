@@ -83,6 +83,8 @@ impl AgentCommandService {
                 {
                     return Err(TargetedControlError::CapabilityUnsupported);
                 }
+                self.require_model_credit(&request.command.envelope.command)
+                    .map_err(CommandAdmissionError::from)?;
                 Ok(self
                     .store
                     .reserve_targeted_control(request.clone())
