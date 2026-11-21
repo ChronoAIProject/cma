@@ -541,6 +541,11 @@ source is the merged `develop` commit or one of its ancestors, and only if stagi
 evidence recorded that exact image as controller-verified. The same deployment helpers and
 private controller design as staging do the write. Deployment configuration, including
 which components production enables, is maintained privately.
+Production selects only the application components (`am`, `eg`, `web`), never the
+`runtime` or `runtime-omarchy` images: until a reviewed production runtime-promotion
+design exists, runtime images stay pinned in Agent Manager's privately maintained
+configuration, and an approved release set that holds one is refused rather than
+narrowed. Staging still deploys runtime images together with Agent Manager.
 `CHRONO_SANDBOX_IMAGE` is the single released default for new allocations,
 managed-runtime updates and owner-requested revival under §5. It is pinned to a
 verified CI artifact by explicit release promotion; publishing a CI tag alone
