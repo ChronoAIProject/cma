@@ -352,6 +352,13 @@ pub trait SandboxEventStore: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
+pub struct RepositoryPreparationRuntime {
+    pub binding: super::RuntimeBinding,
+    pub generation: u64,
+    pub key_generation: u64,
+}
+
+#[derive(Debug, Clone)]
 pub enum SandboxTransaction {
     CreateWorktreeAndAgent {
         worktree: Box<Worktree>,
@@ -369,6 +376,8 @@ pub enum SandboxTransaction {
         event: SandboxEventKind,
     },
     SaveWorkspaceAndAppend {
+        /// Runtime that returned a terminal initial repository preparation failure.
+        repository_runtime: Option<Box<RepositoryPreparationRuntime>>,
         expected_revision: u64,
         workspace: Box<Workspace>,
         event_at: String,
