@@ -8,6 +8,9 @@ use layer3_adapter::{
 };
 use std::sync::Mutex;
 
+#[path = "settings_tests.rs"]
+mod settings;
+
 #[path = "drain_tests.rs"]
 mod drain;
 
