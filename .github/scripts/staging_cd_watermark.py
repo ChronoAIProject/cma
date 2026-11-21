@@ -47,6 +47,23 @@ def require_current_versions(receipts, *, runner=subprocess.run):
                          runner=runner, missing="Final version is absent from component inventory")
 
 
+def require_released_versions(receipts, history, *, runner=subprocess.run):
+    """Production's watermark: only a higher final on the release's develop history supersedes.
+
+    Develop keeps publishing past every release. A final whose peeled source
+    is outside `history` belongs to a later release, whose own run deploys it,
+    so it never withholds this one. Presence of each receipt's tag is still
+    required exactly as for staging.
+    """
+    try:
+        require_current_versions(receipts, runner=runner)
+    except SupersededVersions as error:
+        later = later_final_sources({key: receipts[key] for key in error.components}, runner=runner)
+        stale = {key for key, commits in later.items() if any(c in history.positions for c in commits)}
+        if stale:
+            raise SupersededVersions(stale) from error
+
+
 def advertise(prefixes, *, runner, peeled=False):
     """One credential-free public ref advertisement of the final-tag prefixes."""
     env = {k: os.environ[k] for k in ("PATH", "LANG", "LC_ALL") if k in os.environ}
