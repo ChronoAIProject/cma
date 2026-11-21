@@ -235,6 +235,11 @@ fn error(error: RecoveryError) -> Response {
             "capacity_recovery_unavailable",
             "Retry the unchanged original request to reconcile its outcome.",
         ),
+        RecoveryError::WorkspaceCapacityFull { .. } => (
+            StatusCode::CONFLICT,
+            "capacity_recovery_workspace_full",
+            "Workspace Agent capacity is full. Retry the unchanged original request when a slot is available.",
+        ),
         RecoveryError::Conflict
         | RecoveryError::InvalidEvidence
         | RecoveryError::Disposition(_) => (

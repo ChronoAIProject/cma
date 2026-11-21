@@ -328,10 +328,9 @@ describe('Sandbox navigation tree', () => {
         expect(action).toHaveAttribute('aria-disabled', 'true');
         await actor.click(action);
       }
-      expect(screen.getByRole('menuitem', { name: 'Export history' })).toHaveAttribute(
-        'aria-disabled',
-        'false',
-      );
+      expect(
+        screen.getByRole('menuitem', { name: 'Export retained conversation' }),
+      ).toHaveAttribute('aria-disabled', 'false');
       expect(onAction).not.toHaveBeenCalled();
     },
   );

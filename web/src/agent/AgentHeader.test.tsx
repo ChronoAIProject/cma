@@ -134,7 +134,8 @@ it('orders all reviewed actions and dispatches configuration separately from his
         { id: 'update-skills', label: 'Update skills' },
       ],
       moreActions: [
-        { id: 'export_history', label: 'Export history' },
+        { id: 'export_history', label: 'Export raw history' },
+        { id: 'export_retained_conversation', label: 'Export retained conversation' },
         { id: 'stop_agent', label: 'Stop agent' },
         { id: 'delete_agent', label: 'Delete task', danger: true },
       ],
@@ -144,21 +145,23 @@ it('orders all reviewed actions and dispatches configuration separately from his
   for (const [label, id] of [
     ['Update system prompt', 'update-prompt'],
     ['Update skills', 'update-skills'],
-    ['Export history', 'export_history'],
+    ['Export raw history', 'export_history'],
+    ['Export retained conversation', 'export_retained_conversation'],
   ] as const) {
     await user.click(screen.getByRole('button', { name: 'More Agent actions' }));
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toEqual([
       'Rename',
       'Update system prompt',
       'Update skills',
-      'Export history',
+      'Export retained conversation',
+      'Export raw history',
       'View deletion status',
       'Stop agent',
       'Delete task',
     ]);
     expect(screen.getByRole('menu').querySelectorAll('[role="separator"]')).toHaveLength(1);
     await user.click(screen.getByRole('menuitem', { name: label }));
-    expect(id === 'export_history' ? onMoreAction : onMenuSelect).toHaveBeenCalledWith(id);
+    expect(id.startsWith('export_') ? onMoreAction : onMenuSelect).toHaveBeenCalledWith(id);
   }
 });
 

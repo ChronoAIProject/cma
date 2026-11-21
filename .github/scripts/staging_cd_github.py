@@ -1,4 +1,5 @@
 """Captured GitHub API calls and immutable component tag publication."""
+import copy
 import json
 import os
 import subprocess
@@ -33,6 +34,9 @@ class GitHub:
         # attempt and ends repeats, so a step refuses before its job is killed.
         self.deadline = deadline
         self._history = None
+        # Annotated tag objects are immutable and keyed by their verified ID.
+        # Live ref inventories are never cached; each read is still a fence.
+        self._tags = {}
 
     def history_at(self, head, *, root):
         if self._history is None or self._history.head != head:
@@ -59,10 +63,14 @@ class GitHub:
         require(isinstance(path, str) and not path.startswith(("/", "http"))
                 and ".." not in path and "\n" not in path, "GitHub API path is invalid")
         require(method is None or method == "PATCH" and payload is not None, "GitHub mutation method is invalid")
+        oid = path[len("git/tags/"):] if payload is None and not allow_not_found \
+            and matches(r"git/tags/[0-9a-f]{40}", path) else None
+        if oid in self._tags:
+            return copy.deepcopy(self._tags[oid])
         if self.local_tags is not None and payload is None and not allow_not_found:
             tag = self.local_tags(path)
             if tag is not None:
-                return tag
+                return self.remember(oid, tag)
         require(payload is None or not allow_not_found, "Optional GitHub reads cannot write")
         # Reads ask for the status line and headers, the only explicit throttling signal.
         args = ["gh", "api", "--hostname", "github.com", "-H", "Accept: application/vnd.github+json",
@@ -92,7 +100,21 @@ class GitHub:
                 # A slow network spent the budget; GitHub refused nothing.
                 raise Refusal("GitHub read budget expired") from ci_retry.TransientError()
             return once(timeout)
-        return ci_retry.call(attempt, name="github-read", classify=ci_retry.classify, attempts=attempts, **policy)
+        value = ci_retry.call(attempt, name="github-read", classify=ci_retry.classify, attempts=attempts, **policy)
+        return value if oid is None else self.remember(oid, value)
+
+    def remember(self, oid, value):
+        if oid is not None:
+            self._tags[oid] = copy.deepcopy(value)
+        return value
+
+    def preload_tags(self, rows):
+        """Read the absent objects of one validated live ref inventory from the checkout at once."""
+        if self.local_tags is None:
+            return
+        wanted = {row.get("ref"): row["object"]["sha"] for row in rows if row["object"]["sha"] not in self._tags}
+        if wanted:
+            self._tags.update(self.local_tags.load(wanted))
 
     @staticmethod
     def response(path, payload, result, allow_not_found):
@@ -149,8 +171,10 @@ class GitHub:
                         and isinstance(row.get("object"), dict) and row["object"].get("type") == "tag"
                         and matches(r"[0-9a-f]{40}", row["object"].get("sha")),
                         "Component version must be an annotated tag")
+                version_tuple(row["ref"][len("refs/tags/" + name + "/v"):])
+            self.preload_tags(rows)
+            for row in rows:
                 tag_name = row["ref"][len("refs/tags/"):]
-                version_tuple(tag_name[len(name + "/v"):])
                 tag = self.request("git/tags/" + row["object"]["sha"])
                 require(isinstance(tag, dict) and tag.get("tag") == tag_name
                         and isinstance(tag.get("object"), dict) and tag["object"].get("type") == "commit"

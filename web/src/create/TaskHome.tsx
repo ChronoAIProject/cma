@@ -21,6 +21,7 @@ import { TaskTemplates } from './TaskTemplates';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { useTaskExperience } from '../taskExperience';
 import { useTaskDraft } from './taskDraft';
+import { useTaskTemplateDraftSwitch } from './TaskTemplateDraftSwitch';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import '../ui/Input.css';
 import './AgentLifecycleCard.css';
@@ -87,6 +88,21 @@ function TaskHomeContent({
   const [validation, setValidation] = useState<TemplateIssue>();
   const templateSupported = useTaskTemplateSupport(client);
   const form = useRef<HTMLFormElement>(null);
+  const templateDraft = useTaskTemplateDraftSwitch(
+    draft,
+    (template) => {
+      const previousFocus = document.activeElement;
+      requestAnimationFrame(() => {
+        if (document.activeElement !== previousFocus && document.activeElement !== document.body)
+          return;
+        (template
+          ? form.current?.querySelector<HTMLInputElement>('[data-template-field]')
+          : input.current
+        )?.focus();
+      });
+    },
+    () => setValidation(undefined),
+  );
   const { supported, repositorySupported } = useTaskCreationSupport(client);
   const contextual = Boolean(workspaceId || sandboxId);
   const capacityUnavailable =
@@ -205,6 +221,7 @@ function TaskHomeContent({
         </p>
       ) : null}
       {!contextual ? <SandboxCapacityPanel client={client} capacity={capacity} /> : null}
+      {templateDraft.feedback}
       <form
         ref={form}
         noValidate
@@ -262,10 +279,7 @@ function TaskHomeContent({
               setValidation(undefined);
               draft.changeTemplate(template);
             }}
-            onClear={() => {
-              setValidation(undefined);
-              draft.clearTemplate();
-            }}
+            onClear={templateDraft.clear}
           />
         ) : null}
         {draft.template && templateSupported !== true ? (
@@ -325,15 +339,7 @@ function TaskHomeContent({
           {contextual ? 'Preparing your Agent…' : 'Preparing a cloud computer for your Agent…'}
         </p>
       ) : null}
-      <TaskTemplates
-        onSelect={(id) => {
-          setValidation(undefined);
-          draft.selectTemplate(id);
-          requestAnimationFrame(() =>
-            form.current?.querySelector<HTMLInputElement>('[data-template-field]')?.focus(),
-          );
-        }}
-      />
+      <TaskTemplates onSelect={templateDraft.select} />
       <p className="task-home__defaults">
         <span className="task-home__dot" aria-hidden="true" />
         GPT-6 · High reasoning · Autonomous
