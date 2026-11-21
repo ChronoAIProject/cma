@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 303,
+  "openapi_operations": 305,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -1117,6 +1117,14 @@
         "store_failed"
       ]
     },
+    "POST /api/v1/agui/run/receipt": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/run.rs# Current authorization and the exact original input identify a retained command without admission.",
+      "required_problems": [
+        "thread_not_found",
+        "not_authenticated"
+      ]
+    },
     "POST /api/v1/agui/run": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
@@ -2008,6 +2016,14 @@
       ],
       "required_protocol_failures": [
         "agent_command_authority_revoked"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/receipt": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/input_receipt.rs# Current authorization and the exact original input identify a retained command without admission.",
+      "required_problems": [
+        "response_not_found",
+        "authentication_required"
       ]
     },
     "POST /api/v2/agents/{agent_id}/responses": {

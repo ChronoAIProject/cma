@@ -17,6 +17,11 @@ impl NativeWarmPools {
     /// Release preparation should prewarm this plan before the Recreate rollout.
     /// This bounded guard never serves allocations before readiness and does not
     /// imply that the old API remains available during a Recreate deployment.
+    ///
+    /// Only the default runtime plan gates startup. The shared desktop pool
+    /// merely shortens machine startup, which still works cold, and a new
+    /// machine image's first pull alone can outlast this guard; the supervisor
+    /// fills that pool in the background.
     pub async fn await_default_ready(&self) -> Result<(), WarmPoolError> {
         // The supervisor that retires superseded pools starts only after this
         // gate, yet on a full node pool the new default schedules only once
@@ -31,7 +36,7 @@ impl NativeWarmPools {
             }
         };
         tokio::select! {
-            result = self.await_default_plans_ready() => result,
+            result = self.await_default_plan_ready() => result,
             _ = drain => unreachable!("superseded pool draining never completes"),
         }
     }
@@ -58,34 +63,27 @@ impl NativeWarmPools {
         Ok(())
     }
 
-    async fn await_default_plans_ready(&self) -> Result<(), WarmPoolError> {
+    async fn await_default_plan_ready(&self) -> Result<(), WarmPoolError> {
         let provider = self
             .adapter
             .native_pools()
             .ok_or(WarmPoolError::Unavailable)?;
-        let mut images = vec![&self.image];
-        if let Some((image, _)) = &self.machine {
-            images.push(image);
-        }
-        for image in images {
-            let plan = provider
-                .plan(&NativePoolSpec {
-                    image: image.clone(),
-                    cpu_millis: self.default_capacity.cpu_millis,
-                    memory_mib: self.default_capacity.memory_mib,
-                    home: self.home.clone().ok_or(WarmPoolError::Unavailable)?,
-                })
-                .map_err(|_| WarmPoolError::Unavailable)?;
-            await_ready_with_fencing(
-                self.store.as_ref(),
-                provider,
-                &plan,
-                STARTUP_WARMUP_LIMIT,
-                self.target_fencing,
-            )
-            .await?;
-        }
-        Ok(())
+        let plan = provider
+            .plan(&NativePoolSpec {
+                image: self.image.clone(),
+                cpu_millis: self.default_capacity.cpu_millis,
+                memory_mib: self.default_capacity.memory_mib,
+                home: self.home.clone().ok_or(WarmPoolError::Unavailable)?,
+            })
+            .map_err(|_| WarmPoolError::Unavailable)?;
+        await_ready_with_fencing(
+            self.store.as_ref(),
+            provider,
+            &plan,
+            STARTUP_WARMUP_LIMIT,
+            self.target_fencing,
+        )
+        .await
     }
 }
 

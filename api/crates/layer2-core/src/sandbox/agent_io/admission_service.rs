@@ -305,6 +305,9 @@ impl AgentCommandService {
         let Some(record) = result?? else {
             return Ok(None);
         };
+        if record.receipt.envelope.source.kind != request.envelope.source.kind {
+            return Ok(None);
+        }
         let CommandReservationResult::Existing(record) = request.replay(record)? else {
             return Err(CommandLedgerError::Corrupt.into());
         };
