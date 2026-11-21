@@ -103,7 +103,7 @@ for (const theme of ['light', 'dark', 'system']) {
       animations: 'disabled',
     });
     await page.getByRole('button', { name: 'Usage Sandbox status' }).click();
-    await page.getByRole('menuitemradio', { name: 'retired', exact: true }).click();
+    await page.getByRole('menuitemradio', { name: 'Deleted', exact: true }).click();
     await page.getByRole('button', { name: 'Apply usage filters' }).click();
     await expect(page.getByText('No Sandboxes match this selection.')).toBeVisible();
     metrics.failure = 503;
