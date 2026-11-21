@@ -84,47 +84,14 @@ impl RuntimeConfig {
         {
             return Err("CHRONO_RUNTIME_HOME_IDENTITY must be a canonical home fingerprint".into());
         }
-        let machine_included = match process_env.get("CMA_MACHINE_INCLUDED").map(String::as_str) {
-            None | Some("0") | Some("false") => false,
-            Some("1") | Some("true") => true,
-            Some(_) => return Err("CMA_MACHINE_INCLUDED must be 0, 1, false or true".into()),
-        };
-        let extended_desktop_startup =
-            match process_env.get(DESKTOP_STARTUP_FLAG).map(String::as_str) {
-                None | Some("0" | "false") => false,
-                Some("1" | "true") => true,
-                Some(_) => {
-                    return Err(format!(
-                        "{DESKTOP_STARTUP_FLAG} must be 0, 1, false or true"
-                    ))
-                }
-            };
-
-        let capacity_recovery_enabled = match process_env
-            .get("CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED")
-            .map(String::as_str)
-        {
-            None | Some("0") | Some("false") => false,
-            Some("1") | Some("true") => true,
-            Some(_) => {
-                return Err(
-                    "CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED must be 0, 1, false or true".into(),
-                )
-            }
-        };
-
-        let legacy_journal_recovery_enabled =
-            match process_env
-                .get("CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED")
-                .map(String::as_str)
-            {
-                None | Some("0") | Some("false") => false,
-                Some("1") | Some("true") => true,
-                Some(_) => return Err(
-                    "CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED must be 0, 1, false or true"
-                        .into(),
-                ),
-            };
+        let machine_included = env_flag(&process_env, "CMA_MACHINE_INCLUDED")?;
+        let extended_desktop_startup = env_flag(&process_env, DESKTOP_STARTUP_FLAG)?;
+        let capacity_recovery_enabled =
+            env_flag(&process_env, "CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED")?;
+        let legacy_journal_recovery_enabled = env_flag(
+            &process_env,
+            "CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED",
+        )?;
 
         let bind = env_socket(&process_env, "CHRONO_RUNTIME_BIND", DEFAULT_BIND)?;
         process_env.insert("HOME".into(), home.to_string_lossy().into_owned());
@@ -298,6 +265,14 @@ fn validate_home(home: &Path) -> Result<(), String> {
         return Err("CHRONO_RUNTIME_HOME must be a normalized absolute directory".into());
     }
     Ok(())
+}
+
+fn env_flag(env: &BTreeMap<String, String>, name: &str) -> Result<bool, String> {
+    match env.get(name).map(String::as_str) {
+        None | Some("0" | "false") => Ok(false),
+        Some("1" | "true") => Ok(true),
+        Some(_) => Err(format!("{name} must be 0, 1, false or true")),
+    }
 }
 
 fn env_socket(
