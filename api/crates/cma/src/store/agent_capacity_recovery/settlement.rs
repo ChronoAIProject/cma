@@ -232,6 +232,22 @@ async fn persist(
         now,
     } = step;
     let context = current.context()?;
+    authority::fence_parents(store, current, scope).await?;
+    if !context.agent.status.is_live() && next.status.is_live() {
+        // A snapshot predating another admission must lose the parent write
+        // before counting. Acceptance of recovery did not reserve a live slot.
+        let live = scope
+            .live_agents(store, &context.sandbox.id, &context.workspace.id)
+            .await?;
+        let limit = context.sandbox.limits.max_agents_per_workspace;
+        if live >= u64::from(limit) {
+            return Err(SandboxStoreError::AgentLimitReached {
+                limit,
+                live: u8::try_from(live).unwrap_or(u8::MAX),
+            }
+            .into());
+        }
+    }
     let captured = capture::capture_transaction(store, context.agent, scope).await?;
     if captured.format() != CapturedFormat::Segmented {
         return Err(SandboxStoreError::Conflict.into());
@@ -276,7 +292,6 @@ async fn persist(
     .await?;
     let filter = source::fence_filter_scoped(store, context.agent, scope).await?;
     records::replace(store, &prior, &stored, scope).await?;
-    authority::fence_parents(store, current, scope).await?;
     authority::require(authorized)?;
     writer_commit::persist(
         store,

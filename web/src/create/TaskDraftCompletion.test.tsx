@@ -8,7 +8,7 @@ import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { AgentLifecycleFollowup } from './AgentLifecycleFollowup';
 import { lifecycleStorageKey } from './lifecycleIntent';
 import { lifecycleRecoveryKey } from './lifecycleIntentStorage';
-import { taskDraftStorageKey } from './taskDraft';
+import { taskDraftStorageKey, legacyTaskDraftStorageKey } from './taskDraft';
 import { TaskHome } from './TaskHome';
 
 const original = {
@@ -19,6 +19,19 @@ const original = {
   machineIncluded: true,
 };
 const draftKey = taskDraftStorageKey('owner');
+const legacyKey = legacyTaskDraftStorageKey('owner');
+function expectCompletedDraft() {
+  expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual({
+    version: 3,
+    text: '',
+    repositoryUrl: '',
+    repositoryRef: '',
+    machineIncluded: false,
+    legacyObserved: JSON.stringify(original),
+    recoverable: [],
+  });
+  expect(sessionStorage.getItem(legacyKey)).toBe(JSON.stringify(original));
+}
 const intentKey = lifecycleStorageKey('owner');
 const recoveryKey = lifecycleRecoveryKey(
   { owner: 'owner' },
@@ -32,7 +45,7 @@ afterEach(() => {
 });
 
 async function submit() {
-  sessionStorage.setItem(draftKey, JSON.stringify(original));
+  sessionStorage.setItem(legacyKey, JSON.stringify(original));
   let operation: AgentLifecycleOperationView = {
     id: 'draft-operation',
     status: 'running',
@@ -72,7 +85,9 @@ async function submit() {
   );
   expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual({
     ...original,
-    version: 2,
+    version: 3,
+    legacyObserved: JSON.stringify(original),
+    recoverable: [],
     revision: expect.any(String),
   });
   return {
@@ -93,7 +108,7 @@ it('clears the unchanged submitted draft only after real successful follow-up, t
   const conversation = render(task.followup);
   await waitFor(() => expect(sessionStorage.getItem(recoveryKey)).toBeNull());
   expect(sessionStorage.getItem(intentKey)).toBeNull();
-  expect(sessionStorage.getItem(draftKey)).toBeNull();
+  expectCompletedDraft();
   conversation.unmount();
   render(task.home);
   expect(screen.getByLabelText('Your task')).toHaveValue('');
@@ -110,7 +125,11 @@ it.each([
 ])('preserves the next draft when %j differs from the submitted task', async (change) => {
   const task = await submit();
   task.view.unmount();
-  const next = JSON.stringify({ ...original, ...change });
+  const next = JSON.stringify({
+    ...JSON.parse(sessionStorage.getItem(draftKey)!),
+    ...change,
+    revision: 'next-draft',
+  });
   sessionStorage.setItem(draftKey, next);
   task.finish('succeeded');
   const conversation = render(task.followup);
@@ -142,10 +161,12 @@ it.each([false, true])(
     expect(screen.getByLabelText('Your task')).toHaveValue(edited ? 'Keep my next task' : '');
     if (!edited) {
       expect(screen.queryByRole('button', { name: 'Remove repository' })).not.toBeInTheDocument();
-      expect(sessionStorage.getItem(draftKey)).toBeNull();
+      expectCompletedDraft();
       fireEvent.change(screen.getByLabelText('Your task'), { target: { value: 'A fresh task' } });
       expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual({
-        version: 2,
+        version: 3,
+        legacyObserved: JSON.stringify(original),
+        recoverable: [],
         revision: expect.any(String),
         text: 'A fresh task',
         repositoryUrl: '',
@@ -163,7 +184,9 @@ it('keeps a failed preparation draft available through Start another task and re
   expect(sessionStorage.getItem(intentKey)).toBeNull();
   expect(JSON.parse(sessionStorage.getItem(draftKey)!)).toEqual({
     ...original,
-    version: 2,
+    version: 3,
+    legacyObserved: JSON.stringify(original),
+    recoverable: [],
     revision: expect.any(String),
   });
   expect(screen.getByLabelText('Your task')).toHaveValue(original.text);
@@ -172,7 +195,7 @@ it('keeps a failed preparation draft available through Start another task and re
   expect(screen.getByLabelText('Your task')).toHaveValue(original.text);
 });
 
-it.each(['getItem', 'removeItem'] as const)(
+it.each(['getItem', 'setItem'] as const)(
   'does not crash or block the conversation when draft storage %s throws',
   async (method) => {
     const task = await submit();
@@ -186,11 +209,11 @@ it.each(['getItem', 'removeItem'] as const)(
         if (method === 'getItem') fail(key);
         return storage.getItem(key);
       },
-      removeItem: (key: string) => {
-        if (method === 'removeItem') fail(key);
-        storage.removeItem(key);
+      removeItem: storage.removeItem.bind(storage),
+      setItem: (key: string, value: string) => {
+        if (method === 'setItem') fail(key);
+        storage.setItem(key, value);
       },
-      setItem: storage.setItem.bind(storage),
       clear: storage.clear.bind(storage),
       key: storage.key.bind(storage),
       get length() {
@@ -210,7 +233,9 @@ it.each(['getItem', 'removeItem'] as const)(
     expect(fail).toHaveBeenCalledWith(draftKey);
     expect(JSON.parse(storage.getItem(draftKey)!)).toEqual({
       ...original,
-      version: 2,
+      version: 3,
+      legacyObserved: JSON.stringify(original),
+      recoverable: [],
       revision: expect.any(String),
     });
   },
@@ -234,18 +259,18 @@ it('also discards a matching task draft when the manual recovery surface clears 
   );
   await waitFor(() => expect(sessionStorage.getItem(intentKey)).toBeNull());
   expect(sessionStorage.getItem(intentKey)).toBeNull();
-  expect(sessionStorage.getItem(draftKey)).toBeNull();
+  expectCompletedDraft();
 });
 
 it.each([{}, { workspace_id: 'wsp_1' }, { sandbox_id: 'sbx_1' }])(
   'preserves legacy drafts when a successful request has no draft ownership proof: %j',
   async (scope) => {
     const body = { name: 'New task', initial_message: original.text, desktop: true, ...scope };
-    const key = taskDraftStorageKey('owner', scope.workspace_id, scope.sandbox_id);
+    const key = legacyTaskDraftStorageKey('owner', scope.workspace_id, scope.sandbox_id);
     const saved = JSON.stringify({ version: 1, text: original.text, desktop: true });
     const otherKeys = [
-      taskDraftStorageKey('another-owner'),
-      taskDraftStorageKey('owner', 'another-workspace'),
+      legacyTaskDraftStorageKey('another-owner'),
+      legacyTaskDraftStorageKey('owner', 'another-workspace'),
     ];
     sessionStorage.setItem(key, saved);
     for (const other of otherKeys) sessionStorage.setItem(other, saved);

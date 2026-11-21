@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 // Browser preparation only: callers must still run their complete contract suite.
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
+import { setTimeout as delay } from 'node:timers/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -86,37 +87,228 @@ export function repairDependencies(packages, run, log) {
   }
 }
 
+// Successful CI downloads of the locked Chromium (167 MiB) take 3-5s. Each
+// attempt allows 12x that; the download is idempotent, so a transient
+// failure is retried after a short backoff.
+export const downloadAttempts = 3;
+export const downloadTimeoutMs = 60_000;
+export const downloadBackoffMs = [5_000, 15_000];
+const downloadTailLines = 40;
+const unsupportedHost = /does not support \S+ on (\S+)/;
+const networkFailure =
+  /timed out|Download failed|ECONNRESET|ECONNREFUSED|ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ENETUNREACH|socket hang up|getaddrinfo/i;
+const progressRow = /^\|[^|]*\|\s+\d+% of /;
+
+function describe(error) {
+  const lines = String(error?.message ?? error)
+    .split('\n')
+    .map((line) => line.replace(/^::error::/, '').trim())
+    .filter(Boolean);
+  return (
+    lines.find((line) => !line.startsWith('Command failed')) ??
+    lines[0] ??
+    'unknown error'
+  ).slice(0, 300);
+}
+
+// Playwright prints progress, paths, URLs and errors. Keep only the last
+// progress row of each run, redact URL credentials, and indent every row so
+// downloader output can never start a workflow command.
+export function outputTail(output, limit = downloadTailLines) {
+  const rows = [];
+  for (const raw of String(output ?? '').split(/\r?\n|\r/)) {
+    const row = raw.trimEnd();
+    if (!row) continue;
+    if (progressRow.test(row) && progressRow.test(rows.at(-1) ?? '')) rows.pop();
+    rows.push(row);
+  }
+  return rows.slice(-limit).map((row) => `  ${row.replace(/\/\/[^/\s@]+@/g, '//***@')}`);
+}
+
+// The downloader forks a worker that writes the archive. Running it as its
+// own process group lets a timeout stop that worker too, so nothing it leaves
+// behind can keep writing the browser directory.
+export function runBounded(command, args, { timeoutMs, ...options }) {
+  return new Promise((resolveRun, rejectRun) => {
+    let output = '',
+      timedOut = false,
+      settled = false;
+    const child = spawn(command, args, {
+      ...options,
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const stopGroup = () => {
+      try {
+        process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        // The whole group has already exited.
+      }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      stopGroup();
+    }, timeoutMs);
+    const settle = (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (!error) return resolveRun(output);
+      error.output = output;
+      rejectRun(error);
+    };
+    for (const stream of [child.stdout, child.stderr]) {
+      stream.setEncoding('utf8');
+      stream.on('data', (chunk) => {
+        output = (output + chunk).slice(-65_536);
+      });
+    }
+    child.on('error', settle);
+    child.on('exit', stopGroup);
+    child.on('close', (code, signal) => {
+      if (code === 0 && !timedOut) return settle();
+      const error = new Error(
+        timedOut
+          ? `Command timed out after ${timeoutMs / 1000}s: ${command} ${args.join(' ')}`
+          : `Command failed with ${signal ? `signal ${signal}` : `exit code ${code}`}: ${command} ${args.join(' ')}`,
+      );
+      if (timedOut) error.code = 'ETIMEDOUT';
+      settle(error);
+    });
+  });
+}
+
+export async function downloadBrowser(attempt, log, wait = delay) {
+  let failure;
+  for (let count = 1; count <= downloadAttempts; count += 1) {
+    log(
+      `browser download attempt ${count}/${downloadAttempts}; locked Playwright Chromium, ` +
+        `${downloadTimeoutMs / 1000}s limit`,
+    );
+    const started = Date.now();
+    try {
+      await attempt(downloadTimeoutMs);
+      return;
+    } catch (error) {
+      failure = error;
+      const seconds = ((Date.now() - started) / 1000).toFixed(1);
+      log(
+        `browser download attempt ${count}/${downloadAttempts} failed after ${seconds}s: ${describe(error)}`,
+      );
+      // An unsupported host fails identically every time; retrying only delays the report.
+      if (unsupportedHost.test(String(error.output ?? '')) || count === downloadAttempts) break;
+      const backoff = downloadBackoffMs[count - 1];
+      log(`browser download retry in ${backoff / 1000}s`);
+      await wait(backoff);
+    }
+  }
+  const tail = outputTail(failure.output);
+  log(
+    tail.length
+      ? `Browser downloader output, last ${tail.length} lines:\n${tail.join('\n')}`
+      : 'Browser downloader printed no output.',
+  );
+  const output = String(failure.output ?? '');
+  const host = unsupportedHost.exec(output)?.[1];
+  if (host) {
+    throw new Error(
+      `Pinned Playwright Chromium download refused: the locked Playwright has no Chromium build for ${host}. ` +
+        'This is not a network failure, so it was not retried. Update the locked Playwright version ' +
+        `in web/package-lock.json or run on a supported runner. Browser contract tests remain required. ${describe(failure)}`,
+    );
+  }
+  const network = failure.code === 'ETIMEDOUT' || networkFailure.test(output);
+  throw new Error(
+    `Pinned Playwright Chromium download failed after ${downloadAttempts} bounded attempts ` +
+      `(${downloadTimeoutMs / 1000}s each); ` +
+      (network
+        ? 'likely a network or CDN failure. '
+        : 'the downloader output above shows no network failure. ') +
+      'Re-run the job; if it persists, check runner access to cdn.playwright.dev or the configured proxy, ' +
+      'and the locked Playwright version in web/package-lock.json. ' +
+      `Browser contract tests remain required. ${describe(failure)}`,
+  );
+}
+
+const ubuntuPlatform = /^ubuntu(\d+)\.(\d+)-(x64|arm64)$/;
+
+// Playwright names an Ubuntu release newer than its tables after itself and
+// then has no download for it (1.58.2: "does not support chromium on
+// ubuntu26.04-x64"). For each architecture its Ubuntu Chromium archive is the
+// same generic Linux build on every release, so select the newest Ubuntu
+// table it knows. The launch/render probe still decides whether it is usable.
+export function downloadHostPlatform(hostPlatform, known) {
+  const host = ubuntuPlatform.exec(hostPlatform);
+  if (!host || known.includes(hostPlatform)) return undefined;
+  const release = (match) => Number(match[1]) * 100 + Number(match[2]);
+  return known
+    .map((platform) => ubuntuPlatform.exec(platform))
+    .filter((match) => match && match[3] === host[3] && release(match) < release(host))
+    .sort((left, right) => release(right) - release(left))[0]?.[0];
+}
+
+// A cold first launch on a fresh runner can exceed the probe's launch timeout
+// or deadline while a second launch of the same binary, its pages now cached,
+// passes. In CI, 145 of 158 ubuntu-26.04 jobs passed the first probe (p95
+// 13.6s, max 18.6s); after 13 first-probe timeouts the second launch passed 8
+// times, failing only while the first probe's browser was still running.
+// Only a timeout is re-probed.
+export const probeAttempts = 2;
+
+const seconds = (started) => `${((Date.now() - started) / 1000).toFixed(1)}s`;
+
 export async function ensureBrowser(ops) {
   let repair;
   const failures = [];
   async function inspect(path) {
-    try {
-      const version = await ops.probe(path);
-      return { path, version };
-    } catch (error) {
-      failures.push(`${path}: ${error.message}`);
-      const libraries = ops.missing(path);
-      if (libraries.length && !repair) repair = { path, libraries };
-      return undefined;
+    for (let attempt = 1; ; attempt += 1) {
+      const started = Date.now();
+      try {
+        const version = await ops.probe(path);
+        ops.log(
+          `browser probe attempt ${attempt}/${probeAttempts} passed after ${seconds(started)}: ${path}`,
+        );
+        return { path, version };
+      } catch (error) {
+        const again = error.timedOut === true && attempt < probeAttempts;
+        ops.log(
+          `browser probe attempt ${attempt}/${probeAttempts} ${error.timedOut ? 'timed out' : 'failed'} ` +
+            `after ${seconds(started)}: ${path}: ${describe(error)}${again ? '; re-probing once' : ''}`,
+        );
+        if (again) continue;
+        failures.push(`${path}: ${error.message}`);
+        const libraries = ops.missing(path);
+        if (libraries.length && !repair) repair = { path, libraries };
+        return undefined;
+      }
     }
   }
   for (const path of [...new Set(ops.candidates)]) {
     if (!ops.exists(path)) continue;
     const browser = await inspect(path);
     if (browser) {
-      ops.log('Browser and dependencies verified; apt not needed (0 calls).');
-      return browser;
+      const source = path === ops.pinned ? 'cached' : 'installed';
+      ops.log(
+        `Selected ${source === 'cached' ? 'cached Playwright Chromium' : 'installed browser'} ${path} ` +
+          `(version ${browser.version}): it passed the launch/render probe. ` +
+          'Browser and dependencies verified; apt not needed (0 calls).',
+      );
+      return { ...browser, source };
     }
   }
   if (!repair) {
     // Use the locked Playwright package, without its unconditional apt installer.
-    ops.download();
+    await ops.download();
     if (!ops.exists(ops.pinned))
       throw new Error('Pinned Playwright browser is absent after download');
     const browser = await inspect(ops.pinned);
     if (browser) {
-      ops.log('Downloaded browser and dependencies verified; apt not needed (0 calls).');
-      return browser;
+      ops.log(
+        `Selected downloaded Playwright Chromium ${browser.path} (version ${browser.version}): ` +
+          'no installed browser passed the launch/render probe, so this run tests a different ' +
+          'browser than the runner provides. Downloaded browser and dependencies verified; apt not needed (0 calls).',
+      );
+      return { ...browser, source: 'downloaded' };
     }
   }
   if (!repair) {
@@ -132,7 +324,11 @@ export async function ensureBrowser(ops) {
   if (remaining.length)
     throw new Error(`Browser libraries still missing after apt: ${remaining.join(', ')}`);
   try {
-    return { path: repair.path, version: await ops.probe(repair.path) };
+    const version = await ops.probe(repair.path);
+    ops.log(
+      `Selected ${repair.path} (version ${version}) after installing ${packages.join(', ')}.`,
+    );
+    return { path: repair.path, version, source: 'repaired' };
   } catch (error) {
     throw new Error(
       `Browser still cannot launch/render after installing ${packages.join(', ')}: ${error.message}`,
@@ -141,7 +337,19 @@ export async function ensureBrowser(ops) {
 }
 
 // Separate process bounds both launch and close; a broken browser cannot hold CI.
+// The probe exits at its own deadline, before the parent's kill, so Playwright's
+// exit handler stops the browser instead of leaving it to slow the next probe.
+const probeDeadlineMs = 25_000;
+const probeTimeoutStatus = 124;
+
 async function probe(path) {
+  const deadline = setTimeout(() => {
+    process.stderr.write(
+      `Browser probe exceeded ${probeDeadlineMs / 1000}s; closing its browser\n`,
+    );
+    process.exit(probeTimeoutStatus);
+  }, probeDeadlineMs);
+  deadline.unref();
   const require = createRequire(join(web, 'package.json'));
   const { chromium } = require('playwright');
   const browser = await chromium.launch({ executablePath: path, headless: true, timeout: 15_000 });
@@ -154,6 +362,7 @@ async function probe(path) {
     process.stdout.write(browser.version());
   } finally {
     await browser.close();
+    clearTimeout(deadline);
   }
 }
 
@@ -162,17 +371,22 @@ export async function main() {
   const { chromium } = require('playwright');
   const core = dirname(require.resolve('playwright-core/package.json'));
   const pinned = chromium.executablePath();
+  const env = {
+    ...process.env,
+    DEBIAN_FRONTEND: 'noninteractive',
+    PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: '30000',
+  };
+  const tables = () => ({
+    hostPlatform: require(join(core, 'lib/server/utils/hostPlatform.js')).hostPlatform,
+    deps: require(join(core, 'lib/server/registry/nativeDeps.js')).deps,
+  });
   const run = (command, args, options = {}) =>
     execFileSync(command, args, {
       cwd: web,
       stdio: 'pipe',
       encoding: 'utf8',
       killSignal: 'SIGKILL',
-      env: {
-        ...process.env,
-        DEBIAN_FRONTEND: 'noninteractive',
-        PLAYWRIGHT_DOWNLOAD_CONNECTION_TIMEOUT: '30000',
-      },
+      env,
       ...options,
     });
   const result = await ensureBrowser({
@@ -190,10 +404,16 @@ export async function main() {
       const output = run(command, args, options);
       if (output) process.stdout.write(output);
     },
-    probe: async (path) =>
-      run(process.execPath, [fileURLToPath(import.meta.url), '--probe', path], {
-        timeout: 25_000,
-      }).trim(),
+    probe: async (path) => {
+      try {
+        return run(process.execPath, [fileURLToPath(import.meta.url), '--probe', path], {
+          timeout: probeDeadlineMs + 5_000,
+        }).trim();
+      } catch (error) {
+        error.timedOut = error.status === probeTimeoutStatus || error.code === 'ETIMEDOUT';
+        throw error;
+      }
+    },
     missing: (path) => {
       if (process.platform !== 'linux') return [];
       // Some preinstalled Chrome entry points are shell wrappers; their failed
@@ -206,8 +426,7 @@ export async function main() {
     },
     mapping: () => {
       // Reuse the locked Playwright version's distro-specific t64/package map.
-      const { hostPlatform } = require(join(core, 'lib/server/utils/hostPlatform.js'));
-      const { deps } = require(join(core, 'lib/server/registry/nativeDeps.js'));
+      const { hostPlatform, deps } = tables();
       const mapping = deps[hostPlatform]?.lib2package;
       if (!mapping) throw new Error(`No browser package mapping for ${hostPlatform}`);
       return mapping;
@@ -215,7 +434,25 @@ export async function main() {
     download: () => {
       console.log('No usable installed browser; download locked Playwright Chromium without apt.');
       const cli = join(dirname(require.resolve('playwright/package.json')), 'cli.js');
-      run(process.execPath, [cli, 'install', '--no-shell', 'chromium'], { timeout: 120_000 });
+      const { hostPlatform, deps } = tables();
+      const fallback = env.PLAYWRIGHT_HOST_PLATFORM_OVERRIDE
+        ? undefined
+        : downloadHostPlatform(hostPlatform, Object.keys(deps));
+      if (fallback) {
+        console.log(
+          `Locked Playwright has no Chromium download for ${hostPlatform}; using its newest ` +
+            `Ubuntu build (${fallback}), the same generic Linux archive. The probe still decides.`,
+        );
+      }
+      return downloadBrowser(
+        (timeoutMs) =>
+          runBounded(process.execPath, [cli, 'install', '--no-shell', 'chromium'], {
+            cwd: web,
+            env: fallback ? { ...env, PLAYWRIGHT_HOST_PLATFORM_OVERRIDE: fallback } : env,
+            timeoutMs,
+          }),
+        console.log,
+      );
     },
   });
   if (/[\r\n]/.test(result.path)) throw new Error('Invalid browser executable path');
@@ -225,8 +462,15 @@ export async function main() {
       `CMA_E2E_BROWSER_PATH=${result.path}\nCHROME_PATH=${result.path}\n`,
     );
   }
+  if (result.source === 'downloaded') {
+    console.log(
+      `::warning::Contract browser is the downloaded Playwright Chromium ${result.version}, not the ` +
+        "runner's installed browser: every installed candidate failed its probe (see this step's log).",
+    );
+  }
   console.log(
-    `Contract browser ready: ${result.path}; version ${result.version}. All contract tests remain mandatory.`,
+    `Contract browser ready: ${result.path}; version ${result.version}; source ${result.source}. ` +
+      'All contract tests remain mandatory.',
   );
   return result;
 }
@@ -237,6 +481,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1]
     else await main();
   } catch (error) {
     console.error(`::error::${error.message}`);
-    process.exitCode = 1;
+    // A launch slower than its own timeout is the same cold-start signal as the deadline.
+    const probing = process.argv[2] === '--probe';
+    process.exitCode = probing && error.name === 'TimeoutError' ? probeTimeoutStatus : 1;
   }
 }

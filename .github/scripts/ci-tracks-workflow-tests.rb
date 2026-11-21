@@ -137,8 +137,11 @@ def validate(documents, actions)
   require_check(ci['permissions'] == {'contents' => 'read'}, 'CI permissions must remain read-only')
   # Queue entries run on refs/heads/gh-readonly-queue/develop/pr-N-SHA: their
   # own ref, so a PR (refs/pull/N/merge) or develop push run never cancels one.
+  # Develop pushes write the caches PRs restore, so they finish instead of
+  # being cancelled; every other ref still cancels its superseded run.
   require_check(ci['concurrency'] == {'group' => 'ci-${{ github.workflow }}-${{ github.ref }}',
-    'cancel-in-progress' => true}, 'CI concurrency must remain per ref')
+    'cancel-in-progress' => "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"},
+    'CI concurrency must remain per ref and keep develop cache writers running')
   pr = events.fetch('pull_request')
   require_check(pr.fetch('branches') == %w[develop main], 'CI target differs')
   require_check(pr.fetch('types').sort == %w[opened reopened synchronize edited labeled unlabeled].sort, 'label event coverage differs')
@@ -331,6 +334,7 @@ mutations = [
   ->(d) { d['ci']['jobs']['eg']['with']['packages'] = '["cmaeg"]' },
   ->(d) { d['ci']['permissions']['contents'] = 'write' },
   ->(d) { d['ci']['concurrency']['cancel-in-progress'] = false },
+  ->(d) { d['ci']['concurrency']['cancel-in-progress'] = true },
   ->(d) { d['ci']['jobs']['gate-eg']['needs'].delete('runtime-images') },
   ->(d) { d['ci']['jobs']['gate-am']['if'] = 'success()' },
   ->(d) { d['ci']['jobs']['version-label']['name'] = 'Optional label' },
