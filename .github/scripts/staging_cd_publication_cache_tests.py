@@ -185,6 +185,35 @@ class CacheTests(unittest.TestCase):
             self.assertFalse(self.cache().restore())
             self.assertEqual(transfer.call_count, 2)
 
+    def test_yesterdays_bundle_seeds_only_incremental_state_after_midnight(self):
+        import staging_cd_build_cache
+        tool = bridge()
+        yesterday, today = date(2026, 11, 20), date(2026, 11, 21)
+        with patch.object(staging_cd_build_cache, 'identity',
+                          side_effect=lambda root, component: identity(root, component, day=yesterday)):
+            producer = self.cache()
+        self.populate(producer.accepted)
+        tool.seal(producer.accepted, producer.key.prefix, family=producer.key.family)
+        with patch.object(staging_cd_build_cache, 'identity',
+                          side_effect=lambda root, component: identity(root, component, day=today)):
+            cache = self.cache()
+        self.assertEqual(cache.key.family, producer.key.family)
+        self.assertNotEqual(cache.key.prefix, producer.key.prefix)
+        with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
+            self.assertTrue(cache.restore())
+        self.assertEqual(cache.restore_result, "partial")
+        # The registry and every non-incremental target member stay behind.
+        transfer.assert_called_once_with("inject-target", cache.accepted, namespace=cache.namespace,
+                                         timeout=360, max_content=6 * 1024 ** 3)
+        shutil = __import__('shutil')
+        shutil.rmtree(producer.accepted)
+        self.populate(producer.accepted, target_member="release/deps/libsynthetic.rlib")
+        tool.seal(producer.accepted, producer.key.prefix)
+        with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
+            self.assertFalse(cache.restore())
+        transfer.assert_not_called()
+        self.assertEqual(cache.restore_result, "miss")
+
     def test_partial_restore_seeds_current_graph_only_after_qualification(self):
         cache = self.cache()
         self.populate(cache.accepted)
@@ -354,8 +383,12 @@ class CacheTests(unittest.TestCase):
             target.write_bytes((ROOT / relative).read_bytes())
         base = identity(fake, 'eg')
         day = date(2026, 10, 1)
-        self.assertNotEqual(identity(fake, 'eg', day=day).family,
-                            identity(fake, 'eg', day=date(2026, 10, 2)).family)
+        # Midnight turns over the exact key, so the registry and anything beyond
+        # incremental state refresh, but keeps the family: the next day's first
+        # build is seeded with the previous day's incremental state.
+        before, after = identity(fake, 'eg', day=day), identity(fake, 'eg', day=date(2026, 10, 2))
+        self.assertEqual(before.family, after.family)
+        self.assertNotEqual(before.graph, after.graph)
         dockerfile = fake / 'api/crates/cmaeg/Dockerfile'
         original = dockerfile.read_text()
         consumed = original.replace("FROM rust:1.96.1-alpine AS build", "FROM rust:1.96.1-alpine AS build\n"
