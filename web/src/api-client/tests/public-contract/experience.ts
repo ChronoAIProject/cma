@@ -116,6 +116,10 @@ export const experienceDispatch: Record<string, Dispatch> = {
     });
     return events;
   },
+  'POST /api/v2/agents/{agent_id}/responses/receipt': ({ client, body, command, param }) =>
+    client.responsesV2.findAgentInputReceipt(param('agent_id'), body, {
+      idempotencyKey: command.idempotencyKey!,
+    }),
   'GET /api/v1/agui/capabilities': ({ client }) => client.agui.readCapabilities(),
   'GET /api/v1/agui/agents/{id}/sandbox': ({ client, param }) =>
     client.agui.readSandboxSnapshot(param('id')),
@@ -145,6 +149,8 @@ export const experienceDispatch: Record<string, Dispatch> = {
     );
     return events;
   },
+  'POST /api/v1/agui/run/receipt': ({ client, body, command }) =>
+    client.agui.findInputReceipt(body, { idempotencyKey: command.idempotencyKey! }),
   'GET /api/v1/conversations/{id}': ({ client, param }) =>
     client.responses.readConversation(param('id')),
   'POST /api/v1/conversations': ({ client, body }) => client.responses.createConversation(body),

@@ -50,6 +50,7 @@ pub(crate) struct Relay {
     updates: Weak<DurableAgentUpdateRecorder>,
     authentication: authentication::Authentication,
     public_access: std::sync::OnceLock<Arc<dyn public_access::PublicAuthorization>>,
+    settings_owner_routing: std::sync::OnceLock<()>,
     client: reqwest::Client,
     slots: Arc<Semaphore>,
     capacity: crate::config::RelayCapacityConfig,
@@ -86,6 +87,7 @@ impl Relay {
             updates: Arc::downgrade(updates),
             authentication: authentication::Authentication::new(key),
             public_access: std::sync::OnceLock::new(),
+            settings_owner_routing: std::sync::OnceLock::new(),
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(2))
                 .read_timeout(Duration::from_secs(10))
@@ -104,6 +106,10 @@ impl Relay {
         self.public_access
             .set(access)
             .map_err(|_| "public relay authorization already installed".into())
+    }
+
+    pub(crate) fn enable_settings_owner_routing(&self) {
+        self.settings_owner_routing.get_or_init(|| ());
     }
 
     async fn destination(&self, id: &AgentId) -> Result<Destination, Refusal> {

@@ -34,6 +34,8 @@ class Develop:
         # Staging writers, newest first, and the jobs and statuses they link.
         self.deployments, self.statuses, self.jobs, self.dispatches = [], {}, {}, {}
         self.landing, self.minutes = True, 0
+        # The release plan of each push; by default the whole adoption window.
+        self.plan = lambda queue: queue
         self.read = self.server.request
         self.server.request = self.serve
 
@@ -94,7 +96,7 @@ class Develop:
                 raise GitHubNotFound("GitHub resource was not found")
             if parts[5:] == ["jobs"]:
                 state = self.runs[run_id]["attempts"][attempt - 1]
-                return {"jobs": [{"name": "plan", "status": "completed", "conclusion": "success"},
+                return {"jobs": [self.plan_job(state.get("plan", "success")),
                                  {"name": "allocate", "status": "completed" if state["allocate"] else "queued",
                                   "conclusion": state["allocate"]}] + [dict(job) for job in state["jobs"]]}
             return self.view(run_id, attempt)
@@ -102,7 +104,19 @@ class Develop:
 
     def start(self, run_id, actor=HUMAN):
         self.runs[run_id]["attempts"].append({"status": "in_progress", "actor": actor, "allocate": None,
-                                              "started": self.now(), "jobs": []})
+                                              "started": self.now(), "jobs": [], "plan": "success"})
+
+    @staticmethod
+    def plan_job(outcome):
+        """The plan job: successful, stopped at its transient gate, or failed in its plan step."""
+        steps = {"success": [("Reconcile first-parent merges with the shared selector", "success"),
+                             ("Require a complete release plan", "skipped")],
+                 "stopped": [("Reconcile first-parent merges with the shared selector", "success"),
+                             ("Save trusted develop comparisons", "success"),
+                             ("Require a complete release plan", "failure")],
+                 "failed": [("Reconcile first-parent merges with the shared selector", "failure")]}[outcome]
+        return {"name": "plan", "status": "completed", "conclusion": "success" if outcome == "success" else "failure",
+                "steps": [{"name": name, "conclusion": conclusion} for name, conclusion in steps]}
 
     def complete(self, *run_ids):
         for run_id in run_ids:
@@ -119,6 +133,7 @@ class Develop:
         queue = {"head": source, "event_source": source, "changes": list(self.changes)}
         if transition is not None:
             queue["contract_transition"] = transition
+        queue = self.plan(queue)
         run_id = 801 + index
         self.runs[run_id] = {"head": source, "attempts": []}
         self.queues[run_id] = queue

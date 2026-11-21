@@ -185,6 +185,56 @@ class CatchUpTests(unittest.TestCase):
         self.assertEqual(decide(develop)[::2], ("rerun", [("web", "unproven-final")]))
         self.assertEqual(develop.posts, [])
 
+    def test_a_plan_stopped_at_its_gate_is_re_run_once_from_the_hourly_check_after_staging_settles(self):
+        develop = Develop()
+        develop.push({"web"})
+        develop.complete(801)
+        attempt = develop.runs[801]["attempts"][-1]
+        attempt.update(allocate=None, plan="stopped")
+
+        def check(event, minutes):
+            return catch_up.decide(develop.server, develop.refs, develop.controller, event=event,
+                                   now=develop.later(minutes))
+        # As for finals alone: from a completed staging run, or before every run settled, the outage may persist.
+        self.assertEqual(check("workflow_run", 10), ("plan-waiting", None, []))
+        self.assertEqual(check("schedule", 9), ("plan-waiting", None, []))
+        reason, run, lanes = check("schedule", 10)
+        self.assertEqual((reason, run["id"], lanes), ("plan-rerun", 801, []))
+        # A plan that failed in its own step (a refusal or an error) waits for the next push.
+        attempt["plan"] = "failed"
+        self.assertEqual(check("schedule", 10), ("head-unallocated", None, []))
+        # A cancelled head is never re-run automatically.
+        attempt.update(plan="stopped", conclusion="cancelled")
+        self.assertEqual(check("schedule", 10), ("cancelled", None, []))
+        del attempt["conclusion"]
+        # Once re-run by the check itself, the head is caught up: never a second time.
+        attempt["actor"] = BOT
+        self.assertEqual(check("schedule", 10), ("head-caught-up", None, []))
+        attempt["actor"] = HUMAN
+        attempt["updated"] = "not a time"
+        self.assertEqual(check("schedule", 10), ("plan-waiting", None, []))
+        self.assertEqual(develop.posts, [])
+
+    def test_a_bot_triggered_head_with_a_stopped_plan_is_never_re_run(self):
+        develop = Develop()
+        develop.push({"runtime-omarchy"})  # Run 801 is still building when the next push plans.
+        develop.push({"web"})
+        develop.complete(801, 802)
+        attempt = develop.runs[802]["attempts"][-1]
+        attempt.update(allocate=None, plan="stopped")
+
+        def check():
+            return catch_up.decide(develop.server, develop.refs, develop.controller, event="schedule",
+                                   now=develop.later(10))
+        self.assertEqual(check()[0], "plan-rerun")
+        # The check's own attempt spent this head's automatic re-run: a lane still behind is exhausted.
+        attempt["actor"] = BOT
+        reason, run, lanes = check()
+        self.assertEqual((reason, run["id"], [lane.component for lane in lanes]),
+                         ("exhausted", 802, ["runtime-omarchy"]))
+        self.assertNotIn(reason, catch_up.RERUNS)
+        self.assertEqual(develop.posts, [])
+
     def test_owner_without_a_run_is_settled_and_an_unknown_head_waits(self):
         develop = Develop()
         develop.push({"runtime-omarchy"})
@@ -565,6 +615,16 @@ class EntryTests(unittest.TestCase):
         with patch("staging_cd_promotion.AllocationIO") as io, patch("staging_cd_promotion.snapshot"):
             catch_up.read_snapshot("fixture", ENVIRONMENT)
         io.assert_called_once_with(seconds=10)
+
+    def test_a_stopped_plan_re_run_names_its_run_and_attempt_and_only_named_decisions_re_run(self):
+        run = {"id": 802, "run_attempt": 1}
+        self.assertEqual(self.run_main(lambda *_, **__: ("plan-rerun", run, []), lambda *_: 2),
+                         (0, "CATCH-UP plan-rerun run=802 attempt=2"))
+        never = Mock(side_effect=AssertionError("re-run"))
+        status, _lines = self.run_main(lambda *_, **__: ("exhausted", run, [Lane("web", "undeployed-final", "0.10.4")]),
+                                       never, every=True)
+        self.assertEqual(status, 0)
+        never.assert_not_called()
 
     def test_refusals_fail_with_their_fixed_message_and_unexpected_errors_stay_private(self):
         def unverified(*_args):

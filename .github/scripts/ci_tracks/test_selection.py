@@ -180,5 +180,49 @@ class CIEventSelectionTests(unittest.TestCase):
         self.assertEqual((queued['base'], queued['head']), (release_base, head))
 
 
+    def test_release_base_the_policy_cannot_model_selects_every_deployable(self):
+        # The previous release can predate the current ownership policy. For a
+        # develop-to-main release that base is uncertainty, never a narrower
+        # selection; a develop PR with the same failure still fails closed.
+        from unittest import mock
+        self.write('web/src/main.tsx', 'export const app = 3;')
+        head = self.commit()
+        repository = 'example/repository'
+
+        def pull(base_ref, head_ref):
+            return {'number': 9, 'repository': {'full_name': repository}, 'pull_request': {
+                'base': {'ref': base_ref, 'sha': self.third, 'repo': {'full_name': repository}},
+                'head': {'ref': head_ref, 'sha': head, 'repo': {'full_name': repository}}}}
+
+        real = selection.summarize
+        calls = []
+
+        def summarize(tree, fallback):
+            calls.append(tree)
+            if len(calls) == 2:
+                raise ValueError('missing or ambiguous package ownership')
+            return real(tree, fallback)
+
+        with mock.patch.object(selection, 'summarize', side_effect=summarize):
+            result = selection.determine_ci(self.root, pull('main', 'develop'), 'pull_request', repository)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result['deployables'], sorted(selection.NAMES))
+        self.assertEqual(result['test_tracks'], dict(repo=True, am=True, eg=True, web=True))
+        self.assertEqual(set(result['reasons']), {'release-base-unmodeled', 'full-ci-event'})
+        self.assertEqual((result['base'], result['head']), (self.third, head))
+
+        calls.clear()
+        with mock.patch.object(selection, 'summarize', side_effect=summarize):
+            with self.assertRaises(ValueError):
+                selection.determine_ci(self.root, pull('develop', 'feature'), 'pull_request', repository)
+
+        def broken_head(tree, fallback):
+            raise ValueError('head ownership')
+
+        with mock.patch.object(selection, 'summarize', side_effect=broken_head):
+            with self.assertRaises(ValueError):
+                selection.determine_ci(self.root, pull('main', 'develop'), 'pull_request', repository)
+
+
 if __name__ == '__main__':
     unittest.main()
