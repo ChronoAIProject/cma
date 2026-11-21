@@ -78,7 +78,7 @@ fn parse_records(value: Option<&str>) -> Result<BTreeSet<String>, ConfigError> {
 mod tests {
     use super::*;
     #[test]
-    fn forward_writer_is_independent_default_off_and_requires_native_recovery() {
+    fn forward_writer_is_independent_and_requires_native_recovery() {
         let mut config = NativeDiscordConfig::default();
         assert!(!config.forwards_enabled);
         config.forwards_enabled = true;
@@ -92,7 +92,7 @@ mod tests {
         assert!(!config.discovery_enabled);
     }
     #[test]
-    fn rich_content_writer_is_independent_default_off_and_requires_native_recovery() {
+    fn rich_content_writer_is_independent_and_requires_native_recovery() {
         let mut config = NativeDiscordConfig::default();
         assert!(!config.rich_content_enabled);
         config.rich_content_enabled = true;
@@ -120,7 +120,7 @@ mod tests {
         assert!(routing.execution_records.is_empty());
     }
     #[test]
-    fn activation_is_explicit_bounded_and_requires_durable_recovery() {
+    fn activation_is_bounded_and_requires_durable_recovery() {
         assert!(!NativeDiscordConfig::default().enabled);
         assert!(parse_records(None).unwrap().is_empty());
         for value in ["*", "not-a-record", "11111111-1111-1111-8111-111111111111"] {
