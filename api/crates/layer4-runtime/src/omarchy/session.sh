@@ -21,8 +21,9 @@ fi
 [[ $(stat -c '%a' /tmp/.X11-unix) == 1777 ]]
 exec 9>"$HOME/.cma/desktop.lock"
 flock -n 9
-printf '%s: 127.0.0.1:5900\n' "$CMA_DESKTOP_TOKEN" >/tmp/cma-desktop-token
-unset CMA_DESKTOP_TOKEN
+desktop_token_file=${CMA_DESKTOP_TOKEN_FILE:-/tmp/cma-desktop-token}
+printf '%s: 127.0.0.1:5900\n' "$CMA_DESKTOP_TOKEN" >"$desktop_token_file"
+unset CMA_DESKTOP_TOKEN CMA_DESKTOP_TOKEN_FILE
 # Reuse the baseline's guarded stale-browser-lock recovery.
 python3 - <<'PY'
 import os
@@ -71,7 +72,7 @@ for ((i=0;i<600;i++)); do
   sleep 0.1
 done
 [[ -f /tmp/cma-omarchy-ready ]]
-websockify --host-token --token-plugin=TokenFile --token-source=/tmp/cma-desktop-token 127.0.0.1:6080 >/tmp/cma-websockify.log 2>&1 &
+websockify --host-token --token-plugin=TokenFile --token-source="$desktop_token_file" 127.0.0.1:6080 >/tmp/cma-websockify.log 2>&1 &
 children+=("$!")
 wait -n "${children[@]}"
 exit 1

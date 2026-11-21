@@ -94,6 +94,10 @@ async fn main() {
 
 async fn run() -> Result<(), String> {
     let arguments = std::env::args_os().skip(1).collect::<Vec<_>>();
+    #[cfg(target_os = "linux")]
+    if arguments.len() == 1 && arguments[0] == desktop_process::guardian::COMMAND {
+        return desktop_process::guardian::run().await;
+    }
     if arguments
         .first()
         .is_some_and(|arg| arg == "--cutover-ledger-v1")
@@ -234,7 +238,7 @@ async fn run() -> Result<(), String> {
         .await
         .map_err(|error| format!("bind runtime supervisor at {bind}: {error}"))?;
     tracing::info!(%bind, "runtime supervisor listening");
-    let mut router = link::router(supervisor);
+    let mut router = link::router(supervisor.clone());
     if let Some(auth) = control_auth {
         router = router.layer(axum::middleware::from_fn_with_state(
             auth,
@@ -250,7 +254,10 @@ async fn run() -> Result<(), String> {
         }
     });
     axum::serve(listener, router)
-        .with_graceful_shutdown(shutdown_signal())
+        .with_graceful_shutdown(async move {
+            shutdown_signal().await;
+            supervisor.shutdown_desktop().await;
+        })
         .await
         .map_err(|error| format!("serve runtime supervisor: {error}"))
 }

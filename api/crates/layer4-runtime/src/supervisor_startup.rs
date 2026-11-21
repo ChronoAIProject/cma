@@ -60,7 +60,8 @@ impl Supervisor {
     }
 
     pub(super) async fn finish_startup(supervisor: Arc<Self>) -> Result<Arc<Self>> {
-        if supervisor.config.machine_included {
+        if let Some(desktop) = &supervisor.desktop_process {
+            let started = tokio::time::Instant::now();
             let ready = async {
                 loop {
                     if tokio::net::TcpStream::connect("127.0.0.1:6080")
@@ -72,14 +73,25 @@ impl Supervisor {
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             };
-            tokio::time::timeout(std::time::Duration::from_secs(30), ready)
+            if tokio::time::timeout(crate::desktop_process::STARTUP_LIMIT, ready)
                 .await
-                .map_err(|_| {
-                    RuntimeError::unavailable(
-                        "desktop_start_failed",
-                        "desktop did not become ready",
-                    )
-                })?;
+                .is_err()
+            {
+                tracing::error!(
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "initial desktop readiness timed out"
+                );
+                desktop.shutdown().await;
+                return Err(RuntimeError::unavailable(
+                    "desktop_start_failed",
+                    "desktop did not become ready",
+                ));
+            }
+            tracing::info!(
+                elapsed_ms = started.elapsed().as_millis(),
+                "initial desktop ready"
+            );
+            desktop.ready().await;
         }
         supervisor.recover_journals().await?;
         Ok(supervisor)
@@ -133,7 +145,7 @@ impl Supervisor {
         };
         let checkpoint = CheckpointStore::new(&config);
         let desktop_process = if config.machine_included {
-            Some(crate::desktop_process::DesktopProcess::start(&config)?)
+            Some(crate::desktop_process::DesktopSession::start(&config)?)
         } else {
             None
         };

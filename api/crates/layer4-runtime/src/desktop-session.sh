@@ -10,8 +10,9 @@ fi
 # A web page in Chromium must not bypass CMA by connecting to a loopback
 # WebSocket. Only the supervisor knows this per-boot transport token.
 umask 077
-printf '%s: 127.0.0.1:5900\n' "$CMA_DESKTOP_TOKEN" >/tmp/cma-desktop-token
-unset CMA_DESKTOP_TOKEN
+desktop_token_file=${CMA_DESKTOP_TOKEN_FILE:-/tmp/cma-desktop-token}
+printf '%s: 127.0.0.1:5900\n' "$CMA_DESKTOP_TOKEN" >"$desktop_token_file"
+unset CMA_DESKTOP_TOKEN CMA_DESKTOP_TOKEN_FILE
 mkdir -p "$HOME/.cma/chrome" "$HOME/Desktop" "$HOME/Documents" "$HOME/Downloads"
 export XDG_RUNTIME_DIR=/tmp/cma-desktop-runtime
 mkdir -p "$XDG_RUNTIME_DIR"
@@ -107,7 +108,7 @@ desktop_stage=browser
 desktop_stage=listeners
 x11vnc -display "$DISPLAY" -rfbport 5900 -localhost -forever -shared -nopw >/tmp/cma-x11vnc.log 2>&1 &
 children+=("$!")
-websockify --host-token --token-plugin=TokenFile --token-source=/tmp/cma-desktop-token 127.0.0.1:6080 >/tmp/cma-websockify.log 2>&1 &
+websockify --host-token --token-plugin=TokenFile --token-source="$desktop_token_file" 127.0.0.1:6080 >/tmp/cma-websockify.log 2>&1 &
 children+=("$!")
 # Closing the browser is normal. Keep the desktop available, and let the user
 # reopen applications from the persistent XFCE panel, menu or desktop icons.
