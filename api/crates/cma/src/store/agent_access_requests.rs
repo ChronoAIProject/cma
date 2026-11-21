@@ -45,6 +45,18 @@ impl From<mongodb::error::Error> for Error {
 }
 type TxResult<T> = Result<T, Error>;
 
+fn retryable_body(error: &mongodb::error::Error) -> bool {
+    !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
+        && (is_transient(error) || is_duplicate_key(error))
+}
+
+fn provenance_error(error: super::resource_access::ReadError) -> Error {
+    match error {
+        super::resource_access::ReadError::Driver(error) => Error::Driver(error),
+        _ => Error::Domain(AgentAccessError::NotFound),
+    }
+}
+
 macro_rules! transaction {
     ($store:expr, $session:ident, $body:block) => {{
         let store = $store;
@@ -65,11 +77,7 @@ macro_rules! transaction {
                 Err(error) => {
                     let _ = owned_session.abort_transaction().await;
                     match error {
-                        Error::Driver(error)
-                            if is_transient(&error) || is_duplicate_key(&error) =>
-                        {
-                            continue
-                        }
+                        Error::Driver(error) if retryable_body(&error) => continue,
                         Error::Driver(_) => {
                             outcome = Err(AgentAccessError::Unavailable);
                             break;
@@ -108,6 +116,8 @@ pub(crate) use records::{
 mod lineage;
 pub(in crate::store) use lineage::validate_lineage;
 mod admission;
+#[cfg(test)]
+mod admission_retry_contract;
 mod decisions;
 pub(in crate::store) mod grant;
 mod hot_grant;
