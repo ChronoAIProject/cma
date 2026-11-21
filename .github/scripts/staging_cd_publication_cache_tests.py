@@ -515,6 +515,31 @@ class TimingTests(unittest.TestCase):
             self.assertEqual(result['category_seconds'][name], 4)
         self.assertNotIn('private-value', json.dumps(result))
 
+    def test_a_failed_build_names_only_the_stage_and_step_where_it_stopped(self):
+        rows = [
+            {'id': '1', 'name': '[runtime-base 3/12] RUN apt-get install private-value',
+             'started': '2026-01-01T00:00:00Z', 'completed': '2026-01-01T00:00:09Z',
+             'error': 'exit code: 100 private-error'},
+            {'id': '2', 'name': '[codex 2/4] RUN curl private-value',
+             'started': '2026-01-01T00:00:00Z', 'completed': '2026-01-01T00:00:10Z',
+             'error': 'context canceled'},
+            {'id': '3', 'name': '[internal] load metadata for docker.io/library/private:tag',
+             'started': '2026-01-01T00:00:00Z', 'completed': '2026-01-01T00:00:01Z'},
+            {'id': '4', 'name': '[build 9/9] RUN cargo build private-value',
+             'started': '2026-01-01T00:00:00Z', 'completed': '2026-01-01T00:00:02Z'},
+        ]
+        result = summarize(b'\n'.join(json.dumps(row).encode() for row in rows))
+        self.assertEqual(result['failed_steps'], ['runtime-base 3/12', 'codex 2/4'])
+        self.assertNotIn('private', json.dumps(result))
+        metadata = [{'id': '5', 'name': '[internal] load metadata for ghcr.io/private/image:tag',
+                     'started': '2026-01-01T00:00:00Z', 'completed': '2026-01-01T00:00:03Z',
+                     'error': 'failed to resolve: private'},
+                    {'id': '6', 'name': 'unnamed private vertex', 'error': 'private'}]
+        result = summarize(b'\n'.join(json.dumps(row).encode() for row in metadata))
+        self.assertEqual(result['failed_steps'], ['other', 'base-image-metadata'])
+        self.assertNotIn('private', json.dumps(result))
+        self.assertNotIn('failed_steps', summarize(b'\n'.join(json.dumps(row).encode() for row in rows[2:])))
+
 
 if __name__ == '__main__':
     unittest.main()
