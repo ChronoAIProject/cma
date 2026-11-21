@@ -17,6 +17,7 @@ struct Gateway {
     lose_reply: bool,
     verified_effect: AtomicBool,
     lookup_unavailable: AtomicBool,
+    credential_generation: std::sync::atomic::AtomicU64,
     calls: AtomicUsize,
 }
 
@@ -27,7 +28,10 @@ impl AgentModelGateway for Gateway {
         _: &Agent,
         _: &Sandbox,
     ) -> Result<CredentialBinding, FundingError> {
-        Ok(credential(CredentialSource::Managed))
+        Ok(CredentialBinding {
+            generation: units(self.credential_generation.load(Ordering::SeqCst)),
+            ..credential(CredentialSource::Managed)
+        })
     }
 
     async fn first_phase_limit(
@@ -84,6 +88,7 @@ fn gateway(lose_reply: bool) -> Arc<Gateway> {
         lose_reply,
         verified_effect: AtomicBool::new(false),
         lookup_unavailable: AtomicBool::new(false),
+        credential_generation: std::sync::atomic::AtomicU64::new(1),
         calls: AtomicUsize::new(0),
     })
 }
@@ -294,15 +299,8 @@ async fn model_credit_releases_definitive_refusal_and_keeps_the_same_key_winner_
     };
     let (left, right) = tokio::join!(admit(), admit());
     let replay = admit().await.unwrap();
-    assert!(left.is_ok() || right.is_ok());
     for result in [left, right] {
-        match result {
-            Ok(view) => assert_eq!(view.receipt, replay.receipt),
-            Err(CommandAdmissionError::Input(AgentOperationError::ModelFunding(
-                FundingError::CheckpointChanged,
-            ))) => {}
-            Err(error) => panic!("{error:?}"),
-        }
+        assert_eq!(result.unwrap().receipt, replay.receipt);
     }
     let id = &replay.receipt.command_id;
     assert_eq!(
@@ -346,75 +344,5 @@ async fn model_credit_releases_definitive_refusal_and_keeps_the_same_key_winner_
     assert_eq!(gateway.calls.load(Ordering::SeqCst), 0);
 }
 
-struct LostAdmissionReply(Arc<InMemorySandboxStore>);
-
-#[async_trait]
-impl AgentCommandStore for LostAdmissionReply {
-    async fn reserve_command(
-        &self,
-        request: CommandReservation,
-    ) -> Result<CommandReservationResult, CommandLedgerError> {
-        self.0.reserve_command(request).await?;
-        Err(CommandLedgerError::Unavailable)
-    }
-
-    async fn get_admitted_command(
-        &self,
-        scope: &str,
-        key_sha256: &str,
-    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
-        self.0.get_admitted_command(scope, key_sha256).await
-    }
-
-    async fn get_command(
-        &self,
-        id: &AgentCommandId,
-    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
-        self.0.get_command(id).await
-    }
-
-    async fn get_response_command(
-        &self,
-        id: &AgentResponseId,
-    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
-        self.0.get_response_command(id).await
-    }
-}
-
-#[tokio::test]
-async fn model_credit_lost_admission_reply_retains_exact_committed_hold() {
-    let (store, access, authority, _) = execution_fixture(MAX_MEMBERSHIP_AGE).await;
-    let ledger = Arc::new(Ledger::default());
-    let payer = payer(credential(CredentialSource::Managed));
-    ledger.lock().unwrap().add(&payer, 5);
-    let funding = AgentTurnFunding::new(ledger.clone(), gateway(false));
-    let commands = AgentCommandService::new(
-        Arc::new(LostAdmissionReply(store.clone())),
-        Arc::new(access),
-        authority,
-    )
-    .with_model_credit_required(true)
-    .with_model_funding(Some(funding.clone()));
-    let caller = context("owner");
-    let admit = || {
-        commands.admit(
-            &caller,
-            "selected-credential",
-            CommandSubmissionSource::Api,
-            submission("unknown-admission"),
-        )
-    };
-    assert!(matches!(
-        admit().await,
-        Err(CommandAdmissionError::Ledger(
-            CommandLedgerError::Unavailable
-        ))
-    ));
-    let replay = admit().await.unwrap();
-    let page = PageRequest::new(1, None).unwrap();
-    assert_eq!(
-        funding.pending_commands(&page).await.unwrap().items,
-        vec![replay.receipt.command_id]
-    );
-    assert_eq!(*ledger.lock().unwrap().available(&payer), 0);
-}
+#[path = "command_funding_recovery_tests.rs"]
+mod admission_recovery;

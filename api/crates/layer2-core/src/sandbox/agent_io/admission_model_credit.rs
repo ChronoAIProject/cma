@@ -1,6 +1,6 @@
 use super::*;
 use crate::sandbox::{
-    model_credit::{AgentTurnFunding, Checkpoint},
+    model_credit::{AdmissionHold, AgentTurnFunding, Checkpoint},
     task_experience::TaskExperiencePolicy,
     AgentApprovalDecision,
 };
@@ -34,7 +34,7 @@ impl AgentCommandService {
         &self,
         authorized: &AuthorizedResource,
         target: &ResourceTarget,
-        request: CommandReservation,
+        mut request: CommandReservation,
         required: bool,
     ) -> Result<Result<CommandReservationResult, CommandLedgerError>, CommandAdmissionError> {
         let capability = command_capability(&request.envelope.command);
@@ -49,11 +49,24 @@ impl AgentCommandService {
             let held = self
                 .reserve_model_credit(funding, authorized, &request)
                 .await?;
+            let identity = held
+                .checkpoint
+                .reservation
+                .command
+                .as_ref()
+                .ok_or(CommandLedgerError::Corrupt)?;
+            let command_ref = identity.command_id.to_string();
+            request.envelope.command_id = identity.command_id.clone();
+            request.envelope.source.reference = command_ref.clone();
+            request.envelope.correlation_id = command_ref;
+            request.response_id = Some(identity.response_id.clone());
             if let Err(error) = self.fence(authorized, target, capability).await {
-                release_refused(funding, &held).await?;
+                if held.exclusive {
+                    release_refused(funding, &held.checkpoint).await?;
+                }
                 return Err(error);
             }
-            Some((funding, held))
+            held.exclusive.then_some((funding, held.checkpoint))
         } else {
             None
         };
@@ -83,7 +96,7 @@ impl AgentCommandService {
         funding: &AgentTurnFunding,
         authorized: &AuthorizedResource,
         request: &CommandReservation,
-    ) -> Result<Checkpoint, CommandAdmissionError> {
+    ) -> Result<AdmissionHold, CommandAdmissionError> {
         let lineage = &authorized.snapshot.lineage;
         let agent = lineage.agent.as_ref().ok_or(CommandLedgerError::Corrupt)?;
         self.with_authority_bound(
@@ -129,7 +142,10 @@ fn admission_refused(
 ) -> bool {
     match result {
         Ok(CommandReservationResult::Existing(record)) => {
-            held.reservation.command_id.as_ref() != Some(&record.receipt.envelope.command_id)
+            !held.reservation.command.as_ref().is_some_and(|identity| {
+                identity.command_id == record.receipt.envelope.command_id
+                    && Some(&identity.response_id) == record.receipt.response_id.as_ref()
+            })
         }
         Ok(CommandReservationResult::Created(_))
         | Err(CommandLedgerError::Corrupt | CommandLedgerError::Unavailable) => false,

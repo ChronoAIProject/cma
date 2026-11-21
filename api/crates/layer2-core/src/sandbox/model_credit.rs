@@ -4,7 +4,7 @@
 use std::num::NonZeroU64;
 
 use super::store::{Page, PageRequest};
-use crate::ids::AgentCommandId;
+use crate::ids::{AgentCommandId, AgentResponseId};
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -52,10 +52,17 @@ pub struct PhaseId {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FundedCommandIdentity {
+    pub command_id: AgentCommandId,
+    pub response_id: AgentResponseId,
+    pub intent_fingerprint: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reservation {
     pub id: PhaseId,
     /// An exact durable command receipt is required to use an admission hold.
-    pub command_id: Option<AgentCommandId>,
+    pub command: Option<FundedCommandIdentity>,
     pub binding: PayerBinding,
     pub limit: NonZeroU64,
     pub request_digest: [u8; 32],
@@ -81,6 +88,13 @@ pub struct Checkpoint {
     pub reservation: Reservation,
     pub version: NonZeroU64,
     pub state: PhaseState,
+}
+
+/// An authenticated exact retry may reuse a Reserved admission. Once shared,
+/// neither writer may refund it based solely on its own refusal.
+pub struct AdmissionHold {
+    pub checkpoint: Checkpoint,
+    pub exclusive: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -111,10 +125,17 @@ pub enum FundingError {
 #[async_trait]
 pub trait ReservationAuthority: Send + Sync {
     async fn reserve_first(&self, request: &Reservation) -> Result<Checkpoint, FundingError>;
+
+    /// Reserve for a new command, or recover the original command and response
+    /// IDs for an exact retry of a still-Reserved hold. The payer, binding,
+    /// limit and request digest must all match. Returning a recovered hold
+    /// atomically makes the hold shared before either claimant can refund it.
+    async fn reserve_command(&self, request: &Reservation) -> Result<AdmissionHold, FundingError>;
     async fn read(&self, id: &PhaseId) -> Result<Checkpoint, FundingError>;
 
     /// Release an exclusively held admission after its ledger write definitively
     /// failed. Compare the exact Reserved checkpoint including its command ID.
+    /// A shared hold makes an earlier exclusive release request a no-op.
     /// Never remove or credit a concurrent or already dispatched reservation.
     /// A later hold for the same phase must have a fresh checkpoint version.
     async fn release_refused(&self, expected: &Checkpoint) -> Result<(), FundingError>;
@@ -191,21 +212,9 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
         limit: NonZeroU64,
         request: &G::Request,
     ) -> Result<Checkpoint, FundingError> {
-        self.reserve_first(PhaseId { turn, phase: 0 }, None, selected, limit, request)
-            .await
-    }
-
-    async fn reserve_first(
-        &self,
-        id: PhaseId,
-        command_id: Option<AgentCommandId>,
-        selected: &CredentialBinding,
-        limit: NonZeroU64,
-        request: &G::Request,
-    ) -> Result<Checkpoint, FundingError> {
         let request = Reservation {
-            id,
-            command_id,
+            id: PhaseId { turn, phase: 0 },
+            command: None,
             binding: self.binding(selected).await?,
             limit,
             request_digest: self.gateway.digest(request),
@@ -248,12 +257,12 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
     async fn check_dispatch(
         &self,
         id: &PhaseId,
-        command_id: Option<&AgentCommandId>,
+        command: Option<&FundedCommandIdentity>,
         selected: &CredentialBinding,
         request: &G::Request,
     ) -> Result<Checkpoint, FundingError> {
         let held = self.authority.read(id).await?;
-        if held.reservation.id != *id || held.reservation.command_id.as_ref() != command_id {
+        if held.reservation.id != *id || held.reservation.command.as_ref() != command {
             return Err(FundingError::CheckpointChanged);
         }
         if held.reservation.binding != self.binding(selected).await? {
@@ -270,7 +279,7 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
 
     pub async fn reconcile(&self, id: &PhaseId) -> Result<Checkpoint, FundingError> {
         let prior = self.authority.read(id).await?;
-        if prior.reservation.id != *id || prior.reservation.command_id.is_some() {
+        if prior.reservation.id != *id || prior.reservation.command.is_some() {
             return Err(FundingError::CheckpointChanged);
         }
         self.reconcile_held(&prior).await
@@ -317,7 +326,7 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
                 turn: checkpoint.reservation.id.turn.clone(),
                 phase,
             },
-            command_id: checkpoint.reservation.command_id.clone(),
+            command: checkpoint.reservation.command.clone(),
             binding,
             limit,
             request_digest: self.gateway.digest(request),

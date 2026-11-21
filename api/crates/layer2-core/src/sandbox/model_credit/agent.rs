@@ -39,7 +39,7 @@ pub struct AgentTurnFunding {
 #[derive(Clone)]
 pub(in crate::sandbox) struct FundedAgentMessage {
     phase: PhaseId,
-    command_id: AgentCommandId,
+    identity: FundedCommandIdentity,
     command: AgentCommand,
 }
 
@@ -50,18 +50,21 @@ impl FundedAgentMessage {
         let effective = command
             .effective_command()
             .map_err(|_| FundingError::CheckpointChanged)?;
-        Self::message(
-            command.scope(),
-            &command.key_sha256,
-            command.receipt.envelope.command_id.clone(),
-            effective,
-        )
+        let identity = command_identity(command)?;
+        if effective
+            .fingerprint()
+            .map_err(|_| FundingError::CheckpointChanged)?
+            != identity.intent_fingerprint
+        {
+            return Err(FundingError::CheckpointChanged);
+        }
+        Self::message(command.scope(), &command.key_sha256, identity, effective)
     }
 
     fn message(
         scope: String,
         key: &str,
-        command_id: AgentCommandId,
+        identity: FundedCommandIdentity,
         command: AgentCommand,
     ) -> Result<Self, FundingError> {
         if !matches!(command, AgentCommand::Message { .. }) {
@@ -73,7 +76,7 @@ impl FundedAgentMessage {
         );
         Ok(Self {
             phase: PhaseId { turn, phase: 0 },
-            command_id,
+            identity,
             command,
         })
     }
@@ -103,11 +106,22 @@ impl AgentTurnFunding {
         admission: &CommandReservation,
         agent: &Agent,
         sandbox: &Sandbox,
-    ) -> Result<Checkpoint, FundingError> {
+    ) -> Result<AdmissionHold, FundingError> {
+        if !matches!(admission.envelope.command, AgentCommand::Message { .. }) {
+            return Err(FundingError::Unsupported);
+        }
+        let proposed = FundedCommandIdentity {
+            command_id: admission.envelope.command_id.clone(),
+            response_id: admission
+                .response_id
+                .clone()
+                .ok_or(FundingError::CheckpointChanged)?,
+            intent_fingerprint: admission.envelope.request_fingerprint.clone(),
+        };
         let message = FundedAgentMessage::message(
             admission.scope(),
             &admission.key_sha256,
-            admission.envelope.command_id.clone(),
+            proposed.clone(),
             admission.envelope.command.clone(),
         )?;
         let selected = self.selected(agent, sandbox).await?;
@@ -115,20 +129,31 @@ impl AgentTurnFunding {
             .gateway
             .first_phase_limit(&selected, &message.command)
             .await?;
-        let held = self
-            .credit()
-            .reserve_first(
-                message.phase.clone(),
-                Some(message.command_id.clone()),
-                &selected,
-                limit,
-                &message.request(None),
-            )
-            .await?;
-        if held.state != PhaseState::Reserved {
+        let mut reservation = Reservation {
+            id: message.phase.clone(),
+            command: Some(proposed),
+            binding: self.credit().binding(&selected).await?,
+            limit,
+            request_digest: self.gateway.digest(&message.request(None)),
+        };
+        let hold = self.authority.reserve_command(&reservation).await?;
+        let checkpoint = &hold.checkpoint;
+        let identity = checkpoint
+            .reservation
+            .command
+            .as_ref()
+            .ok_or(FundingError::CheckpointChanged)?;
+        if checkpoint.state != PhaseState::Reserved {
             return Err(FundingError::CheckpointChanged);
         }
-        Ok(held)
+        if identity.intent_fingerprint != admission.envelope.request_fingerprint {
+            return Err(FundingError::CheckpointChanged);
+        }
+        if !hold.exclusive {
+            reservation.command = Some(identity.clone());
+        }
+        require_reservation(checkpoint, &reservation)?;
+        Ok(hold)
     }
 
     pub(in crate::sandbox) async fn release_refused(
@@ -155,7 +180,7 @@ impl AgentTurnFunding {
         self.credit()
             .check_dispatch(
                 &message.phase,
-                Some(&message.command_id),
+                Some(&message.identity),
                 &selected,
                 &message.request(None),
             )
@@ -174,12 +199,7 @@ impl AgentTurnFunding {
         let credit = self.credit();
         let request = message.request(Some(target));
         let held = credit
-            .check_dispatch(
-                &message.phase,
-                Some(&message.command_id),
-                &selected,
-                &request,
-            )
+            .check_dispatch(&message.phase, Some(&message.identity), &selected, &request)
             .await?;
         let checkpoint = credit.dispatch_held(held, request).await?;
         match checkpoint.state {
@@ -204,7 +224,7 @@ impl AgentTurnFunding {
         let message = FundedAgentMessage::message(
             command.scope(),
             &command.key_sha256,
-            command.receipt.envelope.command_id.clone(),
+            command_identity(command)?,
             command.receipt.envelope.command.clone(),
         )?;
         let held = match self.authority.read(&message.phase).await {
@@ -212,7 +232,7 @@ impl AgentTurnFunding {
             result => result?,
         };
         if held.reservation.id != message.phase
-            || held.reservation.command_id.as_ref() != Some(&message.command_id)
+            || held.reservation.command.as_ref() != Some(&message.identity)
             || held.reservation.request_digest != self.gateway.digest(&message.request(None))
         {
             return Err(FundingError::CheckpointChanged);
@@ -243,4 +263,16 @@ impl AgentTurnFunding {
         }
         Ok(selected)
     }
+}
+
+fn command_identity(command: &AdmittedAgentCommand) -> Result<FundedCommandIdentity, FundingError> {
+    Ok(FundedCommandIdentity {
+        command_id: command.receipt.envelope.command_id.clone(),
+        response_id: command
+            .receipt
+            .response_id
+            .clone()
+            .ok_or(FundingError::CheckpointChanged)?,
+        intent_fingerprint: command.receipt.envelope.request_fingerprint.clone(),
+    })
 }

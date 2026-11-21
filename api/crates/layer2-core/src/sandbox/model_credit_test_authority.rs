@@ -11,6 +11,7 @@ pub(in crate::sandbox) struct LedgerState {
     checkpoints: HashMap<PhaseId, Checkpoint>,
     expired: HashSet<PhaseId>,
     refused_versions: HashMap<PhaseId, NonZeroU64>,
+    shared_admissions: HashSet<PhaseId>,
 }
 
 pub(in crate::sandbox) type Ledger = Mutex<LedgerState>;
@@ -51,6 +52,14 @@ impl LedgerState {
         Ok(checkpoint)
     }
 
+    fn hold_first(&mut self, request: &Reservation) -> Result<Checkpoint, FundingError> {
+        let version = self
+            .refused_versions
+            .get(&request.id)
+            .map_or(units(1), |old| units(old.get() + 1));
+        self.hold(request, version)
+    }
+
     fn next(&self, checkpoint: &Checkpoint, state: PhaseState) -> Result<Checkpoint, FundingError> {
         let id = &checkpoint.reservation.id;
         if self.active.get(&id.turn) != Some(&id.phase)
@@ -75,11 +84,47 @@ impl ReservationAuthority for Ledger {
             require_reservation(existing, request)?;
             return Ok(existing.clone());
         }
-        let version = state
-            .refused_versions
-            .get(&request.id)
-            .map_or(units(1), |old| units(old.get() + 1));
-        state.hold(request, version)
+        state.hold_first(request)
+    }
+
+    async fn reserve_command(&self, request: &Reservation) -> Result<AdmissionHold, FundingError> {
+        tokio::task::yield_now().await;
+        let mut state = self.lock().unwrap();
+        let proposed = request
+            .command
+            .as_ref()
+            .ok_or(FundingError::CheckpointChanged)?;
+        if let Some(existing) = state.checkpoints.get(&request.id).cloned() {
+            if existing.state != PhaseState::Reserved {
+                return Err(FundingError::CheckpointChanged);
+            }
+            let existing_identity = existing
+                .reservation
+                .command
+                .as_ref()
+                .ok_or(FundingError::CheckpointChanged)?;
+            if existing.reservation.binding != request.binding {
+                return Err(FundingError::BindingChanged);
+            }
+            if existing_identity.intent_fingerprint != proposed.intent_fingerprint {
+                return Err(FundingError::CheckpointChanged);
+            }
+            let matched = Reservation {
+                command: Some(existing_identity.clone()),
+                ..request.clone()
+            };
+            require_reservation(&existing, &matched)?;
+            state.shared_admissions.insert(request.id.clone());
+            return Ok(AdmissionHold {
+                checkpoint: existing,
+                exclusive: false,
+            });
+        }
+        let checkpoint = state.hold_first(request)?;
+        Ok(AdmissionHold {
+            checkpoint,
+            exclusive: true,
+        })
     }
 
     async fn read(&self, id: &PhaseId) -> Result<Checkpoint, FundingError> {
@@ -93,11 +138,11 @@ impl ReservationAuthority for Ledger {
 
     async fn release_refused(&self, expected: &Checkpoint) -> Result<(), FundingError> {
         let mut state = self.lock().unwrap();
-        if expected.reservation.command_id.is_none() || expected.state != PhaseState::Reserved {
+        if expected.reservation.command.is_none() || expected.state != PhaseState::Reserved {
             return Err(FundingError::CheckpointChanged);
         }
         let id = &expected.reservation.id;
-        if !state.checkpoints.contains_key(id) {
+        if state.shared_admissions.contains(id) || !state.checkpoints.contains_key(id) {
             return Ok(());
         }
         state.next(expected, PhaseState::Settled(Effect::NotStarted))?;
@@ -121,7 +166,12 @@ impl ReservationAuthority for Ledger {
             .checkpoints
             .values()
             .filter(|row| !matches!(row.state, PhaseState::Settled(_)))
-            .filter_map(|row| row.reservation.command_id.as_ref())
+            .filter_map(|row| {
+                row.reservation
+                    .command
+                    .as_ref()
+                    .map(|identity| &identity.command_id)
+            })
             .filter(|id| {
                 page.cursor
                     .as_deref()
