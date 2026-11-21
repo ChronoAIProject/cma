@@ -8,6 +8,8 @@ use tracing_subscriber::{
 
 const LIFECYCLE_TARGET: &str = "agent_scheduler_failure";
 pub(crate) const PROVIDER_IDENTITY_TARGET: &str = "cma::auth::verification_diagnostics";
+pub(crate) const ORGANIZATION_PRINCIPAL_TARGET: &str =
+    "cma::auth::organizations::principal_diagnostics";
 
 pub(crate) struct PrivacyFormat<F> {
     ordinary: F,
@@ -27,14 +29,19 @@ where
         event: &Event<'_>,
     ) -> std::fmt::Result {
         let target = event.metadata().target();
-        if target == PROVIDER_IDENTITY_TARGET {
+        let root = match target {
+            PROVIDER_IDENTITY_TARGET => Some("identity_verification"),
+            ORGANIZATION_PRINCIPAL_TARGET => Some("organization_principal"),
+            _ => None,
+        };
+        if let Some(root) = root {
             // A registered root can be hidden by this writer's own filter.
             // Resolve the explicit parent in the context of this output.
             let has_root = event
                 .parent()
                 .and_then(|id| ctx.span(id))
                 .is_some_and(|span| {
-                    span.name() == "identity_verification"
+                    span.name() == root
                         && span.metadata().target() == target
                         && span.metadata().fields().is_empty()
                         && span.parent().is_none()
@@ -43,7 +50,7 @@ where
                 return Ok(());
             }
         }
-        if matches!(target, LIFECYCLE_TARGET | PROVIDER_IDENTITY_TARGET) {
+        if target == LIFECYCLE_TARGET || root.is_some() {
             self.context_free.format_event(ctx, writer, event)
         } else {
             self.ordinary.format_event(ctx, writer, event)
