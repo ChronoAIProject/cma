@@ -15,6 +15,8 @@ pub enum QueuedCancellationError {
     Admission(#[from] CommandAdmissionError),
     #[error("the original queued cancellation was not admitted and its source revision is permanently stale")]
     NotAdmitted,
+    #[error("the queued Trigger cancellation requires the current Agent owner")]
+    OwnerRequired,
 }
 
 impl From<CommandLedgerError> for QueuedCancellationError {
@@ -67,7 +69,7 @@ impl AgentCommandService {
             .with_authority_bound(
                 &authorized,
                 capability,
-                self.store.cancel_queued_response(request.clone()),
+                self.cancel_with_projection_owner(agent, request.clone()),
             )
             .await;
         self.fence(&authorized, &resource, capability).await?;
