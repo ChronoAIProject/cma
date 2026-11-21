@@ -18,6 +18,8 @@ use std::{
     path::Path,
 };
 
+#[path = "agent_filesystem/existing_file.rs"]
+mod existing_file;
 #[path = "agent_filesystem/io.rs"]
 pub(crate) mod io;
 use io::{cstring, descend, mkdir, names, open_at, parent, read_regular, rename, stat, unlink};
@@ -129,6 +131,14 @@ pub(crate) fn write(
     config: &RuntimeConfig,
     request: AgentFileWriteRequest,
 ) -> Result<AgentFileWriteReceipt> {
+    write_with_mode_change(config, request, existing_file::set_mode)
+}
+
+fn write_with_mode_change(
+    config: &RuntimeConfig,
+    request: AgentFileWriteRequest,
+    set_mode: impl FnOnce(&File, libc::mode_t) -> Result<()>,
+) -> Result<AgentFileWriteReceipt> {
     identity(
         config,
         &request.sandbox_id,
@@ -159,6 +169,8 @@ pub(crate) fn write(
             sha256: digest(&[]),
         });
     }
+    let content_sha256 = digest(&bytes);
+    let mut verified = None;
     let previous = match stat(&parent, &name) {
         Ok(metadata) => {
             if metadata.st_mode & libc::S_IFMT != libc::S_IFREG || metadata.st_nlink != 1 {
@@ -166,8 +178,15 @@ pub(crate) fn write(
             }
             // Updating an existing file requires its version. This also prevents
             // a delayed create/upload from replacing somebody else's new file.
-            let current = digest(&read_regular(&parent, &name, MAX_AGENT_FILE_BYTES)?);
-            if current == digest(&bytes) {
+            let current = if config.preserve_file_mode {
+                let original = existing_file::Original::open(&parent, &name, &metadata)?;
+                let current = original.digest().to_owned();
+                verified = Some(original);
+                current
+            } else {
+                digest(&read_regular(&parent, &name, MAX_AGENT_FILE_BYTES)?)
+            };
+            if current == content_sha256 {
                 return Ok(AgentFileWriteReceipt {
                     path: request.path,
                     size_bytes: bytes.len() as u64,
@@ -189,19 +208,38 @@ pub(crate) fn write(
         Err(error) => return Err(error),
     };
     let stage_name = format!(".cma-write-{}", uuid::Uuid::new_v4().simple());
-    let mode = previous
-        .as_ref()
-        .map_or(0o600, |metadata| metadata.st_mode & 0o777);
+    if let Some(original) = &verified {
+        original.require_staging_policy(&parent)?;
+    }
+    let mode = if verified.is_some() {
+        0o600
+    } else {
+        previous
+            .as_ref()
+            .map_or(0o600, |metadata| metadata.st_mode & 0o777)
+    };
+    let access = if verified.is_some() {
+        libc::O_RDWR
+    } else {
+        libc::O_WRONLY
+    };
     let mut stage = open_at(
         &parent,
         &stage_name,
-        libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL,
+        access | libc::O_CREAT | libc::O_EXCL,
         mode,
     )?;
     let result = (|| {
         stage.write_all(&bytes).map_err(io_error)?;
+        if let Some(original) = &verified {
+            existing_file::check_parent_binding(&root, &request.path, &parent)?;
+            original.restore_mode(&parent, &name, &stage_name, &stage, set_mode)?;
+        }
         stage.sync_all().map_err(io_error)?;
-        if let Some(original) = previous {
+        if let Some(original) = &verified {
+            existing_file::check_parent_binding(&root, &request.path, &parent)?;
+            original.publish(&parent, &name, &stage_name, &stage, &content_sha256)?;
+        } else if let Some(original) = previous {
             let current = stat(&parent, &name)?;
             if current.st_ino != original.st_ino
                 || current.st_dev != original.st_dev
@@ -234,11 +272,19 @@ pub(crate) fn write(
         Ok(AgentFileWriteReceipt {
             path: request.path,
             size_bytes: bytes.len() as u64,
-            sha256: digest(&bytes),
+            sha256: content_sha256,
         })
     })();
     if result.is_err() {
-        let _ = unlink(&parent, &stage_name, false);
+        if verified.is_some() {
+            if let Err(error) = existing_file::cleanup_stage(&parent, &stage_name, &stage) {
+                if error.code != "file_not_found" {
+                    tracing::warn!(code = %error.code, "could not clean up file staging");
+                }
+            }
+        } else {
+            let _ = unlink(&parent, &stage_name, false);
+        }
     }
     result
 }
