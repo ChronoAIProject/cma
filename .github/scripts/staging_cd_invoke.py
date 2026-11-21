@@ -7,7 +7,8 @@ import sys
 import tempfile
 from pathlib import Path
 
-from cd_target import controller
+from cd_target import PRODUCTION, controller
+from prod_cd_select import release_bounds
 from staging_cd_admission import event_identity
 from staging_cd_applied import configured_group
 from staging_cd_checkout import checkout_path
@@ -25,7 +26,7 @@ from staging_cd_tools import environment as tool_environment
 from staging_cd_compatibility import ContractPolicy, GROUP
 from staging_cd_history import DevelopHistory
 from staging_cd_watermark import (SUPERSEDED, eligible_receipts, later_final_sources, record_withheld,
-                                  require_current_versions)
+                                  require_current_versions, require_released_versions)
 from staging_cd_deploy_result import read as read_component_result, retain as retain_component_result
 
 IDENTITY_KEYS = ("GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_NAME",
@@ -131,18 +132,53 @@ def overtaken(receipts):
         return False
 
 
+def released_overtaken(receipts, released, history):
+    """Production: main's newer release owns every member, so this older release hands over.
+
+    Each member needs a higher final at a later source on the newer release's
+    develop history. That release's run selects at least that final for every
+    component production enables, contract members included, so it deploys
+    it, is overtaken the same way, or fails visibly.
+    """
+    if not receipts or history.head == released:
+        return False
+    try:
+        later = later_final_sources(receipts)
+        return all(any(commit in history.positions
+                       and history.positions[commit] > history.position(receipts[key]["source"])
+                       for commit in later[key]) for key in receipts)
+    except (Refusal, OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
 def controller_receipts(receipts, transition, script, directory, started, env, child_env):
+    if env.get("CD_TARGET") == PRODUCTION:
+        # Bounded by main's newest release, never develop's head (prod_cd_select.release_bounds).
+        released, history = release_bounds(env, Path.cwd())
+
+        def check(selected):
+            require_released_versions(selected, history)
+
+        def policy():
+            return ContractPolicy(history)
+
+        def handed_over(selected):
+            return released_overtaken(selected, released, history)
+    else:
+        check, handed_over = require_current_versions, overtaken
+
+        def policy():
+            return ContractPolicy(DevelopHistory.from_head(env["GITHUB_SHA"]))
+
     def current_subset(candidates):
-        return eligible_receipts(candidates, require_current_versions,
-                                 lambda: ContractPolicy(DevelopHistory.from_head(env["GITHUB_SHA"])),
-                                 transition=transition)
+        return eligible_receipts(candidates, check, policy, transition=transition)
 
     try:
         current = current_subset(receipts)
     except Refusal as error:
-        # Overtaken after verification: hand an independent set to the newer
-        # finals' runs before any controller read or mutation. Anything else fails.
-        if str(error) == SUPERSEDED and not transition and overtaken(receipts):
+        # Overtaken after verification: hand the set to the newer runs before
+        # any controller read or mutation. Anything else fails.
+        if str(error) == SUPERSEDED and not transition and handed_over(receipts):
             return {}, SUPERSEDED_BY_NEWER_FINAL
         raise
     record_withheld(env, receipts, current)
