@@ -3,7 +3,8 @@ use std::time::Duration;
 use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::bson::doc;
 
-use super::{admission_retry_delay, origin_filter, suffixed, unique_origin_replay};
+use super::names::suffixed;
+use super::{admission_retry_delay, origin_filter, unique_origin_replay};
 
 #[test]
 fn retry_delay_is_exponential_and_bounded() {
