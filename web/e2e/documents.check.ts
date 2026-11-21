@@ -86,10 +86,23 @@ for (const width of [1600, 390]) {
       });
       await comments.getByRole('button', { name: 'Close comments' }).click();
       await page.getByRole('button', { name: 'Share', exact: true }).click();
-      await page.getByRole('textbox', { name: 'Recipient user ID' }).fill('reviewer');
-      await page.getByRole('button', { name: 'Add person' }).click();
+      const search = page.getByRole('textbox', { name: 'Find share recipients' });
+      const add = page.getByRole('button', { name: 'Add person' });
+      const select = page.getByRole('button', { name: 'Select Local Reviewer (Reviewer-A)' });
+      await search.fill('unresolved');
+      await expect(page.getByText('No matching people.')).toBeVisible();
+      await expect(add).toBeDisabled();
+      await search.fill('reviewer');
+      await select.click();
+      await expect(page.getByRole('list', { name: 'Selected recipients' })).toContainText(
+        'Reviewer-A',
+      );
+      await search.fill('review');
+      await expect(add).toBeDisabled();
+      await select.click();
+      await add.click();
       await expect(page.getByRole('list', { name: 'People with access' })).toContainText(
-        'reviewer',
+        'Reviewer-A',
       );
       await page.screenshot({
         animations: 'disabled',
