@@ -48,11 +48,32 @@ impl SandboxStore for MongoSandboxStore {
         super::super::retained_reopen::receipt(self, id).await
     }
 
+    async fn retained_reopen_replay(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Option<layer2_core::sandbox::RetainedReopenReplay>, SandboxStoreError> {
+        super::super::retained_reopen::replay(self, id).await
+    }
+
+    async fn retained_suspended_reopen_snapshot(
+        &self,
+        id: &SandboxId,
+    ) -> Result<layer2_core::sandbox::RetainedReopenSnapshot, SandboxStoreError> {
+        super::super::retained_reopen::suspended_snapshot(self, id).await
+    }
+
     async fn admit_retained_reopen(
         &self,
         request: layer2_core::sandbox::RetainedReopenRequest,
     ) -> Result<layer2_core::sandbox::RetainedReopenAccepted, SandboxStoreError> {
         super::super::retained_reopen::admit(self, request).await
+    }
+
+    async fn admit_suspended_reopen(
+        &self,
+        request: layer2_core::sandbox::RetainedSuspendedReopenRequest,
+    ) -> Result<layer2_core::sandbox::RetainedReopenAccepted, SandboxStoreError> {
+        super::super::retained_reopen::admit_suspended(self, request).await
     }
 
     async fn retained_runtime_recovery_snapshot(

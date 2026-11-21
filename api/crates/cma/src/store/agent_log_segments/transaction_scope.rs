@@ -58,6 +58,20 @@ impl<'session> TransactionScope<'session> {
             })
     }
 
+    pub(in crate::store) async fn retained_reopen_view(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        id: &layer2_core::SandboxId,
+    ) -> Result<
+        (layer2_core::sandbox::RetainedReopenSnapshot, u64),
+        crate::store::sandbox_unpublished_recovery::transaction::ApplyError,
+    > {
+        use crate::store::sandbox_unpublished_recovery::transaction::NativeFacts;
+        let facts = NativeFacts::capture_reopen(store, id, self).await?;
+        crate::store::retained_reopen::snapshot_in_transaction(store, id, self.session, &facts)
+            .await
+    }
+
     /// Release consumes the scope. The caller may commit/abort and do normal
     /// outcome reconciliation; a later transaction requires a new scope/stamp.
     pub(in crate::store) fn release(self) -> &'session mut ClientSession {

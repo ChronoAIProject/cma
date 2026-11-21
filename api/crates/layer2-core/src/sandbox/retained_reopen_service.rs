@@ -3,7 +3,8 @@ use std::{sync::Arc, time::Duration};
 
 use super::{
     store::{SandboxStore, SandboxStoreError},
-    RetainedReopenAccepted, RetainedReopenRequest, RetainedReopenVerifier,
+    AgentStatus, RetainedReopenAccepted, RetainedReopenRequest, RetainedReopenVerifier,
+    RetainedSuspendedReopenRequest,
 };
 use crate::{Caller, Capability, SandboxId};
 
@@ -27,7 +28,13 @@ pub struct RetainedReopenService {
     store: Arc<dyn SandboxStore>,
     verifier: Arc<dyn RetainedReopenVerifier>,
     enabled: bool,
+    suspended_enabled: bool,
     permits: tokio::sync::Semaphore,
+}
+
+enum PreparedAdmission {
+    Idle(RetainedReopenRequest),
+    Suspended(RetainedSuspendedReopenRequest),
 }
 
 impl RetainedReopenService {
@@ -40,12 +47,18 @@ impl RetainedReopenService {
             store,
             verifier,
             enabled,
+            suspended_enabled: false,
             permits: tokio::sync::Semaphore::new(1),
         }
     }
 
+    pub fn with_suspended_admission(mut self, enabled: bool) -> Self {
+        self.suspended_enabled = enabled;
+        self
+    }
+
     pub fn enabled(&self) -> bool {
-        self.enabled
+        self.enabled || self.suspended_enabled
     }
 
     pub async fn request(
@@ -109,7 +122,7 @@ impl RetainedReopenService {
                 .ok_or(E::NotFound)?;
             if let Some(receipt) = self
                 .store
-                .retained_reopen_receipt(id)
+                .retained_reopen_replay(id)
                 .await
                 .map_err(map_error)?
             {
@@ -124,11 +137,46 @@ impl RetainedReopenService {
                 // Disabling new admission does not revoke an accepted request.
                 return Ok(Err(receipt.accepted));
             }
-            if !self.enabled {
+            if !self.enabled() {
                 return Err(E::Unavailable);
             }
             if parent.revision != expected_revision {
                 return Err(E::Conflict);
+            }
+            if self.suspended_enabled && parent.status == super::SandboxStatus::Failed {
+                let snapshot = self
+                    .store
+                    .retained_suspended_reopen_snapshot(id)
+                    .await
+                    .map_err(map_error)?;
+                if snapshot.retained.sandbox != parent {
+                    return Err(E::Conflict);
+                }
+                if snapshot.retained.agents.iter().any(|agent| {
+                    matches!(
+                        agent.status,
+                        AgentStatus::Ready | AgentStatus::Working | AgentStatus::WaitingApproval
+                    )
+                }) {
+                    snapshot.suspended_source().map_err(map_error)?;
+                    let proof = self
+                        .verifier
+                        .verify_suspended(&snapshot)
+                        .await
+                        .map_err(map_error)?;
+                    proof.validate(&snapshot).map_err(map_error)?;
+                    return Ok(Ok(PreparedAdmission::Suspended(
+                        RetainedSuspendedReopenRequest {
+                            snapshot,
+                            proof,
+                            key_sha256,
+                            requested_at: crate::now_rfc3339(),
+                        },
+                    )));
+                }
+            }
+            if !self.enabled {
+                return Err(E::Unavailable);
             }
             let snapshot = self
                 .store
@@ -141,25 +189,25 @@ impl RetainedReopenService {
             snapshot.validate().map_err(map_error)?;
             let proof = self.verifier.verify(&snapshot).await.map_err(map_error)?;
             proof.validate(&snapshot).map_err(map_error)?;
-            Ok(Ok(RetainedReopenRequest {
+            Ok(Ok(PreparedAdmission::Idle(RetainedReopenRequest {
                 snapshot,
                 proof,
                 key_sha256,
                 requested_at: crate::now_rfc3339(),
-            }))
+            })))
         })
         .await
         .map_err(|_| E::Unavailable)??;
-        let request = match prepared {
-            Ok(request) => request,
-            Err(accepted) => return Ok(accepted),
-        };
         // Do not cancel a transaction with the read-only proof deadline. Its
         // store reconciles unknown commits and retains the exact accepted key.
-        self.store
-            .admit_retained_reopen(request)
-            .await
-            .map_err(map_error)
+        match prepared {
+            Ok(PreparedAdmission::Idle(request)) => self.store.admit_retained_reopen(request).await,
+            Ok(PreparedAdmission::Suspended(request)) => {
+                self.store.admit_suspended_reopen(request).await
+            }
+            Err(accepted) => return Ok(accepted),
+        }
+        .map_err(map_error)
     }
 }
 

@@ -21,8 +21,35 @@ mod load;
 pub(in crate::store) mod mongo_fixtures;
 #[cfg(test)]
 mod mongo_tests;
+mod suspended;
 mod transaction;
 const FIELD: &str = "retained_reopen_receipt_v1";
+
+pub(super) use suspended::{admit_suspended, replay};
+
+pub(super) async fn snapshot_in_transaction(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+    session: &mut mongodb::ClientSession,
+    facts: &NativeFacts,
+) -> Result<(RetainedReopenSnapshot, u64), ApplyError> {
+    load::suspended_snapshot(store, id, session, facts).await
+}
+
+pub(super) async fn suspended_snapshot(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+) -> Result<RetainedReopenSnapshot, SandboxStoreError> {
+    let mut session = store.client.start_session().await.map_err(unavailable)?;
+    let mut scope = TransactionScope::start(&mut session)
+        .await
+        .map_err(unavailable)?;
+    let result = scope.retained_reopen_view(store, id).await;
+    let _ = scope.release().abort_transaction().await;
+    result
+        .map(|(snapshot, _)| snapshot)
+        .map_err(ApplyError::domain)
+}
 
 pub(super) async fn snapshot(
     store: &MongoSandboxStore,

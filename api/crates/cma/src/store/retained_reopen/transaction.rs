@@ -129,39 +129,7 @@ async fn apply_with_sources(
         )
         .await?;
     }
-    for workspace in &current.retained.workspaces {
-        let written = store.workspaces.update_one(crate::store::work_schema::query(doc! {
-            "_id": workspace.id.as_str(), "sandbox_id": expected.id.as_str(),
-            "document_schema_version": DOCUMENT_SCHEMA_VERSION, "revision": number(workspace.revision)?,
-        }), doc! { "$inc": { "sandbox_recovery_fence": 1_i64 } })
-            .session(&mut *session).await.map_err(ApplyError::Driver)?;
-        require_one(written.matched_count)?;
-    }
-    for tree in &current.worktrees {
-        let written = store.worktrees.update_one(doc! {
-            "_id": tree.id.as_str(), "sandbox_id": expected.id.as_str(),
-            "document_schema_version": DOCUMENT_SCHEMA_VERSION, "revision": number(tree.revision)?,
-        }, doc! { "$inc": { "sandbox_recovery_fence": 1_i64 } })
-            .session(&mut *session).await.map_err(ApplyError::Driver)?;
-        require_one(written.matched_count)?;
-    }
-    for (id, lane) in &current.command_lanes {
-        if lane.last_order == 0 {
-            continue;
-        }
-        let written = store
-            .agent_command_orders
-            .update_one(
-                doc! {
-                    "_id": id.as_str(), "last_order": number(lane.last_order)?,
-                },
-                doc! { "$inc": { "sandbox_recovery_fence": 1_i64 } },
-            )
-            .session(&mut *session)
-            .await
-            .map_err(ApplyError::Driver)?;
-        require_one(written.matched_count)?;
-    }
+    fence_membership(store, &current, session).await?;
     let mut fields = sandbox_replacement_fields(&next).map_err(ApplyError::Domain)?;
     fields.insert(
         FIELD,
@@ -189,6 +157,48 @@ async fn apply_with_sources(
         receipt: Box::new(receipt),
         event,
     })
+}
+
+pub(super) async fn fence_membership(
+    store: &MongoSandboxStore,
+    current: &layer2_core::sandbox::RetainedReopenSnapshot,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    let id = &current.retained.sandbox.id;
+    for workspace in &current.retained.workspaces {
+        let written = store.workspaces.update_one(crate::store::work_schema::query(doc! {
+            "_id": workspace.id.as_str(), "sandbox_id": id.as_str(),
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION, "revision": number(workspace.revision)?,
+        }), doc! { "$inc": { "sandbox_recovery_fence": 1_i64 } })
+            .session(&mut *session).await.map_err(ApplyError::Driver)?;
+        require_one(written.matched_count)?;
+    }
+    for tree in &current.worktrees {
+        let written = store.worktrees.update_one(doc! {
+            "_id": tree.id.as_str(), "sandbox_id": id.as_str(),
+            "document_schema_version": DOCUMENT_SCHEMA_VERSION, "revision": number(tree.revision)?,
+        }, doc! { "$inc": { "sandbox_recovery_fence": 1_i64 } })
+            .session(&mut *session).await.map_err(ApplyError::Driver)?;
+        require_one(written.matched_count)?;
+    }
+    for (id, lane) in &current.command_lanes {
+        if lane.last_order == 0 {
+            continue;
+        }
+        let written = store
+            .agent_command_orders
+            .update_one(
+                doc! {
+                    "_id": id.as_str(), "last_order": number(lane.last_order)?,
+                },
+                doc! { "$inc": { "sandbox_recovery_fence": 1_i64 } },
+            )
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?;
+        require_one(written.matched_count)?;
+    }
+    Ok(())
 }
 
 pub(super) async fn reconcile(

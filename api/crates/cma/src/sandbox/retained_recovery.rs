@@ -3,7 +3,8 @@ use std::{collections::BTreeSet, sync::Arc};
 
 use layer2_core::sandbox::{
     RetainedRecoveryDisposition as D, RetainedRecoveryInspector, RetainedRecoverySnapshot,
-    RetainedReopenProof, RetainedReopenSnapshot, RetainedReopenVerifier, SandboxStoreError,
+    RetainedReopenProof, RetainedReopenSnapshot, RetainedReopenVerifier,
+    RetainedSuspendedReopenProof, SandboxStoreError,
 };
 use layer3_adapter::{
     AdapterError, RecoveryConversation, RuntimeHandle, RuntimeInspection,
@@ -199,6 +200,14 @@ impl RetainedRecoveryInspector for RetainedRuntimeInspector {
             .map(|(disposition, _)| disposition)
             .unwrap_or_else(|reason| reason)
     }
+
+    async fn inspect_suspended(&self, snapshot: &RetainedReopenSnapshot) -> D {
+        match self.verify_suspended(snapshot).await {
+            Ok(_) => D::ExactSuspendedRuntime,
+            Err(SandboxStoreError::Unavailable(_)) => D::EvidenceUnavailable,
+            Err(_) => D::ProviderEvidenceRefused,
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -220,6 +229,51 @@ impl RetainedReopenVerifier for RetainedRuntimeInspector {
             .ok_or(SandboxStoreError::InvalidTransaction(
                 "retained reopening proof absent",
             ))
+    }
+
+    async fn verify_suspended(
+        &self,
+        snapshot: &RetainedReopenSnapshot,
+    ) -> Result<RetainedSuspendedReopenProof, SandboxStoreError> {
+        let source = snapshot.suspended_source()?;
+        let parent = &snapshot.retained.sandbox;
+        let refused = || {
+            SandboxStoreError::InvalidTransaction("suspended native recovery authority is absent")
+        };
+        let home = parent
+            .lifecycle
+            .home
+            .as_ref()
+            .and_then(|home| home.attachment())
+            .ok_or_else(refused)?;
+        let volumes = self.adapter.home_volumes().ok_or_else(refused)?;
+        let request = super::runtime_attachment::retained_runtime_request(
+            parent,
+            source.binding,
+            &self.deployment,
+        )
+        .map_err(suspended_error)?;
+        volumes.verify(&home).await.map_err(suspended_error)?;
+        self.adapter
+            .verify_suspended_runtime(&request)
+            .await
+            .map_err(suspended_error)?;
+        volumes.verify(&home).await.map_err(suspended_error)?;
+        Ok(RetainedSuspendedReopenProof {
+            binding: source.binding.clone(),
+            home_identity: source.home_identity,
+        })
+    }
+}
+
+fn suspended_error(error: AdapterError) -> SandboxStoreError {
+    match classify(error) {
+        D::EvidenceUnavailable => SandboxStoreError::Unavailable(
+            "suspended native recovery evidence is unavailable".into(),
+        ),
+        _ => {
+            SandboxStoreError::InvalidTransaction("suspended native recovery evidence was refused")
+        }
     }
 }
 
