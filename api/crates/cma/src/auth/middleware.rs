@@ -16,6 +16,8 @@ use layer2_core::dependency_diagnostics::{
     self as diagnostics, Dependency, Failure, Operation, Reason,
 };
 
+mod failure_diagnostics;
+
 pub async fn attach_subject(
     state: State<Arc<AuthState>>,
     request: axum::extract::Request,
@@ -96,13 +98,12 @@ async fn attach_subject_inner(
     let resolved = match resolved {
         Ok(resolved) => resolved,
         Err(error) => {
-            diagnostics::report(
-                Operation::Authentication,
-                failure.or(Some(Failure::new(
-                    Dependency::AuthenticationAuthority,
-                    Reason::Unknown,
-                ))),
-            );
+            let failure = failure.unwrap_or(Failure::new(
+                Dependency::AuthenticationAuthority,
+                Reason::Unknown,
+            ));
+            failure_diagnostics::record(&error, failure);
+            diagnostics::report(Operation::Authentication, Some(failure));
             if let Some(seconds) = retry_after {
                 return identity_failure_after(seconds);
             }
