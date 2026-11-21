@@ -9,12 +9,12 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-const IO_BOUND: Duration = Duration::from_secs(15);
+pub(super) const IO_BOUND: Duration = Duration::from_secs(15);
 const ATTEMPT_BOUND: Duration = Duration::from_secs(45);
 const LEASE_LIFETIME: Duration = Duration::from_secs(30);
 const RENEW_INTERVAL: Duration = Duration::from_secs(10);
 const RENEW_BOUND: Duration = Duration::from_secs(5);
-const UNCLAIMED_RECHECK_DELAY: Duration = Duration::from_secs(15);
+pub(super) const UNCLAIMED_RECHECK_DELAY: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CommandAttempt {
@@ -59,11 +59,13 @@ pub trait AgentCommandExecution: Send + Sync {
     async fn execute(&self, command: &AdmittedAgentCommand) -> CommandAttempt;
 }
 
+#[derive(Clone)]
 pub struct AgentCommandWorker {
     pub(super) store: Arc<dyn AgentCommandWorkerStore>,
     pub(super) dispatched_recheck_delay: Duration,
     execution: Arc<dyn AgentCommandExecution>,
     holder: String,
+    pub(super) model_funding: Option<Arc<crate::sandbox::model_credit::AgentTurnFunding>>,
 }
 
 impl AgentCommandWorker {
@@ -93,7 +95,18 @@ impl AgentCommandWorker {
             execution,
             holder,
             dispatched_recheck_delay,
+            model_funding: None,
         }))
+    }
+
+    pub fn with_model_funding(
+        &self,
+        funding: Option<Arc<crate::sandbox::model_credit::AgentTurnFunding>>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            model_funding: funding,
+            ..self.clone()
+        })
     }
 
     pub async fn discover(
@@ -131,14 +144,19 @@ impl AgentCommandWorker {
     /// attempt must reread and reauthorize the durable command.
     pub async fn run_scheduled(&self, id: &AgentCommandId) -> Result<Duration, CommandLedgerError> {
         let Some(candidate) = bounded(self.store.get_command(id)).await? else {
-            return Ok(Duration::ZERO);
+            // An unconfirmed admission may still be visible in funding discovery.
+            return Ok(self
+                .model_funding
+                .as_ref()
+                .map_or(Duration::ZERO, |_| UNCLAIMED_RECHECK_DELAY));
         };
         candidate.validate()?;
         if &candidate.receipt.envelope.command_id != id {
             return Err(CommandLedgerError::Corrupt);
         }
+        let funding_delay = self.reconcile_funding(&candidate).await;
         if candidate.status.is_terminal() {
-            return Ok(Duration::ZERO);
+            return Ok(funding_delay);
         }
         if candidate.work.dispatch.is_some() {
             return bounded(self.store.reconcile_command(id))
@@ -148,6 +166,7 @@ impl AgentCommandWorker {
                         command.status,
                         self.dispatched_recheck_delay,
                     )
+                    .max(funding_delay)
                 });
         }
         let delay = candidate.continuation_retry_delay(&now_rfc3339());

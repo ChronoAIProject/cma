@@ -105,6 +105,7 @@ impl AgentOperationService {
         metadata: std::collections::BTreeMap<String, String>,
         task_acceptance: Option<&super::task_acceptance::TaskAcceptanceIntent>,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
+        self.check_model_funding(&current).await?;
         if current.conversation.active_turn.is_some() {
             return Err(AgentOperationError::Corrupt(
                 "ready agent already has an active turn".into(),
@@ -213,6 +214,7 @@ impl AgentOperationService {
         text: String,
         parent: SandboxMutationGuard,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
+        self.require_model_credit()?;
         let turn_sequence = active_turn(&current)?;
         let target = runtime_target(&current)?;
         let required = vec![RuntimeCapability::Conversation, RuntimeCapability::Steer];
@@ -302,6 +304,9 @@ impl AgentOperationService {
         decision: super::AgentApprovalDecision,
         parent: SandboxMutationGuard,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
+        if decision != super::AgentApprovalDecision::Abort {
+            self.require_model_credit()?;
+        }
         let turn_sequence = active_turn(&current)?;
         let pending =
             AgentConversationStore::pending_agent_approvals(self.store.as_ref(), &current.id)
