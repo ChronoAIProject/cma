@@ -22,16 +22,23 @@ fi
 exec 9>"$HOME/.cma/desktop.lock"
 flock -n 9
 desktop_token_file=/tmp/cma-desktop-token
+token_ready=$desktop_token_file
+desktop_token_plugin=TokenFile
 desktop_listener=(127.0.0.1:6080)
 desktop_ready_file=
 legacy_ready_dir=
+rfb_socket=
 if [[ -n ${CMA_DESKTOP_GENERATION_DIR:-} ]]; then
-  desktop_token_file="$CMA_DESKTOP_GENERATION_DIR/token"
+  desktop_token_file=$CMA_DESKTOP_TOKEN_FILE
+  token_ready="$CMA_DESKTOP_GENERATION_DIR/token-ready"
+  desktop_token_plugin=ReadOnlyTokenFile
   desktop_listener=(--unix-listen="$CMA_DESKTOP_GENERATION_DIR/display.sock")
   desktop_ready_file="$CMA_DESKTOP_GENERATION_DIR/omarchy-ready"
+  rfb_socket="$CMA_DESKTOP_GENERATION_DIR/rfb.sock"
+else
+  printf '%s: 127.0.0.1:5900\n' "$CMA_DESKTOP_TOKEN" >"$desktop_token_file"
 fi
-printf '%s: 127.0.0.1:5900\n' "$CMA_DESKTOP_TOKEN" >"$desktop_token_file"
-unset CMA_DESKTOP_TOKEN CMA_DESKTOP_GENERATION_DIR
+unset CMA_DESKTOP_TOKEN CMA_DESKTOP_GENERATION_DIR CMA_DESKTOP_TOKEN_FILE
 # Reuse the baseline's guarded stale-browser-lock recovery.
 python3 - <<'PY'
 import os
@@ -80,7 +87,7 @@ children+=("$!")
 for ((i=0;i<100;i++)); do xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
 xdpyinfo >/dev/null
 export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe LP_NUM_THREADS=2
-CMA_DESKTOP_OWNER_PID=$$ dbus-run-session -- /usr/local/bin/cma-omarchy-inner-session "$desktop_ready_file" >/tmp/cma-omarchy.log 2>&1 &
+CMA_DESKTOP_OWNER_PID=$$ dbus-run-session -- /usr/local/bin/cma-omarchy-inner-session "$desktop_ready_file" "$rfb_socket" >/tmp/cma-omarchy.log 2>&1 &
 children+=("$!")
 for ((i=0;i<600;i++)); do
   [[ -f "$desktop_ready_file" ]] && break
@@ -88,7 +95,11 @@ for ((i=0;i<600;i++)); do
   sleep 0.1
 done
 [[ -f "$desktop_ready_file" ]]
-websockify --host-token --token-plugin=TokenFile --token-source="$desktop_token_file" "${desktop_listener[@]}" >/tmp/cma-websockify.log 2>&1 &
+while [[ ! -f "$token_ready" ]]; do
+  kill -0 "${children[1]}"
+  sleep 0.1
+done
+websockify --host-token --token-plugin="$desktop_token_plugin" --token-source="$desktop_token_file" "${desktop_listener[@]}" >/tmp/cma-websockify.log 2>&1 &
 children+=("$!")
 wait -n "${children[@]}"
 exit 1

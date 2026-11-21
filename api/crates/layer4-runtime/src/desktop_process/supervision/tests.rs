@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use futures_util::{SinkExt as _, StreamExt as _};
-use tokio::io::AsyncReadExt as _;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::process::Command;
 use tokio_tungstenite::tungstenite::handshake::server::{
@@ -17,6 +17,31 @@ use crate::desktop_process::transport::{connect, DISPLAY_URL};
 use crate::desktop_process::GenerationDirectory;
 
 const LISTENER_FIXTURE: &str = "desktop_process::supervision::tests::owned_display_fixture";
+
+#[tokio::test]
+async fn omarchy_waits_for_the_current_launchers_readiness_marker() {
+    let output = tokio::time::timeout(
+        Duration::from_secs(20),
+        Command::new("python3")
+            .args([
+                "-B",
+                "-c",
+                include_str!("../../omarchy/session_tests.py"),
+                include_str!("../../omarchy/session.sh"),
+                include_str!("../../omarchy/inner-session.sh"),
+            ])
+            .kill_on_drop(true)
+            .output(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
 #[tokio::test(start_paused = true)]
 async fn shutdown_cancels_pending_backoff() {
@@ -35,7 +60,7 @@ async fn an_exited_desktop_rotates_the_token_and_a_live_replacement_is_drained_o
     let release = root.0.join("replacement-ready");
     let first_ready = root.0.join("initial-ready");
     std::fs::write(&first_ready, b"").unwrap();
-    let initial = serving_process(&first_ready, Some(&trigger));
+    let initial = serving_process(&first_ready, Some(&trigger), false);
     let first_token = initial.websocket_token().to_owned();
     let (stop, signal) = watch::channel(false);
     let (state, mut current) = watch::channel(State::Starting);
@@ -53,7 +78,7 @@ async fn an_exited_desktop_rotates_the_token_and_a_live_replacement_is_drained_o
                 initial,
                 move || {
                     count.fetch_add(1, Ordering::SeqCst);
-                    Ok(serving_process(&second_ready, None))
+                    Ok(serving_process(&second_ready, None, false))
                 },
                 None,
             )
@@ -160,13 +185,17 @@ async fn unrelated_unix_listeners_never_receive_a_desktop_credential() {
     let root = TestDirectory::new();
     let release = root.0.join("ready");
     std::fs::write(&release, b"").unwrap();
-    let mut child = serving_process(&release, None);
-    let (path, leader) = child.display_socket();
+    let mut child = serving_process(&release, None, false);
+    let (files, leader) = child.display_directory();
+    let path = files.path.join("display.sock");
     let held = path.with_extension("held");
     let token = child.websocket_token().to_owned();
+    let mut backend = None;
     let listener = tokio::time::timeout(Duration::from_secs(3), async {
         loop {
-            if let Ok(listener) = authenticate(&token, &path, leader).await {
+            if let Ok(listener) =
+                authenticate(&token, &files.path, leader, &files.token_map, &mut backend).await
+            {
                 return listener;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
@@ -182,7 +211,11 @@ async fn unrelated_unix_listeners_never_receive_a_desktop_credential() {
     );
     std::fs::rename(&path, &held).unwrap();
     let foreign = UnixListener::bind(&path).unwrap();
-    assert!(authenticate(&token, &path, leader).await.is_err());
+    assert!(
+        authenticate(&token, &files.path, leader, &files.token_map, &mut backend)
+            .await
+            .is_err()
+    );
     let (mut socket, _) = foreign.accept().await.unwrap();
     assert_eq!(socket.read(&mut [0; 1]).await.unwrap(), 0);
     assert!(connect(&generation, DISPLAY_URL).await.is_err());
@@ -196,6 +229,72 @@ async fn unrelated_unix_listeners_never_receive_a_desktop_credential() {
 }
 
 #[tokio::test]
+async fn the_owned_proxy_cannot_publish_or_relay_a_foreign_backend() {
+    let root = TestDirectory::new();
+    let release = root.0.join("ready");
+    std::fs::write(&release, b"").unwrap();
+
+    let mut isolated_proxy = serving_process(&release, None, true);
+    let (files, leader) = isolated_proxy.display_directory();
+    let backend_path = files.path.join("rfb.sock");
+    let foreign = UnixListener::bind(&backend_path).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !files.path.join("display.sock").exists() {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let token = isolated_proxy.websocket_token();
+    let mut backend = None;
+    assert!(
+        authenticate(token, &files.path, leader, &files.token_map, &mut backend)
+            .await
+            .is_err()
+    );
+    assert!(backend.is_none());
+    assert!(!files.path.join("token-ready").exists());
+    assert_eq!(files.token_map.metadata().unwrap().len(), 0);
+    let (mut rejected, _) = foreign.accept().await.unwrap();
+    assert_eq!(rejected.read(&mut [0; 1]).await.unwrap(), 0);
+    isolated_proxy.finish(false).await.unwrap();
+
+    let mut child = serving_process(&release, None, false);
+    let (files, leader) = child.display_directory();
+    let token = child.websocket_token().to_owned();
+    let binding = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            if let Ok(binding) =
+                authenticate(&token, &files.path, leader, &files.token_map, &mut backend).await
+            {
+                return binding;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let (generation, _owner) = DesktopGeneration::supervised(token, binding);
+    let path = files.path.join("rfb.sock");
+    let saved = path.with_extension("held");
+    let mut viewer = connect(&generation, DISPLAY_URL).await.unwrap();
+    assert_eq!(
+        viewer.next().await.unwrap().unwrap(),
+        Message::Binary(b"RFB 003.008\n".to_vec())
+    );
+    std::fs::rename(&path, &saved).unwrap();
+    let foreign = UnixListener::bind(&path).unwrap();
+    assert!(connect(&generation, DISPLAY_URL).await.is_err());
+    assert!(
+        tokio::time::timeout(Duration::from_millis(100), foreign.accept())
+            .await
+            .is_err()
+    );
+    std::fs::remove_file(saved).unwrap();
+    child.finish(false).await.unwrap();
+}
+
+#[tokio::test]
 #[ignore = "subprocess fixture; requires a private generation directory"]
 async fn owned_display_fixture() {
     let dir = PathBuf::from(std::env::var_os("CMA_DESKTOP_GENERATION_DIR").unwrap());
@@ -204,19 +303,33 @@ async fn owned_display_fixture() {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
     let token = std::env::var("CMA_DESKTOP_TOKEN").unwrap();
+    if std::env::var_os("CMA_TEST_PROXY_ONLY").is_none() {
+        let rfb = UnixListener::bind(dir.join("rfb.sock")).unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = rfb.accept().await {
+                let _ = socket.write_all(b"RFB 003.008\n").await;
+            }
+        });
+    }
+    let mapping = PathBuf::from(std::env::var_os("CMA_DESKTOP_TOKEN_FILE").unwrap());
     let listener = UnixListener::bind(dir.join("display.sock")).unwrap();
     loop {
         let (socket, _) = listener.accept().await.unwrap();
-        tokio::spawn(serve(socket, token.clone()));
+        tokio::spawn(serve(socket, token.clone(), mapping.clone()));
     }
 }
 
-async fn serve(socket: UnixStream, token: String) {
+async fn serve(socket: UnixStream, token: String, mapping: PathBuf) {
     if let Ok(mut websocket) = tokio_tungstenite::accept_hdr_async(socket, ExpectToken(token)).await
     {
-        let _ = websocket
-            .send(Message::Binary(b"RFB 003.008\n".to_vec()))
-            .await;
+        let Ok(mapping) = std::fs::read_to_string(mapping) else {
+            return;
+        };
+        let (_, endpoint) = mapping.trim_end().split_once(": unix_socket:").unwrap();
+        let mut backend = UnixStream::connect(endpoint).await.unwrap();
+        let mut greeting = [0; 12];
+        backend.read_exact(&mut greeting).await.unwrap();
+        let _ = websocket.send(Message::Binary(greeting.to_vec())).await;
     }
 }
 
@@ -239,7 +352,7 @@ impl Callback for ExpectToken {
     }
 }
 
-fn serving_process(ready: &Path, exit: Option<&Path>) -> DesktopProcess {
+fn serving_process(ready: &Path, exit: Option<&Path>, proxy_only: bool) -> DesktopProcess {
     let mut command = Command::new("/bin/bash");
     command
         .args([
@@ -265,13 +378,20 @@ fn serving_process(ready: &Path, exit: Option<&Path>) -> DesktopProcess {
         .arg(LISTENER_FIXTURE)
         .arg(exit.unwrap_or_else(|| Path::new("")))
         .env("CMA_TEST_DESKTOP_READY", ready);
+    if proxy_only {
+        command.env("CMA_TEST_PROXY_ONLY", "1");
+    }
     fixture_process(command)
 }
 
 fn fixture_process(mut command: Command) -> DesktopProcess {
     let files = GenerationDirectory::create().unwrap();
     command
-        .env("CMA_DESKTOP_GENERATION_DIR", &files.0)
+        .env("CMA_DESKTOP_GENERATION_DIR", &files.path)
+        .env(
+            "CMA_DESKTOP_TOKEN_FILE",
+            super::super::transport::token_map::endpoint(&files.token_map),
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::piped());
     let mut child = DesktopProcess::spawn_in_group(command, true).unwrap();

@@ -1,5 +1,8 @@
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
+use std::{fs::File, path::Path, sync::Arc};
+
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
@@ -10,6 +13,14 @@ use super::DesktopGeneration;
 mod owned_listener;
 #[cfg(target_os = "linux")]
 pub(super) use owned_listener::OwnedListener;
+#[cfg(target_os = "linux")]
+pub(super) mod token_map;
+
+#[cfg(target_os = "linux")]
+pub(super) struct DisplayBinding {
+    proxy: OwnedListener,
+    backend: Arc<OwnedListener>,
+}
 
 pub(crate) const DISPLAY_URL: &str = "ws://127.0.0.1:6080/websockify";
 
@@ -21,9 +32,12 @@ pub(crate) type Display = tokio_tungstenite::WebSocketStream<Box<dyn DisplayIo>>
 pub(crate) async fn connect(generation: &DesktopGeneration, display: &str) -> Result<Display, ()> {
     tokio::time::timeout(Duration::from_secs(5), async {
         #[cfg(target_os = "linux")]
-        if let Some(listener) = &generation.listener {
-            let socket = listener.connect().await.map_err(|_| ())?;
-            return handshake(socket, generation.token(), DISPLAY_URL).await;
+        if let Some(binding) = &generation.listener {
+            binding.backend.check_current().map_err(|_| ())?;
+            let socket = binding.proxy.connect().await.map_err(|_| ())?;
+            let upstream = handshake(socket, generation.token(), DISPLAY_URL).await?;
+            binding.backend.check_current().map_err(|_| ())?;
+            return Ok(upstream);
         }
         let uri: axum::http::Uri = display.parse().map_err(|_| ())?;
         let authority = uri.authority().ok_or(())?;
@@ -64,16 +78,35 @@ async fn handshake(
 #[cfg(target_os = "linux")]
 pub(super) async fn authenticate(
     token: &str,
-    path: &std::path::Path,
+    directory: &Path,
     leader: i32,
-) -> Result<OwnedListener, ()> {
+    token_map: &File,
+    backend: &mut Option<Arc<OwnedListener>>,
+) -> Result<DisplayBinding, ()> {
     tokio::time::timeout(Duration::from_secs(5), async {
-        let (listener, socket) = OwnedListener::discover(path, leader)
+        if backend.is_none() {
+            let path = directory.join("rfb.sock");
+            let (bound, _) = OwnedListener::discover(&path, leader)
+                .await
+                .map_err(|_| ())?;
+            // Each websockify worker opens this descriptor-backed address.
+            // Replacing the pathname cannot retarget those connections.
+            token_map::seal(token_map, token, &bound.pinned_endpoint()).map_err(|_| ())?;
+            *backend = Some(Arc::new(bound));
+        }
+        let backend = backend.as_ref().expect("pinned backend").clone();
+        backend.check_current().map_err(|_| ())?;
+        let published = directory.join("token-ready");
+        if !published.is_file() {
+            std::fs::File::create(published).map_err(|_| ())?;
+        }
+        let (proxy, socket) = OwnedListener::discover(&directory.join("display.sock"), leader)
             .await
             .map_err(|_| ())?;
         let mut stream = handshake(socket, token, DISPLAY_URL).await?;
         display_greeting(&mut stream).await?;
-        Ok(listener)
+        backend.check_current().map_err(|_| ())?;
+        Ok(DisplayBinding { proxy, backend })
     })
     .await
     .map_err(|_| ())?

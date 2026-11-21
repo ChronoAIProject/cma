@@ -211,10 +211,15 @@ impl Recovery {
     ) -> (End, Option<Instant>) {
         let start = Instant::now();
         let token = child.websocket_token().to_owned();
-        let (path, leader) = child.display_socket();
+        let (files, leader) = child.display_directory();
+        let directory = files.path.clone();
+        let token_map = files.token_map.clone();
+        let mut backend = None;
         let readiness = tokio::time::timeout(STARTUP_LIMIT, async {
             loop {
-                if let Ok(listener) = authenticate(&token, &path, leader).await {
+                if let Ok(listener) =
+                    authenticate(&token, &directory, leader, &token_map, &mut backend).await
+                {
                     return listener;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -222,12 +227,18 @@ impl Recovery {
         });
         let listener = tokio::select! {
             biased;
-            () = stopped(self.shutdown.clone()) => return (End::Shutdown, None),
-            result = child.stopped() => return (observed(result), None),
+            () = stopped(self.shutdown.clone()) => Err(End::Shutdown),
+            result = child.stopped() => Err(observed(result)),
             result = readiness => match result {
-                Ok(listener) => listener,
-                Err(_) => return (End::StartupTimeout, None),
+                Ok(listener) => Ok(listener),
+                Err(_) => Err(End::StartupTimeout),
             }
+        };
+        // Retain the mapped descriptor even if readiness was cancelled.
+        child.backend = backend;
+        let listener = match listener {
+            Ok(listener) => listener,
+            Err(end) => return (end, None),
         };
         if attempt != 0 {
             tracing::info!(

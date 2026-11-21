@@ -44,6 +44,18 @@ impl OwnedListener {
         Ok(stream)
     }
 
+    pub(super) fn pinned_endpoint(&self) -> String {
+        super::token_map::endpoint(&self.file)
+    }
+
+    pub(super) fn check_current(&self) -> io::Result<()> {
+        self.check_path()?;
+        if unsafe { libc::getsid(self.peer) } != self.leader {
+            return Err(unowned());
+        }
+        Ok(())
+    }
+
     fn check_path(&self) -> io::Result<()> {
         let current = self.path.symlink_metadata()?;
         let pinned = self.file.metadata()?;

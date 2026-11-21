@@ -8,6 +8,7 @@ use crate::writer_fence::{ManagedChild, ManagedSpawnPermit};
 
 const LAUNCHER: &str = "/usr/local/bin/cma-desktop-session";
 const GENERATION_DIR_ENV: &str = "CMA_DESKTOP_GENERATION_DIR";
+const TOKEN_FILE_ENV: &str = "CMA_DESKTOP_TOKEN_FILE";
 
 #[cfg(target_os = "linux")]
 pub(crate) mod guardian;
@@ -24,7 +25,7 @@ pub(crate) struct DesktopGeneration {
     token: String,
     invalidation: Option<watch::Receiver<()>>,
     #[cfg(target_os = "linux")]
-    listener: Option<std::sync::Arc<transport::OwnedListener>>,
+    listener: Option<std::sync::Arc<transport::DisplayBinding>>,
 }
 
 impl DesktopGeneration {
@@ -38,7 +39,7 @@ impl DesktopGeneration {
     }
 
     #[cfg(target_os = "linux")]
-    fn supervised(token: String, listener: transport::OwnedListener) -> (Self, watch::Sender<()>) {
+    fn supervised(token: String, listener: transport::DisplayBinding) -> (Self, watch::Sender<()>) {
         let mut generation = Self::legacy(token);
         generation.listener = Some(std::sync::Arc::new(listener));
         generation.with_invalidation()
@@ -140,6 +141,8 @@ pub(crate) struct DesktopProcess {
     token: String,
     #[cfg(target_os = "linux")]
     guard_files: Option<GenerationDirectory>,
+    #[cfg(target_os = "linux")]
+    backend: Option<std::sync::Arc<transport::OwnedListener>>,
 }
 
 impl DesktopProcess {
@@ -167,7 +170,9 @@ impl DesktopProcess {
     }
 
     fn spawn(mut command: Command) -> std::io::Result<Self> {
-        command.env_remove(GENERATION_DIR_ENV);
+        command
+            .env_remove(GENERATION_DIR_ENV)
+            .env_remove(TOKEN_FILE_ENV);
         Self::spawn_in_group(command, true)
     }
 
@@ -201,6 +206,8 @@ impl DesktopProcess {
             token,
             #[cfg(target_os = "linux")]
             guard_files: None,
+            #[cfg(target_os = "linux")]
+            backend: None,
         })
     }
 
@@ -214,7 +221,11 @@ impl DesktopProcess {
             .arg(guardian::COMMAND)
             .env_clear()
             .envs(&config.install_env)
-            .env(GENERATION_DIR_ENV, &files.0)
+            .env(GENERATION_DIR_ENV, &files.path)
+            .env(
+                TOKEN_FILE_ENV,
+                transport::token_map::endpoint(&files.token_map),
+            )
             .current_dir(&config.home)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped());
@@ -301,13 +312,13 @@ impl DesktopProcess {
     }
 
     #[cfg(target_os = "linux")]
-    fn display_socket(&self) -> (std::path::PathBuf, i32) {
+    fn display_directory(&self) -> (&GenerationDirectory, i32) {
         let files = self
             .guard_files
             .as_ref()
             .expect("supervised desktop directory");
         let leader = self.child.id().expect("unreaped desktop guardian PID") as i32;
-        (files.0.join("display.sock"), leader)
+        (files, leader)
     }
 }
 
@@ -330,7 +341,10 @@ impl Drop for DesktopProcess {
 }
 
 #[cfg(target_os = "linux")]
-struct GenerationDirectory(std::path::PathBuf);
+struct GenerationDirectory {
+    path: std::path::PathBuf,
+    token_map: std::sync::Arc<std::fs::File>,
+}
 
 #[cfg(target_os = "linux")]
 impl GenerationDirectory {
@@ -339,8 +353,9 @@ impl GenerationDirectory {
 
         let path = std::path::Path::new("/tmp")
             .join(format!("cma-desktop-{}", uuid::Uuid::new_v4().simple()));
+        let token_map = std::sync::Arc::new(transport::token_map::create()?);
         std::fs::DirBuilder::new().mode(0o700).create(&path)?;
-        Ok(Self(path))
+        Ok(Self { path, token_map })
     }
 }
 
@@ -348,10 +363,11 @@ impl GenerationDirectory {
 impl Drop for GenerationDirectory {
     fn drop(&mut self) {
         for result in [
-            std::fs::remove_file(self.0.join("token")),
-            std::fs::remove_file(self.0.join("display.sock")),
-            std::fs::remove_file(self.0.join("omarchy-ready")),
-            std::fs::remove_dir(&self.0),
+            std::fs::remove_file(self.path.join("token-ready")),
+            std::fs::remove_file(self.path.join("display.sock")),
+            std::fs::remove_file(self.path.join("rfb.sock")),
+            std::fs::remove_file(self.path.join("omarchy-ready")),
+            std::fs::remove_dir(&self.path),
         ] {
             match result {
                 Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
