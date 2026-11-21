@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use crate::{AgentId, Caller, RuntimeCapability};
 
+use super::model_credit::{AgentTurnFunding, FundedAgentMessage};
 use super::store::{
     AgentConversationStore, AgentLogStore, AgentStore, SandboxLifecycleExecutionStore,
     SandboxMutationGuard, SandboxStore, SandboxStoreError,
@@ -19,6 +20,8 @@ mod linear_input;
 
 #[path = "agent_operation_authority.rs"]
 mod execution_authority;
+#[path = "agent_operation_funding.rs"]
+mod funding;
 
 pub trait AgentOperationStore:
     AgentStore + AgentLogStore + AgentConversationStore + SandboxStore + SandboxLifecycleExecutionStore
@@ -52,7 +55,11 @@ pub enum AgentMessageOutcome {
 mod error;
 pub use error::AgentOperationError;
 
+#[derive(Clone)]
 pub struct AgentOperationService {
+    pub(super) model_credit_required: bool,
+    pub(super) model_funding: Option<Arc<AgentTurnFunding>>,
+    pub(super) funded_message: Option<FundedAgentMessage>,
     pub(super) skill_upgrades_enabled: bool,
     pub(super) instruction_policy: Arc<dyn super::AgentInstructionPolicy>,
     pub(super) settings_authority: Option<super::AgentSettingsAuthorization>,
@@ -71,6 +78,9 @@ impl AgentOperationService {
         R: AgentRuntimeRegistry + 'static,
     {
         Arc::new(Self {
+            model_credit_required: false,
+            model_funding: None,
+            funded_message: None,
             skill_upgrades_enabled: false,
             instruction_policy: Arc::new(super::agent_preferences::UnmanagedInstructions),
             settings_authority: None,
@@ -88,6 +98,9 @@ impl AgentOperationService {
         connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            model_credit_required: self.model_credit_required,
+            model_funding: self.model_funding.clone(),
+            funded_message: self.funded_message.clone(),
             skill_upgrades_enabled: self.skill_upgrades_enabled,
             instruction_policy: self.instruction_policy.clone(),
             settings_authority: self.settings_authority.clone(),
@@ -98,6 +111,19 @@ impl AgentOperationService {
             store: self.store.clone(),
             runtimes: self.runtimes.clone(),
         })
+    }
+
+    pub fn with_model_credit_required(&self, required: bool) -> Arc<Self> {
+        Arc::new(Self {
+            model_credit_required: required,
+            ..self.clone()
+        })
+    }
+
+    pub(super) fn require_model_credit(&self) -> Result<(), AgentOperationError> {
+        super::model_credit::require_available(
+            self.model_credit_required && self.funded_message.is_none(),
+        )
     }
 
     pub(super) async fn require_agent_connections(
@@ -134,8 +160,12 @@ impl AgentOperationService {
                     status: current.status,
                 });
             }
+            self.require_model_credit()?;
             self.require_agent_connections(&current).await?;
             let (parent, queues) = self.parent_admission(&current).await?;
+            if self.funded_message.is_some() && (queues || current.status == AgentStatus::Paused) {
+                return Err(AgentOperationError::CheckpointInProgress);
+            }
             // Existing queued records have no metadata field. Do not accept
             // metadata that a retained reader or lifecycle worker would lose.
             if (queues || current.status == AgentStatus::Paused) && !metadata.is_empty() {

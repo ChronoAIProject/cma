@@ -65,6 +65,7 @@ export function Console(props: ConsoleProps) {
 function ConsoleContent({
   user,
   authEpoch = 0,
+  visible = true,
   route,
   onSignOut,
   onNavigate,
@@ -252,6 +253,7 @@ function ConsoleContent({
           viewPosition={viewPosition}
           accessUncertain={accessUncertain}
           accessAuthorized={agentAccess.personalReady && !accessUncertain}
+          firstSendContext={{ authEpoch, visible: visible && !user.visitor }}
           filesOpen={panel !== undefined && panel !== 'details'}
           onFilesOpenChange={(open) => setPanel(open ? 'browser' : undefined)}
           detailsOpen={detailsOpen}

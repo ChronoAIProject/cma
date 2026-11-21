@@ -36,7 +36,9 @@ impl AgentOperationService {
                 .require(prepared.required.iter().copied())
             {
                 Ok(()) => {
-                    let outcome = if matches!(
+                    let outcome = if self.funded_message.is_some() {
+                        self.send_funded(&prepared).await
+                    } else if matches!(
                         prepared.input,
                         layer3_adapter::ConversationInput::RefreshContext { .. }
                     ) {

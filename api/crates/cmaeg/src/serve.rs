@@ -66,6 +66,9 @@ pub(crate) async fn serve(
         config.channel_cache.clone(),
         observers.index.clone(),
     );
+    if config.turns.provider_execution_attribution_enabled {
+        state.activity = Arc::new((*state.activity).clone().with_execution_attribution(true));
+    }
     observers.activity = Arc::new(crate::activity::ObservedActivity::new(
         state.activity.clone(),
         observers.activity.clone(),

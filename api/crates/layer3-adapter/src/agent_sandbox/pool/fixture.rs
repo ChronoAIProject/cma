@@ -7,6 +7,11 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::*;
 
+#[path = "fixture_connection_tests.rs"]
+mod connection_tests;
+
+const HEADER_LIMIT: usize = 128 * 1024;
+
 #[derive(Default)]
 pub(super) struct State {
     pub rows: BTreeMap<String, Value>,
@@ -39,6 +44,7 @@ pub(super) struct Fixture {
     pub client: AgentSandboxPools,
     pub kubernetes: kube::Client,
     pub state: Arc<Mutex<State>>,
+    address: std::net::SocketAddr,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -60,51 +66,44 @@ impl Fixture {
         }));
         let owned = state.clone();
         let task = tokio::spawn(async move {
-            loop {
+            'connections: loop {
                 let (mut socket, _) = listener.accept().await.unwrap();
-                let mut preview = vec![0; 128 * 1024];
-                let length = loop {
-                    let count = socket.peek(&mut preview).await.unwrap();
-                    assert_ne!(count, 0);
-                    if preview[..count].windows(4).any(|v| v == b"\r\n\r\n") {
-                        break count;
-                    }
-                    tokio::task::yield_now().await;
-                };
-                if String::from_utf8_lossy(&preview[..length])
-                    .lines()
-                    .next()
-                    .unwrap()
-                    .contains("/exec?")
-                {
-                    super::fixture_exec::serve(socket, &owned).await;
-                    continue;
-                }
                 let mut input = Vec::new();
-                let (end, length) = loop {
-                    let mut buffer = [0; 8192];
-                    let count = socket.read(&mut buffer).await.unwrap();
+                let mut buffer = [0; 8192];
+                let end = loop {
+                    let remaining = HEADER_LIMIT - input.len();
+                    assert!(remaining > 0, "fixture request header exceeded its limit");
+                    let take = remaining.min(buffer.len());
+                    let count = socket.read(&mut buffer[..take]).await.unwrap();
                     if count == 0 {
-                        return;
+                        continue 'connections;
                     }
                     input.extend_from_slice(&buffer[..count]);
                     if let Some(end) = input.windows(4).position(|v| v == b"\r\n\r\n") {
-                        let head = String::from_utf8_lossy(&input[..end]);
-                        let length = head
-                            .lines()
-                            .find_map(|line| {
-                                line.to_ascii_lowercase()
-                                    .strip_prefix("content-length:")
-                                    .map(|v| v.trim().parse::<usize>().unwrap())
-                            })
-                            .unwrap_or(0);
-                        break (end + 4, length);
+                        break end;
                     }
                 };
+                let head = String::from_utf8_lossy(&input[..end]);
+                if head.lines().next().unwrap().contains("/exec?") {
+                    let (reader, writer) = socket.into_split();
+                    let reader = std::io::Cursor::new(input).chain(reader);
+                    super::fixture_exec::serve(tokio::io::join(reader, writer), &owned).await;
+                    continue;
+                }
+                let length = head
+                    .lines()
+                    .find_map(|line| {
+                        line.to_ascii_lowercase()
+                            .strip_prefix("content-length:")
+                            .map(|v| v.trim().parse::<usize>().unwrap())
+                    })
+                    .unwrap_or(0);
+                let end = end + 4;
                 while input.len() < end + length {
-                    let mut buffer = [0; 8192];
                     let count = socket.read(&mut buffer).await.unwrap();
-                    assert_ne!(count, 0);
+                    if count == 0 {
+                        continue 'connections;
+                    }
                     input.extend_from_slice(&buffer[..count]);
                 }
                 let head = String::from_utf8_lossy(&input[..end]);
@@ -164,6 +163,7 @@ impl Fixture {
             client,
             kubernetes,
             state,
+            address,
             task,
         }
     }

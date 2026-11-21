@@ -1,6 +1,8 @@
 use super::runtime;
 use crate::mcp::agent_delivery_tools_router;
-use crate::rest::{agents_tests, answer_deliverables_router, shared_agent_tests};
+use crate::rest::{
+    agent_filesystem_router, agents_tests, answer_deliverables_router, shared_agent_tests,
+};
 use axum::{
     extract::State,
     http::{Method, StatusCode},
@@ -113,7 +115,8 @@ async fn bind(State(binding): State<Arc<Binding>>, Json(value): Json<Value>) -> 
 fn native_answer_deliverables_prove_real_file_document_receipts_and_public_downloads() {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
-        .thread_stack_size(2 * 1024 * 1024)
+        // Match the debug test stack used by the other native runtime contracts.
+        .thread_stack_size(32 * 1024 * 1024)
         .enable_all()
         .build()
         .unwrap();
@@ -146,8 +149,9 @@ async fn prove_native_deliveries() {
             shared_agent_tests::Reply::Member,
         ))),
     ));
-    let mut files = runtime::Files::new("owner");
-    files.root = Some(directory.clone());
+    let mut adapter = runtime::Files::new("owner");
+    adapter.root = Some(directory.clone());
+    let files = AgentFileService::new(access.clone(), Arc::new(adapter));
     let documents = DocumentService::new(
         Arc::new(MemoryDocuments::default()),
         Arc::new(MemoryDocumentBlobs::default()),
@@ -156,7 +160,7 @@ async fn prove_native_deliveries() {
         fixture.reads(),
         AgentArtifactService::new(fixture.store.clone(), access.clone()),
     )
-    .with_files(AgentFileService::new(access, Arc::new(files)))
+    .with_files(files.clone())
     .with_documents(documents.clone());
     let auth = Arc::new(NativeAuthority {
         capability: format!(
@@ -189,6 +193,7 @@ async fn prove_native_deliveries() {
             .router
             .clone()
             .merge(answer_deliverables_router(service.clone()))
+            .merge(agent_filesystem_router(files))
             .layer(Extension(crate::AuthenticatedSubject(
                 layer2_core::SubjectId::new("owner-a"),
             )))
@@ -222,10 +227,13 @@ async fn prove_native_deliveries() {
     let observed: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(observed["stopReason"], "end_turn");
     let answer = observed["answer"].as_str().unwrap();
-    assert_eq!(
-        std::fs::read(directory.join("report.txt")).unwrap(),
-        b"Native answer file\n"
-    );
+    let expected_files = observed["files"].as_array().unwrap();
+    assert!(expected_files
+        .iter()
+        .any(|file| file["path"] == "output/nested/report.csv"));
+    assert!(expected_files
+        .iter()
+        .any(|file| file["path"] == "output/nested/readme.md"));
     let agent = AgentId(agent_id.clone());
     for kind in [
         AgentLogKind::TurnStarted {
@@ -234,7 +242,7 @@ async fn prove_native_deliveries() {
             origin_key: None,
         },
         AgentLogKind::OwnerMessage {
-            content: "Deliver a file and a persistent document.".into(),
+            content: "Deliver verified live files and a persistent document.".into(),
         },
         AgentLogKind::AgentMessage {
             content: answer.into(),
@@ -252,29 +260,13 @@ async fn prove_native_deliveries() {
     stored.conversation.last_seq = 6;
     stored.revision += 1;
     fixture.store.save_agent(revision, stored).await.unwrap();
-    tokio::spawn(async move {
-    let root = format!("/api/v1/agents/{agent_id}/answers/event:5/deliverables");
-    let router = answer_deliverables_router(service.clone());
-    let (status, listed) = agents_tests::json_response(&router, agents_tests::request(Method::GET, &root, "owner-a", None, None)).await;
-    assert_eq!(status, StatusCode::OK, "{listed}");
-    let items = listed["items"].as_array().unwrap();
-    assert_eq!(items.len(), 2, "{observed}");
-    for item in items {
-        let expected = match item["reference"]["resource"]["kind"].as_str().unwrap() {
-            "live_file" => b"Native answer file\n".as_slice(),
-            "document" => b"# Native document\n\nKnown persistent content.\n".as_slice(),
-            other => panic!("unexpected delivery kind: {other}"),
-        };
-        let response = router.clone().oneshot(agents_tests::request(Method::GET, &format!("{root}/{}/download", item["id"].as_str().unwrap()), "owner-a", None, None)).await.unwrap();
-        assert_eq!(response.status(), StatusCode::OK);
-        assert_eq!(axum::body::to_bytes(response.into_body(), 1024).await.unwrap(), expected);
-    }
-    let (status, replay) = agents_tests::json_response(&answer_deliverables_router(service), agents_tests::request(Method::GET, &root, "owner-a", None, None)).await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(replay, listed);
-    println!("native proof: pinned Codex={}, session={}, answer=event:5, turn=3, verified_resources=2, worker_stack=2097152, bridge_sha256={}", observed["version"], observed["sessionId"], observed["bridge_sha256"]);
-    for item in items { println!("resource={}, bytes={}, sha256={}", item["reference"]["resource"]["kind"], item["reference"]["size_bytes"], item["reference"]["sha256"]); }
-    }).await.unwrap();
+    verify_receipts(
+        answer_deliverables_router(service),
+        &agent_id,
+        &directory,
+        &observed,
+    )
+    .await;
     let web = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("../../../web")
         .canonicalize()
@@ -306,4 +298,174 @@ async fn prove_native_deliveries() {
     );
     println!("{}", String::from_utf8_lossy(&browser_proof.stdout));
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+async fn verify_receipts(
+    router: Router,
+    agent_id: &str,
+    directory: &std::path::Path,
+    observed: &Value,
+) {
+    use sha2::{Digest, Sha256};
+    let root = format!("/api/v1/agents/{agent_id}/answers/event:5/deliverables");
+    let listing = || agents_tests::request(Method::GET, &root, "owner-a", None, None);
+    let (status, legacy) = agents_tests::json_response(&router, listing()).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, listed) = agents_tests::json_response(&router, native_media(listing())).await;
+    assert_eq!(status, StatusCode::OK, "{listed}");
+    let items = listed["items"].as_array().unwrap();
+    let files = observed["files"].as_array().unwrap();
+    assert_eq!(
+        items.len(),
+        files.len() + 1,
+        "a repeated receipt must not add a card"
+    );
+    let legacy_items = legacy["items"].as_array().unwrap();
+    assert_eq!(legacy_items.len(), items.len());
+    for item in items {
+        let reference = &item["reference"];
+        let legacy_item = legacy_items
+            .iter()
+            .find(|item_in_legacy| item_in_legacy["id"] == item["id"])
+            .unwrap();
+        let id = item["id"].as_str().unwrap();
+        let target = format!("{root}/{id}");
+        let (expected, media_type) = match reference["resource"]["kind"].as_str().unwrap() {
+            "live_file" => {
+                let path = reference["resource"]["path"].as_str().unwrap();
+                let verified = files.iter().find(|file| file["path"] == path).unwrap();
+                assert_eq!(reference["sha256"], verified["sha256"]);
+                assert_eq!(reference["size_bytes"], verified["size_bytes"]);
+                assert_eq!(reference["media_type"], verified["stored_media_type"]);
+                (
+                    std::fs::read(directory.join(path)).unwrap(),
+                    verified["media_type"].as_str().unwrap(),
+                )
+            }
+            "document" => (
+                b"# Native document\n\nKnown persistent content.\n".to_vec(),
+                "application/octet-stream",
+            ),
+            other => panic!("unexpected delivery kind: {other}"),
+        };
+        if reference["resource"]["kind"] == "live_file" {
+            let mut projected = item.clone();
+            projected["reference"]["media_type"] = json!("application/octet-stream");
+            assert_eq!(legacy_item, &projected);
+        }
+        let download_path = format!("{target}/download");
+        let download =
+            |subject| agents_tests::request(Method::GET, &download_path, subject, None, None);
+        let response = router
+            .clone()
+            .oneshot(native_media(download("owner-a")))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], media_type);
+        assert_eq!(response.headers()["cache-control"], "private, no-store");
+        assert_eq!(
+            response.headers()["content-length"],
+            expected.len().to_string()
+        );
+        assert_eq!(
+            response.headers()["etag"],
+            format!("\"{}\"", reference["sha256"].as_str().unwrap())
+        );
+        assert_eq!(response.headers()["x-content-type-options"], "nosniff");
+        assert!(response.headers()["content-disposition"]
+            .to_str()
+            .unwrap()
+            .starts_with("attachment;"));
+        let bytes = axum::body::to_bytes(response.into_body(), 32 * 1024 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(&bytes[..], expected);
+        assert_eq!(reference["sha256"], format!("{:x}", Sha256::digest(&bytes)));
+        assert_eq!(reference["size_bytes"], bytes.len());
+        if matches!(
+            reference["name"].as_str(),
+            Some("report.csv" | "report.zip")
+        ) {
+            let (status, reading) = agents_tests::json_response(
+                &router,
+                agents_tests::request(Method::GET, &target, "owner-a", None, None),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(&reading["item"], legacy_item);
+            let response = router.clone().oneshot(download("owner-a")).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers()["content-type"],
+                "application/octet-stream"
+            );
+            assert_eq!(
+                axum::body::to_bytes(response.into_body(), 4096)
+                    .await
+                    .unwrap(),
+                bytes
+            );
+        }
+        assert_eq!(
+            router
+                .clone()
+                .oneshot(download("other"))
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::NOT_FOUND
+        );
+        if reference["name"] == "report.json" {
+            let path = directory.join("output/nested/report.json");
+            std::fs::write(&path, b"{\"changed\":true}\n").unwrap();
+            let (status, problem) = agents_tests::json_response(&router, download("owner-a")).await;
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert_eq!(problem["code"], "deliverable_changed");
+            std::fs::remove_file(&path).unwrap();
+            let (status, problem) = agents_tests::json_response(&router, download("owner-a")).await;
+            assert_eq!(status, StatusCode::NOT_FOUND);
+            assert_eq!(problem["code"], "file_not_found");
+            std::fs::write(&path, &expected).unwrap();
+        }
+        println!(
+            "verified attachment {} ({} bytes)",
+            reference["name"],
+            bytes.len()
+        );
+    }
+    assert_eq!(
+        agents_tests::json_response(&router, native_media(listing())).await,
+        (StatusCode::OK, listed)
+    );
+
+    let path = "output/nested/over-limit.csv";
+    std::fs::File::create(directory.join(path))
+        .unwrap()
+        .set_len(layer3_adapter::MAX_AGENT_FILE_BYTES + 1)
+        .unwrap();
+    let (status, problem) = agents_tests::json_response(
+        &router,
+        agents_tests::request(
+            Method::POST,
+            &format!("/api/v1/agents/{agent_id}/deliverable-references"),
+            "owner-a",
+            None,
+            Some(json!({"kind": "live_file", "path": path})),
+        ),
+    )
+    .await;
+    std::fs::remove_file(directory.join(path)).unwrap();
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(problem["code"], "file_too_large");
+}
+
+fn native_media(
+    mut request: axum::http::Request<axum::body::Body>,
+) -> axum::http::Request<axum::body::Body> {
+    request.headers_mut().insert(
+        "prefer",
+        axum::http::HeaderValue::from_static("cma-native-attachment-media"),
+    );
+    request
 }

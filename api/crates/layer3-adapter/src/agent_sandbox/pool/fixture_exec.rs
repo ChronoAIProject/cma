@@ -1,6 +1,7 @@
 use crate::runtime_bootstrap::{RuntimeBootstrapReceipt, RuntimeBootstrapRequest};
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Mutex;
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio_tungstenite::{
     accept_hdr_async,
     tungstenite::{
@@ -9,7 +10,10 @@ use tokio_tungstenite::{
     },
 };
 
-pub(super) async fn serve(socket: tokio::net::TcpStream, state: &Mutex<super::fixture::State>) {
+pub(super) async fn serve(
+    socket: impl AsyncRead + AsyncWrite + Unpin,
+    state: &Mutex<super::fixture::State>,
+) {
     let mut inspection = false;
     #[allow(clippy::result_large_err)]
     let mut ws = accept_hdr_async(socket, |request: &Request, mut response: Response| {

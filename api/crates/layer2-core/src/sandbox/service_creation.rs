@@ -1,8 +1,8 @@
 use crate::profiles::{
-    MarketplaceLocator, ModelAccess, ProfileVisibility, SandboxProfileRevision,
-    SandboxProfileSnapshot,
+    MarketplaceLocator, ModelAccess, ProfileVisibility, SandboxProfileContent,
+    SandboxProfileRevision, SandboxProfileSnapshot,
 };
-use crate::{now_rfc3339, Caller, Capability, SandboxId, SubjectId};
+use crate::{now_rfc3339, Caller, Capability, SandboxId, ServiceId, SubjectId};
 
 use super::service::{
     policy_error, profile_error, require, store_error, CreateSandbox, SandboxPolicy,
@@ -26,6 +26,25 @@ struct ResolvedProfile {
 }
 
 impl SandboxService {
+    /// Check the same owner credential and service prerequisites as fresh
+    /// lifecycle admission without reserving a Sandbox.
+    pub async fn check_lifecycle_creation_connections(
+        &self,
+        caller: &Caller,
+        profile: &SandboxProfileContent,
+    ) -> Result<(), SandboxServiceError> {
+        require(caller, Capability::UseOwnSandboxes)?;
+        require(caller, Capability::CreateSandbox)?;
+        let policy = self
+            .policy
+            .current_sandbox_policy()
+            .await
+            .map_err(policy_error)?;
+        let reaches = profile.credential_services(&policy.baseline_services);
+        self.check_creation_connections(caller, profile, &reaches)
+            .await
+    }
+
     /// Trusted lifecycle worker admission. Replay precedes current capacity and
     /// dependency checks so a lost response cannot allocate a second Sandbox.
     pub async fn create_for_lifecycle(
@@ -205,6 +224,31 @@ impl SandboxService {
         Ok(())
     }
 
+    async fn check_creation_connections(
+        &self,
+        caller: &Caller,
+        profile: &SandboxProfileContent,
+        reaches: &[ServiceId],
+    ) -> Result<(), SandboxServiceError> {
+        self.credentials
+            .check_services(
+                &caller.subject,
+                &profile.connection_services_for_grants(reaches),
+            )
+            .await
+            .map_err(|error| match error {
+                super::SandboxCredentialPrerequisiteError::SetupRequired => {
+                    SandboxServiceError::CredentialSetupRequired
+                }
+                super::SandboxCredentialPrerequisiteError::ConnectionsRequired { services } => {
+                    SandboxServiceError::ConnectionsRequired { services }
+                }
+                super::SandboxCredentialPrerequisiteError::Unavailable(detail) => {
+                    SandboxServiceError::Unavailable(detail)
+                }
+            })
+    }
+
     async fn admit(
         &self,
         caller: &Caller,
@@ -218,26 +262,8 @@ impl SandboxService {
             .revision
             .content
             .credential_services(&policy.baseline_services);
-        self.credentials
-            .check_services(
-                &caller.subject,
-                &profile
-                    .revision
-                    .content
-                    .connection_services_for_grants(&reaches),
-            )
-            .await
-            .map_err(|error| match error {
-                super::SandboxCredentialPrerequisiteError::SetupRequired => {
-                    SandboxServiceError::CredentialSetupRequired
-                }
-                super::SandboxCredentialPrerequisiteError::ConnectionsRequired { services } => {
-                    SandboxServiceError::ConnectionsRequired { services }
-                }
-                super::SandboxCredentialPrerequisiteError::Unavailable(detail) => {
-                    SandboxServiceError::Unavailable(detail)
-                }
-            })?;
+        self.check_creation_connections(caller, &profile.revision.content, &reaches)
+            .await?;
         let now = now_rfc3339();
         let sign_in = match profile.revision.content.model_access {
             ModelAccess::ChronoaiManaged => SandboxSignInState::NotRequired,

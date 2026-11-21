@@ -5,6 +5,7 @@ import { expect, it, vi } from 'vitest';
 import { AgentHeader } from './AgentHeader';
 import { agentHeaderMenu } from './headerActions';
 import type { TreePermissions } from '../shell/Tree';
+import { sandboxFixture } from '../test/hierarchy';
 
 const permissions: TreePermissions = {
   createWorkspace: true,
@@ -107,7 +108,11 @@ it('retains a reason while access is uncertain and omits unavailable capabilitie
     draw({
       detailsUnavailable: true,
       onDetailsOpenChange,
-      moreActions: agentHeaderMenu('ready', { ...permissions, stopAgent: false }, true, false),
+      moreActions: agentHeaderMenu(
+        'ready',
+        { ...permissions, stopAgent: false },
+        { sandbox: sandboxFixture() },
+      ),
     }),
   );
   const row = screen.getByRole('button', { name: /^Show Agent details/ });
@@ -173,7 +178,7 @@ it.each(['mouse', 'keyboard'] as const)(
     render(
       draw({
         activityStatus: 'completed',
-        moreActions: agentHeaderMenu('ready', permissions, true, false),
+        moreActions: agentHeaderMenu('ready', permissions, { sandbox: sandboxFixture() }),
         onMoreAction,
         onMenuSelect,
       }),
@@ -215,8 +220,10 @@ it.each(['stopped', 'failed', 'runtime-unavailable', 'busy', 'no-permission', 's
           condition === 'shared'
             ? undefined
             : { ...permissions, stopAgent: condition !== 'no-permission' },
-          condition !== 'runtime-unavailable',
-          condition === 'busy',
+          {
+            sandbox: condition === 'runtime-unavailable' ? undefined : sandboxFixture(),
+            busy: condition === 'busy',
+          },
         ),
         onMoreAction,
       }),

@@ -89,7 +89,15 @@ it('retains prompt edits after conflict, requiring explicit preference reload be
         readAgentPreferences: vi.fn().mockResolvedValue(preferences),
         updateAgentPreferences: vi
           .fn()
-          .mockRejectedValue(new AgentPreferencesError('Changed in another tab', 409)),
+          .mockRejectedValue(
+            new AgentPreferencesError(
+              'Changed in another tab',
+              409,
+              undefined,
+              'agent_operation_in_flight',
+              'stale_revision',
+            ),
+          ),
       })}
     >
       <AgentPreferencesDialog
@@ -106,7 +114,7 @@ it('retains prompt edits after conflict, requiring explicit preference reload be
   });
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   await screen.findByText(
-    'The Agent state changed or an update is in progress. Refresh the current settings, then apply your changes again.',
+    'Preferences changed before this update. Refresh preferences, then apply again.',
   );
   expect(screen.getByRole('textbox', { name: 'Agent system prompt' })).toHaveValue('Be kind.');
   expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();

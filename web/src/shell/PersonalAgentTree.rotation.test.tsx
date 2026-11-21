@@ -146,7 +146,7 @@ describe('Agent navigation during environment updates', () => {
       const row = within(screen.getByRole('group', { name: 'Updating environment' })).getByRole(
         'treeitem',
       );
-      expect(row).toHaveTextContent('Updating environment');
+      expect(row).toHaveTextContent('Updating runtime');
       expect(row).toHaveTextContent('Turn ended');
       expect(screen.queryByText('Runtime update failed')).not.toBeInTheDocument();
     },

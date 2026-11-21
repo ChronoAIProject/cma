@@ -1,19 +1,11 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { AgentUsage } from '../api/types';
+import { contextFraction, usageDefinitions, usageSummary } from './usageDescription';
 import './ContextRing.css';
-
-const count = (value: number) => new Intl.NumberFormat('en').format(value);
 
 /** The ring's radius in its 20px box, leaving room for the stroke. */
 const RADIUS = 8;
 const CIRCUMFERENCE = 2 * Math.PI * RADIUS;
-
-/** How full the context window is, when both figures are reported. */
-export function contextFraction(usage: AgentUsage | undefined): number | undefined {
-  const limit = usage?.contextWindow;
-  if (usage === undefined || limit === undefined || limit <= 0) return undefined;
-  return Math.min(1, Math.max(0, usage.contextUsed / limit));
-}
 
 /**
  * Context and token usage as one ring in the composer — the shared style contracts
@@ -37,6 +29,7 @@ export function ContextRing({ usage }: { readonly usage?: AgentUsage }) {
   const tooltipId = useId();
   const root = useRef<HTMLSpanElement>(null);
   const fraction = contextFraction(usage);
+  const { context, total, split, turn } = usageSummary(usage);
   const open = (hovered || focused || pressed) && !dismissed;
   // A press does not focus a button in every browser, so a tooltip opened by
   // touch is closed by the next press anywhere else rather than by blur alone.
@@ -102,40 +95,33 @@ export function ContextRing({ usage }: { readonly usage?: AgentUsage }) {
       </button>
       <span id={tooltipId} role="tooltip" className="context-ring__tooltip" hidden={!open}>
         <span className="context-ring__row">
-          <span className="context-ring__term">Context</span>
-          <span className="context-ring__value">
-            {usage === undefined
-              ? 'not reported'
-              : usage.contextWindow === undefined
-                ? count(usage.contextUsed)
-                : `${count(usage.contextUsed)} / ${count(usage.contextWindow)}`}
-            {fraction === undefined ? null : ` (${String(Math.round(fraction * 100))}%)`}
-          </span>
-        </span>
+          <span className="context-ring__term">Context</span>{' '}
+          <span className="context-ring__value">{context}</span>{' '}
+          <span className="context-ring__definition">{usageDefinitions.context}</span>
+        </span>{' '}
         <span className="context-ring__row">
-          <span className="context-ring__term">Total tokens</span>
+          <span className="context-ring__term">Total tokens</span>{' '}
           <span className="context-ring__value">
-            {usage === undefined ? (
-              'not reported'
-            ) : (
+            {total}
+            {split === undefined ? null : (
               <>
-                {count(usage.inputTokens + usage.outputTokens)}
-                <span className="context-ring__detail">
-                  {count(usage.inputTokens)} input · {count(usage.outputTokens)} output
-                </span>
+                {' '}
+                <span className="context-ring__detail">{split}</span>
               </>
             )}
-          </span>
-        </span>
-        {usage?.currentTurn === undefined ? null : (
-          <span className="context-ring__row">
-            <span className="context-ring__term">This turn</span>
-            <span className="context-ring__value">
-              {count(usage.currentTurn.inputTokens)} input · {count(usage.currentTurn.outputTokens)}{' '}
-              output
-            </span>
-          </span>
+          </span>{' '}
+          <span className="context-ring__definition">{usageDefinitions.total}</span>
+        </span>{' '}
+        {turn === undefined ? null : (
+          <>
+            <span className="context-ring__row">
+              <span className="context-ring__term">This turn</span>{' '}
+              <span className="context-ring__value">{turn}</span>{' '}
+              <span className="context-ring__definition">{usageDefinitions.turn}</span>
+            </span>{' '}
+          </>
         )}
+        <span>{usageDefinitions.billing}</span>
       </span>
     </span>
   );
