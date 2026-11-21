@@ -363,7 +363,8 @@ async fn capacity_is_bounded_and_completed_flight_cannot_replace_new_pending_wor
     assert!(retained[0]
         .set(Err(ProviderVerificationError::Rejected(
             "fixture refusal".into(),
-        )))
+        )
+        .into()))
         .is_ok());
     let replacement = flights.acquire(&key).await;
     assert!(!Arc::ptr_eq(&retained[0], &replacement));
