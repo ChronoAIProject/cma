@@ -18,11 +18,18 @@ pub(in crate::desktop_process) struct OwnedListener {
 
 impl OwnedListener {
     pub(super) async fn discover(path: &Path, leader: i32) -> io::Result<(Self, UnixStream)> {
-        let file = pin_socket(path)?;
+        Self::discover_pinned(path, leader, pin_socket(path)?).await
+    }
+
+    async fn discover_pinned(
+        path: &Path,
+        leader: i32,
+        file: File,
+    ) -> io::Result<(Self, UnixStream)> {
         if !file.metadata()?.file_type().is_socket() {
             return Err(unowned());
         }
-        let stream = UnixStream::connect(path).await?;
+        let stream = connect_pinned(&file).await?;
         let peer = peer_in_session(&stream, leader)?;
         let listener = Self {
             path: path.into(),
@@ -36,7 +43,7 @@ impl OwnedListener {
 
     pub(super) async fn connect(&self) -> io::Result<UnixStream> {
         self.check_path()?;
-        let stream = UnixStream::connect(&self.path).await?;
+        let stream = connect_pinned(&self.file).await?;
         if peer_in_session(&stream, self.leader)? != self.peer {
             return Err(unowned());
         }
@@ -67,6 +74,12 @@ impl OwnedListener {
             Err(unowned())
         }
     }
+}
+
+async fn connect_pinned(file: &File) -> io::Result<UnixStream> {
+    // Inspect the peer reached through the same inode retained by this
+    // descriptor. The visible pathname is checked only for displacement.
+    UnixStream::connect(super::token_map::endpoint(file)).await
 }
 
 fn pin_socket(path: &Path) -> io::Result<File> {
@@ -106,4 +119,70 @@ fn unowned() -> io::Error {
         io::ErrorKind::PermissionDenied,
         "desktop listener identity changed",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+    use tokio::net::UnixListener;
+
+    use super::*;
+    use crate::desktop_process::{transport::token_map, GenerationDirectory};
+
+    #[tokio::test]
+    async fn desktop_discovery_reconnect_and_token_map_use_the_pinned_socket() {
+        let files = GenerationDirectory::create().unwrap();
+        let current = files.path.join("display.sock");
+        let displaced = files.path.join("rfb.sock");
+        let original = UnixListener::bind(&current).unwrap();
+        let leader = unsafe { libc::getsid(0) };
+
+        let pin = pin_socket(&current).unwrap();
+        std::fs::rename(&current, &displaced).unwrap();
+        let replacement = UnixListener::bind(&current).unwrap();
+        assert!(OwnedListener::discover_pinned(&current, leader, pin)
+            .await
+            .is_err());
+        // Discovery reached the pinned socket and then rejected displacement.
+        accepted(&original).await;
+        no_connection(&replacement).await;
+        std::fs::remove_file(&current).unwrap();
+        std::fs::rename(&displaced, &current).unwrap();
+
+        let (owned, discovery) = OwnedListener::discover(&current, leader).await.unwrap();
+        accepted(&original).await;
+        drop(discovery);
+        token_map::seal(&files.token_map, "fixture", &owned.pinned_endpoint()).unwrap();
+        let map = std::fs::read_to_string(token_map::endpoint(&files.token_map)).unwrap();
+        let destination = map
+            .trim_end()
+            .strip_prefix("fixture: unix_socket:")
+            .unwrap();
+
+        std::fs::rename(&current, &displaced).unwrap();
+        let replacement = UnixListener::bind(&current).unwrap();
+        assert!(owned.connect().await.is_err());
+        let pinned = connect_pinned(&owned.file).await.unwrap();
+        assert_eq!(peer_in_session(&pinned, leader).unwrap(), owned.peer);
+        accepted(&original).await;
+        let published = UnixStream::connect(destination).await.unwrap();
+        assert_eq!(peer_in_session(&published, leader).unwrap(), owned.peer);
+        accepted(&original).await;
+        no_connection(&replacement).await;
+    }
+
+    async fn accepted(listener: &UnixListener) {
+        tokio::time::timeout(Duration::from_secs(1), listener.accept())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    async fn no_connection(listener: &UnixListener) {
+        assert!(
+            tokio::time::timeout(Duration::from_millis(50), listener.accept())
+                .await
+                .is_err()
+        );
+    }
 }
