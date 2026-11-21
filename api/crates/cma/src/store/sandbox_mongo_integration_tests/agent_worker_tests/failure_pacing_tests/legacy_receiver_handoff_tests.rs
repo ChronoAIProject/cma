@@ -1,6 +1,7 @@
 use super::*;
-use l3::owner_protocol::ReceiverRevocation;
+use l3::owner_protocol::{ReceiverRevocation, TransportAuthority};
 use layer2_core::agent_ownership::{test_support::MemoryOwnershipStore, Authority};
+use std::sync::atomic::AtomicUsize;
 
 struct Handoff {
     runtime: Runtime,
@@ -75,11 +76,11 @@ impl Handoff {
         assert!(self.peer.acquire(&self.agent).await.unwrap().is_none());
     }
 
-    async fn assert_peer_took_over(&self) {
+    async fn assert_peer_took_over(&self, revocations: usize) {
         assert_eq!(self.store.membership().await.unwrap().now_ms, 1);
         let peer = self.peer.acquire(&self.agent).await.unwrap().unwrap();
         assert_eq!(peer.token.epoch, self.authority.token.epoch + 1);
-        assert_eq!(self.runtime.revocations(), 1);
+        assert_eq!(self.runtime.revocations(), revocations);
         self.runtime.assert_counts(1);
     }
 }
@@ -90,7 +91,7 @@ async fn legacy_receiver_handoff_releases_before_expiry_after_local_drain() {
     fixture.attempt_owned_control().await;
     fixture.assert_original_lease().await;
     fixture.settle().await.unwrap();
-    fixture.assert_peer_took_over().await;
+    fixture.assert_peer_took_over(1).await;
 }
 
 #[tokio::test]
@@ -136,6 +137,49 @@ async fn legacy_receiver_handoff_revalidates_if_exact_token_release_fails() {
     assert_eq!(fixture.runtime.revocations(), 2);
 }
 
+#[derive(Default)]
+struct OneShotAcknowledgement {
+    calls: AtomicUsize,
+}
+
+#[async_trait::async_trait]
+impl ReceiverRevocation for OneShotAcknowledgement {
+    fn identity(&self) -> String {
+        "supported-sibling".into()
+    }
+
+    async fn revoke(&self) -> l3::Result<()> {
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            Ok(())
+        } else {
+            Err(l3::AdapterError::Unavailable(
+                "fixture runtime retired after its acknowledgement".into(),
+            ))
+        }
+    }
+}
+
+#[tokio::test]
+async fn legacy_receiver_handoff_retries_negative_proof_without_reopening_acknowledged_sibling() {
+    let fixture = Handoff::new("receiverless", true).await;
+    let acknowledged = Arc::new(OneShotAcknowledgement::default());
+    fixture
+        .authority
+        .register_receiver(acknowledged.clone())
+        .unwrap();
+    fixture.attempt_owned_control().await;
+    fixture.old_store.partition(true);
+    assert!(fixture.settle().await.is_err());
+    fixture.old_store.partition(false);
+    fixture.assert_original_lease().await;
+    assert_eq!(acknowledged.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(fixture.runtime.revocations(), 1);
+
+    fixture.settle().await.unwrap();
+    assert_eq!(acknowledged.calls.load(Ordering::SeqCst), 1);
+    fixture.assert_peer_took_over(2).await;
+}
+
 struct UnresolvedSibling;
 
 #[async_trait::async_trait]
@@ -153,7 +197,6 @@ impl ReceiverRevocation for UnresolvedSibling {
 
 #[tokio::test]
 async fn legacy_receiver_handoff_cannot_settle_an_unresolved_sibling() {
-    use l3::owner_protocol::TransportAuthority;
     let fixture = Handoff::new("receiverless", true).await;
     fixture
         .authority

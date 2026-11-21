@@ -233,9 +233,14 @@ impl Authority {
         if after_local_drain {
             self.join_local_work().await?;
         }
-        let receivers: Vec<_> = self.receivers.lock().unwrap().values().cloned().collect();
-        let mut revalidate_on_retry = false;
-        for receiver in receivers {
+        let receivers: Vec<_> = self
+            .receivers
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(identity, receiver)| (identity.clone(), receiver.clone()))
+            .collect();
+        for (identity, receiver) in receivers {
             let result = if after_local_drain {
                 receiver.revocation.settle(receiver.confirmation).await
             } else {
@@ -246,11 +251,18 @@ impl Authority {
                     .map(|()| ReceiverCleanup::Acknowledged)
             };
             match result {
-                Ok(ReceiverCleanup::Acknowledged) => {}
+                Ok(ReceiverCleanup::Acknowledged) => {
+                    // Confirmation admission is closed. A matching runtime ACK
+                    // settles this token permanently, even if a sibling or
+                    // durable release still needs another attempt.
+                    self.receivers.lock().unwrap().remove(&identity);
+                    self.confirmed_receivers.lock().unwrap().remove(&identity);
+                }
                 Ok(ReceiverCleanup::NoReceiver)
                     if receiver.confirmation == ReceiverConfirmationCustody::NeverSent =>
                 {
-                    revalidate_on_retry = true;
+                    // Keep only negative evidence in the retry set. Its
+                    // incumbent runtime must still be proven on the next attempt.
                 }
                 _ => {
                     return Err(super::OwnershipError::Unavailable(
@@ -258,11 +270,6 @@ impl Authority {
                     ));
                 }
             }
-        }
-        // A durable release retry must freshly prove a negative classification.
-        // An actual runtime acknowledgement remains final for the captured token.
-        if !revalidate_on_retry {
-            self.receivers.lock().unwrap().clear();
         }
         Ok(())
     }
