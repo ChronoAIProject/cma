@@ -120,12 +120,8 @@ impl InlineAgentLifecycle {
                 existing_agent_id: record.agent_id,
                 actor: record.input.actor,
             };
-            self.preflight_repository(
-                &caller.subject,
-                &mut input,
-                record.repository_commit.as_deref(),
-            )
-            .await?;
+            self.preflight_repository(&caller, &mut input, record.repository_commit.as_deref())
+                .await?;
             self.provision(&caller, input).await
         };
         tokio::pin!(work);

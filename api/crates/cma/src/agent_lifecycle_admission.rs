@@ -75,3 +75,24 @@ impl InlineAgentLifecycle {
         })
     }
 }
+
+pub(super) fn sandbox_admission_error(
+    error: SandboxServiceError,
+    profile: &SandboxProfileRef,
+) -> AgentLifecycleProvisioningError {
+    let services = match error {
+        SandboxServiceError::ConnectionsRequired { services } => services
+            .into_iter()
+            .map(|service| service.to_string())
+            .collect(),
+        SandboxServiceError::CredentialSetupRequired => vec!["cma-credentials".into()],
+        error => return sandbox_error(error),
+    };
+    AgentLifecycleProvisioningError::ConnectionRequired {
+        services,
+        connection_target: json!({
+            "type":"sandbox_profile",
+            "profile":{"id":profile.id.to_string(),"revision":profile.revision}
+        }),
+    }
+}

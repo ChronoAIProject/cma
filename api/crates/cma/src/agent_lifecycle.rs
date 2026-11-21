@@ -225,31 +225,8 @@ impl InlineAgentLifecycle {
                 success = admission_result.is_ok(),
                 "inline Agent lifecycle preparation phase completed"
             );
-            let sandbox = match admission_result {
-                Ok(value) => value,
-                Err(SandboxServiceError::ConnectionsRequired { services }) => {
-                    return Err(AgentLifecycleProvisioningError::ConnectionRequired {
-                        services: services
-                            .into_iter()
-                            .map(|service| service.to_string())
-                            .collect(),
-                        connection_target: json!({
-                            "type":"sandbox_profile",
-                            "profile":{"id":sandbox_profile.id.to_string(),"revision":sandbox_profile.revision}
-                        }),
-                    });
-                }
-                Err(SandboxServiceError::CredentialSetupRequired) => {
-                    return Err(AgentLifecycleProvisioningError::ConnectionRequired {
-                        services: vec!["cma-credentials".into()],
-                        connection_target: json!({
-                            "type":"sandbox_profile",
-                            "profile":{"id":sandbox_profile.id.to_string(),"revision":sandbox_profile.revision}
-                        }),
-                    });
-                }
-                Err(error) => return Err(sandbox_error(error)),
-            };
+            let sandbox = admission_result
+                .map_err(|error| admission::sandbox_admission_error(error, &sandbox_profile))?;
             self.operations
                 .mark_sandbox(&lease, sandbox.id.as_str())
                 .await
