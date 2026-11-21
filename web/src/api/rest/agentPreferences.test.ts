@@ -22,7 +22,11 @@ it('uses the public Agent preferences route and preserves retry identity and edi
       cache: 'no-store',
       credentials: 'same-origin',
       body: JSON.stringify(update),
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'same-request' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': 'same-request',
+        Prefer: 'cma-settings-reasons',
+      },
     }),
   );
 });
@@ -63,6 +67,7 @@ it('retains preference problem and retry metadata without displaying upstream pa
       new Response(
         JSON.stringify({
           code: 'agent_operation_in_flight',
+          settings_update_reason: 'stale_revision',
           detail: '<html>private upstream response</html>',
         }),
         { status: 409, headers: { 'Retry-After': '3' } },
@@ -76,6 +81,7 @@ it('retains preference problem and retry metadata without displaying upstream pa
     status: 409,
     code: 'agent_operation_in_flight',
     retryAfterMs: 3000,
+    extensions: { settings_update_reason: 'stale_revision' },
   });
   expect(error).toHaveProperty('message', 'Agent preferences could not be loaded or updated.');
 });

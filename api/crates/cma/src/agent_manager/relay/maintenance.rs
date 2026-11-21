@@ -89,7 +89,7 @@ impl Relay {
                 .await
                 .map_err(|_| ())?
                 .ok_or(())?;
-            return self.destination(id).await;
+            return self.destination(id).await.map_err(|_| ());
         }
         // Epoch zero is a signed claim invitation, never execution authority.
         let token = OwnershipToken {

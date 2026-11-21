@@ -76,7 +76,8 @@ fn fixture() -> (Arc<DocumentService>, Arc<Quota>, Arc<Blobs>) {
         blobs.clone(),
         true,
         Some(quota.clone()),
-    );
+    )
+    .with_directory(memory::recipient_directory(&["quota-reader"]));
     (service, quota, blobs)
 }
 

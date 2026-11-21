@@ -10,12 +10,7 @@ import { scopeValue } from './scope';
 import { SandboxBranch, type TreeExpansion } from './HierarchyTree';
 import { keyboardNavigation } from '../shell/treePresentation';
 import '../shell/Tree.css';
-import {
-  sandboxFilterEmpty,
-  sandboxNavigationGroup,
-  sandboxNavigationGroups,
-} from '../shell/navigationStatuses';
-import { sandboxSummary } from '../api/rest/hierarchy';
+import { sandboxFilterEmpty, sandboxNavigation } from '../shell/navigationStatuses';
 import { DeletionProgressList } from '../shell/DeletionProgressList';
 import { useTreeFocus } from '../shell/useTreeFocus';
 
@@ -85,12 +80,7 @@ function SandboxTreePage({
   const current = useAuthorizedRead(read);
   const focus = useTreeFocus();
   const items = current.state.status === 'ready' ? current.state.value.items : [];
-  const navigationGroups = new Map(
-    items.map((sandbox) => [
-      sandbox.id,
-      sandboxNavigationGroup(sandbox.access === 'shared' ? sandbox : sandboxSummary(sandbox)),
-    ]),
-  );
+  const { groups, deleting } = sandboxNavigation(items, (sandbox) => sandbox, statusFilter);
   const accessSummaries = useAccessSummaries(
     client,
     'sandbox',
@@ -111,7 +101,7 @@ function SandboxTreePage({
       ) : (
         <>
           <DeletionProgressList
-            sandboxes={items.filter((sandbox) => navigationGroups.get(sandbox.id) === 'deleting')}
+            sandboxes={deleting}
             onViewStatus={(sandboxId) => onNavigate({ kind: 'sandbox', sandboxId })}
           />
           {current.state.value.items.length === 0 ? (
@@ -124,18 +114,11 @@ function SandboxTreePage({
             </p>
           ) : (
             <div>
-              {sandboxNavigationGroups(statusFilter).map(({ id, label }) => (
+              {groups.map(({ id, label, items }) => (
                 <SandboxGroup
-                  key={label}
+                  key={id}
                   label={label}
-                  items={items.filter(
-                    (sandbox) =>
-                      navigationGroups.get(sandbox.id) !== 'hidden' &&
-                      navigationGroups.get(sandbox.id) !== 'deleting' &&
-                      (statusFilter === 'all'
-                        ? navigationGroups.get(sandbox.id) === id
-                        : sandbox.status === statusFilter),
-                  )}
+                  items={items}
                   client={client}
                   expansion={expansion}
                   route={route}

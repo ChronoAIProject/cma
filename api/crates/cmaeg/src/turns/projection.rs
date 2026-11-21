@@ -72,7 +72,7 @@ impl Projection {
             ResponsesEvent::McpCallInProgress { item_id } => self.tool(item_id, None, None)?,
             ResponsesEvent::McpCallCompleted { item_id } => self.tool(item_id, None, Some(true))?,
             ResponsesEvent::McpCallFailed { item_id } => self.tool(item_id, None, Some(false))?,
-            ResponsesEvent::Completed { response } => {
+            ResponsesEvent::Completed { response, .. } => {
                 let mut final_text = String::new();
                 if let Some(output) = response.get("output").and_then(|value| value.as_array()) {
                     for item in output {

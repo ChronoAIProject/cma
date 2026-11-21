@@ -54,6 +54,8 @@ module OmarchyCIContract
         "continue-on-error" => true, "with" => { "path" => CACHE_PATH, "key" => CACHE_KEY, "fail-on-cache-miss" => false } },
       { "name" => "Discard incomplete Omarchy cache restore", "if" => CACHE_MISS,
         "run" => 'rm -rf "$RUNNER_TEMP/omarchy-layer-cache"' },
+      { "name" => "Resolve OS security refresh key", "id" => "os-refresh",
+        "run" => 'python3 .github/scripts/os_refresh_key.py runtime-omarchy api/crates/layer4-runtime/Dockerfile "${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"' },
       { "name" => "Build current-source Omarchy image", "id" => "build",
         "uses" => "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8",
         "with" => { "context" => ".", "file" => "api/crates/layer4-runtime/Dockerfile", "target" => "omarchy",
@@ -64,7 +66,7 @@ module OmarchyCIContract
             RUNTIME_DESKTOP=1
             CHRONO_BUILD=${{ steps.identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
             SOURCE_DATE_EPOCH=0
           ARGS
             ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}

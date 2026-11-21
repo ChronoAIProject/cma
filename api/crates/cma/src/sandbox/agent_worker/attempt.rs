@@ -3,6 +3,7 @@
 #[cfg(test)]
 use super::super::lifecycle_failure::Phase;
 use super::super::lifecycle_failure::{LifecycleAttempt, LifecycleTaskFailure, Origin};
+use super::startup_holds::{Admission, ProbePermit};
 use super::*;
 
 impl AgentWorker {
@@ -29,6 +30,11 @@ impl AgentWorker {
         now: SystemTime,
         attempt: &LifecycleAttempt,
     ) -> Result<bool, LifecycleTaskFailure> {
+        let startup_probe = match self.startup_admission(id, None, true).await {
+            Admission::Proceed => None,
+            Admission::Probe(permit) => Some(permit),
+            Admission::Hold => return Ok(false),
+        };
         if let Some(coordinator) = &self.config.ownership {
             use super::super::ownership_retry_hint::{AdvisoryDecision, CapturedOwnershipProbe};
             if let Some(hints) = &self.config.ownership_retry_hints {
@@ -55,6 +61,7 @@ impl AgentWorker {
                     now,
                     attempt,
                     Some((&authority.token, &captured)),
+                    startup_probe.as_ref(),
                 )))
                 .await;
             if let (Some(observed), Some(failure)) = (
@@ -71,7 +78,7 @@ impl AgentWorker {
             }
             return result;
         }
-        Box::pin(self.run_claimed(id, now, attempt, None)).await
+        Box::pin(self.run_claimed(id, now, attempt, None, startup_probe.as_ref())).await
     }
 
     async fn run_claimed(
@@ -83,7 +90,16 @@ impl AgentWorker {
             &layer2_core::agent_ownership::OwnershipToken,
             &OnceLock<Arc<dyn super::super::ownership_retry_hint::CapturedOwnershipProbe>>,
         )>,
+        startup_probe: Option<&ProbePermit<'_>>,
     ) -> Result<bool, LifecycleTaskFailure> {
+        if observation.is_some()
+            && matches!(
+                self.startup_admission(id, startup_probe, false).await,
+                Admission::Hold
+            )
+        {
+            return Ok(false);
+        }
         let started = tokio::time::Instant::now();
         let Some(agent) = self
             .dependencies

@@ -4,7 +4,103 @@ import { SkeletonRows } from '../ui/Skeleton';
 import { Button } from '../ui/Button';
 import { PageHeader } from '../ui/PageHeader';
 import { Alert } from '../ui/Alert';
+import { Presence } from '../ui/Presence';
+import { IconCloseOutline16 } from '../ui/icons';
+import { ConnectionWizard } from '../connections/ConnectionWizard';
+import { isConnectionReport, type ConnectionReport } from '../connections/client';
+import type { useConnectionGate } from '../connections/useConnectionGate';
 import type { AgentController } from './controller';
+
+export function AgentConnectionSetup({
+  agentId,
+  owner,
+  explicit,
+  gate,
+  onReady,
+  onCancel,
+}: {
+  readonly agentId: string;
+  readonly owner?: string;
+  readonly explicit: boolean;
+  readonly gate: ReturnType<typeof useConnectionGate>;
+  readonly onReady: (report: ConnectionReport) => void;
+  readonly onCancel: () => void;
+}) {
+  if (gate.pending) return null;
+  const target = { type: 'agent', id: agentId } as const;
+  if (!explicit)
+    return (
+      <ConnectionWizard
+        target={target}
+        presentation="dialog"
+        expectedOwner={owner}
+        onReady={onReady}
+        onCancel={onCancel}
+      />
+    );
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={() =>
+        gate.run(
+          target,
+          (report) => {
+            if (isConnectionReport(report) && report.ready && report.owner === owner)
+              onReady(report);
+          },
+          false,
+          owner,
+        )
+      }
+    >
+      Connect accounts
+    </Button>
+  );
+}
+
+export function AgentSurfaceIssue({
+  issue,
+  historyIncomplete,
+  onRetry,
+  onDismiss,
+}: {
+  readonly issue?: string;
+  readonly historyIncomplete: boolean;
+  readonly onRetry?: () => void;
+  readonly onDismiss: () => void;
+}) {
+  return (
+    <Presence>
+      {issue === undefined ? null : historyIncomplete ? (
+        <p className="agent-surface__history-notice" role="status">
+          {issue}
+        </p>
+      ) : (
+        <Alert
+          tone="error"
+          actions={
+            <>
+              {onRetry ? (
+                <Button size="sm" onClick={onRetry}>
+                  Retry connections
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                icon={<IconCloseOutline16 />}
+                aria-label="Dismiss error"
+                onClick={onDismiss}
+              />
+            </>
+          }
+        >
+          {issue}
+        </Alert>
+      )}
+    </Presence>
+  );
+}
 
 export function AgentCommandNotices({
   controller,

@@ -19,6 +19,7 @@ const conflict = () =>
     409,
     undefined,
     'agent_operation_in_flight',
+    'stale_revision',
   );
 const read = () => vi.fn().mockResolvedValue(original);
 function form(

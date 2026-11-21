@@ -228,6 +228,109 @@ describe('native warm pool operations', () => {
     expect(screen.queryByText('Current default configuration')).not.toBeInTheDocument();
   });
 
+  it('lists the seeded shared desktop pool on its own with a target to resize', async () => {
+    const client = operatorClient();
+    const user = userEvent.setup();
+    const desktopImage = 'registry.example/desktop-runtime@sha256:' + 'e'.repeat(64);
+    const desktop = {
+      ...warmPool,
+      id: 'desktop',
+      machine: true,
+      image: desktopImage,
+      config_sha256: 'e'.repeat(64),
+      cpu_millis: 2000,
+      memory_mib: 8192,
+    };
+    client.admin.listWarmPools.mockResolvedValue({
+      items: [warmPool, desktop],
+      default_cpu_millis: warmPool.cpu_millis,
+      default_memory_mib: warmPool.memory_mib,
+      default_config_sha256: warmPool.config_sha256,
+      default_image: warmPool.image,
+      machine_image: desktopImage,
+      available: true,
+    });
+    client.admin.resizeWarmPool.mockResolvedValue({ ...desktop, revision: 2, target_replicas: 5 });
+    render(<WarmPools client={client} />);
+    const table = await screen.findByRole('table', { name: 'Shared desktop pool' });
+    const reference = screen.getByText('Shared desktop pool').closest('.warm-pool-image')!;
+    expect(within(reference as HTMLElement).getByText(desktopImage)).toBeVisible();
+    expect(
+      within(table)
+        .getAllByRole('columnheader')
+        .map((column) => column.textContent),
+    ).toEqual(['Size', 'Status', 'Desired', 'Ready', 'Pending', 'Target', 'Actions']);
+    const row = within(table).getByRole('row', { name: 'Warm pool 2000 millicores / 8192 MiB' });
+    expect(
+      within(screen.getByRole('table', { name: 'Current runtime pools' })).getAllByRole('row', {
+        name: /Warm pool/,
+      }),
+    ).toHaveLength(1);
+    expect(screen.queryByText(/Previous runtime pools/)).not.toBeInTheDocument();
+    // Only the current Agent runtime is configured from the board; this pool is seeded.
+    expect(screen.getAllByText('Configure a warm pool')).toHaveLength(1);
+    expect(within(row).getByRole('button', { name: 'Disable pool' })).toBeEnabled();
+    fireEvent.change(within(row).getByLabelText('Ready Sandbox target'), {
+      target: { value: '5' },
+    });
+    await user.click(within(row).getByRole('button', { name: 'Update target' }));
+    expect(client.admin.resizeWarmPool).toHaveBeenCalledWith('desktop', {
+      expected_revision: 1,
+      target_replicas: 5,
+    });
+    await screen.findByText('Target saved.');
+    const resized = within(screen.getByRole('table', { name: 'Shared desktop pool' })).getByRole(
+      'row',
+      { name: 'Warm pool 2000 millicores / 8192 MiB' },
+    );
+    expect(cell(resized, 'Desired')).toHaveTextContent('5');
+    expect(client.admin.configureWarmPool).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { machine_image: 'registry.example/desktop-runtime@sha256:' + 'f'.repeat(64) },
+    { machine_image: null },
+  ])('keeps a desktop pool for another image under previous runtime pools: %j', async (config) => {
+    const client = operatorClient();
+    const user = userEvent.setup();
+    const oldImage = 'registry.example/desktop-runtime@sha256:' + 'e'.repeat(64);
+    client.admin.listWarmPools.mockResolvedValue({
+      items: [
+        warmPool,
+        {
+          ...warmPool,
+          id: 'old-desktop',
+          machine: true,
+          image: oldImage,
+          target_replicas: 0,
+          ready_replicas: 0,
+          status: 'disabled',
+        },
+      ],
+      default_cpu_millis: warmPool.cpu_millis,
+      default_memory_mib: warmPool.memory_mib,
+      default_config_sha256: warmPool.config_sha256,
+      default_image: warmPool.image,
+      available: true,
+      ...config,
+    });
+    render(<WarmPools client={client} />);
+    const summary = await screen.findByText('Previous runtime pools (1)');
+    await user.click(summary);
+    const previous = within(
+      screen.getByRole('table', { name: 'Previous runtime pools' }),
+    ).getByRole('row', { name: /Warm pool/ });
+    expect(previous).toHaveTextContent(oldImage);
+    expect(within(previous).queryByRole('button', { name: 'Update target' })).toBeNull();
+    if (config.machine_image) {
+      expect(
+        await screen.findByRole('cell', { name: /No shared desktop pool is recorded/ }),
+      ).toBeVisible();
+    } else {
+      expect(screen.queryByRole('table', { name: 'Shared desktop pool' })).toBeNull();
+    }
+  });
+
   it('stages resources while infrastructure is unavailable and replays an uncertain create exactly', async () => {
     const client = operatorClient();
     const user = userEvent.setup();

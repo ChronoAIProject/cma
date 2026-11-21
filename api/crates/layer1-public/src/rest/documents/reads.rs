@@ -14,6 +14,11 @@ pub(crate) struct PageParams {
 pub(crate) struct SourceParams {
     revision: Option<u64>,
 }
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RecipientQuery {
+    q: String,
+}
 
 #[utoipa::path(get,path="/api/v1/documents",tag="documents",params(("limit"=Option<u16>,Query),("cursor"=Option<String>,Query),("scope"=Option<String>,Query),("q"=Option<String>,Query)),responses((status=200,body=DocumentPage),(status=400,description="Invalid document request, JSON or idempotency key",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=401,description="Authenticated subject required",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=404,description="Document unavailable to this caller",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=503,description="Document storage unavailable",body=super::super::ProblemDocument,content_type="application/problem+json")))]
 pub(crate) async fn list(
@@ -87,6 +92,32 @@ pub(crate) async fn shares(
     Path(id): Path<String>,
 ) -> Result<Json<Vec<core::DocumentShare>>, DocumentProblem> {
     Ok(Json(service.shares(&caller, &id).await?))
+}
+/// Resolve an exact subject first. Other searches return a bounded list of matches.
+#[utoipa::path(
+    get,
+    path = "/api/v1/documents/{id}/share-recipients",
+    tag = "documents",
+    params(("id" = String, Path), ("q" = String, Query)),
+    responses(
+        (status = 200, body = [DocumentShareRecipient]),
+        (status = 400, description = "Invalid search query", body = super::super::ProblemDocument, content_type = "application/problem+json"),
+        (status = 401, description = "Authenticated subject required", body = super::super::ProblemDocument, content_type = "application/problem+json"),
+        (status = 403, description = "Owner account deletion is in progress", body = super::super::ProblemDocument, content_type = "application/problem+json"),
+        (status = 404, description = "Document unavailable to this caller", body = super::super::ProblemDocument, content_type = "application/problem+json"),
+        (status = 503, description = "Document storage or recipient directory unavailable", body = super::super::ProblemDocument, content_type = "application/problem+json")
+    )
+)]
+pub(crate) async fn share_recipients(
+    State(service): State<Arc<DocumentService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    Path(id): Path<String>,
+    query: Result<Query<RecipientQuery>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Vec<core::DocumentShareRecipient>>, DocumentProblem> {
+    let Query(query) = query.map_err(|_| DocumentProblem(DocumentError::Invalid))?;
+    Ok(Json(
+        service.share_recipients(&caller, &id, &query.q).await?,
+    ))
 }
 #[utoipa::path(get,path="/api/v1/documents/{id}/share-links",tag="documents",params(("id"=String,Path)),responses((status=200,body=[DocumentLink]),(status=401,description="Authenticated subject required",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=404,description="Document unavailable to this caller",body=super::super::ProblemDocument,content_type="application/problem+json"),(status=503,description="Document storage unavailable",body=super::super::ProblemDocument,content_type="application/problem+json")))]
 pub(crate) async fn links(

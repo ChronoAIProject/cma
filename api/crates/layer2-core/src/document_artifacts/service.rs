@@ -5,6 +5,7 @@ use std::time::Duration;
 
 pub struct DocumentService {
     pub(super) standing: Arc<dyn crate::account_deletion::AccountStanding>,
+    pub(super) directory: Option<Arc<crate::UserDirectory>>,
     pub(super) store: Arc<dyn DocumentStore>,
     pub(super) blobs: Arc<dyn DocumentBlobStore>,
     pub(super) revocation_reserve_enabled: bool,
@@ -32,6 +33,7 @@ impl DocumentService {
             store,
             blobs,
             standing: Arc::new(crate::account_deletion::AvailableAccounts),
+            directory: None,
             revocation_reserve_enabled,
             quota,
         })

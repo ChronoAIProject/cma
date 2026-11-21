@@ -118,10 +118,9 @@ impl AgentSandboxBackend {
         request: &ProviderSandboxRequest,
     ) -> Result<()> {
         let enabled = self.client.runtime_startup_breaker_enabled();
-        let sandbox_id = enabled
+        let identity = enabled
             .then(|| super::super::deployment::provider_request_identity(request).ok())
-            .flatten()
-            .map(|identity| identity.sandbox_id);
+            .flatten();
         let incarnation = enabled
             .then(|| crate::agent_sandbox::startup_incarnation(pod))
             .flatten();
@@ -144,11 +143,12 @@ impl AgentSandboxBackend {
         )
         .await?;
         if assigned.is_some() {
-            if let (Some(incarnation), Some(sandbox_id)) = (incarnation, sandbox_id) {
+            if let (Some(incarnation), Some(identity)) = (incarnation, identity) {
                 self.startup_breaker.delivered(
                     handle,
                     incarnation,
-                    sandbox_id,
+                    identity.sandbox_id,
+                    identity.generation,
                     std::time::SystemTime::now(),
                 );
             }

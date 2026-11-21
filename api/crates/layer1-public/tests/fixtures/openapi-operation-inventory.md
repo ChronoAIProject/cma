@@ -864,6 +864,7 @@ Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_
 | `GET /api/v1/documents/{id}/source` | Read current or specific source revision. |
 | `GET /api/v1/documents/{id}/revisions` | Page immutable source revision metadata. |
 | `GET /api/v1/documents/{id}/shares` | Owner direct recipient inventory. |
+| `GET /api/v1/documents/{id}/share-recipients` | Owner search for eligible direct recipients. |
 | `PUT /api/v1/documents/{id}/shares/{subject}` | Grant/update read or comment access. |
 | `DELETE /api/v1/documents/{id}/shares/{subject}` | Revoke direct recipient access. |
 | `GET /api/v1/documents/{id}/share-links` | Owner link metadata, never secrets. |
