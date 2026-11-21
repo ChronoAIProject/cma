@@ -3,20 +3,6 @@ use super::{tests::*, *};
 use mongodb::bson::{doc, Bson, Document};
 use sha2::{Digest, Sha256};
 
-fn publisher_fixture(collection: &str) -> bool {
-    matches!(
-        collection,
-        "agent_profiles"
-            | "agent_profile_revisions"
-            | "workspace_profiles"
-            | "workspace_profile_revisions"
-            | "sandbox_profiles"
-            | "sandbox_profile_revisions"
-            | "trigger_definitions"
-            | "trigger_definition_revisions"
-    )
-}
-
 fn fixtures(subject: &str, suffix: &str) -> Vec<(&'static str, Document)> {
     let id = format!("row_{suffix}");
     let sandbox = format!("sbx_{suffix}");
@@ -216,10 +202,7 @@ async fn audited_owner_and_linked_fixtures_are_erased_without_touching_other_own
     let db = database().await;
     sandbox(&db, "acct:a", "sbx_a").await;
     sandbox(&db, "acct:b", "sbx_b").await;
-    let owned = fixtures("acct:a", "a")
-        .into_iter()
-        .filter(|(collection, _)| !publisher_fixture(collection))
-        .collect::<Vec<_>>();
+    let owned = fixtures("acct:a", "a");
     let other = fixtures("acct:b", "b");
     let mut expected = BTreeMap::<String, u64>::new();
     expected.insert("sandboxes".into(), 1);

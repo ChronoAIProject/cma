@@ -17,6 +17,9 @@ pub(super) async fn workspace_references(
     parent: &WorkspaceProfile,
     session: &mut ClientSession,
 ) -> Result<(), PublishError> {
+    let database = store
+        .client
+        .database(&store.workspace_profiles.namespace().db);
     let mut inherited = InheritedReferences::default();
     if let Some(source) = &parent.forked_from {
         let document = find(
@@ -78,6 +81,20 @@ pub(super) async fn workspace_references(
         let revision =
             super::agent_profiles::read_revision(&document).map_err(PublishError::Domain)?;
         verify_agent_revision(reference, &revision).map_err(PublishError::Domain)?;
+        if !super::profile_pin_admission::agent(
+            &database,
+            reference.id.as_str(),
+            reference.revision,
+            Some(&revision.digest),
+            session,
+        )
+        .await
+        .map_err(PublishError::Driver)?
+        {
+            return Err(PublishError::Domain(
+                ProfileStoreError::ReferenceUnavailable,
+            ));
+        }
     }
     Ok(())
 }
@@ -87,6 +104,9 @@ pub(super) async fn sandbox_references(
     parent: &SandboxProfile,
     session: &mut ClientSession,
 ) -> Result<(), PublishError> {
+    let database = store
+        .client
+        .database(&store.sandbox_profiles.namespace().db);
     let mut inherited = InheritedReferences::default();
     if let Some(source) = &parent.forked_from {
         let document = find(
@@ -150,6 +170,20 @@ pub(super) async fn sandbox_references(
         let revision =
             super::workspace_profiles::read_revision(&document).map_err(PublishError::Domain)?;
         verify_workspace_revision(reference, &revision).map_err(PublishError::Domain)?;
+        if !super::profile_pin_admission::workspace(
+            &database,
+            reference.id.as_str(),
+            reference.revision,
+            Some(&revision.digest),
+            session,
+        )
+        .await
+        .map_err(PublishError::Driver)?
+        {
+            return Err(PublishError::Domain(
+                ProfileStoreError::ReferenceUnavailable,
+            ));
+        }
         if !names.insert(revision.content.name) {
             return Err(PublishError::Domain(
                 ProfileError::new("duplicate_workspace_name", "workspace_profiles").into(),

@@ -5062,7 +5062,7 @@
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-retired",
           "title": "trigger retired",
           "status": 409,
-          "detail": "This Trigger is retired and no longer accepts launches.",
+          "detail": "This Trigger is retired and no longer accepts launches. Choose another Trigger to start a new Launch.",
           "code": "trigger_retired"
         },
         "bodyKind": "json"
