@@ -181,17 +181,19 @@ def read_database(path):
 
 
 def fetch(urls, target, size, digest, attempts=10, delay=5, runner=subprocess.run, sleep=time.sleep, hosts=None):
-    """Download into target, resuming a partial file on every retry, and fail closed on any mismatch."""
+    """Download into target, resuming a partial file only from the URL that wrote it, and fail closed on any mismatch."""
     target = Path(target)
     hosts = hosts or Hosts()
-    part = target.with_name(target.name + ".part")
+    # One partial file per URL, so one host's bytes are never continued from another host.
+    parts = {url: target.with_name(f"{target.name}.{hashlib.sha256(url.encode()).hexdigest()[:12]}.part") for url in urls}
     failure = "no attempt"
     for attempt in range(attempts):
         for url in hosts.order(urls):
+            part = parts[url]
             if part.exists() and part.stat().st_size > size:
                 part.unlink()
             if not (part.exists() and part.stat().st_size == size):
-                # Each curl run resumes from the partial file's current size.
+                # Each curl run resumes from this URL's partial file.
                 # curl's own --retry would truncate back to its start offset.
                 arguments = ["curl", "--fail", "--location", "--silent", "--show-error", "--connect-timeout", "20",
                              "--speed-limit", "1024", "--speed-time", "30", "--retry", "0", "--continue-at", "-",
@@ -199,18 +201,23 @@ def fetch(urls, target, size, digest, attempts=10, delay=5, runner=subprocess.ru
                 if url.startswith("https://"):
                     arguments += ["--proto", "=https", "--proto-redir", "=https"]
                 result = runner(arguments + [url], capture_output=True, text=True, check=False)
-                hosts.record(url, result.returncode != 0)
                 if result.returncode != 0:
+                    hosts.record(url, True)
                     failure = f"{url}: curl exit {result.returncode}"
                     if result.returncode in (33, 36):  # the server cannot resume this partial file
                         part.unlink(missing_ok=True)
                     continue
             if part.exists() and part.stat().st_size == size and sha256(part) == digest:
+                hosts.record(url, False)
                 part.replace(target)
+                for other in parts.values():
+                    other.unlink(missing_ok=True)
                 return attempt
+            # The host completed a download of other bytes. That is a failure of
+            # this host, and the next try of this URL starts the file afresh.
+            hosts.record(url, True)
             failure = f"{url}: content does not match the lock"
-            if part.exists() and part.stat().st_size >= size:
-                part.unlink()
+            part.unlink(missing_ok=True)
         if attempt + 1 < attempts:
             sleep(delay)
     raise BundleError(f"{target.name}: {failure}")

@@ -66,6 +66,16 @@ def send(handler, status, body, headers=()):
     handler.wfile.write(body)
 
 
+def truncated(handler, payload, length):
+    """Announce the whole payload, send only its first length bytes, then reset the connection."""
+    handler.send_response(200)
+    handler.send_header("Content-Length", str(len(payload)))
+    handler.end_headers()
+    handler.wfile.write(payload[:length])
+    handler.wfile.flush()
+    handler.connection.shutdown(2)
+
+
 def ranged(payload):
     def respond(handler, _):
         start = int(handler.headers["Range"].split("=")[1].rstrip("-")) if handler.headers.get("Range") else 0
@@ -128,7 +138,7 @@ class FetchTests(unittest.TestCase):
         with self.assertRaisesRegex(BUNDLE.BundleError, "does not match the lock"):
             BUNDLE.fetch([server.url + "/file.pkg.tar.zst"], self.target, len(self.payload), digest(self.payload),
                          attempts=3, sleep=lambda _: None)
-        self.assertFalse(self.target.exists())
+        self.assertEqual(list(self.target.parent.iterdir()), [])
         self.assertEqual(len(server.requests), 3)
 
     def test_reset_connection_resumes_from_the_partial_file(self):
@@ -136,13 +146,7 @@ class FetchTests(unittest.TestCase):
 
         def respond(handler, number):
             if number == 1:
-                handler.send_response(200)
-                handler.send_header("Content-Length", str(len(self.payload)))
-                handler.end_headers()
-                handler.wfile.write(self.payload[:half])
-                handler.wfile.flush()
-                handler.connection.shutdown(2)
-                return
+                return truncated(handler, self.payload, half)
             ranged(self.payload)(handler, number)
 
         server = self.serve(respond)
@@ -153,6 +157,31 @@ class FetchTests(unittest.TestCase):
         self.assertNotIn("Range", server.requests[0][1])
         self.assertEqual(server.requests[1][1].get("Range"), f"bytes={half}-")
         self.assertEqual(sleeps, [5])
+
+    def test_a_host_serving_other_complete_bytes_fails_and_the_fallback_starts_afresh(self):
+        # The first host serves a shorter, different file in full, as the archive does for a re-released package.
+        other = self.serve(lambda h, _: send(h, 200, os.urandom(len(self.payload) // 2)))
+        good = self.serve(ranged(self.payload))
+        hosts = BUNDLE.Hosts()
+        urls = [other.url.replace("127.0.0.1", "localhost") + "/file.pkg.tar.zst", good.url + "/file.pkg.tar.zst"]
+        attempt = BUNDLE.fetch(urls, self.target, len(self.payload), digest(self.payload), attempts=3,
+                               sleep=lambda _: None, hosts=hosts)
+        self.assertEqual((attempt, self.target.read_bytes()), (0, self.payload))
+        self.assertEqual(len(other.requests), 1)
+        self.assertEqual([headers.get("Range") for _, headers in good.requests], [None])
+        self.assertEqual(hosts.failures, {"localhost": 1, "127.0.0.1": 0})
+        self.assertEqual(hosts.order(urls), urls[::-1])
+        self.assertEqual(list(self.target.parent.iterdir()), [self.target])
+
+    def test_a_partial_file_is_never_continued_from_another_host(self):
+        broken = self.serve(lambda h, _: truncated(h, self.payload, len(self.payload) // 2))
+        good = self.serve(ranged(self.payload))
+        urls = [broken.url.replace("127.0.0.1", "localhost") + "/file.pkg.tar.zst", good.url + "/file.pkg.tar.zst"]
+        BUNDLE.fetch(urls, self.target, len(self.payload), digest(self.payload), attempts=3, sleep=lambda _: None)
+        self.assertEqual(self.target.read_bytes(), self.payload)
+        self.assertEqual(len(broken.requests), 1)
+        self.assertEqual([headers.get("Range") for _, headers in good.requests], [None])
+        self.assertEqual(list(self.target.parent.iterdir()), [self.target])
 
     def test_refused_connection_is_retried_until_the_server_answers(self):
         with socket.socket() as probe:  # a free port with nothing listening: connections are refused
