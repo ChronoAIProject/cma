@@ -1,4 +1,5 @@
 use super::{
+    execution_receipt::{self, ExecutionReceiptVerifier},
     outcomes::{DeliveryCommand, TurnOutcome},
     projection::Projection,
 };
@@ -20,9 +21,11 @@ pub(super) async fn consume(
     provider: &str,
     delivery: &dyn DeliverySink,
     activity: &dyn super::observer::ActivityObserver,
+    execution_verifier: Option<&dyn ExecutionReceiptVerifier>,
     admitted: &mut Option<oneshot::Sender<LaunchOutcome>>,
 ) -> Result<&'static str, &'static str> {
     let mut acceptance_pending = true;
+    let mut admitted_response = None;
     let mut projection = Projection::default();
     let mut trace = None;
     loop {
@@ -31,6 +34,9 @@ pub(super) async fn consume(
             accepted = &mut stream.accepted, if acceptance_pending => {
                 acceptance_pending = false;
                 let accepted = accepted.map_err(|_| "stream_lost")?;
+                if execution_verifier.is_some() {
+                    admitted_response = Some(accepted.response_id.clone());
+                }
                 adopt_trace(&stream, &turn, &mut trace);
                 metrics::histogram!(crate::telemetry::names::PROVIDER_ACCEPT,
                     crate::telemetry::names::PROVIDER => provider.to_owned())
@@ -53,13 +59,21 @@ pub(super) async fn consume(
                     activity.checkpoint(&turn.channel.definition.record_id,
                         &turn.activity.event_id, change).await;
                 }
+                let execution = execution_receipt::observe(
+                    execution_verifier, &turn, provider, admitted_response.as_deref(), &event,
+                );
                 if let Some(outcome) = projection.event(event)? {
                     let terminal = outcome.terminal();
                     let kind = outcome.kind();
                     if terminal && acceptance_pending {
                         refuse(admitted,ProblemCode::ProviderUnavailable,"provider stream ended before acceptance");
                     }
-                    send(delivery,&turn,outcome).await?;
+                    let delivery = send(delivery,&turn,outcome).await;
+                    if let Some(change) = execution {
+                        activity.checkpoint(&turn.channel.definition.record_id,
+                            &turn.activity.event_id, change).await;
+                    }
+                    delivery?;
                     if terminal {
                         if let Some(trace) = trace {trace.finish(Outcome::Streamed);}
                         return Ok(kind);

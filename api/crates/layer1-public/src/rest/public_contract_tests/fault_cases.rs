@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use layer2_core::{
-    Authorization, Capability, OperationClaim, OperationReservation, OperationStore, StoreError,
+    sandbox::AgentStatus, Authorization, Capability, OperationClaim, OperationReservation,
+    OperationStore, StoreError,
 };
 
 use super::super::{
@@ -89,11 +90,13 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
                 Capability::DeleteOwnSandbox,
             ],
         ),
-        "agents" => (
-            agents::fixture_with_operations(fault).await.router,
-            "owner-a",
-            vec![Capability::UseOwnSandboxes],
-        ),
+        "agents" => {
+            let fixture = agents::fixture_with_operations(fault).await;
+            // A ledger fault is observable only after establishing current access.
+            let agent = agents::seeded_agent("agt_contract", AgentStatus::Ready, 2, None);
+            agents::insert_agent(&fixture.store, agent, vec![]).await;
+            (fixture.router, "owner-a", vec![Capability::UseOwnSandboxes])
+        }
         _ => return None,
     };
     Some(Scenario {

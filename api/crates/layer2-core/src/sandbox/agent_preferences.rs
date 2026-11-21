@@ -145,7 +145,7 @@ impl AgentOperationService {
                 update.expected_revision() != current.conversation.preferences.revision
             })
         {
-            return Err(AgentOperationError::Conflict);
+            return Err(AgentOperationError::PreferencesRevisionMismatch);
         }
         Ok(())
     }
@@ -161,7 +161,7 @@ impl AgentOperationService {
         for _ in 0..super::agent_operation_service::MAX_OPERATION_COMMIT_RETRIES {
             let current = self.owned_agent(caller, id).await?;
             if current.conversation.preferences.revision != update.expected_revision() {
-                return Err(AgentOperationError::Conflict);
+                return Err(AgentOperationError::PreferencesRevisionMismatch);
             }
             match &update {
                 AgentPreferencesUpdate::SystemPrompt { system_prompt, .. } => {
@@ -212,7 +212,7 @@ impl AgentOperationService {
                 }
             }
         }
-        Err(AgentOperationError::Conflict)
+        Err(AgentOperationError::ConfigurationAdmissionConflict)
     }
 }
 

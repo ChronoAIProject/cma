@@ -85,7 +85,7 @@ describe.each(['owner', 'operations'] as const)('%s range validation', (surface)
       });
     else {
       await userEvent.click(screen.getByRole('button', { name: 'Usage Sandbox status' }));
-      await userEvent.click(screen.getByRole('menuitemradio', { name: 'active' }));
+      await userEvent.click(screen.getByRole('menuitemradio', { name: 'Live' }));
     }
     expect(screen.getByRole('alert')).toHaveTextContent(rangeError);
     await submit();

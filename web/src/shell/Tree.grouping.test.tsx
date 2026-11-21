@@ -142,6 +142,57 @@ it('moves lifecycle transitions between groups without losing the selected route
   expect(screen.getByRole('button', { name: 'View status for Atlas' })).toBeVisible();
 });
 
+it('uses the current rotation for the label and filter while keeping Live and deletion disjoint', () => {
+  const active = sandboxFixture();
+  const rotation = {
+    ...active.lifecycle!,
+    operation: {
+      purpose: 'image_rotation' as const,
+      phase: 'publish_active',
+      startedAt: active.updatedAt,
+    },
+  };
+  const historical = {
+    ...active.lifecycle!,
+    result: { state: 'failed' as const, continuing: false, actions: ['observe' as const] },
+  };
+  const row = (name: string, status: SandboxStatus, lifecycle = active.lifecycle) => ({
+    sandbox: { ...active, id: name, name, status, lifecycle },
+    workspaces: [],
+  });
+  const items = [
+    row('Running', 'active', historical),
+    row('Updating before publish', 'active', rotation),
+    row('Updating after publish starts', 'rotating'),
+    row('Refreshing access', 'credential_rotating'),
+    row('Failed', 'failed', rotation),
+    row('Deleting', 'retiring', rotation),
+    row('Locally deleting', 'active', rotation),
+    row('Previously deleted', 'retired', rotation),
+  ];
+  const input = { ...props, items, deletingSandboxIds: new Set(['Locally deleting']) };
+  const view = render(<Tree {...input} />);
+  const liveInAll = within(screen.getByRole('tree', { name: 'Live sandboxes' })).getAllByRole(
+    'treeitem',
+  );
+  expect(liveInAll).toHaveLength(1);
+  expect(liveInAll[0]).toHaveTextContent('Running');
+  view.rerender(<Tree {...input} statusFilter="active" />);
+  expect(screen.getAllByRole('treeitem')).toHaveLength(1);
+  expect(screen.getByRole('treeitem')).toHaveTextContent('Running');
+  view.rerender(<Tree {...input} statusFilter="rotating" />);
+  const updating = screen.getByRole('region', { name: 'Updating runtime sandboxes' });
+  expect(updating.querySelector('.resource-tree__count')).toHaveTextContent('2');
+  expect(within(updating).getAllByRole('treeitem')).toHaveLength(2);
+  for (const item of within(updating).getAllByRole('treeitem')) {
+    expect(item).toHaveTextContent('Updating runtime');
+  }
+  expect(screen.getByText('Deletion progress (2)')).toBeVisible();
+  view.rerender(<Tree {...input} statusFilter="credential_rotating" />);
+  expect(screen.getByRole('treeitem')).toHaveTextContent('Refreshing access');
+  expect(screen.getByRole('treeitem')).toHaveTextContent('Updating access');
+});
+
 it('remembers each new group collapse independently across filters and remounts', async () => {
   const actor = userEvent.setup();
   const items = ['failed', 'pausing'].map((status, i) => ({
