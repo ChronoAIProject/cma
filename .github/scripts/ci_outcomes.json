@@ -843,6 +843,12 @@
           "cause": "transient",
           "next": "Re-run the deployment after the current rollout settles."
         },
+        "apply-abandoned": {
+          "title": "Stored generation never applied",
+          "meaning": "chrono-cd stored a new generation of one of the staging apps this release depends on or deploys but never applied it: it stays pending with no reconcile result long after any apply ends. No rollout is running, so a re-run refuses again.",
+          "cause": "operator",
+          "next": "An operator finds the app left pending, runs the deployment service's admin reconcile for that app (see the cma-infra staging README) or re-submits the same spec, waits for ready, then re-runs."
+        },
         "transport": {
           "title": "Deployment service unreachable",
           "meaning": "The controller could not reach the deployment service.",
@@ -1142,6 +1148,12 @@
           "meaning": "A readiness check outside the named rollout and pod checks failed, such as the Event Gateway's readiness or startup logs.",
           "cause": "unknown",
           "next": "Check the released components' staging pods and startup logs; if this change caused it, fix it and push."
+        },
+        "apply-abandoned": {
+          "title": "Stored generation never applied",
+          "meaning": "chrono-cd stored this deployment's new generation of an app but never applied it: the app stays pending with no reconcile result long after any apply ends, so staging may still run the earlier spec.",
+          "cause": "operator",
+          "next": "Run the deployment service's admin reconcile for the app left pending (see the cma-infra staging README) or re-submit the same spec. That applies this run's unverified write, so then re-run this deployment so it is verified."
         },
         "transport": {
           "title": "Deployment service unreachable",
