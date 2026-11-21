@@ -7,7 +7,7 @@ from unittest.mock import Mock
 
 from staging_cd_allocate import allocate_queue
 from staging_cd_allocation_fixture import AllocationServer
-from staging_cd_allocation_io import ALLOCATION_SECONDS, AllocationIO
+from staging_cd_allocation_io import ALLOCATION_SECONDS, PUSH_RESERVE_SECONDS, SETTLE_WAITS, AllocationIO
 from staging_cd_allocation_snapshot import AllocationSnapshot, SnapshotAPI
 from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
@@ -155,12 +155,23 @@ class AllocationSnapshotTests(unittest.TestCase):
         self.assertFalse(any(args[1] == "push" for args in server.commands))
 
     def test_timed_out_atomic_push_settles_only_the_exact_batch_without_replay(self):
-        for damaged in (None, "missing", "wrong"):
+        # "late" is the hosted failure of run 44948149418: the client timed out,
+        # then the server committed the whole atomic push a few seconds later.
+        for damaged in (None, "late", "missing", "wrong"):
             server, store = self.fixture(14, reserved=False, components=tuple(DEPLOYABLES))
+            held = {}
             def runner(args, **kwargs):
+                if args[1] == "ls-remote" and held and len(server.commands) >= held["visible_after"]:
+                    server.refs.update(held.pop("refs"))
                 result = server.command(args, **kwargs)
                 if args[1] == "push":
                     claim = next(name for name in server.refs if name.startswith("cma-allocation/"))
+                    if damaged == "late":
+                        pushed = {name: oid for name, oid in server.refs.items()
+                                  if name.startswith("cma-allocation/") or "/pending/" in name}
+                        for name in pushed:
+                            del server.refs[name]
+                        held.update(refs=pushed, visible_after=len(server.commands) + 3)
                     if damaged == "missing":
                         del server.refs[claim]
                     if damaged == "wrong":
@@ -168,16 +179,43 @@ class AllocationSnapshotTests(unittest.TestCase):
                     raise subprocess.TimeoutExpired("git", kwargs["timeout"])
                 return result
             store.io.runner = runner
+            store.io.sleep = Mock()
             with self.subTest(damaged=damaged):
-                if damaged:
+                if damaged in ("missing", "wrong"):
                     with self.assertRaisesRegex(Refusal, "settlement is uncertain"):
                         self.allocate(server, store)
                     self.assertEqual(store.list(), [])
+                    waits = [call.args[0] for call in store.io.sleep.call_args_list]
+                    # A ref that is still absent is waited for within bounds; a
+                    # ref holding another object is refused without waiting.
+                    self.assertEqual(waits, list(SETTLE_WAITS) if damaged == "missing" else [])
                 else:
                     self.allocate(server, store)
                     self.assertEqual(len(store.list()), 5)
                     self.assertEqual(len([p for p in server.calls if p.startswith("git/ref/tags/")]), 5)
+                    if damaged == "late":
+                        self.assertTrue(store.io.sleep.called)
                 self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
+
+    def test_settlement_never_waits_past_the_allocation_deadline(self):
+        server, store = self.fixture(14, reserved=False, components=tuple(DEPLOYABLES))
+        def runner(args, **kwargs):
+            result = server.command(args, **kwargs)
+            if args[1] == "push":
+                del server.refs[next(name for name in server.refs if name.startswith("cma-allocation/"))]
+                raise subprocess.TimeoutExpired("git", kwargs["timeout"])
+            return result
+        now = [0.0]
+        store.io = AllocationIO(runner, clock=lambda: now[0], sleep=lambda seconds: now.__setitem__(0, now[0] + seconds))
+        original = store.io.write
+        def late_write(args, **kwargs):
+            if args[:2] == ["git", "push"]:
+                now[0] = ALLOCATION_SECONDS - PUSH_RESERVE_SECONDS
+            return original(args, **kwargs)
+        store.io.write = late_write
+        with self.assertRaisesRegex(Refusal, "settlement is uncertain"):
+            self.allocate(server, store)
+        self.assertLess(now[0], ALLOCATION_SECONDS)
 
     def test_missing_readbacks_retry_only_the_exact_ref_then_settle_or_refuse(self):
         for misses in (2, 3):

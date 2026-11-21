@@ -1,7 +1,7 @@
 """One complete ref snapshot and bounded settlement for insert-only tags."""
 import json
 
-from staging_cd_allocation_io import TransientRead, UncertainPush, parallel_read
+from staging_cd_allocation_io import SETTLE_WAITS, TransientRead, UncertainPush, parallel_read
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical, parse_annotation
@@ -179,7 +179,7 @@ class AllocationSnapshot(Reservations):
         except UncertainPush:
             # Unlike an explicit rejection, a timeout cannot authorize another
             # plan. Accept only exact evidence for every member of this batch.
-            require(self.ref_oids(*refs) == refs, "Allocation write settlement is uncertain")
+            self.settle_uncertain(refs)
         else:
             if pushed.returncode:
                 self.check_conflict(refs)
@@ -188,6 +188,27 @@ class AllocationSnapshot(Reservations):
                         == len(refs), "An up-to-date push is not a new version reservation")
         parallel_read(lambda row: self.verify(*row), objects)
         self.pending.extend(self.planned)
+
+    def settle_uncertain(self, expected):
+        """Wait, within bounds, for a timed-out atomic push the server may still commit.
+
+        The client can give up while the server is still applying the push; it
+        then commits all refs together. Settle once every ref holds exactly its
+        planned object. A ref holding any other object is a foreign or damaged
+        write and is refused at once. Refs that are still absent keep the batch
+        uncertain until the bounded waits end; the push is never replayed.
+        """
+        for wait in (0, *SETTLE_WAITS):
+            if wait:
+                if self.io.remaining() <= wait + 1:
+                    break
+                self.io.sleep(wait)
+            actual = self.ref_oids(*expected)
+            if actual == expected:
+                return
+            require(all(actual.get(ref) in (None, oid) for ref, oid in expected.items()),
+                    "Allocation write settlement is uncertain")
+        require(False, "Allocation write settlement is uncertain")
 
     def check_conflict(self, expected):
         # Ambiguous success must match the entire transaction. A proven foreign

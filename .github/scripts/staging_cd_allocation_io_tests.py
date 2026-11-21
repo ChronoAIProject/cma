@@ -6,7 +6,7 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
-from staging_cd_allocation_io import (ALLOCATION_SECONDS, PUSH_RESERVE_SECONDS, AllocationGitHub, AllocationIO,
+from staging_cd_allocation_io import (ALLOCATION_SECONDS, PUSH_RESERVE_SECONDS, PUSH_SECONDS, PUSH_SETTLEMENT_SECONDS, AllocationGitHub, AllocationIO,
                                       parallel_read)
 from staging_cd_allocation_snapshot import AllocationSnapshot
 from staging_cd_common import Refusal
@@ -92,11 +92,18 @@ class AllocationIOTests(unittest.TestCase):
 
     def test_push_after_slow_inventory_keeps_its_settlement_margin(self):
         # Hosted allocation reached the push after 23-28 s of inventory reads.
+        # GitHub can take longer than 10 s to accept the atomic push, so it gets
+        # PUSH_SECONDS while the settlement margin stays reserved after it.
         runner = Mock(return_value=Mock(returncode=0, stdout=""))
         AllocationIO(runner, clock=Mock(side_effect=[0, 28])).write(["git", "push", "fixture"])
-        self.assertEqual(runner.call_args.kwargs["timeout"], 10)
+        self.assertEqual(runner.call_args.kwargs["timeout"], PUSH_SECONDS)
         runner.reset_mock()
-        late = AllocationIO(runner, clock=Mock(side_effect=[0, ALLOCATION_SECONDS - 6.5]))
+        # Close to the deadline the push is bounded by what leaves settlement time.
+        AllocationIO(runner, clock=Mock(side_effect=[0, ALLOCATION_SECONDS - PUSH_SETTLEMENT_SECONDS - 12])).write(
+            ["git", "push", "fixture"])
+        self.assertEqual(runner.call_args.kwargs["timeout"], 12)
+        runner.reset_mock()
+        late = AllocationIO(runner, clock=Mock(side_effect=[0, ALLOCATION_SECONDS - PUSH_RESERVE_SECONDS + 0.5]))
         with self.assertRaisesRegex(Refusal, "deadline"):
             late.write(["git", "push", "fixture"])
         runner.assert_not_called()

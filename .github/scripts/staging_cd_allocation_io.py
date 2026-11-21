@@ -35,9 +35,16 @@ class UncertainPush(Refusal):
 # Inventory reads grow with every published tag. At 30 s, hosted runs reached
 # the reservation push with less than the 7 s it requires and failed.
 ALLOCATION_SECONDS = 120
-# A complete ref advertisement and parallel owner readbacks need time after the
-# single remote write, and a push never starts in the final second.
-PUSH_SETTLEMENT_SECONDS = 6
+# GitHub can take longer than 10 s to accept an atomic push of several tags
+# and claims, especially while tag rulesets are evaluated. A client that gives
+# up earlier leaves the server to commit the push after it has stopped
+# listening, so the write gets a longer bound.
+PUSH_SECONDS = 30
+# After a timed-out push, the server may still commit it. Settlement polls the
+# exact refs for a bounded time (SETTLE_WAITS), then the parallel owner
+# readbacks run; a push never starts without that time left.
+SETTLE_WAITS = (1, 2, 4, 8)
+PUSH_SETTLEMENT_SECONDS = sum(SETTLE_WAITS) + 5
 PUSH_RESERVE_SECONDS = PUSH_SETTLEMENT_SECONDS + 1
 
 
@@ -80,7 +87,7 @@ class AllocationIO:
         available = self.remaining() - (PUSH_SETTLEMENT_SECONDS if push else 0)
         require(available >= PUSH_RESERVE_SECONDS - PUSH_SETTLEMENT_SECONDS if push else available > 0,
                 "Allocation deadline exceeded")
-        kwargs["timeout"] = min(10, available)
+        kwargs["timeout"] = min(PUSH_SECONDS if push else 10, available)
         try:
             return self.runner(args, **kwargs)
         except (OSError, subprocess.SubprocessError):
