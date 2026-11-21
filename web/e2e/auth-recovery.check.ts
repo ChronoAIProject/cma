@@ -73,6 +73,8 @@ for (const action of ['send', 'cancel'] as const) {
       baseURL,
     }, info) => {
       const fixture = new ReplicaFixture();
+      if (!enabled && action === 'send' && phase === 'confirmation')
+        fixture.revealInputReceipt = false;
       if (action === 'cancel') fixture.append({ type: 'turn_started', turn_sequence: 1 }, binding);
       let failedAt = 0;
       let faultPosts = -1;
@@ -128,9 +130,12 @@ for (const action of ['send', 'cancel'] as const) {
           ).toBeVisible();
           expect(fixture.writes.length).toBe(faultPosts);
           faultActive = false;
-          if (phase === 'confirmation')
-            await page.getByRole('button', { name: 'Recover pending request' }).click();
-          else {
+          if (phase === 'confirmation') {
+            const recover = page.getByRole('button', { name: 'Recover pending request' });
+            await expect(recover).toBeEnabled();
+            fixture.revealInputReceipt = true;
+            await recover.click();
+          } else {
             if (action === 'send')
               await expect(page.locator('.message--user')).toContainText('Not sent');
             await submit();
@@ -151,7 +156,15 @@ for (const action of ['send', 'cancel'] as const) {
         const recoveredAt = performance.now();
         if (enabled) expect(recoveredAt - failedAt).toBeGreaterThanOrEqual(1000);
         expect(recoveredAt - failedAt).toBeLessThan(10_000);
-        expect(fixture.writes).toHaveLength(!enabled && phase === 'confirmation' ? 2 : 1);
+        expect(fixture.writes).toHaveLength(
+          !enabled && phase === 'confirmation' && action === 'cancel' ? 2 : 1,
+        );
+        if (!enabled && action === 'send' && phase === 'confirmation') {
+          expect(fixture.receiptReads.at(-1)).toMatchObject({
+            key: fixture.writes[0]!.key,
+            body: fixture.writes[0]!.body,
+          });
+        }
         expect(fixture.effects.size).toBe(1);
         if (action === 'cancel') {
           fixture.append({ type: 'turn_cancelled', turn_sequence: 1 });

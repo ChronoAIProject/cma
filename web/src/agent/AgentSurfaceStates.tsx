@@ -21,22 +21,26 @@ export function AgentCommandNotices({
         <Alert
           tone="warning"
           actions={
-            <Button
-              size="sm"
-              disabled={
-                unavailable ||
-                controller.pending !== undefined ||
-                (starting && !controller.inputAvailability.allowed)
-              }
-              onClick={() => void controller.recoverPending?.()}
-            >
-              Recover pending request
-            </Button>
+            controller.checkingInputReceipt && !controller.pendingControl ? undefined : (
+              <Button
+                size="sm"
+                disabled={
+                  unavailable ||
+                  controller.pending !== undefined ||
+                  (starting && !controller.inputAvailability.allowed)
+                }
+                onClick={() => void controller.recoverPending?.()}
+              >
+                Recover pending request
+              </Button>
+            )
           }
         >
-          {controller.pendingMessage !== undefined
-            ? 'Your message is awaiting confirmation. Recover it before sending another message.'
-            : 'Your response action is awaiting confirmation.'}
+          {controller.checkingInputReceipt
+            ? 'Checking the receipt for your previous message.'
+            : controller.pendingMessage !== undefined
+              ? 'Your message is awaiting confirmation. Recover it before sending another message.'
+              : 'Your response action is awaiting confirmation.'}
         </Alert>
       )}
       {controller.controlNotice === undefined ? null : (

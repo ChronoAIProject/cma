@@ -28,6 +28,7 @@ pub(crate) fn document() -> utoipa::openapi::OpenApi {
     #[openapi(paths(
         capabilities::declare,
         run::run,
+        run::receipt,
         replay::replay,
         sandbox_companion::snapshot
     ))]
@@ -42,6 +43,12 @@ pub fn router(state: crate::AgentConversationState) -> Router {
     Router::new()
         .route("/api/v1/agui/capabilities", get(capabilities::declare))
         .route("/api/v1/agui/run", post(run::run))
+        .route(
+            "/api/v1/agui/run/receipt",
+            post(run::receipt).layer(axum::middleware::map_response(
+                crate::conversation::commands::no_store_receipt,
+            )),
+        )
         .route("/api/v1/agui/events", get(replay::replay))
         .route(
             "/api/v1/agui/agents/{id}/sandbox",
