@@ -75,6 +75,15 @@ impl SandboxAdmissionStore for MongoSandboxStore {
         self.sandbox_admitted.notify_one();
         Ok(result)
     }
+
+    async fn admit_catalogue_sandbox(
+        &self,
+        admission: SandboxAdmission,
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+        let result = self.commit_catalogue_sandbox_admission(admission).await?;
+        self.sandbox_admitted.notify_one();
+        Ok(result)
+    }
 }
 
 fn admission_retry_delay(attempt: usize) -> Duration {
@@ -89,6 +98,7 @@ async fn apply<F>(
     observe: &F,
     wait_for_prepared_lease: bool,
     retrying: bool,
+    catalogue: bool,
 ) -> Result<AdmissionReceipt, AdmissionError>
 where
     F: Fn() -> String + Sync,
@@ -129,6 +139,26 @@ where
         return Err(AdmissionError::Domain(
             SandboxStoreError::AccountDeletionInProgress,
         ));
+    }
+    if catalogue {
+        let profile = &admission.sandbox.profile;
+        if matches!(&admission.sandbox.origin, SandboxOrigin::Trigger { .. })
+            || !super::profile_pin_admission::sandbox(
+                &database,
+                profile.id.as_str(),
+                profile.revision,
+                Some(&profile.digest),
+                session,
+            )
+            .await
+            .map_err(AdmissionError::Driver)?
+        {
+            super::profile_pin_admission::frozen::sandbox(&database, &admission.sandbox, session)
+                .await
+                .map_err(AdmissionError::Driver)?
+                .require()
+                .map_err(AdmissionError::Domain)?;
+        }
     }
     if retrying
         && admission.admission_cause() == layer2_core::admission::AdmissionCause::Fresh

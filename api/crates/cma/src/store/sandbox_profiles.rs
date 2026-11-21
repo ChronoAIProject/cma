@@ -10,7 +10,7 @@ use layer2_core::profiles::{
 use mongodb::bson::Document;
 
 use super::profile_documents::{
-    decode_record, profile_document, revision_document, save_draft, ProfileDocumentInput,
+    decode_record, profile_document, revision_document, ProfileDocumentInput,
 };
 use super::profiles::{
     advance_publication, get_profile, get_revision, list_profiles, list_revisions, retire_profile,
@@ -103,17 +103,13 @@ impl SandboxProfileStore for MongoProfileStore {
         if profile.draft_version != 1 || profile.forked_from.is_some() {
             return Err(ProfileStoreError::Conflict);
         }
-        self.sandbox_profiles
-            .insert_one(document(&profile)?)
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                if is_duplicate_key(&error) {
-                    ProfileStoreError::Duplicate
-                } else {
-                    ProfileStoreError::Unavailable(error.to_string())
-                }
-            })
+        super::profile_draft_admission::create(
+            self,
+            &self.sandbox_profiles,
+            document(&profile)?,
+            super::profile_draft_admission::Pins::sandbox(&profile),
+        )
+        .await
     }
 
     async fn sandbox_profile(
@@ -129,7 +125,14 @@ impl SandboxProfileStore for MongoProfileStore {
         profile: SandboxProfile,
     ) -> Result<(), ProfileStoreError> {
         profile.availability.validate(profile.visibility)?;
-        save_draft(&self.sandbox_profiles, expected, input(&profile)).await
+        super::profile_draft_admission::save(
+            self,
+            &self.sandbox_profiles,
+            expected,
+            input(&profile),
+            super::profile_draft_admission::Pins::sandbox(&profile),
+        )
+        .await
     }
 
     async fn publish_sandbox_profile(

@@ -6,6 +6,9 @@ use std::{collections::BTreeMap, sync::Mutex};
 pub trait BotStore: Send + Sync {
     /// Enforce unique creation keys per owner in the same admission as the record.
     async fn insert(&self, bot: &Bot) -> Result<(), BotError>;
+    async fn insert_catalogue(&self, bot: &Bot) -> Result<(), BotError> {
+        self.insert(bot).await
+    }
     async fn get(&self, id: &str) -> Result<Option<Bot>, BotError>;
     async fn creation(&self, owner: &SubjectId, key_hash: &str) -> Result<Option<Bot>, BotError>;
     async fn list(

@@ -157,7 +157,7 @@ impl InlineAgentLifecycle {
                             revision.profile_id,
                             revision.revision,
                         ),
-                        title: Some(input.request.name.clone()),
+                        title: validation::initial_title(&input.request),
                         first_message: input.first_message.clone(),
                         origin: AgentOrigin::Lifecycle {
                             operation_id: input.lease.id.clone(),

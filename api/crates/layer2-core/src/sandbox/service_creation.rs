@@ -167,10 +167,20 @@ impl SandboxService {
             request.confirmed_digest.as_deref(),
         )
         .await?;
-        Ok(ResolvedProfile {
-            name: profile.name,
-            revision,
-        })
+        let name = if frozen
+            && profile.owner.as_str() == crate::DELETED_ACCOUNT_SUBJECT
+            && profile.visibility == ProfileVisibility::Private
+            && profile.retired_at.is_some()
+            && profile.name.is_empty()
+            && profile.description.is_empty()
+        {
+            // Retained catalogue metadata has no author-supplied display name.
+            // The admission transaction still verifies the frozen Launch pin.
+            "Sandbox".into()
+        } else {
+            profile.name
+        };
+        Ok(ResolvedProfile { name, revision })
     }
 
     async fn require_trust(
@@ -286,7 +296,7 @@ impl SandboxService {
         admission.limit_class = limit_class;
         let result = self
             .store
-            .admit_sandbox(admission)
+            .admit_catalogue_sandbox(admission)
             .await
             .map_err(store_error)?;
         match result {

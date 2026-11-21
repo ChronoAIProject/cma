@@ -7586,7 +7586,7 @@
       "version": "0.8.4-1"
     }
   ],
-  "scanner_manifest_sha256": "791cef403329aa642586b3d3d937109524b98f87a3b09064c303c4aadbcc0051",
+  "scanner_manifest_sha256": "a3eb9041f1b920bda1f8b2bd63241ea5ed0c890f60841a7303670b35dbb384c3",
   "schema": "cma-staging-omarchy-package-evidence-v2",
   "trust_store": {
     "alias": {

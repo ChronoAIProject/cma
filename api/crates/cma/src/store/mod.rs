@@ -96,6 +96,8 @@ mod gateway_records;
 #[cfg(test)]
 mod gateway_records_mongo_integration_tests;
 mod hierarchy;
+#[allow(dead_code)] // Foundation primitives have no production capture worker.
+pub(crate) mod home_backups;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
@@ -129,11 +131,13 @@ mod operator_profiles;
 mod operator_sandboxes;
 mod platform_write_coordination;
 mod profile_documents;
+mod profile_draft_admission;
 #[cfg(test)]
 mod profile_index_tests;
 mod profile_mongo;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;
+mod profile_pin_admission;
 mod profile_references;
 mod profiles;
 pub(crate) mod request_limits;

@@ -126,6 +126,22 @@ impl EventWorkerProfileStore for MongoEventWorkerProfileStore {
         let row = document(value)?;
         let mut session = self.client.start_session().await.map_err(unavailable)?;
         start_transaction(&mut session).await.map_err(unavailable)?;
+        let retiring_existing = if let Some(revision) =
+            expected.filter(|_| value.retired_at.is_some())
+        {
+            let previous = self.records.find_one(doc! {"_id":&value.id,"owner":value.owner.as_str(),"revision":i64::from(revision),"retired":false})
+                .session(&mut session).await.map_err(unavailable)?
+                .as_ref().map(|row| decode(row, false)).transpose()?;
+            if previous.is_none_or(|previous| {
+                previous.source != value.source || previous.profiles != value.profiles
+            }) {
+                let _ = session.abort_transaction().await;
+                return Err(BotError::Conflict);
+            }
+            true
+        } else {
+            false
+        };
         if let Some(revision) = expected {
             let changed=self.records.replace_one(doc!{"_id":&value.id,"owner":value.owner.as_str(),"revision":i64::from(revision),"retired":false},row.clone()).session(&mut session).await.map_err(classify)?;
             if changed.matched_count != 1 {
@@ -138,6 +154,16 @@ impl EventWorkerProfileStore for MongoEventWorkerProfileStore {
                 .session(&mut session)
                 .await
                 .map_err(classify)?;
+        }
+        if !retiring_existing {
+            let database = self.client.database(&self.records.namespace().db);
+            if !super::profile_pin_admission::bot_profiles(&database, &value.profiles, &mut session)
+                .await
+                .map_err(unavailable)?
+            {
+                let _ = session.abort_transaction().await;
+                return Err(BotError::Conflict);
+            }
         }
         let mut revision = row;
         revision.insert("_id", format!("{}:{}", value.id, value.revision));

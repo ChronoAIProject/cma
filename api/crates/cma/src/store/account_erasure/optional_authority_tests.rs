@@ -17,6 +17,7 @@ use fixture::Fixture;
 mod observers;
 
 pub(crate) async fn verify_runtime() {
+    missing_drain_qualification().await;
     observers::verify().await;
     disabled_absent().await;
     present_without_grants().await;
@@ -27,6 +28,59 @@ pub(crate) async fn verify_runtime() {
     enabled_or_unknown().await;
     resumed_absence_is_rechecked().await;
     resumed_appearance_restarts_effects().await;
+}
+
+async fn missing_drain_qualification() {
+    let fixture = Fixture::new(false, None).await;
+    put(
+        &fixture.admin,
+        "users",
+        doc! {"_id":"acct:a","canary":"preserve"},
+    )
+    .await;
+    let subject = SubjectId::new("acct:a");
+    let error = super::erase_records_with_options(
+        &fixture.runtime,
+        &[Target {
+            subject: &subject,
+            inventory: &ErasureInventory::default(),
+        }],
+        &mut Cursor {
+            drain_complete: true,
+            ..Default::default()
+        },
+        NOW,
+        Options {
+            billing_enabled: false,
+            allocation_rollups_enabled: Some(false),
+            agent_shared_observation: Some(false),
+            transaction_drain_minimum_secs: 86_400,
+            drain_qualification: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        error,
+        Error::CohortBlocked(CohortBlock::TransactionDrainQualificationRequired)
+    ));
+    assert_eq!(count(&fixture.admin, "users").await, 1);
+    {
+        let commands = fixture.commands.lock().unwrap();
+        for command in commands.iter() {
+            for operation in [
+                "create",
+                "createIndexes",
+                "update",
+                "insert",
+                "delete",
+                "findAndModify",
+            ] {
+                assert!(!command.contains_key(operation));
+            }
+        }
+    }
+    fixture.admin.drop().await.unwrap();
 }
 
 async fn disabled_absent() {
@@ -132,6 +186,7 @@ async fn once_with(
 ) -> Result<Batch, Error> {
     let subject = SubjectId::new("acct:a");
     let inventory = ErasureInventory::default();
+    cursor.test_drain_seconds.get_or_insert(0);
     super::erase_records_with_options(
         &fixture.runtime,
         &[Target {
@@ -141,6 +196,8 @@ async fn once_with(
         cursor,
         NOW,
         Options {
+            transaction_drain_minimum_secs: 120,
+            drain_qualification: Some(TransactionDrainQualification::fixture()),
             billing_enabled: false,
             allocation_rollups_enabled: mode,
             agent_shared_observation: Some(false),

@@ -1,14 +1,18 @@
 """Network budgets cannot become repeated or uncertain remote writes."""
 import json
 import subprocess
+import threading
+import time
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from staging_cd_allocation_io import (ALLOCATION_SECONDS, PUSH_RESERVE_SECONDS, AllocationGitHub, AllocationIO,
                                       parallel_read)
 from staging_cd_allocation_snapshot import AllocationSnapshot
 from staging_cd_common import Refusal
-from staging_cd_github import GitHubNotFound
+from staging_cd_github import GitHub, GitHubNotFound
+import staging_cd_github
+import staging_cd_allocation_io
 
 
 def response(code, body="{}"):
@@ -16,6 +20,29 @@ def response(code, body="{}"):
 
 
 class AllocationIOTests(unittest.TestCase):
+    def test_parallel_first_history_reads_share_one_fetch(self):
+        # Annotation reads run on several threads. Concurrent fetches into one
+        # checkout race on its lock files, so only one load may ever run.
+        for module, client in ((staging_cd_github, lambda: GitHub("fixture")),
+                               (staging_cd_allocation_io, lambda: AllocationGitHub("fixture", AllocationIO(Mock())))):
+            active, peak, loads, lock = [0], [0], [], threading.Lock()
+
+            def load(*_args, **_kwargs):
+                with lock:
+                    active[0] += 1
+                    peak[0] = max(peak[0], active[0])
+                time.sleep(0.05)
+                with lock:
+                    active[0] -= 1
+                loads.append(1)
+                return object()
+
+            api = client()
+            with self.subTest(client=type(api).__name__), patch.object(module.DevelopHistory, "load", side_effect=load):
+                results = parallel_read(lambda _: api.history(), range(4))
+                self.assertEqual((len(loads), peak[0]), (1, 1))
+                self.assertTrue(all(result is results[0] for result in results))
+
     def test_transient_reads_back_off_with_jitter_inside_the_allocation_deadline(self):
         for failure in (response(429), response(503), subprocess.TimeoutExpired("fixture", 5)):
             runner = Mock(side_effect=[failure, failure, response(200)])

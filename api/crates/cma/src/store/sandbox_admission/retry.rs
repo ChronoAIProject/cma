@@ -29,6 +29,27 @@ impl MongoSandboxStore {
     where
         F: Fn() -> String + Send + Sync,
     {
+        self.commit_sandbox_admission_inner(admission, observe, false)
+            .await
+    }
+
+    pub(super) async fn commit_catalogue_sandbox_admission(
+        &self,
+        admission: SandboxAdmission,
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+        self.commit_sandbox_admission_inner(admission, layer2_core::now_rfc3339, true)
+            .await
+    }
+
+    async fn commit_sandbox_admission_inner<F>(
+        &self,
+        admission: SandboxAdmission,
+        observe: F,
+        catalogue: bool,
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError>
+    where
+        F: Fn() -> String + Send + Sync,
+    {
         admission.validate()?;
         let started = tokio::time::Instant::now();
         let mut last_transient = None;
@@ -67,6 +88,7 @@ impl MongoSandboxStore {
                 &observe,
                 wait_for_lease,
                 failures > 0,
+                catalogue,
             )
             .await
             {

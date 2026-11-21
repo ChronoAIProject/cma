@@ -1,3 +1,4 @@
+import { DocsLink } from '../services/DocsLink';
 import { useEffect, useRef, useState } from 'react';
 import { DocumentError, type DocumentsClient, type DocumentView } from '../api/documents';
 import type { AppRoute } from '../routing/routes';
@@ -121,6 +122,7 @@ export function DocumentRegistry({
         <div>
           <h1>Artifacts</h1>
           <p>Your ideas, brought together.</p>
+          <DocsLink view="find-your-outputs">Help finding your outputs</DocsLink>
         </div>
         {canCreate ? (
           <Button variant="primary" icon={<IconPlusOutline16 />} onClick={() => setCreate(true)}>

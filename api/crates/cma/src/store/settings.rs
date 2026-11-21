@@ -4,13 +4,13 @@ use layer2_core::{PlatformSettings, PlatformSettingsStore, StoreError, StoredPla
 use mongodb::{
     bson::{doc, Document},
     error::{Error, ErrorKind, WriteFailure},
-    options::ReturnDocument,
     Client, Collection,
 };
 use serde::{Deserialize, Serialize};
 
 use super::{
     durability::majority_collection,
+    profile_draft_admission::{self, Error as AdmissionError, Mutation, Pins},
     schema::{self, DOCUMENT_SCHEMA_VERSION},
 };
 
@@ -63,6 +63,7 @@ fn update_pipeline(settings: &PlatformSettings) -> Result<Vec<Document>, StoreEr
 /// Compare-and-set adapter for the singleton platform settings document.
 pub struct MongoPlatformSettingsStore {
     initial_settings: super::settings_defaults::InitialSettings,
+    client: Client,
     settings: Collection<SettingsDoc>,
 }
 
@@ -81,6 +82,7 @@ impl MongoPlatformSettingsStore {
         schema::initialize_collections(&database, &[SETTINGS]).await?;
         Ok(Self {
             initial_settings,
+            client: client.clone(),
             settings: majority_collection(&database, SETTINGS),
         })
     }
@@ -126,30 +128,47 @@ impl PlatformSettingsStore for MongoPlatformSettingsStore {
                 expected: expected_revision,
                 actual: 0,
             })?;
-        let result = self
-            .settings
-            .find_one_and_update(
-                doc! {
+        let database = self.client.database(&self.settings.namespace().db);
+        let mut pins = Pins::defaults(&settings.defaults);
+        let result = profile_draft_admission::transact(
+            &self.client,
+            &database,
+            &mut pins,
+            &Mutation::Settings {
+                collection: self.settings.clone_with_type::<Document>(),
+                filter: doc! {
                     "_id": SETTINGS_ID,
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                     "revision": expected,
                 },
-                update_pipeline(settings)?,
-            )
-            .return_document(ReturnDocument::After)
-            .upsert(expected_revision == 0)
-            .await;
+                pipeline: update_pipeline(settings)?,
+                upsert: expected_revision == 0,
+            },
+        )
+        .await;
         match result {
-            Ok(Some(document)) => from_doc(document),
+            Ok(Some(document)) => from_doc(
+                mongodb::bson::deserialize_from_document(document).map_err(|error| {
+                    StoreError::Malformed(format!("platform settings: {error}"))
+                })?,
+            ),
             Ok(None) => Err(StoreError::RevisionConflict {
                 expected: expected_revision,
                 actual: self.current_revision().await?,
             }),
-            Err(error) if is_duplicate_key(&error) => Err(StoreError::RevisionConflict {
-                expected: expected_revision,
-                actual: self.current_revision().await?,
-            }),
-            Err(error) => Err(StoreError::Unavailable(format!(
+            Err(AdmissionError::Driver(error))
+                if is_duplicate_key(&error)
+                    || profile_draft_admission::is_transaction_conflict(&error) =>
+            {
+                Err(StoreError::RevisionConflict {
+                    expected: expected_revision,
+                    actual: self.current_revision().await?,
+                })
+            }
+            Err(AdmissionError::ReferenceUnavailable) => Err(StoreError::ReferenceUnavailable(
+                "platform defaults reference an unavailable Profile".into(),
+            )),
+            Err(AdmissionError::Driver(error)) => Err(StoreError::Unavailable(format!(
                 "replace platform settings: {error}"
             ))),
         }

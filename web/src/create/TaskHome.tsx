@@ -1,5 +1,6 @@
 import { useSandboxCapacity } from '../sandbox/useSandboxCapacity';
 import { SandboxCapacityPanel } from '../sandbox/SandboxCapacityPanel';
+import { DocsLink } from '../services/DocsLink';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { AppRoute } from '../routing/routes';
@@ -21,6 +22,7 @@ import { TaskTemplates } from './TaskTemplates';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { useTaskExperience } from '../taskExperience';
 import { useTaskDraft } from './taskDraft';
+import { taskCreateRequest, useTaskTitleModeSupport } from './taskCreateRequest';
 import { useTaskTemplateDraftSwitch } from './TaskTemplateDraftSwitch';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import '../ui/Input.css';
@@ -70,6 +72,7 @@ function TaskHomeContent({
   onRefresh,
 }: TaskHomeProps & { readonly onRefresh: () => void }) {
   const policy = useTaskExperience(client, viewerId);
+  const titleModeSupported = useTaskTitleModeSupport(client);
   const capacity = useSandboxCapacity(client, viewerId);
   const [checkingCapacity, setCheckingCapacity] = useState(false);
   const mounted = useRef(true);
@@ -165,6 +168,7 @@ function TaskHomeContent({
     lifecycle.blocked ||
     Boolean(intent) ||
     !canCreate ||
+    titleModeSupported === undefined ||
     supported !== true;
   return (
     <section
@@ -181,7 +185,8 @@ function TaskHomeContent({
           </span>
           <h1 id={titleId}>What should your Agent work on?</h1>
           <p className="task-home__intro">
-            Give it a task. Your Agent works through it on a cloud computer.
+            Give it a task. Your Agent works through it on a cloud computer.{' '}
+            <DocsLink view="start-a-task">Help starting a task</DocsLink>
           </p>
         </>
       ) : (
@@ -250,22 +255,11 @@ function TaskHomeContent({
           }
           setRecovering(false);
           void lifecycle.submit(
-            {
-              name: 'New task',
-              initial_message: submission.text,
-              ...(draft.template ? { template: draft.template } : {}),
-              ...(draft.machineIncluded ? { machine_included: true } : {}),
-              ...(!workspaceId && !sandboxId && draft.repositoryUrl
-                ? {
-                    repository: {
-                      url: draft.repositoryUrl,
-                      ...(draft.repositoryRef ? { ref: draft.repositoryRef } : {}),
-                    },
-                  }
-                : {}),
-              ...(workspaceId ? { workspace_id: workspaceId } : {}),
-              ...(sandboxId ? { sandbox_id: sandboxId } : {}),
-            },
+            taskCreateRequest(
+              { ...draft, text: submission.text },
+              { workspaceId, sandboxId },
+              titleModeSupported,
+            ),
             draftRevision,
           );
         }}
@@ -344,7 +338,7 @@ function TaskHomeContent({
         <span className="task-home__dot" aria-hidden="true" />
         GPT-6 · High reasoning · Autonomous
       </p>
-      {supported === undefined ? (
+      {supported === undefined || titleModeSupported === undefined ? (
         <p className="sr-only" role="status">
           Checking task creation…
         </p>
@@ -368,6 +362,9 @@ function TaskHomeContent({
         <section className="task-submitted" aria-label="Submitted task">
           <h2>Submitted task</h2>
           <p className="task-submitted__text">{intent.body.initial_message}</p>
+          {!intent.receipt && !lifecycle.pending ? (
+            <DocsLink view="recover-and-continue">Help recovering this request</DocsLink>
+          ) : null}
           {intent.body.repository ? (
             <>
               <p className="task-submitted__literal">{intent.body.repository.url}</p>

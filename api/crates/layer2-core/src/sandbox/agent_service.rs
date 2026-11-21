@@ -258,12 +258,14 @@ impl AgentService {
         };
         let result = if let Some(initiation) = attribution.initiation {
             self.store
-                .admit_agent_with_trigger_initiator(admission, initiation, reuse_existing)
+                .admit_catalogue_agent_with_trigger_initiator(admission, initiation, reuse_existing)
                 .await
         } else if reuse_existing {
-            self.store.admit_agent_reusing_profile(admission).await
+            self.store
+                .admit_catalogue_agent_reusing_profile(admission)
+                .await
         } else {
-            self.store.admit_agent(admission).await
+            self.store.admit_catalogue_agent(admission).await
         }
         .map_err(store_error)?;
         if let AgentAdmissionResult::Created(creation) = &result {

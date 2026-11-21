@@ -1,13 +1,14 @@
 use layer2_core::trigger_domain::{
-    PublicTrigger, Trigger, TriggerAvailability, TriggerId, TriggerStoreError,
+    Launch, PublicTrigger, Trigger, TriggerAvailability, TriggerReferenceError, TriggerStoreError,
 };
-use mongodb::bson::doc;
+use mongodb::bson::{doc, Document};
 use mongodb::ClientSession;
 
 use crate::store::sandbox_mongo::signed;
 use crate::store::schema::DOCUMENT_SCHEMA_VERSION;
 
 use super::super::documents::{read_trigger, trigger_document};
+use super::super::publisher_erasure;
 use super::super::queries::{self as trigger_queries, TransactionReadError};
 use super::{corrupt, trigger_error, MongoTriggerDefinitionStore};
 
@@ -32,6 +33,11 @@ pub(super) async fn record_admission(
         .ok_or(CounterError::Domain(
             layer2_core::trigger_domain::LaunchStoreError::TriggerUnavailable,
         ))?;
+    if document.get_bool("account_erasure_fenced").ok() == Some(true) {
+        return Err(CounterError::Domain(
+            layer2_core::trigger_domain::LaunchStoreError::TriggerRetired,
+        ));
+    }
     let stored = read_trigger(&document)
         .map_err(trigger_error)
         .map_err(CounterError::Domain)?;
@@ -58,33 +64,59 @@ pub(super) async fn record_admission(
             .map_err(layer2_core::trigger_domain::LaunchStoreError::from)
             .map_err(CounterError::Domain)?;
     }
-    replace(store, changed, stored.mutation_version, session).await
+    replace(store, changed, stored.mutation_version, &document, session).await
 }
 
 pub(super) async fn record_ready(
     store: &MongoTriggerDefinitionStore,
-    id: &TriggerId,
+    launch: &Launch,
     session: &mut ClientSession,
-) -> Result<CounterUpdate, CounterError> {
-    let document = store
+) -> Result<Option<CounterUpdate>, CounterError> {
+    let Some(document) = store
         .definitions
-        .find_one(doc! { "_id": id.as_str() })
+        .find_one(doc! { "_id": launch.trigger_id.as_str() })
         .session(&mut *session)
         .await
         .map_err(CounterError::Driver)?
-        .ok_or(CounterError::Domain(
-            layer2_core::trigger_domain::LaunchStoreError::TriggerUnavailable,
-        ))?;
+    else {
+        if !publisher_erasure::prove(
+            store,
+            &launch.trigger_id,
+            &launch.revision_digest,
+            &launch.public_id,
+        )
+        .await
+        .map_err(CounterError::from)?
+        {
+            return Err(CounterError::Domain(corrupt(
+                "Launch publisher definition is missing without erasure evidence",
+            )));
+        }
+        // Validated erasure evidence permits publisher statistics to disappear
+        // while the visitor's Agent and Launch retain runtime authority.
+        return Ok(None);
+    };
     let stored = read_trigger(&document)
         .map_err(trigger_error)
         .map_err(CounterError::Domain)?;
-    verify_revisions(store, &stored.trigger, session).await?;
+    match trigger_queries::verify_in_session(store, &stored.trigger, session).await {
+        Ok(()) => {}
+        Err(TransactionReadError::Domain(TriggerStoreError::Reference(
+            TriggerReferenceError::Unavailable { .. },
+        ))) => return Ok(None),
+        Err(TransactionReadError::Domain(error)) => {
+            return Err(CounterError::Domain(trigger_error(error)));
+        }
+        Err(TransactionReadError::Driver(error)) => return Err(CounterError::Driver(error)),
+    }
     let mut changed = stored.trigger;
     changed
         .record_agent_ready()
         .map_err(layer2_core::trigger_domain::LaunchStoreError::from)
         .map_err(CounterError::Domain)?;
-    replace(store, changed, stored.mutation_version, session).await
+    replace(store, changed, stored.mutation_version, &document, session)
+        .await
+        .map(Some)
 }
 
 pub(super) async fn snapshot_matches(
@@ -112,6 +144,7 @@ async fn replace(
     store: &MongoTriggerDefinitionStore,
     changed: Trigger,
     mutation_version: u64,
+    original: &Document,
     session: &mut ClientSession,
 ) -> Result<CounterUpdate, CounterError> {
     changed
@@ -121,6 +154,14 @@ async fn replace(
     let next = mutation_version
         .checked_add(1)
         .ok_or_else(|| CounterError::Domain(corrupt("Trigger mutation version is exhausted")))?;
+    let mut replacement = trigger_document(&changed, next)
+        .map_err(trigger_error)
+        .map_err(CounterError::Domain)?;
+    for field in ["account_erasure_fenced", "account_erasure_fenced_at"] {
+        if let Some(value) = original.get(field) {
+            replacement.insert(field, value.clone());
+        }
+    }
     let result = store
         .definitions
         .replace_one(
@@ -131,9 +172,7 @@ async fn replace(
                     .map_err(corrupt)
                     .map_err(CounterError::Domain)?,
             },
-            trigger_document(&changed, next)
-                .map_err(trigger_error)
-                .map_err(CounterError::Domain)?,
+            replacement,
         )
         .session(session)
         .await
