@@ -6,6 +6,7 @@ use axum::{
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use environment_diagnostics::EnvironmentRead;
 use futures_util::StreamExt;
 
 pub(super) async fn route(
@@ -37,6 +38,7 @@ pub(super) async fn route(
     {
         return layer1_public::auth::NotAuthenticated.into_response();
     }
+    let mut environment = EnvironmentRead::from_request(&request);
     let observer = request
         .uri()
         .path()
@@ -46,7 +48,7 @@ pub(super) async fn route(
         return capacity::refused(observer);
     };
     if !relay.coordinator.is_ready() {
-        return unavailable();
+        return unavailable_with(environment.as_ref(), Refusal::CoordinatorNotReady);
     }
     let body_limit = body_limit(request.uri().path());
     let Ok(_body_budget) = relay
@@ -66,7 +68,7 @@ pub(super) async fn route(
     let mut request = Request::from_parts(parts, Body::from(bytes.clone()));
     if !private {
         let Some(access) = relay.public_access.get() else {
-            return unavailable();
+            return unavailable_with(environment.as_ref(), Refusal::AuthorizationUnavailable);
         };
         let Some(context) = request
             .extensions()
@@ -111,14 +113,19 @@ pub(super) async fn route(
         let Some(verified) = verified else {
             return StatusCode::FORBIDDEN.into_response();
         };
+        if let Some(environment) = environment.as_mut() {
+            environment.correlate_hop(raw.as_bytes());
+        }
         if verified.owner.agent_id != id
             || verified.owner.instance_id != relay.coordinator.instance_id
         {
-            return unavailable();
+            return unavailable_with(environment.as_ref(), Refusal::AuthorityChanged);
         }
         let membership = match bounded(relay.coordinator.store.membership()).await {
             Ok(membership) => membership,
-            Err(_) => return unavailable(),
+            Err(_) => {
+                return unavailable_with(environment.as_ref(), Refusal::MembershipUnavailable)
+            }
         };
         if membership.require_compatible().is_err()
             || !membership.members.iter().any(|member| {
@@ -127,6 +134,9 @@ pub(super) async fn route(
                     && !member.draining
             })
         {
+            if let Some(environment) = &environment {
+                environment.record(Refusal::MembershipUnavailable);
+            }
             return StatusCode::FORBIDDEN.into_response();
         }
         let destination = match if private
@@ -135,12 +145,15 @@ pub(super) async fn route(
                 .path()
                 .starts_with("/internal/agent-manager/v1/control/")
         {
-            relay.control_destination(&id).await
+            relay
+                .control_destination(&id)
+                .await
+                .map_err(|_| Refusal::AuthorityChanged)
         } else {
             relay.destination(&id).await
         } {
             Ok(value) => value,
-            Err(_) => return unavailable(),
+            Err(reason) => return unavailable_with(environment.as_ref(), reason),
         };
         if destination.token != verified.owner
             && !(verified.owner.epoch == 0
@@ -151,7 +164,7 @@ pub(super) async fn route(
                     .starts_with("/internal/agent-manager/v1/control/")
                 && destination.token.instance_id == verified.owner.instance_id)
         {
-            return unavailable();
+            return unavailable_with(environment.as_ref(), Refusal::AuthorityChanged);
         }
         request.headers_mut().remove(PROOF);
         request.extensions_mut().insert(VerifiedPeer);
@@ -162,7 +175,7 @@ pub(super) async fn route(
         }
         match relay.destination(&id).await {
             Ok(value) => value,
-            Err(_) => return unavailable(),
+            Err(reason) => return unavailable_with(environment.as_ref(), reason),
         }
     };
     if destination.member.instance_id == relay.coordinator.instance_id {
@@ -170,14 +183,22 @@ pub(super) async fn route(
             .authority
             .run(next.run(request))
             .await
-            .unwrap_or_else(|_| unavailable());
+            .unwrap_or_else(|_| unavailable_with(environment.as_ref(), Refusal::AuthorityChanged));
         // One admission covers the owner response body, including live streams.
         return retain(response, slot);
     }
     if private {
         return unavailable();
     }
-    forward(&relay, destination, request, bytes.as_ref(), slot).await
+    forward(
+        &relay,
+        destination,
+        request,
+        bytes.as_ref(),
+        slot,
+        environment,
+    )
+    .await
 }
 
 #[derive(Clone)]
@@ -245,6 +266,7 @@ async fn forward(
     request: Request,
     body: &[u8],
     permit: capacity::Permit,
+    mut environment: Option<EnvironmentRead>,
 ) -> Response {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     let mut headers = HeaderMap::new();
@@ -262,8 +284,11 @@ async fn forward(
         body,
     ) {
         Ok(proof) => proof,
-        Err(_) => return unavailable(),
+        Err(_) => return unavailable_with(environment.as_ref(), Refusal::PeerSignature),
     };
+    if let Some(environment) = environment.as_mut() {
+        environment.correlate_hop(proof.as_bytes());
+    }
     let url = format!(
         "{}{}",
         destination.member.relay_address.trim_end_matches('/'),
@@ -285,9 +310,15 @@ async fn forward(
     .await
     {
         Ok(Ok(response)) => response,
-        _ => return unavailable(),
+        _ => return unavailable_with(environment.as_ref(), Refusal::PeerTransport),
     };
     let status = response.status();
+    if let Some(environment) = environment
+        .as_ref()
+        .filter(|_| status.is_client_error() || status.is_server_error())
+    {
+        environment.record(Refusal::PeerResponse);
+    }
     let headers = response.headers().clone();
     // Hold capacity through the response body, including slow readers. Headers
     // alone do not finish a relay, and a trickle cannot extend its total deadline.
@@ -335,6 +366,13 @@ pub(super) fn unavailable() -> Response {
     (StatusCode::SERVICE_UNAVAILABLE, [("retry-after", "1"), ("content-type", "application/problem+json")], axum::Json(serde_json::json!({
         "type":"about:blank", "title":"Agent owner unavailable", "status":503, "code":"agent_owner_unavailable"
     }))).into_response()
+}
+
+fn unavailable_with(environment: Option<&EnvironmentRead>, reason: Refusal) -> Response {
+    if let Some(environment) = environment {
+        environment.record(reason);
+    }
+    unavailable()
 }
 
 pub(super) fn retain(response: Response, permit: capacity::Permit) -> Response {
