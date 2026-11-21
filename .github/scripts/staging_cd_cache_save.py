@@ -1,11 +1,11 @@
 """Prove that a cache save point created its Actions cache entry, or say why not.
 
 A refused save leaves its step green. The Actions cache turns read-only once the
-organization's budget is reached, and a BuildKit export with ignore-error drops
-its failure. Every later build then runs cold with no visible cause. Each save
-point reads the repository's cache list for the entry it should have created and
-prints one fixed outcome line, plus one warning naming the consequence when the
-entry is missing.
+organization's budget is reached, actions/cache/save then only warns, and a
+BuildKit export with ignore-error drops its failure. Every later build or plan
+then runs cold with no visible cause. Each save point reads the repository's
+cache list for the entry it should have created and prints one fixed outcome
+line, plus one warning naming the consequence when the entry is missing.
 
 This is diagnostic only. It never fails its step and prints only fixed text.
 An unreadable cache list is "unknown", never "not saved".
@@ -13,6 +13,7 @@ An unreadable cache list is "unknown", never "not saved".
 import datetime
 import hashlib
 import math
+import os
 import re
 import sys
 import time
@@ -49,6 +50,9 @@ LAYER_WARNINGS = {
     "absent": "{c} build layers were not saved; the repository's Actions cache may be read-only (budget reached) "
               "or the export failed. Later {c} builds will start cold and run slower.",
 }
+SELECTION_WARNING = ("This plan's analysed revisions were not saved; the repository's Actions cache may be "
+                     "read-only (budget reached) or the save failed. The next plan will re-analyse these "
+                     "revisions and run slower.")
 
 
 def develop_push(env):
@@ -138,3 +142,31 @@ def report_layers(component, scope, summary, started, env, *, stream=None, api=N
         result, reason = "unknown", REASONS["unknown"]
     warning = LAYER_WARNINGS[reason].format(c=component) if result == "not-saved" else None
     emit(stream, "build-layers", result, reason, component=component, title="Build cache not saved", warning=warning)
+
+
+def report_selection(env, *, stream=None, api=None, **options):
+    """Print whether this plan's exact selection cache key was saved; always return 0."""
+    stream = sys.stdout if stream is None else stream
+    if not develop_push(env):
+        return 0  # Only the develop push plan saves selection comparisons.
+    key = env.get("CD_CACHE_KEY")
+    try:
+        require(isinstance(key, str) and KEY.fullmatch(key) is not None, "Selection cache key is invalid")
+        reader = api if api is not None else GitHub(env.get("GH_TOKEN"))
+        # The key is a prefix filter; another attempt's key can extend this one.
+        result = observe(lambda: listing(reader, key), lambda row: row["key"] == key, **options)
+    except Exception:  # noqa: BLE001 - a diagnostic never fails the plan.
+        result = "unknown"
+    warning = SELECTION_WARNING if result == "not-saved" else None
+    emit(stream, "selection", result, REASONS[result], title="Selection cache not saved", warning=warning)
+    return 0
+
+
+def main(argv):
+    if argv == ["selection"]:
+        return report_selection(os.environ)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
