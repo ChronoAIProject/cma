@@ -5,7 +5,13 @@ import { Button } from '../../ui/Button';
 import { Input } from '../../ui/Input';
 import { Picker } from '../../ui/Picker';
 import { ReportSelector } from './ReportSelector';
-import { metricQuery, statuses, type MetricsClient, type Range, type Selection } from './model';
+import {
+  metricQuery,
+  statusOptions,
+  type MetricsClient,
+  type Range,
+  type Selection,
+} from './model';
 
 function localInput(value: string): string {
   const date = new Date(value);
@@ -114,10 +120,7 @@ export function MetricFilters({
             placement="usage-filter-control"
             label="Usage Sandbox status"
             value={draft.status}
-            options={[
-              { value: '', label: 'Any status' },
-              ...statuses.map((value) => ({ value, label: value.replaceAll('_', ' ') })),
-            ]}
+            options={[{ value: '', label: 'Any status' }, ...statusOptions]}
             onChange={(status) => update({ ...draft, status })}
           />
         </label>

@@ -22,12 +22,21 @@ export type AuthorizedRead<Value> =
       readonly refreshError?: string;
     };
 
+interface RetryPolicy {
+  readonly scope: object;
+  readonly applies: (error: ApiError) => boolean;
+}
+
 /** Values belong to one read context and expire independently of a pending refresh. */
 export function useAuthorizedRead<Value>(
   read: ((signal: AbortSignal) => Promise<AuthorizedValue<Value>>) | undefined,
   retainStale = false,
+  retryPolicy?: RetryPolicy,
 ) {
-  const retry = useRef({ read, failures: 0, at: 0 });
+  const retryScope = retryPolicy?.scope ?? read;
+  const retryWithDeadline = retryPolicy?.applies;
+  const retry = useRef({ scope: retryScope, failures: 0, at: 0 });
+  const retryRead = useRef<{ read: typeof read; load: () => void } | undefined>(undefined);
   const [revision, setRevision] = useState(0);
   const [stored, setStored] = useState<{
     readonly read: typeof read;
@@ -35,10 +44,18 @@ export function useAuthorizedRead<Value>(
     readonly result: AuthorizedRead<Value>;
     readonly refreshing: boolean;
   }>();
-  const reload = useCallback(() => setRevision((value) => value + 1), []);
+  const reload = useCallback(() => {
+    const scheduled = retryRead.current;
+    if (scheduled && scheduled.read === read && retry.current.at > 0) {
+      scheduled.load();
+      return;
+    }
+    setRevision((value) => value + 1);
+  }, [read]);
   useEffect(() => {
     if (read === undefined) return;
-    if (retry.current.read !== read) retry.current = { read, failures: 0, at: 0 };
+    if (retry.current.scope !== retryScope)
+      retry.current = { scope: retryScope, failures: 0, at: 0 };
     let active = true;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let pending: AbortController | undefined;
@@ -121,7 +138,7 @@ export function useAuthorizedRead<Value>(
           clear();
           void load();
         }, deadline - Date.now());
-        retry.current = { read, failures: 0, at: 0 };
+        retry.current = { scope: retryScope, failures: 0, at: 0 };
         publish({ status: 'ready', value: result.value });
       } catch (error) {
         if (active && pending === request) {
@@ -131,10 +148,13 @@ export function useAuthorizedRead<Value>(
             (error instanceof ApiError && error.isRetryable) ||
             error instanceof TransportError ||
             error instanceof TypeError;
-          const limited = error instanceof ApiError && error.status === 429;
+          const limited =
+            error instanceof ApiError && (error.status === 429 || retryWithDeadline?.(error));
           if (limited) {
             retry.current.at = Date.now() + readRetryDelay(error, ++retry.current.failures);
             retryTimer = setTimeout(() => void load(), retry.current.at - Date.now());
+          } else {
+            retry.current.at = 0;
           }
           publish({
             status: 'error',
@@ -163,12 +183,14 @@ export function useAuthorizedRead<Value>(
       if (validUntil !== undefined && Date.now() >= validUntil) clear();
       void load();
     };
+    retryRead.current = { read, load: () => void load() };
     void load();
     const refresh = setInterval(() => void load(), 30_000);
     document.addEventListener('visibilitychange', foreground);
     window.addEventListener('focus', foreground);
     return () => {
       active = false;
+      retryRead.current = undefined;
       pending?.abort();
       clearTimeout(expiration);
       clearInterval(refresh);
@@ -176,7 +198,7 @@ export function useAuthorizedRead<Value>(
       document.removeEventListener('visibilitychange', foreground);
       window.removeEventListener('focus', foreground);
     };
-  }, [read, revision, retainStale]);
+  }, [read, revision, retainStale, retryScope, retryWithDeadline]);
   const state: AuthorizedRead<Value> =
     stored !== undefined &&
     stored.read === read &&

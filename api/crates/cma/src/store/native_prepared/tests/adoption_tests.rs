@@ -139,6 +139,10 @@ async fn native_prepared_adoption_waits_for_parent_and_tool_marker_requires_exac
         store.admit_agent(input.clone()).await,
         Err(SandboxStoreError::SandboxNotReady)
     ));
+    let previous = parent.revision;
+    parent.status = SandboxStatus::Installing;
+    parent.revision += 1;
+    store.save_sandbox(previous, parent.clone()).await.unwrap();
     workspace.status = WorkspaceStatus::Ready;
     workspace.resolved_commit = record.payload.workspaces[0].resolved_commit.clone();
     workspace.ready_at = Some(NOW.into());

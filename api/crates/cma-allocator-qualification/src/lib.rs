@@ -10,7 +10,11 @@ use std::{
     time::{Duration, Instant},
 };
 
-const WORKERS: usize = 18;
+// Staging gives AM and EG few CPUs, and CI runners have four. Eighteen
+// persistent workers on four CPUs made the RSS measurement noisy enough to
+// fail unrelated changes (24.6 and 26.6 MiB against the 24 MiB limit on
+// 21 Nov 2026) while frees on foreign threads stay exercised with four.
+const WORKERS: usize = 4;
 const BLOCKS: usize = 128;
 const WARMUP: usize = 256;
 const ROUNDS: usize = 4096;

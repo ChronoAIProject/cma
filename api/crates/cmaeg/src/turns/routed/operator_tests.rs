@@ -142,6 +142,7 @@ async fn expired_accepted_keeps_delivery_and_guard_uncertainty_precedence() {
         } else {
             let mut state = lease.state.clone();
             state.delivery = Some(DeliveryCheckpoint {
+                execution_attribution: None,
                 trace_contract: false,
                 response_id: "resp_1".into(),
                 cursor: 0,

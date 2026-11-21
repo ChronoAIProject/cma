@@ -1,4 +1,5 @@
 import { DocsLink } from '../services/DocsLink';
+import { CreationRequestHelp, type CreationRequest } from './CreationRequestHelp';
 import { useEffect, useRef, useState } from 'react';
 import { DocumentError, type DocumentsClient, type DocumentView } from '../api/documents';
 import type { AppRoute } from '../routing/routes';
@@ -30,8 +31,13 @@ export function DocumentRegistry({
   const [create, setCreate] = useState(false);
   const [title, setTitle] = useState('Untitled');
   const [busy, setBusy] = useState(false);
-  const [createError, setCreateError] = useState<string>();
-  const [intent, setIntent] = useState<{ title: string; key: string }>();
+  const [createError, setCreateError] = useState<{
+    message: string;
+    status?: number;
+    refused: boolean;
+  }>();
+  const [intent, setIntent] = useState<CreationRequest>();
+  const [uncertain, setUncertain] = useState(false);
   const mutation = useRef<AbortController | undefined>(undefined);
   useEffect(() => () => mutation.current?.abort(), []);
   useEffect(() => {
@@ -86,7 +92,11 @@ export function DocumentRegistry({
       new TextEncoder().encode(title.trim()).length > 240
     )
       return;
-    const retained = intent ?? { title: title.trim(), key: crypto.randomUUID() };
+    const retained = intent ?? {
+      title: title.trim(),
+      key: crypto.randomUUID(),
+      startedAt: new Date().toISOString(),
+    };
     const request = new AbortController();
     mutation.current = request;
     setIntent(retained);
@@ -99,17 +109,19 @@ export function DocumentRegistry({
       );
       if (!request.signal.aborted) {
         setIntent(undefined);
+        setUncertain(false);
         onNavigate({ kind: 'document', documentId: document.id });
       }
     } catch (cause) {
       if (!request.signal.aborted) {
-        if (cause instanceof DocumentError && cause.status >= 400 && cause.status < 500)
-          setIntent(undefined);
-        setCreateError(
-          cause instanceof Error
-            ? cause.message
-            : 'Creation could not be confirmed. Retry this request.',
-        );
+        const status = cause instanceof DocumentError ? cause.status : undefined;
+        const refused = status !== undefined && status >= 400 && status < 500 && status !== 408;
+        if (!refused || status === 409) setUncertain(true);
+        setCreateError({
+          message: cause instanceof Error ? cause.message : 'No confirmation was received.',
+          status,
+          refused,
+        });
       }
     } finally {
       if (!request.signal.aborted) setBusy(false);
@@ -124,12 +136,20 @@ export function DocumentRegistry({
           <p>Your ideas, brought together.</p>
           <DocsLink view="find-your-outputs">Help finding your outputs</DocsLink>
         </div>
-        {canCreate ? (
+        {canCreate || intent ? (
           <Button variant="primary" icon={<IconPlusOutline16 />} onClick={() => setCreate(true)}>
-            New document
+            {intent ? 'Resume creation' : 'New document'}
           </Button>
         ) : null}
       </header>
+      {intent && !create ? (
+        <Alert tone="warning" title={`Creation request: ${intent.title}`}>
+          {createError?.refused
+            ? 'The last attempt was refused.'
+            : 'Creation has not been confirmed.'}{' '}
+          Choose Resume creation to return to this request.
+        </Alert>
+      ) : null}
       <div className="documents-page__filters">
         <div className="documents-page__tabs" role="group" aria-label="Artifact ownership">
           {(['all', 'owned', 'shared'] as const).map((value) => (
@@ -160,7 +180,7 @@ export function DocumentRegistry({
           }}
         />
       </div>
-      {canCreate ? (
+      {canCreate && !intent ? (
         <section className="documents-page__create" aria-label="Make something new">
           <p>Make something new</p>
           <button type="button" className="document-template" onClick={() => setCreate(true)}>
@@ -253,7 +273,10 @@ export function DocumentRegistry({
             <Button
               variant="primary"
               disabled={
-                busy || !title.trim() || new TextEncoder().encode(title.trim()).length > 240
+                busy ||
+                !canCreate ||
+                !title.trim() ||
+                new TextEncoder().encode(title.trim()).length > 240
               }
               onClick={() => void createDocument()}
             >
@@ -262,19 +285,66 @@ export function DocumentRegistry({
           </>
         }
       >
-        <label className="document-field">
-          Title
-          <Input
-            value={title}
-            maxLength={240}
-            disabled={busy || intent !== undefined}
-            onChange={(event) => setTitle(event.target.value)}
-          />
-        </label>
-        {new TextEncoder().encode(title.trim()).length > 240 ? (
-          <Alert tone="warning">Keep the title within 240 bytes.</Alert>
-        ) : null}
-        {createError ? <Alert tone="error">{createError}</Alert> : null}
+        <div className="document-creation-fields">
+          <label className="document-field">
+            Title
+            <Input
+              value={title}
+              maxLength={240}
+              disabled={busy || intent !== undefined}
+              aria-describedby={intent ? 'creation-title-help' : undefined}
+              onChange={(event) => setTitle(event.target.value)}
+            />
+          </label>
+          {intent ? <p id="creation-title-help">The title stays with this request.</p> : null}
+          {busy ? (
+            <Alert tone="info">Sending this creation request. Waiting for confirmation.</Alert>
+          ) : null}
+          {new TextEncoder().encode(title.trim()).length > 240 ? (
+            <Alert tone="warning">Keep the title within 240 bytes.</Alert>
+          ) : null}
+          {createError && intent ? (
+            <>
+              <Alert
+                tone="error"
+                title={createError.refused ? 'Creation request refused' : 'Creation not confirmed'}
+              >
+                <p>{createError.message}</p>
+                {createError.refused ? (
+                  <p>
+                    This attempt was refused (HTTP {createError.status}). Retry uses the same
+                    request.
+                  </p>
+                ) : (
+                  <p>Creation has not been confirmed. Retry uses the same request.</p>
+                )}
+                {createError.refused && uncertain ? (
+                  <p>The original creation is still unconfirmed.</p>
+                ) : null}
+              </Alert>
+              <p>
+                You can close this dialog and resume from Artifacts. Keep Artifacts open until
+                creation is resolved.
+              </p>
+              {createError.refused && !uncertain ? (
+                <Button
+                  onClick={() => {
+                    setIntent(undefined);
+                    setCreateError(undefined);
+                    setUncertain(false);
+                  }}
+                >
+                  Edit as a new request
+                </Button>
+              ) : null}
+              <CreationRequestHelp
+                request={intent}
+                status={createError.status}
+                refused={createError.refused}
+              />
+            </>
+          ) : null}
+        </div>
       </Modal>
     </section>
   );

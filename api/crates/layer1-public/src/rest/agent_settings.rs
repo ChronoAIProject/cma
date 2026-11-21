@@ -2,7 +2,7 @@
 
 use axum::{
     extract::{Path, State},
-    http::header,
+    http::{header, HeaderMap},
     response::{IntoResponse, Response},
     Json,
 };
@@ -17,7 +17,12 @@ use utoipa::ToSchema;
 use super::{
     agents::{execute_command, AgentRoutesState},
     idempotency::{IdempotencyKey, RequestBody},
-    instance_problem::InstanceProblem,
+    instance_problem::{
+        configuration_write::{
+            authorize_receipt, operation_problem, private_response, wants_reasons,
+        },
+        InstanceProblem,
+    },
     BodyProblem,
 };
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
@@ -128,7 +133,8 @@ pub(crate) async fn read(
 }
 
 #[utoipa::path(patch, operation_id = "update_agent_settings", path = "/api/v1/agents/{id}/settings", tag = "agents",
-    params(("id" = String, Path), ("Idempotency-Key" = String, Header)),
+    params(("id" = String, Path), ("Idempotency-Key" = String, Header),
+        ("Prefer" = Option<String>, Header, description = "Use cma-settings-reasons for the original write reason")),
     request_body = UpdateAgentSettingsRequest,
     responses((status = 200, body = AgentSettingsView),
     (status = 409, body = crate::rest::ProblemDocument)))]
@@ -137,30 +143,27 @@ pub(crate) async fn update(
     AuthenticatedCaller(caller): AuthenticatedCaller,
     resource: Option<AuthenticatedResourceCaller>,
     Path(id): Path<String>,
+    headers: HeaderMap,
     key: IdempotencyKey,
     body: Result<RequestBody<UpdateAgentSettingsRequest>, BodyProblem>,
 ) -> Response {
     let service = state.agent_operations.clone();
     let operation_caller = caller.clone();
+    let reason_requested = wants_reasons(&headers);
     // Every request, including cached success replay, needs current permission.
-    let read = if let Some(resource) = &resource {
-        match state
-            .reads
-            .configuration_authorized(
-                &resource.context,
-                resource.credential.as_ref().map(DelegatedCredential::value),
-                &AgentId(id.clone()),
-            )
-            .await
-        {
-            Ok(read) => Some(read),
-            Err(error) => return InstanceProblem::from(error).into_response(),
-        }
-    } else {
-        None
+    let read = match authorize_receipt(
+        &state.reads,
+        &caller,
+        resource.as_ref(),
+        &AgentId(id.clone()),
+    )
+    .await
+    {
+        Ok(read) => read,
+        Err(problem) => return private_response(problem.into_response()),
     };
     let reads = state.reads.clone();
-    let mut response = execute_command(
+    let response = execute_command(
         &state,
         &caller,
         key,
@@ -177,11 +180,15 @@ pub(crate) async fn update(
                         &settings,
                     )
                     .await?;
-                service.update_settings_authorized(&authority).await?
+                service
+                    .update_settings_authorized(&authority)
+                    .await
+                    .map_err(|error| operation_problem(error, reason_requested))?
             } else {
                 service
                     .update_settings(&operation_caller, &AgentId(id), settings)
-                    .await?
+                    .await
+                    .map_err(|error| operation_problem(error, reason_requested))?
             };
             Ok(Json(AgentSettingsView::from(agent)).into_response())
         },
@@ -189,12 +196,8 @@ pub(crate) async fn update(
     .await;
     if let Some(read) = &read {
         if let Err(error) = state.reads.validate_configuration_read(read).await {
-            return InstanceProblem::from(error).into_response();
+            return private_response(InstanceProblem::from(error).into_response());
         }
     }
-    response.headers_mut().insert(
-        header::CACHE_CONTROL,
-        header::HeaderValue::from_static("private, no-store"),
-    );
-    response
+    private_response(response)
 }

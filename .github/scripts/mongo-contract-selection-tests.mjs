@@ -11,7 +11,93 @@ function selectionFunctions(source) {
   return source.slice(start, end);
 }
 
-export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, fixturePredicate, ordinaryPredicate, qualificationPredicate}) {
+// Evaluate the nextest filterset subset the runner uses (test/package atoms,
+// not/and/or and parentheses) against one test name. Unsupported syntax fails
+// the guard instead of being skipped, so it proves selection semantics.
+function filterset(expression) {
+  const tokens = [];
+  const lexeme = /\s+|(?:and|or|not)\b|[&|()]|(test|package)\(([=~]?)([^()\s]+)\)/y;
+  for (let index = 0; index < expression.length; index = lexeme.lastIndex) {
+    lexeme.lastIndex = index;
+    const match = lexeme.exec(expression);
+    assert.ok(match, `unsupported filterset syntax: ${expression.slice(index, index + 60)}`);
+    if (match[1]) tokens.push({kind: match[1], exact: match[2] === '=', value: match[3]});
+    else if (match[0].trim()) tokens.push(match[0]);
+  }
+  let position = 0;
+  const unary = () => {
+    const token = tokens[position++];
+    if (token === 'not') { const inner = unary(); return name => !inner(name); }
+    if (token === '(') {
+      const inner = union();
+      assert.equal(tokens[position++], ')', 'balanced filterset');
+      return inner;
+    }
+    assert.equal(typeof token, 'object', 'filterset atom');
+    if (token.kind === 'package') {
+      assert.ok(token.exact);
+      return () => token.value === 'cma';
+    }
+    return token.exact ? name => name === token.value : name => name.includes(token.value);
+  };
+  const binary = (operand, operators, combine) => () => {
+    let left = operand();
+    while (operators.includes(tokens[position])) {
+      position++;
+      const [l, r] = [left, operand()];
+      left = name => combine(l(name), r(name));
+    }
+    return left;
+  };
+  const intersection = binary(unary, ['and', '&'], (l, r) => l && r);
+  const union = binary(intersection, ['or', '|'], (l, r) => l || r);
+  const select = union();
+  assert.equal(position, tokens.length, 'complete filterset');
+  return select;
+}
+
+// Read per-test budgets (period x terminate-after) from the nextest profiles.
+function nextestBudgets(text) {
+  const profiles = {};
+  let table = null;
+  for (const raw of text.split('\n')) {
+    const line = raw.trim();
+    let match;
+    if (!line || line.startsWith('#')) continue;
+    if ((match = /^\[profile\.([a-z-]+)\]$/.exec(line))) {
+      table = profiles[match[1]] ??= {overrides: []};
+    } else if ((match = /^\[\[profile\.([a-z-]+)\.overrides\]\]$/.exec(line))) {
+      table = {};
+      (profiles[match[1]] ??= {overrides: []}).overrides.push(table);
+    } else if (line.startsWith('[')) {
+      table = null;
+    } else if (table && (match = /^filter = "([^"]+)"$/.exec(line))) {
+      table.filter = match[1];
+    } else if (table && line.startsWith('slow-timeout')) {
+      match = /^slow-timeout = \{ period = "([1-9][0-9]*)s", terminate-after = ([1-9][0-9]*) \}$/.exec(line);
+      assert.ok(match, `unreadable per-test budget: ${line}`);
+      table.budget = Number(match[1]) * Number(match[2]);
+    }
+  }
+  return profiles;
+}
+
+function captureInvocations(source, modes) {
+  const captured = execFileSync('bash', ['-c', selectionFunctions(source) + `
+nextest_build() { printf '%s\\n' "$@"; }
+for selection in ${modes.join(' ')}; do
+  printf 'MODE %s\\n' "$selection"
+  nextest_contracts run
+done
+`], {encoding: 'utf8', env: {...process.env, script_directory: fileURLToPath(new URL('.', import.meta.url))}});
+  return Object.fromEntries(captured.split('MODE ').filter(Boolean).map(block => {
+    const [mode, ...args] = block.trim().split('\n');
+    return [mode, args];
+  }));
+}
+const expression = args => args[args.indexOf('-E') + 1];
+
+export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, observationTest, fixturePredicate, ordinaryPredicate, qualificationPredicate}) {
   test('selection proof parses old and isolated owner and audit predicates', () => {
     const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
     const result = execFileSync('python3', ['-c', `
@@ -84,6 +170,84 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
       assert.deepEqual(remaining, before);
     });
   }
+
+  test('selection proof removes the thirty-minute qualification from the listing and ordinary partitions only', () => {
+    const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+    const result = execFileSync('python3', ['-c', `
+import json, runpy, sys
+parse = runpy.run_path(sys.argv[1])["mongo_filters"]
+source = sys.argv[2]
+before = "\\n".join(line for line in source.splitlines()
+    if not line.startswith("readonly observation_budget_test=")
+    and not line.strip().startswith("observation-budget)"))
+before = before.replace(' or test(=$observation_budget_test)', '')
+print(json.dumps({"before": parse(before), "after": parse(source)}))
+`, fileURLToPath(new URL('backend-selection-proof.py', import.meta.url)), source], {
+      env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
+    });
+    const {before, after} = JSON.parse(result);
+    const {'observation-budget': dedicated, ...remaining} = after;
+    assert.equal(before['observation-budget'], undefined);
+    assert.ok(dedicated.startsWith(`package(=cma) and test(=${observationTest}) & ${fixturePredicate} & (`));
+    for (const mode of ['all', 'ordinary']) {
+      assert.equal(remaining[mode].split(` or test(=${observationTest})`).length, 2, `${mode} excludes it exactly once`);
+      remaining[mode] = remaining[mode].replace(` or test(=${observationTest})`, '');
+    }
+    assert.ok(after.all.startsWith(`${qualificationPredicate} & ${fixturePredicate} & (`));
+    assert.ok(after.ordinary.startsWith(`${ordinaryPredicate} & ${fixturePredicate} & (`));
+    assert.deepEqual(remaining, before);
+  });
+
+  // Class guard: every dedicated-mode contract stays out of the PR shards, and
+  // only those ordinary partitions run under the per-test budget. Modes come
+  // from the runner's own selection cases, so a new mode is guarded too.
+  test('ordinary PR partitions exclude every dedicated-mode contract and alone carry the per-test budget', () => {
+    const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+    const modes = [...source.matchAll(/^ {4}([a-z-]+)\) selection_filter=/gm)].map(match => match[1]);
+    assert.ok(modes.includes('ordinary') && modes.includes('observation-budget'));
+    const invocations = captureInvocations(source, ['all', ...modes]);
+    const select = Object.fromEntries(Object.entries(invocations).map(([mode, args]) => [mode, filterset(expression(args))]));
+    const named = Object.fromEntries([...source.matchAll(/^readonly ([a-z_]+_test)='([^']+)'$/gm)].map(match => [match[1], match[2]]));
+    const declared = Object.keys(JSON.parse(readFileSync(new URL('mongo-contract-exceptions.json', import.meta.url), 'utf8')));
+    assert.equal(named.observation_budget_test, observationTest);
+    assert.ok(declared.includes(observationTest));
+    for (const name of [...Object.values(named), ...declared]) {
+      assert.equal(select.ordinary(name), false, `ordinary PR partitions select dedicated contract ${name}`);
+    }
+    for (const name of declared) assert.equal(select.all(name), false, `the PR listing selects on-demand ${name}`);
+    for (const [variable, name] of Object.entries(named)) {
+      const owners = modes.filter(mode => expression(invocations[mode]).startsWith(`package(=cma) and test(=${name}) & `));
+      assert.equal(owners.length, 1, `${variable} has exactly one dedicated mode`);
+      assert.ok(select[owners[0]](name) && source.includes(`"$1" == '--${owners[0]}'`), `--${owners[0]} runs ${variable}`);
+    }
+    // Exclusions are exact: a sibling contract in the same module stays ordinary.
+    const sibling = observationTest.replace(/[^:]+$/, 'observation_two_serving_replicas_keep_idle_work_independent_of_history');
+    assert.ok(select.ordinary(sibling) && select.all(sibling));
+    // Not vacuous: without its exclusion the qualification would reach a PR shard.
+    const regressed = captureInvocations(source.replaceAll(' or test(=$observation_budget_test)', ''), ['all', 'ordinary']);
+    assert.ok(filterset(expression(regressed.ordinary))(observationTest) && filterset(expression(regressed.all))(observationTest));
+
+    for (const [mode, args] of Object.entries(invocations)) {
+      assert.equal(args.includes('--profile'), mode === 'ordinary', `${mode} nextest profile`);
+    }
+    const profile = invocations.ordinary[invocations.ordinary.indexOf('--profile') + 1];
+    const budgets = nextestBudgets(readFileSync(new URL('../../api/.config/nextest.toml', import.meta.url), 'utf8'));
+    const ordinary = budgets[profile];
+    assert.ok(ordinary?.budget > 0, `${profile} terminates a test at its per-test budget`);
+    assert.ok(ordinary.budget < 1800, 'the budget stops a thirty-minute qualification');
+    assert.equal(budgets.default?.budget, undefined, 'dedicated modes keep the unbounded default profile');
+    const timings = JSON.parse(readFileSync(new URL('mongo-contract-timings.json', import.meta.url), 'utf8')).tests;
+    const allowances = Object.fromEntries(ordinary.overrides.map(override => {
+      const name = /^test\(=([^()\s]+)\)$/.exec(override.filter ?? '')?.[1];
+      assert.ok(name && override.budget > ordinary.budget, `override names one exact longer contract: ${override.filter}`);
+      assert.ok(select.ordinary(name) && timings[name], `override is for a measured ordinary contract: ${name}`);
+      return [name, override.budget];
+    }));
+    // At least 3x every measured ordinary contract, so the budget cannot flake.
+    for (const [name, seconds] of Object.entries(timings)) {
+      if (select.ordinary(name)) assert.ok((allowances[name] ?? ordinary.budget) >= 3 * seconds, `${name} (${seconds} s) lacks 3x headroom`);
+    }
+  });
 }
 
 test('focused Agent-list runner keeps the complete ordinary and full selections', () => {
@@ -160,7 +324,7 @@ test('merged runner selections share the complete contract corpus and fixture ex
   const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
   const modes = ['all', 'ordinary', 'scale', 'owner-allocation', 'audit-bounds', 'diagnostics',
     'scan-cooperation', 'request-limits', 'agent-list-contracts', 'availability',
-    'agent-list-profile', 'organization-inventory', 'agent-lists', 'cpu-profile'];
+    'agent-list-profile', 'organization-inventory', 'agent-lists', 'cpu-profile', 'observation-budget'];
   const prefix = selectionFunctions(source);
   const captured = execFileSync('bash', ['-c', prefix + `
 nextest_build() { printf '%s\\n' "$@"; }

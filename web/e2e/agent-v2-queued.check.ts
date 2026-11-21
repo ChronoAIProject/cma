@@ -152,6 +152,13 @@ for (const theme of ['light', 'dark']) {
         outcomes.getByText('Message status could not be confirmed. Refresh status.'),
       ).toBeVisible();
       await expect(outcomes.getByText('Retain this admitted instruction')).toBeVisible();
+      await expect(
+        outcomes.getByRole('button', { name: 'Restore to draft', exact: true }),
+      ).toHaveCount(0);
+      await expect(outcomes.getByRole('button', { name: 'Copy message', exact: true })).toHaveCount(
+        0,
+      );
+      expect(fixture.writes).toHaveLength(1);
       expired = true;
       await outcomes.getByRole('button', { name: 'Refresh status', exact: true }).click();
       await expect(outcomes.getByText('Expired before starting')).toBeVisible({ timeout: 10000 });
@@ -299,6 +306,9 @@ for (const delivery of ['runtime_lost', 'recovery_required'] as const) {
       await expect(
         outcomes.getByRole('button', { name: 'Restore to draft', exact: true }),
       ).toHaveCount(0);
+      await expect(outcomes.getByRole('button', { name: 'Copy message', exact: true })).toHaveCount(
+        0,
+      );
       expect(fixture.writes).toHaveLength(1);
       expect(fixture.boundary.unexpected).toEqual([]);
       expect(fixture.boundary.errors).toEqual([]);

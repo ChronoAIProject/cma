@@ -8,7 +8,7 @@ use layer2_core::sandbox::store::{SandboxStoreError, MAX_PAGE_SIZE};
 use layer2_core::AgentId;
 use tokio::sync::{watch, Notify};
 use tokio::task::{Id, JoinError, JoinHandle, JoinSet};
-use tokio::time::MissedTickBehavior;
+use tokio::time::{Instant, MissedTickBehavior};
 
 use super::agent_worker::AgentWorker;
 use super::lifecycle_failure::{
@@ -35,6 +35,10 @@ pub(crate) struct AgentScheduler {
 
 #[async_trait::async_trait]
 trait AgentScheduleWork: Send + Sync {
+    fn next_startup_probe(&self) -> Option<Instant> {
+        None
+    }
+
     async fn due(&self, now: SystemTime, limit: u16) -> Result<Vec<AgentId>, SandboxStoreError>;
     async fn reconcile(&self, now: SystemTime) -> Result<usize, SandboxStoreError>;
     async fn run_one(
@@ -47,6 +51,10 @@ trait AgentScheduleWork: Send + Sync {
 
 #[async_trait::async_trait]
 impl AgentScheduleWork for AgentWorker {
+    fn next_startup_probe(&self) -> Option<Instant> {
+        AgentWorker::next_startup_probe(self)
+    }
+
     async fn due(&self, now: SystemTime, limit: u16) -> Result<Vec<AgentId>, SandboxStoreError> {
         layer2_core::diagnostic_context::DiagnosticContext::background("scheduler")
             .scope(self.due_work(now, limit))
@@ -143,6 +151,7 @@ impl AgentScheduler {
                         if *shutdown.borrow() {
                             break;
                         }
+                        let startup_probe = work.worker.next_startup_probe();
                         tokio::select! {
                             changed = shutdown.changed() => {
                                 if changed.is_err() || *shutdown.borrow() {
@@ -164,6 +173,7 @@ impl AgentScheduler {
                             // Keep one coalesced hint through a full queue, full capacity,
                             // or an in-progress discovery that may predate the admission.
                             _ = admitted.notified(), if work.can_discover() => work.discover(),
+                            _ = startup_probe_wake(startup_probe), if startup_probe.is_some() && work.can_discover() => work.discover(),
                         }
                         if !*shutdown.borrow() {
                             work.fill_slots();
@@ -191,6 +201,12 @@ impl AgentScheduler {
                 })
             },
         )
+    }
+}
+
+async fn startup_probe_wake(deadline: Option<Instant>) {
+    if let Some(deadline) = deadline {
+        tokio::time::sleep_until(deadline).await;
     }
 }
 

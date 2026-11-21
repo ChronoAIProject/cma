@@ -2,9 +2,10 @@
 import os
 from pathlib import Path
 
+from ci_outcome import cell, entry
 from staging_cd_common import require
 from staging_cd_compatibility import GROUP
-from staging_cd_component_admission import validate_failures
+from staging_cd_component_admission import REASONS as ADMISSION_REASONS, validate_failures
 from staging_cd_deploy_result import STATES
 from staging_cd_set import OVERTAKEN, document
 from staging_cd_targets import TARGETS
@@ -14,10 +15,53 @@ CONCLUSIONS = {"success", "failure", "skipped", "cancelled"}
 # run finalized the same source first, no run is known to own the deployment
 # (a newer run may have planned around this one), so that skip always fails.
 DISPOSITIONS = frozenset({"reservation_superseded", "source_already_final"})
+UNSUCCESSFUL = ("failure", "skipped", "cancelled", "unknown")
+# Every code a row or a run-level line can explain, from the component-report catalogue family.
+CODES = frozenset({"allocation-incomplete", "evidence-invalid", *DISPOSITIONS, OVERTAKEN, "superseded-peer",
+                   "finalize-incomplete", "admit-skipped", "admit-unknown", "controller-unreported",
+                   *("publish-" + value for value in UNSUCCESSFUL), *("deploy-" + value for value in UNSUCCESSFUL)})
+HEADER = ["| Component | Publish + finalize | Admit | Deploy job | Controller outcome | Reason | Likely cause | Next step |",
+          "|---|---|---|---|---|---|---|---|"]
 
 
 def outcome(value):
     return value if isinstance(value, str) and value in CONCLUSIONS else "unknown"
+
+
+def diagnosis(publish, admit, deploy, state):
+    """Return (family, code) for a row's first unproven column, or None if verified."""
+    if publish in DISPOSITIONS or publish in ("superseded-peer", "finalize-incomplete"):
+        return "component-report", publish
+    if publish not in ("success", "retained"):
+        return "component-report", "publish-" + publish
+    if admit in ADMISSION_REASONS:
+        return "admission", admit
+    if admit != "admitted":
+        return "component-report", "admit-" + admit
+    if deploy != "success":
+        return "component-report", "deploy-" + deploy
+    if state in ("withheld", "unverified"):
+        return "deploy-component", STATES[state]
+    if state == OVERTAKEN:
+        return "component-report", OVERTAKEN
+    if state != "controller-verified":
+        return "component-report", "controller-unreported"
+    return None
+
+
+def row(component, publish, admit, deploy, state, *, reason=None):
+    """One table row; the reason columns explain the first column that is not proven."""
+    found = diagnosis(reason or publish, admit, deploy, state)
+    if found is None:
+        explained = "none | - | -"
+    else:
+        value = entry(*found)
+        explained = f"{found[1]} | {value['cause']} | {cell(value['next'])}"
+    return f"| {component} | {publish} | {admit} | {deploy} | {state} | {explained} |"
+
+
+def next_step(code):
+    return "Next step: " + entry("component-report", code)["next"]
 
 
 def summarize(env):
@@ -28,7 +72,8 @@ def summarize(env):
         require(allocation == "skipped", "Unexpected allocation after empty plan")
         return ["No components selected."], True
     if allocation != "success":
-        return ["Allocation " + outcome(allocation) + ". No component deployment proven."], False
+        return ["Allocation " + outcome(allocation) + ". No component deployment proven.",
+                next_step("allocation-incomplete")], False
     lanes = document(env["CD_LANES"])
     require(isinstance(lanes, dict) and set(lanes) <= TARGETS
             and all(lane == c or (lane == "contract" and c in GROUP) for c, lane in lanes.items()),
@@ -46,8 +91,7 @@ def summarize(env):
             superseded[c] = disposition
     overtaken, admission_overtaken = set(), set()
     passed = env["CD_INFRASTRUCTURE_RESULT"] == "success"
-    lines = ["| Component | Publish + finalize | Admit | Deploy job | Controller outcome |",
-             "|---|---|---|---|---|"]
+    lines = list(HEADER)
     for lane in sorted(set(lanes.values())):
         selected = {c for c in lanes if lanes[c] == lane}
         job = document(env["CD_PROMOTE_" + lane.upper().replace("-", "_")])
@@ -89,11 +133,15 @@ def summarize(env):
                 suffix = c.upper().replace("-", "_")
                 result = outcome(env["CD_PUBLISH_" + suffix])
                 passed &= result == "success"
+                reason = None
                 if c in superseded and result == "success":
                     result = superseded[c]
                 elif c not in superseded:
-                    passed &= env.get("CD_FINALIZED_" + suffix) == "success"
-                lines.append(f"| {c} | {result} | {missing} | {missing} | unreported |")
+                    finalized = env.get("CD_FINALIZED_" + suffix) == "success"
+                    passed &= finalized
+                    if result == "success":
+                        reason = "superseded-peer" if finalized else "finalize-incomplete"
+                lines.append(row(c, result, missing, missing, "unreported", reason=reason))
             continue
         for c in sorted(selected | reported):
             publish = outcome(env["CD_PUBLISH_" + c.upper().replace("-", "_")]) if c in selected else "retained"
@@ -105,7 +153,7 @@ def summarize(env):
             if c in states:
                 state = states[c]["state"]
                 require(state in STATES and states[c]["reason"] == STATES[state], "Invalid controller outcome")
-            lines.append(f"| {c} | {publish} | {admit} | {deploy} | {state} |")
+            lines.append(row(c, publish, admit, deploy, state))
             handled = c in admission_overtaken
             passed &= (publish in ("success", "retained") and job["result"] == "success"
                        and outputs.get("admit") == "success"
@@ -132,7 +180,7 @@ def main():
     try:
         lines, passed = summarize(os.environ)
     except (ValueError, TypeError, KeyError):
-        lines, passed = ["Component outcome evidence is missing or invalid."], False
+        lines, passed = ["Component outcome evidence is missing or invalid.", next_step("evidence-invalid")], False
     message = "\n".join(lines)
     print(message)
     if os.environ.get("GITHUB_STEP_SUMMARY"):

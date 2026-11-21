@@ -20,6 +20,10 @@ pub enum DocumentError {
     AccountDeletionInProgress,
     #[error("share recipient is unavailable")]
     ShareRecipientUnavailable,
+    #[error("Choose a CMA user with a valid recipient identifier")]
+    InvalidShareRecipient,
+    #[error("Recipient lookup is temporarily unavailable. Try again.")]
+    RecipientDirectoryUnavailable,
     #[error("Document request is invalid")]
     Invalid,
     #[error("Document is unavailable to this caller")]
@@ -48,6 +52,12 @@ pub enum DocumentAccess {
     Owner,
     Read,
     Comment,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DocumentShareRecipient {
+    pub subject: crate::SubjectId,
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

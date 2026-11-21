@@ -14,7 +14,8 @@ from unittest.mock import Mock, patch
 import yaml
 
 from actions_cache_retention import BUDGET, DEVELOP, Entry, Policies, Readers, plan
-from actions_cache_sweep import Actions, authorized_completion, main, pages, sweep
+from actions_cache_sweep import (INVENTORY_BACKOFF_SECONDS, INVENTORY_READS, Actions, InconsistentInventory,
+                                 authorized_completion, main, pages, sweep)
 
 ROOT = Path(__file__).resolve().parents[2]
 CLOCK = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -295,6 +296,41 @@ class Contracts(unittest.TestCase):
         for bad in ({"id": True}, {"size_in_bytes": -1}, {"version": ""}, {"created_at": "2026-01-01"}):
             with self.assertRaises(ValueError):
                 Entry.parse(row | bad)
+
+    def test_a_listing_that_changes_while_read_is_reread_from_its_first_page(self):
+        # A run that changes state between GitHub's count and its page makes one
+        # read disagree with itself. Re-read it whole; never mix two listings.
+        run = {"id": 5, "status": "in_progress"}
+        sleeps = []
+        api = Actions("fixture", 99, sleep=sleeps.append)
+        moving = {"total_count": 2, "workflow_runs": [run]}
+        settled = {"total_count": 1, "workflow_runs": [run]}
+        empty = {"total_count": 0, "workflow_runs": []}
+        responses = {state: [empty] for state in ("requested", "queued", "pending", "waiting")}
+        responses["in_progress"] = [moving, settled]
+        def request(path):
+            state = path.split("status=")[1].split("&")[0]
+            return responses[state].pop(0)
+        api.api.request = Mock(side_effect=request)
+        with patch("actions_cache_sweep.Readers.from_runs", side_effect=lambda runs, _run_id: runs):
+            self.assertEqual(api.readers(), [run])
+        self.assertEqual(sleeps, [INVENTORY_BACKOFF_SECONDS[0]])
+        self.assertEqual(sum("status=in_progress&" in call.args[0] and "page=1&" in call.args[0]
+                             for call in api.api.request.call_args_list), 2)
+        # A persistent disagreement still refuses the sweep after bounded reads.
+        sleeps.clear()
+        api.api.request = Mock(return_value=moving)
+        with self.assertRaises(InconsistentInventory):
+            api.list("runs", "workflow_runs", status="queued")
+        self.assertEqual(api.api.request.call_count, INVENTORY_READS)
+        self.assertEqual(sleeps, list(INVENTORY_BACKOFF_SECONDS))
+        # Malformed pages are not a race and are never re-read.
+        for doc in ({"total_count": "1", "actions_caches": []}, {"total_count": 1, "actions_caches": None}):
+            api.api.request = Mock(return_value=doc)
+            with self.assertRaises(ValueError) as refused:
+                api.list("caches", "actions_caches")
+            self.assertNotIsInstance(refused.exception, InconsistentInventory)
+            self.assertEqual(api.api.request.call_count, 1)
 
     def test_rest_adapter_uses_exact_ids_and_all_nonterminal_run_states(self):
         api = Actions("fixture", 99)

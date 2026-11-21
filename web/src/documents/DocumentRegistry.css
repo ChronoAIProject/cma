@@ -218,3 +218,30 @@
     transition: none;
   }
 }
+.document-creation-fields {
+  display: grid;
+  gap: 12px;
+}
+.creation-request-help summary {
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.creation-request-help summary:focus-visible,
+.creation-request-help pre:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+.creation-request-help pre {
+  margin-block: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-2);
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  user-select: text;
+}
+.creation-request-help > a {
+  display: inline-block;
+  margin-top: 8px;
+}

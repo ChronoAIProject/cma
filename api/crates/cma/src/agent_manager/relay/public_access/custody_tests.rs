@@ -1,6 +1,6 @@
 //! A failed custody read after real policy work is unavailable, not revoked.
 use super::*;
-use crate::auth::persistence::MemoryAuthStore;
+use crate::auth::persistence::{AuthStore, MemoryAuthStore};
 use axum::{body::Body, http::Request};
 use layer2_core::resource_access::*;
 use layer2_core::sandbox::{store::InMemorySandboxStore, AgentListQuery, OwnerSandboxQuery};
@@ -12,6 +12,7 @@ struct PolicyStore {
     inner: Arc<InMemorySandboxStore>,
     auth: Arc<MemoryAuthStore>,
     reads: AtomicUsize,
+    revoke: bool,
 }
 
 #[async_trait::async_trait]
@@ -24,7 +25,18 @@ impl ResourceAccessStore for PolicyStore {
         // The serving policy performs an admission snapshot and its final
         // current-snapshot check before RelayCaller::current reads custody.
         if self.reads.fetch_add(1, Ordering::SeqCst) == 1 {
-            self.auth.set_unavailable(true);
+            if self.revoke {
+                let mut state = self
+                    .auth
+                    .subject(&SubjectId::new("owner"))
+                    .await
+                    .unwrap()
+                    .unwrap();
+                state.tokens = None;
+                self.auth.put_subject(state).await.unwrap();
+            } else {
+                self.auth.set_unavailable(true);
+            }
         }
         Ok(snapshot)
     }
@@ -77,12 +89,23 @@ impl ResourceShareStore for PolicyStore {
 
 #[tokio::test]
 async fn post_policy_custody_outage_is_503_without_ownership_or_effects() {
+    custody_change("GET", "environment", false).await;
+}
+
+#[tokio::test]
+async fn preferences_policy_io_cannot_outlive_credential_custody() {
+    custody_change("PATCH", "preferences", false).await;
+    custody_change("PATCH", "preferences", true).await;
+}
+
+async fn custody_change(method: &str, suffix: &str, revoke: bool) {
     let browser = crate::auth::relay::tests::Fixture::new(true).await;
     let mut f = fixture::fixture(browser.auth.clone(), "agt-public", "owner").await;
     let policy_store = Arc::new(PolicyStore {
         inner: f.store.clone(),
         auth: browser.store.clone(),
         reads: AtomicUsize::new(0),
+        revoke,
     });
     let access = Arc::new(ResourceAccessService::new(
         policy_store.clone(),
@@ -97,7 +120,8 @@ async fn post_policy_custody_outage_is_503_without_ownership_or_effects() {
     );
     let (router, ownership) = fixture::router(&f).await;
     let mut request = Request::builder()
-        .uri("/api/v1/agents/agt-public/environment")
+        .method(method)
+        .uri(format!("/api/v1/agents/agt-public/{suffix}"))
         .body(Body::empty())
         .unwrap();
     *request.headers_mut() = browser.headers.clone();
@@ -113,7 +137,14 @@ async fn post_policy_custody_outage_is_503_without_ownership_or_effects() {
             "test-access".into(),
         ));
     let response = router.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        response.status(),
+        if revoke {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+    );
     assert_eq!(response.headers()["cache-control"], "private, no-store");
     assert_eq!(
         response.headers()["content-type"],
@@ -124,7 +155,11 @@ async fn post_policy_custody_outage_is_503_without_ownership_or_effects() {
         .unwrap();
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&body).unwrap()["code"],
-        "resource_access_unavailable"
+        if revoke {
+            "authentication_required"
+        } else {
+            "resource_access_unavailable"
+        }
     );
     assert_eq!(policy_store.reads.load(Ordering::SeqCst), 2);
     assert_eq!(ownership.calls.load(Ordering::SeqCst), 0);

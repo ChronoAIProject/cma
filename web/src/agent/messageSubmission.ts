@@ -5,6 +5,7 @@ import type { AgentV2Session } from './transport/client';
 import type { useOptimisticMessages } from './optimisticMessages';
 import type { useAgentConnectionReadiness } from './connectionReadiness';
 import type { useConnectionGate } from '../connections/useConnectionGate';
+import type { ConnectionReport } from '../connections/client';
 
 export function messageSubmission({
   controller,
@@ -36,8 +37,9 @@ export function messageSubmission({
     onAccepted: (receipt?: MessageAcceptance) => void,
     answerContext?: AnswerContext,
     onRefused?: (reason?: 'answer_changed' | 'suggestions_unavailable') => void,
+    freshConnections?: ConnectionReport,
   ) => {
-    const verified = connection.verified;
+    const verified = freshConnections ?? connection.verified;
     if (readOnly || verified === undefined) return;
     const message = optimistic.begin(
       content,

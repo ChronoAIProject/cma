@@ -50,7 +50,7 @@ def main():
         output(env, "publications", canonical({e["component"]: e["tasks"] for e in matrix["include"]}))
         output(env, "batches", canonical(batches))
         return True
-    return run_private(operation, None)
+    return run_private(operation, None, subject="component-routes")
 
 
 if __name__ == "__main__":
