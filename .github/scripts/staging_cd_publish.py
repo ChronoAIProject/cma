@@ -311,10 +311,16 @@ def main():
     component = env.get("CD_COMPONENT")
     if component in TARGETS:
         timings.emit(sys.stdout, scan_only=component in RUNTIME_TARGETS)
+    # Every image reports its build summary, so a failed runtime build also
+    # names the Dockerfile step where it stopped.
+    label = component if component in DEPLOYABLES else "image"
+    for metrics in build_metrics:
+        value = metrics or {"complete": False, "reason": "progress-unavailable"}
+        print(json.dumps({"event": "publication-build", **value}, sort_keys=True), flush=True)
+        for step in value.get("failed_steps", ())[:1]:
+            print(f"::error title=Image build step failed::{label} stopped at Dockerfile step {step}; "
+                  "its output is withheld. Reproduce that step locally from the same source.", flush=True)
     if component in APP_TARGETS:
-        for metrics in build_metrics:
-            value = metrics or {"complete": False, "reason": "progress-unavailable"}
-            print(json.dumps({"event": "publication-build", **value}, sort_keys=True), flush=True)
         emit_cache_metrics(component, cache_metrics, sys.stdout)
     return result
 
