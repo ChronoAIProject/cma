@@ -41,10 +41,14 @@ ALLOCATION_SECONDS = 120
 # listening, so the write gets a longer bound.
 PUSH_SECONDS = 30
 # After a timed-out push, the server may still commit it. Settlement polls the
-# exact refs for a bounded time (SETTLE_WAITS), then the parallel owner
-# readbacks run; a push never starts without that time left.
+# exact refs with waits of 1, 2, 4 and 8 s, then 8 s each, for as long as the
+# allocation budget allows. Every poll starts with this reserve still left: it
+# covers that final read and the parallel owner readbacks of a settled batch.
+VERIFY_RESERVE_SECONDS = 5
 SETTLE_WAITS = (1, 2, 4, 8)
-PUSH_SETTLEMENT_SECONDS = sum(SETTLE_WAITS) + 5
+# A push never starts unless the full ladder of waits and the verification
+# reserve still fit after it has used its whole bound: the guaranteed minimum.
+PUSH_SETTLEMENT_SECONDS = sum(SETTLE_WAITS) + VERIFY_RESERVE_SECONDS
 PUSH_RESERVE_SECONDS = PUSH_SETTLEMENT_SECONDS + 1
 
 
@@ -76,6 +80,11 @@ class AllocationIO:
         code = status.partition(" ")[2].partition(" ")[0] if status.startswith("HTTP/") else ""
         if result.returncode == 1 and (not code or code == "429" or code.startswith("5")):
             raise TransientRead("Allocation read failed")
+        # Git exits 128 for every fatal error. Only its diagnostic tells an
+        # outage (an HTTP 502, a reset connection) from a refusal that persists.
+        if (args[:1] == ["git"] and result.returncode == 128
+                and ci_retry.cli_message(result.stderr) == ci_retry.TRANSIENT):
+            raise TransientRead("Allocation read failed") from ci_retry.cli_cause(result.stderr)
         return result
 
     def read(self, args, **kwargs):

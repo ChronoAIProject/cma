@@ -1,7 +1,8 @@
 """One complete ref snapshot and bounded settlement for insert-only tags."""
+import itertools
 import json
 
-from staging_cd_allocation_io import SETTLE_WAITS, TransientRead, UncertainPush, parallel_read
+from staging_cd_allocation_io import SETTLE_WAITS, VERIFY_RESERVE_SECONDS, TransientRead, UncertainPush, parallel_read
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical, parse_annotation
@@ -195,19 +196,31 @@ class AllocationSnapshot(Reservations):
         The client can give up while the server is still applying the push; it
         then commits all refs together. Settle once every ref holds exactly its
         planned object. A ref holding any other object is a foreign or damaged
-        write and is refused at once. Refs that are still absent keep the batch
-        uncertain until the bounded waits end; the push is never replayed.
+        write and is refused at once. Refs that are still absent, or a read that
+        failed transiently, keep the batch uncertain while the allocation budget
+        lasts; the push is never replayed.
         """
-        for wait in (0, *SETTLE_WAITS):
-            if wait:
-                if self.io.remaining() <= wait + 1:
+        waits = itertools.chain(SETTLE_WAITS, itertools.repeat(SETTLE_WAITS[-1]))
+        while True:
+            self.progress("all", "settle-poll")
+            try:
+                actual = self.ref_oids(*expected)
+            except TransientRead:
+                # A failed read proves nothing about the push; poll again.
+                self.progress("all", "settle-transient")
+            else:
+                if actual == expected:
+                    self.progress("all", "settled")
+                    return
+                if any(actual.get(ref) not in (None, oid) for ref, oid in expected.items()):
                     break
-                self.io.sleep(wait)
-            actual = self.ref_oids(*expected)
-            if actual == expected:
-                return
-            require(all(actual.get(ref) in (None, oid) for ref, oid in expected.items()),
-                    "Allocation write settlement is uncertain")
+            # Every poll starts with the verification reserve left, so the last
+            # read and the owner readbacks of a settled batch always have time.
+            wait = min(next(waits), self.io.remaining() - VERIFY_RESERVE_SECONDS)
+            if wait <= 0:
+                break
+            self.io.sleep(wait)
+        self.progress("all", "settle-refused")
         require(False, "Allocation write settlement is uncertain")
 
     def check_conflict(self, expected):
