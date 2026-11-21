@@ -164,6 +164,10 @@ jobs:
         if: "inputs.track == 'am'"
         working-directory: "."
       -
+        name: "API allocator qualification"
+        run: "bash ../.github/scripts/backend-nextest.sh run -E 'package(=cma) and binary(=allocator_cli) and test(=actual_api_allocator_completes_without_configuration)' --test-threads 1 --success-output final"
+        if: "inputs.track == 'am'"
+      -
         name: "Image normalization budgets"
         run: "bash ../.github/scripts/backend-nextest.sh run -E 'binary(=media_image_peak)' --test-threads 1 --success-output final"
         if: "inputs.track == 'eg'"

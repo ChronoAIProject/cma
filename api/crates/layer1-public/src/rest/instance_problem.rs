@@ -54,6 +54,7 @@ pub(crate) enum InstanceProblem {
     CheckpointInProgress,
     DeliveryAmbiguous,
     ResourcesUnsupported,
+    HistoryExport(super::AgentHistoryExportError),
     Unavailable,
 }
 
@@ -187,6 +188,7 @@ impl IntoResponse for InstanceProblem {
     fn into_response(self) -> Response {
         let (status, slug, detail, code): (_, _, &str, _) = match &self {
             Self::RuntimeCapacity(capacity) => return super::problems::runtime_capacity(*capacity),
+            Self::HistoryExport(error) => return super::agent_history::problem(*error),
             Self::AdmissionPaused => return super::admission_problem::paused(),
             Self::SessionCapacityUnavailable => return super::admission_problem::session_capacity(),
             // Every budget refusal, the platform's included, is a final 402

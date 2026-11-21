@@ -6,7 +6,7 @@ export const queuedOutcomeText = {
   starting: 'Message is being prepared. Execution is not yet confirmed.',
   running: 'Message has started. Conversation history is being refreshed.',
   completed: 'Message completed. Conversation history is being refreshed.',
-  expired: 'Message expired before it started. Submit it again if still needed.',
+  expired: 'Expired before starting',
   cancelled: 'Message was cancelled.',
   failed: 'Message failed. Review the conversation before submitting it again.',
   uncertain:

@@ -223,6 +223,9 @@ class TransitionTests(unittest.TestCase):
             with self.subTest(gateway=gateway, failed_check=failed_check, controller=controller_code), \
                     tempfile.TemporaryDirectory() as tmp:
                 members = GROUP | ({"eg"} if gateway else set())
+                # A final exists only where its lane was selected. An EG final
+                # at this source would make that source EG's baseline.
+                self.tags = [fixture_tag(self.receipts[k]) for k in sorted(members)]
                 row = dict(self.rows[0], deployables=sorted(DEPLOYABLES[k] for k in members))
                 admitted, errors = automatic_admission(self.allocate(self.first, [row]), self.api,
                                                        self.registry, policy=self.policy)

@@ -248,6 +248,39 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal '${{ runner.temp }}/public-admission/admission.json', evidence['with']['path']
   end
 
+  def test_an_overtaken_set_skips_every_deployment_step_and_reaches_the_component_report
+    deploy = workflow('staging-deploy')
+    job = deploy['jobs']['deploy']
+    # Verification or, after it, the coordinator under the set lock may find the set overtaken.
+    assert_equal '${{ steps.release.outputs.disposition || steps.coordinate.outputs.disposition }}',
+                 job.dig('outputs', 'disposition')
+    trigger = deploy['on'] || deploy.fetch(true)
+    assert_equal '${{ jobs.deploy.outputs.disposition }}', trigger.dig('workflow_call', 'outputs', 'disposition', 'value')
+    steps = job['steps']
+    verify = steps.index { |step| step['id'] == 'release' }
+    assert_equal 'verify', steps[verify].dig('env', 'CD_RESOLVE_MODE')
+    gate = "steps.release.outputs.disposition == ''"
+    steps.drop(verify + 1).each do |step|
+      condition = step['if'].to_s
+      # Cleanup always runs; the proof echo needs a coordinator result; every other step is gated.
+      next if condition.start_with?('always()')
+
+      assert_includes condition, gate, step['name']
+    end
+    assert_equal ["Verified staging receipts ${{ steps.coordinate.outputs.controller_proof }}",
+                  'Remove private checkout', 'Remove isolated deployment tools'],
+                 steps.drop(verify + 1).select { |step| step['if'].to_s.start_with?('always()') }.map { |s| s['name'] }
+    promote = workflow('staging-promote')
+    trigger = promote['on'] || promote.fetch(true)
+    assert_equal '${{ jobs.deploy.outputs.disposition }}',
+                 trigger.dig('workflow_call', 'outputs', 'deploy_disposition', 'value')
+    assert_equal '${{ jobs.admit.outputs.disposition }}',
+                 trigger.dig('workflow_call', 'outputs', 'admit_disposition', 'value')
+    admit = promote['jobs']['admit']
+    assert_equal '${{ steps.set.outputs.disposition }}', admit.dig('outputs', 'disposition')
+    assert_equal 'automatic', admit['steps'].find { |step| step['id'] == 'set' }.dig('env', 'CD_RESOLVE_MODE')
+  end
+
   def test_proven_takeover_in_any_lane_skips_finalize_and_reaches_the_component_report
     release = workflow('staging-release')
     assert_equal '${{ steps.publication.outputs.disposition }}', release.dig('jobs', 'publish', 'outputs', 'disposition')
@@ -442,6 +475,56 @@ class StagingWorkflowTest < Minitest::Test
     # An overwriting repeat replaces the first attempt's artifact, so its id wins.
     assert_equal '${{ steps.receipts-retry.outputs.artifact-id || steps.receipts.outputs.artifact-id }}',
                  workflow('staging-release').dig('jobs', 'publish', 'outputs', 'artifact')
+  end
+
+  def test_catch_up_only_re_runs_the_develop_push_run_and_staging_stays_push_only
+    staging = workflow('staging-cd')
+    assert_equal 'Staging CD', staging['name'], 'the catch-up trigger names this workflow'
+    assert_equal({ 'push' => { 'branches' => ['develop'] } }, staging['on'] || staging[true])
+    staging['jobs'].each do |id, job|
+      refute_equal 'write', job.dig('permissions', 'actions'), "#{id} must not re-run or dispatch staging"
+    end
+    check = workflow('staging-cd-catch-up')
+    events = check['on'] || check[true]
+    assert_equal %w[schedule workflow_run], events.keys.sort
+    assert_equal({ 'workflows' => ['Staging CD'], 'types' => ['completed'], 'branches' => ['develop'] },
+                 events['workflow_run'])
+    assert_equal [{ 'cron' => '23 * * * *' }], events['schedule']
+    assert_equal({}, check['permissions'])
+    refute check.key?('concurrency')
+    assert_equal ['catch_up'], check['jobs'].keys
+    job = check['jobs']['catch_up']
+    assert_equal({ 'contents' => 'read', 'actions' => 'write' }, job['permissions'])
+    # At most one check runs and one waits; each decides from fresh state.
+    assert_equal({ 'group' => 'cma-staging-cd-catch-up', 'cancel-in-progress' => false }, job['concurrency'])
+    %w[github.repository\ ==\ 'ChronoAIProject/cma' github.ref\ ==\ 'refs/heads/develop'
+       github.event.workflow_run.event\ ==\ 'push' github.event.workflow_run.head_branch\ ==\ 'develop'
+       github.event.workflow_run.head_repository.full_name\ ==\ github.repository].each do |guard|
+      assert_includes job['if'], guard
+    end
+    refute job.key?('environment')
+    refute job.to_s.include?('secrets.')
+    job['steps'].each do |step|
+      refute step.key?('continue-on-error')
+      assert_match(/\A[^@]+@[a-f0-9]{40}\z/, step['uses']) if step['uses']
+    end
+    assert_equal false, job['steps'].first.dig('with', 'persist-credentials')
+    assert_equal ['python3 -B .github/scripts/staging_cd_catch_up.py'], job['steps'].map { |step| step['run'] }.compact
+    assert_equal({ 'GH_TOKEN' => '${{ github.token }}' }, job['steps'].last['env'])
+  end
+
+  def test_catch_up_reads_the_allocation_job_by_its_exact_display_name
+    source = File.read(File.join(__dir__, 'staging_cd_catch_up.py'))
+    names = source.scan(/^ALLOCATION_JOB = "([^"]+)"$/).flatten
+    assert_equal 1, names.size
+    assert_includes source, 'job.get("name") == ALLOCATION_JOB'
+    # A job without a name displays its id. Renaming either side would make
+    # every head look unallocated, so catch-up would silently never re-run.
+    jobs = workflow('staging-cd')['jobs']
+    matching = jobs.select { |id, job| job.fetch('name', id) == names.first }
+    assert_equal ['allocate'], matching.keys
+    assert_includes matching['allocate']['steps'].map { |step| step['run'] },
+                    'python3 -B .github/scripts/staging_cd_allocate.py'
   end
 
   def test_package_and_download_tools_repeat_transient_network_failures

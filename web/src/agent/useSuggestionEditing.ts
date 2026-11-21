@@ -60,6 +60,9 @@ export function useSuggestionEditing(
         : value;
     },
     editorRef,
+    restore(text: string) {
+      editorRef.current?.restore(text, () => setEdited(undefined));
+    },
     edit(text: string) {
       const item = source?.items.find((candidate) => candidate.text === text);
       if (source && item)

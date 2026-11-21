@@ -3,6 +3,7 @@ mod admission_capacity;
 mod admission_checks;
 
 pub(crate) mod account_deletions;
+pub(crate) mod account_erasure;
 pub mod activity;
 pub(crate) mod admission_ceilings;
 pub(crate) mod admission_control;
@@ -117,6 +118,7 @@ mod message_feedback;
 pub(crate) mod migrations;
 pub mod mongo;
 mod mongo_diagnostics;
+pub(crate) mod pending_launch_homes;
 #[cfg(test)]
 pub(crate) use mongo_diagnostics::attach_readiness_fixture;
 pub(crate) mod mongo_latency;

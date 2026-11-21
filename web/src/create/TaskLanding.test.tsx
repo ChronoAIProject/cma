@@ -5,6 +5,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { unavailableClient, type CmaWebClient } from '../api/client';
 import { taskExperience } from '../test/taskExperience';
 import { TaskHome } from './TaskHome';
+import { taskDraftStorageKey } from './taskDraft';
 
 const preparing = 'Preparing a cloud computer for your Agent…';
 afterEach(() => {
@@ -63,7 +64,7 @@ it('validates, normalizes, edits and removes a repository while preserving the t
   await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
   expect(create).not.toHaveBeenCalled();
   expect(screen.getByText('feature/demo')).toBeVisible();
-  const key = `cma:task-draft:${JSON.stringify([location.origin, 'owner', null, null])}`;
+  const key = taskDraftStorageKey('owner');
   expect(JSON.parse(sessionStorage.getItem(key)!)).toMatchObject({
     repositoryUrl: 'https://github.com/owner/repo',
     repositoryRef: 'feature/demo',

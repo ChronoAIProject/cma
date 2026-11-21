@@ -83,7 +83,7 @@ jobs:
         name: "Local browser guard mechanics"
         working-directory: "web"
         run: |
-          node --test ../.github/scripts/agent-v2-ci.test.mjs ../.github/scripts/new-agent-request-ci.test.mjs ../.github/scripts/lifecycle-browser-ci.test.mjs
+          node --test ../.github/scripts/agent-v2-ci.test.mjs ../.github/scripts/tree-row-menu-ci.test.mjs ../.github/scripts/new-agent-request-ci.test.mjs ../.github/scripts/lifecycle-browser-ci.test.mjs ../.github/scripts/channel-setup-ci.test.mjs
           npm run e2e:mechanics
       -
         name: "CSS collisions"
@@ -104,6 +104,36 @@ jobs:
         env:
           CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
         run: "npx playwright test --config e2e/desktop-conversation.config.ts"
+      -
+        name: "Local row menu pointer and keyboard contracts"
+        id: row_menu
+        timeout-minutes: 5
+        env:
+          CMA_ROW_MENU_EVIDENCE_DIR: "${{ runner.temp }}/cma-row-menu"
+        run: "node node_modules/playwright/cli.js test --config e2e/tree-row-menu.config.ts"
+      -
+        name: "Row menu failure evidence"
+        if: "failure() && steps.row_menu.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "row-menu-failure"
+          path: "${{ runner.temp }}/cma-row-menu"
+          retention-days: 1
+      -
+        name: "Local channel setup validation"
+        id: channel_setup
+        timeout-minutes: 5
+        env:
+          CMA_CHANNEL_SETUP_EVIDENCE_DIR: "${{ runner.temp }}/cma-channel-setup"
+        run: "node node_modules/playwright/cli.js test --config e2e/channel-setup.config.ts"
+      -
+        name: "Channel setup failure evidence"
+        if: "failure() && steps.channel_setup.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "channel-setup-failure"
+          path: "${{ runner.temp }}/cma-channel-setup"
+          retention-days: 1
       -
         name: "Local resource lifecycle contracts"
         id: resource_lifecycle

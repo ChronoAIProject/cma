@@ -1,5 +1,6 @@
 import { useSandboxCapacity } from '../sandbox/useSandboxCapacity';
 import { SandboxCapacityPanel } from '../sandbox/SandboxCapacityPanel';
+import { DocsLink } from '../services/DocsLink';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { AppRoute } from '../routing/routes';
@@ -21,6 +22,7 @@ import { TaskTemplates } from './TaskTemplates';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { useTaskExperience } from '../taskExperience';
 import { useTaskDraft } from './taskDraft';
+import { useTaskTemplateDraftSwitch } from './TaskTemplateDraftSwitch';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import '../ui/Input.css';
 import './AgentLifecycleCard.css';
@@ -87,6 +89,21 @@ function TaskHomeContent({
   const [validation, setValidation] = useState<TemplateIssue>();
   const templateSupported = useTaskTemplateSupport(client);
   const form = useRef<HTMLFormElement>(null);
+  const templateDraft = useTaskTemplateDraftSwitch(
+    draft,
+    (template) => {
+      const previousFocus = document.activeElement;
+      requestAnimationFrame(() => {
+        if (document.activeElement !== previousFocus && document.activeElement !== document.body)
+          return;
+        (template
+          ? form.current?.querySelector<HTMLInputElement>('[data-template-field]')
+          : input.current
+        )?.focus();
+      });
+    },
+    () => setValidation(undefined),
+  );
   const { supported, repositorySupported } = useTaskCreationSupport(client);
   const contextual = Boolean(workspaceId || sandboxId);
   const capacityUnavailable =
@@ -165,7 +182,8 @@ function TaskHomeContent({
           </span>
           <h1 id={titleId}>What should your Agent work on?</h1>
           <p className="task-home__intro">
-            Give it a task. Your Agent works through it on a cloud computer.
+            Give it a task. Your Agent works through it on a cloud computer.{' '}
+            <DocsLink view="start-a-task">Help starting a task</DocsLink>
           </p>
         </>
       ) : (
@@ -205,6 +223,7 @@ function TaskHomeContent({
         </p>
       ) : null}
       {!contextual ? <SandboxCapacityPanel client={client} capacity={capacity} /> : null}
+      {templateDraft.feedback}
       <form
         ref={form}
         noValidate
@@ -262,10 +281,7 @@ function TaskHomeContent({
               setValidation(undefined);
               draft.changeTemplate(template);
             }}
-            onClear={() => {
-              setValidation(undefined);
-              draft.clearTemplate();
-            }}
+            onClear={templateDraft.clear}
           />
         ) : null}
         {draft.template && templateSupported !== true ? (
@@ -325,15 +341,7 @@ function TaskHomeContent({
           {contextual ? 'Preparing your Agent…' : 'Preparing a cloud computer for your Agent…'}
         </p>
       ) : null}
-      <TaskTemplates
-        onSelect={(id) => {
-          setValidation(undefined);
-          draft.selectTemplate(id);
-          requestAnimationFrame(() =>
-            form.current?.querySelector<HTMLInputElement>('[data-template-field]')?.focus(),
-          );
-        }}
-      />
+      <TaskTemplates onSelect={templateDraft.select} />
       <p className="task-home__defaults">
         <span className="task-home__dot" aria-hidden="true" />
         GPT-6 · High reasoning · Autonomous
@@ -362,6 +370,9 @@ function TaskHomeContent({
         <section className="task-submitted" aria-label="Submitted task">
           <h2>Submitted task</h2>
           <p className="task-submitted__text">{intent.body.initial_message}</p>
+          {!intent.receipt && !lifecycle.pending ? (
+            <DocsLink view="recover-and-continue">Help recovering this request</DocsLink>
+          ) : null}
           {intent.body.repository ? (
             <>
               <p className="task-submitted__literal">{intent.body.repository.url}</p>

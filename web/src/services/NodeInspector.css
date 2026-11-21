@@ -333,3 +333,19 @@
 .channel-node-editor > form > button {
   justify-self: start;
 }
+
+.channel-advanced > summary {
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 22px;
+  font-weight: 500;
+  padding-block: 12px;
+}
+.channel-advanced > summary:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}
+
+.channel-connection-summary {
+  overflow-wrap: anywhere;
+}
