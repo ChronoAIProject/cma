@@ -44,6 +44,7 @@ pub(crate) struct FeatureFlags {
     pub platform_counter_shards: bool,
     pub admission_control_writes_enabled: bool,
     pub admission_ceilings_writes_enabled: bool,
+    pub pending_home_reconciliation: bool,
     pub agent_control_write_coordination: bool,
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
@@ -98,6 +99,10 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            pending_home_reconciliation: flag(
+                lookup,
+                "CHRONO_PENDING_HOME_RECONCILIATION_ENABLED",
+            )?,
             visitor_launch_admission: flag(lookup, "CHRONO_VISITOR_LAUNCH_ADMISSION_ENABLED")?,
             usage_signed_cursors_enabled: flag(lookup, "CHRONO_USAGE_SIGNED_CURSORS_ENABLED")?,
             usage_strict_cursors_enabled: flag(lookup, "CHRONO_USAGE_STRICT_CURSORS_ENABLED")?,
@@ -356,6 +361,9 @@ mod observation_tests;
 mod ownership_retry_hint_tests;
 
 mod launch_admission;
+
+#[cfg(test)]
+mod pending_homes_tests;
 
 #[cfg(test)]
 #[path = "features/visitor_defaults_tests.rs"]

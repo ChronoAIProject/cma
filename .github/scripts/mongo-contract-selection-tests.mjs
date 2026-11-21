@@ -11,7 +11,7 @@ function selectionFunctions(source) {
   return source.slice(start, end);
 }
 
-export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, fixturePredicate, ordinaryPredicate, qualificationPredicate}) {
+export function registerSelectionTests({scaleTest, ownerTest, auditTest, diagnosticsTest, scanTest, bsonCeilingTest, firstResponseTest, fixturePredicate, ordinaryPredicate, qualificationPredicate}) {
   test('selection proof parses old and isolated owner and audit predicates', () => {
     const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
     const result = execFileSync('python3', ['-c', `
@@ -19,9 +19,9 @@ import json, runpy, sys
 parse = runpy.run_path(sys.argv[1])["mongo_filters"]
 source = sys.argv[2]
 before = "\\n".join(line for line in source.splitlines()
-    if not line.startswith(("readonly owner_allocation_test=", "readonly audit_bounds_test=", "readonly diagnostics_test=", "readonly scan_cooperation_test=", "readonly bson_ceiling_test="))
-    and not line.strip().startswith(("owner-allocation)", "audit-bounds)", "diagnostics)", "scan-cooperation)", "bson-ceiling)")))
-before = before.replace('not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test) or test(=$bson_ceiling_test))', 'not test(=$scale_test)')
+    if not line.startswith(("readonly owner_allocation_test=", "readonly audit_bounds_test=", "readonly diagnostics_test=", "readonly scan_cooperation_test=", "readonly bson_ceiling_test=", "readonly first_response_test="))
+    and not line.strip().startswith(("owner-allocation)", "audit-bounds)", "diagnostics)", "scan-cooperation)", "bson-ceiling)", "first-response)")))
+before = before.replace('not (test(=$scale_test) or test(=$owner_allocation_test) or test(=$audit_bounds_test) or test(=$diagnostics_test) or test(=$scan_cooperation_test) or test(=$bson_ceiling_test) or test(=$first_response_test))', 'not test(=$scale_test)')
 print(json.dumps({"before": parse(before), "after": parse(source)}))
 `, fileURLToPath(new URL('backend-selection-proof.py', import.meta.url)), source], {
       env: {...process.env, PYTHONDONTWRITEBYTECODE: '1'}, encoding: 'utf8',
@@ -61,6 +61,7 @@ print(json.dumps({"before": parse(before), "after": parse(source)}))
   for (const [mode, variable, testName] of [
     ['scan-cooperation', 'scan_cooperation_test', scanTest],
     ['bson-ceiling', 'bson_ceiling_test', bsonCeilingTest],
+    ['first-response', 'first_response_test', firstResponseTest],
   ]) {
     test(`selection proof moves only ${mode} from ordinary partitions`, () => {
       const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');

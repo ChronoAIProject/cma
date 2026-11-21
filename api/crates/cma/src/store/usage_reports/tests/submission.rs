@@ -264,7 +264,11 @@ async fn default_day_report_serves_four_hundred_sandboxes_without_polling() {
     for batch in states.chunks(200) {
         seed(&store, batch).await;
     }
+    assert!(!store.report_worker_subscribed());
     let worker = tokio::spawn(crate::sandbox_metrics::reports_fixture(store.clone()));
+    tokio::time::timeout(Duration::from_secs(5), store.wait_for_report_worker())
+        .await
+        .expect("stage=worker_readiness worker_subscribed=false");
     let started = std::time::Instant::now();
     let (status, report) = request(
         &store,
@@ -275,7 +279,12 @@ async fn default_day_report_serves_four_hundred_sandboxes_without_polling() {
         serde_json::json!({"from":from,"to":from+86_400}),
     )
     .await;
-    assert_eq!(status, 200, "{report:?}");
+    eprintln!(
+        "stage=first_response elapsed_ms={} status={status} worker_subscribed={}",
+        started.elapsed().as_millis(),
+        store.report_worker_subscribed(),
+    );
+    assert_eq!(status, 200, "stage=first_response");
     assert_eq!(report["summary"]["sandbox_count"], 400);
     let id = report["report_id"].as_str().unwrap();
     let (status, rows) = request(
@@ -287,12 +296,17 @@ async fn default_day_report_serves_four_hundred_sandboxes_without_polling() {
         serde_json::Value::Null,
     )
     .await;
-    assert_eq!(status, 200);
+    eprintln!(
+        "stage=first_page elapsed_ms={} status={status} worker_subscribed={}",
+        started.elapsed().as_millis(),
+        store.report_worker_subscribed(),
+    );
+    assert_eq!(status, 200, "stage=first_page");
     assert_eq!(rows["items"].as_array().unwrap().len(), 50);
     assert_eq!(rows["total_count"], 400);
     assert!(rows["next"].is_string());
     let elapsed = started.elapsed();
-    eprintln!("local 24-hour admin report, 400 sandboxes, first 50 rows: {elapsed:?}");
+    eprintln!("stage=complete elapsed_ms={}", elapsed.as_millis());
     assert!(elapsed < Duration::from_secs(2), "{elapsed:?}");
     worker.abort();
     assert!(worker.await.unwrap_err().is_cancelled());

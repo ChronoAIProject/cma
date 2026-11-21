@@ -33,6 +33,18 @@ impl MemoryAdmissionCeilingsStore {
 
 #[async_trait::async_trait]
 impl AdmissionCeilingsStore for MemoryAdmissionCeilingsStore {
+    async fn reconcile_pending_homes(
+        &self,
+        _observed_pending: u64,
+        _actor: &SubjectId,
+        _reason: &str,
+        _dry_run: bool,
+        _now: u64,
+    ) -> Result<crate::admission::PendingHomesReconciliation, StoreError> {
+        Err(StoreError::Unavailable(
+            "pending home receipt ledger is unavailable".into(),
+        ))
+    }
     async fn read(&self) -> Result<AdmissionCeilingsState, StoreError> {
         Ok(self.state.lock().map_err(|_| unavailable())?.state.clone())
     }
