@@ -16,18 +16,19 @@ from staging_cd_admission import event_identity
 from staging_cd_common import require
 from staging_cd_github import GitHub
 from staging_cd_publish import validated_tasks
+from staging_cd_release_tags import local_tag_reader
 from staging_cd_reservations import Reservations, ReservationSuperseded
 from staging_cd_resolve import output as step_output
 from staging_cd_versions import DEPLOYABLES
 
 
-def owned(env, root, *, github=GitHub, reservations=Reservations):
+def owned(env, root, *, github=None, reservations=Reservations):
     """True while this job may still build; False once a successor owns every reservation."""
     event_identity(env)
     require(env.get("CD_COMPONENT") in DEPLOYABLES, "Ownership precheck component is unknown")
     tasks = validated_tasks(json.loads(env["CD_TASKS"]), env)
     token = env.get("GH_TOKEN")
-    authority = reservations(github(token), token, root)
+    authority = reservations((github or GitHub)(token, local_tags=local_tag_reader(root)), token, root)
     for mode, value in tasks:
         if mode != "publish":
             # A resumed receipt is already published; finishing it needs no build.

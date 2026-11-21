@@ -303,21 +303,25 @@ impl AgentHistoryExporter for AdapterAgentHistoryExporter {
                 &layer3_adapter::AgentSlot::new(agent_id),
             )
             .await
-            .map_err(|error| match error {
-                AdapterError::RuntimeCapacity(_) => AgentHistoryExportError::Capacity,
-                AdapterError::Unsupported(_) => AgentHistoryExportError::Unsupported,
-                AdapterError::InputAuthorityUnavailable(_)
-                | AdapterError::PromptNotWritten(_)
-                | AdapterError::NativeClaimNotReady(_)
-                | AdapterError::RuntimeStartupHold(_)
-                | AdapterError::Unavailable(_)
-                | AdapterError::RuntimeLedgerHold(_)
-                | AdapterError::AtCapacity(_) => AgentHistoryExportError::Unavailable,
-                AdapterError::Rejected(_)
-                | AdapterError::AccessRevoked
-                | AdapterError::SkillUpgradeRefused(_)
-                | AdapterError::OperationIdentityConflict(_)
-                | AdapterError::RuntimeContractMismatch(_) => AgentHistoryExportError::Rejected,
+            .map_err(|error| {
+                let reason = match error {
+                    AdapterError::RuntimeCapacity(_) => AgentHistoryExportError::Capacity,
+                    AdapterError::Unsupported(_) => AgentHistoryExportError::Unsupported,
+                    AdapterError::InputAuthorityUnavailable(_)
+                    | AdapterError::PromptNotWritten(_)
+                    | AdapterError::NativeClaimNotReady(_)
+                    | AdapterError::RuntimeStartupHold(_)
+                    | AdapterError::Unavailable(_)
+                    | AdapterError::RuntimeLedgerHold(_)
+                    | AdapterError::AtCapacity(_) => AgentHistoryExportError::Unavailable,
+                    AdapterError::Rejected(_)
+                    | AdapterError::AccessRevoked
+                    | AdapterError::SkillUpgradeRefused(_)
+                    | AdapterError::OperationIdentityConflict(_)
+                    | AdapterError::RuntimeContractMismatch(_) => AgentHistoryExportError::Rejected,
+                };
+                tracing::warn!(parent: None, reason = ?reason, "Agent raw history export failed");
+                reason
             })?;
         Ok(bytes)
     }

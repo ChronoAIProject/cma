@@ -221,7 +221,7 @@ def main():
         output = Path(env["CD_RECEIPTS_PATH"])
         output.parent.mkdir(parents=True, exist_ok=True)
         registry = Registry(credential=env.get("GH_TOKEN"), actor=env.get("GITHUB_ACTOR"))
-        api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(env.get("CD_COMPONENT"), Path.cwd()))
+        api = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(root))
         for mode, value in tasks:
             cache = None
             diagnostics.mark("validate")

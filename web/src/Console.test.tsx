@@ -146,7 +146,7 @@ it('keeps composer settings available while Details and tree navigation remain u
     'aria-disabled',
     'true',
   );
-  expect(screen.getByRole('menuitem', { name: 'Export history' })).toBeEnabled();
+  expect(screen.getByRole('menuitem', { name: 'Export raw history' })).toBeEnabled();
   await actor.keyboard('{Escape}');
   await expandNavigationFilters(actor);
   await actor.click(screen.getByRole('button', { name: 'Manage environments' }));
