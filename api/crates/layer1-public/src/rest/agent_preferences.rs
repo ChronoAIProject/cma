@@ -16,7 +16,10 @@ use utoipa::ToSchema;
 use super::{
     agents::{execute_command, AgentRoutesState},
     idempotency::{IdempotencyKey, RequestBody},
-    instance_problem::InstanceProblem,
+    instance_problem::{
+        configuration_write::{authorize_receipt, operation_problem},
+        InstanceProblem,
+    },
     BodyProblem,
 };
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
@@ -131,21 +134,16 @@ pub(crate) async fn update(
     let service = state.agent_operations.clone();
     let operation_caller = caller.clone();
     // Every request, including cached success replay, needs current permission.
-    let read = if let Some(resource) = &resource {
-        match state
-            .reads
-            .configuration_authorized(
-                &resource.context,
-                resource.credential.as_ref().map(DelegatedCredential::value),
-                &AgentId(id.clone()),
-            )
-            .await
-        {
-            Ok(read) => Some(read),
-            Err(error) => return InstanceProblem::from(error).into_response(),
-        }
-    } else {
-        None
+    let read = match authorize_receipt(
+        &state.reads,
+        &caller,
+        resource.as_ref(),
+        &AgentId(id.clone()),
+    )
+    .await
+    {
+        Ok(read) => read,
+        Err(problem) => return problem.into_response(),
     };
     let reads = state.reads.clone();
     let mut response = execute_command(
@@ -165,11 +163,15 @@ pub(crate) async fn update(
                         &preferences,
                     )
                     .await?;
-                service.update_preferences_authorized(&authority).await?
+                service
+                    .update_preferences_authorized(&authority)
+                    .await
+                    .map_err(operation_problem)?
             } else {
                 service
                     .update_preferences(&operation_caller, &AgentId(id), preferences)
-                    .await?
+                    .await
+                    .map_err(operation_problem)?
             };
             Ok(Json(AgentPreferencesView::from_agent(&agent, &service).await).into_response())
         },

@@ -51,6 +51,10 @@ pub enum AgentOperationError {
     SkillHistoryFull,
     #[error("agent changed while the operation was being fenced")]
     Conflict,
+    #[error("configuration admission lost a concurrent state comparison")]
+    ConfigurationAdmissionConflict,
+    #[error("agent preferences revision does not match")]
+    PreferencesRevisionMismatch,
     #[error("sandbox checkpoint is in progress; input was not admitted")]
     CheckpointInProgress,
     #[error("the previous turn does not match the conversation's latest turn")]
@@ -97,7 +101,9 @@ impl AgentOperationError {
             }
             Self::SkillUpgradeDisabled => "agent_skill_upgrade_disabled",
             Self::SkillHistoryFull => "agent_skill_history_full",
-            Self::Conflict => "agent_operation_conflict",
+            Self::Conflict
+            | Self::ConfigurationAdmissionConflict
+            | Self::PreferencesRevisionMismatch => "agent_operation_conflict",
             Self::CheckpointInProgress => "sandbox_checkpoint_in_progress",
             Self::PreviousTurnConflict => "agent_previous_turn_conflict",
             Self::LogCapacityExceeded => "agent_log_capacity_exceeded",
