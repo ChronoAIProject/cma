@@ -1436,9 +1436,9 @@
       "codes": {
         "incomplete": {
           "title": "Selection budget exhausted",
-          "meaning": "The selection cache did not cover develop's history since CMA_CD_ADOPTION_SHA, usually after a selector policy change, and analysing the rest exceeded the plan's budget. Analysed revisions were saved; INCOMPLETE gives the count.",
+          "meaning": "The selection cache did not cover the plan window, usually after a selector policy change, and analysing the rest exceeded the plan's budget. Analysed revisions were saved; INCOMPLETE gives the count.",
           "cause": "transient",
-          "next": "Re-run this workflow or wait for the next develop push; planning continues from the saved revisions. If it repeats, an operator can advance CMA_CD_ADOPTION_SHA to the first merge after the last fully deployed run."
+          "next": "Re-run or wait for the next push; planning continues from the saved revisions. PLAN window names the lane bounding the start; if a lane without a verified final holds it at CMA_CD_ADOPTION_SHA, an operator can advance that variable."
         }
       }
     },
