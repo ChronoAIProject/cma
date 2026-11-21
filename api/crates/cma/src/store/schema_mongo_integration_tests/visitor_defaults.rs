@@ -157,7 +157,7 @@ async fn production_startup_injects_the_same_default_into_admin_and_sandbox_poli
         uri.set_password(Some(&password)).unwrap();
         uri.query_pairs_mut().append_pair("authSource", &name);
         let uri = uri.to_string();
-        let connect = |enabled| {
+        let connect = |enabled, pending_home_reconciliation| {
             let uri = uri.clone();
             let name = name.clone();
             async move {
@@ -178,12 +178,13 @@ async fn production_startup_injects_the_same_default_into_admin_and_sandbox_poli
                 )
                 .await
                 .unwrap()
-                .configure_admission_ceilings(0, false)
+                .configure_admission_ceilings(0, false, pending_home_reconciliation)
                 .await
                 .unwrap()
             }
         };
-        let stores = connect(enabled).await;
+        let stores = connect(enabled, false).await;
+        assert!(!stores.admission_ceilings.pending_homes.enabled());
         let before = stores.settings.read().await.unwrap();
         assert_eq!(before.settings, InitialSettings::new(enabled).platform());
         let service = Arc::new(layer2_core::PlatformSettingsService::new(
@@ -201,7 +202,8 @@ async fn production_startup_injects_the_same_default_into_admin_and_sandbox_poli
             ),
             before.settings.limits.visitor_max_sandboxes,
         );
-        let reopened = connect(!enabled).await;
+        let reopened = connect(!enabled, true).await;
+        assert!(reopened.admission_ceilings.pending_homes.enabled());
         assert_eq!(reopened.settings.read().await.unwrap(), before);
         use layer2_core::sandbox::store::{
             SandboxAdmission, SandboxAdmissionName, SandboxAdmissionResult, SandboxAdmissionStore,
@@ -257,8 +259,33 @@ async fn production_startup_injects_the_same_default_into_admin_and_sandbox_poli
             .replace(before.revision, &saved)
             .await
             .unwrap();
-        let restarted = connect(enabled).await;
+        let restarted = connect(enabled, true).await;
         assert_eq!(restarted.settings.read().await.unwrap(), saved);
+        client
+            .database(&name)
+            .collection::<Document>(SETTINGS)
+            .delete_one(doc! {"_id": "platform"})
+            .await
+            .unwrap();
+        restarted
+            .admission_ceilings
+            .replace(
+                0,
+                &SubjectId::new("operator"),
+                "seed configured defaults",
+                AdmissionCeilings {
+                    registrations: Some(10),
+                    ..Default::default()
+                },
+                100,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            restarted.settings.read().await.unwrap().settings,
+            InitialSettings::new(enabled).platform(),
+            "configuring pending-home recovery must preserve visitor defaults"
+        );
         client
             .database(&name)
             .run_command(doc! {"dropUser": "visitor-defaults-runtime"})

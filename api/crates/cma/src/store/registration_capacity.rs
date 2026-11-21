@@ -1,6 +1,9 @@
 //! Public registration receipts and their transaction-fenced capacity counter.
 
-use std::time::Duration;
+use std::{
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 
 use layer2_core::{StoreError, SubjectId};
 use mongodb::{
@@ -51,9 +54,14 @@ pub struct MongoRegistrationCapacityStore {
     database: Database,
     admissions: Collection<Document>,
     settings: Collection<Document>,
+    activated: std::sync::Arc<AtomicBool>,
 }
 
 impl MongoRegistrationCapacityStore {
+    pub(crate) fn activation_observation(&self) -> std::sync::Arc<AtomicBool> {
+        self.activated.clone()
+    }
+
     #[cfg(test)]
     pub(crate) async fn open(
         client: &Client,
@@ -96,6 +104,7 @@ impl MongoRegistrationCapacityStore {
             settings: majority_collection(&database, SETTINGS),
             database,
             admissions,
+            activated: std::sync::Arc::new(AtomicBool::new(marker.is_some())),
         })
     }
 
@@ -223,6 +232,19 @@ impl MongoRegistrationCapacityStore {
 
 #[async_trait::async_trait]
 impl RegistrationCapacity for MongoRegistrationCapacityStore {
+    async fn tracking_active(&self) -> Result<bool, StoreError> {
+        if self.activated.load(Ordering::Relaxed) {
+            return Ok(true);
+        }
+        let active = activation::read(&self.admissions, None)
+            .await
+            .map_err(activation::Error::into_store_error)?;
+        if active {
+            self.activated.store(true, Ordering::Relaxed);
+        }
+        Ok(active)
+    }
+
     async fn existing_subject(&self, subject: &SubjectId) -> Result<bool, StoreError> {
         self.known_subject(subject, None)
             .await
@@ -301,6 +323,9 @@ impl RegistrationCapacity for MongoRegistrationCapacityStore {
             .await
             .map_err(|error| unavailable(&format!("read registration count: {error}")))?;
         let count = row.as_ref().map(registration_count).transpose()?;
+        if count.is_some() {
+            self.activated.store(true, Ordering::Relaxed);
+        }
         Ok(count.is_some_and(|count| count < u64::from(limit)))
     }
 

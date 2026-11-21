@@ -41,6 +41,8 @@ mod binding_holds;
 mod diagnostics;
 #[path = "reconciliation_loss_observation.rs"]
 mod loss_observation;
+#[path = "reconciliation_pending_homes.rs"]
+mod pending_homes;
 #[path = "reconciliation_platform.rs"]
 pub(crate) mod platform;
 #[path = "reconciliation_sweep.rs"]
@@ -74,6 +76,8 @@ pub(crate) struct SandboxReconciler {
     background_work: crate::background::BackgroundWork,
     resume_background: bool,
     runtime_loss_bounded_proof_enabled: bool,
+    pending_homes: Option<Arc<dyn pending_homes::PendingHomesSweep>>,
+    pending_homes_schedule: tokio::sync::Mutex<pending_homes::PendingHomesSchedule>,
 }
 
 impl SandboxReconciler {
@@ -109,6 +113,8 @@ impl SandboxReconciler {
             ),
             resume_background: false,
             runtime_loss_bounded_proof_enabled: false,
+            pending_homes: None,
+            pending_homes_schedule: Default::default(),
         }
     }
 

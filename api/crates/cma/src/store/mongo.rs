@@ -62,16 +62,8 @@ impl MongoStores {
         mut self,
         deployment_limit: u16,
         writes_enabled: bool,
+        pending_home_reconciliation: bool,
     ) -> Result<Self, StoreError> {
-        self.admission_ceilings = Arc::new(
-            super::MongoAdmissionCeilingsStore::open_with_defaults(
-                &self.client,
-                &self.database,
-                deployment_limit,
-                self.initial_settings,
-            )
-            .await?,
-        );
         if writes_enabled {
             self.registration_capacity = Arc::new(
                 super::MongoRegistrationCapacityStore::open_with_defaults(
@@ -83,6 +75,17 @@ impl MongoStores {
                 .await?,
             );
         }
+        self.admission_ceilings = Arc::new(
+            super::MongoAdmissionCeilingsStore::open_with_defaults(
+                &self.client,
+                &self.database,
+                deployment_limit,
+                self.initial_settings,
+            )
+            .await?
+            .with_activation(self.registration_capacity.activation_observation())
+            .with_pending_home_reconciliation(pending_home_reconciliation),
+        );
         Ok(self)
     }
 
@@ -281,15 +284,6 @@ impl MongoStores {
             )
             .await?,
         );
-        let admission_ceilings = Arc::new(
-            super::MongoAdmissionCeilingsStore::open_with_defaults(
-                &client,
-                database,
-                0,
-                startup.initial_settings,
-            )
-            .await?,
-        );
         let registration_capacity = Arc::new(
             super::MongoRegistrationCapacityStore::open_with_defaults(
                 &client,
@@ -298,6 +292,16 @@ impl MongoStores {
                 startup.initial_settings,
             )
             .await?,
+        );
+        let admission_ceilings = Arc::new(
+            super::MongoAdmissionCeilingsStore::open_with_defaults(
+                &client,
+                database,
+                0,
+                startup.initial_settings,
+            )
+            .await?
+            .with_activation(registration_capacity.activation_observation()),
         );
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let agent_lifecycle =
