@@ -48,6 +48,10 @@ class Develop:
         self.minutes += 1
         return (EPOCH + timedelta(minutes=self.minutes)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    def later(self, minutes):
+        """The clock reading `minutes` after the latest synthetic event."""
+        return (EPOCH + timedelta(minutes=self.minutes + minutes)).timestamp()
+
     def view(self, run_id, attempt=None):
         run = self.runs[run_id]
         number = len(run["attempts"]) if attempt is None else attempt
@@ -55,6 +59,7 @@ class Develop:
         return {"id": run_id, "run_attempt": number, "event": "push", "head_branch": "develop",
                 "head_sha": run["head"], "path": WORKFLOW, "status": state["status"],
                 "triggering_actor": state["actor"], "run_started_at": state["started"],
+                "updated_at": state.get("updated", state["started"]),
                 "repository": {"full_name": REPOSITORY}, "head_repository": {"full_name": REPOSITORY}}
 
     def serve(self, path, payload=None, **kwargs):
@@ -101,7 +106,7 @@ class Develop:
 
     def complete(self, *run_ids):
         for run_id in run_ids:
-            self.runs[run_id]["attempts"][-1]["status"] = "completed"
+            self.runs[run_id]["attempts"][-1].update(status="completed", updated=self.now())
 
     def push(self, components, *, transition=None, verified=None):
         """Merge one develop commit whose own inputs select `components`."""

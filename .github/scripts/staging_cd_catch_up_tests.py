@@ -26,11 +26,17 @@ def instant(_seconds):
     return None
 
 
-def decide(develop, controller=None):
-    """The decision, with each lane that is not current as (component, reason)."""
+def decide_raw(develop, controller=None, **when):
+    """Decide as the hourly check does long after the head settled, unless `when` says otherwise."""
     # The synthetic runs must carry the identities the check reads.
     assert (fixture.WORKFLOW, fixture.BOT["login"]) == (catch_up.WORKFLOW, catch_up.BOT)
-    reason, run, lanes = catch_up.decide(develop.server, develop.refs, controller or develop.controller)
+    when = {"event": "schedule", "now": develop.later(60), **when}
+    return catch_up.decide(develop.server, develop.refs, controller or develop.controller, **when)
+
+
+def decide(develop, controller=None, **when):
+    """The decision, with each lane that is not current as (component, reason)."""
+    reason, run, lanes = decide_raw(develop, controller, **when)
     return reason, run, [(lane.component, lane.reason) for lane in lanes]
 
 
@@ -53,7 +59,8 @@ class CatchUpTests(unittest.TestCase):
         # The last run to finish decides; 801 is still running.
         self.assertEqual(decide(develop), ("run-active", None, []))
         develop.complete(801)  # Its runtime-omarchy build failed; no push follows.
-        reason, run, lanes = decide(develop)
+        # A build left behind is retried straight after the run that completes last.
+        reason, run, lanes = decide(develop, event="workflow_run", now=develop.later(0))
         self.assertEqual((reason, run["id"], lanes), ("rerun", 802, [("runtime-omarchy", "unfinalized-reservation")]))
         self.assertEqual(catch_up.rerun(develop.server, run, sleep=instant), 2)
         self.assertEqual(develop.posts, [802])
@@ -204,7 +211,7 @@ class UnprovenFinalTests(unittest.TestCase):
     def test_unproven_final_of_a_settled_owner_re_runs_the_head_once_and_is_resumed(self):
         develop = self.failed_deploy()
         develop.complete(801)
-        reason, run, lanes = catch_up.decide(develop.server, develop.refs, develop.controller)
+        reason, run, lanes = decide_raw(develop)
         self.assertEqual((reason, run["id"], lanes),
                          ("rerun", 801, [Lane("web", "unproven-final", version(develop, "web"))]))
         self.assertEqual(catch_up.rerun(develop.server, run, sleep=instant), 2)
@@ -216,6 +223,20 @@ class UnprovenFinalTests(unittest.TestCase):
         develop.complete(801)
         self.assertEqual(decide(develop), ("head-caught-up", None, []))
         self.assertEqual(develop.posts, [801])
+
+    def test_a_deploy_failure_is_retried_only_hourly_after_its_head_settled(self):
+        develop = self.failed_deploy()
+        develop.complete(801)
+        behind = [("web", "unproven-final")]
+        # The run's own completion and an unsettled hourly check leave the cause time to clear.
+        for event, minutes in (("workflow_run", 60), ("schedule", 0), ("schedule", 9)):
+            with self.subTest(event=event, minutes=minutes):
+                self.assertEqual(decide(develop, event=event, now=develop.later(minutes)),
+                                 ("final-waiting", None, behind))
+        self.assertEqual(decide(develop, event="schedule", now=develop.later(10))[::2], ("rerun", behind))
+        develop.runs[801]["attempts"][-1]["updated"] = None
+        self.assertEqual(decide(develop)[0], "final-waiting")
+        self.assertEqual(develop.posts, [])
 
     def test_proven_or_superseded_final_never_re_runs(self):
         develop = self.failed_deploy()
@@ -269,14 +290,14 @@ class UnprovenFinalTests(unittest.TestCase):
     def test_a_deterministic_deploy_failure_is_retried_once_then_reported_exhausted(self):
         develop = self.failed_deploy()
         develop.complete(801)
-        _reason, run, _lanes = catch_up.decide(develop.server, develop.refs, develop.controller)
+        _reason, run, _lanes = decide_raw(develop)
         catch_up.rerun(develop.server, run, sleep=instant)
         develop.allocate(801)
         develop.deploy(801, "web", "failed")
         develop.complete(801)
         # Every later check, after each run and hourly, reports the lane without re-running.
         for _ in range(3):
-            reason, run, lanes = catch_up.decide(develop.server, develop.refs, develop.controller)
+            reason, run, lanes = decide_raw(develop)
             self.assertEqual((reason, run["run_attempt"], lanes),
                              ("exhausted", 2, [Lane("web", "unproven-final", version(develop, "web"))]))
         self.assertEqual(develop.posts, [801])
@@ -323,7 +344,8 @@ class UnprovenFinalTests(unittest.TestCase):
         develop.deploy(802, "eg")
         develop.deploy(802, "web", "failed")
         develop.complete(802, 801)
-        reason, run, lanes = decide(develop)
+        # The build left behind re-runs at once and carries the final with it.
+        reason, run, lanes = decide(develop, event="workflow_run", now=develop.later(0))
         self.assertEqual((reason, run["id"], lanes), ("rerun", 802, [
             ("runtime-omarchy", "unfinalized-reservation"), ("web", "unproven-final")]))
         # An unknown outcome never hides the reservation it cannot judge.
@@ -420,22 +442,32 @@ class EntryTests(unittest.TestCase):
         return status, lines if every else lines[-1]
 
     def test_outcome_line_names_only_the_decision_run_and_lanes(self):
-        self.assertEqual(self.run_main(lambda *_: ("nothing-behind", None, [])), (0, "CATCH-UP nothing-behind"))
+        self.assertEqual(self.run_main(lambda *_, **__: ("nothing-behind", None, [])), (0, "CATCH-UP nothing-behind"))
         run = {"id": 802, "run_attempt": 1}
         lanes = [Lane("am", "unfinalized-reservation", "0.20.12"), Lane("runtime-omarchy", "unproven-final", "0.18.12"),
                  Lane("web", "controller-unknown", "0.10.4")]
-        self.assertEqual(self.run_main(lambda *_: ("rerun", run, lanes), lambda *_: 2, every=True), (0, [
+        self.assertEqual(self.run_main(lambda *_, **__: ("rerun", run, lanes), lambda *_: 2, every=True), (0, [
             "PASS catch-up", "CATCH-UP lane=am reason=unfinalized-reservation version=0.20.12",
             "CATCH-UP lane=runtime-omarchy reason=unproven-final version=0.18.12",
             "CATCH-UP lane=web reason=controller-unknown version=0.10.4",
             "CATCH-UP rerun run=802 attempt=2 lanes=am,runtime-omarchy"]))
-        self.assertEqual(self.run_main(lambda *_: ("controller-unknown", None, lanes[2:]), every=True), (0, [
+        self.assertEqual(self.run_main(lambda *_, **__: ("controller-unknown", None, lanes[2:]), every=True), (0, [
             "PASS catch-up", "CATCH-UP lane=web reason=controller-unknown version=0.10.4", "CATCH-UP controller-unknown"]))
+        self.assertEqual(self.run_main(lambda *_, **__: ("final-waiting", None, lanes[1:2]), every=True), (0, [
+            "PASS catch-up", "CATCH-UP lane=runtime-omarchy reason=unproven-final version=0.18.12",
+            "CATCH-UP final-waiting"]))
+
+    def test_the_check_decides_with_its_own_trigger(self):
+        for event in ("workflow_run", "schedule"):
+            env = self.environment(event, COMPLETED if event == "workflow_run" else {"schedule": "23 * * * *"})
+            decide = Mock(return_value=("nothing-behind", None, []))
+            self.run_main(decide, env=env)
+            self.assertEqual(decide.call_args.kwargs, {"event": event})
 
     def test_an_exhausted_head_names_each_lane_still_behind_and_its_attempts(self):
         run = {"id": 802, "run_attempt": 2}
         lanes = [Lane("runtime-omarchy", "unproven-final", "0.18.12"), Lane("web", "undeployed-final", "0.10.4")]
-        status, lines = self.run_main(lambda *_: ("exhausted", run, lanes), every=True)
+        status, lines = self.run_main(lambda *_, **__: ("exhausted", run, lanes), every=True)
         self.assertEqual((status, lines[:3], lines[4:]), (0, ["PASS catch-up",
             "CATCH-UP lane=runtime-omarchy reason=unproven-final version=0.18.12",
             "CATCH-UP lane=web reason=undeployed-final version=0.10.4"], [
@@ -452,10 +484,10 @@ class EntryTests(unittest.TestCase):
         def unverified(*_args):
             raise Refusal("Catch-up re-run was not verified")
         run = {"id": 802, "run_attempt": 1}
-        self.assertEqual(self.run_main(lambda *_: ("rerun", run, [Lane("am", "unfinalized-reservation", "0.1.0")]),
+        self.assertEqual(self.run_main(lambda *_, **__: ("rerun", run, [Lane("am", "unfinalized-reservation", "0.1.0")]),
                                        unverified),
                          (1, "FAIL catch-up Catch-up re-run was not verified"))
-        def private(*_args):
+        def private(*_args, **_kwargs):
             raise KeyError("private response field")
         self.assertEqual(self.run_main(private), (1, "FAIL catch-up unexpected error"))
         self.assertEqual(self.run_main(env=self.environment("push")),

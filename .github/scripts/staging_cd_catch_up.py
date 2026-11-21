@@ -8,7 +8,9 @@ After each Staging CD run completes, and hourly as a backstop, this check
 re-runs the develop head's own push run once when no Staging CD run is
 active, that run's allocation completed, and some lane's newest version is
 either an unfinalized reservation of an earlier run or a final of a settled
-owner that no controller proof covers. A re-run attempt is the same develop
+owner that no controller proof covers. A re-run for finals alone waits for
+the hourly check, once its head has settled for a while, so a stuck app or
+a namespace fence that failed the deploy can clear first. A re-run attempt is the same develop
 push event, so every push-only authority, cache and admission check applies
 unchanged, its admission clock starts afresh, and staging-cd.yml gains no
 trigger. Like any allocation it also retries the head's own failed builds,
@@ -20,6 +22,7 @@ behind after that is reported as exhausted until a push or a maintainer acts.
 An unreadable controller outcome is reported as unknown and never re-runs.
 """
 import collections
+from datetime import datetime
 import json
 import os
 from pathlib import Path
@@ -44,6 +47,8 @@ ALLOCATION_JOB = "allocate"
 # One automatic re-run per develop head; never re-run a head this many times.
 ATTEMPTS = 5
 SECONDS = 150
+# A re-run for finals alone waits until its head has been settled this long.
+SETTLE_SECONDS = 600
 TIMESTAMP = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"
 # Why a lane is not current. Only the first three re-run its head.
 BEHIND = ("unfinalized-reservation", "unproven-final", "undeployed-final")
@@ -237,7 +242,15 @@ def allocated(jobs):
     return len(rows) == 1 and rows[0].get("status") == "completed" and rows[0].get("conclusion") == "success"
 
 
-def decide(api, read_refs, read_controller):
+def settled(run, now):
+    try:
+        finished = datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")).timestamp()
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+    return now - finished >= SETTLE_SECONDS
+
+
+def decide(api, read_refs, read_controller, *, event=None, now=None):
     listing = api.request("actions/workflows/staging-cd.yml/runs?branch=develop&per_page=100")
     require(isinstance(listing, dict) and isinstance(listing.get("workflow_runs"), list)
             and all(isinstance(run, dict) for run in listing["workflow_runs"]), "Staging runs could not be read")
@@ -261,8 +274,15 @@ def decide(api, read_refs, read_controller):
     wait, lanes = left_behind(api, refs, run, jobs, read_controller)
     if wait:
         return wait, None, []
-    if any(lane.reason in BEHIND for lane in lanes):
-        return ("exhausted" if spent else "rerun"), run, lanes
+    late = [lane for lane in lanes if lane.reason in BEHIND]
+    if late and spent:
+        return "exhausted", run, lanes
+    if late:
+        # A deploy failure's cause may outlast its run; the single retry waits for it.
+        if all(lane.reason != BEHIND[0] for lane in late) and (
+                event != "schedule" or not settled(run, time.time() if now is None else now)):
+            return "final-waiting", None, lanes
+        return "rerun", run, lanes
     if spent:
         return "head-caught-up", None, lanes
     return (UNKNOWN if lanes else "nothing-behind"), None, lanes
@@ -315,7 +335,7 @@ def main():
         try:
             authorized(env)
             api = GitHub(env.get("GH_TOKEN"), deadline=time.monotonic() + SECONDS)
-            reason, run, lanes = decide(api, advertised, controller_reader(env))
+            reason, run, lanes = decide(api, advertised, controller_reader(env), event=env["GITHUB_EVENT_NAME"])
             outcome.update(reason=reason, lanes=lanes)
             if reason == "rerun":
                 outcome.update(run=run["id"], attempt=rerun(api, run))
