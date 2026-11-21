@@ -8,6 +8,10 @@ use layer2_core::sandbox::{AgentOperationError, AgentReadError, AgentServiceErro
 use layer2_core::RuntimeCapability;
 
 use super::{problem_document, problem_response};
+use configuration_write::ConfigurationWriteReason;
+
+#[path = "configuration_write.rs"]
+pub(super) mod configuration_write;
 
 pub(crate) enum InstanceProblem {
     AdmissionPaused,
@@ -51,6 +55,7 @@ pub(crate) enum InstanceProblem {
     SkillHistoryFull,
     SkillNotReady,
     OperationInFlight,
+    ConfigurationWrite(Box<Self>, ConfigurationWriteReason),
     CheckpointInProgress,
     DeliveryAmbiguous,
     ResourcesUnsupported,
@@ -172,6 +177,8 @@ impl From<AgentOperationError> for InstanceProblem {
             AgentOperationError::DispatchInProgress { .. }
             | AgentOperationError::DispatchRecoveryRequired { .. }
             | AgentOperationError::PreviousTurnConflict
+            | AgentOperationError::ConfigurationAdmissionConflict
+            | AgentOperationError::PreferencesRevisionMismatch
             | AgentOperationError::Conflict => Self::OperationInFlight,
             AgentOperationError::CheckpointInProgress => Self::CheckpointInProgress,
             AgentOperationError::DeliveryAmbiguous { .. } => Self::DeliveryAmbiguous,
@@ -186,7 +193,12 @@ impl From<AgentOperationError> for InstanceProblem {
 
 impl IntoResponse for InstanceProblem {
     fn into_response(self) -> Response {
-        let (status, slug, detail, code): (_, _, &str, _) = match &self {
+        let (problem, configuration_reason) = match self {
+            Self::ConfigurationWrite(problem, reason) => (*problem, Some(reason)),
+            other => (other, None),
+        };
+        let (status, slug, detail, code): (_, _, &str, _) = match &problem {
+            Self::ConfigurationWrite(..) => unreachable!("only an instance problem is annotated"),
             Self::RuntimeCapacity(capacity) => return super::problems::runtime_capacity(*capacity),
             Self::HistoryExport(error) => return super::agent_history::problem(*error),
             Self::AdmissionPaused => return super::admission_problem::paused(),
@@ -355,9 +367,16 @@ impl IntoResponse for InstanceProblem {
                 "instance_service_unavailable",
             ),
         };
+        let detail = match configuration_reason {
+            Some(reason) => reason.detail(),
+            None => detail,
+        };
         let mut body = problem_document(status, slug, detail, code);
         if let Some(object) = body.as_object_mut() {
-            match self {
+            if let Some(reason) = configuration_reason {
+                object.insert("settings_update_reason".into(), reason.as_str().into());
+            }
+            match problem {
                 Self::AgentLimitReached { limit, live } => {
                     object.insert("limit".into(), limit.into());
                     object.insert("live".into(), live.into());

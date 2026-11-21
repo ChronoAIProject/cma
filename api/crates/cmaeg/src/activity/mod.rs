@@ -1,10 +1,12 @@
 //! Owner-visible recent channel activity. Encrypted snapshots are independent
 //! of execution authority; observing progress never changes a provider turn.
+mod execution;
 pub(crate) mod facts;
 mod model;
 mod observer;
 pub(crate) mod public_projection;
 mod store;
+pub(crate) use execution::ExecutionAttribution;
 pub use model::{
     ActivityConsumer, ActivityDelivery, ActivityMediaResponse, ActivityPage, ActivityRecipient,
     ChannelActivity,

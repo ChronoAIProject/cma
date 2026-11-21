@@ -143,7 +143,7 @@ impl AgentOperationService {
             if expected_revision
                 .is_some_and(|revision| revision != current.conversation.preferences.revision)
             {
-                return Err(AgentOperationError::Conflict);
+                return Err(AgentOperationError::PreferencesRevisionMismatch);
             }
             if current.work.step != super::AgentWorkStep::None
                 || current.status != AgentStatus::Ready
@@ -242,7 +242,7 @@ impl AgentOperationService {
                 Err(error) => return Err(error),
             }
         }
-        Err(AgentOperationError::Conflict)
+        Err(AgentOperationError::ConfigurationAdmissionConflict)
     }
 }
 
