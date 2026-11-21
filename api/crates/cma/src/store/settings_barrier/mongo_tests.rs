@@ -3,7 +3,7 @@ use crate::{
     auth::registration::RegistrationCapacity,
     store::sandbox_mongo::{commit_transaction, start_transaction, CommitOutcome},
 };
-use layer2_core::{PlatformSettingsStore, SubjectId};
+use layer2_core::{PlatformSettingsStore, StoreError, SubjectId};
 use std::sync::Arc;
 use test_support::{platform, Pause, Point};
 
@@ -154,11 +154,14 @@ async fn operator_cannot_acknowledge_while_admission_holds_the_settings_write() 
         }
     }));
     let operator_client = mongodb::Client::with_options(options).unwrap();
-    let operator = crate::store::MongoPlatformSettingsStore::open(&operator_client, &name)
-        .await
-        .unwrap();
+    let operator = Arc::new(
+        crate::store::MongoPlatformSettingsStore::open(&operator_client, &name)
+            .await
+            .unwrap(),
+    );
     let mut settings = operator.read().await.unwrap();
     settings.settings.limits.max_sandboxes_per_user = 0;
+    let before = platform(&client, &name).await;
     let pause = Arc::new(Pause::default());
     let observed = pause.client().await;
     let candidate = crate::store::MongoRegistrationCapacityStore::open(&observed, &name, false)
@@ -168,31 +171,45 @@ async fn operator_cannot_acknowledge_while_admission_holds_the_settings_write() 
     let admitting =
         tokio::spawn(async move { candidate.admit(&SubjectId::new("before-cutoff")).await });
     pause.wait().await;
-    let mut lowering = tokio::spawn(async move {
-        operator
-            .replace(settings.revision, &settings.settings)
+    let writer = operator.clone();
+    let requested = settings.clone();
+    let lowering = tokio::spawn(async move {
+        writer
+            .replace(requested.revision, &requested.settings)
             .await
     });
     tokio::time::timeout(std::time::Duration::from_secs(5), dispatched.notified())
         .await
         .expect("operator did not dispatch its settings write");
+    let result = tokio::time::timeout(std::time::Duration::from_secs(5), lowering)
+        .await
+        .expect("operator did not resolve its conflicting settings transaction")
+        .unwrap();
     assert!(
-        tokio::time::timeout(std::time::Duration::from_millis(150), &mut lowering)
-            .await
-            .is_err(),
-        "operator acknowledged while the admission transaction held its settings write"
+        matches!(result, Err(StoreError::RevisionConflict { expected, actual })
+            if expected == settings.revision && actual == settings.revision),
+        "operator must refuse while admission holds its settings write: {result:?}"
     );
+    assert_eq!(platform(&client, &name).await, before);
     drop(release);
     assert!(admitting.await.unwrap().unwrap());
+    let admitted = platform(&client, &name).await;
     assert_eq!(
-        lowering
+        admitted.get_i64("admission_policy_fence").unwrap(),
+        before.get_i64("admission_policy_fence").unwrap_or(0) + 1
+    );
+    let updated = operator
+        .replace(settings.revision, &settings.settings)
+        .await
+        .unwrap();
+    assert_eq!(updated.revision, settings.revision + 1);
+    assert_eq!(updated.settings, settings.settings);
+    assert_eq!(
+        platform(&client, &name)
             .await
-            .unwrap()
-            .unwrap()
-            .settings
-            .limits
-            .max_sandboxes_per_user,
-        0
+            .get_i64("admission_policy_fence")
+            .unwrap(),
+        admitted.get_i64("admission_policy_fence").unwrap()
     );
     assert_eq!(pause.attempts(), 1);
     assert!(control
