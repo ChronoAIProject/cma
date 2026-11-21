@@ -39,6 +39,7 @@ function ViewerNavigation({
   onScope,
   onViewDeletion,
   onNavigate,
+  onRestoreTaskRoute = onNavigate,
   onAgentIntent,
   onAction,
 }: {
@@ -58,6 +59,7 @@ function ViewerNavigation({
   readonly onScope: (scope: string) => void;
   readonly onViewDeletion: (id: string) => void;
   readonly onNavigate: (route: AppRoute) => void;
+  readonly onRestoreTaskRoute?: (route: AppRoute) => void;
   readonly onAgentIntent?: (agentId: string, active: boolean) => void;
   readonly onAction: (action: TreeAction) => void;
 }) {
@@ -65,8 +67,12 @@ function ViewerNavigation({
   const settingsHost = useContext(NavigationSettingsContext);
   const sidebar = useContext(SidebarContext);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [environmentsOpened, setEnvironmentsOpened] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  const scrollport = useRef<HTMLDivElement>(null);
+  const taskScrollTop = useRef(0);
+  const taskPanel = useRef<HTMLDivElement>(null);
   const taskFocus = useRef<HTMLElement | null>(null);
   const filters = useNavigationFilterState(viewerId, scope);
   const { statuses } = filters;
@@ -79,6 +85,30 @@ function ViewerNavigation({
   const modeChanged = useRef(false);
   const refreshRequestedFor = useRef<string | undefined>(undefined);
   const status = statuses[view];
+  function selectView(next: NavigationView) {
+    if (sidebar?.collapsed) {
+      modeChanged.current = true;
+      sidebar.toggle();
+    }
+    if (view === next) return;
+    modeChanged.current = true;
+    if (next === 'sandbox') {
+      setTaskReturn({
+        route,
+        scope,
+        status: statuses.agent,
+        scrollTop: sidebar?.collapsed
+          ? taskScrollTop.current
+          : (scrollport.current?.scrollTop ?? 0),
+      });
+      setFiltersOpen(false);
+      setEnvironmentsOpened(true);
+    } else {
+      if (scope !== taskReturn.scope) onScope(taskReturn.scope);
+      if (route !== taskReturn.route) onRestoreTaskRoute(taskReturn.route);
+    }
+    setView(next);
+  }
   useLayoutEffect(() => {
     if (currentAgent === undefined || navigation.status !== 'ready') return;
     const summary = navigation.items
@@ -95,18 +125,16 @@ function ViewerNavigation({
     navigation.refresh();
   }, [currentAgent, navigation]);
   useLayoutEffect(() => {
-    if (!modeChanged.current) return;
-    if (view === 'sandbox')
-      root.current?.querySelector<HTMLButtonElement>('[data-back-to-tasks]')?.focus();
-    else {
-      const target = taskFocus.current?.isConnected
-        ? taskFocus.current
-        : root.current?.querySelector<HTMLElement>('[role="treeitem"][aria-selected="true"]');
-      target?.focus({ preventScroll: true });
-      const scrollport = root.current?.closest('.sidebar__navigation');
-      if (scrollport) scrollport.scrollTop = taskReturn.scrollTop;
-    }
-  }, [view, taskReturn.scrollTop]);
+    if (!modeChanged.current || sidebar?.collapsed) return;
+    modeChanged.current = false;
+    const mode = root.current?.querySelector<HTMLButtonElement>(`[data-navigation-mode="${view}"]`);
+    const task = taskPanel.current?.contains(taskFocus.current)
+      ? taskFocus.current
+      : taskPanel.current?.querySelector<HTMLElement>('[role="treeitem"][aria-selected="true"]');
+    (view === 'agent' ? (task ?? mode) : mode)?.focus({ preventScroll: true });
+    if (scrollport.current)
+      scrollport.current.scrollTop = view === 'agent' ? taskReturn.scrollTop : 0;
+  }, [view, sidebar?.collapsed, taskReturn.scrollTop]);
   const navigationPanel = (panelView: NavigationView) => (
     <ScopedNavigation
       route={panelView === 'agent' && view === 'sandbox' ? taskReturn.route : route}
@@ -189,7 +217,7 @@ function ViewerNavigation({
     />
   );
   return (
-    <div ref={root}>
+    <div ref={root} className="manager-navigation">
       {settingsHost
         ? createPortal(
             <Menu
@@ -198,21 +226,8 @@ function ViewerNavigation({
               items={[{ id: 'environments', label: 'Manage environments' }]}
               onClose={() => setSettingsOpen(false)}
               onSelect={() => {
-                if (sidebar?.collapsed) sidebar.toggle();
-                if (view === 'sandbox') {
-                  setSettingsOpen(false);
-                  return;
-                }
-                setTaskReturn({
-                  route,
-                  scope,
-                  status: statuses.agent,
-                  scrollTop: root.current?.closest('.sidebar__navigation')?.scrollTop ?? 0,
-                });
-                modeChanged.current = true;
                 setSettingsOpen(false);
-                setEnvironmentsOpened(true);
-                setView('sandbox');
+                selectView('sandbox');
               }}
               anchor={
                 <button
@@ -231,41 +246,11 @@ function ViewerNavigation({
             settingsHost,
           )
         : null}
-      {view === 'sandbox' ? (
-        <button
-          type="button"
-          className="resource-tree__heading"
-          data-back-to-tasks
-          onClick={() => {
-            modeChanged.current = true;
-            setView('agent');
-            if (scope !== taskReturn.scope) onScope(taskReturn.scope);
-            if (route !== taskReturn.route) onNavigate(taskReturn.route);
-          }}
-        >
-          Back to tasks
-        </button>
-      ) : null}
       <NavigationFilters
         scope={
           client === undefined ? undefined : (
             <NavigationScopePicker choices={choices} value={scope} onChange={onScope} />
           )
-        }
-        onManageEnvironments={
-          view === 'agent'
-            ? () => {
-                setTaskReturn({
-                  route,
-                  scope,
-                  status: statuses.agent,
-                  scrollTop: root.current?.closest('.sidebar__navigation')?.scrollTop ?? 0,
-                });
-                modeChanged.current = true;
-                setEnvironmentsOpened(true);
-                setView('sandbox');
-              }
-            : undefined
         }
         scopeSummary={
           client === undefined
@@ -274,6 +259,9 @@ function ViewerNavigation({
         }
         scopeActive={client !== undefined && scope !== ''}
         view={view}
+        onView={selectView}
+        open={filtersOpen}
+        onOpenChange={setFiltersOpen}
         status={status}
         onStatus={(next) => filters.select(view, next)}
         onClear={() => {
@@ -286,20 +274,30 @@ function ViewerNavigation({
           Filters apply now but cannot be remembered after refresh.
         </p>
       ) : null}
-      <TreeCreationScope viewerId={viewerId}>
-        <div
-          hidden={view !== 'agent'}
-          onFocusCapture={(event) => {
-            const row = (event.target as HTMLElement).closest<HTMLElement>('[role="treeitem"]');
-            if (row) taskFocus.current = row;
-          }}
-        >
-          {navigationPanel('agent')}
-        </div>
-        {environmentsOpened ? (
-          <div hidden={view !== 'sandbox'}>{navigationPanel('sandbox')}</div>
-        ) : null}
-      </TreeCreationScope>
+      <div
+        ref={scrollport}
+        className="manager-navigation__list"
+        onScroll={(event) => {
+          if (view === 'agent' && !sidebar?.collapsed)
+            taskScrollTop.current = event.currentTarget.scrollTop;
+        }}
+      >
+        <TreeCreationScope viewerId={viewerId}>
+          <div
+            ref={taskPanel}
+            hidden={view !== 'agent'}
+            onFocusCapture={(event) => {
+              const row = (event.target as HTMLElement).closest<HTMLElement>('[role="treeitem"]');
+              if (row) taskFocus.current = row;
+            }}
+          >
+            {navigationPanel('agent')}
+          </div>
+          {environmentsOpened ? (
+            <div hidden={view !== 'sandbox'}>{navigationPanel('sandbox')}</div>
+          ) : null}
+        </TreeCreationScope>
+      </div>
     </div>
   );
 }
