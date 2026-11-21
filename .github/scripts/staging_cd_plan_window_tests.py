@@ -20,8 +20,8 @@ from staging_cd_common import Refusal
 from staging_cd_compatibility import GROUP, RECIPE, VERSION_FILE
 from staging_cd_contract_tests import fixture_source
 from staging_cd_history import DevelopHistory
-from staging_cd_plan_window import (MANIFEST, PlanRefused, Window, newest_finals, plan_window, read_finals, recall,
-                                    remember, window_line, window_warning)
+from staging_cd_plan_window import (MANIFEST, PROPAGATION_SECONDS, PlanRefused, Window, newest_finals, plan_window,
+                                    read_finals, window_line, window_warning)
 import staging_cd_queue as queue
 from staging_cd_queue import release_queue
 from staging_cd_receipts import annotation, final_tag_oid, final_tag_text, git_tag_oid, parse_annotation
@@ -211,41 +211,71 @@ class NewestFinalTests(unittest.TestCase):
         self.assertEqual(len(clock.waits), 1)
         self.assertGreaterEqual(clock.waits[0], 45)
 
-    def test_reads_that_keep_failing_are_unreadable_and_refusals_are_denied(self):
+    def test_only_a_rejected_credential_is_denied_and_a_lasting_404_is_untrusted(self):
         oid = self.tags().refs["refs/tags/cma-web/v0.10.2"]
-        for errors, kind in (([failure(503)] * 6, "unreadable"), ([failure(404)] * 6, "unreadable"),
-                             ([failure(401)], "denied"), ([failure(403)], "denied"),
-                             ([failure(403, {"x-ratelimit-remaining": "0"})] * 6, "unreadable")):
-            with self.subTest(errors=errors[0].status, kind=kind):
+        invalid = Refusal("GitHub API response is invalid")  # No status, nothing transient: a body that did not parse.
+        for name, errors, kind, retried in (
+                ("server errors", [failure(503)] * 6, "unreadable", True),
+                ("a secondary rate limit without its headers", [failure(403)] * 6, "unreadable", True),
+                ("an exhausted quota", [failure(403, {"x-ratelimit-remaining": "0"})] * 6, "unreadable", True),
+                ("an invalid body", [invalid], "unreadable", False),
+                ("a rejected credential", [failure(401)], "denied", False)):
+            with self.subTest(name):
                 tags, clock = self.tags(), Clock()
                 tags.failures[oid] = list(errors)
                 self.assertEqual(self.read(tags, clock)["web"], (None, kind))
+                self.assertEqual(bool(clock.waits), retried)
                 self.assertLessEqual(clock.now, 240)
-        # The budget, not the attempt count, ends a long outage.
+        # A 404 is propagation only for a short while; after it the final is not a tag GitHub serves.
         tags, clock = self.tags(), Clock()
-        tags.failures[oid] = [failure(503, {"retry-after": "200"})] * 6
-        self.assertEqual(newest_finals(tags, tags.refs, deadline=100, clock=clock, sleep=clock.sleep)["web"],
+        tags.failures[oid] = [failure(404)] * 50
+        self.assertEqual(self.read(tags, clock)["web"], (None, "untrusted"))
+        self.assertGreater(len(clock.waits), 0)
+        self.assertLess(sum(clock.waits[:-1]), PROPAGATION_SECONDS)
+        # A requested wait past the deadline ends the read instead of sleeping; one wait is capped.
+        tags, clock = self.tags(), Clock()
+        tags.failures[oid] = [failure(503, {"retry-after": "600"})] * 6
+        self.assertEqual(newest_finals(tags, tags.refs, deadline=50, clock=clock, sleep=clock.sleep)["web"],
                          (None, "unreadable"))
         self.assertEqual(clock.waits, [])
+        tags, clock = self.tags(), Clock()
+        tags.failures[oid] = [failure(503, {"retry-after": "600"})]
+        self.assertEqual(self.read(tags, clock)["web"], (COMMITS[7], "final"))
+        self.assertEqual(clock.waits, [ci_retry.RETRY_AFTER_CAP])
 
-    def test_the_inventory_read_repeats_transport_failures_and_names_the_rest(self):
-        chain, tags = history(), Tags()  # No finals: only the inventory is read.
+    def test_any_failed_listing_repeats_and_only_a_malformed_one_is_untrusted(self):
+        chain, tags = history(), Tags()  # No finals: only the listing is read.
         listed = subprocess.CompletedProcess([], 0, tags.advertisement(), "")
-        offline = subprocess.CompletedProcess([], 128, "", "fatal: unable to access: Could not resolve host: github.com")
-        for responses, expected in (([offline, offline, listed], "read"),
-                                    ([offline] * 6, "unreadable"),
-                                    ([subprocess.TimeoutExpired(["git"], 60)] * 6, "unreadable"),
-                                    ([subprocess.CompletedProcess([], 128, "", "fatal: repository not found")], "denied"),
-                                    ([subprocess.CompletedProcess([], 0, "not an advertisement", "")], "untrusted")):
-            with self.subTest(expected=expected, first=str(responses[0])[:60]):
+        diagnostics = [
+            "fatal: unable to access: Failed to connect to github.com port 443 after 3 ms: Couldn't connect to server",
+            "fatal: unable to access: Empty reply from server",
+            "error: RPC failed; curl 92 HTTP/2 stream 1 was not closed cleanly: CANCEL (err 8)",
+            "fatal: expected flush after ref listing",
+            "fatal: repository not found",
+            "fatal: unable to access: Could not resolve host: github.com",
+        ]
+        for diagnostic in diagnostics:
+            for persistent in (False, True):
+                with self.subTest(diagnostic=diagnostic, persistent=persistent):
+                    clock = Clock()
+                    failed = subprocess.CompletedProcess([], 128, "", diagnostic)
+                    runner = Mock(side_effect=[failed] * (6 if persistent else 2) + [listed] * 3)
+                    develop, lanes = read_finals(Path.cwd(), "fixture", chain, runner=runner, clock=clock,
+                                                 sleep=clock.sleep)
+                    if persistent:
+                        self.assertEqual((develop, lanes), (None, dict.fromkeys(LANES, (None, "unreadable"))))
+                    else:
+                        self.assertEqual((develop, lanes, len(clock.waits)),
+                                         (COMMITS[9], dict.fromkeys(LANES, (None, "new")), 2))
+        for responses, kind in (([subprocess.TimeoutExpired(["git"], 60)] * 6, "unreadable"),
+                                ([OSError("git is missing")] * 6, "unreadable"),
+                                ([subprocess.CompletedProcess([], 0, "not an advertisement", "")], "untrusted"),
+                                ([subprocess.CompletedProcess([], 0, "a" * 40 + "\trefs/tags/x\n", "")], "untrusted")):
+            with self.subTest(kind=kind, first=str(responses[0])[:60]):
                 clock = Clock()
-                runner = Mock(side_effect=list(responses) + [listed] * 3)
-                develop, lanes = read_finals(Path.cwd(), "fixture", chain, runner=runner, clock=clock, sleep=clock.sleep)
-                if expected == "read":
-                    self.assertEqual((develop, len(clock.waits)), (COMMITS[9], 2))
-                    self.assertEqual(lanes, dict.fromkeys(LANES, (None, "new")))
-                else:
-                    self.assertEqual((develop, lanes), (None, dict.fromkeys(LANES, (None, expected))))
+                develop, lanes = read_finals(Path.cwd(), "fixture", chain, runner=Mock(side_effect=responses),
+                                             clock=clock, sleep=clock.sleep)
+                self.assertEqual((develop, lanes), (None, dict.fromkeys(LANES, (None, kind))))
 
     def test_reader_sees_credentials_and_stale_runs(self):
         chain = history()
@@ -271,8 +301,8 @@ ADDED = dict.fromkeys(LANES, COMMITS[0])
 
 
 class PlanWindowTests(unittest.TestCase):
-    def plan(self, adoption, sources, introduced=None, recalled=None, count=10):
-        return plan_window(history(count), adoption, sources, dict(ADDED, **(introduced or {})), recalled)
+    def plan(self, adoption, sources, introduced=None, count=10):
+        return plan_window(history(count), adoption, sources, dict(ADDED, **(introduced or {})))
 
     def refused(self, *args, **kwargs):
         with self.assertRaises(PlanRefused) as refused:
@@ -282,7 +312,7 @@ class PlanWindowTests(unittest.TestCase):
     def test_window_starts_at_the_oldest_lane_newest_final(self):
         sources = finals(**{"am": COMMITS[4], "eg": COMMITS[6], "runtime": COMMITS[4],
                             "runtime-omarchy": COMMITS[5], "web": COMMITS[8]})
-        self.assertEqual(self.plan(COMMITS[1], sources), Window(COMMITS[4], ["am", "runtime"], COMMITS[4], COMMITS[1]))
+        self.assertEqual(self.plan(COMMITS[1], sources), Window(COMMITS[4], ["am", "runtime"], COMMITS[1]))
 
     def test_the_adoption_commit_is_not_needed_once_every_lane_has_a_final(self):
         sources = finals(**dict({key: COMMITS[6] for key in LANES}, web=COMMITS[3]))
@@ -292,14 +322,14 @@ class PlanWindowTests(unittest.TestCase):
 
     def test_an_adoption_newer_than_the_oldest_final_is_still_the_start(self):
         sources = finals(**{key: COMMITS[2] for key in LANES})
-        self.assertEqual(self.plan(COMMITS[6], sources), Window(COMMITS[6], ["adoption"], COMMITS[2], COMMITS[1]))
+        self.assertEqual(self.plan(COMMITS[6], sources), Window(COMMITS[6], ["adoption"], COMMITS[1]))
         self.assertEqual(self.plan(COMMITS[2], sources).bound_by, LANES)
 
     def test_a_lane_that_never_had_a_final_starts_after_the_merge_that_added_it(self):
         # The selector cannot compare the addition itself: its parent lacks the lane.
         sources = finals(**{key: COMMITS[6] for key in LANES if key != "web"})
         self.assertEqual(self.plan(None, sources, {"web": COMMITS[3]}),
-                         Window(COMMITS[4], ["web:new"], COMMITS[4], COMMITS[4]))
+                         Window(COMMITS[4], ["web:new"], COMMITS[4]))
         # A window that would reach any lane's addition refuses at once, naming it.
         older = dict(sources, eg=(COMMITS[2], "final"))
         self.assertEqual(self.refused(None, older, {"web": COMMITS[3]}), ("introduced", ["web"], COMMITS[3]))
@@ -315,22 +345,15 @@ class PlanWindowTests(unittest.TestCase):
             with self.subTest(name):
                 bounded = dict(sources, web=lane)
                 window = self.plan(COMMITS[2], bounded, introduced)
-                self.assertEqual((window.start, window.bound_by, window.proven), (COMMITS[2], ["web:floor"], None))
+                self.assertEqual((window.start, window.bound_by), (COMMITS[2], ["web:floor"]))
                 for adoption in (None, "f" * 40):
                     self.assertEqual(self.refused(adoption, bounded, introduced), ("floor", ["web"], None))
 
-    def test_a_lane_that_cannot_be_read_uses_the_last_proven_bound_or_refuses(self):
+    def test_a_lane_that_cannot_be_read_or_trusted_refuses_the_plan_at_once(self):
         sources = finals(**{key: COMMITS[6] for key in LANES})
-        unreadable = dict(sources, eg=(None, "unreadable"))
-        window = self.plan(COMMITS[1], unreadable, recalled=COMMITS[3])
-        self.assertEqual((window.start, window.bound_by, window.proven), (COMMITS[3], ["eg:recalled"], None))
-        for recalled in (None, "f" * 40):
-            self.assertEqual(self.refused(COMMITS[1], unreadable, recalled=recalled), ("unreadable", ["eg"], None))
-        # A refused credential or an untrusted tag is never an outage to wait out.
-        for kind in ("denied", "untrusted"):
-            self.assertEqual(self.refused(COMMITS[1], dict(sources, eg=(None, kind)), recalled=COMMITS[3]),
-                             (kind, ["eg"], None))
-        # Most actionable first.
+        for kind in ("unreadable", "denied", "untrusted"):
+            self.assertEqual(self.refused(COMMITS[1], dict(sources, eg=(None, kind))), (kind, ["eg"], None))
+        # Most actionable first; only an outage alone is the transient stop catch-up re-runs.
         mixed = dict(sources, eg=(None, "unreadable"), web=(None, "untrusted"), am=(None, "denied"))
         self.assertEqual(self.refused(COMMITS[1], mixed), ("untrusted", ["web"], None))
         self.assertEqual(self.refused(COMMITS[1], {}), ("unreadable", LANES, None))
@@ -447,13 +470,12 @@ class Repository:
     def row(self, commit):
         return {"source": commit, "tree": self.tree(commit), "deployables": self.decisions.get(commit, [])}
 
-    def plan(self, adoption, *, lanes=None, develop=None, head=None, budget=None, memory=None):
+    def plan(self, adoption, *, lanes=None, develop=None, head=None, budget=None):
         """Plan from the adoption commit, or bounded by `lanes` (each lane's newest final)."""
         found, head = {}, head or self.commits[-1]
         reader = None if lanes is None else (lambda _history: (develop or head, lanes))
         with patch.object(queue, "batch_selection", side_effect=self.batch):
-            result = release_queue(self.root, adoption, head, head, {}, budget, finals=reader, window=found,
-                                   memory=memory)
+            result = release_queue(self.root, adoption, head, head, {}, budget, finals=reader, window=found)
         return result, found
 
 
@@ -615,40 +637,6 @@ class ReleaseQueueWindowTests(unittest.TestCase):
         self.assertEqual(windows(repo.calls, cached=False), [])
         self.assertNotIn("contract_transition", result)
         self.assertNotIn("transition", found)
-
-    def test_a_proven_bound_is_remembered_and_recalled_only_when_tags_cannot_be_read(self):
-        repo = Repository(self, 6)
-        repo.decisions = {repo.commits[3]: ["cma-web"]}
-        with tempfile.TemporaryDirectory() as directory:
-            memory = Path(directory)
-            proven = finals(**dict({key: repo.commits[4] for key in LANES}, eg=repo.commits[2]))
-            repo.plan(repo.commits[0], lanes=proven, memory=memory)
-            self.assertEqual(recall(memory, DevelopHistory(repo.commits[-1], list(reversed(repo.commits)))),
-                             repo.commits[2])
-            # Later every tag read fails: the remembered bound plans instead of a refusal.
-            unreadable = dict.fromkeys(LANES, (None, "unreadable"))
-            repo.calls.clear()
-            _result, found = repo.plan(repo.commits[0], lanes=unreadable, memory=memory)
-            self.assertEqual((found["start"], windows(repo.calls)), (repo.commits[2], [repo.commits[2:]]))
-            self.assertEqual(found["bound_by"], [key + ":recalled" for key in LANES])
-            # A plan that used the remembered bound never rewrites it.
-            self.assertEqual(json.loads((memory / "plan-window.json").read_text())["bound"], repo.commits[2])
-            # A newer proven bound replaces it; finals only grow, so it only moves forward.
-            repo.plan(repo.commits[0], lanes=finals(**{key: repo.commits[4] for key in LANES}), memory=memory)
-            self.assertEqual(json.loads((memory / "plan-window.json").read_text())["bound"], repo.commits[4])
-            # Without a usable record the plan still refuses, as transient.
-            for record in ("not json", json.dumps({"schema": "cma-plan-window-v1", "bound": "f" * 40,
-                                                   "lanes": LANES}),
-                           json.dumps({"schema": "cma-plan-window-v1", "bound": repo.commits[2], "lanes": ["web"]})):
-                with self.subTest(record=record[:40]):
-                    (memory / "plan-window.json").write_text(record)
-                    with self.assertRaises(PlanRefused) as refused:
-                        repo.plan(repo.commits[0], lanes=unreadable, memory=memory)
-                    self.assertEqual(refused.exception.kind, "unreadable")
-            (memory / "plan-window.json").unlink()
-            (memory / "plan-window.json").symlink_to(memory / "elsewhere.json")
-            remember(memory, repo.commits[4])
-            self.assertFalse((memory / "elsewhere.json").exists())
 
     def test_every_selection_shares_one_budget_with_the_tag_reads(self):
         repo = Repository(self, 6, contract_at=1)
@@ -911,29 +899,27 @@ class MainWindowTests(unittest.TestCase):
                     patch.object(queue, "git", return_value=COMMITS[3]), \
                     patch.object(queue, "read_finals", return_value="read") as reader, \
                     patch.object(queue, "release_queue", side_effect=plan), contextlib.redirect_stdout(stdout):
-                for key in (*unset, *({"CD_SELECTOR_CACHE"} - env.keys())):
+                for key in unset:
                     os.environ.pop(key, None)
                 status = queue.main(list(argv))
             return status, outputs.read_text(), stdout.getvalue(), reader
 
     def test_main_reads_finals_lazily_and_prints_the_chosen_window(self):
-        cache = json.dumps({"directory": "/trusted/cache", "policy": "c" * 64})
-
-        def plan(root, adoption, head, event_source, metrics, *, budget, finals, window, memory):
-            self.assertEqual((adoption, head, event_source, budget, memory),
-                             (COMMITS[0], COMMITS[3], COMMITS[3], queue.BUDGET_SECONDS, Path("/trusted/cache")))
+        def plan(root, adoption, head, event_source, metrics, *, budget, finals, window):
+            self.assertEqual((adoption, head, event_source, budget),
+                             (COMMITS[0], COMMITS[3], COMMITS[3], queue.BUDGET_SECONDS))
             self.assertEqual(finals("history"), "read")
             window.update(start=COMMITS[2], revisions=2, adoption=adoption, bound_by=["eg"])
             return {"head": head, "event_source": event_source, "changes": []}
-        status, outputs, stdout, reader = self.run_main(plan, extra={"CD_SELECTOR_CACHE": cache})
+        status, outputs, stdout, reader = self.run_main(plan)
         self.assertEqual(status, 0)
         reader.assert_called_once_with(Path.cwd(), "synthetic-not-a-credential", "history")
         self.assertIn(f"PLAN window start={COMMITS[2]} revisions=2 adoption={COMMITS[0]} bound-by=eg\n", stdout)
         self.assertNotIn("::warning", stdout)
 
     def test_an_unset_adoption_and_a_wide_window_plan_and_warn(self):
-        def plan(root, adoption, head, event_source, metrics, *, budget, finals, window, memory):
-            self.assertEqual((adoption, memory), (None, None))
+        def plan(root, adoption, head, event_source, metrics, *, budget, finals, window):
+            self.assertIsNone(adoption)
             window.update(start=COMMITS[2], revisions=400, adoption="none", bound_by=["eg"])
             return {"head": head, "event_source": event_source, "changes": []}
         status, _outputs, stdout, _reader = self.run_main(plan, unset=("CD_ADOPTION_SHA",))
@@ -961,7 +947,7 @@ class MainWindowTests(unittest.TestCase):
         self.assertTrue(stdout.startswith("FAIL release-queue reason=incomplete"))
 
     def test_a_stale_run_completes_with_nothing_changed(self):
-        def plan(root, adoption, head, event_source, metrics, *, budget, finals, window, memory):
+        def plan(root, adoption, head, event_source, metrics, *, budget, finals, window):
             window.update(stale=COMMITS[9], head=head)
             return {"head": head, "event_source": event_source, "changes": []}
         status, outputs, stdout, _reader = self.run_main(plan)

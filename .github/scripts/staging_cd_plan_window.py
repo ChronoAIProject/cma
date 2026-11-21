@@ -25,22 +25,19 @@ lower bound, and contract transitions older than it stay out of the plan. It is
 needed only for a lane whose newest final is not on the last 2,000 first-parent
 merges, and that plan refuses at once, naming the lane, until it is set.
 
-Tag reads repeat transient failures, honour Retry-After and treat a 404 on a
-just-advertised object as propagation. A read that still fails falls back to
-the last proven bound in the trusted develop selection cache: finals only grow,
-so an earlier proven bound is still a lower bound. Only without one does the
-plan refuse, as transient. A run whose push is no longer the develop head plans
-nothing: allocation would find it stale, and the newer push's run plans it.
+Tag reads repeat failures that may pass, honour Retry-After and give a
+just-advertised object a short while to propagate. A read that still fails
+stops the plan as transient: its gate is the one catch-up re-runs, once, and
+the next push plans again; nothing is planned, so nothing is skipped. A run
+whose push is no longer the develop head plans nothing: allocation would find
+it stale, and the newer push's run plans it.
 """
 from dataclasses import dataclass
 import json
-import os
-from pathlib import Path
 import subprocess
 import time
 
 import ci_retry
-from ci_tracks.selection_cache import PLAN_RECORD
 from staging_cd_catch_up import advertised, final_source, lane_versions
 from staging_cd_common import Refusal
 from staging_cd_compatibility import ContractPolicy, RECIPE, VERSION_FILE
@@ -52,8 +49,12 @@ from staging_cd_versions import DEPLOYABLES, version_tuple
 # reads repeat inside this budget, which the plan's selection budget includes.
 FINAL_SECONDS = 240
 READ_POLICY = {"attempts": 6, "base": 2.0, "cap": 30.0}
+# A just-advertised tag object may 404 this long; after it a 404 is a real one.
+PROPAGATION_SECONDS = 30
+# The anonymous tag listing of this public repository refuses no credential:
+# only these say what it returned is wrong.
+MALFORMED = frozenset({"Release tag inventory is malformed", "Develop head could not be verified"})
 MANIFEST = ".github/scripts/deployables.json"
-RECORD_SCHEMA = "cma-plan-window-v1"
 UNREADABLE = (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError)
 # A window this long is analysed for minutes on a cold cache; say why it is.
 WIDE_REVISIONS = 150
@@ -72,13 +73,35 @@ class PlanRefused(Exception):
 class Window:
     start: str  # The first revision to reconcile.
     bound_by: list  # The lanes, or "adoption", that put it there.
-    proven: str | None  # The oldest lane bound when every bound came from tags now.
     after: str | None  # The newest current lane's manifest addition on this history.
 
 
-def transient_read(error):
-    """A just-advertised tag object can 404 while GitHub still propagates it."""
-    return ci_retry.TRANSIENT if getattr(error, "status", None) == 404 else ci_retry.classify(error)
+def object_reader(clock):
+    """Classify one tag object's failed reads, and name what a final failure means.
+
+    Only a 401 refuses the credential. A 403 can be a secondary rate limit
+    without its headers, so it is repeated like any outage. A 404 is repeated
+    for a short propagation window, then the advertised final is not a tag
+    object GitHub serves (deleted, or lightweight). Anything else that does
+    not pass is unreadable.
+    """
+    first = {}
+
+    def classify(error):
+        status = getattr(error, "status", None)
+        if status == 404:
+            first.setdefault(404, clock())
+            return ci_retry.TRANSIENT if clock() - first[404] < PROPAGATION_SECONDS else ci_retry.PERMANENT
+        return ci_retry.TRANSIENT if status == 403 else ci_retry.classify(error)
+
+    def kind(error):
+        status = getattr(error, "status", None)
+        return "denied" if status == 401 else "untrusted" if status == 404 else "unreadable"
+    return classify, kind
+
+
+def inventory_retryable(error):
+    return ci_retry.PERMANENT if isinstance(error, Refusal) and str(error) in MALFORMED else ci_retry.TRANSIENT
 
 
 def newest_finals(api, refs, *, deadline=None, clock=time.monotonic, sleep=time.sleep):
@@ -99,13 +122,13 @@ def newest_finals(api, refs, *, deadline=None, clock=time.monotonic, sleep=time.
             continue
         version = max(finals, key=version_tuple)
         oid = finals[version]
+        classify, kind = object_reader(clock)
         try:
             ci_retry.call(lambda: api.request("git/tags/" + oid, attempts=1), name="release-tag-read",
-                          classify=transient_read, deadline=deadline, clock=clock, sleep=sleep,
+                          classify=classify, deadline=deadline, clock=clock, sleep=sleep,
                           honour_retry_after=True, **READ_POLICY)
         except UNREADABLE as error:
-            # An outage is no verdict on the tag; a refused credential is not an outage.
-            result[component] = (None, "unreadable" if transient_read(error) == ci_retry.TRANSIENT else "denied")
+            result[component] = (None, kind(error))
             continue
         try:
             # The reader keeps the object it read, so these checks see the same bytes.
@@ -124,11 +147,11 @@ def read_finals(root, token, history, *, runner=subprocess.run, seconds=FINAL_SE
     """
     deadline = clock() + seconds
     try:
-        refs = ci_retry.call(lambda: advertised(runner), name="release-tag-inventory", classify=ci_retry.classify,
+        # Any failed listing may pass; only a listing that arrived malformed is wrong.
+        refs = ci_retry.call(lambda: advertised(runner), name="release-tag-inventory", classify=inventory_retryable,
                              deadline=deadline, clock=clock, sleep=sleep, **READ_POLICY)
     except UNREADABLE as error:
-        kind = ("unreadable" if ci_retry.classify(error) == ci_retry.TRANSIENT
-                else "denied" if str(error) == "Release tag inventory is incomplete" else "untrusted")
+        kind = "untrusted" if inventory_retryable(error) == ci_retry.PERMANENT else "unreadable"
         return None, dict.fromkeys(DEPLOYABLES, (None, kind))
     develop = refs["refs/heads/develop"]
     if develop not in history.positions:
@@ -165,50 +188,16 @@ def introductions(root, history):
     return {component: found.get(name) for component, name in DEPLOYABLES.items()}
 
 
-def recall(directory, history):
-    """The last proven lane bound in the trusted develop cache, when it covers every lane here."""
-    try:
-        path = Path(directory) / PLAN_RECORD
-        if path.is_symlink() or not path.is_file() or path.stat().st_size > 4096:
-            return None
-        record = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, TypeError):
-        return None
-    if not (isinstance(record, dict) and set(record) == {"schema", "bound", "lanes"}
-            and record["schema"] == RECORD_SCHEMA and isinstance(record["lanes"], list)
-            and set(DEPLOYABLES) <= set(record["lanes"]) and record["bound"] in history.positions):
-        return None
-    return record["bound"]
-
-
-def remember(directory, bound):
-    """Keep this plan's proven bound for a later plan whose tag reads fail; never fail for it."""
-    path = Path(directory) / PLAN_RECORD
-    staged = path.with_name(PLAN_RECORD + ".partial")
-    try:
-        if path.is_symlink() or staged.is_symlink():
-            return
-        staged.write_text(json.dumps({"schema": RECORD_SCHEMA, "bound": bound, "lanes": sorted(DEPLOYABLES)}),
-                          encoding="utf-8")
-        os.replace(staged, path)
-    except OSError:
-        pass
-
-
-def plan_window(history, adoption, finals, introduced, recalled=None):
+def plan_window(history, adoption, finals, introduced):
     """Choose the window's first revision. Raises PlanRefused when no start can be proved.
 
-    `introduced` maps each lane to its newest manifest addition on this history,
-    and `recalled` is the last proven bound, used only for lanes whose tags
-    could not be read now.
+    `introduced` maps each lane to its newest manifest addition on this history.
     """
     floor = adoption if adoption in history.positions else None
     commits = {position: sha for sha, position in history.positions.items()}
     bounds, refused = {}, {}
     for component in sorted(DEPLOYABLES):
         source, kind = finals.get(component, (None, "unreadable"))
-        if kind == "unreadable" and recalled in history.positions:
-            source, kind = recalled, "recalled"
         if kind in ("unreadable", "denied", "untrusted"):
             refused.setdefault(kind, []).append(component)
             continue
@@ -229,7 +218,6 @@ def plan_window(history, adoption, finals, introduced, recalled=None):
     start = min((position for position, _kind in bounds.values()), default=0)
     lanes = [component if kind == "final" else component + ":" + kind
              for component, (position, kind) in bounds.items() if position == start]
-    proven = commits[start] if all(kind in ("final", "new") for _position, kind in bounds.values()) else None
     if floor is not None and history.positions[floor] > start:
         start, lanes = history.positions[floor], ["adoption"]
     added = {component: history.positions[source] for component, source in introduced.items()
@@ -238,7 +226,7 @@ def plan_window(history, adoption, finals, introduced, recalled=None):
     if crossed:
         raise PlanRefused("introduced", crossed, commits[max(added[component] for component in crossed)])
     after = max(added.values(), default=None)
-    return Window(commits[start], lanes or ["adoption"], proven, None if after is None else commits.get(after + 1))
+    return Window(commits[start], lanes or ["adoption"], None if after is None else commits.get(after + 1))
 
 
 def earlier_transition(root, history, floor, start):

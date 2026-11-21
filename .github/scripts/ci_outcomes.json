@@ -1442,13 +1442,13 @@
         },
         "finals-unreadable": {
           "title": "Lane releases unreadable",
-          "meaning": "A lane's newest final release tag could not be read after repeated attempts, and no proven bound was remembered in the develop cache. Nothing was planned.",
+          "meaning": "The tag listing or a lane's newest final release tag could not be read after repeated attempts within the plan's read budget. Nothing was planned.",
           "cause": "transient",
           "next": "Catch-up re-runs this once from its hourly check after the outage settles; the next develop push plans again too."
         },
         "finals-untrusted": {
           "title": "Lane release tag untrusted",
-          "meaning": "A lane's newest final release tag, or the tag inventory, failed the checks allocation also applies: its name, commit and receipt must agree. Nothing was planned.",
+          "meaning": "A lane's newest final release tag, or the tag listing, failed the checks allocation also applies, or GitHub serves no tag object for it. Nothing was planned.",
           "cause": "unknown",
           "next": "Inspect the tags of the lanes the PLAN refused line names; allocation would refuse the same tag."
         },
@@ -1466,9 +1466,9 @@
         },
         "finals-denied": {
           "title": "Lane release read refused",
-          "meaning": "GitHub refused to serve a lane's newest final release tag or the tag inventory, for example for a credential or permission. Nothing was planned.",
+          "meaning": "GitHub rejected the plan step's credential (401) while reading a lane's newest final release tag, or the step has no token. Nothing was planned.",
           "cause": "operator",
-          "next": "Check that the plan step's GH_TOKEN can read this repository's contents; the PLAN refused line names the lanes."
+          "next": "Check that the plan step receives GH_TOKEN and that it can read this repository's contents; the PLAN refused line names the lanes."
         },
         "manifest-boundary": {
           "title": "Window crosses a lane addition",

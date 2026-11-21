@@ -14,7 +14,7 @@ from staging_cd_admission import event_identity
 from staging_cd_common import matches, require
 from staging_cd_compatibility import GROUP
 from staging_cd_plan_window import (PlanRefused, earlier_transition, introductions, plan_window, read_finals,
-                                    recall, remember, window_line, window_warning)
+                                    window_line, window_warning)
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
 from staging_cd_history import DevelopHistory
@@ -99,15 +99,14 @@ def reconcile(root, adoption, head, selector=selection, command=git, metrics=Non
     return results
 
 
-def release_queue(root, adoption, head, event_source, metrics, budget=None, finals=None, window=None, memory=None):
+def release_queue(root, adoption, head, event_source, metrics, budget=None, finals=None, window=None):
     """Plan develop's release queue from the adoption commit or, when
     `finals(history)` reads each lane's newest final, from the oldest revision
     a current lane can still need (staging_cd_plan_window).
 
     A bounded plan does everything the adoption window does, plus resumes of a
     lane's newest final that the adoption window would strand. `window` records
-    the chosen start and why; `memory` is the trusted cache directory holding
-    the last proven bound. Raises PlanRefused when no start can be proved.
+    the chosen start and why. Raises PlanRefused when no start can be proved.
     """
     deadline = None if budget is None else time.monotonic() + budget
     history = DevelopHistory(head, git(root, "rev-list", "--first-parent", "--max-count=2000", head).splitlines())
@@ -128,10 +127,7 @@ def release_queue(root, adoption, head, event_source, metrics, budget=None, fina
         # Allocation only plans the develop head; the newer push's run plans this one too.
         window.update(stale=develop, head=head)
         return queue_of(head, event_source, [], None)
-    plan = plan_window(history, adoption, lanes, introductions(root, history),
-                       None if memory is None else recall(memory, history))
-    if plan.proven and memory is not None:
-        remember(memory, plan.proven)
+    plan = plan_window(history, adoption, lanes, introductions(root, history))
     start = plan.start
     window.update(start=start, revisions=1 - history.position(start), adoption=adoption or "none",
                   bound_by=plan.bound_by)
@@ -174,17 +170,13 @@ def main(argv=None):
         report("step", "refused", subject="release-queue")
         return 1
     env, root, metrics, progress, window = os.environ, Path.cwd(), {}, {}, {}
-    try:
-        memory = Path(json.loads(env.get("CD_SELECTOR_CACHE") or "{}")["directory"])
-    except (ValueError, KeyError, TypeError):
-        memory = None  # Without the trusted cache there is no remembered bound.
     def operation(_masker):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Allocation planning only accepts develop pushes")
         head = git(root, "rev-parse", "origin/develop")
         try:
             queue = release_queue(root, env.get("CD_ADOPTION_SHA"), head, env["GITHUB_SHA"], metrics,
-                                  budget=BUDGET_SECONDS, window=window, memory=memory,
+                                  budget=BUDGET_SECONDS, window=window,
                                   finals=lambda history: read_finals(root, env.get("GH_TOKEN"), history))
         except SelectionIncomplete as stopped:
             # Nothing is planned, so nothing downstream runs. A later step fails
