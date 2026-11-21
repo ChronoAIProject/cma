@@ -290,6 +290,25 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 'automatic', admit['steps'].find { |step| step['id'] == 'set' }.dig('env', 'CD_RESOLVE_MODE')
   end
 
+  def test_a_production_set_a_newer_release_owns_deploys_and_reports_nothing
+    deploy = workflow('prod-deploy')
+    job = deploy['jobs']['deploy']
+    assert_equal 'production', job.dig('env', 'CD_TARGET')
+    # Reproducing the approved set never hands over; only the coordinator can.
+    assert_equal '${{ steps.coordinate.outputs.disposition }}', job.dig('outputs', 'disposition')
+    trigger = deploy['on'] || deploy.fetch(true)
+    assert_equal '${{ jobs.deploy.outputs.disposition }}', trigger.dig('workflow_call', 'outputs', 'disposition', 'value')
+    steps = job['steps']
+    # release_commit reads this merge's parents; contract checks read release sources locally.
+    assert_equal 0, steps.first.dig('with', 'fetch-depth')
+    assert_equal 'python3 -B .github/scripts/prod_cd_select.py', steps.find { |step| step['id'] == 'release' }['run']
+    coordinate = steps.index { |step| step['id'] == 'coordinate' }
+    # A handover writes no controller proof or component result, so nothing after it reports a release.
+    assert_equal ["always() && !cancelled() && steps.coordinate.outputs.controller_proof != ''", 'always()', 'always()'],
+                 steps.drop(coordinate + 1).map { |step| step['if'] }
+    assert_equal "always() && needs.deploy.outputs.component_result != ''", deploy.dig('jobs', 'report', 'if')
+  end
+
   def test_proven_takeover_in_any_lane_skips_finalize_and_reaches_the_component_report
     release = workflow('staging-release')
     assert_equal '${{ steps.publication.outputs.disposition }}', release.dig('jobs', 'publish', 'outputs', 'disposition')
@@ -503,7 +522,8 @@ class StagingWorkflowTest < Minitest::Test
     refute check.key?('concurrency')
     assert_equal ['catch_up'], check['jobs'].keys
     job = check['jobs']['catch_up']
-    assert_equal({ 'contents' => 'read', 'actions' => 'write' }, job['permissions'])
+    # Re-running staging needs actions: write; controller outcomes only deployment reads.
+    assert_equal({ 'contents' => 'read', 'actions' => 'write', 'deployments' => 'read' }, job['permissions'])
     # At most one check runs and one waits; each decides from fresh state.
     assert_equal({ 'group' => 'cma-staging-cd-catch-up', 'cancel-in-progress' => false }, job['concurrency'])
     %w[github.repository\ ==\ 'ChronoAIProject/cma' github.ref\ ==\ 'refs/heads/develop'
@@ -519,7 +539,10 @@ class StagingWorkflowTest < Minitest::Test
     end
     assert_equal false, job['steps'].first.dig('with', 'persist-credentials')
     assert_equal ['python3 -B .github/scripts/staging_cd_catch_up.py'], job['steps'].map { |step| step['run'] }.compact
-    assert_equal({ 'GH_TOKEN' => '${{ github.token }}' }, job['steps'].last['env'])
+    # The check judges finals by the same controller outcomes the planner reads.
+    planner = staging.dig('jobs', 'plan', 'steps').find { |step| step['id'] == 'promotions' }
+    assert_equal({ 'GH_TOKEN' => '${{ github.token }}',
+                   'CD_STAGING_ENVIRONMENT' => planner.dig('env', 'CD_STAGING_ENVIRONMENT') }, job['steps'].last['env'])
   end
 
   def test_catch_up_reads_the_allocation_job_by_its_exact_display_name

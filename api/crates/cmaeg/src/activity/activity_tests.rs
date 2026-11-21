@@ -22,6 +22,8 @@ use std::{
     time::Duration,
 };
 
+#[path = "execution_tests.rs"]
+mod execution;
 #[path = "expiry_reporting_tests.rs"]
 mod expiry_reporting;
 #[path = "owner_keys_tests.rs"]

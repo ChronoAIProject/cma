@@ -1,12 +1,14 @@
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ApiError } from '@cma/client';
+import { ApiError, createClient } from '@cma/client';
 import { AgentSidePanel, type AgentPanel } from './AgentSidePanel';
 import { CmaClientProvider } from '../api/context';
+import type { ReadOptions } from '../api/client';
 import { agentClient, AGENT_DETAIL } from '../test/agent';
 import { ArtifactPublicationScope } from '../resources/artifactRecovery';
 import type { AgentEnvironment } from '@cma/client';
 import { AgentComputerObservation } from './environment/observation';
+import { computerClient } from '../api/rest/computer';
 
 afterEach(() => {
   vi.useRealTimers();
@@ -30,7 +32,7 @@ const environment: AgentEnvironment = {
   operation_output: unavailable,
 };
 const available = { ...unavailable, state: 'available' as const, writable: true };
-function files(read: () => Promise<AgentEnvironment>) {
+function files(read: (agentId: string, options?: ReadOptions) => Promise<AgentEnvironment>) {
   return {
     environment: vi.fn(read),
     list: vi.fn(async () => []),
@@ -40,11 +42,16 @@ function files(read: () => Promise<AgentEnvironment>) {
     remove: vi.fn(),
   };
 }
-function panel(client: ReturnType<typeof agentClient>, tab: AgentPanel = 'files', shared = false) {
+function panel(
+  client: ReturnType<typeof agentClient>,
+  tab: AgentPanel = 'files',
+  shared = false,
+  { viewerId = 'owner-a', agentId = 'agt_1', runtimeVersion = 'runtime-a' } = {},
+) {
   const observation = new AgentComputerObservation({
     client,
-    subject: 'owner-a',
-    agentId: 'agt_1',
+    subject: viewerId,
+    agentId,
   });
   observation.publish([
     {
@@ -59,12 +66,13 @@ function panel(client: ReturnType<typeof agentClient>, tab: AgentPanel = 'files'
   return (
     <CmaClientProvider client={client}>
       <AgentSidePanel
-        agentId="agt_1"
+        agentId={agentId}
         shared={shared}
-        viewerId="owner-a"
+        viewerId={viewerId}
         observation={observation}
         panel={tab}
-        detail={{ ...AGENT_DETAIL, desktop: false }}
+        detail={{ ...AGENT_DETAIL, id: agentId, desktop: false }}
+        resourceAvailability={{ state: 'live', runtimeVersion }}
         onClose={vi.fn()}
         onAccessChanged={vi.fn()}
         publicationScope={new ArtifactPublicationScope()}
@@ -334,6 +342,94 @@ it('honors the environment 429 deadline through retry buttons, focus and the per
   expect(fileClient.list).toHaveBeenCalledTimes(1);
   expect(currentTab().queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
 });
+
+it('honors the owner retry header across first open and same-scope reopen', async () => {
+  vi.useFakeTimers();
+  vi.spyOn(Math, 'random').mockReturnValue(0);
+  let recover!: (response: Response) => void;
+  const fetch = vi
+    .fn<(request: RequestInfo | URL, options?: RequestInit) => Promise<Response>>()
+    .mockResolvedValueOnce(
+      Response.json(
+        {
+          type: 'about:blank',
+          title: 'Agent owner unavailable',
+          status: 503,
+          code: 'agent_owner_unavailable',
+        },
+        {
+          status: 503,
+          headers: { 'content-type': 'application/problem+json', 'retry-after': '1' },
+        },
+      ),
+    )
+    .mockImplementationOnce(() => new Promise<Response>((resolve) => (recover = resolve)));
+  const rest = computerClient(createClient({ baseUrl: 'https://fixture.invalid', fetch }));
+  const fileClient = files(() => rest.environment('agt_1'));
+  const client = agentClient({ files: { ...fileClient, environment: rest.environment } });
+  const view = render(panel(client));
+  await act(async () => {});
+  const retry = () => {
+    fireEvent.click(currentTab().getByRole('button', { name: 'Try again' }));
+    fireEvent.focus(window);
+  };
+  retry();
+  retry();
+  view.rerender(panel(client, 'details'));
+  await act(() => vi.advanceTimersByTimeAsync(200));
+  expect(fetch).toHaveBeenCalledTimes(1);
+  view.rerender(panel(client));
+  await act(() => vi.advanceTimersByTimeAsync(799));
+  expect(fetch).toHaveBeenCalledTimes(1);
+  expect(fileClient.list).not.toHaveBeenCalled();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(fetch).toHaveBeenCalledTimes(2);
+  fireEvent.focus(window);
+  fireEvent.focus(window);
+  await act(async () => recover(Response.json({ ...environment, files: available })));
+
+  expect(fetch).toHaveBeenCalledTimes(2);
+  for (const [request, options] of fetch.mock.calls) {
+    expect(String(request)).toBe('https://fixture.invalid/api/v1/agents/agt_1/environment');
+    expect(options?.method).toBe('GET');
+  }
+  expect(fileClient.list).toHaveBeenCalledTimes(1);
+});
+
+it.each([{ viewerId: 'owner-b' }, { agentId: 'agt_2' }, { runtimeVersion: 'runtime-b' }])(
+  'quarantines an old Environment retry after the scope changes to %o',
+  async (scope) => {
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    let recover!: (value: AgentEnvironment) => void;
+    const fileClient = files(
+      vi
+        .fn()
+        .mockRejectedValueOnce(
+          new ApiError(503, 'Agent owner unavailable', 'agent_owner_unavailable', undefined, 1000),
+        )
+        .mockImplementationOnce(
+          () => new Promise<AgentEnvironment>((resolve) => (recover = resolve)),
+        )
+        .mockRejectedValueOnce(new ApiError(403, 'Forbidden')),
+    );
+    const client = agentClient({ files: fileClient });
+    const view = render(panel(client));
+    await act(async () => {});
+    await act(() => vi.advanceTimersByTimeAsync(1000));
+    const request = fileClient.environment.mock.calls[1]?.[1];
+    view.rerender(panel(client, 'files', false, scope));
+    await act(async () => recover({ ...environment, files: available }));
+    expect(request?.signal?.aborted).toBe(true);
+    expect(fileClient.environment).toHaveBeenCalledTimes(3);
+    expect(fileClient.environment).toHaveBeenLastCalledWith(
+      scope.agentId ?? 'agt_1',
+      expect.anything(),
+    );
+    expect(currentTab().getByText('File access is unavailable.')).toBeVisible();
+    expect(fileClient.list).not.toHaveBeenCalled();
+  },
+);
 
 it('withdraws file IO on 403 and distinguishes denial from a transient read failure', async () => {
   const fileClient = files(

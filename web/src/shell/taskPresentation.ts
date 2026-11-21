@@ -1,5 +1,5 @@
 import type { AgentSummary, SandboxSummary } from '../api/types';
-import { sandboxChildStatus } from '../sandbox/lifecycle';
+import { sandboxStatusPresentation } from '../sandbox/presentation';
 import { observedTaskStatus, taskWords, type TaskStatus, type CurrentTask } from './taskStatus';
 
 export type EnvironmentTaskGroup =
@@ -30,8 +30,8 @@ export function taskPresentation(
       showRunningTime: false,
     };
 
-  const rotating = sandboxChildStatus(sandbox, 'ready') === 'rotating';
-  if (rotating) {
+  const parent = sandboxStatusPresentation(sandbox);
+  if (parent.status === 'rotating') {
     const recorded = observedTaskStatus(agent, undefined, currentTask);
     const ended = recorded === 'failed' || recorded === 'stopped';
     const failed = sandbox.runtimeUpdate?.state === 'failed';
@@ -39,8 +39,9 @@ export function taskPresentation(
     return {
       status: recorded,
       group: ended ? undefined : group,
-      label: ended || recorded === 'completed' ? taskWords[recorded] : group,
-      parentNotice: failed ? 'Runtime update failed' : 'Updating environment',
+      label:
+        ended || recorded === 'completed' ? taskWords[recorded] : failed ? group : parent.label,
+      parentNotice: failed ? 'Runtime update failed' : parent.label,
       showRunningTime: false,
     };
   }

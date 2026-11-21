@@ -136,6 +136,7 @@ impl AgentOperationService {
         at: String,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
         require_queue_dispatchable(sandbox, &current, queued_message_sequence)?;
+        self.require_model_credit()?;
         let target = runtime_target(&current)?;
         let operation_sequence = next_sequence(current.conversation.last_seq)?;
         let turn_sequence = operation_sequence

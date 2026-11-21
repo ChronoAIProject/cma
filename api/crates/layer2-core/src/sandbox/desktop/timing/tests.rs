@@ -24,7 +24,7 @@ async fn phase_observation_preserves_results_and_records_cancellation() {
     let subscriber = tracing_subscriber::fmt()
         .json()
         .without_time()
-        .with_max_level(tracing::Level::DEBUG)
+        .with_max_level(tracing::Level::INFO)
         .with_writer(move || writer.clone())
         .finish();
     let _scope = tracing::subscriber::set_default(subscriber);
@@ -45,9 +45,49 @@ async fn phase_observation_preserves_results_and_records_cancellation() {
     assert_eq!(records.len(), 3);
     for (record, expected) in records.iter().zip(["success", "failure", "cancelled"]) {
         assert_eq!(record["target"], "cma::desktop::connect");
+        assert_eq!(record["level"], "INFO");
         assert_eq!(record["fields"]["outcome"], expected);
         assert_eq!(record["fields"]["phase"], expected);
         assert_eq!(record["fields"].as_object().unwrap().len(), 4);
     }
     assert_eq!(records[2]["fields"]["elapsed_ms"], 10.0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn independent_renewal_intervals_have_only_bounded_outcomes_and_timestamps() {
+    let output = Output::default();
+    let writer = output.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .without_time()
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(move || writer.clone())
+        .finish();
+    let _scope = tracing::subscriber::set_default(subscriber);
+    let successful = Renewal::start();
+    tokio::time::advance(Duration::from_millis(3)).await;
+    successful.finish(RenewalOutcome::Renewed);
+    let refused = Renewal::start();
+    tokio::time::advance(Duration::from_millis(5)).await;
+    refused.finish(RenewalOutcome::Refused);
+    drop(Renewal::start());
+
+    let bytes = output.0.lock().unwrap();
+    let records: Vec<serde_json::Value> = std::str::from_utf8(&bytes)
+        .unwrap()
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    assert_eq!(records.len(), 3);
+    for (record, (expected, elapsed_ms)) in
+        records
+            .iter()
+            .zip([("renewed", 3.0), ("refused", 5.0), ("cancelled", 0.0)])
+    {
+        assert_eq!(record["target"], "cma::desktop::renewal");
+        assert_eq!(record["fields"]["outcome"], expected);
+        assert_eq!(record["fields"]["elapsed_ms"], elapsed_ms);
+        assert!(record["fields"]["started_unix_ms"].as_u64().unwrap() > 0);
+        assert_eq!(record["fields"].as_object().unwrap().len(), 4);
+    }
 }
