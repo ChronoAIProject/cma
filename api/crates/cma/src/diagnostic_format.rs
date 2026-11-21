@@ -1,4 +1,4 @@
-//! Keep bounded lifecycle events independent of ambient span formatting.
+//! Keep bounded diagnostic events independent of ambient span formatting.
 
 use tracing::{Event, Subscriber};
 use tracing_subscriber::{
@@ -7,6 +7,7 @@ use tracing_subscriber::{
 };
 
 const LIFECYCLE_TARGET: &str = "agent_scheduler_failure";
+pub(crate) const PROVIDER_IDENTITY_TARGET: &str = "cma::auth::verification_diagnostics";
 
 pub(crate) struct PrivacyFormat<F> {
     ordinary: F,
@@ -25,7 +26,24 @@ where
         writer: format::Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
-        if event.metadata().target() == LIFECYCLE_TARGET {
+        let target = event.metadata().target();
+        if target == PROVIDER_IDENTITY_TARGET {
+            // A registered root can be hidden by this writer's own filter.
+            // Resolve the explicit parent in the context of this output.
+            let has_root = event
+                .parent()
+                .and_then(|id| ctx.span(id))
+                .is_some_and(|span| {
+                    span.name() == "identity_verification"
+                        && span.metadata().target() == target
+                        && span.metadata().fields().is_empty()
+                        && span.parent().is_none()
+                });
+            if !has_root {
+                return Ok(());
+            }
+        }
+        if matches!(target, LIFECYCLE_TARGET | PROVIDER_IDENTITY_TARGET) {
             self.context_free.format_event(ctx, writer, event)
         } else {
             self.ordinary.format_event(ctx, writer, event)
