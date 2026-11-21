@@ -867,6 +867,24 @@
           "cause": "transient",
           "next": "Re-run after the other deployment finishes."
         },
+        "configuration": {
+          "title": "Controller configuration refused",
+          "meaning": "The controller's reviewed configuration, deployment budgets, web overlays or the secret bindings the spec requires failed validation.",
+          "cause": "operator",
+          "next": "An operator must check the deployment controller's configuration for this component."
+        },
+        "publication": {
+          "title": "Publication evidence refused",
+          "meaning": "The controller refused the release's publication evidence: its receipt, signal, publisher or scan policy.",
+          "cause": "unknown",
+          "next": "Check the component's Release job and its publication receipt; if they are valid, an operator checks the controller's publication policy."
+        },
+        "internal-error": {
+          "title": "Controller internal error",
+          "meaning": "The controller refused its own malformed call or raised an unexpected error. This is a controller defect, not a property of the release.",
+          "cause": "operator",
+          "next": "An operator must give this run's deployment controller log to the controller's owner."
+        },
         "interrupted": {
           "title": "Controller interrupted",
           "meaning": "The controller was interrupted before it changed anything.",
@@ -1070,6 +1088,96 @@
           "meaning": "The controller's component result was missing or failed validation.",
           "cause": "unknown",
           "next": "An operator must read the deployment controller's log for this run."
+        },
+        "permit": {
+          "title": "Deployment permit refused",
+          "meaning": "After staging changed, the deployment permit or the reviewed mode policy refused a later step.",
+          "cause": "operator",
+          "next": "An operator must check the deployment permit for this repository."
+        },
+        "authentication": {
+          "title": "Deployment authentication failed",
+          "meaning": "After staging changed, the deployment service rejected the deployment credential.",
+          "cause": "operator",
+          "next": "An operator must rotate or restore the deployment client credentials."
+        },
+        "authorization": {
+          "title": "Deployment authorization refused",
+          "meaning": "After staging changed, the deployment credential lacked permission for a later step.",
+          "cause": "operator",
+          "next": "An operator must grant the deployment client its required permission."
+        },
+        "clock": {
+          "title": "Controller clock refused",
+          "meaning": "After staging changed, the controller's timing check refused to continue.",
+          "cause": "transient",
+          "next": "Re-run once staging is reconciled."
+        },
+        "inventory": {
+          "title": "Deployment inventory unreadable",
+          "meaning": "After staging changed, the controller could not read or validate the deployment inventory.",
+          "cause": "transient",
+          "next": "Re-run once staging is reconciled; if it repeats, an operator must check the staging deployment state."
+        },
+        "compatibility": {
+          "title": "Compatibility unverified",
+          "meaning": "After staging changed, the runtime compatibility state could not be read, validated or promoted.",
+          "cause": "unknown",
+          "next": "An operator checks the runtime promotion and compatibility state; then re-run."
+        },
+        "image-version": {
+          "title": "Image version refused",
+          "meaning": "After staging changed, the controller refused the released or deployed image version.",
+          "cause": "unknown",
+          "next": "Compare the released and deployed versions in the controller log."
+        },
+        "baseline": {
+          "title": "Baseline unproven",
+          "meaning": "The previous release or the rollback baseline could not be read or proved.",
+          "cause": "operator",
+          "next": "An operator must reconcile the staging deployment with its recorded state."
+        },
+        "readiness": {
+          "title": "Target not ready",
+          "meaning": "A readiness check outside the named rollout and pod checks failed, such as the Event Gateway's readiness or startup logs.",
+          "cause": "unknown",
+          "next": "Check the released components' staging pods and startup logs; if this change caused it, fix it and push."
+        },
+        "transport": {
+          "title": "Deployment service unreachable",
+          "meaning": "The controller could not reach the deployment service or a public endpoint, including after its retries.",
+          "cause": "transient",
+          "next": "Re-run once staging is reconciled."
+        },
+        "schema": {
+          "title": "Document schema refused",
+          "meaning": "A release request, app spec, live view or schema-state document failed its closed schema or the reviewed spec policy.",
+          "cause": "unknown",
+          "next": "Read the controller log for the refused document; a release that requires a migration needs the reviewed migration first."
+        },
+        "fence": {
+          "title": "Deployment fence changed",
+          "meaning": "Resource ownership or the recorded preimage changed during the deployment, or the write would change more than the owned image.",
+          "cause": "operator",
+          "next": "An operator must check for a concurrent manual or second deployment."
+        },
+        "configuration": {
+          "title": "Controller configuration refused",
+          "meaning": "The controller's reviewed configuration, deployment budgets, web overlays or the secret bindings the spec requires failed validation.",
+          "cause": "operator",
+          "next": "An operator must check the deployment controller's configuration for this component."
+        },
+        "publication": {
+          "title": "Publication evidence refused",
+          "meaning": "The controller refused the release's publication evidence: its receipt, signal, publisher or scan policy.",
+          "cause": "unknown",
+          "next": "Check the component's Release job and its publication receipt; if they are valid, an operator checks the controller's publication policy."
+        },
+        "internal-error": {
+          "title": "Controller internal error",
+          "meaning": "The controller refused its own malformed call or raised an unexpected error. This is a controller defect, not a property of the release.",
+          "cause": "operator",
+          "next": "An operator must give this run's deployment controller log to the controller's owner."
         },
         "unreported": {
           "title": "Reason unreported",
