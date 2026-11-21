@@ -19,6 +19,8 @@ export const documentDispatch: Record<string, Dispatch> = {
   'GET /api/v1/documents/{id}/revisions': (c) =>
     c.client.documents.revisions(c.param('id'), options(c)),
   'GET /api/v1/documents/{id}/shares': (c) => c.client.documents.shares(c.param('id')),
+  'GET /api/v1/documents/{id}/share-recipients': (c) =>
+    c.client.documents.shareRecipients(c.param('id'), c.query.get('q') ?? undefined),
   'PUT /api/v1/documents/{id}/shares/{subject}': (c) =>
     c.client.documents.grant(c.param('id'), c.param('subject'), c.body, c.command),
   'DELETE /api/v1/documents/{id}/shares/{subject}': (c) =>

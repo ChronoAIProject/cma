@@ -41,7 +41,8 @@ async fn default_writer_refuses_all_mutations_past_either_old_limit() {
             fill_metadata(&rows, &id).await;
         }
         let before = serde_json::to_vec(&rows.get(&id).await.unwrap().unwrap()).unwrap();
-        let rollback = DocumentService::new(rows.clone(), enabled.blobs.clone());
+        let rollback = DocumentService::new(rows.clone(), enabled.blobs.clone())
+            .with_directory(memory::recipient_directory(&["new-reader"]));
         assert!(!rollback.revocation_reserve_enabled);
         let commands = [
             mutation::Command::Update(UpdateDocument {

@@ -36,7 +36,8 @@ async fn tenant_isolation_revoked_grant_and_link_receipts_do_not_restore_http_ac
     let store = Arc::new(MongoDocumentStore::new(database.clone()));
     store.ensure_indexes().await.unwrap();
     let blobs = Arc::new(memory::MemoryDocumentBlobs::default());
-    let service = DocumentService::new(store.clone(), blobs.clone());
+    let service = DocumentService::new(store.clone(), blobs.clone())
+        .with_directory(memory::recipient_directory(&["reader"]));
     let owner = caller("owner");
     let reader = caller("reader");
     let foreign = caller("foreign");

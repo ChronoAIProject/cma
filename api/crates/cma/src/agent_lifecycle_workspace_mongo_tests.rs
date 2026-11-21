@@ -1,5 +1,7 @@
 //! The actual facade persists admission, restarts safely and retains its parent.
 use super::*;
+#[path = "agent_lifecycle_repository_preflight_tests.rs"]
+mod repository_preflight;
 #[path = "agent_lifecycle_template_tests.rs"]
 mod templates;
 use layer2_core::sandbox::store::{

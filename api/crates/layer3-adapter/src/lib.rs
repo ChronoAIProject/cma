@@ -181,7 +181,7 @@ pub use runtime_recovery::{
     RuntimeRecovery, RuntimeRecoveryInspection, RuntimeRecoveryInspectionRequest,
     RuntimeRecoveryQuiescence, RuntimeRecoveryQuiescenceRequest,
 };
-pub use runtime_startup::{RuntimeStartupFailure, RuntimeStartupFailureClass};
+pub use runtime_startup::{RuntimeStartupFailure, RuntimeStartupFailureClass, RuntimeStartupProbe};
 pub use runtime_status::{valid_home_identity, RuntimeStatus, RuntimeStatusRequest};
 pub use tool_proxy::{ToolProxyRequest, ToolProxyStatus, LOCAL_TOOL_PROXY_URL};
 pub use workspace::{

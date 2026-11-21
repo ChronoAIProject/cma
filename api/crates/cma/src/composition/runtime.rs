@@ -96,6 +96,7 @@ pub(super) fn lifecycle_config(
         runtime_loss_bounded_proof_enabled: config.features.runtime_loss_bounded_proof_enabled,
         native_retirement_finality_enabled: config.features.native_retirement_finality_enabled,
         parent_not_ready_pacing_enabled: config.features.parent_not_ready_pacing_enabled,
+        startup_sibling_hold_enabled: config.features.startup_sibling_hold_enabled,
         retry_single_marker_enabled: config.features.retry_single_marker_enabled,
         work_retry_policy_enabled: config.features.work_retry_policy_enabled,
         native_create_retry_enabled: config.features.native_create_retry_enabled,
