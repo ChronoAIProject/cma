@@ -1,6 +1,6 @@
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BUILD_INFO } from '../shell/build';
 import { ProfileMenu, initialsFor } from './ProfileMenu';
 
@@ -13,6 +13,8 @@ const user = {
   visitor: false,
 } as const;
 
+afterEach(() => vi.unstubAllGlobals());
+
 describe('account menu', () => {
   it('keeps Docs, appearance and sign out without service or developer actions', async () => {
     const onSignOut = vi.fn();
@@ -20,7 +22,7 @@ describe('account menu', () => {
     const actor = userEvent.setup();
     render(<ProfileMenu user={user} onSignOut={onSignOut} onNavigate={onNavigate} />);
     await actor.click(screen.getByRole('button', { name: /account menu/i }));
-    for (const name of ['Event Gateway consumers', 'Developer']) {
+    for (const name of ['Event Gateway consumers', 'Developer', 'Service authorization']) {
       expect(screen.queryByRole('menuitem', { name })).not.toBeInTheDocument();
     }
     expect(screen.queryByRole('menuitem', { name: 'Marketplace' })).not.toBeInTheDocument();
@@ -34,6 +36,25 @@ describe('account menu', () => {
     await actor.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     expect(onSignOut).toHaveBeenCalledOnce();
   });
+
+  it.each([
+    { status: 'unknown', text: 'The account grant status could not be verified.' },
+    { status: 'revoked', text: 'NyxID confirms the account grant was revoked.' },
+  ])(
+    'shows $status for the account grant when the feature is enabled',
+    async ({ status, text }) => {
+      const actor = userEvent.setup();
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => Response.json({ owner: user.id, status })),
+      );
+      render(<ProfileMenu user={{ ...user, serviceAuthorization: true }} onSignOut={vi.fn()} />);
+      await actor.click(screen.getByRole('button', { name: /account menu/i }));
+      await actor.click(screen.getByRole('menuitem', { name: 'Service authorization' }));
+      expect(await screen.findByText(text)).toBeInTheDocument();
+      expect(screen.queryByRole('link', { name: 'Manage authorized apps in NyxID' })).toBeNull();
+    },
+  );
 
   it('shows Operations only with an operator capability', async () => {
     const actor = userEvent.setup();

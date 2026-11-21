@@ -81,6 +81,7 @@ pub struct LoginAttempt {
     pub return_to: Option<String>,
     /// Server-created authority intent; never inferred from return_to.
     pub actor_link_intent: Option<super::actor_links::ActorLoginIntent>,
+    pub(crate) service_authorization: Option<super::service_authorization::RecoveryIntent>,
     /// Asked the provider not to interact; a refusal returns to `return_to`.
     pub silent: bool,
     /// A silent-origin attempt has already escalated once to provider consent.
