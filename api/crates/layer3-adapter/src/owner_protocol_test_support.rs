@@ -49,6 +49,22 @@ impl TransportAuthority for TestAuthority {
             .unwrap()
             .push(identity.into());
     }
+    fn begin_receiver_confirmation(&self, identity: &str) -> crate::Result<()> {
+        if self.is_current()
+            && self
+                .receivers
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|receiver| receiver.identity() == identity)
+        {
+            Ok(())
+        } else {
+            Err(crate::AdapterError::Rejected(
+                "missing receiver custody".into(),
+            ))
+        }
+    }
     fn is_current(&self) -> bool {
         !*self.revoked.borrow()
     }
