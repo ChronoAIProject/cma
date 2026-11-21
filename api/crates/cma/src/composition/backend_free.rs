@@ -67,7 +67,7 @@ pub(crate) async fn compose(
     )?
     .with_account_standing(standing.clone());
     let limits = RateLimiters::from_config(
-        config.rate_limits.clone(),
+        config.rate_limits,
         config.trusted_proxies.clone(),
         stores.request_limits.clone(),
     );

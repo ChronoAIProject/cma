@@ -119,7 +119,7 @@ async fn unavailable(
     } else if path.starts_with("/api/v1/launches/{id}")
         || path == "/api/v1/agui/launches/{id}/events"
     {
-        let id = parameter(&parameters, "id")?;
+        let id = parameter(&parameters, "id").map_err(IntoResponse::into_response)?;
         if !state
             .stores
             .owns_launch(&caller.subject, &LaunchId(id.to_owned()))
@@ -136,12 +136,12 @@ async fn unavailable(
     if !path.starts_with("/api/v1/admin/") {
         let targets = if path == "/api/v1/agui/events" {
             let Query(AguiThread { thread_id }) =
-                thread.map_err(|_| invalid_resource_selector())?;
+                thread.map_err(|_| invalid_resource_selector().into_response())?;
             vec![ResourceTarget::Agent {
                 agent_id: AgentId(thread_id),
             }]
         } else {
-            targets(path, parameters)?
+            targets(path, parameters).map_err(IntoResponse::into_response)?
         };
         if let Some(target) = targets.last() {
             let snapshot = state
@@ -195,17 +195,16 @@ fn required_capability(method: &Method, path: &str) -> Capability {
     }
 }
 
-fn invalid_resource_selector() -> Response {
+fn invalid_resource_selector() -> Problem {
     Problem(CoreError::InvalidRequest(
         "invalid resource selector".into(),
     ))
-    .into_response()
 }
 
 fn parameter<'a>(
     parameters: &'a Result<Path<BTreeMap<String, String>>, PathRejection>,
     name: &str,
-) -> Result<&'a str, Response> {
+) -> Result<&'a str, Problem> {
     parameters
         .as_ref()
         .ok()
@@ -217,11 +216,11 @@ fn parameter<'a>(
 fn targets(
     path: &str,
     parameters: Result<Path<BTreeMap<String, String>>, PathRejection>,
-) -> Result<Vec<ResourceTarget>, Response> {
+) -> Result<Vec<ResourceTarget>, Problem> {
     let parts = path.split('/').collect::<Vec<_>>();
     let mut targets = Vec::new();
     for parts in parts.windows(2) {
-        let Some(parameter) = parts[1]
+        let Some(name) = parts[1]
             .strip_prefix('{')
             .and_then(|part| part.strip_suffix('}'))
         else {
@@ -233,7 +232,7 @@ fn targets(
         ) {
             continue;
         }
-        let value = self::parameter(&parameters, parameter)?.to_owned();
+        let value = parameter(&parameters, name)?.to_owned();
         targets.push(match parts[0] {
             "sandboxes" => ResourceTarget::Sandbox {
                 sandbox_id: SandboxId(value),
