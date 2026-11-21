@@ -4,7 +4,7 @@ use layer2_core::agent_ownership::Authority;
 use layer2_core::sandbox::store::*;
 use layer2_core::sandbox::{AgentLogEntry, Worktree};
 
-pub(super) struct Store {
+pub(in crate::sandbox::agent_worker_tests) struct Store {
     pub inner: Arc<InMemorySandboxStore>,
     pub delayed_observations: Mutex<Vec<AgentId>>,
     pub failures: Mutex<BTreeMap<(&'static str, usize), SandboxStoreError>>,
@@ -195,15 +195,16 @@ impl AgentWorkerStore for Store {
         self.observe("schedule_agent_connection_recovery")?;
         self.inner.schedule_agent_connection_recovery(request).await
     }
-    async fn due_agent_work_with_cleanup_holds(
+    async fn due_agent_work_filtered(
         &self,
         now: &str,
         limit: u16,
         holds: &std::collections::BTreeSet<AgentId>,
+        startup: StartupWorkFilter<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
         self.observe("due_agent_work")?;
         self.inner
-            .due_agent_work_with_cleanup_holds(now, limit, holds)
+            .due_agent_work_filtered(now, limit, holds, startup)
             .await
     }
     async fn claim_agent_work(

@@ -1,10 +1,50 @@
 use async_trait::async_trait;
+use std::collections::BTreeSet;
 
 use crate::ids::{AgentId, SandboxId};
 use crate::sandbox::{Agent, AgentLogKind, AgentStatus, AgentWorkStep, SandboxEventKind, Worktree};
 use crate::seconds_from_rfc3339;
 
 use super::{Page, PageRequest, SandboxStoreError};
+
+/// Advisory discovery for runtime-dependent background steps. A directed
+/// probe remains discoverable even when its Sandbox is hidden in ordinary work.
+#[derive(Clone, Copy, Default)]
+pub enum StartupWorkFilter<'a> {
+    #[default]
+    All,
+    Exclude(&'a BTreeSet<SandboxId>),
+    Probe(&'a SandboxId),
+}
+
+impl StartupWorkFilter<'_> {
+    pub const STEPS: [AgentWorkStep; 6] = [
+        AgentWorkStep::InstallSkill,
+        AgentWorkStep::AddWorktree,
+        AgentWorkStep::MaterializeHome,
+        AgentWorkStep::OpenConversation,
+        AgentWorkStep::PublishReady,
+        AgentWorkStep::PublishConnection,
+    ];
+
+    pub fn can_hold(agent: &Agent) -> bool {
+        // An unreconciled lease or cleanup debt can represent an effect that
+        // has already started. Keep these and explicit controls eligible.
+        Self::STEPS.contains(&agent.work.step)
+            && agent.work.lease.is_none()
+            && agent.work.cleanup_debt.is_empty()
+    }
+
+    pub fn includes(self, agent: &Agent) -> bool {
+        match self {
+            Self::All => true,
+            Self::Exclude(sandboxes) => {
+                !sandboxes.contains(&agent.sandbox_id) || !Self::can_hold(agent)
+            }
+            Self::Probe(sandbox_id) => &agent.sandbox_id == sandbox_id && Self::can_hold(agent),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct VersionedWorktree {
@@ -318,7 +358,18 @@ pub trait AgentWorkerStore: Send + Sync {
         &self,
         now: &str,
         limit: u16,
-        holds: &std::collections::BTreeSet<AgentId>,
+        holds: &BTreeSet<AgentId>,
+    ) -> Result<Vec<AgentId>, SandboxStoreError> {
+        self.due_agent_work_filtered(now, limit, holds, StartupWorkFilter::All)
+            .await
+    }
+
+    async fn due_agent_work_filtered(
+        &self,
+        now: &str,
+        limit: u16,
+        holds: &BTreeSet<AgentId>,
+        startup: StartupWorkFilter<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError>;
 
     async fn claim_agent_work(
