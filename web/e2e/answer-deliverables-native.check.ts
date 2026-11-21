@@ -44,7 +44,11 @@ test('NATIVE receipts reach answer cards and authenticated public downloads with
   );
   await page.route(`**${root}/answers/**`, async (route) => {
     const url = new URL(route.request().url());
-    const response = await request.get(origin + url.pathname + url.search);
+    const prefer = route.request().headers().prefer;
+    expect(prefer).toBe('cma-native-attachment-media');
+    const response = await request.get(origin + url.pathname + url.search, {
+      headers: { Prefer: prefer ?? '' },
+    });
     await route.fulfill({ response });
   });
   await page.goto(`/agents/${agentId}`);

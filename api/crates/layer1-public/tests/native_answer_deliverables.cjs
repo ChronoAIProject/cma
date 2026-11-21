@@ -31,8 +31,9 @@ async function prove() {
   stageFiles(directory);
   const markers = new Set();
   const receipts = new Map();
-  let legacyArchiveMarker;
-  const legacyArchivePath = "output/nested/report.zip";
+  const markerPattern = /^<!--cma-deliverable:v1:([A-Za-z0-9_-]+)-->$/;
+  let typedCsvMarker;
+  const typedCsvPath = "output/nested/report.csv";
   const describe = [...files, files[0]];
   let round = 0;
   let failure;
@@ -106,6 +107,8 @@ async function prove() {
           assert.equal(reference.size_bytes, file.bytes.length);
           assert.equal(reference.sha256, digest(file.bytes));
           assert.equal(reference.media_type, file.mediaType, `MCP media type for ${file.path}`);
+          const stored = JSON.parse(Buffer.from(markerPattern.exec(marker)[1], "base64url"));
+          assert.deepEqual(stored, { ...reference, media_type: "application/octet-stream" });
           assert(markers.has(marker), `The native tool reply must supply its marker for ${file.path}`);
         }
         item = call("__publish_document", {
@@ -125,17 +128,15 @@ async function prove() {
             (marker) =>
               JSON.parse(
                 Buffer.from(
-                  /^<!--cma-deliverable:v1:([A-Za-z0-9_-]+)-->$/.exec(
-                    marker,
-                  )[1],
+                  markerPattern.exec(marker)[1],
                   "base64url",
                 ).toString(),
               ).resource.kind,
           )
           .sort();
         assert.deepEqual(kinds, ["document", ...files.map(() => "live_file")]);
-        const legacyArchive = { ...receipts.get(legacyArchivePath).reference, media_type: "application/octet-stream" };
-        legacyArchiveMarker = `<!--cma-deliverable:v1:${Buffer.from(JSON.stringify(legacyArchive)).toString("base64url")}-->`;
+        const typedCsv = receipts.get(typedCsvPath).reference;
+        typedCsvMarker = `<!--cma-deliverable:v1:${Buffer.from(JSON.stringify(typedCsv)).toString("base64url")}-->`;
         item = {
           id: `msg_${round}`,
           type: "message",
@@ -144,7 +145,7 @@ async function prove() {
           content: [
             {
               type: "output_text",
-              text: `Delivered the native files and persistent document.\n${[legacyArchiveMarker, ...markers, receipts.get(files[0].path).marker].join("\n")}`,
+              text: `Delivered the native files and persistent document.\n${[typedCsvMarker, ...markers, receipts.get(files[0].path).marker].join("\n")}`,
               annotations: [],
             },
           ],
@@ -338,7 +339,7 @@ async function prove() {
     });
     assert.equal(markers.size, files.length + 1);
     assert(
-      [legacyArchiveMarker, ...markers].every((marker) => answer.includes(marker)),
+      [typedCsvMarker, ...markers].every((marker) => answer.includes(marker)),
       `ACP answer must contain every observed receipt: ${JSON.stringify(answer)}`,
     );
     process.stdout.write(
@@ -349,7 +350,7 @@ async function prove() {
         stopReason: result.stopReason,
         files: files.map(({ path, bytes, mediaType }) => ({
           path, size_bytes: bytes.length, sha256: digest(bytes), media_type: mediaType,
-          stored_media_type: path === legacyArchivePath ? "application/octet-stream" : mediaType,
+          stored_media_type: path === typedCsvPath ? mediaType : "application/octet-stream",
         })),
         answer,
       }),

@@ -107,6 +107,22 @@ it('accepts only a server-verified descriptor whose marker matches the explicit 
   ).rejects.toBeInstanceOf(ProtocolError);
 });
 
+it('requests verified MIME and validates the version-one opaque marker', async () => {
+  const test = transport();
+  const resource = { kind: 'live_file', path: 'result.csv' } as const;
+  const reference = { ...item.reference, resource, name: 'result.csv', media_type: 'text/csv' };
+  const stored = { ...reference, media_type: 'application/octet-stream' };
+  const marker = `<!--cma-deliverable:v1:${Buffer.from(JSON.stringify(stored)).toString('base64url')}-->`;
+  test.answer({ reference, marker });
+  await expect(test.client.agents.describeDeliverable('agent-1', resource)).resolves.toEqual({
+    reference,
+    marker,
+  });
+  expect(new Headers(test.fetch.mock.calls[0]?.[1]?.headers).get('prefer')).toBe(
+    'cma-native-attachment-media',
+  );
+});
+
 it('rejects unsafe explicit resource selectors before requesting verification', async () => {
   const test = transport();
   for (const selected of [

@@ -210,8 +210,12 @@ function access(options: DocumentAccessOptions): RequestOptions {
     }, options.shareToken);
   return {
     ...options,
-    headers:
-      options.shareToken === undefined ? {} : { 'X-CMA-Document-Share-Token': options.shareToken },
+    headers: {
+      Prefer: 'cma-native-attachment-media',
+      ...(options.shareToken === undefined
+        ? {}
+        : { 'X-CMA-Document-Share-Token': options.shareToken }),
+    },
   };
 }
 
@@ -244,10 +248,15 @@ export function describeDeliverable(
           .replaceAll('+', '-')
           .replaceAll('/', '_')
           .replace(/=+$/, '');
+        const storedMedia =
+          result.reference.resource.kind === 'live_file'
+            ? { ...result.reference, media_type: opaque }
+            : result.reference;
+        const markerBody = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
         if (
           canonical !== encoded ||
-          new TextDecoder('utf-8', { fatal: true }).decode(bytes) !==
-            JSON.stringify(result.reference)
+          (markerBody !== JSON.stringify(result.reference) &&
+            markerBody !== JSON.stringify(storedMedia))
         ) {
           throw new Error('descriptor mismatch');
         }

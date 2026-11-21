@@ -5,7 +5,7 @@ use std::path::Path;
 use zip::ZipArchive;
 
 pub(super) const OPAQUE: &str = "application/octet-stream";
-const MAX_OFFICE_MANIFEST_BYTES: u64 = 64 * 1024;
+const MAX_OFFICE_XML_BYTES: u64 = 64 * 1024;
 
 #[derive(Clone, Copy)]
 enum NativeFormat {
@@ -49,12 +49,10 @@ impl NativeFormat {
         match self {
             Self::Word => office_package(
                 bytes,
-                "word/document.xml",
                 b"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
             ),
             Self::Spreadsheet => office_package(
                 bytes,
-                "xl/workbook.xml",
                 b"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
             ),
             Self::Zip => archive(bytes).is_some(),
@@ -84,30 +82,91 @@ fn archive(bytes: &[u8]) -> Option<ZipArchive<Cursor<&[u8]>>> {
     ZipArchive::new(Cursor::new(bytes)).ok()
 }
 
-fn office_package(bytes: &[u8], entry: &str, content_type: &[u8]) -> bool {
+fn office_package(bytes: &[u8], content_type: &[u8]) -> bool {
     let Some(mut zip) = archive(bytes) else {
         return false;
     };
-    if zip.index_for_name(entry).is_none() || zip.index_for_name("_rels/.rels").is_none() {
-        return false;
-    }
-    let Ok(manifest) = zip.by_name("[Content_Types].xml") else {
+    let Some(relationships) = read_xml_part(&mut zip, "_rels/.rels") else {
         return false;
     };
-    if manifest.size() > MAX_OFFICE_MANIFEST_BYTES {
+    let Some(entry) = office_document_target(&relationships) else {
         return false;
-    }
-    // Inspect the package manifest without extracting files or reading the document body.
-    let mut xml = Vec::new();
-    if manifest
-        .take(MAX_OFFICE_MANIFEST_BYTES + 1)
-        .read_to_end(&mut xml)
-        .is_err()
-        || xml.len() as u64 > MAX_OFFICE_MANIFEST_BYTES
+    };
+    if zip
+        .index_for_name(&entry)
+        .and_then(|index| zip.by_index_raw(index).ok())
+        .is_none_or(|part| !part.is_file())
     {
         return false;
     }
-    let mut reader = Reader::from_reader(xml.as_slice());
+    read_xml_part(&mut zip, "[Content_Types].xml")
+        .is_some_and(|manifest| declares_content_type(&manifest, &entry, content_type))
+}
+
+fn read_xml_part(zip: &mut ZipArchive<Cursor<&[u8]>>, name: &str) -> Option<Vec<u8>> {
+    let part = zip.by_name(name).ok()?;
+    if part.size() > MAX_OFFICE_XML_BYTES {
+        return None;
+    }
+    // Inspect only the bounded metadata parts without extracting the document.
+    let mut xml = Vec::new();
+    part.take(MAX_OFFICE_XML_BYTES + 1)
+        .read_to_end(&mut xml)
+        .ok()?;
+    (xml.len() as u64 <= MAX_OFFICE_XML_BYTES).then_some(xml)
+}
+
+fn office_document_target(xml: &[u8]) -> Option<String> {
+    let mut reader = Reader::from_reader(xml);
+    if !read_xml_root(&mut reader, b"Relationships") {
+        return None;
+    }
+    let mut target = None;
+    loop {
+        match reader.read_event().ok()? {
+            Event::Start(element) | Event::Empty(element)
+                if element.local_name().as_ref() == b"Relationship" =>
+            {
+                let relation = element.try_get_attribute("Type").ok()??;
+                if !matches!(relation.value.as_ref(),
+                    b"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
+                    | b"http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument")
+                {
+                    continue;
+                }
+                if target.is_some()
+                    || element
+                        .try_get_attribute("TargetMode")
+                        .ok()?
+                        .is_some_and(|mode| mode.value.as_ref() != b"Internal")
+                {
+                    return None;
+                }
+                let entry = element.try_get_attribute("Target").ok()??;
+                let path = std::str::from_utf8(&entry.value).ok()?;
+                let path = path.strip_prefix('/').unwrap_or(path);
+                if path.is_empty()
+                    || path.contains([':', '?', '#', '%', '&'])
+                    || !layer3_adapter::valid_agent_file_path(path)
+                {
+                    return None;
+                }
+                target = Some(path.to_owned());
+            }
+            Event::End(element) if element.local_name().as_ref() == b"Relationships" => {
+                return target;
+            }
+            Event::Eof | Event::DocType(_) => return None,
+            _ => {}
+        }
+    }
+}
+
+fn declares_content_type(xml: &[u8], entry: &str, content_type: &[u8]) -> bool {
+    let mut reader = Reader::from_reader(xml);
+    if !read_xml_root(&mut reader, b"Types") {
+        return false;
+    }
     let mut matched = false;
     loop {
         match reader.read_event() {
@@ -128,9 +187,22 @@ fn office_package(bytes: &[u8], entry: &str, content_type: &[u8]) -> bool {
                 }
                 matched = true;
             }
-            Ok(Event::Eof) => return matched,
-            Ok(Event::DocType(_)) | Err(_) => return false,
+            Ok(Event::End(element)) if element.local_name().as_ref() == b"Types" => {
+                return matched;
+            }
+            Ok(Event::Eof | Event::DocType(_)) | Err(_) => return false,
             _ => {}
+        }
+    }
+}
+
+fn read_xml_root(reader: &mut Reader<&[u8]>, expected: &[u8]) -> bool {
+    reader.config_mut().trim_text(true);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Decl(_) | Event::Comment(_) | Event::PI(_)) => {}
+            Ok(Event::Start(element)) => return element.local_name().as_ref() == expected,
+            _ => return false,
         }
     }
 }
@@ -196,18 +268,72 @@ mod tests {
 
     #[test]
     fn requires_an_office_package_with_the_matching_main_part() {
-        let mut archive = ZipWriter::new(Cursor::new(Vec::new()));
-        for (name, bytes) in [
-            ("word/document.xml", b"<test/>".as_slice()),
-            ("_rels/.rels", b"<Relationships/>"),
-            ("[Content_Types].xml", br#"<Types><Override PartName="/word/document.xml" ContentType="application/vnd.ms-word.document.macroEnabled.main+xml"/></Types>"#),
-        ] {
-            archive.start_file(name, SimpleFileOptions::default()).unwrap();
-            archive.write_all(bytes).unwrap();
-        }
-        let bytes = archive.finish().unwrap().into_inner();
+        let bytes = office_fixture(
+            "application/vnd.ms-word.document.macroEnabled.main+xml",
+            &relationship("main/body.xml", "Internal"),
+        );
         assert_eq!(verified("macro.docx", &bytes), OPAQUE);
         assert_eq!(verified("wrong.xlsx", &bytes), OPAQUE);
         assert_eq!(verified("archive.zip", &bytes), "application/zip");
+    }
+
+    #[test]
+    fn office_media_requires_one_internal_relationship_to_the_declared_part() {
+        for (file, content_type, verified_type) in [
+            (
+                "report.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+                NativeFormat::Word.media_type(),
+            ),
+            (
+                "report.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+                NativeFormat::Spreadsheet.media_type(),
+            ),
+        ] {
+            let path = "main/body.xml";
+            let actual = relationship(path, "Internal");
+            for (relationships, expected) in [
+                (actual.clone(), verified_type),
+                (relationship("/main/body.xml", "Internal"), verified_type),
+                (relationship("missing/body.xml", "Internal"), OPAQUE),
+                (relationship(path, "External"), OPAQUE),
+                (
+                    format!("{actual}{}", relationship("missing/body.xml", "Internal")),
+                    OPAQUE,
+                ),
+                (String::new(), OPAQUE),
+            ] {
+                assert_eq!(
+                    verified(file, &office_fixture(content_type, &relationships)),
+                    expected
+                );
+            }
+        }
+    }
+
+    fn relationship(target: &str, mode: &str) -> String {
+        format!(
+            r#"<Relationship Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="{target}" TargetMode="{mode}"/>"#
+        )
+    }
+
+    fn office_fixture(content_type: &str, relationships: &str) -> Vec<u8> {
+        let relationships = format!("<Relationships>{relationships}</Relationships>");
+        let manifest = format!(
+            r#"<Types><Override PartName="/main/body.xml" ContentType="{content_type}"/></Types>"#
+        );
+        let mut archive = ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, bytes) in [
+            ("main/body.xml", b"<test/>".as_slice()),
+            ("_rels/.rels", relationships.as_bytes()),
+            ("[Content_Types].xml", manifest.as_bytes()),
+        ] {
+            archive
+                .start_file(name, SimpleFileOptions::default())
+                .unwrap();
+            archive.write_all(bytes).unwrap();
+        }
+        archive.finish().unwrap().into_inner()
     }
 }

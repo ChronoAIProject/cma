@@ -309,7 +309,9 @@ async fn verify_receipts(
     use sha2::{Digest, Sha256};
     let root = format!("/api/v1/agents/{agent_id}/answers/event:5/deliverables");
     let listing = || agents_tests::request(Method::GET, &root, "owner-a", None, None);
-    let (status, listed) = agents_tests::json_response(&router, listing()).await;
+    let (status, legacy) = agents_tests::json_response(&router, listing()).await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, listed) = agents_tests::json_response(&router, native_media(listing())).await;
     assert_eq!(status, StatusCode::OK, "{listed}");
     let items = listed["items"].as_array().unwrap();
     let files = observed["files"].as_array().unwrap();
@@ -318,8 +320,16 @@ async fn verify_receipts(
         files.len() + 1,
         "a repeated receipt must not add a card"
     );
+    let legacy_items = legacy["items"].as_array().unwrap();
+    assert_eq!(legacy_items.len(), items.len());
     for item in items {
         let reference = &item["reference"];
+        let legacy_item = legacy_items
+            .iter()
+            .find(|item_in_legacy| item_in_legacy["id"] == item["id"])
+            .unwrap();
+        let id = item["id"].as_str().unwrap();
+        let target = format!("{root}/{id}");
         let (expected, media_type) = match reference["resource"]["kind"].as_str().unwrap() {
             "live_file" => {
                 let path = reference["resource"]["path"].as_str().unwrap();
@@ -338,11 +348,22 @@ async fn verify_receipts(
             ),
             other => panic!("unexpected delivery kind: {other}"),
         };
-        let target = format!("{root}/{}/download", item["id"].as_str().unwrap());
-        let download = |subject| agents_tests::request(Method::GET, &target, subject, None, None);
-        let response = router.clone().oneshot(download("owner-a")).await.unwrap();
+        if reference["resource"]["kind"] == "live_file" {
+            let mut projected = item.clone();
+            projected["reference"]["media_type"] = json!("application/octet-stream");
+            assert_eq!(legacy_item, &projected);
+        }
+        let download_path = format!("{target}/download");
+        let download =
+            |subject| agents_tests::request(Method::GET, &download_path, subject, None, None);
+        let response = router
+            .clone()
+            .oneshot(native_media(download("owner-a")))
+            .await
+            .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         assert_eq!(response.headers()["content-type"], media_type);
+        assert_eq!(response.headers()["cache-control"], "private, no-store");
         assert_eq!(
             response.headers()["content-length"],
             expected.len().to_string()
@@ -362,6 +383,30 @@ async fn verify_receipts(
         assert_eq!(&bytes[..], expected);
         assert_eq!(reference["sha256"], format!("{:x}", Sha256::digest(&bytes)));
         assert_eq!(reference["size_bytes"], bytes.len());
+        if matches!(
+            reference["name"].as_str(),
+            Some("report.csv" | "report.zip")
+        ) {
+            let (status, reading) = agents_tests::json_response(
+                &router,
+                agents_tests::request(Method::GET, &target, "owner-a", None, None),
+            )
+            .await;
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(&reading["item"], legacy_item);
+            let response = router.clone().oneshot(download("owner-a")).await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response.headers()["content-type"],
+                "application/octet-stream"
+            );
+            assert_eq!(
+                axum::body::to_bytes(response.into_body(), 4096)
+                    .await
+                    .unwrap(),
+                bytes
+            );
+        }
         assert_eq!(
             router
                 .clone()
@@ -390,7 +435,7 @@ async fn verify_receipts(
         );
     }
     assert_eq!(
-        agents_tests::json_response(&router, listing()).await,
+        agents_tests::json_response(&router, native_media(listing())).await,
         (StatusCode::OK, listed)
     );
 
@@ -413,4 +458,14 @@ async fn verify_receipts(
     std::fs::remove_file(directory.join(path)).unwrap();
     assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(problem["code"], "file_too_large");
+}
+
+fn native_media(
+    mut request: axum::http::Request<axum::body::Body>,
+) -> axum::http::Request<axum::body::Body> {
+    request.headers_mut().insert(
+        "prefer",
+        axum::http::HeaderValue::from_static("cma-native-attachment-media"),
+    );
+    request
 }
