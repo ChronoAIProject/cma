@@ -1,5 +1,6 @@
 //! Catalogue and snapshot admissions share the current transaction and replay protocol.
 use super::*;
+use mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT;
 
 impl MongoSandboxStore {
     pub(super) fn admit_agent_with_reuse(
@@ -147,6 +148,14 @@ impl MongoSandboxStore {
                     )
                     .await
                     .map_err(SandboxStoreError::Unavailable)?;
+                }
+                Err(ApplyError::Driver(error))
+                    if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) =>
+                {
+                    let _ = session.abort_transaction().await;
+                    return Err(SandboxStoreError::Unavailable(
+                        "Agent admission transaction outcome is unavailable".into(),
+                    ));
                 }
                 Err(ApplyError::Driver(error)) if is_transient(&error) => {
                     let _ = session.abort_transaction().await;
