@@ -57,6 +57,7 @@ pub struct AgentCommandService {
     authority: Arc<dyn AgentCommandAdmissionAuthority>,
     task_experience: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
     model_credit_required: bool,
+    model_funding: Option<Arc<crate::sandbox::model_credit::AgentTurnFunding>>,
 }
 
 impl AgentCommandService {
@@ -71,6 +72,7 @@ impl AgentCommandService {
             authority,
             task_experience: Default::default(),
             model_credit_required: false,
+            model_funding: None,
         })
     }
 
@@ -172,16 +174,19 @@ impl AgentCommandService {
             agent_id: request.envelope.agent_id.clone(),
         };
         let capability = command_capability(&request.envelope.command);
-        let funding = self.require_model_credit(&request.envelope.command);
-        if funding.is_err() || (AnswerContext::from_command(&request.envelope.command)?.is_some()
+        let requires_funding = self
+            .require_model_credit(&request.envelope.command)
+            .is_err();
+        let policy_refused = AnswerContext::from_command(&request.envelope.command)?.is_some()
             && !self.task_experience.allows(&context.caller.subject,
-                crate::sandbox::task_experience::TaskExperienceCapability::SuggestedFollowupAdmission))
-        {
+                crate::sandbox::task_experience::TaskExperienceCapability::SuggestedFollowupAdmission);
+        if requires_funding || policy_refused {
             let existing = self
                 .with_authority_bound(
                     &authorized,
                     capability,
-                    self.store.get_admitted_command(&request.scope(), &request.key_sha256),
+                    self.store
+                        .get_admitted_command(&request.scope(), &request.key_sha256),
                 )
                 .await;
             self.fence(&authorized, &target, capability).await?;
@@ -191,8 +196,11 @@ impl AgentCommandService {
                 };
                 return Ok(CommandStatusView::from_record(&record));
             }
-            funding?;
-            return Err(ResourceAccessError::Access(AccessError::Forbidden).into());
+            if policy_refused {
+                return Err(ResourceAccessError::Access(AccessError::Forbidden).into());
+            }
+            self.reserve_model_credit(&authorized, &request).await?;
+            self.fence(&authorized, &target, capability).await?;
         }
         let expected = request.clone();
         let lineage = &authorized.snapshot.lineage;

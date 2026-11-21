@@ -9,6 +9,8 @@ pub enum AgentOperationError {
     AdmissionPaused,
     #[error("guaranteed model funding is unsupported")]
     ModelFundingUnsupported,
+    #[error(transparent)]
+    ModelFunding(crate::sandbox::model_credit::FundingError),
     #[error("active session capacity is unavailable")]
     SessionCapacityUnavailable,
     #[error(transparent)]
@@ -80,6 +82,7 @@ impl AgentOperationError {
             Self::Budget(reason) => reason.code(),
             Self::AdmissionPaused => "admission_paused",
             Self::ModelFundingUnsupported => "model_funding_unsupported",
+            Self::ModelFunding(_) => "model_funding_refused",
             Self::SessionCapacityUnavailable => "session_capacity_unavailable",
             Self::Connection(error) => error.code(),
             Self::Forbidden => "forbidden",
@@ -109,6 +112,16 @@ impl AgentOperationError {
             Self::DeliveryAmbiguous { .. } => "agent_delivery_ambiguous",
             Self::OutcomeUnavailable(_) => "agent_operation_outcome_unavailable",
             Self::Unavailable(_) => "agent_operation_unavailable",
+        }
+    }
+}
+
+impl From<crate::sandbox::model_credit::FundingError> for AgentOperationError {
+    fn from(error: crate::sandbox::model_credit::FundingError) -> Self {
+        if error == crate::sandbox::model_credit::FundingError::Unsupported {
+            Self::ModelFundingUnsupported
+        } else {
+            Self::ModelFunding(error)
         }
     }
 }

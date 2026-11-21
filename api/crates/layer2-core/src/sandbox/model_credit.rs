@@ -6,6 +6,10 @@ use std::num::NonZeroU64;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
+mod agent;
+pub(in crate::sandbox) use agent::FundedAgentMessage;
+pub use agent::{AgentModelGateway, AgentTurnFunding, ModelPhaseRequest};
+
 /// No deployed adapter currently certifies the payer and bounds each phase.
 /// Existing integrations may continue using the default, unfenced path.
 pub(super) fn require_available(required: bool) -> Result<(), super::AgentOperationError> {
@@ -147,12 +151,12 @@ pub trait ContinuationAuthority: Send + Sync {
     ) -> Result<(), FundingError>;
 }
 
-pub struct ModelCredit<'a, A, G> {
+pub struct ModelCredit<'a, A: ?Sized, G: ?Sized> {
     authority: &'a A,
     gateway: &'a G,
 }
 
-impl<'a, A: ReservationAuthority, G: FundedModelGateway> ModelCredit<'a, A, G> {
+impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> ModelCredit<'a, A, G> {
     pub fn new(authority: &'a A, gateway: &'a G) -> Self {
         Self { authority, gateway }
     }
@@ -181,6 +185,28 @@ impl<'a, A: ReservationAuthority, G: FundedModelGateway> ModelCredit<'a, A, G> {
         selected: &CredentialBinding,
         request: G::Request,
     ) -> Result<Checkpoint, FundingError> {
+        let held = self.check_dispatch(id, selected, &request).await?;
+        if matches!(held.state, PhaseState::Settled(_)) {
+            return Ok(held);
+        }
+        let permit = self.authority.begin(&held).await?;
+        require_transition(&held, &permit, PhaseState::InFlight)?;
+        let effect = self
+            .gateway
+            .execute(&permit, request)
+            .await
+            .map_err(|_| FundingError::ReconciliationRequired)?;
+        self.settle(&permit, effect)
+            .await
+            .map_err(|_| FundingError::ReconciliationRequired)
+    }
+
+    async fn check_dispatch(
+        &self,
+        id: &PhaseId,
+        selected: &CredentialBinding,
+        request: &G::Request,
+    ) -> Result<Checkpoint, FundingError> {
         let held = self.authority.read(id).await?;
         if held.reservation.id != *id {
             return Err(FundingError::CheckpointChanged);
@@ -188,18 +214,13 @@ impl<'a, A: ReservationAuthority, G: FundedModelGateway> ModelCredit<'a, A, G> {
         if held.reservation.binding != self.binding(selected).await? {
             return Err(FundingError::BindingChanged);
         }
-        if held.reservation.request_digest != self.gateway.digest(&request) {
+        if held.reservation.request_digest != self.gateway.digest(request) {
             return Err(FundingError::CheckpointChanged);
         }
-        match held.state {
-            PhaseState::Reserved => {}
-            PhaseState::InFlight => return Err(FundingError::ReconciliationRequired),
-            PhaseState::Settled(_) => return Ok(held),
+        if held.state == PhaseState::InFlight {
+            return Err(FundingError::ReconciliationRequired);
         }
-        let permit = self.authority.begin(&held).await?;
-        require_transition(&held, &permit, PhaseState::InFlight)?;
-        let effect = self.gateway.execute(&permit, request).await?;
-        self.settle(&permit, effect).await
+        Ok(held)
     }
 
     pub async fn reconcile(&self, id: &PhaseId) -> Result<Checkpoint, FundingError> {
@@ -306,4 +327,4 @@ fn require_transition(
 
 #[cfg(test)]
 #[path = "model_credit_tests.rs"]
-mod tests;
+pub(in crate::sandbox) mod tests;

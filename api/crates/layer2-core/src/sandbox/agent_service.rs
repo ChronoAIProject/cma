@@ -219,10 +219,6 @@ impl AgentService {
         validate_title(request.title.as_deref())?;
         let workspace = self.owned_workspace(caller, workspace_id).await?;
         let sandbox = self.parent_sandbox(caller, &workspace).await?;
-        super::model_credit::require_available(
-            self.model_credit_required && request.first_message.is_some(),
-        )
-        .map_err(|_| AgentServiceError::ModelFundingUnsupported)?;
         let bootstrap = matches!(&request.origin, AgentOrigin::Lifecycle { operation_id }
             if sandbox.accepts_lifecycle_bootstrap(operation_id))
             && super::lifecycle_bootstrap::bootstrap_workspace(&sandbox, &workspace);
@@ -274,6 +270,15 @@ impl AgentService {
             creation_key,
             event_at: now,
         };
+        if self.model_credit_required && admission.first_message.is_some() {
+            return self
+                .store
+                .replay_agent_admission(&admission)
+                .await
+                .map_err(store_error)?
+                .map(|result| result.creation().agent.clone())
+                .ok_or(AgentServiceError::ModelFundingUnsupported);
+        }
         let result = if let Some(initiation) = attribution.initiation {
             self.store
                 .admit_catalogue_agent_with_trigger_initiator(admission, initiation, reuse_existing)

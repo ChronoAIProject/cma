@@ -250,6 +250,8 @@ impl AgentOperationService {
         std::sync::Arc::new(Self {
             skill_upgrades_enabled: enabled,
             model_credit_required: self.model_credit_required,
+            model_funding: self.model_funding.clone(),
+            funded_message: self.funded_message.clone(),
             instruction_policy: self.instruction_policy.clone(),
             settings_authority: self.settings_authority.clone(),
             command_claim: self.command_claim.clone(),

@@ -11,21 +11,21 @@ use std::{
 type Balances = HashMap<(String, String), u64>;
 
 #[derive(Default)]
-struct LedgerState {
+pub(in crate::sandbox) struct LedgerState {
     balances: Balances,
     active: HashMap<String, u32>,
     checkpoints: HashMap<PhaseId, Checkpoint>,
     expired: HashSet<PhaseId>,
 }
 
-type Ledger = Mutex<LedgerState>;
+pub(in crate::sandbox) type Ledger = Mutex<LedgerState>;
 
 impl LedgerState {
-    fn add(&mut self, binding: &PayerBinding, amount: u64) {
+    pub(in crate::sandbox) fn add(&mut self, binding: &PayerBinding, amount: u64) {
         *self.available(binding) += amount;
     }
 
-    fn available(&mut self, binding: &PayerBinding) -> &mut u64 {
+    pub(in crate::sandbox) fn available(&mut self, binding: &PayerBinding) -> &mut u64 {
         self.balances
             .entry((binding.payer.clone(), binding.pool.clone()))
             .or_default()
@@ -145,11 +145,11 @@ impl ReservationAuthority for Ledger {
     }
 }
 
-fn units(value: u64) -> NonZeroU64 {
+pub(in crate::sandbox) fn units(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).unwrap()
 }
 
-fn payer(selected: CredentialBinding) -> PayerBinding {
+pub(in crate::sandbox) fn payer(selected: CredentialBinding) -> PayerBinding {
     let name = match selected.source {
         CredentialSource::Managed => "managed",
         CredentialSource::Own => "own",
@@ -161,7 +161,7 @@ fn payer(selected: CredentialBinding) -> PayerBinding {
     }
 }
 
-fn credential(source: CredentialSource) -> CredentialBinding {
+pub(in crate::sandbox) fn credential(source: CredentialSource) -> CredentialBinding {
     CredentialBinding {
         source,
         generation: units(1),

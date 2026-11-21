@@ -104,7 +104,7 @@ impl AgentOperationService {
         parent: SandboxMutationGuard,
         metadata: std::collections::BTreeMap<String, String>,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
-        self.require_model_credit()?;
+        self.check_model_funding(&current).await?;
         if current.conversation.active_turn.is_some() {
             return Err(AgentOperationError::Corrupt(
                 "ready agent already has an active turn".into(),
