@@ -46,6 +46,46 @@ it('downloads the selected answer version and rechecks authority after validatin
   ]);
 });
 
+it.each(['text/csv', 'application/octet-stream'] as const)(
+  'accepts verified CSV downloads from a %s live-file marker',
+  async (mediaType) => {
+    const test = transport();
+    const selected = {
+      ...item,
+      reference: {
+        ...item.reference,
+        name: 'result.CSV',
+        resource: { kind: 'live_file', path: 'nested/result.CSV' },
+        media_type: mediaType,
+      },
+    } as const;
+    test.answer({ ...identity, items: [selected] });
+    const listed = await test.client.agents.answerDeliverables('agent-1', 'event:5');
+    test.fetch.mockResolvedValueOnce(json({ ...reading, item: selected }));
+    test.fetch.mockResolvedValueOnce(
+      new Response('abc', { headers: { 'content-type': 'text/csv' } }),
+    );
+    test.fetch.mockResolvedValueOnce(json({ ...reading, item: selected }));
+    await expect(
+      test.client.agents.downloadAnswerDeliverable('agent-1', 'event:5', listed.items[0]!),
+    ).resolves.toEqual(new TextEncoder().encode('abc'));
+  },
+);
+
+it('declines native media types that do not match the live file path or resource kind', async () => {
+  const test = transport();
+  for (const resource of [
+    item.reference.resource,
+    { kind: 'agent_artifact', id: `art_${'a'.repeat(64)}` },
+  ]) {
+    const reference = { ...item.reference, resource, media_type: 'application/zip' };
+    test.answer({ ...identity, items: [{ ...item, reference }] });
+    await expect(
+      test.client.agents.answerDeliverables('agent-1', 'event:5'),
+    ).rejects.toBeInstanceOf(ProtocolError);
+  }
+});
+
 it('accepts only a server-verified descriptor whose marker matches the explicit selected resource', async () => {
   const test = transport();
   const marker = `<!--cma-deliverable:v1:${Buffer.from(JSON.stringify(item.reference)).toString('base64url')}-->`;

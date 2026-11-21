@@ -168,7 +168,13 @@ pub(crate) async fn read_item(
 
 #[utoipa::path(get, path = "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download", tag = "agents",
     params(("id" = String, Path), ("answer_id" = String, Path), ("delivery_id" = String, Path), ("X-CMA-Document-Share-Token" = Option<String>, Header)),
-    responses((status = 200, body = Vec<u8>, content_type = "application/octet-stream"),
+    responses((status = 200, content(
+        (Vec<u8> = "application/octet-stream"),
+        (Vec<u8> = "text/csv"),
+        (Vec<u8> = "application/json"),
+        (Vec<u8> = "application/zip"),
+        (Vec<u8> = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        (Vec<u8> = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))),
         (status = 401, body = super::ProblemDocument), (status = 404, body = super::ProblemDocument),
         (status = 409, body = super::ProblemDocument), (status = 422, body = super::ProblemDocument), (status = 503, body = super::ProblemDocument)))]
 pub(crate) async fn download(
@@ -187,9 +193,13 @@ pub(crate) async fn download(
         )
         .await
         .map_err(problem)?;
+    let media_type = match reference.resource {
+        DeliverableResource::LiveFile { .. } => reference.media_type,
+        _ => "application/octet-stream".to_owned(),
+    };
     Ok((
         [
-            (header::CONTENT_TYPE, "application/octet-stream".to_owned()),
+            (header::CONTENT_TYPE, media_type),
             (
                 header::CONTENT_DISPOSITION,
                 super::agent_filesystem::download_name(&reference.name, &reference.sha256),

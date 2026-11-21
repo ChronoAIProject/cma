@@ -31,6 +31,8 @@ async function prove() {
   stageFiles(directory);
   const markers = new Set();
   const receipts = new Map();
+  let legacyArchiveMarker;
+  const legacyArchivePath = "output/nested/report.zip";
   const describe = [...files, files[0]];
   let round = 0;
   let failure;
@@ -132,6 +134,8 @@ async function prove() {
           )
           .sort();
         assert.deepEqual(kinds, ["document", ...files.map(() => "live_file")]);
+        const legacyArchive = { ...receipts.get(legacyArchivePath).reference, media_type: "application/octet-stream" };
+        legacyArchiveMarker = `<!--cma-deliverable:v1:${Buffer.from(JSON.stringify(legacyArchive)).toString("base64url")}-->`;
         item = {
           id: `msg_${round}`,
           type: "message",
@@ -140,7 +144,7 @@ async function prove() {
           content: [
             {
               type: "output_text",
-              text: `Delivered the native files and persistent document.\n${[...markers, receipts.get(files[0].path).marker].join("\n")}`,
+              text: `Delivered the native files and persistent document.\n${[legacyArchiveMarker, ...markers, receipts.get(files[0].path).marker].join("\n")}`,
               annotations: [],
             },
           ],
@@ -334,7 +338,7 @@ async function prove() {
     });
     assert.equal(markers.size, files.length + 1);
     assert(
-      [...markers].every((marker) => answer.includes(marker)),
+      [legacyArchiveMarker, ...markers].every((marker) => answer.includes(marker)),
       `ACP answer must contain every observed receipt: ${JSON.stringify(answer)}`,
     );
     process.stdout.write(
@@ -343,7 +347,10 @@ async function prove() {
         bridge_sha256: bridgeHash,
         sessionId: created.sessionId,
         stopReason: result.stopReason,
-        files: files.map(({ path, bytes, mediaType }) => ({ path, size_bytes: bytes.length, sha256: digest(bytes), media_type: mediaType })),
+        files: files.map(({ path, bytes, mediaType }) => ({
+          path, size_bytes: bytes.length, sha256: digest(bytes), media_type: mediaType,
+          stored_media_type: path === legacyArchivePath ? "application/octet-stream" : mediaType,
+        })),
         answer,
       }),
     );

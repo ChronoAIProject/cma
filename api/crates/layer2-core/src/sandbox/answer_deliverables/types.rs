@@ -70,7 +70,7 @@ impl DeliverableReference {
                 layer3_adapter::valid_agent_file_path(path)
                     && !path.is_empty()
                     && self.name == file_name(path.rsplit('/').next().unwrap_or("deliverable"))
-                    && self.media_type == "application/octet-stream"
+                    && super::media::allowed(path, &self.media_type)
                     && self.size_bytes <= layer3_adapter::MAX_AGENT_FILE_BYTES
             }
             DeliverableResource::AgentArtifact { id } => {

@@ -20,6 +20,34 @@ import {
   type Output,
 } from '../schema.js';
 
+const opaque = 'application/octet-stream';
+const artifactMediaTypes = [
+  'text/plain',
+  'text/markdown',
+  'application/json',
+  'application/pdf',
+  opaque,
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+] as const;
+const artifactMedia: ReadonlySet<string> = new Set(artifactMediaTypes);
+const nativeMediaTypes = {
+  csv: 'text/csv',
+  json: 'application/json',
+  zip: 'application/zip',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+} as const;
+
+function nativeMedia(path: string): string | undefined {
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  const extension = /.+\.([a-z]+)$/i.exec(name)?.[1]?.toLowerCase();
+  return extension === undefined
+    ? undefined
+    : Object.entries(nativeMediaTypes).find(([suffix]) => suffix === extension)?.[1];
+}
+
 const resource = tagged(
   {
     agent_artifact: object({ kind: enumeration('agent_artifact'), id: text }),
@@ -32,16 +60,7 @@ const reference = object({
   agent_id: text,
   resource,
   name: text,
-  media_type: enumeration(
-    'text/plain',
-    'text/markdown',
-    'application/json',
-    'application/pdf',
-    'application/octet-stream',
-    'image/png',
-    'image/jpeg',
-    'image/webp',
-  ),
+  media_type: enumeration(...artifactMediaTypes, ...Object.values(nativeMediaTypes)),
   size_bytes: integer,
   sha256: text,
 });
@@ -139,7 +158,7 @@ function validateReference(item: DeliverableReference, agentId: string): Deliver
   const selected = item.resource;
   if (selected.kind === 'live_file') {
     if (
-      item.media_type !== 'application/octet-stream' ||
+      (item.media_type !== opaque && item.media_type !== nativeMedia(selected.path)) ||
       item.size_bytes > 32 * 1024 * 1024 ||
       new TextEncoder().encode(selected.path).length > 1024 ||
       /[\p{Cc}\\]/u.test(selected.path) ||
@@ -150,7 +169,8 @@ function validateReference(item: DeliverableReference, agentId: string): Deliver
   } else if (
     item.size_bytes === 0 ||
     item.size_bytes > 1024 * 1024 ||
-    (selected.kind === 'agent_artifact' && !/^art_[a-f0-9]{64}$/.test(selected.id)) ||
+    (selected.kind === 'agent_artifact' &&
+      (!/^art_[a-f0-9]{64}$/.test(selected.id) || !artifactMedia.has(item.media_type))) ||
     (selected.kind === 'document' &&
       (!/^doc_[a-f0-9]{32}$/.test(selected.id) || item.media_type !== 'text/markdown'))
   ) {
@@ -330,12 +350,12 @@ export function downloadAnswerDeliverable(
       requestId,
       expectedStatus: 200,
     });
-    if (
-      response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !==
-      'application/octet-stream'
-    ) {
+    const mediaType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+    if (!downloadMediaMatches(selected.reference, mediaType)) {
       await response.body?.cancel();
-      throw new ProtocolError('deliverable download did not return opaque bytes');
+      throw new ProtocolError(
+        'deliverable download media type does not match the selected resource',
+      );
     }
     const bytes = await readBytes(response, signal, Math.max(1, selected.reference.size_bytes));
     const digest = new Uint8Array(
@@ -353,4 +373,12 @@ export function downloadAnswerDeliverable(
     throwIfSignalAborted(signal);
     return bytes;
   });
+}
+
+function downloadMediaMatches(reference: DeliverableReference, mediaType: string | undefined) {
+  if (!mediaType) return false;
+  if (reference.resource.kind !== 'live_file') return mediaType === opaque;
+  if (reference.media_type === mediaType) return true;
+  // Earlier markers only stored octet-stream. The server can now identify their exact bytes.
+  return reference.media_type === opaque && mediaType === nativeMedia(reference.resource.path);
 }

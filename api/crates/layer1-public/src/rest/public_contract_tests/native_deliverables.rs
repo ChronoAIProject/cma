@@ -326,7 +326,7 @@ async fn verify_receipts(
                 let verified = files.iter().find(|file| file["path"] == path).unwrap();
                 assert_eq!(reference["sha256"], verified["sha256"]);
                 assert_eq!(reference["size_bytes"], verified["size_bytes"]);
-                assert_eq!(reference["media_type"], verified["media_type"]);
+                assert_eq!(reference["media_type"], verified["stored_media_type"]);
                 (
                     std::fs::read(directory.join(path)).unwrap(),
                     verified["media_type"].as_str().unwrap(),
@@ -371,6 +371,18 @@ async fn verify_receipts(
                 .status(),
             StatusCode::NOT_FOUND
         );
+        if reference["name"] == "report.json" {
+            let path = directory.join("output/nested/report.json");
+            std::fs::write(&path, b"{\"changed\":true}\n").unwrap();
+            let (status, problem) = agents_tests::json_response(&router, download("owner-a")).await;
+            assert_eq!(status, StatusCode::CONFLICT);
+            assert_eq!(problem["code"], "deliverable_changed");
+            std::fs::remove_file(&path).unwrap();
+            let (status, problem) = agents_tests::json_response(&router, download("owner-a")).await;
+            assert_eq!(status, StatusCode::NOT_FOUND);
+            assert_eq!(problem["code"], "file_not_found");
+            std::fs::write(&path, &expected).unwrap();
+        }
         println!(
             "verified attachment {} ({} bytes)",
             reference["name"],
@@ -381,4 +393,24 @@ async fn verify_receipts(
         agents_tests::json_response(&router, listing()).await,
         (StatusCode::OK, listed)
     );
+
+    let path = "output/nested/over-limit.csv";
+    std::fs::File::create(directory.join(path))
+        .unwrap()
+        .set_len(layer3_adapter::MAX_AGENT_FILE_BYTES + 1)
+        .unwrap();
+    let (status, problem) = agents_tests::json_response(
+        &router,
+        agents_tests::request(
+            Method::POST,
+            &format!("/api/v1/agents/{agent_id}/deliverable-references"),
+            "owner-a",
+            None,
+            Some(json!({"kind": "live_file", "path": path})),
+        ),
+    )
+    .await;
+    std::fs::remove_file(directory.join(path)).unwrap();
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+    assert_eq!(problem["code"], "file_too_large");
 }
