@@ -205,7 +205,7 @@ class GitHubReadTests(unittest.TestCase):
 class PublicationTests(unittest.TestCase):
     """The publish job checks the layer index of its last export, and only diagnoses."""
 
-    def publish(self, exports, *, summary=None):
+    def publish(self, exports, *, summary=None, check=None):
         import staging_cd_publish as publication
         from staging_cd_receipts_tests import fixture_identity, fixture_receipt
         identity = fixture_identity()
@@ -233,7 +233,7 @@ class PublicationTests(unittest.TestCase):
             stack.enter_context(patch.object(publication, "publish", return_value=fixture_receipt()))
             # The script passes its live environment; keep what it held at the call.
             layers = stack.enter_context(patch.object(publication, "report_layers"))
-            layers.side_effect = lambda *args: layers.snapshots.append(args[:4] + (dict(args[4]),))
+            layers.side_effect = check or (lambda *args: layers.snapshots.append(args[:4] + (dict(args[4]),)))
             layers.snapshots = []
             output = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
             before = datetime.datetime.now(datetime.timezone.utc).timestamp()
@@ -251,6 +251,16 @@ class PublicationTests(unittest.TestCase):
         self.assertEqual(env["CD_COMPONENT"], "web")
         # The ignored export failure no longer reads as a failed Dockerfile step.
         self.assertNotIn("Image build step failed", output)
+
+    def test_a_failing_check_prints_unknown_and_never_changes_the_publication_outcome(self):
+        def broken(*_args):
+            raise RuntimeError(PRIVATE)
+        status, layers, _, output = self.publish(True, check=broken)
+        self.assertEqual(status, 0)
+        layers.assert_called_once()
+        self.assertIn("CACHE-SAVE cache=build-layers component=web result=unknown reason=unreadable\n", output)
+        self.assertNotIn(PRIVATE, output)
+        self.assertNotIn("::warning", output)
 
     def test_a_build_without_a_layer_export_expects_no_save(self):
         for exports in (False, Mock()):

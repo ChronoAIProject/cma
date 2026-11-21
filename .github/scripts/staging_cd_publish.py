@@ -336,7 +336,11 @@ def main():
         # Diagnostic only, after publication: did the last export reach the
         # Actions cache, or will the next build of this component start cold?
         started, progress = layer_exports[-1]
-        report_layers(component, SCOPES[component], progress, started, env)
+        try:
+            report_layers(component, SCOPES[component], progress, started, env)
+        except Exception:  # noqa: BLE001 - by construction, the check never changes the outcome.
+            print(f"CACHE-SAVE cache=build-layers component={component} result=unknown reason=unreadable",
+                  flush=True)
     return result
 
 
