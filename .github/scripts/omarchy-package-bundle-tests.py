@@ -119,6 +119,25 @@ class LockTests(unittest.TestCase):
         with self.assertRaisesRegex(BUNDLE.BundleError, "canonical"):
             BUNDLE.validate(lock, raw.replace(b'"files": [', b'"files":  ['))
 
+    def test_packages_are_bound_to_their_repository(self):
+        _, raw = BUNDLE.load()
+
+        def package(lock, repository):
+            return next(e for e in lock["files"] if e["kind"] == "package" and e["path"].startswith(repository + "/")
+                        and "-keyring-" not in e["path"])
+
+        cases = {
+            "Arch package without its database": (lambda l: package(l, "extra").pop("database"), "not bound"),
+            "Arch package on the Omarchy keyring": (lambda l: package(l, "core").update(keyring="omarchy"), "does not sign its repository"),
+            "Omarchy package on the Arch keyring": (lambda l: package(l, "omarchy").update(keyring="arch"), "does not sign its repository"),
+        }
+        for name, (mutate, message) in cases.items():
+            with self.subTest(name):
+                changed = json.loads(raw)
+                mutate(changed)
+                with self.assertRaisesRegex(BUNDLE.BundleError, message):
+                    BUNDLE.validate(changed)
+
 
 class FetchTests(unittest.TestCase):
     def setUp(self):

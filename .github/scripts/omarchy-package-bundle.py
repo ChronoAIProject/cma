@@ -48,6 +48,8 @@ REISSUE_MIRRORS = ("https://geo.mirror.pkgbuild.com/{repo}/os/x86_64/{name}",
 OMARCHY = "https://pkgs.omarchy.org/stable/x86_64/{name}"
 ARCH_REPOS = ("core", "extra", "multilib")
 KEYRINGS = {"arch": ("archlinux.gpg", "archlinux-revoked"), "omarchy": ("omarchy.gpg", "omarchy-revoked")}
+# The keyring that signs each repository directory's packages.
+REPOSITORY_KEYRINGS = {**{repo: "arch" for repo in ARCH_REPOS}, "omarchy": "omarchy"}
 SNAPSHOT = re.compile(r"[0-9]{4}/[0-9]{2}/[0-9]{2}")
 HEX = re.compile(r"[0-9a-f]{64}")
 NAME = re.compile(r"[A-Za-z0-9@._+:-]+")
@@ -124,6 +126,9 @@ def validate(lock, raw=None):
             require(sig is not None and sig["kind"] == "signature" and e["signature"] == e["path"] + ".sig",
                     "package signature entry is missing")
             require(e["keyring"] in KEYRINGS, "package keyring is unknown")
+            repository = PurePosixPath(e["path"]).parts[0]
+            require(REPOSITORY_KEYRINGS.get(repository) == e["keyring"], "package keyring does not sign its repository")
+            require("database" in e or repository not in ARCH_REPOS, "Arch package is not bound to its snapshot database")
             if "database" in e:
                 db = by_path.get(e["database"])
                 require(db is not None and db["kind"] == "database"
