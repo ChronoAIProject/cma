@@ -252,6 +252,11 @@ class EntryTests(unittest.TestCase):
                          (0, "CATCH-UP rerun run=802 attempt=2 lanes=am,runtime-omarchy"))
         self.assertEqual(self.run_main(lambda *_: ("plan-rerun", run, []), lambda *_: 2),
                          (0, "CATCH-UP plan-rerun run=802 attempt=2"))
+        # Only named decisions re-run; any other that carries a run never does.
+        never = Mock(side_effect=AssertionError("re-run"))
+        self.assertEqual(self.run_main(lambda *_: ("exhausted", run, ["am"]), never),
+                         (0, "CATCH-UP exhausted lanes=am"))
+        never.assert_not_called()
 
     def test_refusals_fail_with_their_fixed_message_and_unexpected_errors_stay_private(self):
         def unverified(*_args):

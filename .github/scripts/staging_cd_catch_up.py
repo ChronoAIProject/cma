@@ -42,6 +42,8 @@ PLAN_JOB = "plan"
 PLAN_GATE = "Require a complete release plan"
 # A transiently stopped plan is re-run only after it has been settled this long.
 PLAN_SETTLE_SECONDS = 600
+# Only these decisions re-run the head run; any other names no action.
+RERUNS = frozenset({"rerun", "plan-rerun"})
 # One automatic re-run per develop head; never re-run a head this many times.
 ATTEMPTS = 5
 SECONDS = 150
@@ -271,7 +273,7 @@ def main():
             api = GitHub(env.get("GH_TOKEN"), deadline=time.monotonic() + SECONDS)
             reason, run, lanes = decide(api, advertised, event=env["GITHUB_EVENT_NAME"])
             outcome.update(reason=reason, lanes=lanes)
-            if run is not None:
+            if reason in RERUNS:
                 outcome.update(run=run["id"], attempt=rerun(api, run))
         except Refusal as error:
             outcome["failure"] = str(error)  # Refusals carry only fixed messages.
