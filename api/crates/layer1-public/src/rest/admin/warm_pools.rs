@@ -45,6 +45,9 @@ pub struct WarmPoolView {
     pub status: String,
     pub resource_name: Option<String>,
     pub error: Option<String>,
+    /// The deployment-seeded shared desktop pool, resized against `machine_image`.
+    #[serde(default)]
+    pub machine: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, ToSchema)]
@@ -56,6 +59,9 @@ pub struct WarmPoolList {
     /// Exact current default configuration; null when it cannot be planned.
     pub default_config_sha256: Option<String>,
     pub available: bool,
+    /// Configured shared desktop image; null when this deployment seeds no desktop pool.
+    #[serde(default)]
+    pub machine_image: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -24,6 +24,8 @@ export const warmPoolView = object({
   status: enumeration('pending', 'ready', 'disabled', 'unavailable'),
   resource_name: nullable(text),
   error: nullable(text),
+  /** The deployment-seeded shared desktop pool; older servers omit it. */
+  machine: optional(boolean),
 });
 export type WarmPoolView = Output<typeof warmPoolView>;
 export const warmPoolList = object({
@@ -33,6 +35,8 @@ export const warmPoolList = object({
   default_memory_mib: integer,
   default_config_sha256: optional(nullable(text)),
   available: boolean,
+  /** Configured shared desktop image; null when none is configured, absent from older servers. */
+  machine_image: optional(nullable(text)),
 });
 export type WarmPoolList = Output<typeof warmPoolList>;
 export interface ConfigureWarmPoolBody {
