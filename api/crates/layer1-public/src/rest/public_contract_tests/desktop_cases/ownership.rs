@@ -14,6 +14,7 @@ use layer2_core::{
 use layer3_adapter::{
     AdapterError, DesktopOwnership, DesktopOwnershipChallenge, DesktopOwnershipControl,
 };
+use tokio::sync::Notify;
 
 #[derive(Default)]
 pub(super) struct Ownership {
@@ -21,6 +22,9 @@ pub(super) struct Ownership {
     pub state: Mutex<State>,
     pub checks: AtomicUsize,
     pub revoked: AtomicBool,
+    pub block_renewal: AtomicBool,
+    pub renewal_entered: Notify,
+    pub resume_renewal: Notify,
 }
 
 #[derive(Default)]
@@ -166,6 +170,10 @@ impl SandboxSessionStore for Ownership {
     ) -> Result<DesktopOwnership, SandboxStoreError> {
         assert_eq!(request.session_id, owner.session_id);
         assert_eq!(request.sandbox_id.as_str(), owner.sandbox_id);
+        if self.block_renewal.load(Ordering::SeqCst) {
+            self.renewal_entered.notify_one();
+            self.resume_renewal.notified().await;
+        }
         let mut state = self.state.lock().unwrap();
         if state.claim.as_ref() != Some(owner) {
             return Err(SandboxStoreError::Conflict);
