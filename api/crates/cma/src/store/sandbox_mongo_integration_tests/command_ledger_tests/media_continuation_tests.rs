@@ -23,6 +23,9 @@ use serde_json::{json, Value};
 use std::{path::PathBuf, sync::atomic::AtomicBool};
 use tower::ServiceExt;
 
+#[path = "media_continuation_tests/ownership_handoff.rs"]
+mod ownership_handoff;
+
 struct Peer {
     active: AtomicBool,
     outage: AtomicBool,

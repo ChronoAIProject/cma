@@ -8,10 +8,15 @@ use axum::{
 };
 use layer1_public::responses::v2::QueuedCancellationNeedsOwner;
 
-/// The source manager already admitted this exact operation to its rate budget.
+/// The source manager already charged the operation budget and records the
+/// final outcome.
 /// Only the authenticated relay or its same-process retry inserts this marker.
 #[derive(Clone)]
 pub(crate) struct Charged;
+
+/// This ingress can handle an ownership handoff within the same public request.
+#[derive(Clone)]
+pub(crate) struct DeferQueuedCancellationActivity;
 
 pub(super) fn agent_id(request: &Request) -> Option<AgentId> {
     if request.method() != Method::POST {
@@ -57,13 +62,11 @@ pub(super) async fn try_local(
     else {
         return StatusCode::PAYLOAD_TOO_LARGE.into_response();
     };
-    let response = next
-        .clone()
-        .run(Request::from_parts(
-            parts.clone(),
-            Body::from(bytes.clone()),
-        ))
-        .await;
+    let mut local = Request::from_parts(parts.clone(), Body::from(bytes.clone()));
+    local
+        .extensions_mut()
+        .insert(DeferQueuedCancellationActivity);
+    let mut response = next.clone().run(local).await;
     if response
         .extensions()
         .get::<QueuedCancellationNeedsOwner>()
@@ -71,15 +74,32 @@ pub(super) async fn try_local(
     {
         return response;
     }
-    // This response extension is produced after local authorization and exact
-    // target validation. The owner repeats both with the original credentials.
+    let activity = response
+        .extensions_mut()
+        .remove::<crate::activity::PendingActivity>();
+    let retry = Request::from_parts(parts, Body::from(bytes.clone()));
+    let response = forward_to_owner(relay, id, retry, &bytes, next).await;
+    if let Some(activity) = activity {
+        activity.record(response.status()).await;
+    }
+    response
+}
+
+async fn forward_to_owner(
+    relay: &Relay,
+    id: &AgentId,
+    mut retry: Request,
+    bytes: &[u8],
+    next: Next,
+) -> Response {
+    // The local handler already proved resource authorization and the exact target.
+    // The owner repeats both with the original credentials.
     let Ok(permit) = relay.acquire(capacity::Class::Ordinary) else {
         return capacity::refused(false);
     };
     let Ok(destination) = relay.destination(id).await else {
         return http::unavailable();
     };
-    let mut retry = Request::from_parts(parts, Body::from(bytes.clone()));
     if destination.member.instance_id == relay.coordinator.instance_id {
         retry.extensions_mut().insert(Charged);
         let response = destination
@@ -89,5 +109,5 @@ pub(super) async fn try_local(
             .unwrap_or_else(|_| http::unavailable());
         return http::retain(response, permit);
     }
-    http::forward(relay, destination, retry, &bytes, permit).await
+    http::forward(relay, destination, retry, bytes, permit).await
 }

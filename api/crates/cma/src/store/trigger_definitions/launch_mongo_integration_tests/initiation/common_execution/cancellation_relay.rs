@@ -13,8 +13,9 @@ use layer2_core::{
         OrganizationChoice, ResourceAccessService, ResourceActor,
     },
 };
+use layer2_core::{ActivityOutcome, ActivityQuery, ActivityRecord, ActivityService, ActivityStore};
 use serde_json::{json, Value};
-use std::num::NonZeroU32;
+use std::{num::NonZeroU32, sync::Mutex};
 
 struct Authority;
 
@@ -67,7 +68,26 @@ impl SandboxResourceReader for Authority {
     }
 }
 
+#[derive(Default)]
+struct CapturedActivity(Mutex<Vec<ActivityOutcome>>);
+
+#[async_trait::async_trait]
+impl ActivityStore for CapturedActivity {
+    async fn append(&self, record: &ActivityRecord) -> Result<(), layer2_core::StoreError> {
+        self.0.lock().unwrap().push(record.outcome.clone());
+        Ok(())
+    }
+
+    async fn list(
+        &self,
+        _: &ActivityQuery,
+    ) -> Result<layer2_core::Page<ActivityRecord>, layer2_core::StoreError> {
+        unreachable!("the HTTP recorder only appends")
+    }
+}
+
 struct Replica {
+    activity: Arc<CapturedActivity>,
     coordinator: Arc<OwnershipCoordinator>,
     address: String,
     _updates: Arc<DurableAgentUpdateRecorder>,
@@ -147,10 +167,17 @@ impl Replica {
                     .unwrap(),
             ),
         );
+        let activity = Arc::new(CapturedActivity::default());
+        let recorder =
+            crate::activity::ActivityRecorder::new(ActivityService::new(activity.clone()));
         let responses = router(ResponsesV2State::new(
             layer1_public::agent_page::AgentPageOrigin::new("https://agents.example").unwrap(),
             commands,
             reads,
+        ))
+        .layer(middleware::from_fn_with_state(
+            recorder,
+            crate::activity::record,
         ))
         .layer(middleware::from_fn_with_state(
             limits,
@@ -195,6 +222,7 @@ impl Replica {
             ));
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         Self {
+            activity,
             coordinator,
             address,
             _updates: updates,
@@ -206,13 +234,23 @@ impl Replica {
 #[tokio::test]
 #[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
 async fn queued_trigger_cancellation_reaches_owner_and_replays_across_replicas() {
+    run_cancellation(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
+async fn queued_trigger_cancellation_records_one_final_relay_failure() {
+    run_cancellation(true).await;
+}
+
+async fn run_cancellation(fail_owner: bool) {
     for segmented in [false, true] {
         let a = if segmented {
             super::segmented::accepted().await
         } else {
             Accepted::new().await
         };
-        let replicas = [Replica::start(&a, 0).await, Replica::start(&a, 1).await];
+        let mut replicas = [Replica::start(&a, 0).await, Replica::start(&a, 1).await];
         let membership = replicas[0].coordinator.store.membership().await.unwrap();
         let preferred = candidates(&a.agent.id, &membership, None).unwrap();
         let owner = replicas
@@ -247,9 +285,10 @@ async fn queued_trigger_cancellation_reaches_owner_and_replays_across_replicas()
             .timeout(std::time::Duration::from_secs(5))
             .build()
             .unwrap();
+        let addresses = [replicas[0].address.clone(), replicas[1].address.clone()];
         let submit = |replica: usize| {
             client
-                .post(format!("{}{path}", replicas[replica].address))
+                .post(format!("{}{path}", addresses[replica]))
                 .header("idempotency-key", "cancel-trigger-once")
                 .json(&body)
         };
@@ -257,6 +296,19 @@ async fn queued_trigger_cancellation_reaches_owner_and_replays_across_replicas()
             submit(peer).send().await.unwrap().status(),
             StatusCode::UNAUTHORIZED
         );
+        for replica in &replicas {
+            replica.activity.0.lock().unwrap().clear();
+        }
+        let before = a.current_agent().await;
+        if fail_owner {
+            // Keep the serving owner's lease valid while its HTTP listener is gone.
+            replicas[owner].server.abort();
+            assert!((&mut replicas[owner].server)
+                .await
+                .unwrap_err()
+                .is_cancelled());
+        }
+
         let first = submit(peer)
             .bearer_auth("fixture-caller")
             .send()
@@ -264,7 +316,35 @@ async fn queued_trigger_cancellation_reaches_owner_and_replays_across_replicas()
             .unwrap();
         let status = first.status();
         let result: Value = first.json().await.unwrap();
+        let outcomes: Vec<_> = replicas
+            .iter()
+            .flat_map(|replica| replica.activity.0.lock().unwrap().clone())
+            .collect();
+        if fail_owner {
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{result:?}");
+            assert_eq!(outcomes, vec![ActivityOutcome::Failed("503".into())]);
+            assert_eq!(
+                a.f.resources
+                    .get_command(&a.command.receipt.envelope.command_id)
+                    .await
+                    .unwrap(),
+                Some(a.command.clone())
+            );
+            assert_eq!(a.current_agent().await, before);
+            assert_eq!(
+                a.f.resources
+                    .agent_commands
+                    .count_documents(doc! {})
+                    .await
+                    .unwrap(),
+                1
+            );
+            drop(replicas);
+            a.f.close().await;
+            continue;
+        }
         assert_eq!(status, StatusCode::OK, "{result:?}");
+        assert_eq!(outcomes, vec![ActivityOutcome::Succeeded]);
         assert_eq!(result["response"]["status"], "cancelled");
         for replica in [owner, peer] {
             let replay = submit(replica)

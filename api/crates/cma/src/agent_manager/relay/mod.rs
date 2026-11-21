@@ -12,7 +12,9 @@ mod observation;
 pub(crate) mod public_access;
 pub(crate) use public_access::PublicAccess;
 mod queued_cancellation;
-pub(crate) use queued_cancellation::Charged as ChargedQueuedCancellation;
+pub(crate) use queued_cancellation::{
+    Charged as ChargedQueuedCancellation, DeferQueuedCancellationActivity,
+};
 mod reopen;
 pub(crate) use reopen::ReopenCall;
 
