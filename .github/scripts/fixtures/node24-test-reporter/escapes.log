@@ -1,0 +1,69 @@
+raw stdout line
+✖ plain literal failure (1.9685ms)
+✖ error with carriage return (0.101542ms)
+✖ error with line separator (0.047958ms)
+✖ error with form feed (0.11875ms)
+✔ stdout passthrough (0.541042ms)
+✔ passes (1.440417ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 2
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 61.446958
+
+✖ failing tests:
+
+test at a.test.cjs:3:1
+✖ plain literal failure (1.9685ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+  
+  1 !== 2
+  
+      at TestContext.<anonymous> (/w/a.test.cjs:3:46)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.start (node:internal/test_runner/test:1242:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 1,
+    expected: 2,
+    operator: 'strictEqual',
+    diff: 'simple'
+  }
+
+test at a.test.cjs:4:1
+✖ error with carriage return (0.101542ms)
+  Error: child stderr: progress 10%✖ CR-LEAKED-VALUE (1ms)test at x/cr_leak.test.cjs:1:1
+      at TestContext.<anonymous> (/w/a.test.cjs:5:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at a.test.cjs:7:1
+✖ error with line separator (0.047958ms)
+  Error: detail ✖ LS-LEAKED-VALUE (2ms)
+      at TestContext.<anonymous> (/w/a.test.cjs:8:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
+
+test at a.test.cjs:11:1
+✖ error with form feed (0.11875ms)
+  Error: detail✖ FF-LEAKED-VALUE (3ms)
+      at TestContext.<anonymous> (/w/a.test.cjs:12:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Test.postRun (node:internal/test_runner/test:1522:19)
+      at Test.run (node:internal/test_runner/test:1447:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:960:7)
