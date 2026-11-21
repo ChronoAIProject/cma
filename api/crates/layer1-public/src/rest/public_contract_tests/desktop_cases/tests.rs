@@ -93,6 +93,54 @@ async fn protected_public_relay_revalidates_authority_and_releases_after_receive
 }
 
 #[tokio::test]
+async fn protected_relay_forwards_frames_while_independent_storage_renewal_waits() {
+    use std::time::Duration;
+
+    let fixture = fixture("desktop_owner").await;
+    fixture
+        .ownership
+        .block_renewal
+        .store(true, Ordering::SeqCst);
+    let scenario = fixture.scenario;
+    let router = scenario
+        .router
+        .layer(Extension(AuthenticatedSubject(SubjectId::new("owner-a"))))
+        .layer(Extension(scenario.authorization));
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    let _server = AbortServer(server);
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!(
+        "ws://{address}/api/v1/agents/agt_contract/desktop/ws"
+    ))
+    .await
+    .unwrap();
+    assert_eq!(
+        socket.next().await.unwrap().unwrap(),
+        Message::Binary(b"RFB 003.008\n".to_vec())
+    );
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        fixture.ownership.renewal_entered.notified(),
+    )
+    .await
+    .expect("renewal must reach its storage wait");
+    let input = Message::Binary(vec![1, 2, 3]);
+    socket.send(input.clone()).await.unwrap();
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(1), socket.next())
+            .await
+            .expect("frame relay must continue during renewal")
+            .unwrap()
+            .unwrap(),
+        input
+    );
+    assert_eq!(fixture.ownership.state.lock().unwrap().writes, 1);
+    fixture.ownership.resume_renewal.notify_one();
+    socket.close(None).await.unwrap();
+}
+
+#[tokio::test]
 async fn protected_busy_holder_closes_exactly_and_delayed_cleanup_cannot_release_successor() {
     let f = fixture("desktop_busy").await;
     let caller = Caller::new(SubjectId::new("owner-a"), f.scenario.authorization.clone());

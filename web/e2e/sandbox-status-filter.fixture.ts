@@ -6,6 +6,7 @@ export class LocalSandboxFilters {
   readonly boundary = new LocalStartup();
   viewer = 'local-owner';
   paginated = true;
+  ownedAccess = false;
   readonly writes: string[] = [];
   readonly lists: URL[] = [];
   readonly sandboxes: SandboxDetail[] = (
@@ -38,6 +39,8 @@ export class LocalSandboxFilters {
       const url = new URL(request.url());
       if (url.origin !== baseURL) return route.fallback();
       const reply = (json: unknown) => route.fulfill({ json });
+      if (url.pathname === '/auth/connections/check' && request.method() === 'POST')
+        return reply({ owner: this.viewer, ready: true, checked_at: localTime, services: [] });
       if (request.method() !== 'GET' && /^\/(api|auth)\//.test(url.pathname)) {
         this.writes.push(`${request.method()} ${url.pathname}`);
         return route.fulfill({ status: 500, json: { code: 'unexpected_write' } });
@@ -79,7 +82,7 @@ export class LocalSandboxFilters {
       )
         return reply({
           capabilities: ['view_details'],
-          owner: { kind: 'person', is_current_person: false },
+          owner: { kind: 'person', is_current_person: this.ownedAccess },
           revalidate_at: null,
           policy_revision: 1,
         });

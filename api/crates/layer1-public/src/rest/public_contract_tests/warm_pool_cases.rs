@@ -23,6 +23,18 @@ fn view() -> WarmPoolView {
         status: "pending".into(),
         resource_name: None,
         error: None,
+        machine: false,
+    }
+}
+
+/// The deployment-seeded shared desktop pool listed beside an Agent pool.
+fn desktop_view() -> WarmPoolView {
+    WarmPoolView {
+        id: "wp_contract_desktop".into(),
+        config_sha256: "e".repeat(64),
+        image: format!("registry/desktop@sha256:{}", "b".repeat(64)),
+        machine: true,
+        ..view()
     }
 }
 
@@ -36,12 +48,13 @@ impl Pools {
 impl WarmPoolAdministration for Pools {
     async fn list(&self, _: &Caller) -> Result<WarmPoolList, WarmPoolError> {
         self.result(WarmPoolList {
-            items: vec![view()],
+            items: vec![view(), desktop_view()],
             default_image: view().image,
             default_cpu_millis: 1000,
             default_memory_mib: 1024,
             default_config_sha256: Some("d".repeat(64)),
             available: true,
+            machine_image: Some(desktop_view().image),
         })
     }
 

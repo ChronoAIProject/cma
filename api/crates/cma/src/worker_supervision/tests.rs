@@ -7,6 +7,78 @@ async fn settle() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn startup_stall_recovers_before_any_scheduler_activity() {
+    for after_exit in [false, true] {
+        let activity = Workers::new().get("agents");
+        let (stop, signal) = watch::channel(false);
+        let turn = Arc::new(tokio::sync::Notify::new());
+        let allow_turn = turn.clone();
+        let stalled_attempt = if after_exit { 2 } else { 1 };
+        let worker = spawn(
+            0,
+            activity.clone(),
+            signal,
+            move |attempt, activity, shutdown| {
+                let turn = allow_turn.clone();
+                Box::pin(async move {
+                    *attempt += 1;
+                    if *attempt < stalled_attempt {
+                        activity.scheduled();
+                        activity.waiting(WATCH_INTERVAL, "idle_scan");
+                        return;
+                    }
+                    if *attempt == stalled_attempt {
+                        std::future::pending::<()>().await;
+                    }
+                    activity.waiting(WATCH_INTERVAL, "idle_scan");
+                    turn.notified().await;
+                    activity.scheduled();
+                    activity.waiting(WATCH_INTERVAL, "idle_scan");
+                    crate::shutdown::signalled(shutdown).await;
+                })
+            },
+            |_| Box::pin(async {}),
+        );
+        settle().await;
+        if after_exit {
+            assert_eq!(activity.snapshot().state, "backoff");
+            tokio::time::advance(WATCH_INTERVAL).await;
+            settle().await;
+        }
+        let starting = activity.snapshot();
+        assert_eq!(starting.state, "starting");
+        assert_eq!(starting.waiting, "startup");
+        assert_eq!(starting.expected_wake_in_ms, Some(0));
+        assert_eq!(starting.activity_age_ms, None);
+        assert!(!starting.available());
+
+        tokio::time::advance(LOOP_GRACE - WATCH_INTERVAL).await;
+        settle().await;
+        assert_eq!(activity.snapshot().state, "starting");
+        tokio::time::advance(WATCH_INTERVAL).await;
+        settle().await;
+        assert_eq!(activity.snapshot().state, "backoff");
+        assert!(!activity.snapshot().available());
+
+        tokio::time::advance(if after_exit {
+            2 * WATCH_INTERVAL
+        } else {
+            WATCH_INTERVAL
+        })
+        .await;
+        settle().await;
+        let waiting = activity.snapshot();
+        assert_eq!(waiting.phase, "scheduling");
+        assert!(!waiting.available(), "registering a wait is not a turn");
+        turn.notify_one();
+        settle().await;
+        assert!(activity.snapshot().available());
+        stop.send(true).unwrap();
+        worker.await.unwrap();
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn suspended_scheduling_future_recovers_without_cancelling_or_replaying_children() {
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     struct Dropped(Arc<AtomicBool>);

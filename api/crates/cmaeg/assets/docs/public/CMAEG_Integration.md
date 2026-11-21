@@ -97,7 +97,10 @@ they do not load or decrypt the complete snapshots. No client polling is require
 
 Activity names the source, actor, source conversation/thread, selected consumer,
 provider and provider conversation. Consumer display names and native agent IDs
-are present only when recorded authority supplies them. `occurred_at` is the
+are present only when recorded authority supplies them. An optional
+`execution_reference` identifies the executor for that response through a
+verified provider receipt. It is independent of the native provider Agent ID
+and any worker that delivered the reply. `occurred_at` is the
 normalized event timestamp: the source timestamp when supplied, or the gateway
 time at normalization for custom CloudEvents without `time`. The fallback leaves
 the original CloudEvent's `time` absent; `occurred_at` alone does not establish

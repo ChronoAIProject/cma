@@ -6,6 +6,7 @@ import {
   IconPlayOutline16,
   IconPlusOutline16,
   IconDownloadOutline16,
+  IconDataOutline16,
   IconStopFill16,
   IconTrashOutline16,
 } from '../ui/icons';
@@ -100,11 +101,25 @@ export function workspaceActions(
   return actions;
 }
 
+export interface AgentActionContext {
+  readonly sandbox?: SandboxSummary;
+  readonly viewerId?: string;
+  readonly stale?: boolean;
+  readonly busy?: boolean;
+}
+
+export const OPEN_SANDBOX_TO_RESUME = 'open_sandbox_to_resume';
+const ACTION_BUSY = 'Another action is still being confirmed.';
+const REQUIRES_ACTIVE_SANDBOX = 'Available when the Sandbox is active.';
+
 export function agentActions(
   status: AgentStatus,
   permissions: TreePermissions,
-  runtimeAvailable = true,
+  context: AgentActionContext,
 ): TreeRowAction[] {
+  const { sandbox, viewerId, stale, busy } = context;
+  const runtimeAvailable =
+    !busy && !stale && sandbox !== undefined && sandboxChildrenAvailable(sandbox);
   const actions: TreeRowAction[] = [];
   if (permissions.stopAgent)
     actions.push({
@@ -114,21 +129,43 @@ export function agentActions(
       disabled:
         !runtimeAvailable ||
         !['starting', 'ready', 'working', 'waiting_approval', 'paused'].includes(status),
-      reason: !runtimeAvailable ? 'Available when the Sandbox is active.' : undefined,
+      reason: busy ? ACTION_BUSY : !runtimeAvailable ? REQUIRES_ACTIVE_SANDBOX : undefined,
     });
-  if (permissions.deleteAgent)
+  if (permissions.deleteAgent) {
+    const terminal = status === 'stopped' || status === 'failed';
+    const paused = terminal && sandbox?.status === 'paused' && !sandbox.lifecycle?.operation;
+    const reason =
+      agentDeletionBlock(context) ??
+      (paused
+        ? 'Resume the Sandbox before deleting this Agent and its Worktree.'
+        : !runtimeAvailable
+          ? REQUIRES_ACTIVE_SANDBOX
+          : !terminal
+            ? 'Stop this Agent before deleting it and its Worktree.'
+            : undefined);
+    if (
+      paused &&
+      sandbox.lifecycle &&
+      !stale &&
+      !busy &&
+      viewerId !== undefined &&
+      sandbox.owner === viewerId
+    )
+      actions.push({
+        id: OPEN_SANDBOX_TO_RESUME,
+        label: 'Open Sandbox to resume',
+        icon: <IconDataOutline16 />,
+        route: { kind: 'sandbox', sandboxId: sandbox.id },
+      });
     actions.push({
       id: 'delete_agent',
       label: 'Delete',
       icon: <IconTrashOutline16 />,
       danger: true,
-      disabled: !runtimeAvailable || !['stopped', 'failed'].includes(status),
-      reason: !runtimeAvailable
-        ? 'Available when the Sandbox is active.'
-        : !['stopped', 'failed'].includes(status)
-          ? 'Stop this Agent before deleting it and its Worktree.'
-          : undefined,
+      disabled: reason !== undefined,
+      reason,
     });
+  }
   if (permissions.exportHistory) {
     actions.push({
       id: 'export_retained_conversation',
@@ -146,4 +183,14 @@ export function agentActions(
     });
   }
   return actions;
+}
+
+function agentDeletionBlock({ sandbox, stale, busy }: AgentActionContext): string | undefined {
+  if (stale || sandbox === undefined)
+    return 'Sandbox status is unavailable. Refresh and try again.';
+  if (sandbox.status === 'retiring') return 'The Sandbox is being deleted.';
+  if (sandbox.status === 'retired') return 'The Sandbox has been deleted.';
+  if (sandbox.status === 'reviving' || sandbox.lifecycle?.operation?.purpose === 'revive')
+    return 'Wait for the Sandbox to finish resuming.';
+  if (busy) return ACTION_BUSY;
 }

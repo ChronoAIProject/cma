@@ -14,6 +14,9 @@ pub struct DeliveryCheckpoint {
     pub effect_hash: String,
     pub terminal: bool,
     pub status: DeliveryStatus,
+    /// Verified response-scoped evidence remains available after cursor acknowledgement.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) execution_attribution: Option<crate::activity::ExecutionAttribution>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub custom: Option<super::CustomCheckpoint>,
 }
