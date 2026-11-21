@@ -93,7 +93,8 @@ async fn a_second_store_refuses_every_fresh_resource_and_message_with_metering_o
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn continuation_resource_steps_and_exact_replays_do_not_write_hot_settings() {
+async fn continuation_sandbox_fences_once_while_replay_and_child_steps_preserve_settings_and_audit()
+{
     let (client, name) = database("operator_continuation").await;
     let store = MongoSandboxStore::open(&client, &name).await.unwrap();
     let mut parent = active_sandbox("sbx_operator_children");
@@ -103,11 +104,18 @@ async fn continuation_resource_steps_and_exact_replays_do_not_write_hot_settings
     ready.profile.digest = layer2_core::profiles::content_digest(&ready.profile.content).unwrap();
     store.create_workspace(ready.clone()).await.unwrap();
     stop(&client, &name).await;
-    let before = store
-        .budget_settings
-        .find_one(doc! {"_id": "platform"})
-        .await
+    let (mut expected_settings, expected_audit) = policy_snapshot(&client, &name).await;
+    assert_eq!(
+        expected_settings.len(),
+        2,
+        "platform and operator stop history"
+    );
+    assert_eq!(expected_audit.len(), 1, "operator stop audit");
+    let platform = expected_settings
+        .iter_mut()
+        .find(|row| row.get_str("_id") == Ok("platform"))
         .unwrap();
+    assert_eq!(platform.insert("admission_policy_fence", 1_i64), None);
     let mut sandbox = provisioning_sandbox("sbx_operator_continued");
     sandbox.name = "continued".into();
     sandbox.profile.digest =
@@ -127,9 +135,12 @@ async fn continuation_resource_steps_and_exact_replays_do_not_write_hot_settings
     let SandboxAdmissionResult::Created(created) = first else {
         panic!("new continuation expected")
     };
+    let after_sandbox = policy_snapshot(&client, &name).await;
+    assert_eq!(after_sandbox, (expected_settings, expected_audit));
     assert!(
         matches!(store.admit_sandbox(admission).await.unwrap(), SandboxAdmissionResult::Existing(existing) if existing.id == created.id)
     );
+    assert_eq!(policy_snapshot(&client, &name).await, after_sandbox);
     let mut work = workspace_admission(workspace(&parent, "wks_operator_continued", "continued"));
     work.kind = layer2_core::sandbox::store::WorkspaceAdmissionKind::Trigger;
     work.workspace.origin = layer2_core::sandbox::WorkspaceOrigin::Trigger {
@@ -138,6 +149,7 @@ async fn continuation_resource_steps_and_exact_replays_do_not_write_hot_settings
     work.workspace.profile.digest =
         layer2_core::profiles::content_digest(&work.workspace.profile.content).unwrap();
     assert!(store.admit_workspace(work).await.is_ok());
+    assert_eq!(policy_snapshot(&client, &name).await, after_sandbox);
     let mut child = agent_admission(&ready, "operator_continued", "agt_operator_continued");
     child.origin = layer2_core::sandbox::AgentOrigin::Trigger {
         trigger_id: "trigger".into(),
@@ -145,15 +157,31 @@ async fn continuation_resource_steps_and_exact_replays_do_not_write_hot_settings
     };
     child.profile.digest = layer2_core::profiles::content_digest(&child.profile.content).unwrap();
     assert!(store.admit_agent(child).await.is_ok());
-    assert_eq!(
-        store
-            .budget_settings
-            .find_one(doc! {"_id": "platform"})
-            .await
-            .unwrap(),
-        before
-    );
+    assert_eq!(policy_snapshot(&client, &name).await, after_sandbox);
     client.database(&name).drop().await.unwrap();
+}
+
+async fn policy_snapshot(client: &Client, name: &str) -> (Vec<Document>, Vec<Document>) {
+    let database = client.database(name);
+    let settings = database
+        .collection::<Document>("platform_settings")
+        .find(doc! {})
+        .sort(doc! {"_id": 1})
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    let audit = database
+        .collection::<Document>("activity")
+        .find(doc! {})
+        .sort(doc! {"_id": 1})
+        .await
+        .unwrap()
+        .try_collect()
+        .await
+        .unwrap();
+    (settings, audit)
 }
 
 #[tokio::test]
