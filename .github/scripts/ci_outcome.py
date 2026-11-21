@@ -54,6 +54,7 @@ LINES = {
     "component-report": "FAIL component={component} reason={code}",
     "cache-withheld": "WITHHELD build-cache reason={code}",
     "release-plan": "FAIL {subject} reason={code}",
+    "scan-review": "FAIL {subject} reason={code}",
 }
 DEFAULT_LINE = "FAIL {subject} reason={code}"
 UNAVAILABLE = {"title": "Explanation unavailable", "cause": "unknown",

@@ -1333,6 +1333,24 @@
           "next": "Re-run this workflow or wait for the next develop push; planning continues from the saved revisions. If it repeats, an operator can advance CMA_CD_ADOPTION_SHA to the first merge after the last fully deployed run."
         }
       }
+    },
+    "scan-review": {
+      "title": "Scanner bundle not accepted",
+      "effect": "Nothing. No image was built, published or deployed by this run.",
+      "codes": {
+        "unreviewed": {
+          "title": "Scanner bundle not reviewed by the controller",
+          "meaning": "This checkout scans with a bundle (the SCAN-REVIEW line names it) that the pinned deployment controller does not list in REVIEWED_SCANS, so every deployment would be refused.",
+          "cause": "operator",
+          "next": "Merge the infrastructure repository's REVIEWED_SCANS entry for this bundle after its independent review, then re-run this workflow."
+        },
+        "unreadable": {
+          "title": "Controller scan policy unreadable",
+          "meaning": "The deployment controller's reviewed scanner set could not be read or parsed at the pinned infrastructure revision.",
+          "cause": "unknown",
+          "next": "Re-run the workflow; if it repeats, check the infrastructure reader token and the controller's reviewed_scan.py declaration."
+        }
+      }
     }
   }
 }

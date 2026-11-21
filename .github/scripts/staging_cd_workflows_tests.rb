@@ -36,9 +36,18 @@ class StagingWorkflowTest < Minitest::Test
     %w[plan allocate].each { |id| refute jobs.fetch(id).key?('concurrency'), "#{id} must accept every merge" }
     refute jobs.fetch('plan').key?('needs')
     assert_equal 'plan', jobs.fetch('allocate').fetch('needs')
+    # Releases also wait for the scanner-review preflight. It needs only
+    # allocation and holds no lock, so a new push still never waits on a build.
+    assert_equal 'allocate', jobs.fetch('infrastructure').fetch('needs')
+    refute jobs.fetch('infrastructure').key?('concurrency')
     %w[web am eg runtime runtime_omarchy].each do |component|
-      assert_equal 'allocate', jobs.fetch("release_#{component}").fetch('needs')
+      assert_equal %w[allocate infrastructure], jobs.fetch("release_#{component}").fetch('needs')
     end
+    review = jobs.fetch('infrastructure').fetch('steps').index { |step| step['run'].to_s.include?('staging_cd_scan_review.py') }
+    resolve = jobs.fetch('infrastructure').fetch('steps').index { |step| step['id'] == 'private' }
+    refute_nil review
+    assert_operator resolve, :<, review
+    assert_equal '${{ steps.private.outputs.revision }}', jobs['infrastructure']['steps'][review].dig('env', 'CD_INFRA_REVISION')
     workflow('staging-release').fetch('jobs').each_value { |job| refute job.key?('concurrency') }
     refute jobs['allocate']['steps'].any? { |step| step['run'].to_s.match?(/buildx|skopeo|deploy\.py/) }
   end
@@ -199,7 +208,7 @@ class StagingWorkflowTest < Minitest::Test
       id = component.tr('-', '_')
       publisher = jobs.fetch("release_#{id}")
       promote = jobs.fetch("promote_#{id}")
-      assert_equal 'allocate', publisher['needs']
+      assert_equal %w[allocate infrastructure], publisher['needs']
       assert_equal './.github/workflows/staging-release.yml', publisher['uses']
       assert_equal component, publisher.dig('with', 'component')
       assert_equal "Release #{component}", publisher['name'] # detector-cache producer identity
