@@ -9,6 +9,8 @@ REASONS = frozenset({
     "image-version", "image-identity", "baseline", "readiness", "transport", "acceptance",
     "schema", "fence", "configuration", "publication", "internal-error", "interrupted",
     "preflight",
+    # chrono-cd stored a generation but never applied it; an operator must apply it.
+    "apply-abandoned",
 })
 
 
