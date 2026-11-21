@@ -4,7 +4,7 @@ use crate::store::agent_log_telemetry::ScanCaller;
 use layer2_core::sandbox::store::{
     agent_cleanup_capacity_retry, validate_agent_cleanup_capacity_log_with_retry,
     validate_agent_work_mutation, validate_agent_work_mutation_with_sandbox, AgentWorkMutation,
-    SandboxStoreError,
+    AgentWorkPublication, AgentWorkPublicationParents, SandboxStoreError,
 };
 use layer2_core::sandbox::{
     Agent, AgentLogEntry, AgentStatus, AgentWorkStep, Sandbox, SandboxEvent, Worktree,
@@ -25,6 +25,7 @@ use super::worktrees::{read_worktree, worktree_replacement_fields};
 
 mod contention;
 mod persistence;
+mod rebuild_parents;
 use persistence::{advance_agent, advance_worktree};
 mod prepared_replay;
 #[cfg(test)]
@@ -55,6 +56,7 @@ enum ApplyError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
     PreparedIneligible,
+    StaleProposal,
 }
 
 impl From<TransactionEventError> for ApplyError {
@@ -84,6 +86,14 @@ pub(super) async fn commit_agent_work(
         .map(|_| ())
 }
 
+pub(super) async fn try_publish_agent_work(
+    store: &MongoSandboxStore,
+    mutation: AgentWorkMutation,
+    parents: AgentWorkPublicationParents,
+) -> Result<AgentWorkPublication, SandboxStoreError> {
+    publication_transaction::try_publish(store, mutation, parents).await
+}
+
 pub(super) async fn commit_prepared_agent_open_ready(
     store: &MongoSandboxStore,
     mutation: AgentWorkMutation,
@@ -104,6 +114,7 @@ async fn apply_publication(
         None,
         None,
         &mut publication_history::AttemptHistory::default(),
+        None,
         scope,
     )
     .await
@@ -124,6 +135,7 @@ async fn apply_publication_observed(
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
     repeated_marker: Option<&AgentLogEntry>,
     history_cache: &mut publication_history::AttemptHistory,
+    rebuild_parents: Option<&AgentWorkPublicationParents>,
     mut scope: TransactionScope<'_>,
 ) -> Result<PublicationReceipt, ApplyError> {
     let current_row = scope
@@ -132,6 +144,12 @@ async fn apply_publication_observed(
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
+    if let Some(parents) = rebuild_parents {
+        if current.revision != mutation.expected_agent_revision {
+            return Err(ApplyError::StaleProposal);
+        }
+        rebuild_parents::fence(store, &current, mutation, parents, &mut scope).await?;
+    }
     let segmented = if super::agent_log_segments::read_format(&current_row)
         .map_err(ApplyError::Domain)?
         .is_some()

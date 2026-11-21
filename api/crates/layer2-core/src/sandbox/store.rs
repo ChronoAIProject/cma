@@ -102,6 +102,7 @@ pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
     AgentConnectionRecoveryRequest, AgentCreateAdmission, AgentRetryObservation, AgentWorkMutation,
+    AgentWorkPublication, AgentWorkPublicationLineage, AgentWorkPublicationParents,
     AgentWorkerStore, StartupWorkFilter, VersionedWorktree,
 };
 pub use agent_sign_in::apply_agent_sign_in;

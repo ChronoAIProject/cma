@@ -15,9 +15,10 @@ mod parent_wake_tests;
 
 mod claims;
 mod execution;
+mod lifecycle_publication;
 
-struct BootstrapHarness {
-    harness: Harness,
+struct BootstrapHarness<S = InMemorySandboxStore> {
+    harness: Harness<S>,
     ready_parent: Sandbox,
     ready_workspace: Workspace,
 }
@@ -28,6 +29,12 @@ impl BootstrapHarness {
     }
 
     async fn with_readiness(readiness: Option<Arc<tokio::sync::Notify>>) -> Self {
+        Self::with_store(Arc::new(InMemorySandboxStore::default()), readiness).await
+    }
+}
+
+impl<S: FixtureStore> BootstrapHarness<S> {
+    async fn with_store(store: Arc<S>, readiness: Option<Arc<tokio::sync::Notify>>) -> Self {
         let original = Harness::new(Arc::new(EmptyAgentSkillResolver)).await;
         let mut ready_parent = original
             .store
@@ -54,7 +61,6 @@ impl BootstrapHarness {
         parent.lifecycle.runtime_generation_high_water = 0;
         parent.work =
             SandboxWorkState::new(SandboxWorkStep::ProvisionRuntime, rfc3339_at(original.now));
-        let store = Arc::new(InMemorySandboxStore::default());
         store
             .admit_sandbox(
                 SandboxAdmission::new(
@@ -157,6 +163,19 @@ impl BootstrapHarness {
 
     async fn ready(&self) {
         let h = &self.harness;
+        // Publishing a ready Workspace requires an installing or active Sandbox.
+        let current = h
+            .store
+            .get_sandbox(&h.workspace.sandbox_id)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut parent = self.ready_parent.clone();
+        parent.revision = current.revision + 1;
+        h.store
+            .save_sandbox(current.revision, parent)
+            .await
+            .unwrap();
         let current = h
             .store
             .get_workspace(&h.workspace.id)
@@ -168,18 +187,6 @@ impl BootstrapHarness {
         workspace.revision = current.revision + 1;
         h.store
             .save_workspace(current.revision, workspace)
-            .await
-            .unwrap();
-        let current = h
-            .store
-            .get_sandbox(&h.workspace.sandbox_id)
-            .await
-            .unwrap()
-            .unwrap();
-        let mut parent = self.ready_parent.clone();
-        parent.revision = current.revision + 1;
-        h.store
-            .save_sandbox(current.revision, parent)
             .await
             .unwrap();
     }
