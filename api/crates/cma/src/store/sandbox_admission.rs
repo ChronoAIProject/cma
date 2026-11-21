@@ -15,6 +15,7 @@ use super::sandbox_events::{event_document, read_event};
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::sandboxes::{admitted_sandbox_document, read_sandbox, read_sandbox_admission_replay};
 
+mod catalogue;
 mod global;
 mod retry;
 
@@ -97,6 +98,7 @@ async fn apply<F>(
     session: &mut mongodb::ClientSession,
     observe: &F,
     wait_for_prepared_lease: bool,
+    retrying: bool,
     catalogue: bool,
 ) -> Result<AdmissionReceipt, AdmissionError>
 where
@@ -140,41 +142,63 @@ where
         ));
     }
     if catalogue {
-        let profile = &admission.sandbox.profile;
-        if matches!(&admission.sandbox.origin, SandboxOrigin::Trigger { .. })
-            || !super::profile_pin_admission::sandbox(
-                &database,
-                profile.id.as_str(),
-                profile.revision,
-                Some(&profile.digest),
-                session,
-            )
-            .await
-            .map_err(AdmissionError::Driver)?
-        {
-            super::profile_pin_admission::frozen::sandbox(&database, &admission.sandbox, session)
-                .await
-                .map_err(AdmissionError::Driver)?
-                .require()
-                .map_err(AdmissionError::Domain)?;
-        }
+        catalogue::admit(&database, &admission.sandbox, session).await?;
     }
+    if retrying
+        && admission.admission_cause() == layer2_core::admission::AdmissionCause::Fresh
+        && super::launch_home_capacity::precheck_fresh_home(
+            &store.budget_settings,
+            &store.sandbox_admissions,
+            &store.sandboxes,
+            store.global_sandbox_limit,
+            &admission.sandbox.owner,
+            session,
+        )
+        .await
+        .map_err(AdmissionError::Driver)?
+        .is_some()
+    {
+        return Err(AdmissionError::Domain(
+            SandboxStoreError::GlobalCapacityReached,
+        ));
+    }
+    let protected =
+        super::settings_barrier::acquire(&store.budget_settings, store.initial_settings, session)
+            .await
+            .map_err(|error| match error {
+                super::settings_barrier::Error::Driver(error) if is_duplicate_key(&error) => {
+                    AdmissionError::Retry(error)
+                }
+                super::settings_barrier::Error::Driver(error) => AdmissionError::Driver(error),
+                super::settings_barrier::Error::Unreadable => AdmissionError::Domain(
+                    SandboxStoreError::Budget(layer2_core::budget::BudgetError::Unavailable),
+                ),
+            })?;
+    let live_limit = admission.live_limit.min(
+        admission
+            .limit_class
+            .current_limit(protected.settings())
+            .map_err(AdmissionError::Domain)?,
+    );
     let live = store
         .sandboxes
         .count_documents(doc! { "owner": owner, "retired_at": Bson::Null })
         .session(&mut *session)
         .await
         .map_err(AdmissionError::Driver)?;
-    if live >= u64::from(admission.live_limit) {
+    if live >= u64::from(live_limit) {
         return Err(AdmissionError::Domain(SandboxStoreError::LimitReached {
-            limit: admission.live_limit,
+            limit: live_limit,
             live: u16::try_from(live).unwrap_or(u16::MAX),
         }));
     }
-    let ceilings = super::budget::require_open_with_ceilings(
-        store,
+    let ceilings = super::budget::require_open_protected(
+        &store.budget_settings,
+        &store.model_budget,
+        &protected,
         super::budget::now_seconds(),
         admission.admission_cause(),
+        store.platform_counter_shards,
         session,
     )
     .await?;

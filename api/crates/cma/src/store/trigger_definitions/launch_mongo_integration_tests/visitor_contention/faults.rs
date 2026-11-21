@@ -13,6 +13,14 @@ struct Observed {
 
 impl Observed {
     async fn new(seed: &Seeded, policy: LaunchAdmissionPolicy) -> Self {
+        use layer2_core::PlatformSettingsStore;
+        // Keep insert failpoints on the quota-day write, after settings bootstrap.
+        crate::store::MongoPlatformSettingsStore::open(&seed.client, &seed.database)
+            .await
+            .unwrap()
+            .replace(0, &Default::default())
+            .await
+            .unwrap();
         let app = format!("visitor-admission-{}", uuid::Uuid::new_v4().simple());
         let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
             .await
