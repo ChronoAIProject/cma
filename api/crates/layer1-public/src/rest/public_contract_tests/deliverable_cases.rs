@@ -28,6 +28,9 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         "foreign",
         "anonymous",
         "unavailable",
+        "task_owner",
+        "task_foreign",
+        "task_anonymous",
     ]
     .contains(&mode));
     let (fixture, access, organization, _) =
@@ -81,7 +84,10 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         .await
         .unwrap();
     let base = AnswerDeliverableService::new(fixture.reads(), artifacts);
-    let service = base.with_documents(documents.clone()).with_files(files);
+    let service = base
+        .with_documents(documents.clone())
+        .with_files(files)
+        .with_task_store(fixture.store.clone());
     let authority = DeliverableAccess {
         caller: &owner.caller,
         context: Some(&owner),
@@ -130,6 +136,19 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let mut agent = fixture.store.get_agent(&agent_id).await.unwrap().unwrap();
     let revision = agent.revision;
     agent.conversation.last_seq = 13;
+    if mode.starts_with("task_") {
+        agent.conversation.observations.task_acceptance = Some(serde_json::from_value(serde_json::json!({
+            "version": 1,
+            "task_id": "cmd_contract_task",
+            "turn_sequence": 10,
+            "verdict": {"status": "needs_attention", "reason": "required_deliverables_missing"},
+            "requirements": [{
+                "id": "required-output", "required": true,
+                "evidence": {"kind": "deliverable", "resource": {"kind": "live_file", "path": "cma/hello world.txt"}}
+            }],
+            "completed_steps": [], "deliveries": {}, "history_incomplete": false
+        })).unwrap());
+    }
     agent.revision += 1;
     fixture.store.save_agent(revision, agent).await.unwrap();
     if mode == "edited" {
@@ -182,11 +201,11 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     }
     let subject = match mode {
         "viewer" | "denied" | "revoked" => "recipient",
-        "foreign" => "foreign",
+        "foreign" | "task_foreign" => "foreign",
         _ => "owner-a",
     };
     let caller = context(subject);
-    if mode == "foreign" {
+    if matches!(mode, "foreign" | "task_foreign") {
         *organization.0.lock().unwrap() = super::super::shared_agent_tests::Reply::Missing;
     }
     Some(Scenario {
@@ -199,7 +218,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         .layer(Extension(crate::DelegatedCredential::new(
             "request-credential".into(),
         ))),
-        subject: (mode != "anonymous").then_some(subject),
+        subject: (!matches!(mode, "anonymous" | "task_anonymous")).then_some(subject),
         authorization: caller.caller.authorization,
         symbols: Default::default(),
     })

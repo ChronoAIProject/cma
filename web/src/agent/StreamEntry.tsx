@@ -16,6 +16,7 @@ import type { Entry } from './timeline';
 import { AnswerDeliverables } from './AnswerDeliverables';
 import { answerProse } from './answerDeliveries';
 import type { ConversationState } from './model';
+import type { TaskAcceptance } from '@cma/client';
 
 function StreamEntryView({
   entry,
@@ -24,6 +25,8 @@ function StreamEntryView({
   onApproval,
   activeRunId,
   planOutcome,
+  taskAcceptance,
+  onTaskDeliveryConfirmed,
   user,
   unknownUserName,
   feedback,
@@ -36,6 +39,8 @@ function StreamEntryView({
   /** Only the active turn can still be running a call. */
   readonly activeRunId?: string;
   readonly planOutcome?: NonNullable<ConversationState['turnOutcomes']>[string];
+  readonly taskAcceptance?: TaskAcceptance;
+  readonly onTaskDeliveryConfirmed?: () => void;
   readonly user?: MessageUser;
   readonly unknownUserName?: string;
   readonly feedback?: MessageFeedbackControls;
@@ -79,7 +84,12 @@ function StreamEntryView({
             <MessageContent content={delivery.content} streaming={message.status === 'streaming'} />
           )}
           {canDeliver && delivery.references ? (
-            <AnswerDeliverables answerId={message.id} references={delivery.references} />
+            <AnswerDeliverables
+              answerId={message.id}
+              references={delivery.references}
+              taskAcceptance={taskAcceptance}
+              onTaskDeliveryConfirmed={onTaskDeliveryConfirmed}
+            />
           ) : null}
           {message.retainedPartial?.loading ? (
             <p className="message__delivery" role="status">
@@ -130,6 +140,11 @@ function StreamEntryView({
         plan={entry.item}
         active={entry.item.runId !== undefined && entry.item.runId === activeRunId}
         outcome={planOutcome}
+        taskAcceptance={
+          taskAcceptance && entry.item.runId === String(taskAcceptance.turn_sequence)
+            ? taskAcceptance
+            : undefined
+        }
       />
     );
   if (entry.kind === 'recovery') {
@@ -188,11 +203,17 @@ export const StreamEntry = memo(StreamEntryView, (previous, next) => {
       previous.user === next.user &&
       previous.unknownUserName === next.unknownUserName &&
       previous.feedback === next.feedback &&
+      previous.taskAcceptance === next.taskAcceptance &&
+      previous.onTaskDeliveryConfirmed === next.onTaskDeliveryConfirmed &&
       previous.continued === next.continued
     );
   if (next.entry.kind === 'tool') return previous.activeRunId === next.activeRunId;
   if (next.entry.kind === 'plan')
-    return previous.activeRunId === next.activeRunId && previous.planOutcome === next.planOutcome;
+    return (
+      previous.activeRunId === next.activeRunId &&
+      previous.planOutcome === next.planOutcome &&
+      previous.taskAcceptance === next.taskAcceptance
+    );
   if (next.entry.kind === 'approval')
     return (
       previous.approvalBusy === next.approvalBusy &&

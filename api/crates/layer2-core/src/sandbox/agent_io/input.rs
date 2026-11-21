@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::super::{AgentOperationError, MAX_AGENT_MESSAGE_BYTES};
+use crate::sandbox::task_acceptance::TaskAcceptanceIntent;
 
 const MAX_CONTENT_ITEMS: usize = 32;
 
@@ -32,12 +33,15 @@ pub enum AgentContent {
 #[serde(deny_unknown_fields)]
 pub struct AgentInput {
     pub content: Vec<AgentContent>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_acceptance: Option<TaskAcceptanceIntent>,
 }
 
 impl AgentInput {
     pub fn text(text: impl Into<String>) -> Self {
         Self {
             content: vec![AgentContent::Text { text: text.into() }],
+            task_acceptance: None,
         }
     }
 
@@ -99,7 +103,17 @@ impl AgentInput {
         if !meaningful {
             return Err(invalid("input must contain content"));
         }
-        Ok(Self { content })
+        if external && self.task_acceptance.is_some() {
+            return Err(invalid("task acceptance requires ordinary Agent input"));
+        }
+        Ok(Self {
+            content,
+            task_acceptance: self
+                .task_acceptance
+                .as_ref()
+                .map(TaskAcceptanceIntent::canonical)
+                .transpose()?,
+        })
     }
 
     /// Current runtime dispatch accepts text. Refuse attachments explicitly;

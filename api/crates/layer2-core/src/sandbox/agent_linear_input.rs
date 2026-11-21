@@ -13,6 +13,7 @@ impl AgentOperationService {
         text: String,
         previous_turn_sequence: Option<u64>,
         metadata: BTreeMap<String, String>,
+        task_acceptance: Option<&crate::sandbox::task_acceptance::TaskAcceptanceIntent>,
     ) -> Result<AgentOperationReceipt, AgentOperationError> {
         self.require_owner_authority(caller)?;
         self.validate_message(&text)?;
@@ -42,7 +43,13 @@ impl AgentOperationService {
                 });
             }
             match self
-                .fence_message(current, text.clone(), parent, metadata.clone())
+                .fence_message(
+                    current,
+                    text.clone(),
+                    parent,
+                    metadata.clone(),
+                    task_acceptance,
+                )
                 .await
             {
                 Ok(prepared) => return self.dispatch_prepared(prepared).await,

@@ -23,6 +23,12 @@ impl From<&Agent> for AgentHierarchySummary {
     fn from(value: &Agent) -> Self {
         Self {
             task_status: super::super::AgentTaskStatus::Unknown,
+            task_acceptance: value
+                .conversation
+                .observations
+                .task_acceptance
+                .as_ref()
+                .map(|task| task.summary()),
             task_started_at: None,
             task_activity_at: None,
             runtime_metadata: (!value.conversation.observations.is_empty())

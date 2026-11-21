@@ -181,6 +181,7 @@ impl AgentCommandService {
         if AnswerContext::from_command(&request.envelope.command)?.is_some()
             && !self.task_experience.allows(&context.caller.subject,
                 crate::sandbox::task_experience::TaskExperienceCapability::SuggestedFollowupAdmission)
+            || !crate::sandbox::task_acceptance::permits_admission(&self.task_experience, context, &request.envelope)
         {
             let existing = self
                 .with_authority_bound(

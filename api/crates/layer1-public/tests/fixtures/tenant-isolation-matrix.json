@@ -128,6 +128,7 @@
   {"operation":"POST /api/v1/agents/{id}/artifacts","positive":"artifact-owner-publish","negative":"artifact-revoked-publication","proof":"contract"},
   {"operation":"POST /api/v1/agents/{id}/attachments","positive":"attachment-success","negative":"attachment-foreign","proof":"probe"},
   {"operation":"POST /api/v1/agents/{id}/browser/control","positive":"browser-control-acquire","negative":"browser-control-post-foreign","proof":"contract"},
+  {"operation":"POST /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation","positive":"task-delivery-confirmation-owner","negative":"task-delivery-confirmation-foreign","proof":"contract"},
   {"operation":"POST /api/v1/agents/{id}/deliverable-references","positive":"deliverables-owner-describe-document","negative":"deliverables-revoked-describe-document","proof":"contract"},
   {"operation":"POST /api/v1/agents/{id}/files","positive":"filesystem-create-success","negative":"filesystem-write-foreign","proof":"contract"},
   {"operation":"POST /api/v1/agents/{id}/input","positive":"agent-runtime-input","negative":"agent-input-unavailable-denied","proof":"probe"},

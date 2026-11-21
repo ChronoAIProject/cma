@@ -156,6 +156,8 @@ pub struct AgentHierarchySummary {
     #[serde(default)]
     pub task_status: super::AgentTaskStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_acceptance: Option<super::task_acceptance::TaskAcceptanceSummary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub owner_title: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub runtime_metadata: Option<super::AgentRuntimeMetadata>,

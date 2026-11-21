@@ -1,6 +1,7 @@
 import { useRetainedOutput, type RetainedOutputAccess } from './useRetainedOutput';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import type { TaskAcceptance } from '@cma/client';
 import type { ApprovalDecision } from './controller';
 import type { ConversationState } from './conversation';
 import { StreamEntry } from './StreamEntry';
@@ -23,6 +24,8 @@ import { messageStreamKey } from './streamTimeline';
 
 interface MessageStreamProps {
   readonly conversation: ConversationState;
+  readonly taskAcceptance?: TaskAcceptance;
+  readonly onTaskDeliveryConfirmed?: () => void;
   readonly retainedOutput?: RetainedOutputAccess;
   readonly approvalBusy?: boolean;
   readonly approvalReadOnly?: boolean;
@@ -45,6 +48,8 @@ interface MessageStreamProps {
 
 export function MessageStream({
   conversation,
+  taskAcceptance,
+  onTaskDeliveryConfirmed,
   retainedOutput,
   approvalBusy = false,
   approvalReadOnly = false,
@@ -165,6 +170,8 @@ export function MessageStream({
               approvalReadOnly={approvalReadOnly}
               onApproval={onApproval}
               activeRunId={conversation.activeRunId}
+              taskAcceptance={taskAcceptance}
+              onTaskDeliveryConfirmed={onTaskDeliveryConfirmed}
               planOutcome={
                 entry.kind === 'plan' && entry.item.runId !== undefined
                   ? conversation.turnOutcomes?.[entry.item.runId]

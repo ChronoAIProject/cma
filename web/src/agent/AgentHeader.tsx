@@ -4,6 +4,9 @@ import type { AgentStatus } from '../api/types';
 import { statusLabel } from '../vocabulary/status';
 import { activityWords, type ActivityStatus } from './activityStatus';
 import { Button } from '../ui/Button';
+import { Badge } from '../ui/Badge';
+import type { TaskAcceptance } from '@cma/client';
+import { taskAcceptanceLabel, taskAcceptanceReason } from './taskAcceptance';
 import { Menu, type MenuEntry } from '../ui/Menu';
 import type { Crumb } from '../ui/PageHeader';
 import {
@@ -23,6 +26,7 @@ export function AgentHeader({
   title,
   status,
   activityStatus,
+  taskAcceptance,
   headingRef,
   detailsOpen,
   detailsUnavailable = false,
@@ -40,6 +44,7 @@ export function AgentHeader({
   readonly title: string;
   readonly status: AgentStatus;
   readonly activityStatus?: ActivityStatus;
+  readonly taskAcceptance?: TaskAcceptance;
   readonly breadcrumb: readonly Crumb[];
   readonly branch?: string;
   readonly headingRef?: Ref<HTMLHeadingElement>;
@@ -59,6 +64,8 @@ export function AgentHeader({
   readonly onViewDeletionStatus?: () => void;
   readonly onReviewEnvironment?: () => void;
 }) {
+  const acceptanceLabel = status === 'ready' ? taskAcceptanceLabel(taskAcceptance) : undefined;
+  const acceptanceReason = taskAcceptanceReason(taskAcceptance);
   const [open, setOpen] = useState(false);
   const sidebar = useContext(SidebarContext);
   const remove = moreActions.find((item) => item.id === 'delete_agent');
@@ -131,6 +138,11 @@ export function AgentHeader({
             <IconChevronDownOutline14 />
           </button>
         </h1>
+        {acceptanceLabel ? (
+          <span title={acceptanceReason}>
+            <Badge tone={acceptanceReason ? 'warning' : 'neutral'}>{acceptanceLabel}</Badge>
+          </span>
+        ) : null}
       </div>
       <div className="agent-toolbar__actions">
         {onShare ? (
