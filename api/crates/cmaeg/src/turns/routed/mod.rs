@@ -199,3 +199,4 @@ mod compatibility_execution_tests;
 
 #[cfg(test)]
 mod compatibility_mongo_tests;
+mod execution_activity;

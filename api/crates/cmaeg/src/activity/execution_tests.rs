@@ -1,6 +1,9 @@
 use super::*;
 use crate::activity::ExecutionAttribution;
 
+#[path = "routed_execution_tests.rs"]
+mod routed;
+
 fn change(response: &str, reference: &str) -> Change {
     Change::execution_attribution(
         "default",

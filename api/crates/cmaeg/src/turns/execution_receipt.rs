@@ -7,6 +7,7 @@ use crate::{
     providers::ResponsesEvent,
 };
 use serde_json::Value;
+use std::{collections::BTreeMap, sync::Arc};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExecutionScope {
@@ -31,6 +32,36 @@ pub trait ExecutionReceiptVerifier: Send + Sync {
     fn verify(&self, scope: &ExecutionScope, terminal: &Value) -> Option<ExecutionReceipt>;
 }
 
+#[derive(Default)]
+pub struct ExecutionVerifiers {
+    enabled: bool,
+    providers: BTreeMap<String, Arc<dyn ExecutionReceiptVerifier>>,
+}
+
+impl ExecutionVerifiers {
+    pub fn new(enabled: bool) -> Self {
+        Self {
+            enabled,
+            providers: BTreeMap::new(),
+        }
+    }
+
+    pub fn with_provider(
+        mut self,
+        provider: cmaeg_core::ids::ProviderSlug,
+        verifier: Arc<dyn ExecutionReceiptVerifier>,
+    ) -> Self {
+        if self.enabled {
+            self.providers.insert(provider.to_string(), verifier);
+        }
+        self
+    }
+
+    pub(crate) fn verifier(&self, provider: &str) -> Option<&dyn ExecutionReceiptVerifier> {
+        self.providers.get(provider).map(Arc::as_ref)
+    }
+}
+
 pub(super) fn observe(
     verifier: Option<&dyn ExecutionReceiptVerifier>,
     turn: &LaunchRequest,
@@ -40,16 +71,6 @@ pub(super) fn observe(
 ) -> Option<Change> {
     let verifier = verifier?;
     let admitted_response = admitted_response?;
-    let ResponsesEvent::Completed {
-        response,
-        matching_response_identity: true,
-    } = event
-    else {
-        return None;
-    };
-    if response.get("id")?.as_str()? != admitted_response {
-        return None;
-    }
     let scope = ExecutionScope {
         provider: provider.into(),
         channel_record_id: turn.channel.definition.record_id.to_string(),
@@ -61,12 +82,43 @@ pub(super) fn observe(
             .into(),
         response_id: admitted_response.into(),
     };
-    let receipt = verifier.verify(&scope, response)?;
-    if receipt.scope != scope {
+    verified_change(verifier, &scope, event)
+}
+
+pub(super) fn verified_change(
+    verifier: &dyn ExecutionReceiptVerifier,
+    scope: &ExecutionScope,
+    event: &ResponsesEvent,
+) -> Option<Change> {
+    let ResponsesEvent::Completed {
+        response,
+        matching_response_identity: true,
+    } = event
+    else {
+        return None;
+    };
+    if response.get("id")?.as_str()? != scope.response_id {
         return None;
     }
-    let attribution =
-        ExecutionAttribution::new(scope.provider, scope.response_id, receipt.reference)?;
+    // The routed frame hash excludes negotiated trace annotations.
+    // A verifier may only use evidence covered by execution identity.
+    let mut without_trace;
+    let response = if response.get("nyxid_trace").is_some() {
+        without_trace = response.clone();
+        without_trace.as_object_mut()?.remove("nyxid_trace");
+        &without_trace
+    } else {
+        response
+    };
+    let receipt = verifier.verify(scope, response)?;
+    if receipt.scope != *scope {
+        return None;
+    }
+    let attribution = ExecutionAttribution::new(
+        scope.provider.clone(),
+        scope.response_id.clone(),
+        receipt.reference,
+    )?;
     Some(Change::execution_attribution(
         &scope.consumer_id,
         attribution,

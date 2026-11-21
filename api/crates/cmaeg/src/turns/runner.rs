@@ -1,7 +1,6 @@
 //! Acceptance budget is independent of the detached, bounded provider consumer.
 use super::{
     consume, custom_replay,
-    execution_receipt::ExecutionReceiptVerifier,
     outcomes::TurnOutcome,
     preparation,
     preparation::has_attachments,
@@ -25,7 +24,6 @@ use cmaeg_core::{
 use futures_util::future::BoxFuture;
 use ring::rand::{SecureRandom, SystemRandom};
 use std::{
-    collections::BTreeMap,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -52,7 +50,6 @@ pub struct TurnRunner {
     media: Option<Arc<MediaService>>,
     prepare: PrepareConfig,
     activity: Arc<dyn super::observer::ActivityObserver>,
-    execution_verifiers: BTreeMap<String, Arc<dyn ExecutionReceiptVerifier>>,
 }
 impl TurnRunner {
     pub fn new(
@@ -71,22 +68,11 @@ impl TurnRunner {
             media: None,
             prepare: PrepareConfig::default(),
             activity: Arc::new(super::observer::NoopObserver),
-            execution_verifiers: BTreeMap::new(),
         }
     }
     /// Observe durable dispatch facts through the composition's shared observer.
     pub fn with_activity(mut self, activity: Arc<dyn super::observer::ActivityObserver>) -> Self {
         self.activity = activity;
-        self
-    }
-    pub fn with_execution_receipt_verifier(
-        mut self,
-        provider: String,
-        verifier: Arc<dyn ExecutionReceiptVerifier>,
-    ) -> Self {
-        if self.config.provider_execution_attribution_enabled {
-            self.execution_verifiers.insert(provider, verifier);
-        }
         self
     }
     /// Prepare media turns with `media` under `prepare`'s bounds.
@@ -186,7 +172,7 @@ impl TurnRunner {
                 &provider,
                 &*self.delivery,
                 self.activity.as_ref(),
-                self.execution_verifiers.get(&provider).map(Arc::as_ref),
+                self.providers.execution_verifiers.verifier(&provider),
                 &mut admitted,
             )
             .await

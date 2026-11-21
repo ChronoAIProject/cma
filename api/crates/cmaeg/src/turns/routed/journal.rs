@@ -2,6 +2,7 @@ use super::{model::*, storage};
 use crate::{
     ingress::routing_store::{AdmittedPlan, StoredTarget},
     records::RecordClient,
+    turns::execution_receipt::ExecutionVerifiers,
 };
 use cmaeg_core::seal::MasterKeyRing;
 use std::{
@@ -13,6 +14,7 @@ use std::{
 pub struct Journal {
     pub(super) partitions: Option<crate::replicas::partition::Partitions>,
     pub(super) activity: Option<Arc<crate::activity::ActivityStore>>,
+    pub(super) execution_verifiers: Arc<ExecutionVerifiers>,
     pub(super) records: RecordClient,
     pub(super) keys: Arc<MasterKeyRing>,
     pub(super) clock: Arc<dyn Fn() -> i64 + Send + Sync>,
@@ -37,6 +39,7 @@ impl Journal {
         Self {
             partitions: None,
             activity: None,
+            execution_verifiers: Arc::default(),
             records: records.interactions(),
             keys,
             clock: Arc::new(|| {

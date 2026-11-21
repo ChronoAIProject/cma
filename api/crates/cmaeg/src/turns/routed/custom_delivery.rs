@@ -306,6 +306,7 @@ impl RoutedDelivery {
         self.journal
             .acknowledge_delivery(lease, &frame.response_id, frame.sequence_number)
             .await?;
+        self.journal.observe_execution(plan, target, frame).await;
         Ok(FrameDelivery::Settled {
             cursor: frame.sequence_number,
             receipt: None,
