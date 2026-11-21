@@ -1,10 +1,19 @@
 """Failing test names leave private BuildKit logs only through strict failure patterns."""
 import base64
+import contextlib
+import io
 import json
+import os
+from pathlib import Path
+import subprocess
+import tempfile
 import unittest
+from unittest.mock import patch
 
+import staging_cd_publish as publication
 import staging_cd_test_failures as failures
 from staging_cd_build_progress import summarize
+from staging_cd_receipts_tests import fixture_identity, fixture_receipt
 
 QUALIFICATION = "[runtime-qualification 1/1] RUN --mount=type=bind,source=private-source cp -a /payload/. /"
 STEP = "runtime-qualification 1/1"
@@ -361,6 +370,81 @@ class SanitizationTests(unittest.TestCase):
         huge.add(b"x" * (failures.HEAD + failures.TAIL) * 3)
         self.assertEqual((len(huge.head), len(huge.tail)), (failures.HEAD, failures.TAIL))
         self.assertEqual(huge.text(), "")
+
+
+class AnnotationTests(unittest.TestCase):
+    def test_annotations_print_only_valid_names_and_at_most_ten(self):
+        rows = [{"step": STEP, "file": f"f{n}.test.cjs", "test": f"title {n}"} for n in range(12)]
+        hostile = [{"step": STEP, "test": "x\n::warning::injected"}, {"step": "runtime-tools 1/2", "test": "x"},
+                   {"step": STEP}, {"step": STEP, "test": "x", "error": "private"}, {"step": STEP, "test": 7},
+                   "private", {"step": STEP + "\n::error::injected", "test": "x"}]
+        output = io.StringIO()
+        failures.annotate("runtime", {"failed_tests": hostile + rows}, output)
+        lines = output.getvalue().splitlines()
+        self.assertEqual(lines, [f"::error title=Image test failed::runtime {STEP}: f{n}.test.cjs › title {n}"
+                                 for n in range(3)])
+        output = io.StringIO()
+        failures.annotate("runtime", {"failed_tests": rows + [{"step": STEP, "file": "only.cjs"}]}, output)
+        self.assertEqual(len(output.getvalue().splitlines()), 10)
+        for summary in ({}, {"failed_tests": "private"}, None, {"failed_tests": [{"step": STEP, "test": "x" * 121}]}):
+            output = io.StringIO()
+            failures.annotate("runtime", summary, output)
+            self.assertEqual(output.getvalue(), "")
+        output = io.StringIO()
+        failures.annotate("eg", {"failed_tests": [{"step": "media-self-test 7/7", "file": "voice.ogg"}]}, output)
+        self.assertEqual(output.getvalue(), "::error title=Image test failed::eg media-self-test 7/7: voice.ogg\n")
+
+    def test_publication_annotates_test_names_only_when_it_stopped_in_that_build(self):
+        identity = fixture_identity()
+        reservation = {k: v for k, v in identity.items() if k != "build"}
+        reservation["schema"] = "cma-version-reservation-v1"
+        summary = failed_qualification(stdout=SPEC)
+        expected = [f"::error title=Image test failed::web {STEP}: sample.test.cjs › "
+                    "reopens the original conversation after restart",
+                    f"::error title=Image test failed::web {STEP}: sample.test.cjs › "
+                    "nested failure with <angle> quotes",
+                    f"::error title=Image test failed::web {STEP}: crash.test.cjs",
+                    f"::error title=Image test failed::web {STEP}: timeout.test.cjs › "
+                    "session open overlap stays bounded"]
+        # mode -> (build raises, publish raises, annotations expected)
+        cases = {"stopped-in-build": (True, False, expected), "failed-after-build": (False, True, []),
+                 "published": (False, False, [])}
+        for mode, (build_fails, publish_fails, annotations) in cases.items():
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                env = {"GITHUB_EVENT_NAME": "push", "GITHUB_RUN_ID": "100", "GITHUB_RUN_ATTEMPT": "1",
+                       "RUNNER_TEMP": directory, "CD_COMPONENT": "web",
+                       "CD_RECEIPTS_PATH": str(Path(directory) / "receipts.json"),
+                       "CD_TASKS": json.dumps([{"component": "web", "mode": "publish", "reservation": reservation}])}
+
+                def fake_build(*_args, progress, **_kwargs):
+                    progress.update(summary)
+                    if build_fails:
+                        raise subprocess.CalledProcessError(1, "private build")
+                    return Path(directory) / "image.tar", identity
+
+                def fake_publish(*_args, diagnostics, **_kwargs):
+                    if publish_fails:
+                        diagnostics.mark("scan")
+                        raise OSError("private")
+                    return fixture_receipt()
+
+                output = io.StringIO()
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(patch.dict(os.environ, env, clear=True))
+                    for name in ("event_identity", "Registry", "GitHub", "Reservations", "snapshot"):
+                        stack.enter_context(patch.object(publication, name))
+                    stack.enter_context(patch.object(publication, "identity", return_value=(identity, {}, {})))
+                    stack.enter_context(patch.object(publication, "try_reuse", return_value=None))
+                    stack.enter_context(patch.object(publication, "build", side_effect=fake_build))
+                    stack.enter_context(patch.object(publication, "publish", side_effect=fake_publish))
+                    stack.enter_context(contextlib.redirect_stdout(output))
+                    status = publication.main()
+                text = output.getvalue()
+                self.assertEqual(status, 1 if build_fails or publish_fails else 0)
+                builds = [json.loads(line) for line in text.splitlines() if '"publication-build"' in line]
+                self.assertEqual(builds, [{"event": "publication-build", **summary}])
+                self.assertEqual([line for line in text.splitlines() if "Image test failed" in line], annotations)
+                self.assertNotIn("private", text)
 
 
 if __name__ == "__main__":

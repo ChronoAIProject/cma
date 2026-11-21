@@ -32,6 +32,7 @@ STREAMS = (1, 2)
 
 ANSI = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[@-Z\\-_])")
 DROPPED = re.compile(r"[^A-Za-z0-9 _.,:/()<>=+#-]")
+NAME = re.compile(r"[A-Za-z0-9 _.,:/()<>=+#-]{1,%d}" % MAX_NAME)
 FILE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}")
 STEP = re.compile(r"([A-Za-z0-9][A-Za-z0-9_.-]{0,63}) [1-9][0-9]{0,3}/[1-9][0-9]{0,3}")
 # A whole node test file that failed to load reports its path as the title.
@@ -254,3 +255,25 @@ def failed_tests(raw, failed):
                         return names
     return names
 
+
+def public(row):
+    if not (isinstance(row, dict) and set(row) <= {"step", "file", "test"} and len(row) > 1):
+        return False
+    step = STEP.fullmatch(row["step"]) if isinstance(row.get("step"), str) else None
+    file, test = row.get("file"), row.get("test")
+    return bool(step and step[1] in STAGES
+                and (file is None or isinstance(file, str) and FILE.fullmatch(file) and not secret_like(file))
+                and (test is None or isinstance(test, str) and NAME.fullmatch(test) and "::" not in test
+                     and not secret_like(test)))
+
+
+def annotate(component, summary, stream):
+    """One annotation per failing test of the build where publication stopped."""
+    rows = summary.get("failed_tests") if isinstance(summary, dict) else None
+    if not isinstance(rows, list):
+        return
+    for row in rows[:MAX_NAMES]:
+        if not public(row):
+            continue
+        name = " › ".join(row[key] for key in ("file", "test") if key in row)
+        print(f"::error title=Image test failed::{component} {row['step']}: {name}", file=stream, flush=True)
