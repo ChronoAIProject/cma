@@ -10,10 +10,9 @@ import {
 } from './appearance';
 
 const STORAGE_KEY = 'cma:appearance';
-const LEGACY_STORAGE_KEY = 'chrono-bot:appearance';
 
 /**
- * The two attributes and the boot path — `docs/Web_Style.md` §3.
+ * The two attributes and the boot path — the shared style contracts
  *
  * The palette selects dark on `body[data-ds-dark-theme]` and carries no
  * `prefers-color-scheme` block, so every one of these is load-bearing: the
@@ -59,59 +58,56 @@ afterEach(() => {
 });
 
 describe('stored appearance', () => {
-  it('writes only the canonical key', () => {
+  it('writes the canonical key', () => {
     stubSystem(false);
     setAppearance('dark');
 
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
-    expect(window.localStorage.getItem(LEGACY_STORAGE_KEY)).toBeNull();
   });
 
-  it('migrates a valid historical preference', () => {
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
-
-    expect(storedAppearance()).toBe('dark');
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
-  });
-
-  it('prefers a valid canonical preference when both exist', () => {
+  it('reads a valid canonical preference', () => {
     window.localStorage.setItem(STORAGE_KEY, 'light');
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
 
     expect(storedAppearance()).toBe('light');
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('light');
   });
 
-  it('falls back to valid historical data when canonical data is malformed', () => {
+  it('defaults to dark when canonical data is invalid', () => {
     window.localStorage.setItem(STORAGE_KEY, 'sepia');
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
-
-    expect(storedAppearance()).toBe('dark');
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
-  });
-
-  it('defaults to system when neither spelling contains valid data', () => {
-    window.localStorage.setItem(STORAGE_KEY, 'sepia');
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'midnight');
-
-    expect(storedAppearance()).toBe('system');
-  });
-
-  it('uses a historical preference even when its migration write is blocked', () => {
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
-    vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
-      throw new DOMException('quota', 'QuotaExceededError');
-    });
 
     expect(storedAppearance()).toBe('dark');
   });
 
-  it('defaults to system instead of throwing when reads are blocked', () => {
+  it('does not read another product storage key', () => {
+    window.localStorage.setItem('other-product:appearance', 'dark');
+
+    expect(storedAppearance()).toBe('dark');
+  });
+
+  it('defaults to dark instead of throwing when reads are blocked', () => {
     vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
       throw new DOMException('denied', 'SecurityError');
     });
 
-    expect(storedAppearance()).toBe('system');
+    expect(storedAppearance()).toBe('dark');
+  });
+
+  it('retains a System choice when storage writes are denied and follows OS changes', () => {
+    const system = stubSystem(false);
+    const stop = startAppearance();
+    const write = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('denied', 'SecurityError');
+    });
+    try {
+      setAppearance('system');
+      expect(storedAppearance()).toBe('system');
+      expect(isDark()).toBe(false);
+      system.flip(true);
+      expect(isDark()).toBe(true);
+    } finally {
+      write.mockRestore();
+      setAppearance('dark');
+      stop();
+    }
   });
 });
 
@@ -164,9 +160,12 @@ describe('starting up', () => {
     expect(isDark()).toBe(true);
   });
 
-  it('follows the machine while the choice is system', () => {
+  it('uses the dark platform default until a system choice is explicit', () => {
     const system = stubSystem(false);
     const stop = startAppearance();
+    expect(isDark()).toBe(true);
+
+    setAppearance('system');
     expect(isDark()).toBe(false);
 
     system.flip(true);
@@ -242,48 +241,14 @@ describe('the pre-paint boot script', () => {
     // for most people, wrong for exactly those who expressed a preference.
     setAppearance('dark');
     expect(inline).toContain(STORAGE_KEY);
-    expect(inline).toContain(LEGACY_STORAGE_KEY);
   });
 
-  it('migrates a historical preference before first paint', () => {
-    stubSystem(false);
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
-
-    boot();
-
-    expect(isDark()).toBe(true);
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
-  });
-
-  it('gives a valid canonical preference precedence before first paint', () => {
-    stubSystem(false);
-    window.localStorage.setItem(STORAGE_KEY, 'light');
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
-
-    boot();
-
-    expect(isDark()).toBe(false);
-  });
-
-  it('falls back from malformed canonical data before first paint', () => {
+  it('uses the dark default for an unrecognised preference before first paint', () => {
     stubSystem(false);
     window.localStorage.setItem(STORAGE_KEY, 'sepia');
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
 
     boot();
 
-    expect(isDark()).toBe(true);
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe('dark');
-  });
-
-  it('still applies a historical preference when migration writes are blocked', () => {
-    stubSystem(false);
-    window.localStorage.setItem(LEGACY_STORAGE_KEY, 'dark');
-    vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
-      throw new DOMException('quota', 'QuotaExceededError');
-    });
-
-    expect(() => boot()).not.toThrow();
     expect(isDark()).toBe(true);
   });
 

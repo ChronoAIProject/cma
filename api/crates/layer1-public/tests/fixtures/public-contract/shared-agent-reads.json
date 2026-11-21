@@ -1,0 +1,1232 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "shared-agent-member-detail",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "shared_agent_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "callback_url": "https://cma.example/agents/agt_shared_read",
+          "access": "shared",
+          "id": "agt_shared_read",
+          "status": "ready",
+          "title": "Agent agt_shared_read",
+          "model": "gpt-proof",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "ready_at": "2026-09-05T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-missing-detail",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "shared_agent_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-outage-detail",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "shared_agent_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-revoked-detail",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "shared_agent_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-invalid_context-detail",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "shared_agent_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-no_credential-detail",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "shared_agent_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-member-events",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "shared_agent_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "seq": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "access_redacted"
+              }
+            },
+            {
+              "seq": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "access_redacted"
+              }
+            },
+            {
+              "seq": 3,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 3
+              }
+            },
+            {
+              "seq": 4,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "access_redacted"
+              }
+            },
+            {
+              "seq": 5,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "owner_message",
+                "content": "Please review"
+              }
+            },
+            {
+              "seq": 6,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "agent_message",
+                "content": "Review complete"
+              }
+            },
+            {
+              "seq": 7,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "access_redacted"
+              }
+            },
+            {
+              "seq": 8,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "usage",
+                "input_tokens": 5,
+                "output_tokens": 8,
+                "context_used": 13
+              }
+            },
+            {
+              "seq": 9,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 3,
+                "failure": {
+                  "class": "agent_turn_failed",
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
+                }
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-missing-events",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "shared_agent_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-outage-events",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "shared_agent_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-revoked-events",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "shared_agent_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-invalid_context-events",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "shared_agent_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-no_credential-events",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "shared_agent_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-member-transcript",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "shared_agent_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "through_seq": 9,
+          "turns": [
+            {
+              "turn_sequence": 3,
+              "started_at": "2026-09-05T00:00:00Z",
+              "owner_message": "Please review",
+              "agent_messages": [
+                "Review complete"
+              ],
+              "messages": [
+                {
+                  "sequence": 5,
+                  "role": "user",
+                  "content": "Please review",
+                  "appended_at": "2026-09-05T00:00:00Z"
+                },
+                {
+                  "sequence": 6,
+                  "role": "assistant",
+                  "content": "Review complete",
+                  "appended_at": "2026-09-05T00:00:00Z"
+                }
+              ],
+              "outcome": {
+                "type": "failed",
+                "at": "2026-09-05T00:00:00Z",
+                "failure": {
+                  "class": "agent_turn_failed",
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
+                }
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-missing-transcript",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "shared_agent_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-outage-transcript",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "shared_agent_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-revoked-transcript",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "shared_agent_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-invalid_context-transcript",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "shared_agent_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-no_credential-transcript",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "shared_agent_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-member-usage",
+      "operation": "GET /api/v1/agents/{id}/usage",
+      "scenario": "shared_agent_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "through_seq": 9,
+          "input_tokens": 5,
+          "output_tokens": 8,
+          "context_used": 13
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-missing-usage",
+      "operation": "GET /api/v1/agents/{id}/usage",
+      "scenario": "shared_agent_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-outage-usage",
+      "operation": "GET /api/v1/agents/{id}/usage",
+      "scenario": "shared_agent_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-revoked-usage",
+      "operation": "GET /api/v1/agents/{id}/usage",
+      "scenario": "shared_agent_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-invalid_context-usage",
+      "operation": "GET /api/v1/agents/{id}/usage",
+      "scenario": "shared_agent_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-no_credential-usage",
+      "operation": "GET /api/v1/agents/{id}/usage",
+      "scenario": "shared_agent_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-member-resources",
+      "operation": "GET /api/v1/agents/{id}/resources",
+      "scenario": "shared_agent_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/resources",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-missing-resources",
+      "operation": "GET /api/v1/agents/{id}/resources",
+      "scenario": "shared_agent_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/resources",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-outage-resources",
+      "operation": "GET /api/v1/agents/{id}/resources",
+      "scenario": "shared_agent_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/resources",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-revoked-resources",
+      "operation": "GET /api/v1/agents/{id}/resources",
+      "scenario": "shared_agent_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/resources",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-invalid_context-resources",
+      "operation": "GET /api/v1/agents/{id}/resources",
+      "scenario": "shared_agent_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/resources",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-no_credential-resources",
+      "operation": "GET /api/v1/agents/{id}/resources",
+      "scenario": "shared_agent_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/resources",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-member-events-page",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "shared_agent_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/events?limit=2",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "seq": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "access_redacted"
+              }
+            },
+            {
+              "seq": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "access_redacted"
+              }
+            }
+          ],
+          "next": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-member-second-events-page",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "shared_agent_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/events?after=2&limit=2",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "seq": 3,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 3
+              }
+            },
+            {
+              "seq": 4,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "access_redacted"
+              }
+            }
+          ],
+          "next": 4
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-sibling-detail",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "shared_agent_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_sibling",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-owner-detail",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "shared_agent_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "callback_url": "https://cma.example/agents/agt_shared_read",
+          "id": "agt_shared_read",
+          "status": "ready",
+          "profile": {
+            "id": "agp_route",
+            "revision": 1,
+            "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "model": "gpt-proof",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": []
+          },
+          "worktree": {
+            "id": "wkt_agt_shared_read",
+            "name": "wt-agt_shared_read",
+            "path": "/home/cma/project/.worktrees/agt_shared_read",
+            "branch": "cma/agt_shared_read",
+            "base_commit": "cccccccccccccccccccccccccccccccccccccccc",
+            "status": "ready"
+          },
+          "workspace": {
+            "id": "wks_route",
+            "name": "project",
+            "path": "/home/cma/project",
+            "status": "ready",
+            "profile": {
+              "id": "wkp_route",
+              "revision": 2,
+              "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "resolved_commit": "cccccccccccccccccccccccccccccccccccccccc"
+          },
+          "sandbox": {
+            "id": "sbx_route",
+            "name": "research",
+            "status": "active",
+            "profile": {
+              "id": "sbp_route",
+              "revision": 3,
+              "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          "conforms_to": [
+            "https://spec.chrono-ai.fun/cma/1.0/conf/core",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/events-replay",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/conversation",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/steering",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/interrupt",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/usage",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/resources"
+          ],
+          "reach": [
+            "api-github"
+          ],
+          "title": "Agent agt_shared_read",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "ready_at": "2026-09-05T00:00:00Z",
+          "desktop": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-owner_outage-detail",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "shared_agent_owner_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "callback_url": "https://cma.example/agents/agt_shared_read",
+          "id": "agt_shared_read",
+          "status": "ready",
+          "profile": {
+            "id": "agp_route",
+            "revision": 1,
+            "digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+            "model": "gpt-proof",
+            "thinking_effort": "high",
+            "permission_level": "guarded",
+            "skills": []
+          },
+          "worktree": {
+            "id": "wkt_agt_shared_read",
+            "name": "wt-agt_shared_read",
+            "path": "/home/cma/project/.worktrees/agt_shared_read",
+            "branch": "cma/agt_shared_read",
+            "base_commit": "cccccccccccccccccccccccccccccccccccccccc",
+            "status": "ready"
+          },
+          "workspace": {
+            "id": "wks_route",
+            "name": "project",
+            "path": "/home/cma/project",
+            "status": "ready",
+            "profile": {
+              "id": "wkp_route",
+              "revision": 2,
+              "digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            },
+            "resolved_commit": "cccccccccccccccccccccccccccccccccccccccc"
+          },
+          "sandbox": {
+            "id": "sbx_route",
+            "name": "research",
+            "status": "active",
+            "profile": {
+              "id": "sbp_route",
+              "revision": 3,
+              "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          "conforms_to": [
+            "https://spec.chrono-ai.fun/cma/1.0/conf/core",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/approvals",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/events-replay",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/conversation",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/steering",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/interrupt",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/usage",
+            "https://spec.chrono-ai.fun/cma/1.0/conf/resources"
+          ],
+          "reach": [
+            "api-github"
+          ],
+          "title": "Agent agt_shared_read",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "ready_at": "2026-09-05T00:00:00Z",
+          "desktop": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-owner_outage-transcript",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "shared_agent_owner_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "through_seq": 9,
+          "turns": [
+            {
+              "turn_sequence": 3,
+              "started_at": "2026-09-05T00:00:00Z",
+              "owner_message": "Please review",
+              "agent_messages": [
+                "Review complete"
+              ],
+              "messages": [
+                {
+                  "sequence": 5,
+                  "role": "user",
+                  "content": "Please review",
+                  "appended_at": "2026-09-05T00:00:00Z"
+                },
+                {
+                  "sequence": 6,
+                  "role": "assistant",
+                  "content": "Review complete",
+                  "appended_at": "2026-09-05T00:00:00Z"
+                }
+              ],
+              "outcome": {
+                "type": "failed",
+                "at": "2026-09-05T00:00:00Z",
+                "failure": {
+                  "class": "agent_turn_failed",
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
+                }
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-anonymous-detail",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "shared_agent_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-agent-whole_sandbox-resources",
+      "operation": "GET /api/v1/agents/{id}/resources",
+      "scenario": "shared_agent_whole_sandbox",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/resources",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "sandbox_id": "sbx_route",
+          "uptime_ms": 8000,
+          "cpu_usage_usec": 3200,
+          "cpu_millis_limit": 1000,
+          "memory_bytes_used": 67108864,
+          "memory_bytes_limit": 2147483648,
+          "memory_bytes_peak": 100663296,
+          "stall_permille": 2,
+          "ceiling_hits": 1,
+          "allocation_failures": 0,
+          "kills": 0,
+          "received_bytes": 42,
+          "sent_bytes": 84
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

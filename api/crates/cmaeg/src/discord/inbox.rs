@@ -1,0 +1,244 @@
+//! Durable native inbox with immutable chunk bodies and source/message dedup.
+use super::{
+    journal::DurableJournal,
+    journal_model::{Authority, Chunk, Inbox, RETENTION_SECONDS},
+    Dispatch, GatewayError,
+};
+use crate::{channels::definition::hash_secret, connections::store::index_id};
+use base64::{engine::general_purpose::STANDARD, Engine};
+use serde_json::json;
+impl DurableJournal {
+    pub(super) async fn persist_message(
+        &self,
+        authority: &Authority,
+        event: &Dispatch,
+    ) -> Result<(), GatewayError> {
+        event.message_id().ok_or(GatewayError::Protocol)?;
+        self.persist_inbox(authority, event, None).await
+    }
+    pub(super) async fn persist_inbox(
+        &self,
+        authority: &Authority,
+        event: &Dispatch,
+        component: Option<&super::components::Snapshot>,
+    ) -> Result<(), GatewayError> {
+        let received_at = (self.store.clock)() / 1000;
+        let message =
+            super::protocol::snowflake(&event.data["id"]).ok_or(GatewayError::Protocol)?;
+        // Discord IDs embed their creation time. Once the seven-day dedup
+        // window expires, old replays are refused instead of launching twice.
+        let created = (message.parse::<u64>().map_err(|_| GatewayError::Protocol)? >> 22) as i64
+            + 1_420_070_400_000;
+        let expiry = created / 1000 + RETENTION_SECONDS;
+        if expiry <= (self.store.clock)() / 1000 || created > (self.store.clock)() + 300_000 {
+            return Err(GatewayError::Protocol);
+        }
+        // The record API caps expiry at seven days from its current clock.
+        // Wait for a small clock skew rather than writing an overlong TTL.
+        if created / 1000 > (self.store.clock)() / 1000 {
+            return Err(GatewayError::Unavailable);
+        }
+        let id = index_id(
+            "discord-native-message-v1",
+            &[&authority.record, &authority.bot_id, message],
+        );
+        if let Some((existing, 1)) = self.store.load::<Inbox>(&id, true).await? {
+            let bytes = self.verify_inbox(&existing, authority, message).await?;
+            verify_projection_replay(&bytes, &event.data, &authority.bot_id)?;
+            return self.observe_inbox(&existing, authority, &bytes).await;
+        }
+        let mut body = json!({"dispatch":event.data,"channel":authority.public_definition});
+        let projection = (component.is_none() && self.api.rich_content)
+            .then(|| super::content::Snapshot::capture(&event.data))
+            .flatten();
+        let forward = (component.is_none() && self.api.forwards)
+            .then(|| super::forward::Snapshot::capture(&event.data))
+            .flatten();
+        let normalized = component.is_none().then(|| {
+            super::normalize::normalize_with_projections(
+                &event.data,
+                &authority.bot_id,
+                &authority.admission,
+                projection.as_ref(),
+                forward.as_ref(),
+            )
+        });
+        // Pin only an admitted human message's facts. Missing snapshots always
+        // retain the old normalization, even if the writer gate changes later.
+        if matches!(
+            &normalized,
+            Some(Ok(super::normalize::Normalized::Activity(_)))
+        ) {
+            if let Some(forward) = &forward {
+                body["forward_projection"] =
+                    serde_json::to_value(forward).map_err(|_| GatewayError::Protocol)?;
+            }
+            if let Some(projection) = &projection {
+                body["content_projection"] =
+                    serde_json::to_value(projection).map_err(|_| GatewayError::Protocol)?;
+            }
+        }
+        if component.is_none() && self.api.quoted_context {
+            if let Some(Ok(super::normalize::Normalized::Activity(activity))) = &normalized {
+                let snapshot = crate::ingress::quoted_context::Snapshot {
+                    version: 1,
+                    quoted_message: crate::ingress::quoted_context::discord(&event.data, activity),
+                };
+                body["quote_projection"] =
+                    serde_json::to_value(snapshot).map_err(|_| GatewayError::Protocol)?;
+            }
+        }
+        if component.is_none()
+            && self.api.thread_metadata
+            && matches!(
+                &normalized,
+                Some(Ok(super::normalize::Normalized::Activity(_)))
+            )
+        {
+            body["native_channel"] = serde_json::to_value(
+                self.api
+                    .channel_evidence(&authority.token, &event.data)
+                    .await,
+            )
+            .map_err(|_| GatewayError::Protocol)?;
+        }
+        if let Some(component) = component {
+            body["component"] =
+                serde_json::to_value(component).map_err(|_| GatewayError::Protocol)?;
+        }
+        let bytes = serde_json::to_vec(&body).map_err(|_| GatewayError::Protocol)?;
+        if bytes.len() > 2 * 1024 * 1024 {
+            return Err(GatewayError::Protocol);
+        }
+        let payload_hash =
+            hash_secret(std::str::from_utf8(&bytes).map_err(|_| GatewayError::Protocol)?);
+        let mut parts = Vec::new();
+        for (index, chunk) in bytes.chunks(32 * 1024).enumerate() {
+            let part = index_id(
+                "discord-native-message-chunk-v1",
+                &[&id, &payload_hash, &index.to_string()],
+            );
+            self.store
+                .immutable(
+                    &part,
+                    &authority.owner,
+                    &Chunk {
+                        kind: "discord_inbox_chunk_v1".into(),
+                        bytes: STANDARD.encode(chunk),
+                    },
+                    expiry,
+                )
+                .await?;
+            parts.push(part);
+        }
+        let inbox = Inbox {
+            kind: "discord_inbox_v1".into(),
+            change_id: None,
+            channel_record: authority.record.clone(),
+            bot_id: authority.bot_id.clone(),
+            message_id: message.into(),
+            source_revision: authority.revision.clone(),
+            payload_hash,
+            parts,
+            received_at,
+            retained_until: expiry,
+        };
+        match self
+            .write_owned(&id, &authority.owner, &inbox, None, Some(expiry))
+            .await
+        {
+            Ok(1) => self.observe_inbox(&inbox, authority, &bytes).await,
+            Ok(_) => Err(GatewayError::Protocol),
+            Err(error) => match self.store.load::<Inbox>(&id, true).await? {
+                Some((existing, 1)) => {
+                    let bytes = self.verify_inbox(&existing, authority, message).await?;
+                    verify_projection_replay(&bytes, &event.data, &authority.bot_id)?;
+                    self.observe_inbox(&existing, authority, &bytes).await
+                }
+                Some(_) => Err(GatewayError::Protocol),
+                None => Err(error),
+            },
+        }
+    }
+    pub(super) async fn verify_inbox(
+        &self,
+        inbox: &Inbox,
+        authority: &Authority,
+        message: &str,
+    ) -> Result<Vec<u8>, GatewayError> {
+        self.store.verify_inbox(inbox, authority, message).await
+    }
+}
+impl super::record_store::Store {
+    pub(super) async fn verify_inbox(
+        &self,
+        inbox: &Inbox,
+        authority: &Authority,
+        message: &str,
+    ) -> Result<Vec<u8>, GatewayError> {
+        if inbox.id().is_err()
+            || inbox.channel_record != authority.record
+            || inbox.bot_id != authority.bot_id
+            || inbox.message_id != message
+            || inbox.received_at < 0
+            || inbox.received_at >= inbox.retained_until
+            || inbox.received_at > (self.clock)() / 1000
+            || inbox.retained_until <= (self.clock)() / 1000
+            || inbox.parts.is_empty()
+            || inbox.parts.len() > 64
+        {
+            return Err(GatewayError::Protocol);
+        }
+        // Restore the original snapshot even after a policy or credential edit;
+        // a duplicate must never route again using the new policy.
+        let mut bytes = Vec::new();
+        for part in &inbox.parts {
+            let (chunk, version) = self
+                .load::<Chunk>(part, true)
+                .await?
+                .ok_or(GatewayError::Unavailable)?;
+            if version != 1 || chunk.kind != "discord_inbox_chunk_v1" {
+                return Err(GatewayError::Protocol);
+            }
+            let chunk = STANDARD
+                .decode(chunk.bytes)
+                .map_err(|_| GatewayError::Protocol)?;
+            if chunk.len() > 32 * 1024 || bytes.len() + chunk.len() > 2 * 1024 * 1024 {
+                return Err(GatewayError::Protocol);
+            }
+            bytes.extend(chunk);
+        }
+        if hash_secret(std::str::from_utf8(&bytes).map_err(|_| GatewayError::Protocol)?)
+            != inbox.payload_hash
+        {
+            return Err(GatewayError::Protocol);
+        }
+        Ok(bytes)
+    }
+}
+
+fn verify_projection_replay(
+    bytes: &[u8],
+    incoming: &serde_json::Value,
+    bot: &str,
+) -> Result<(), GatewayError> {
+    let body: super::inbox_reader::Body =
+        serde_json::from_slice(bytes).map_err(|_| GatewayError::Protocol)?;
+    if let Some(snapshot) = &body.forward_projection {
+        snapshot.verify(incoming)?;
+    }
+    let Some(snapshot) = &body.quote_projection else {
+        return Ok(());
+    };
+    let super::normalize::Normalized::Activity(activity) = body.activity(bot)? else {
+        return Err(GatewayError::Protocol);
+    };
+    if incoming["id"] != body.dispatch["id"]
+        || incoming["channel_id"] != body.dispatch["channel_id"]
+        || incoming["author"]["id"] != body.dispatch["author"]["id"]
+        || crate::ingress::quoted_context::discord(incoming, &activity) != snapshot.quoted_message
+    {
+        return Err(GatewayError::Protocol);
+    }
+    Ok(())
+}

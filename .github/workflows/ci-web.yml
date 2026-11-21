@@ -1,0 +1,232 @@
+name: "Web track"
+on:
+  workflow_call: {}
+permissions:
+  contents: "read"
+jobs:
+  web:
+    name: "Web checks"
+    runs-on: "ubuntu-latest"
+    defaults:
+      run:
+        working-directory: "web"
+    steps:
+      -
+        uses: "actions/checkout@v5"
+      -
+        uses: "actions/setup-node@v6"
+        with:
+          node-version: "24.15.0"
+          package-manager-cache: false
+          cache: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'npm' || '' }}"
+          cache-dependency-path: "web/package-lock.json"
+      -
+        name: "Locate npm download cache"
+        if: "github.event_name != 'push' || github.ref != 'refs/heads/develop'"
+        id: npm-cache
+        run: |
+          directory=$(npm config get cache)
+          architecture=$(node -p 'process.arch')
+          printf 'directory=%s\narchitecture=%s\n' "$directory" "$architecture" >> "$GITHUB_OUTPUT"
+      -
+        # Match setup-node's cache path and lockfile key so existing entries remain usable.
+        name: "Restore npm download cache"
+        if: "github.event_name != 'push' || github.ref != 'refs/heads/develop'"
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.npm-cache.outputs.directory }}
+          key: node-cache-${{ runner.os }}-${{ steps.npm-cache.outputs.architecture }}-npm-${{ hashFiles('web/package-lock.json') }}
+      -
+        name: "Install (lockfile integrity)"
+        run: "npm ci"
+      -
+        name: "Format"
+        run: "npx prettier --check ."
+      -
+        name: "Lint"
+        run: "npm run lint"
+      -
+        name: "Type check"
+        run: "npm run typecheck"
+      -
+        name: "Tests"
+        run: "npm run test"
+      -
+        name: "Anonymous readiness proxy regressions"
+        timeout-minutes: 5
+        working-directory: "."
+        run: "python3 web/scripts/readiness-proxy-tests.py"
+      -
+        name: "Production build"
+        env:
+          CHRONO_BUILD_SHA: "${{ github.sha }}"
+          CHRONO_BUILD_ARTIFACT: "promotable"
+        run: "CHRONO_BUILD=\"git-${GITHUB_SHA:0:12}\" npm run build"
+      -
+        name: "Typecheck every harness entry point"
+        working-directory: "web"
+        run: "npm run e2e:typecheck"
+      -
+        name: "Fail-closed fixtures and cleanup mechanics"
+        working-directory: "web"
+        run: "npm run test -- e2e/environment.test.ts e2e/owner-mechanics.test.ts"
+      -
+        name: "Install pinned local browser"
+        timeout-minutes: 10
+        working-directory: "web"
+        env:
+          DEBUG: "pw:install"
+        run: |
+          node --test ../.github/scripts/install-contract-browser.test.mjs
+          node ../.github/scripts/install-contract-browser.mjs
+      -
+        name: "Local browser guard mechanics"
+        working-directory: "web"
+        run: |
+          node --test ../.github/scripts/agent-v2-ci.test.mjs ../.github/scripts/tree-row-menu-ci.test.mjs ../.github/scripts/new-agent-request-ci.test.mjs ../.github/scripts/lifecycle-browser-ci.test.mjs ../.github/scripts/channel-setup-ci.test.mjs
+          npm run e2e:mechanics
+      -
+        name: "CSS collisions"
+        run: "npm run check:css"
+      -
+        name: "Computed styles"
+        timeout-minutes: 5
+        run: "npm run check:styles"
+      -
+        name: "Compiled web build identity"
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
+        run: "npx playwright test --config e2e/build-identity.config.ts"
+      -
+        name: "Desktop and conversation browser layout"
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
+        run: "npx playwright test --config e2e/desktop-conversation.config.ts"
+      -
+        name: "Local row menu pointer and keyboard contracts"
+        id: row_menu
+        timeout-minutes: 5
+        env:
+          CMA_ROW_MENU_EVIDENCE_DIR: "${{ runner.temp }}/cma-row-menu"
+        run: "node node_modules/playwright/cli.js test --config e2e/tree-row-menu.config.ts"
+      -
+        name: "Row menu failure evidence"
+        if: "failure() && steps.row_menu.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "row-menu-failure"
+          path: "${{ runner.temp }}/cma-row-menu"
+          retention-days: 1
+      -
+        name: "Local channel setup validation"
+        id: channel_setup
+        timeout-minutes: 5
+        env:
+          CMA_CHANNEL_SETUP_EVIDENCE_DIR: "${{ runner.temp }}/cma-channel-setup"
+        run: "node node_modules/playwright/cli.js test --config e2e/channel-setup.config.ts"
+      -
+        name: "Channel setup failure evidence"
+        if: "failure() && steps.channel_setup.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "channel-setup-failure"
+          path: "${{ runner.temp }}/cma-channel-setup"
+          retention-days: 1
+      -
+        name: "Local resource lifecycle contracts"
+        id: resource_lifecycle
+        timeout-minutes: 5
+        env:
+          CMA_LIFECYCLE_EVIDENCE_DIR: "${{ runner.temp }}/cma-resource-lifecycle"
+        run: |
+          node node_modules/playwright/cli.js test --config e2e/resource-lifecycle.config.ts --list
+          node node_modules/playwright/cli.js test --config e2e/resource-lifecycle.config.ts
+      -
+        name: "Resource lifecycle failure evidence"
+        if: "failure() && steps.resource_lifecycle.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "resource-lifecycle-failure"
+          path: "${{ runner.temp }}/cma-resource-lifecycle"
+          retention-days: 1
+      -
+        name: "Local Sandbox status filter contracts"
+        id: sandbox_status_filter
+        timeout-minutes: 5
+        env:
+          CMA_SANDBOX_FILTER_EVIDENCE_DIR: "${{ runner.temp }}/cma-sandbox-filter"
+        run: |
+          node node_modules/playwright/cli.js test --config e2e/sandbox-status-filter.config.ts --list
+          node node_modules/playwright/cli.js test --config e2e/sandbox-status-filter.config.ts
+      -
+        name: "Sandbox status filter failure evidence"
+        if: "failure() && steps.sandbox_status_filter.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "sandbox-status-filter-failure"
+          path: "${{ runner.temp }}/cma-sandbox-filter"
+          retention-days: 1
+      -
+        name: "Local New agent request isolation"
+        id: new_agent_request
+        timeout-minutes: 5
+        env:
+          CMA_NEW_AGENT_REQUEST_EVIDENCE_DIR: "${{ runner.temp }}/cma-new-agent-request"
+        run: "node node_modules/playwright/cli.js test --config e2e/new-agent-request.config.ts"
+      -
+        name: "New agent request failure evidence"
+        if: "failure() && steps.new_agent_request.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "new-agent-request-failure"
+          path: "${{ runner.temp }}/cma-new-agent-request"
+          retention-days: 1
+      -
+        name: "Local Agent v2 contracts"
+        id: agent_v2
+        timeout-minutes: 5
+        env:
+          CMA_AGENT_V2_OUTPUT_DIR: "${{ runner.temp }}/cma-agent-v2"
+        run: |
+          node -e 'console.log("Agent v2 browser:", process.env.CMA_E2E_BROWSER_PATH)'
+          "$CMA_E2E_BROWSER_PATH" --version
+          node node_modules/playwright/cli.js test --config e2e/agent-v2.config.ts
+      -
+        name: "Agent v2 failure evidence"
+        if: "failure() && steps.agent_v2.outcome == 'failure'"
+        uses: "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+        with:
+          name: "agent-v2-failure"
+          path: "${{ runner.temp }}/cma-agent-v2"
+          retention-days: 1
+      -
+        name: "Usage browser layouts and states"
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
+        run: |
+          npx playwright test --config e2e/usage.config.ts
+          CMA_E2E_MEASURED_USAGE=true npx playwright test --config e2e/usage.config.ts account-usage.check.ts operations-usage.check.ts
+      -
+        name: "Document navigation and creation recovery"
+        timeout-minutes: 5
+        env:
+          CMA_E2E_BROWSER_PATH: "/usr/bin/google-chrome"
+        run: "npx playwright test --config e2e/documents.config.ts documents-unsaved.check.ts documents-legacy-history.check.ts documents-creation.check.ts"
+      -
+        name: "Dependency audit"
+        run: |
+          node --test ../.github/scripts/audit-policy.test.mjs
+          node ../.github/scripts/audit-dependencies.mjs
+      -
+        name: "Web artifact identity contract"
+        run: |
+          python3 .github/scripts/web-build-identity-tests.py
+          python3 .github/scripts/web-image-smoke-tests.py
+          python3 .github/scripts/web-image-processes-tests.py
+          python3 .github/scripts/web-image-evidence-tests.py
+          ruby .github/scripts/web-build-contract.rb
+        working-directory: "."
+    timeout-minutes: 45

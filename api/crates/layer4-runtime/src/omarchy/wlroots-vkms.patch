@@ -1,0 +1,18 @@
+--- a/render/wlr_renderer.c
++++ b/render/wlr_renderer.c
+@@ -163,7 +163,14 @@
+ 			wlr_log_errno(WLR_ERROR, "Failed to open '%s'", render_name);
+ 			return false;
+ 		}
+-		if (drmGetNodeTypeFromFd(drm_fd) != DRM_NODE_RENDER) {
++		int node_type = drmGetNodeTypeFromFd(drm_fd);
++		drmVersion *version = drmGetVersion(drm_fd);
++		bool is_vkms = version && version->name &&
++			strcmp(version->name, "vkms") == 0;
++		drmFreeVersion(version);
++		// VKMS exposes dumb/PRIME buffers only through its primary node.
++		if (node_type != DRM_NODE_RENDER &&
++				!(node_type == DRM_NODE_PRIMARY && is_vkms)) {
+ 			wlr_log(WLR_ERROR, "'%s' is not a DRM render node", render_name);
+ 			close(drm_fd);
+ 			return false;

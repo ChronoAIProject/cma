@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
 die() {
   printf 'error: %s\n' "$*" >&2
   exit 1
@@ -171,7 +173,9 @@ trap cleanup EXIT HUP INT TERM
 
 # Validate every archive and its authoritative root before looking at or
 # changing the destination. The copy phase consumes only these checked files.
-for component in api web runtime; do
+for component in api web runtime cmaeg runtime-omarchy; do
+  image_name=$(python3 "$script_dir/scripts/deployables.py" "$component") \
+    || die "unknown deployable component"
   base="cma-${component}-${version}-${revision}"
   metadata="${component}/${base}.json"
   archive="${component}/${base}.oci.tar"
@@ -185,7 +189,7 @@ for component in api web runtime; do
   source_repository=$(jq -er '.sourceRepository' "$metadata") \
     || die "metadata has no source repository: $metadata"
   is_match "$source_repository" \
-    "^ghcr\\.io/[a-z0-9]+([._-][a-z0-9]+)*/cma-${component}$" \
+    "^ghcr\\.io/[a-z0-9]+([._-][a-z0-9]+)*/${image_name}$" \
     || die "metadata source does not match component $component"
   if [ "$component" = web ]; then
     expected_platforms='["linux/amd64", "linux/arm64"]'
@@ -241,8 +245,10 @@ done
 
 # Complete the six-tag preflight before the first copy. An existing equal tag
 # is an idempotent success; any mismatch aborts the entire import unchanged.
-for component in api web runtime; do
-  destination_repository="${destination_prefix}/cma-${component}"
+for component in api web runtime cmaeg runtime-omarchy; do
+  image_name=$(python3 "$script_dir/scripts/deployables.py" "$component") \
+    || die "unknown deployable component"
+  destination_repository="${destination_prefix}/${image_name}"
   tags="$tmp_dir/${component}-tags.json"
   tags_error="$tmp_dir/${component}-tags.error"
   if ! skopeo_list_tags "docker://${destination_repository}" \
@@ -281,10 +287,12 @@ for component in api web runtime; do
   done
 done
 
-for component in api web runtime; do
+for component in api web runtime cmaeg runtime-omarchy; do
+  image_name=$(python3 "$script_dir/scripts/deployables.py" "$component") \
+    || die "unknown deployable component"
   base="cma-${component}-${version}-${revision}"
   archive="${component}/${base}.oci.tar"
-  destination_repository="${destination_prefix}/cma-${component}"
+  destination_repository="${destination_prefix}/${image_name}"
   expected_digest=$(<"$tmp_dir/${component}.digest")
   for kind in version revision; do
     if [ "$kind" = version ]; then tag=$version; else tag=$revision; fi

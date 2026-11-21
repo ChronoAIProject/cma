@@ -1,0 +1,1673 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "deliverables-owner-list",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "items": [
+            {
+              "id": "delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "document",
+                  "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+                  "revision": 1
+                },
+                "name": "Report.md",
+                "media_type": "text/markdown",
+                "size_bytes": 11,
+                "sha256": "a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3"
+              },
+              "status": "ready"
+            },
+            {
+              "id": "delivery_5ed345d109614248bae2c304426859fa837c2eac7d647ba6df10536a13728b9d",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "agent_artifact",
+                  "id": "art_90eb7c6201ae2bf61f995b387c92dee777fd68c39bcce9ad9e7ab93411e22e92"
+                },
+                "name": "result.txt",
+                "media_type": "text/plain",
+                "size_bytes": 3,
+                "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+              },
+              "status": "ready"
+            },
+            {
+              "id": "delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "live_file",
+                  "path": "cma/hello world.txt"
+                },
+                "name": "hello world.txt",
+                "media_type": "application/octet-stream",
+                "size_bytes": 12,
+                "sha256": "cf2a1999088291aea704804dac731691b768e1fc6afcfcfcaeb6a9ffc7ab7f52"
+              },
+              "status": "unchecked"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-describe-document",
+      "operation": "POST /api/v1/agents/{id}/deliverable-references",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/deliverable-references",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "document",
+          "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "reference": {
+            "agent_id": "agt_shared_read",
+            "resource": {
+              "kind": "document",
+              "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+              "revision": 1
+            },
+            "name": "Report.md",
+            "media_type": "text/markdown",
+            "size_bytes": 11,
+            "sha256": "a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3"
+          },
+          "marker": "<!--cma-deliverable:v1:eyJhZ2VudF9pZCI6ImFndF9zaGFyZWRfcmVhZCIsInJlc291cmNlIjp7ImtpbmQiOiJkb2N1bWVudCIsImlkIjoiZG9jXzBhNTI0OTRkMGU3NzViYTZhN2YyNGZjYjVmYjQ3NTA0IiwicmV2aXNpb24iOjF9LCJuYW1lIjoiUmVwb3J0Lm1kIiwibWVkaWFfdHlwZSI6InRleHQvbWFya2Rvd24iLCJzaXplX2J5dGVzIjoxMSwic2hhMjU2IjoiYTlhNTI1MDk4NzcxYzhkYTllY2Y5N2UxMmY2Nzk5MDk0YmYxMjcxNDcyY2FlZWFiZThiOGExZTJmYmYwYTdmMyJ9-->"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-read-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "item": {
+            "id": "delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+            "reference": {
+              "agent_id": "agt_shared_read",
+              "resource": {
+                "kind": "document",
+                "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+                "revision": 1
+              },
+              "name": "Report.md",
+              "media_type": "text/markdown",
+              "size_bytes": 11,
+              "sha256": "a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3"
+            },
+            "status": "ready"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-download-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-disposition": "attachment; filename=\"file-a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3\"; filename*=UTF-8''Report.md",
+          "content-type": "application/octet-stream",
+          "etag": "\"a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3\"",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": "# Original\n",
+        "bodyKind": "text"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-describe-agent_artifact",
+      "operation": "POST /api/v1/agents/{id}/deliverable-references",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/deliverable-references",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "agent_artifact",
+          "id": "art_90eb7c6201ae2bf61f995b387c92dee777fd68c39bcce9ad9e7ab93411e22e92"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "reference": {
+            "agent_id": "agt_shared_read",
+            "resource": {
+              "kind": "agent_artifact",
+              "id": "art_90eb7c6201ae2bf61f995b387c92dee777fd68c39bcce9ad9e7ab93411e22e92"
+            },
+            "name": "result.txt",
+            "media_type": "text/plain",
+            "size_bytes": 3,
+            "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+          },
+          "marker": "<!--cma-deliverable:v1:eyJhZ2VudF9pZCI6ImFndF9zaGFyZWRfcmVhZCIsInJlc291cmNlIjp7ImtpbmQiOiJhZ2VudF9hcnRpZmFjdCIsImlkIjoiYXJ0XzkwZWI3YzYyMDFhZTJiZjYxZjk5NWIzODdjOTJkZWU3NzdmZDY4YzM5YmNjZTlhZDllN2FiOTM0MTFlMjJlOTIifSwibmFtZSI6InJlc3VsdC50eHQiLCJtZWRpYV90eXBlIjoidGV4dC9wbGFpbiIsInNpemVfYnl0ZXMiOjMsInNoYTI1NiI6ImJhNzgxNmJmOGYwMWNmZWE0MTQxNDBkZTVkYWUyMjIzYjAwMzYxYTM5NjE3N2E5Y2I0MTBmZjYxZjIwMDE1YWQifQ-->"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-read-agent_artifact",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_5ed345d109614248bae2c304426859fa837c2eac7d647ba6df10536a13728b9d",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "item": {
+            "id": "delivery_5ed345d109614248bae2c304426859fa837c2eac7d647ba6df10536a13728b9d",
+            "reference": {
+              "agent_id": "agt_shared_read",
+              "resource": {
+                "kind": "agent_artifact",
+                "id": "art_90eb7c6201ae2bf61f995b387c92dee777fd68c39bcce9ad9e7ab93411e22e92"
+              },
+              "name": "result.txt",
+              "media_type": "text/plain",
+              "size_bytes": 3,
+              "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+            },
+            "status": "ready"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-download-agent_artifact",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_5ed345d109614248bae2c304426859fa837c2eac7d647ba6df10536a13728b9d/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-disposition": "attachment; filename=\"file-ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\"; filename*=UTF-8''result.txt",
+          "content-type": "application/octet-stream",
+          "etag": "\"ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\"",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": "abc",
+        "bodyKind": "text"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-describe-live_file",
+      "operation": "POST /api/v1/agents/{id}/deliverable-references",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/deliverable-references",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "live_file",
+          "path": "cma/hello world.txt"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "reference": {
+            "agent_id": "agt_shared_read",
+            "resource": {
+              "kind": "live_file",
+              "path": "cma/hello world.txt"
+            },
+            "name": "hello world.txt",
+            "media_type": "application/octet-stream",
+            "size_bytes": 12,
+            "sha256": "cf2a1999088291aea704804dac731691b768e1fc6afcfcfcaeb6a9ffc7ab7f52"
+          },
+          "marker": "<!--cma-deliverable:v1:eyJhZ2VudF9pZCI6ImFndF9zaGFyZWRfcmVhZCIsInJlc291cmNlIjp7ImtpbmQiOiJsaXZlX2ZpbGUiLCJwYXRoIjoiY21hL2hlbGxvIHdvcmxkLnR4dCJ9LCJuYW1lIjoiaGVsbG8gd29ybGQudHh0IiwibWVkaWFfdHlwZSI6ImFwcGxpY2F0aW9uL29jdGV0LXN0cmVhbSIsInNpemVfYnl0ZXMiOjEyLCJzaGEyNTYiOiJjZjJhMTk5OTA4ODI5MWFlYTcwNDgwNGRhYzczMTY5MWI3NjhlMWZjNmFmY2ZjZmNhZWI2YTlmZmM3YWI3ZjUyIn0-->"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-read-live_file",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "item": {
+            "id": "delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda",
+            "reference": {
+              "agent_id": "agt_shared_read",
+              "resource": {
+                "kind": "live_file",
+                "path": "cma/hello world.txt"
+              },
+              "name": "hello world.txt",
+              "media_type": "application/octet-stream",
+              "size_bytes": 12,
+              "sha256": "cf2a1999088291aea704804dac731691b768e1fc6afcfcfcaeb6a9ffc7ab7f52"
+            },
+            "status": "unchecked"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-download-live_file",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-disposition": "attachment; filename=\"file-cf2a1999088291aea704804dac731691b768e1fc6afcfcfcaeb6a9ffc7ab7f52\"; filename*=UTF-8''hello%20world.txt",
+          "content-type": "application/octet-stream",
+          "etag": "\"cf2a1999088291aea704804dac731691b768e1fc6afcfcfcaeb6a9ffc7ab7f52\"",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": "hello files\n",
+        "bodyKind": "text"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-verify-live_file",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda?verify=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "item": {
+            "id": "delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda",
+            "reference": {
+              "agent_id": "agt_shared_read",
+              "resource": {
+                "kind": "live_file",
+                "path": "cma/hello world.txt"
+              },
+              "name": "hello world.txt",
+              "media_type": "application/octet-stream",
+              "size_bytes": 12,
+              "sha256": "cf2a1999088291aea704804dac731691b768e1fc6afcfcfcaeb6a9ffc7ab7f52"
+            },
+            "status": "ready"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-edited-list",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables",
+      "scenario": "deliverable_edited",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "items": [
+            {
+              "id": "delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "document",
+                  "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+                  "revision": 1
+                },
+                "name": "Report.md",
+                "media_type": "text/markdown",
+                "size_bytes": 11,
+                "sha256": "a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3"
+              },
+              "status": "version_changed"
+            },
+            {
+              "id": "delivery_5ed345d109614248bae2c304426859fa837c2eac7d647ba6df10536a13728b9d",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "agent_artifact",
+                  "id": "art_90eb7c6201ae2bf61f995b387c92dee777fd68c39bcce9ad9e7ab93411e22e92"
+                },
+                "name": "result.txt",
+                "media_type": "text/plain",
+                "size_bytes": 3,
+                "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+              },
+              "status": "ready"
+            },
+            {
+              "id": "delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "live_file",
+                  "path": "cma/hello world.txt"
+                },
+                "name": "hello world.txt",
+                "media_type": "application/octet-stream",
+                "size_bytes": 12,
+                "sha256": "cf2a1999088291aea704804dac731691b768e1fc6afcfcfcaeb6a9ffc7ab7f52"
+              },
+              "status": "unchecked"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-edited-read-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_edited",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "item": {
+            "id": "delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+            "reference": {
+              "agent_id": "agt_shared_read",
+              "resource": {
+                "kind": "document",
+                "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+                "revision": 1
+              },
+              "name": "Report.md",
+              "media_type": "text/markdown",
+              "size_bytes": 11,
+              "sha256": "a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3"
+            },
+            "status": "version_changed"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-edited-download-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+      "scenario": "deliverable_edited",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-disposition": "attachment; filename=\"file-a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3\"; filename*=UTF-8''Report.md",
+          "content-type": "application/octet-stream",
+          "etag": "\"a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3\"",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": "# Original\n",
+        "bodyKind": "text"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-viewer-list",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables",
+      "scenario": "deliverable_viewer",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "items": [
+            {
+              "id": "delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "document",
+                  "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+                  "revision": 1
+                },
+                "name": "Report.md",
+                "media_type": "text/markdown",
+                "size_bytes": 11,
+                "sha256": "a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3"
+              },
+              "status": "ready"
+            },
+            {
+              "id": "delivery_5ed345d109614248bae2c304426859fa837c2eac7d647ba6df10536a13728b9d",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "agent_artifact",
+                  "id": "art_90eb7c6201ae2bf61f995b387c92dee777fd68c39bcce9ad9e7ab93411e22e92"
+                },
+                "name": "result.txt",
+                "media_type": "text/plain",
+                "size_bytes": 3,
+                "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+              },
+              "status": "ready"
+            },
+            {
+              "id": "delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "live_file",
+                  "path": "cma/hello world.txt"
+                },
+                "name": "hello world.txt",
+                "media_type": "application/octet-stream",
+                "size_bytes": 12,
+                "sha256": "cf2a1999088291aea704804dac731691b768e1fc6afcfcfcaeb6a9ffc7ab7f52"
+              },
+              "status": "denied"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-viewer-read-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_viewer",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "item": {
+            "id": "delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+            "reference": {
+              "agent_id": "agt_shared_read",
+              "resource": {
+                "kind": "document",
+                "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+                "revision": 1
+              },
+              "name": "Report.md",
+              "media_type": "text/markdown",
+              "size_bytes": 11,
+              "sha256": "a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3"
+            },
+            "status": "ready"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-viewer-download-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+      "scenario": "deliverable_viewer",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-disposition": "attachment; filename=\"file-a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3\"; filename*=UTF-8''Report.md",
+          "content-type": "application/octet-stream",
+          "etag": "\"a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3\"",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": "# Original\n",
+        "bodyKind": "text"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-viewer-describe-document",
+      "operation": "POST /api/v1/agents/{id}/deliverable-references",
+      "scenario": "deliverable_viewer",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/deliverable-references",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "document",
+          "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-denied-list",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables",
+      "scenario": "deliverable_denied",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "items": [
+            {
+              "id": "delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "document",
+                  "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+                  "revision": 1
+                },
+                "name": "Report.md",
+                "media_type": "text/markdown",
+                "size_bytes": 11,
+                "sha256": "a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3"
+              },
+              "status": "denied"
+            },
+            {
+              "id": "delivery_5ed345d109614248bae2c304426859fa837c2eac7d647ba6df10536a13728b9d",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "agent_artifact",
+                  "id": "art_90eb7c6201ae2bf61f995b387c92dee777fd68c39bcce9ad9e7ab93411e22e92"
+                },
+                "name": "result.txt",
+                "media_type": "text/plain",
+                "size_bytes": 3,
+                "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+              },
+              "status": "ready"
+            },
+            {
+              "id": "delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "live_file",
+                  "path": "cma/hello world.txt"
+                },
+                "name": "hello world.txt",
+                "media_type": "application/octet-stream",
+                "size_bytes": 12,
+                "sha256": "cf2a1999088291aea704804dac731691b768e1fc6afcfcfcaeb6a9ffc7ab7f52"
+              },
+              "status": "denied"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-denied-read-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_denied",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "item": {
+            "id": "delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+            "reference": {
+              "agent_id": "agt_shared_read",
+              "resource": {
+                "kind": "document",
+                "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+                "revision": 1
+              },
+              "name": "Report.md",
+              "media_type": "text/markdown",
+              "size_bytes": 11,
+              "sha256": "a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3"
+            },
+            "status": "denied"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-denied-download-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+      "scenario": "deliverable_denied",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-denied-describe-document",
+      "operation": "POST /api/v1/agents/{id}/deliverable-references",
+      "scenario": "deliverable_denied",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/deliverable-references",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "document",
+          "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-revoked-list",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables",
+      "scenario": "deliverable_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "items": [
+            {
+              "id": "delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "document",
+                  "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+                  "revision": 1
+                },
+                "name": "Report.md",
+                "media_type": "text/markdown",
+                "size_bytes": 11,
+                "sha256": "a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3"
+              },
+              "status": "denied"
+            },
+            {
+              "id": "delivery_5ed345d109614248bae2c304426859fa837c2eac7d647ba6df10536a13728b9d",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "agent_artifact",
+                  "id": "art_90eb7c6201ae2bf61f995b387c92dee777fd68c39bcce9ad9e7ab93411e22e92"
+                },
+                "name": "result.txt",
+                "media_type": "text/plain",
+                "size_bytes": 3,
+                "sha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+              },
+              "status": "ready"
+            },
+            {
+              "id": "delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda",
+              "reference": {
+                "agent_id": "agt_shared_read",
+                "resource": {
+                  "kind": "live_file",
+                  "path": "cma/hello world.txt"
+                },
+                "name": "hello world.txt",
+                "media_type": "application/octet-stream",
+                "size_bytes": 12,
+                "sha256": "cf2a1999088291aea704804dac731691b768e1fc6afcfcfcaeb6a9ffc7ab7f52"
+              },
+              "status": "denied"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-revoked-read-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "item": {
+            "id": "delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+            "reference": {
+              "agent_id": "agt_shared_read",
+              "resource": {
+                "kind": "document",
+                "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+                "revision": 1
+              },
+              "name": "Report.md",
+              "media_type": "text/markdown",
+              "size_bytes": 11,
+              "sha256": "a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3"
+            },
+            "status": "denied"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-revoked-download-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+      "scenario": "deliverable_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-revoked-describe-document",
+      "operation": "POST /api/v1/agents/{id}/deliverable-references",
+      "scenario": "deliverable_revoked",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/deliverable-references",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "document",
+          "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-foreign-describe-document",
+      "operation": "POST /api/v1/agents/{id}/deliverable-references",
+      "scenario": "deliverable_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/deliverable-references",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "document",
+          "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-foreign-list",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables",
+      "scenario": "deliverable_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-foreign-read-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-foreign-download-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+      "scenario": "deliverable_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-anonymous-describe-document",
+      "operation": "POST /api/v1/agents/{id}/deliverable-references",
+      "scenario": "deliverable_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/deliverable-references",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "document",
+          "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-anonymous-list",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables",
+      "scenario": "deliverable_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-anonymous-read-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-anonymous-download-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+      "scenario": "deliverable_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-unavailable-describe-document",
+      "operation": "POST /api/v1/agents/{id}/deliverable-references",
+      "scenario": "deliverable_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/deliverable-references",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "document",
+          "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+          "revision": 1
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/deliverable_unavailable",
+          "title": "deliverable_unavailable",
+          "status": 503,
+          "detail": "This resource capability is unavailable",
+          "code": "deliverable_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-unavailable-read-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "item": {
+            "id": "delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+            "reference": {
+              "agent_id": "agt_shared_read",
+              "resource": {
+                "kind": "document",
+                "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+                "revision": 1
+              },
+              "name": "Report.md",
+              "media_type": "text/markdown",
+              "size_bytes": 11,
+              "sha256": "a9a525098771c8da9ecf97e12f6799094bf1271472caeeabe8b8a1e2fbf0a7f3"
+            },
+            "status": "unavailable"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-unavailable-download-document",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+      "scenario": "deliverable_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/deliverable_unavailable",
+          "title": "deliverable_unavailable",
+          "status": 503,
+          "detail": "This resource capability is unavailable",
+          "code": "deliverable_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-changed_file-verify-live_file",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_changed_file",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda?verify=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "answer_id": "event:12",
+          "turn_sequence": 10,
+          "item": {
+            "id": "delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda",
+            "reference": {
+              "agent_id": "agt_shared_read",
+              "resource": {
+                "kind": "live_file",
+                "path": "cma/hello world.txt"
+              },
+              "name": "hello world.txt",
+              "media_type": "application/octet-stream",
+              "size_bytes": 12,
+              "sha256": "cf2a1999088291aea704804dac731691b768e1fc6afcfcfcaeb6a9ffc7ab7f52"
+            },
+            "status": "changed"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-changed_file-download-live_file",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
+      "scenario": "deliverable_changed_file",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_23e6fb25bd81daee99cd0bc1c493a76a7a6f4664a99dd4f4dae128d95a476dda/download",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/deliverable_changed",
+          "title": "deliverable_changed",
+          "status": 409,
+          "detail": "Deliverable bytes differ from the referenced version",
+          "code": "deliverable_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-invalid-revision",
+      "operation": "POST /api/v1/agents/{id}/deliverable-references",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/deliverable-references",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "kind": "document",
+          "id": "doc_0a52494d0e775ba6a7f24fcb5fb47504",
+          "revision": 0
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_deliverable_reference",
+          "title": "invalid_deliverable_reference",
+          "status": 422,
+          "detail": "Invalid deliverable reference",
+          "code": "invalid_deliverable_reference"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-invalid-answer-list",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:0/deliverables",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_deliverable_reference",
+          "title": "invalid_deliverable_reference",
+          "status": 422,
+          "detail": "Invalid deliverable reference",
+          "code": "invalid_deliverable_reference"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-invalid-answer-read",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:0/deliverables/delivery_f1a94f7bcdfae4e3a6d7871775111eac27b55a6b388627649ae240225242c98d",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_deliverable_reference",
+          "title": "invalid_deliverable_reference",
+          "status": 422,
+          "detail": "Invalid deliverable reference",
+          "code": "invalid_deliverable_reference"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-nonfinal-answer",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:11/deliverables",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "deliverables-owner-missing-item",
+      "operation": "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}",
+      "scenario": "deliverable_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/answers/event:12/deliverables/delivery_ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/deliverable_not_found",
+          "title": "deliverable_not_found",
+          "status": 404,
+          "detail": "Deliverable is not part of this final answer",
+          "code": "deliverable_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

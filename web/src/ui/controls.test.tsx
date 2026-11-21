@@ -7,7 +7,7 @@ import { Button } from './Button';
 import { Picker } from './Picker';
 
 /**
- * Controls — docs/Web_Style.md §12.
+ * Controls — the shared style contracts
  *
  * The two shared control heights and no others, `box-sizing: border-box`
  * everywhere, the lift state contract, and one dropdown pattern. jsdom does
@@ -100,7 +100,7 @@ describe('the button', () => {
     );
     expect(css).toMatch(/\.button--outline\s*\{[^}]*var\(--dsw-alias-border-l3\)/);
     expect(css).toMatch(
-      /\.button--outline:hover:not\(:disabled\)\s*\{[^}]*var\(--dsw-alias-interactive-bg-hover-accent\)[^}]*var\(--dsw-alias-state-business-primary\)/,
+      /\.button--outline:hover:not\(:disabled\)\s*\{[^}]*var\(--dsw-alias-interactive-bg-hover\)[^}]*var\(--dsw-alias-border-l4\)/,
     );
   });
 
@@ -110,13 +110,13 @@ describe('the button', () => {
     // made every disabled control taller than its enabled neighbour.
     render(
       <div>
-        <Button disabled>Pause session</Button>
-        <span className="control-reason">This session is not running</span>
+        <Button disabled>Pause resource</Button>
+        <span className="control-reason">This resource is not running</span>
       </div>,
     );
-    const button = screen.getByRole('button', { name: 'Pause session' });
+    const button = screen.getByRole('button', { name: 'Pause resource' });
     expect(button).toBeDisabled();
-    expect(button.textContent).not.toContain('This session is not running');
+    expect(button.textContent).not.toContain('This resource is not running');
 
     // Dimmed rather than recoloured, so a primary button that cannot be
     // pressed is still recognisably the one somebody is looking for.
@@ -185,11 +185,22 @@ describe('the shared component vocabulary', () => {
     );
   });
 
+  it('settles a pressed button to 96% and keeps it still under reduced motion', () => {
+    const css = readFileSync(join(SRC, 'ui', 'Button.css'), 'utf8');
+    expect(css).toMatch(/\.button:active:not\(:disabled\) \{\s*scale: 0\.96;/);
+    expect(css).toMatch(
+      /prefers-reduced-motion: reduce[\s\S]*\.button:active:not\(:disabled\) \{\s*scale: none;/,
+    );
+    const shared = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
+    expect(shared).toMatch(/scale var\(--ds-transition-duration-fast\)/);
+  });
+
   it('pins the field, failure, progress, and skeleton idioms to their aliases', () => {
     const css = readFileSync(join(SRC, 'styles', 'components.css'), 'utf8');
     expect(css).toMatch(
-      /\.field__label\s*\{[^}]*font-family: var\(--ds-font-family-code\)[^}]*font-size: 10\.5px[^}]*letter-spacing: 0\.14em/,
+      /\.field__label\s*\{[^}]*color: var\(--dsw-alias-label-caption\)[^}]*font: var\(--dsw-font-xxs-strong-12\)/,
     );
+    expect(css).not.toMatch(/\.field__label\s*\{[^}]*text-transform: uppercase/);
     expect(css).toMatch(
       /\.notice--fail\s*\{[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)[^}]*border-left: 2px solid var\(--dsw-alias-state-error-primary\)/,
     );
@@ -208,9 +219,9 @@ describe('the shared component vocabulary', () => {
 
 describe('the value picker', () => {
   const OPTIONS = [
-    { value: 'a', label: 'Codex' },
-    { value: 'b', label: 'Claude Code' },
-    { value: 'c', label: 'DeepSeek Harness', unavailable: 'no terminal plane' },
+    { value: 'a', label: 'First option' },
+    { value: 'b', label: 'Second option' },
+    { value: 'c', label: 'Unavailable option', unavailable: 'not available' },
   ] as const;
 
   function renderPicker(onChange = vi.fn()) {
@@ -237,7 +248,7 @@ describe('the value picker', () => {
 
     await user.click(screen.getByRole('button', { name: 'Agent' }));
     // Focus lands on the selected row, so arrows move from where you are.
-    expect(screen.getByRole('menuitemradio', { name: 'Codex' })).toHaveFocus();
+    expect(screen.getByRole('menuitemradio', { name: 'First option' })).toHaveFocus();
 
     await user.keyboard('{ArrowDown}{Enter}');
     expect(onChange).toHaveBeenCalledWith('b');
@@ -251,7 +262,7 @@ describe('the value picker', () => {
     await user.click(screen.getByRole('button', { name: 'Agent' }));
 
     await user.keyboard('{ArrowUp}');
-    expect(screen.getByRole('menuitemradio', { name: /DeepSeek Harness/ })).toHaveFocus();
+    expect(screen.getByRole('menuitemradio', { name: /Unavailable option/ })).toHaveFocus();
   });
 
   it('closes on Escape without choosing', async () => {
@@ -272,9 +283,9 @@ describe('the value picker', () => {
     renderPicker();
     await user.click(screen.getByRole('button', { name: 'Agent' }));
 
-    const unavailable = screen.getByRole('menuitemradio', { name: /DeepSeek Harness/ });
+    const unavailable = screen.getByRole('menuitemradio', { name: /Unavailable option/ });
     expect(unavailable).toHaveAttribute('aria-disabled', 'true');
-    expect(unavailable.textContent).toContain('no terminal plane');
+    expect(unavailable.textContent).toContain('not available');
 
     // Still reachable, so the reason can actually be read. Choosing it does
     // nothing — the row is listed, not offered.
@@ -297,7 +308,7 @@ describe('the value picker', () => {
     const css = readFileSync(join(SRC, 'ui', 'Menu.css'), 'utf8');
     expect(css).toMatch(/\.menu__item\s*\{[^}]*min-height: 40px[^}]*border-radius: 7px/);
     expect(css).toMatch(
-      /\.menu__item:hover:not\(\[aria-disabled='true'\]\)\s*\{[^}]*color: var\(--dsw-alias-state-business-primary\)[^}]*background: var\(--dsw-alias-interactive-bg-hover-accent\)/,
+      /\.menu__item:hover:not\(\[aria-disabled='true'\]\)\s*\{[^}]*color: var\(--dsw-alias-label-primary\)[^}]*background: var\(--dsw-alias-interactive-bg-hover\)/,
     );
     expect(css).toMatch(
       /\.menu__item--danger:hover:not\(\[aria-disabled='true'\]\)[^{]*\{[^}]*color: var\(--dsw-alias-state-error-primary\)[^}]*background: var\(--dsw-alias-interactive-bg-hover-danger\)/,

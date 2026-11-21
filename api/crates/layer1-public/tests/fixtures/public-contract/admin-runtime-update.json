@@ -1,0 +1,345 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "admin-runtime-update-noop",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-update",
+      "scenario": "admin_runtime_update_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_update",
+          "owner": "foreign-owner",
+          "owner_name": null,
+          "name": "Sandbox sbx_update",
+          "status": "active",
+          "profile": {
+            "id": "sbp_test",
+            "revision": 1
+          },
+          "nyxid_services": [],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": true
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
+          },
+          "runtime_version": "runtime-v2",
+          "runtime_update": {
+            "current_version": "runtime-v2",
+            "latest_version": "runtime-v2",
+            "update_available": false,
+            "state": "up_to_date",
+            "can_update": false,
+            "preserves_home": false,
+            "schedule": {
+              "timezone": "Asia/Singapore",
+              "local_time": "02:00"
+            },
+            "blocked_reason": "Runtime updates require a retained managed home and its original runtime identity."
+          },
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-update-replay",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-update",
+      "scenario": "admin_runtime_update_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "sbx_update",
+          "owner": "foreign-owner",
+          "owner_name": null,
+          "name": "Sandbox sbx_update",
+          "status": "active",
+          "profile": {
+            "id": "sbp_test",
+            "revision": 1
+          },
+          "nyxid_services": [],
+          "limits": {
+            "max_workspaces": 4,
+            "max_agents_per_workspace": 4
+          },
+          "lifecycle": {
+            "pause": {
+              "allowed": true
+            },
+            "revive": {
+              "allowed": false,
+              "reason": "not_paused"
+            }
+          },
+          "runtime_version": "runtime-v2",
+          "runtime_update": {
+            "current_version": "runtime-v2",
+            "latest_version": "runtime-v2",
+            "update_available": false,
+            "state": "up_to_date",
+            "can_update": false,
+            "preserves_home": false,
+            "schedule": {
+              "timezone": "Asia/Singapore",
+              "local_time": "02:00"
+            },
+            "blocked_reason": "Runtime updates require a retained managed home and its original runtime identity."
+          },
+          "last_activity_at": "2026-09-05T00:00:00Z",
+          "created_at": "2026-09-05T00:00:00Z",
+          "updated_at": "2026-09-05T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-update-anonymous",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-update",
+      "scenario": "admin_runtime_update_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-update-forbidden",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-update",
+      "scenario": "admin_runtime_update_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-update-missing",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-update",
+      "scenario": "admin_runtime_update_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/missing/runtime-update",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-update-invalid-json",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-update",
+      "scenario": "admin_runtime_update_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-resource-request",
+          "title": "invalid resource request",
+          "status": 422,
+          "detail": "The request does not satisfy the resource contract.",
+          "code": "invalid_runtime_update"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-update-stale-target",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-update",
+      "scenario": "admin_runtime_update_operator",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "target_version": "unapproved-runtime"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
+          "title": "resource conflict",
+          "status": 409,
+          "detail": "The operation conflicts with current resource state.",
+          "code": "runtime_update_target_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-update-unavailable",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-update",
+      "scenario": "admin_runtime_update_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
+          "title": "resource conflict",
+          "status": 409,
+          "detail": "The operation conflicts with current resource state.",
+          "code": "runtime_update_not_available"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "admin-runtime-update-unconfigured",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/runtime-update",
+      "scenario": "settings_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_update/runtime-update",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "target_version": "runtime-v2"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

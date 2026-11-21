@@ -1,0 +1,5076 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "document-list-success",
+      "operation": "GET /api/v1/documents",
+      "scenario": "document_owner__list",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+              "owner_subject": "document-owner",
+              "title": "Independent report",
+              "revision": 4,
+              "source_revision": 1,
+              "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+              "size_bytes": 17,
+              "created_at": "2026-10-22T00:00:00Z",
+              "updated_at": "2026-10-22T00:00:00Z",
+              "origin_agent_id": null,
+              "access": "owner"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-list-anonymous",
+      "operation": "GET /api/v1/documents",
+      "scenario": "document_anonymous__list",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-list-forbidden",
+      "operation": "GET /api/v1/documents",
+      "scenario": "document_forbidden__list",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-list-unavailable",
+      "operation": "GET /api/v1/documents",
+      "scenario": "document_unavailable__list",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-list-invalid",
+      "operation": "GET /api/v1/documents",
+      "scenario": "document_invalid__list",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_document_request",
+          "title": "invalid_document_request",
+          "status": 400,
+          "detail": "Document request is invalid",
+          "code": "invalid_document_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-create-success",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_owner__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "title": "Created report",
+          "markdown": "# New\n",
+          "origin_agent_id": null
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_f253f780fccc59c982f867adb293a290",
+          "owner_subject": "document-owner",
+          "title": "Created report",
+          "revision": 1,
+          "source_revision": 1,
+          "sha256": "f676b43bd55f91451babc1663739064abb7e11e2b5f4a7efe62c29e4eeb0d117",
+          "size_bytes": 6,
+          "created_at": "2026-10-22T01:00:00Z",
+          "updated_at": "2026-10-22T01:00:00Z",
+          "origin_agent_id": null,
+          "access": "owner"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/updated_at"
+      }
+    },
+    {
+      "id": "document-create-replay",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_owner__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "title": "Created report",
+          "markdown": "# New\n",
+          "origin_agent_id": null
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_f253f780fccc59c982f867adb293a290",
+          "owner_subject": "document-owner",
+          "title": "Created report",
+          "revision": 1,
+          "source_revision": 1,
+          "sha256": "f676b43bd55f91451babc1663739064abb7e11e2b5f4a7efe62c29e4eeb0d117",
+          "size_bytes": 6,
+          "created_at": "2026-10-22T01:00:00Z",
+          "updated_at": "2026-10-22T01:00:00Z",
+          "origin_agent_id": null,
+          "access": "owner"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/updated_at"
+      }
+    },
+    {
+      "id": "document-create-reused-key",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_owner__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "title": "Conflicting report",
+          "markdown": "# New\n",
+          "origin_agent_id": null
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "Idempotency key identifies another request",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-create-anonymous",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_anonymous__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "title": "Created report",
+          "markdown": "# New\n",
+          "origin_agent_id": null
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-create-forbidden",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_forbidden__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "title": "Created report",
+          "markdown": "# New\n",
+          "origin_agent_id": null
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-create-unavailable",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_unavailable__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "title": "Created report",
+          "markdown": "# New\n",
+          "origin_agent_id": null
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-create-missing-key",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_missing-key__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "title": "Created report",
+          "markdown": "# New\n",
+          "origin_agent_id": null
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-create-invalid-key",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_invalid-key__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "with spaces"
+        },
+        "body": {
+          "title": "Created report",
+          "markdown": "# New\n",
+          "origin_agent_id": null
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-create-malformed-json",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_malformed-json__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-create-missing-media-type",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_missing-media-type__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "title": "Created report",
+          "markdown": "# New\n",
+          "origin_agent_id": null
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-create-invalid",
+      "operation": "POST /api/v1/documents",
+      "scenario": "document_invalid__create",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-create"
+        },
+        "body": {
+          "title": "",
+          "markdown": "# New\n",
+          "origin_agent_id": null
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_document_request",
+          "title": "invalid_document_request",
+          "status": 400,
+          "detail": "Document request is invalid",
+          "code": "invalid_document_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-read-success",
+      "operation": "GET /api/v1/documents/{id}",
+      "scenario": "document_owner__read",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "owner_subject": "document-owner",
+          "title": "Independent report",
+          "revision": 4,
+          "source_revision": 1,
+          "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+          "size_bytes": 17,
+          "created_at": "2026-10-22T00:00:00Z",
+          "updated_at": "2026-10-22T00:00:00Z",
+          "origin_agent_id": null,
+          "access": "owner"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-read-anonymous",
+      "operation": "GET /api/v1/documents/{id}",
+      "scenario": "document_anonymous__read",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-read-forbidden",
+      "operation": "GET /api/v1/documents/{id}",
+      "scenario": "document_forbidden__read",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-read-unavailable",
+      "operation": "GET /api/v1/documents/{id}",
+      "scenario": "document_unavailable__read",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-read-foreign",
+      "operation": "GET /api/v1/documents/{id}",
+      "scenario": "document_foreign__read",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-read-invalid",
+      "operation": "GET /api/v1/documents/{id}",
+      "scenario": "document_invalid__read",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "x-cma-document-share-token": "invalid"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_document_request",
+          "title": "invalid_document_request",
+          "status": 400,
+          "detail": "Document request is invalid",
+          "code": "invalid_document_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-success",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_owner__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "owner_subject": "document-owner",
+          "title": "Revised report",
+          "revision": 5,
+          "source_revision": 5,
+          "sha256": "6c19f963d34ebbab4a75a80836f0b7551ba19021db0bf658f9ad15dc34ffa7ce",
+          "size_bytes": 10,
+          "created_at": "2026-10-22T00:00:00Z",
+          "updated_at": "2026-10-22T01:00:00Z",
+          "origin_agent_id": null,
+          "access": "owner"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/updated_at"
+      }
+    },
+    {
+      "id": "document-update-replay",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_owner__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "owner_subject": "document-owner",
+          "title": "Revised report",
+          "revision": 5,
+          "source_revision": 5,
+          "sha256": "6c19f963d34ebbab4a75a80836f0b7551ba19021db0bf658f9ad15dc34ffa7ce",
+          "size_bytes": 10,
+          "created_at": "2026-10-22T00:00:00Z",
+          "updated_at": "2026-10-22T01:00:00Z",
+          "origin_agent_id": null,
+          "access": "owner"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/updated_at"
+      }
+    },
+    {
+      "id": "document-update-reused-key",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_owner__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 99,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "Idempotency key identifies another request",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-anonymous",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_anonymous__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-forbidden",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_forbidden__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-unavailable",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_unavailable__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-foreign",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_foreign__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-missing-key",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_missing-key__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-invalid-key",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_invalid-key__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "with spaces"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-malformed-json",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_malformed-json__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-missing-media-type",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_missing-media-type__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-capacity",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_capacity__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_capacity",
+          "title": "document_capacity",
+          "status": 429,
+          "detail": "Document capacity reached",
+          "code": "document_capacity"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-stale",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_stale__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 99,
+          "title": "Revised report",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_revision_conflict",
+          "title": "document_revision_conflict",
+          "status": 409,
+          "detail": "Document revision changed",
+          "code": "document_revision_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-update-invalid",
+      "operation": "PATCH /api/v1/documents/{id}",
+      "scenario": "document_invalid__update",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-update"
+        },
+        "body": {
+          "expected_revision": 4,
+          "title": "",
+          "markdown": "# Revised\n"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_document_request",
+          "title": "invalid_document_request",
+          "status": 400,
+          "detail": "Document request is invalid",
+          "code": "invalid_document_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-source-success",
+      "operation": "GET /api/v1/documents/{id}/source",
+      "scenario": "document_owner__source",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/source",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "revision": 1,
+          "markdown": "# Durable report\n"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-source-anonymous",
+      "operation": "GET /api/v1/documents/{id}/source",
+      "scenario": "document_anonymous__source",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/source",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-source-forbidden",
+      "operation": "GET /api/v1/documents/{id}/source",
+      "scenario": "document_forbidden__source",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/source",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-source-unavailable",
+      "operation": "GET /api/v1/documents/{id}/source",
+      "scenario": "document_unavailable__source",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/source",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-source-foreign",
+      "operation": "GET /api/v1/documents/{id}/source",
+      "scenario": "document_foreign__source",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/source",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-source-invalid",
+      "operation": "GET /api/v1/documents/{id}/source",
+      "scenario": "document_invalid__source",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/source?revision=invalid",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_document_request",
+          "title": "invalid_document_request",
+          "status": 400,
+          "detail": "Document request is invalid",
+          "code": "invalid_document_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revisions-success",
+      "operation": "GET /api/v1/documents/{id}/revisions",
+      "scenario": "document_owner__revisions",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "items": [
+            {
+              "revision": 1,
+              "title": "Independent report",
+              "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+              "size_bytes": 17,
+              "created_at": "2026-10-22T00:00:00Z",
+              "author_subject": "document-owner"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revisions-anonymous",
+      "operation": "GET /api/v1/documents/{id}/revisions",
+      "scenario": "document_anonymous__revisions",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revisions-forbidden",
+      "operation": "GET /api/v1/documents/{id}/revisions",
+      "scenario": "document_forbidden__revisions",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revisions-unavailable",
+      "operation": "GET /api/v1/documents/{id}/revisions",
+      "scenario": "document_unavailable__revisions",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revisions-foreign",
+      "operation": "GET /api/v1/documents/{id}/revisions",
+      "scenario": "document_foreign__revisions",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revisions-invalid",
+      "operation": "GET /api/v1/documents/{id}/revisions",
+      "scenario": "document_invalid__revisions",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/revisions?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_document_request",
+          "title": "invalid_document_request",
+          "status": 400,
+          "detail": "Document request is invalid",
+          "code": "invalid_document_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-shares-success",
+      "operation": "GET /api/v1/documents/{id}/shares",
+      "scenario": "document_owner__shares",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": [
+          {
+            "subject": "document-reader",
+            "permission": "comment"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-shares-anonymous",
+      "operation": "GET /api/v1/documents/{id}/shares",
+      "scenario": "document_anonymous__shares",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-shares-forbidden",
+      "operation": "GET /api/v1/documents/{id}/shares",
+      "scenario": "document_forbidden__shares",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-shares-unavailable",
+      "operation": "GET /api/v1/documents/{id}/shares",
+      "scenario": "document_unavailable__shares",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-shares-foreign",
+      "operation": "GET /api/v1/documents/{id}/shares",
+      "scenario": "document_foreign__shares",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-grant-success",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_owner__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "owner_subject": "document-owner",
+          "title": "Independent report",
+          "revision": 5,
+          "source_revision": 1,
+          "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+          "size_bytes": 17,
+          "created_at": "2026-10-22T00:00:00Z",
+          "updated_at": "2026-10-22T01:00:00Z",
+          "origin_agent_id": null,
+          "access": "owner"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/updated_at"
+      }
+    },
+    {
+      "id": "document-grant-replay",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_owner__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "owner_subject": "document-owner",
+          "title": "Independent report",
+          "revision": 5,
+          "source_revision": 1,
+          "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+          "size_bytes": 17,
+          "created_at": "2026-10-22T00:00:00Z",
+          "updated_at": "2026-10-22T01:00:00Z",
+          "origin_agent_id": null,
+          "access": "owner"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/updated_at"
+      }
+    },
+    {
+      "id": "document-grant-reused-key",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_owner__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 99,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "Idempotency key identifies another request",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-grant-anonymous",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_anonymous__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-grant-forbidden",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_forbidden__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-grant-unavailable",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_unavailable__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-grant-foreign",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_foreign__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-grant-missing-key",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_missing-key__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-grant-invalid-key",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_invalid-key__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "with spaces"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-grant-malformed-json",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_malformed-json__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-grant-missing-media-type",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_missing-media-type__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-grant-capacity",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_capacity__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_capacity",
+          "title": "document_capacity",
+          "status": 429,
+          "detail": "Document capacity reached",
+          "code": "document_capacity"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-grant-stale",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_stale__grant",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 99,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_revision_conflict",
+          "title": "document_revision_conflict",
+          "status": 409,
+          "detail": "Document revision changed",
+          "code": "document_revision_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revoke-success",
+      "operation": "DELETE /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_owner__revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-revoke"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "owner_subject": "document-owner",
+          "title": "Independent report",
+          "revision": 5,
+          "source_revision": 1,
+          "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+          "size_bytes": 17,
+          "created_at": "2026-10-22T00:00:00Z",
+          "updated_at": "2026-10-22T01:00:00Z",
+          "origin_agent_id": null,
+          "access": "owner"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/updated_at"
+      }
+    },
+    {
+      "id": "document-revoke-replay",
+      "operation": "DELETE /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_owner__revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-revoke"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "owner_subject": "document-owner",
+          "title": "Independent report",
+          "revision": 5,
+          "source_revision": 1,
+          "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+          "size_bytes": 17,
+          "created_at": "2026-10-22T00:00:00Z",
+          "updated_at": "2026-10-22T01:00:00Z",
+          "origin_agent_id": null,
+          "access": "owner"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/updated_at"
+      }
+    },
+    {
+      "id": "document-revoke-reused-key",
+      "operation": "DELETE /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_owner__revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-revoke"
+        },
+        "body": {
+          "expected_revision": 99
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "Idempotency key identifies another request",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revoke-anonymous",
+      "operation": "DELETE /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_anonymous__revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-revoke"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revoke-forbidden",
+      "operation": "DELETE /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_forbidden__revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-revoke"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revoke-unavailable",
+      "operation": "DELETE /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_unavailable__revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-revoke"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revoke-foreign",
+      "operation": "DELETE /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_foreign__revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-revoke"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revoke-missing-key",
+      "operation": "DELETE /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_missing-key__revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revoke-invalid-key",
+      "operation": "DELETE /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_invalid-key__revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "with spaces"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revoke-malformed-json",
+      "operation": "DELETE /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_malformed-json__revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-revoke"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revoke-missing-media-type",
+      "operation": "DELETE /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_missing-media-type__revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "idempotency-key": "contract-revoke"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revoke-capacity",
+      "operation": "DELETE /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_capacity__revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-revoke"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_capacity",
+          "title": "document_capacity",
+          "status": 429,
+          "detail": "Document capacity reached",
+          "code": "document_capacity"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revoke-stale",
+      "operation": "DELETE /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_stale__revoke",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-revoke"
+        },
+        "body": {
+          "expected_revision": 99
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_revision_conflict",
+          "title": "document_revision_conflict",
+          "status": 409,
+          "detail": "Document revision changed",
+          "code": "document_revision_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-links-success",
+      "operation": "GET /api/v1/documents/{id}/share-links",
+      "scenario": "document_owner__links",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": [
+          {
+            "id": "dln_12ebd2a6d267523fa64d84f63bd79370",
+            "permission": "read",
+            "created_at": "2026-10-22T00:00:00Z"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-links-anonymous",
+      "operation": "GET /api/v1/documents/{id}/share-links",
+      "scenario": "document_anonymous__links",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-links-forbidden",
+      "operation": "GET /api/v1/documents/{id}/share-links",
+      "scenario": "document_forbidden__links",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-links-unavailable",
+      "operation": "GET /api/v1/documents/{id}/share-links",
+      "scenario": "document_unavailable__links",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-links-foreign",
+      "operation": "GET /api/v1/documents/{id}/share-links",
+      "scenario": "document_foreign__links",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-link-success",
+      "operation": "POST /api/v1/documents/{id}/share-links",
+      "scenario": "document_owner__link",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-link"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "comment",
+          "token": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "document": {
+            "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+            "owner_subject": "document-owner",
+            "title": "Independent report",
+            "revision": 5,
+            "source_revision": 1,
+            "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+            "size_bytes": 17,
+            "created_at": "2026-10-22T00:00:00Z",
+            "updated_at": "2026-10-22T01:00:00Z",
+            "origin_agent_id": null,
+            "access": "owner"
+          },
+          "link": {
+            "id": "dln_9b3708f7d03b5e65b8ce0a5bb01de9d5",
+            "permission": "comment",
+            "created_at": "2026-10-22T01:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/document/updated_at"
+      }
+    },
+    {
+      "id": "document-link-replay",
+      "operation": "POST /api/v1/documents/{id}/share-links",
+      "scenario": "document_owner__link",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-link"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "comment",
+          "token": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "document": {
+            "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+            "owner_subject": "document-owner",
+            "title": "Independent report",
+            "revision": 5,
+            "source_revision": 1,
+            "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+            "size_bytes": 17,
+            "created_at": "2026-10-22T00:00:00Z",
+            "updated_at": "2026-10-22T01:00:00Z",
+            "origin_agent_id": null,
+            "access": "owner"
+          },
+          "link": {
+            "id": "dln_9b3708f7d03b5e65b8ce0a5bb01de9d5",
+            "permission": "comment",
+            "created_at": "2026-10-22T01:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/document/updated_at"
+      }
+    },
+    {
+      "id": "document-link-reused-key",
+      "operation": "POST /api/v1/documents/{id}/share-links",
+      "scenario": "document_owner__link",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-link"
+        },
+        "body": {
+          "expected_revision": 99,
+          "permission": "comment",
+          "token": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "Idempotency key identifies another request",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-link-anonymous",
+      "operation": "POST /api/v1/documents/{id}/share-links",
+      "scenario": "document_anonymous__link",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-link"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "comment",
+          "token": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-link-forbidden",
+      "operation": "POST /api/v1/documents/{id}/share-links",
+      "scenario": "document_forbidden__link",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-link"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "comment",
+          "token": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-link-unavailable",
+      "operation": "POST /api/v1/documents/{id}/share-links",
+      "scenario": "document_unavailable__link",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-link"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "comment",
+          "token": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-link-foreign",
+      "operation": "POST /api/v1/documents/{id}/share-links",
+      "scenario": "document_foreign__link",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-link"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "comment",
+          "token": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-link-missing-key",
+      "operation": "POST /api/v1/documents/{id}/share-links",
+      "scenario": "document_missing-key__link",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "comment",
+          "token": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-link-invalid-key",
+      "operation": "POST /api/v1/documents/{id}/share-links",
+      "scenario": "document_invalid-key__link",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "with spaces"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "comment",
+          "token": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-link-malformed-json",
+      "operation": "POST /api/v1/documents/{id}/share-links",
+      "scenario": "document_malformed-json__link",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-link"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-link-missing-media-type",
+      "operation": "POST /api/v1/documents/{id}/share-links",
+      "scenario": "document_missing-media-type__link",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {
+          "idempotency-key": "contract-link"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "comment",
+          "token": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-link-capacity",
+      "operation": "POST /api/v1/documents/{id}/share-links",
+      "scenario": "document_capacity__link",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-link"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "comment",
+          "token": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_capacity",
+          "title": "document_capacity",
+          "status": 429,
+          "detail": "Document capacity reached",
+          "code": "document_capacity"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-link-stale",
+      "operation": "POST /api/v1/documents/{id}/share-links",
+      "scenario": "document_stale__link",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-link"
+        },
+        "body": {
+          "expected_revision": 99,
+          "permission": "comment",
+          "token": "0202020202020202020202020202020202020202020202020202020202020202"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_revision_conflict",
+          "title": "document_revision_conflict",
+          "status": 409,
+          "detail": "Document revision changed",
+          "code": "document_revision_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-unlink-success",
+      "operation": "DELETE /api/v1/documents/{id}/share-links/{link_id}",
+      "scenario": "document_owner__unlink",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links/dln_12ebd2a6d267523fa64d84f63bd79370",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-unlink"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "owner_subject": "document-owner",
+          "title": "Independent report",
+          "revision": 5,
+          "source_revision": 1,
+          "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+          "size_bytes": 17,
+          "created_at": "2026-10-22T00:00:00Z",
+          "updated_at": "2026-10-22T01:00:00Z",
+          "origin_agent_id": null,
+          "access": "owner"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/updated_at"
+      }
+    },
+    {
+      "id": "document-unlink-replay",
+      "operation": "DELETE /api/v1/documents/{id}/share-links/{link_id}",
+      "scenario": "document_owner__unlink",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links/dln_12ebd2a6d267523fa64d84f63bd79370",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-unlink"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "owner_subject": "document-owner",
+          "title": "Independent report",
+          "revision": 5,
+          "source_revision": 1,
+          "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+          "size_bytes": 17,
+          "created_at": "2026-10-22T00:00:00Z",
+          "updated_at": "2026-10-22T01:00:00Z",
+          "origin_agent_id": null,
+          "access": "owner"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/updated_at"
+      }
+    },
+    {
+      "id": "document-unlink-reused-key",
+      "operation": "DELETE /api/v1/documents/{id}/share-links/{link_id}",
+      "scenario": "document_owner__unlink",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links/dln_12ebd2a6d267523fa64d84f63bd79370",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-unlink"
+        },
+        "body": {
+          "expected_revision": 99
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "Idempotency key identifies another request",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-unlink-anonymous",
+      "operation": "DELETE /api/v1/documents/{id}/share-links/{link_id}",
+      "scenario": "document_anonymous__unlink",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links/dln_12ebd2a6d267523fa64d84f63bd79370",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-unlink"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-unlink-forbidden",
+      "operation": "DELETE /api/v1/documents/{id}/share-links/{link_id}",
+      "scenario": "document_forbidden__unlink",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links/dln_12ebd2a6d267523fa64d84f63bd79370",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-unlink"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-unlink-unavailable",
+      "operation": "DELETE /api/v1/documents/{id}/share-links/{link_id}",
+      "scenario": "document_unavailable__unlink",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links/dln_12ebd2a6d267523fa64d84f63bd79370",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-unlink"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-unlink-foreign",
+      "operation": "DELETE /api/v1/documents/{id}/share-links/{link_id}",
+      "scenario": "document_foreign__unlink",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links/dln_12ebd2a6d267523fa64d84f63bd79370",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-unlink"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-unlink-missing-key",
+      "operation": "DELETE /api/v1/documents/{id}/share-links/{link_id}",
+      "scenario": "document_missing-key__unlink",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links/dln_12ebd2a6d267523fa64d84f63bd79370",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-unlink-invalid-key",
+      "operation": "DELETE /api/v1/documents/{id}/share-links/{link_id}",
+      "scenario": "document_invalid-key__unlink",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links/dln_12ebd2a6d267523fa64d84f63bd79370",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "with spaces"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-unlink-malformed-json",
+      "operation": "DELETE /api/v1/documents/{id}/share-links/{link_id}",
+      "scenario": "document_malformed-json__unlink",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links/dln_12ebd2a6d267523fa64d84f63bd79370",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-unlink"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-unlink-missing-media-type",
+      "operation": "DELETE /api/v1/documents/{id}/share-links/{link_id}",
+      "scenario": "document_missing-media-type__unlink",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links/dln_12ebd2a6d267523fa64d84f63bd79370",
+        "headers": {
+          "idempotency-key": "contract-unlink"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-unlink-capacity",
+      "operation": "DELETE /api/v1/documents/{id}/share-links/{link_id}",
+      "scenario": "document_capacity__unlink",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links/dln_12ebd2a6d267523fa64d84f63bd79370",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-unlink"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_capacity",
+          "title": "document_capacity",
+          "status": 429,
+          "detail": "Document capacity reached",
+          "code": "document_capacity"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-unlink-stale",
+      "operation": "DELETE /api/v1/documents/{id}/share-links/{link_id}",
+      "scenario": "document_stale__unlink",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-links/dln_12ebd2a6d267523fa64d84f63bd79370",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-unlink"
+        },
+        "body": {
+          "expected_revision": 99
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_revision_conflict",
+          "title": "document_revision_conflict",
+          "status": 409,
+          "detail": "Document revision changed",
+          "code": "document_revision_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comments-success",
+      "operation": "GET /api/v1/documents/{id}/comments",
+      "scenario": "document_owner__comments",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "dcm_ff4233b8e65253fc8f03a13002131a44",
+              "author_subject": "document-owner",
+              "body": "Recorded comment",
+              "document_revision": 1,
+              "created_at": "2026-10-22T00:00:00Z"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comments-anonymous",
+      "operation": "GET /api/v1/documents/{id}/comments",
+      "scenario": "document_anonymous__comments",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comments-forbidden",
+      "operation": "GET /api/v1/documents/{id}/comments",
+      "scenario": "document_forbidden__comments",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comments-unavailable",
+      "operation": "GET /api/v1/documents/{id}/comments",
+      "scenario": "document_unavailable__comments",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comments-foreign",
+      "operation": "GET /api/v1/documents/{id}/comments",
+      "scenario": "document_foreign__comments",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comments-invalid",
+      "operation": "GET /api/v1/documents/{id}/comments",
+      "scenario": "document_invalid__comments",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_document_request",
+          "title": "invalid_document_request",
+          "status": 400,
+          "detail": "Document request is invalid",
+          "code": "invalid_document_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comment-success",
+      "operation": "POST /api/v1/documents/{id}/comments",
+      "scenario": "document_owner__comment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-comment"
+        },
+        "body": {
+          "body": "New comment",
+          "document_revision": 1
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "document": {
+            "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+            "owner_subject": "document-owner",
+            "title": "Independent report",
+            "revision": 5,
+            "source_revision": 1,
+            "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+            "size_bytes": 17,
+            "created_at": "2026-10-22T00:00:00Z",
+            "updated_at": "2026-10-22T01:00:00Z",
+            "origin_agent_id": null,
+            "access": "owner"
+          },
+          "comment": {
+            "id": "dcm_d59571c4003055b384c573627c03f0ec",
+            "author_subject": "document-owner",
+            "body": "New comment",
+            "document_revision": 1,
+            "created_at": "2026-10-22T01:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/document/updated_at"
+      }
+    },
+    {
+      "id": "document-comment-replay",
+      "operation": "POST /api/v1/documents/{id}/comments",
+      "scenario": "document_owner__comment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-comment"
+        },
+        "body": {
+          "body": "New comment",
+          "document_revision": 1
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "document": {
+            "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+            "owner_subject": "document-owner",
+            "title": "Independent report",
+            "revision": 5,
+            "source_revision": 1,
+            "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+            "size_bytes": 17,
+            "created_at": "2026-10-22T00:00:00Z",
+            "updated_at": "2026-10-22T01:00:00Z",
+            "origin_agent_id": null,
+            "access": "owner"
+          },
+          "comment": {
+            "id": "dcm_d59571c4003055b384c573627c03f0ec",
+            "author_subject": "document-owner",
+            "body": "New comment",
+            "document_revision": 1,
+            "created_at": "2026-10-22T01:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/document/updated_at"
+      }
+    },
+    {
+      "id": "document-comment-reused-key",
+      "operation": "POST /api/v1/documents/{id}/comments",
+      "scenario": "document_owner__comment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-comment"
+        },
+        "body": {
+          "body": "Conflicting comment",
+          "document_revision": 1
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "Idempotency key identifies another request",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comment-anonymous",
+      "operation": "POST /api/v1/documents/{id}/comments",
+      "scenario": "document_anonymous__comment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-comment"
+        },
+        "body": {
+          "body": "New comment",
+          "document_revision": 1
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comment-forbidden",
+      "operation": "POST /api/v1/documents/{id}/comments",
+      "scenario": "document_forbidden__comment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-comment"
+        },
+        "body": {
+          "body": "New comment",
+          "document_revision": 1
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comment-unavailable",
+      "operation": "POST /api/v1/documents/{id}/comments",
+      "scenario": "document_unavailable__comment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-comment"
+        },
+        "body": {
+          "body": "New comment",
+          "document_revision": 1
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comment-foreign",
+      "operation": "POST /api/v1/documents/{id}/comments",
+      "scenario": "document_foreign__comment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-comment"
+        },
+        "body": {
+          "body": "New comment",
+          "document_revision": 1
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comment-missing-key",
+      "operation": "POST /api/v1/documents/{id}/comments",
+      "scenario": "document_missing-key__comment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "body": "New comment",
+          "document_revision": 1
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comment-invalid-key",
+      "operation": "POST /api/v1/documents/{id}/comments",
+      "scenario": "document_invalid-key__comment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "with spaces"
+        },
+        "body": {
+          "body": "New comment",
+          "document_revision": 1
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comment-malformed-json",
+      "operation": "POST /api/v1/documents/{id}/comments",
+      "scenario": "document_malformed-json__comment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-comment"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comment-missing-media-type",
+      "operation": "POST /api/v1/documents/{id}/comments",
+      "scenario": "document_missing-media-type__comment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "idempotency-key": "contract-comment"
+        },
+        "body": {
+          "body": "New comment",
+          "document_revision": 1
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comment-capacity",
+      "operation": "POST /api/v1/documents/{id}/comments",
+      "scenario": "document_capacity__comment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-comment"
+        },
+        "body": {
+          "body": "New comment",
+          "document_revision": 1
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_capacity",
+          "title": "document_capacity",
+          "status": 429,
+          "detail": "Document capacity reached",
+          "code": "document_capacity"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comment-invalid",
+      "operation": "POST /api/v1/documents/{id}/comments",
+      "scenario": "document_invalid__comment",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-comment"
+        },
+        "body": {
+          "body": "New comment",
+          "document_revision": 99
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_document_request",
+          "title": "invalid_document_request",
+          "status": 400,
+          "detail": "Document request is invalid",
+          "code": "invalid_document_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-uncomment-success",
+      "operation": "DELETE /api/v1/documents/{id}/comments/{comment_id}",
+      "scenario": "document_owner__uncomment",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments/dcm_ff4233b8e65253fc8f03a13002131a44",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-uncomment"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "owner_subject": "document-owner",
+          "title": "Independent report",
+          "revision": 5,
+          "source_revision": 1,
+          "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+          "size_bytes": 17,
+          "created_at": "2026-10-22T00:00:00Z",
+          "updated_at": "2026-10-22T01:00:00Z",
+          "origin_agent_id": null,
+          "access": "owner"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/updated_at"
+      }
+    },
+    {
+      "id": "document-uncomment-replay",
+      "operation": "DELETE /api/v1/documents/{id}/comments/{comment_id}",
+      "scenario": "document_owner__uncomment",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments/dcm_ff4233b8e65253fc8f03a13002131a44",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-uncomment"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "owner_subject": "document-owner",
+          "title": "Independent report",
+          "revision": 5,
+          "source_revision": 1,
+          "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+          "size_bytes": 17,
+          "created_at": "2026-10-22T00:00:00Z",
+          "updated_at": "2026-10-22T01:00:00Z",
+          "origin_agent_id": null,
+          "access": "owner"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "changed_at": "/updated_at"
+      }
+    },
+    {
+      "id": "document-uncomment-reused-key",
+      "operation": "DELETE /api/v1/documents/{id}/comments/{comment_id}",
+      "scenario": "document_owner__uncomment",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments/dcm_ff4233b8e65253fc8f03a13002131a44",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-uncomment"
+        },
+        "body": {
+          "expected_revision": 99
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency_key_reused",
+          "title": "idempotency_key_reused",
+          "status": 409,
+          "detail": "Idempotency key identifies another request",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-uncomment-anonymous",
+      "operation": "DELETE /api/v1/documents/{id}/comments/{comment_id}",
+      "scenario": "document_anonymous__uncomment",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments/dcm_ff4233b8e65253fc8f03a13002131a44",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-uncomment"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-uncomment-forbidden",
+      "operation": "DELETE /api/v1/documents/{id}/comments/{comment_id}",
+      "scenario": "document_forbidden__uncomment",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments/dcm_ff4233b8e65253fc8f03a13002131a44",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-uncomment"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-uncomment-unavailable",
+      "operation": "DELETE /api/v1/documents/{id}/comments/{comment_id}",
+      "scenario": "document_unavailable__uncomment",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments/dcm_ff4233b8e65253fc8f03a13002131a44",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-uncomment"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-uncomment-foreign",
+      "operation": "DELETE /api/v1/documents/{id}/comments/{comment_id}",
+      "scenario": "document_foreign__uncomment",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments/dcm_ff4233b8e65253fc8f03a13002131a44",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-uncomment"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-uncomment-missing-key",
+      "operation": "DELETE /api/v1/documents/{id}/comments/{comment_id}",
+      "scenario": "document_missing-key__uncomment",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments/dcm_ff4233b8e65253fc8f03a13002131a44",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-uncomment-invalid-key",
+      "operation": "DELETE /api/v1/documents/{id}/comments/{comment_id}",
+      "scenario": "document_invalid-key__uncomment",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments/dcm_ff4233b8e65253fc8f03a13002131a44",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "with spaces"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-uncomment-malformed-json",
+      "operation": "DELETE /api/v1/documents/{id}/comments/{comment_id}",
+      "scenario": "document_malformed-json__uncomment",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments/dcm_ff4233b8e65253fc8f03a13002131a44",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-uncomment"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing an object at line 1 column 1",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-uncomment-missing-media-type",
+      "operation": "DELETE /api/v1/documents/{id}/comments/{comment_id}",
+      "scenario": "document_missing-media-type__uncomment",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments/dcm_ff4233b8e65253fc8f03a13002131a44",
+        "headers": {
+          "idempotency-key": "contract-uncomment"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-uncomment-capacity",
+      "operation": "DELETE /api/v1/documents/{id}/comments/{comment_id}",
+      "scenario": "document_capacity__uncomment",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments/dcm_ff4233b8e65253fc8f03a13002131a44",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-uncomment"
+        },
+        "body": {
+          "expected_revision": 4
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_capacity",
+          "title": "document_capacity",
+          "status": 429,
+          "detail": "Document capacity reached",
+          "code": "document_capacity"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-uncomment-stale",
+      "operation": "DELETE /api/v1/documents/{id}/comments/{comment_id}",
+      "scenario": "document_stale__uncomment",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments/dcm_ff4233b8e65253fc8f03a13002131a44",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-uncomment"
+        },
+        "body": {
+          "expected_revision": 99
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_revision_conflict",
+          "title": "document_revision_conflict",
+          "status": 409,
+          "detail": "Document revision changed",
+          "code": "document_revision_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-read-linked",
+      "operation": "GET /api/v1/documents/{id}",
+      "scenario": "document_link__read",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {
+          "x-cma-document-share-token": "0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "owner_subject": "document-owner",
+          "title": "Independent report",
+          "revision": 4,
+          "source_revision": 1,
+          "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+          "size_bytes": 17,
+          "created_at": "2026-10-22T00:00:00Z",
+          "updated_at": "2026-10-22T00:00:00Z",
+          "origin_agent_id": null,
+          "access": "read"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-source-linked",
+      "operation": "GET /api/v1/documents/{id}/source",
+      "scenario": "document_link__source",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/source",
+        "headers": {
+          "x-cma-document-share-token": "0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "revision": 1,
+          "markdown": "# Durable report\n"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-revisions-linked",
+      "operation": "GET /api/v1/documents/{id}/revisions",
+      "scenario": "document_link__revisions",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/revisions",
+        "headers": {
+          "x-cma-document-share-token": "0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "items": [
+            {
+              "revision": 1,
+              "title": "Independent report",
+              "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+              "size_bytes": 17,
+              "created_at": "2026-10-22T00:00:00Z",
+              "author_subject": "document-owner"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comments-linked",
+      "operation": "GET /api/v1/documents/{id}/comments",
+      "scenario": "document_link__comments",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {
+          "x-cma-document-share-token": "0101010101010101010101010101010101010101010101010101010101010101"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "dcm_ff4233b8e65253fc8f03a13002131a44",
+              "author_subject": "document-owner",
+              "body": "Recorded comment",
+              "document_revision": 1,
+              "created_at": "2026-10-22T00:00:00Z"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-read-recipient",
+      "operation": "GET /api/v1/documents/{id}",
+      "scenario": "document_reader__read",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "owner_subject": "document-owner",
+          "title": "Independent report",
+          "revision": 4,
+          "source_revision": 1,
+          "sha256": "3b34eba46313d3e2484f1b2050e213d06b63701934f262dae49cae97511bdaf8",
+          "size_bytes": 17,
+          "created_at": "2026-10-22T00:00:00Z",
+          "updated_at": "2026-10-22T00:00:00Z",
+          "origin_agent_id": null,
+          "access": "comment"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-source-recipient",
+      "operation": "GET /api/v1/documents/{id}/source",
+      "scenario": "document_reader__source",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/source",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "id": "doc_fefd3b02dfed5d519c9a7759ebb8148f",
+          "revision": 1,
+          "markdown": "# Durable report\n"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-comments-recipient",
+      "operation": "GET /api/v1/documents/{id}/comments",
+      "scenario": "document_reader__comments",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/comments",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "items": [
+            {
+              "id": "dcm_ff4233b8e65253fc8f03a13002131a44",
+              "author_subject": "document-owner",
+              "body": "Recorded comment",
+              "document_revision": 1,
+              "created_at": "2026-10-22T00:00:00Z"
+            }
+          ],
+          "next": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

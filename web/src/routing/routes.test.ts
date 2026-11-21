@@ -1,94 +1,177 @@
 import { act, renderHook } from '@testing-library/react';
-import { parseRoute, routePath, useAppRouter } from './routes';
+import { describe, expect, it } from 'vitest';
+import { parseRoute, routePath, useAppRouter, type AppRoute } from './routes';
 
-describe('canonical routes', () => {
-  it.each([
-    ['/', { kind: 'home' }],
-    ['/triggers/public%20one', { kind: 'trigger', publicId: 'public one' }],
-    ['/launches/launch-1', { kind: 'launch', launchId: 'launch-1' }],
-    ['/launches/launch-1/recover', { kind: 'trigger_recovery', launchId: 'launch-1' }],
-    ['/launches/launch-1/contribute', { kind: 'contribute', launchId: 'launch-1' }],
-    ['/sessions/session-1', { kind: 'session', sessionId: 'session-1' }],
-  ])('parses %s', (pathname, expected) => {
-    expect(parseRoute(pathname)).toEqual(expected);
+const ROUTES: readonly AppRoute[] = [
+  { kind: 'home' },
+  { kind: 'agent_manager' },
+  { kind: 'event_gateway' },
+  { kind: 'docs' },
+  { kind: 'docs', view: 'event_gateway_protocol' },
+  { kind: 'docs', view: 'start-a-task' },
+  { kind: 'docs', view: 'environments-and-capacity' },
+  { kind: 'docs', view: 'recover-and-continue' },
+  { kind: 'docs', view: 'find-your-outputs' },
+  { kind: 'bots' },
+  { kind: 'bot_new' },
+  { kind: 'bot', botId: 'bot_123' },
+  { kind: 'sandbox', sandboxId: 'sbx_123' },
+  { kind: 'workspace', workspaceId: 'wks_123' },
+  { kind: 'agent', agentId: 'agt_123' },
+  { kind: 'agent_share', shareId: 'shr_123' },
+  { kind: 'inventory' },
+  { kind: 'inventory', shared: true },
+  { kind: 'inventory', organization: 'org_123' },
+  { kind: 'profiles' },
+  { kind: 'profile', profileKind: 'agent', profileId: 'agp_123' },
+  { kind: 'profile', profileKind: 'workspace', profileId: 'wkp_123' },
+  { kind: 'profile', profileKind: 'sandbox', profileId: 'sbp_123' },
+  { kind: 'marketplace' },
+  { kind: 'marketplace_profile', profileKind: 'agent', profileId: 'agp_123' },
+  { kind: 'triggers' },
+  { kind: 'trigger', triggerId: 'trg_123' },
+  { kind: 'trigger_embed', triggerId: 'trg_123' },
+  { kind: 'public_trigger', publicId: 'pub_123' },
+  { kind: 'public_trigger', publicId: 'pub_123', placementId: 'plc_123' },
+  { kind: 'launch', launchId: 'lch_123' },
+  { kind: 'operations' },
+  { kind: 'usage' },
+];
+
+describe('application routes', () => {
+  it.each(ROUTES)('round trips $kind', (route) => {
+    expect(parseRoute(routePath(route))).toEqual(route);
   });
 
-  it.each(['/triggers', '/triggers/a/extra', '/triggers/%2F', '/sessions/../launches/x'])(
-    'refuses non-canonical path %s',
-    (pathname) => {
-      expect(parseRoute(pathname)).toEqual({ kind: 'not_found', pathname });
-    },
-  );
-
-  it.each(['expired', 'cancelled', 'failed'] as const)(
-    'retains the closed %s authentication-return error as display-only route state',
-    (authError) => {
-      expect(parseRoute('/triggers/public-one', `?auth_error=${authError}`)).toEqual({
-        kind: 'trigger',
-        publicId: 'public-one',
-        authError,
-      });
-    },
-  );
-
-  it.each([
-    '?auth_error=',
-    '?auth_error=provider%20said%20something',
-    '?auth_error=EXPIRED',
-    '?auth_error=expired&auth_error=failed',
-  ])('drops unrecognised or ambiguous authentication-return data from %s', (search) => {
-    expect(parseRoute('/triggers/public-one', search)).toEqual({
-      kind: 'trigger',
-      publicId: 'public-one',
-    });
+  it('encodes opaque identifiers without changing their value', () => {
+    const route = { kind: 'agent', agentId: 'agent name?#' } as const;
+    expect(routePath(route)).toBe('/agents/agent%20name%3F%23');
+    expect(parseRoute(routePath(route))).toEqual(route);
   });
 
-  it('round-trips encoded opaque identifiers', () => {
-    const routes = [
-      { kind: 'trigger', publicId: 'opaque value' },
-      { kind: 'trigger_recovery', launchId: 'older launch' },
-    ] as const;
-    for (const route of routes) {
+  it.each([
+    'agents/agt_1',
+    '/agents/',
+    '/agents/a/b',
+    '/agents/%',
+    '/agents/%2F',
+    '/agents/.',
+    '/profiles/agent',
+    '/profiles/agent/agp_1',
+    '/profiles/unknown/id',
+    '/triggers/manage/id/unknown',
+    '/operations/extra',
+    '/docs/unknown-topic',
+    '/docs/start-a-task/extra',
+  ])('rejects malformed or unknown path %s', (pathname) => {
+    expect(parseRoute(pathname)).toEqual({ kind: 'not_found', pathname });
+  });
+
+  it('preserves an unknown path for rendering and browser history', () => {
+    expect(routePath({ kind: 'not_found', pathname: '/unknown' })).toBe('/unknown');
+  });
+
+  it.each(['agent', 'workspace', 'sandbox'] as const)(
+    'uses the explicit %s editor resource path',
+    (profileKind) => {
+      const route = { kind: 'profile' as const, profileKind, profileId: 'profile-one' };
+      expect(routePath(route)).toBe(`/profiles/${profileKind}-profiles/profile-one`);
       expect(parseRoute(routePath(route))).toEqual(route);
-    }
-  });
+    },
+  );
 
-  it('never includes an authentication-return error in a canonical destination', () => {
-    expect(routePath({ kind: 'trigger', publicId: 'public-one', authError: 'failed' })).toBe(
-      '/triggers/public-one',
-    );
-  });
-
-  it('tracks push and browser history without performing an action', () => {
+  it('tracks navigate, replace, and browser popstate from the current location', () => {
     window.history.replaceState(null, '', '/');
     const { result } = renderHook(() => useAppRouter());
 
     act(() => {
-      result.current.navigate({ kind: 'launch', launchId: 'launch-1' });
+      result.current.navigate({ kind: 'agent', agentId: 'agt_1' });
     });
-    expect(window.location.pathname).toBe('/launches/launch-1');
-    expect(result.current.route).toEqual({ kind: 'launch', launchId: 'launch-1' });
+    expect(window.location.pathname).toBe('/agents/agt_1');
+    expect(result.current.route).toEqual({ kind: 'agent', agentId: 'agt_1' });
 
     act(() => {
-      window.history.replaceState(null, '', '/sessions/session-2');
+      window.history.replaceState(null, '', '/sandboxes/sbx_1');
       window.dispatchEvent(new PopStateEvent('popstate'));
     });
-    expect(result.current.route).toEqual({ kind: 'session', sessionId: 'session-2' });
-  });
+    expect(result.current.route).toEqual({ kind: 'sandbox', sandboxId: 'sbx_1' });
 
-  it('reads a typed authentication-return error and clears it on canonical navigation', () => {
-    window.history.replaceState(null, '', '/triggers/public-one?auth_error=expired');
-    const { result } = renderHook(() => useAppRouter());
-
-    expect(result.current.route).toEqual({
-      kind: 'trigger',
-      publicId: 'public-one',
-      authError: 'expired',
-    });
     act(() => {
-      result.current.navigate({ kind: 'trigger', publicId: 'public-one' }, { replace: true });
+      result.current.navigate({ kind: 'operations' }, { replace: true });
     });
-    expect(window.location.search).toBe('');
-    expect(result.current.route).toEqual({ kind: 'trigger', publicId: 'public-one' });
+    expect(window.location.pathname).toBe('/operations');
+    expect(result.current.route).toEqual({ kind: 'operations' });
   });
+
+  it('rewrites the retired Developer address to Docs without a history entry', () => {
+    window.history.replaceState(null, '', '/agent-manager');
+    window.history.pushState(null, '', '/developer');
+    const entries = window.history.length;
+    const { result } = renderHook(() => useAppRouter());
+    expect(result.current.route).toEqual({ kind: 'docs' });
+    expect(window.location.pathname).toBe('/docs');
+    expect(window.history.length).toBe(entries);
+  });
+
+  it('leaves an unknown address as written', () => {
+    window.history.replaceState(null, '', '/developers');
+    const { result } = renderHook(() => useAppRouter());
+    expect(result.current.route).toEqual({ kind: 'not_found', pathname: '/developers' });
+    expect(window.location.pathname).toBe('/developers');
+  });
+});
+
+it('refuses direct Image Manager URLs while the portal is unavailable', () => {
+  expect(parseRoute('/image-manager')).toEqual({ kind: 'not_found', pathname: '/image-manager' });
+  expect(parseRoute('/image-manager/images')).toEqual({
+    kind: 'not_found',
+    pathname: '/image-manager/images',
+  });
+  const { result } = renderHook(() => useAppRouter());
+  act(() => result.current.navigate({ kind: 'image_manager' }));
+  expect(result.current.route).toEqual({ kind: 'not_found', pathname: '/image-manager' });
+});
+
+it.each(['/settings', '/settings/general', '/settings/usage'])(
+  'replaces legacy %s without changing theme or discarding the query',
+  (path) => {
+    localStorage.setItem('cma:appearance', 'light');
+    window.history.replaceState(null, '', path + '?range=7d&sandbox=sbx-2');
+    const entries = window.history.length;
+    const { result } = renderHook(() => useAppRouter());
+    expect(result.current.route).toEqual({ kind: 'usage' });
+    expect(result.current.backgroundRoute).toEqual({ kind: 'agent_manager' });
+    expect(result.current.usageAppearanceNotice).toBe(path !== '/settings/usage');
+    expect(window.location.pathname).toBe('/usage');
+    expect(window.location.search).toBe('?range=7d&sandbox=sbx-2');
+    expect(window.history.length).toBe(entries);
+    expect(localStorage.getItem('cma:appearance')).toBe('light');
+  },
+);
+it('keeps the background route when opening and replaying Usage history', () => {
+  window.history.replaceState(null, '', '/agents/agt_1?view=chat');
+  const { result } = renderHook(() => useAppRouter());
+  const background = result.current.route;
+  act(() => result.current.navigate({ kind: 'usage' }));
+  const saved = window.history.state;
+  expect(result.current.backgroundRoute).toBe(background);
+  expect(saved.usageBackground).toBe('/agents/agt_1?view=chat');
+  act(() => {
+    window.history.replaceState(null, '', '/agents/agt_1?view=chat');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  expect(result.current.route).toEqual(background);
+  act(() => {
+    window.history.replaceState(saved, '', '/usage');
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+  expect(result.current.backgroundRoute).toEqual(background);
+});
+it('closes a direct Usage link to the safe app shell by replacement', () => {
+  window.history.replaceState(null, '', '/usage');
+  const entries = window.history.length;
+  const { result } = renderHook(() => useAppRouter());
+  act(() => result.current.closeUsage?.());
+  expect(result.current.route).toEqual({ kind: 'agent_manager' });
+  expect(window.history.length).toBe(entries);
 });

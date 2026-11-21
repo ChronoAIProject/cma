@@ -1,0 +1,1345 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "browser-control-read",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "state": "agent",
+          "revision": 0,
+          "client_id": null,
+          "lease_token": null,
+          "expires_at": null,
+          "lease_duration_ms": 15000,
+          "operation_id": null,
+          "operation_revision": null,
+          "audit": [],
+          "audit_truncated_before": null
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-read-shared-audit",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_viewer",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "state": "agent",
+          "revision": 0,
+          "client_id": null,
+          "lease_token": null,
+          "expires_at": null,
+          "lease_duration_ms": 15000,
+          "operation_id": null,
+          "operation_revision": null,
+          "audit": [],
+          "audit_truncated_before": null
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-recover",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client&operation_id=78af4405-b644-44ab-b58d-53ce4d62acc0",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "state": "user",
+          "revision": 1,
+          "client_id": "control-client",
+          "lease_token": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "expires_at": "2026-11-03T15:00:15Z",
+          "lease_duration_ms": 15000,
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "operation_revision": 1,
+          "audit": [],
+          "audit_truncated_before": null
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-acquire",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "state": "user",
+          "revision": 1,
+          "client_id": "control-client",
+          "lease_token": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "expires_at": "2026-11-03T15:00:15Z",
+          "lease_duration_ms": 15000,
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "operation_revision": 1,
+          "audit": [],
+          "audit_truncated_before": null
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-input",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "input",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 1,
+          "lease_token": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "input": {
+            "kind": "text",
+            "text": "known form text"
+          }
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "state": "user",
+          "revision": 2,
+          "client_id": "control-client",
+          "lease_token": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "expires_at": "2026-11-03T15:00:15Z",
+          "lease_duration_ms": 15000,
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "operation_revision": 2,
+          "audit": [],
+          "audit_truncated_before": null
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-renew",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "renew",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 1,
+          "lease_token": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "state": "user",
+          "revision": 2,
+          "client_id": "control-client",
+          "lease_token": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "expires_at": "2026-11-03T15:00:15Z",
+          "lease_duration_ms": 15000,
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "operation_revision": 2,
+          "audit": [],
+          "audit_truncated_before": null
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-return",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "return",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 1,
+          "lease_token": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "agent_id": "agt_shared_read",
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "state": "agent",
+          "revision": 2,
+          "client_id": null,
+          "lease_token": null,
+          "expires_at": null,
+          "lease_duration_ms": 15000,
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "operation_revision": 2,
+          "audit": [],
+          "audit_truncated_before": null
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-get-foreign",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-get-revoked",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-get-anonymous",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-get-unsupported",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_unsupported",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_unsupported",
+          "title": "browser_control_unsupported",
+          "status": 409,
+          "detail": "This runtime has no verified browser control capability.",
+          "code": "browser_control_unsupported"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-get-unavailable",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_unknown",
+          "title": "browser_control_unknown",
+          "status": 503,
+          "detail": "Control state is unknown. Query the original operation before sending input.",
+          "code": "browser_control_unknown"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-get-conflict",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_conflict",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_conflict",
+          "title": "browser_control_conflict",
+          "status": 409,
+          "detail": "Control identity changed or the operation cannot be confirmed. Query the original operation.",
+          "code": "browser_control_conflict"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-get-mismatch",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_mismatch",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_conflict",
+          "title": "browser_control_conflict",
+          "status": 409,
+          "detail": "Control identity changed or the operation cannot be confirmed. Query the original operation.",
+          "code": "browser_control_conflict"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-get-not_ready",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_not_ready",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_not_ready",
+          "title": "browser_control_not_ready",
+          "status": 409,
+          "detail": "The browser runtime is not active.",
+          "code": "browser_control_not_ready"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-get-paused",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_paused",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_conflict",
+          "title": "browser_control_conflict",
+          "status": 409,
+          "detail": "Control identity changed or the operation cannot be confirmed. Query the original operation.",
+          "code": "browser_control_conflict"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-get-old-incarnation",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=old&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_conflict",
+          "title": "browser_control_conflict",
+          "status": 409,
+          "detail": "Control identity changed or the operation cannot be confirmed. Query the original operation.",
+          "code": "browser_control_conflict"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-get-bad-context",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=invalid&client_id=control-client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_browser_control",
+          "title": "invalid_browser_control",
+          "status": 400,
+          "detail": "Browser control request is invalid.",
+          "code": "invalid_browser_control"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-get-bad-client",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=not+a+client",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_browser_control",
+          "title": "invalid_browser_control",
+          "status": 400,
+          "detail": "Browser control request is invalid.",
+          "code": "invalid_browser_control"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-post-foreign",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-post-revoked",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_revoked",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-post-anonymous",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-post-unsupported",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_unsupported",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_unsupported",
+          "title": "browser_control_unsupported",
+          "status": 409,
+          "detail": "This runtime has no verified browser control capability.",
+          "code": "browser_control_unsupported"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-post-unavailable",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_unknown",
+          "title": "browser_control_unknown",
+          "status": 503,
+          "detail": "Control state is unknown. Query the original operation before sending input.",
+          "code": "browser_control_unknown"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-post-conflict",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_conflict",
+          "title": "browser_control_conflict",
+          "status": 409,
+          "detail": "Control identity changed or the operation cannot be confirmed. Query the original operation.",
+          "code": "browser_control_conflict"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-post-mismatch",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_mismatch",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_conflict",
+          "title": "browser_control_conflict",
+          "status": 409,
+          "detail": "Control identity changed or the operation cannot be confirmed. Query the original operation.",
+          "code": "browser_control_conflict"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-post-not_ready",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_not_ready",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_not_ready",
+          "title": "browser_control_not_ready",
+          "status": 409,
+          "detail": "The browser runtime is not active.",
+          "code": "browser_control_not_ready"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-post-paused",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_paused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_conflict",
+          "title": "browser_control_conflict",
+          "status": 409,
+          "detail": "Control identity changed or the operation cannot be confirmed. Query the original operation.",
+          "code": "browser_control_conflict"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-post-old-incarnation",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "old",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_conflict",
+          "title": "browser_control_conflict",
+          "status": 409,
+          "detail": "Control identity changed or the operation cannot be confirmed. Query the original operation.",
+          "code": "browser_control_conflict"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-post-bad-context",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "invalid",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_browser_control",
+          "title": "invalid_browser_control",
+          "status": 400,
+          "detail": "Browser control request is invalid.",
+          "code": "invalid_browser_control"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-post-bad-client",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "not a client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_browser_control",
+          "title": "invalid_browser_control",
+          "status": 400,
+          "detail": "Browser control request is invalid.",
+          "code": "invalid_browser_control"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-acquire-viewer",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_viewer",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-acquire-writer",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_writer",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "acquire",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-recover-viewer",
+      "operation": "GET /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_viewer",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/browser/control?runtime_incarnation=72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821&context_id=e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24&client_id=control-client&operation_id=78af4405-b644-44ab-b58d-53ce4d62acc0",
+        "headers": {
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-old-lease",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "input",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 1,
+          "lease_token": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "input": {
+            "kind": "text",
+            "text": "late"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/browser_control_conflict",
+          "title": "browser_control_conflict",
+          "status": 409,
+          "detail": "Control identity changed or the operation cannot be confirmed. Query the original operation.",
+          "code": "browser_control_conflict"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-outside-viewport",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "input",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 1,
+          "lease_token": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "input": {
+            "kind": "click",
+            "x": 1280,
+            "y": 1
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_browser_control",
+          "title": "invalid_browser_control",
+          "status": 400,
+          "detail": "Browser control request is invalid.",
+          "code": "invalid_browser_control"
+        }
+      },
+      "captures": {}
+    },
+    {
+      "id": "browser-control-missing-lease",
+      "operation": "POST /api/v1/agents/{id}/browser/control",
+      "scenario": "browser_control_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_shared_read/browser/control",
+        "headers": {
+          "content-type": "application/json",
+          "x-cma-browser-client": "b2f66e8e-5ddd-4e96-b2e9-84eb55195664"
+        },
+        "body": {
+          "runtime_incarnation": "72d7e4de8a534f369c98f9043597e7983246b03ce36c64d0b43987d50e3f8821",
+          "context_id": "e9ed9ab9-02a9-4c1e-91f5-7e13ca191b24",
+          "client_id": "control-client",
+          "command": "input",
+          "operation_id": "78af4405-b644-44ab-b58d-53ce4d62acc0",
+          "expected_revision": 1,
+          "input": {
+            "kind": "text",
+            "text": "late"
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "bodyKind": "json",
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_browser_control",
+          "title": "invalid_browser_control",
+          "status": 400,
+          "detail": "Browser control request is invalid.",
+          "code": "invalid_browser_control"
+        }
+      },
+      "captures": {}
+    }
+  ]
+}

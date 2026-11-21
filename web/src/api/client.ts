@@ -1,650 +1,419 @@
-/**
- * The dashboard's own CMA client.
- *
- * Everything below is `@chronoai/cma-sdk` bound to one configuration: the
- * empty one. That means same-origin paths authenticated by the cookie the
- * browser attaches, which is exactly what this deployment needs. The Gateway
- * sends API, auth, and discovery paths on that origin directly to the control
- * plane; nginx supplies the same paths when the image is reached without the
- * managed route. No host is compiled in and no token is ever handled in the
- * browser. A build that knew the API's address would need rebuilding to move
- * it, and a token in script gives up the one property an http-only cookie has.
- *
- * The binding is the point rather than an implementation detail. `CLAUDE.md`
- * §1 makes this the reference client for the public interfaces, and a
- * reference client that reached the service through its own private code path
- * would demonstrate nothing about the path somebody else has to use. Anything
- * the dashboard needs and the SDK does not export is a gap in the SDK, and it
- * surfaces here as a build failure rather than as a discovery made by whoever
- * integrates next.
- *
- * A second client with a different address or credential is a `createClient`
- * call away; this module is only the one this app happens to hold.
- */
-
-import {
-  createClient,
-  ProtocolError,
-  type CreateSession,
-  type ConversationItemsRequest,
-  type CreateResponseRequest,
-  type OperationOptions,
-  type ResponsesConnection,
-  type ResponsesConversation,
-  type ResponsesConversationItemList,
-  type ResponsesResponse,
-  type SessionListSurface,
-} from '@chronoai/cma-sdk';
 import type {
-  DiffReview,
-  CursorPage,
-  KernelOffer,
-  Launch,
-  LaunchListRequest,
-  LaunchOverrides,
-  LaunchProgress,
-  PullRequestDraft,
-  Session,
-  SessionAllowance,
-  SessionLifecycle,
-  SessionPlane,
-  PricingQuote,
-  SessionResourceStatus,
-  SessionSpend,
-  TriggerCommandOptions,
-  TriggerConnection,
-  TriggerContentDraft,
-  TriggerDraft,
-  TriggerPreview,
-  TriggerRepositorySelection,
-  TriggerRevision,
-} from '@chronoai/cma-sdk';
-import { isStage, type Stage } from '../sessions/progress';
-import type { SignIn } from '@chronoai/cma-sdk';
+  AgentDetail,
+  AgentEvent,
+  AgentLiveEvent,
+  AgentRunRequest,
+  AgentTranscript,
+  AgentUsage,
+  ConfiguredSandboxCapacity,
+  CreateAgentInput,
+  CreateInlineWorkspaceInput,
+  CreateSandboxInput,
+  CreateWorkspaceInput,
+  ProfileReference,
+  ResourcePage,
+  SandboxDetail,
+  SandboxEvent,
+  SandboxSummary,
+  SandboxRuntimeUpdate,
+  SandboxProfileSettings,
+  WorkspaceDetail,
+} from './types';
+import type {
+  Cma,
+  AccessibleAgentSource,
+  AgentAttachment,
+  AgentProvenance,
+  AgentResources,
+} from '@cma/client';
+import type { ResourceViewsClient } from '../resources/client';
+import type { BotClient } from '../bots/model';
+import type { createAgentTransport } from '../agent/transport/client';
+import type { ConnectionTarget } from '../connections/client';
+import type { AgentFilesClient } from './agentFiles';
+import type { AgentBrowserClient, AgentBrowserControlClient } from '@cma/client';
+import type { DocumentsClient } from './documents';
 
-export {
-  ApiError,
-  CapabilityRefused,
-  DeploymentAtCapacity,
-  SessionLimitReached,
-  TransportError,
-  toSession,
-} from '@chronoai/cma-sdk';
-export type {
-  DiffReview,
-  Launch,
-  LaunchListRequest,
-  LaunchOverrides,
-  LaunchProgress,
-  PullRequestDraft,
-  PricingQuote,
-  SessionAllowance,
-  SessionResourceStatus,
-  SessionSpend,
-  TriggerConnection,
-  TriggerContentDraft,
-  TriggerDraft,
-  TriggerInputFieldDefinition,
-  TriggerRepositoryAccessPolicy,
-  TriggerPreview,
-  TriggerRevision,
-  TriggerSessionPolicy,
-  TriggerSourceMode,
-  TriggerTask,
-} from '@chronoai/cma-sdk';
-
-/**
- * The one client this app holds.
- *
- * Same-origin and cookie-authenticated, which is every default — so this
- * configures nothing, and the defaults being right for the reference client is
- * not a coincidence but the reason they are the defaults.
- */
-const bot = createClient();
-const CATALOG_PAGE_LIMIT = 200;
-const CATALOG_MAX_PAGES = 50;
-const CATALOG_MAX_ITEMS = CATALOG_PAGE_LIMIT * CATALOG_MAX_PAGES;
-
-async function collectCatalog<T extends { readonly id: string }>(
-  name: string,
-  load: (cursor?: string) => Promise<CursorPage<T>>,
-): Promise<readonly T[]> {
-  const items: T[] = [];
-  const itemIds = new Set<string>();
-  const cursors = new Set<string>();
-  let cursor: string | undefined;
-
-  for (let pageNumber = 0; pageNumber < CATALOG_MAX_PAGES; pageNumber += 1) {
-    const page = await load(cursor);
-    let added = 0;
-    for (const item of page.items) {
-      if (itemIds.has(item.id)) continue;
-      if (items.length >= CATALOG_MAX_ITEMS) {
-        throw new ProtocolError(`${name} exceeded the bounded catalogue size`);
-      }
-      itemIds.add(item.id);
-      items.push(item);
-      added += 1;
-    }
-    if (page.next_cursor === null) return items;
-    if (page.items.length === 0 || added === 0) {
-      throw new ProtocolError(`${name} pagination made no progress`);
-    }
-    if (page.next_cursor === cursor || cursors.has(page.next_cursor)) {
-      throw new ProtocolError(`${name} pagination repeated a cursor`);
-    }
-    cursors.add(page.next_cursor);
-    cursor = page.next_cursor;
-  }
-
-  throw new ProtocolError(`${name} exceeded the bounded page count`);
+export interface ReadOptions {
+  readonly signal?: AbortSignal;
 }
 
-/** Public, credential-suppressed README Trigger preview. */
-export function readTriggerPreview(
-  publicId: string,
-  signal?: AbortSignal,
-): Promise<TriggerPreview> {
-  return bot.readTriggerPreview(publicId, { signal });
+export interface PageOptions<Cursor = string> extends ReadOptions {
+  readonly cursor?: Cursor;
 }
 
-export function createTrigger(
-  serviceId: string,
-  content: TriggerContentDraft,
-  options: TriggerCommandOptions,
-): Promise<TriggerDraft> {
-  return bot.createTrigger(serviceId, content, options);
+export interface CommandOptions extends ReadOptions {
+  readonly idempotencyKey: string;
 }
 
-export function listTriggers(signal?: AbortSignal): Promise<readonly TriggerDraft[]> {
-  return collectCatalog('Trigger drafts', (cursor) =>
-    bot.listTriggers(CATALOG_PAGE_LIMIT, cursor, { signal }),
-  );
+export interface AgentStreamOptions extends ReadOptions {
+  readonly idempotencyKey?: string;
+  readonly after?: number;
+  readonly onEvent: (event: AgentLiveEvent) => void;
 }
 
-export function readTrigger(id: string, signal?: AbortSignal): Promise<TriggerDraft> {
-  return bot.readTrigger(id, { signal });
+export interface AgentLifecycleCreateInput {
+  readonly name: string;
+  readonly title_mode?: 'automatic' | 'named';
+  readonly initial_message?: string;
+  readonly template?: import('../api-client/agents/task-template').TaskTemplate;
+  readonly desktop?: boolean;
+  readonly machine_included?: boolean;
+  readonly workspace_id?: string;
+  readonly sandbox_id?: string;
+  readonly image?: { readonly id: string; readonly version?: string };
+  readonly repository?: { readonly url: string; readonly ref?: string };
+  readonly profile?: {
+    readonly model?: string;
+    readonly reasoning_effort?: string;
+    readonly permission_mode?: 'guarded' | 'autonomous';
+    readonly system_prompt?: string;
+    readonly skills?: readonly { readonly id: string; readonly version?: string }[];
+    readonly permissions?: { readonly services: readonly string[] };
+  };
 }
 
-export function updateTrigger(
-  id: string,
-  expectedVersion: number,
-  serviceId: string,
-  content: TriggerContentDraft,
-  options: TriggerCommandOptions,
-): Promise<TriggerDraft> {
-  return bot.updateTrigger(id, expectedVersion, serviceId, content, options);
+export interface AgentSkillState {
+  readonly id: string;
+  readonly name?: string;
+  readonly version: string;
+  readonly source: 'ornn';
+  readonly status: 'installed' | 'pending' | 'failed';
+  readonly error?: string;
+}
+export interface AgentSkillsView {
+  readonly can_install: boolean;
+  readonly unavailable_reason?: string;
+  readonly items: readonly AgentSkillState[];
+  readonly pending: boolean;
 }
 
-export function publishTrigger(
-  id: string,
-  expectedVersion: number,
-  serviceId: string,
-  options: TriggerCommandOptions,
-): Promise<TriggerRevision> {
-  return bot.publishTrigger(id, expectedVersion, serviceId, options);
+export interface AgentModelOption {
+  readonly id: string;
+  readonly label: string;
+  readonly available: boolean;
 }
 
-export function listTriggerRevisions(signal?: AbortSignal): Promise<readonly TriggerRevision[]> {
-  return collectCatalog('Trigger revisions', (cursor) =>
-    bot.listTriggerRevisions(CATALOG_PAGE_LIMIT, cursor, { signal }),
-  );
+export interface AgentPreferencesView {
+  readonly title?: string;
+  readonly system_prompt: string;
+  readonly prompt_pending: boolean;
+  readonly prompt_supported: boolean;
+  readonly revision: number;
+}
+export interface UpdateAgentPreferences {
+  readonly expected_revision: number;
+  readonly title?: string;
+  readonly system_prompt?: string;
 }
 
-export function retireTriggerRevision(
-  id: string,
-  options: TriggerCommandOptions,
-): Promise<TriggerRevision> {
-  return bot.retireTriggerRevision(id, options);
+export interface AgentSettingsView {
+  readonly pending?: boolean;
+  readonly model: string;
+  readonly reasoning_effort: 'minimal' | 'low' | 'medium' | 'high' | 'x_high';
+  readonly permission_mode: 'guarded' | 'autonomous';
 }
 
-export function listTriggerConnections(
-  signal?: AbortSignal,
-): Promise<readonly TriggerConnection[]> {
-  return bot.listTriggerConnections({ signal });
+export type MessageVote = 'up' | 'down' | null;
+export interface MessageFeedback {
+  readonly message_id: string;
+  readonly vote: MessageVote;
 }
 
-export function beginTriggerConnection(intentId: string, options: TriggerCommandOptions) {
-  return bot.beginTriggerConnection(intentId, options);
+export interface AgentLifecycleCreateReceipt {
+  readonly id: string;
+  readonly status?: string;
 }
 
-export function reconnectTriggerConnection(serviceId: string, options: TriggerCommandOptions) {
-  return bot.reconnectTriggerConnection(serviceId, options);
+export interface AgentLifecycleOperationEvent {
+  readonly sequence: number;
+  readonly phase: string;
+  readonly status: string;
+  readonly message: string;
+  readonly occurred_at: string;
 }
 
-export function revokeTriggerConnection(
-  serviceId: string,
-  options: TriggerCommandOptions,
-): Promise<TriggerConnection> {
-  return bot.revokeTriggerConnection(serviceId, options);
+export interface AgentLifecycleOperationView {
+  readonly id: string;
+  readonly status: string;
+  readonly phase: string;
+  readonly agent_id?: string;
+  readonly error?: string;
+  readonly failure?: import('@cma/client').AgentLifecycleFailure;
+  readonly events: readonly AgentLifecycleOperationEvent[];
+  readonly connection?: { readonly services: readonly string[]; readonly target: ConnectionTarget };
 }
 
-export function preflightTriggerConnection(
-  serviceId: string,
-  signal?: AbortSignal,
-): Promise<TriggerConnection> {
-  return bot.preflightTriggerConnection(serviceId, { signal });
+export interface AgentLifecycleConnectionRequired {
+  readonly code: 'connection_required';
+  readonly services: readonly string[];
+  readonly target: ConnectionTarget;
 }
 
-export function resolveTriggerRepository(
-  serviceId: string,
-  owner: string,
-  name: string,
-  signal?: AbortSignal,
-): Promise<TriggerRepositorySelection> {
-  return bot.resolveTriggerRepository(serviceId, owner, name, { signal });
-}
+export class AgentLifecycleCreateError extends Error {
+  readonly status: number;
+  readonly code?: string;
+  readonly connection?: AgentLifecycleConnectionRequired;
+  readonly failure?: import('@cma/client').AgentLifecycleFailure;
 
-export function createOrResumeLaunch(
-  publicId: string,
-  options: TriggerCommandOptions,
-): Promise<Launch> {
-  return bot.createOrResumeLaunch(publicId, options);
-}
-
-export function createNewLaunch(publicId: string, options: TriggerCommandOptions): Promise<Launch> {
-  return bot.createNewLaunch(publicId, options);
-}
-
-export function listLaunches(page: LaunchListRequest = {}): Promise<readonly Launch[]> {
-  return bot.listLaunches(page).then((result) => result.items);
-}
-
-/** One owner-scoped Launch page, retained for bounded relationship lookups. */
-export function listLaunchPage(
-  page: LaunchListRequest = {},
-  signal?: AbortSignal,
-): Promise<CursorPage<Launch>> {
-  return bot.listLaunches(page, { signal });
-}
-
-export function readLaunch(id: string, signal?: AbortSignal): Promise<Launch> {
-  return bot.readLaunch(id, { signal });
-}
-
-export function updateLaunchOverrides(
-  id: string,
-  expectedRevision: number,
-  overrides: LaunchOverrides,
-  options: TriggerCommandOptions,
-): Promise<Launch> {
-  return bot.updateLaunchOverrides(id, expectedRevision, overrides, options);
-}
-
-export function selectLaunchConnection(
-  id: string,
-  expectedRevision: number,
-  serviceId: string,
-  options: TriggerCommandOptions,
-): Promise<Launch> {
-  return bot.selectLaunchConnection(id, expectedRevision, serviceId, options);
-}
-
-export function startLaunch(
-  id: string,
-  expectedRevision: number,
-  snapshotDigest: string,
-  acknowledgeWorkflowRisk: boolean,
-  options: TriggerCommandOptions,
-): Promise<Launch> {
-  return bot.startLaunch(id, expectedRevision, snapshotDigest, acknowledgeWorkflowRisk, options);
-}
-
-export function recoverInitialPrompt(
-  id: string,
-  expectedRevision: number,
-  snapshotDigest: string,
-  options: TriggerCommandOptions,
-): Promise<Launch> {
-  return bot.recoverInitialPrompt(id, expectedRevision, snapshotDigest, options);
-}
-
-export function cancelLaunch(
-  id: string,
-  expectedRevision: number,
-  snapshotDigest: string,
-  options: TriggerCommandOptions,
-): Promise<Launch> {
-  return bot.cancelLaunch(id, expectedRevision, snapshotDigest, options);
-}
-
-export function completeLaunch(
-  id: string,
-  expectedRevision: number,
-  snapshotDigest: string,
-  options: TriggerCommandOptions,
-) {
-  return bot.completeLaunch(id, expectedRevision, snapshotDigest, options);
-}
-
-export function readLaunchProgress(
-  id: string,
-  after: number,
-  signal?: AbortSignal,
-): Promise<LaunchProgress> {
-  return bot.readLaunchProgress(id, after, 100, { signal });
-}
-
-export function requestLaunchDiff(
-  id: string,
-  expectedRevision: number,
-  snapshotDigest: string,
-  options: TriggerCommandOptions,
-): Promise<Launch> {
-  return bot.requestLaunchDiff(id, expectedRevision, snapshotDigest, options);
-}
-
-export function readLaunchDiff(id: string, signal?: AbortSignal): Promise<DiffReview> {
-  return bot.readLaunchDiff(id, { signal });
-}
-
-export function downloadDiffArtifact(
-  launchId: string,
-  artifactId: string,
-  signal?: AbortSignal,
-): Promise<Uint8Array> {
-  return bot.downloadDiffArtifact(launchId, artifactId, { signal });
-}
-
-export function publishLaunchBranch(
-  id: string,
-  expectedRevision: number,
-  snapshotDigest: string,
-  options: TriggerCommandOptions,
-): Promise<Launch> {
-  return bot.publishLaunchBranch(id, expectedRevision, snapshotDigest, options);
-}
-
-export function reviewPullRequest(
-  id: string,
-  operation: 'open' | 'update',
-  edits: { readonly title?: string; readonly body?: string } = {},
-  signal?: AbortSignal,
-): Promise<PullRequestDraft> {
-  return bot.reviewPullRequest(id, operation, edits, { signal });
-}
-
-export function confirmPullRequest(
-  id: string,
-  operation: 'open' | 'update',
-  expectedRevision: number,
-  snapshotDigest: string,
-  edits: { readonly title?: string; readonly body?: string },
-  options: TriggerCommandOptions,
-): Promise<Launch> {
-  return bot.confirmPullRequest(id, operation, expectedRevision, snapshotDigest, edits, options);
-}
-
-/** Queue a fenced, read-only GitHub status observation for one open pull request. */
-export function refreshPullRequestStatus(
-  id: string,
-  expectedRevision: number,
-  options: TriggerCommandOptions,
-): Promise<Launch> {
-  return bot.refreshPullRequestStatus(id, expectedRevision, options);
-}
-
-/** Sessions belonging to the signed-in subject on one exact surface, newest first. */
-export function listSessions(surface?: SessionListSurface): Promise<readonly Session[]> {
-  return bot.listSessions({ surface });
-}
-
-/** Whether this deployment explicitly exposes the owner-facing Chat surface. */
-export async function readChatSurfaceEnabled(signal?: AbortSignal): Promise<boolean> {
-  try {
-    const capabilities = await bot.readAguiCapabilities({ signal });
-    const feature = capabilities.features.custom['cma:chat'];
-    return (
-      typeof feature === 'object' &&
-      feature !== null &&
-      !Array.isArray(feature) &&
-      (feature as Record<string, unknown>).enabled === true
-    );
-  } catch {
-    // Older deployments omit the route or declaration. Both mean disabled.
-    return false;
+  constructor(
+    message: string,
+    status: number,
+    code?: string,
+    connection?: AgentLifecycleConnectionRequired,
+    failure?: import('@cma/client').AgentLifecycleFailure,
+  ) {
+    super(message);
+    this.name = 'AgentLifecycleCreateError';
+    this.status = status;
+    this.code = code;
+    this.connection = connection;
+    this.failure = failure;
   }
 }
 
-/** The signed-in subject's advisory live-session allowance. */
-export function readAllowance(): Promise<SessionAllowance> {
-  return bot.readAllowance();
+/** A transport-free view of the public CMA operations consumed by the web app. */
+export interface CmaWebClient {
+  readonly usageViews?: import('../usage/client').UsageClient;
+  readonly readSuggestedReplies?: (
+    agentId: string,
+    scope: { readonly turn_sequence: number; readonly answer_sequence: number },
+    options?: { readonly signal?: AbortSignal },
+  ) => Promise<import('@cma/client').SuggestedReplyReading>;
+  readonly deliverables?: Pick<
+    Cma['agents'],
+    'answerDeliverables' | 'readAnswerDeliverable' | 'downloadAnswerDeliverable'
+  >;
+  readonly readFeedbackDetails?: (
+    agentId: string,
+    messageId: string,
+    options?: ReadOptions,
+  ) => Promise<import('./feedbackTypes').FeedbackDetails>;
+  readonly setFeedbackReasons?: (
+    agentId: string,
+    messageId: string,
+    body: import('./feedbackTypes').FeedbackReasonRequest,
+    options?: ReadOptions,
+  ) => Promise<import('./feedbackTypes').FeedbackDetails>;
+  readonly documents?: DocumentsClient;
+  readonly files?: AgentFilesClient;
+  readonly browser?: AgentBrowserClient;
+  readonly browserControl?: AgentBrowserControlClient;
+  readonly readMessageFeedback?: (
+    agentId: string,
+    options?: ReadOptions,
+  ) => Promise<readonly MessageFeedback[]>;
+  readonly setMessageFeedback?: (
+    agentId: string,
+    messageId: string,
+    vote: MessageVote,
+    options?: ReadOptions,
+  ) => Promise<MessageFeedback>;
+  readonly updateSandboxRuntime?: (
+    id: string,
+    targetVersion: string,
+    options: CommandOptions,
+  ) => Promise<{ readonly runtimeUpdate: SandboxRuntimeUpdate; readonly revision: number }>;
+  readonly inspectSandboxRecovery?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<import('@cma/client').RetainedRecoveryAssessment>;
+  readonly recoverSandboxRetained?: (
+    id: string,
+    expectedRevision: number,
+    options: CommandOptions,
+  ) => Promise<import('@cma/client').RetainedReopenReceipt>;
+  readonly uploadAgentAttachment?: (
+    id: string,
+    file: File,
+    options: CommandOptions,
+  ) => Promise<AgentAttachment>;
+  readonly agentTransport?: ReturnType<typeof createAgentTransport>;
+  readonly resourceViews?: ResourceViewsClient;
+  /** New Agent Manager lifecycle facade; absent in compatibility-only clients. */
+  readonly readTaskCreationSupport?: (options?: ReadOptions) => Promise<boolean>;
+  readonly readTaskTitleModeSupport?: (options?: ReadOptions) => Promise<boolean>;
+  readonly taskExperience?: import('@cma/client').TaskExperienceClient;
+  readonly readTaskTemplateSupport?: (options?: ReadOptions) => Promise<boolean>;
+  readonly readTaskRepositorySupport?: (options?: ReadOptions) => Promise<boolean>;
+  readonly createAgentLifecycle?: (
+    input: AgentLifecycleCreateInput,
+    options: CommandOptions,
+  ) => Promise<AgentLifecycleCreateReceipt>;
+  readonly readAgentLifecycle?: (
+    operationId: string,
+    options?: ReadOptions,
+  ) => Promise<AgentLifecycleOperationView>;
+  readonly readAgentSkills?: (id: string, options?: ReadOptions) => Promise<AgentSkillsView>;
+  readonly installAgentSkill?: (
+    id: string,
+    skill: { readonly id: string; readonly version: string },
+    options: CommandOptions,
+  ) => Promise<AgentSkillsView>;
+  readonly readAgentModels?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<readonly AgentModelOption[]>;
+  readonly readAgentPreferences?: (
+    id: string,
+    options?: ReadOptions,
+  ) => Promise<AgentPreferencesView>;
+  readonly updateAgentPreferences?: (
+    id: string,
+    preferences: UpdateAgentPreferences,
+    options: CommandOptions,
+  ) => Promise<AgentPreferencesView>;
+  readonly readAgentSettings?: (id: string, options?: ReadOptions) => Promise<AgentSettingsView>;
+  readonly updateAgentSettings?: (
+    id: string,
+    settings: AgentSettingsView,
+    options: CommandOptions,
+  ) => Promise<AgentSettingsView>;
+  readonly grantSandboxServiceAccess?: (
+    id: string,
+    services: readonly string[],
+    options: CommandOptions,
+  ) => Promise<void>;
+  readonly botViews?: BotClient;
+  readonly readSandboxCapacity?: (
+    options?: ReadOptions,
+  ) => Promise<import('@cma/client').SandboxCapacity>;
+  listSandboxes(
+    options?: PageOptions & { readonly excludeRetired?: boolean },
+  ): Promise<ResourcePage<SandboxSummary>>;
+  readSandbox(id: string, options?: ReadOptions): Promise<SandboxDetail>;
+  readWorkspace(id: string, options?: ReadOptions): Promise<WorkspaceDetail>;
+  readAgent(id: string, options?: ReadOptions): Promise<AgentDetail>;
+  readAgentEvents(
+    id: string,
+    options?: PageOptions<number>,
+  ): Promise<ResourcePage<AgentEvent, number>>;
+  readonly readRetainedOutput?: (
+    id: string,
+    options?: import('@cma/client').RetainedOutputOptions,
+  ) => Promise<import('@cma/client').RetainedOutputPage>;
+  readAgentTranscript(
+    id: string,
+    options?: ReadOptions & {
+      readonly maxPages?: number;
+      readonly maxBytes?: number;
+      readonly cache?: 'no-store';
+    },
+  ): Promise<AgentTranscript>;
+  exportAgentHistory(id: string, options?: ReadOptions): Promise<Blob>;
+  readAgentUsage(id: string, options?: ReadOptions): Promise<AgentUsage>;
+  readAgentResources(id: string, options?: ReadOptions): Promise<AgentResources>;
+  readAgentSource(id: string, options?: ReadOptions): Promise<AccessibleAgentSource>;
+  readAgentProvenance(id: string, options?: ReadOptions): Promise<AgentProvenance>;
+  readSandboxAllocation(
+    sandboxId: string,
+    options?: ReadOptions,
+  ): Promise<ConfiguredSandboxCapacity | undefined>;
+  readSandboxProfileSettings(
+    reference: ProfileReference,
+    options?: ReadOptions,
+  ): Promise<SandboxProfileSettings>;
+  readSandboxEvents(id: string, options?: PageOptions<number>): Promise<readonly SandboxEvent[]>;
+  replayAgent(threadId: string, options: AgentStreamOptions): Promise<void>;
+  runAgent(request: AgentRunRequest, options: AgentStreamOptions): Promise<void>;
+  createSandbox(input: CreateSandboxInput, options: CommandOptions): Promise<SandboxDetail>;
+  createWorkspace(
+    sandboxId: string,
+    input: CreateWorkspaceInput,
+    options: CommandOptions,
+  ): Promise<WorkspaceDetail>;
+  createInlineWorkspace(
+    sandboxId: string,
+    input: CreateInlineWorkspaceInput,
+    options: CommandOptions,
+  ): Promise<WorkspaceDetail>;
+  createAgent(
+    workspaceId: string,
+    input: CreateAgentInput,
+    options: CommandOptions,
+  ): Promise<AgentDetail>;
+  pauseSandbox(id: string, options: CommandOptions): Promise<void>;
+  reviveSandbox(id: string, options: CommandOptions): Promise<void>;
+  setSandboxAlwaysOn(
+    id: string,
+    alwaysOn: boolean,
+    expectedRevision: number,
+    options: CommandOptions,
+  ): Promise<SandboxDetail>;
+  deleteSandbox(id: string, options: CommandOptions): Promise<void>;
+  removeWorkspace(id: string, options: CommandOptions): Promise<void>;
+  interruptAgent(id: string, options: CommandOptions): Promise<void>;
+  stopAgent(id: string, options: CommandOptions): Promise<void>;
+  deleteAgent(id: string, options: CommandOptions): Promise<void>;
 }
 
-/**
- * Read one session, as the control plane currently describes it.
- *
- * Used when a session settles: what it was handed at creation is the answer
- * from before provisioning ran, and provisioning is what settles some of it.
- */
-export function readSession(id: string): Promise<Session> {
-  return bot.readSession(id);
-}
-
-/**
- * The runtimes this deployment can start a session on, and what each can be.
- *
- * Asked once and passed down, rather than asked wherever a form needs it: the
- * answer describes the deployment and does not change while somebody fills a
- * form in.
- */
-export function listKernels(): Promise<readonly KernelOffer[]> {
-  return bot.listKernels();
-}
-
-/**
- * Provision a session on the given kernel.
- *
- * Positional here and named in the SDK, deliberately: this is the call the
- * console already makes, and changing thirty call sites to prove a point about
- * argument style would be a worse commit than this adapter.
- */
-export function createSession(
-  cols: number,
-  rows: number,
-  environmentProfile?: string | null,
-  quotedRateCard?: string,
-): Promise<Session> {
-  const options: CreateSession = { cols, rows, environmentProfile, quotedRateCard };
-  return bot.createSession(options);
-}
-
-/** Provision a deployment-configured chat thread with no caller-owned choices. */
-export function createChatSession(): Promise<Session> {
-  return bot.createSession({ surface: 'chat' });
-}
-
-/** Read one caller-owned chat through the public Responses interface. */
-export function readResponsesConversation(
-  id: string,
-  signal?: AbortSignal,
-): Promise<ResponsesConversation> {
-  return bot.readConversation(id, { signal });
-}
-
-/** Read one newest-first page of durable chat history. */
-export function listResponsesConversationItems(
-  id: string,
-  page: ConversationItemsRequest = {},
-  signal?: AbortSignal,
-): Promise<ResponsesConversationItemList> {
-  return bot.listConversationItems(id, page, { signal });
-}
-
-/** Admit one chat turn and return its folding Responses connection. */
-export function createResponsesTurn(
-  request: CreateResponseRequest,
-  options: OperationOptions = {},
-): Promise<ResponsesConnection> {
-  return bot.createResponse(request, options);
-}
-
-/** Reconstruct one durable chat response after its stream is no longer available. */
-export function readResponsesResponse(
-  id: string,
-  signal?: AbortSignal,
-): Promise<ResponsesResponse> {
-  return bot.readResponse(id, { signal });
-}
-
-/** Quote a new session at the deployment's current sealed rate card. */
-export function quoteSession(environmentProfile?: string | null): Promise<PricingQuote> {
-  return bot.quoteSession(environmentProfile);
-}
-
-/** Read reserved-capacity spend derived from one session's durable log. */
-export function readSessionSpend(id: string): Promise<SessionSpend> {
-  return bot.readSpend(id);
-}
-
-/** Read the latest public resource status for one session. */
-export function readSessionResources(
-  id: string,
-  signal?: AbortSignal,
-): Promise<SessionResourceStatus> {
-  return bot.readResources(id, { signal });
-}
-
-/**
- * Move a session onto the other plane.
- *
- * A rotation, and answered as one: the session comes back `rotating`, which is
- * the window in which it takes no input. What it costs — the turn in flight,
- * and the pause — is stated before this is called, never after.
- *
- * A refusal arrives as a `CapabilityRefused` carrying the control plane's own
- * sentence and the name of the missing ability. It is shown rather than
- * flattened: an API that names what is absent is worth nothing if the
- * interface renders it as "something went wrong".
- */
-export function changePlane(id: string, plane: SessionPlane): Promise<Session> {
-  return bot.changePlane(id, plane);
-}
-
-/**
- * End a session, leaving it listed.
- *
- * Distinct from removing it: a finished conversation is still worth reading,
- * and the control plane keeps it until its owner deletes it.
- */
-export function terminateSession(id: string): Promise<void> {
-  return bot.terminateSession(id);
-}
-
-/**
- * Release a session's sandbox, keeping the session.
- *
- * The reversible half of ending something: nothing is running and nothing is
- * being paid for, while the history stays readable and the session can be
- * picked up again with `reviveSession`.
- */
-export function stopSession(id: string): Promise<void> {
-  return bot.stopSession(id);
-}
-
-/** Give a stopped session a sandbox again, under the same id. */
-export function reviveSession(id: string): Promise<Session> {
-  return bot.reviveSession(id);
-}
-
-/**
- * Everything a session's terminal has shown.
- *
- * How a session with no sandbox is read. Bytes rather than text, because it is
- * an escape-sequence stream that only a terminal knows how to interpret.
- */
-export function fetchTranscript(id: string): Promise<Uint8Array> {
-  return bot.fetchTranscript(id);
-}
-
-/** Remove a session and its history permanently. */
-export function deleteSession(id: string): Promise<void> {
-  return bot.deleteSession(id);
-}
-
-const LIFECYCLES = [
-  'provisioning',
-  'ready',
-  'running',
-  'rotating',
-  'idle',
-  'terminated',
-] as const satisfies readonly SessionLifecycle[];
-
-function lifecycleFrom(value: unknown): SessionLifecycle | undefined {
-  if (typeof value !== 'string' || value === '') {
-    return undefined;
+export class ClientUnavailableError extends Error {
+  constructor(message = 'The CMA web client is not available in this build.') {
+    super(message);
+    this.name = 'ClientUnavailableError';
   }
-  return LIFECYCLES.includes(value as (typeof LIFECYCLES)[number])
-    ? (value as (typeof LIFECYCLES)[number])
-    : 'unknown';
 }
 
-/**
- * Follow a session's events until it stops provisioning.
- *
- * Creating a session returns before its runtime exists, so this is how the UI
- * learns what happened next. Resumes from a cursor and reconnects on its own,
- * which is why it is a stream of server-sent events rather than polling.
- *
- * Returns a cancel function; calling it aborts the active fetch or reconnect.
- */
-export function followSession(
-  id: string,
-  onStatus: (lifecycle: SessionLifecycle, detail?: string) => void,
-  onError: (message: string) => void,
-  onStage?: (stage: Stage) => void,
-  onSignIn?: (signIn: SignIn) => void,
-): () => void {
-  const controller = new AbortController();
-
-  void (async () => {
-    try {
-      for await (const frame of bot.streamEvents(id, { signal: controller.signal })) {
-        const event = frame.event;
-
-        // A step on the way to ready, reported so the interface can say which
-        // part is taking the time rather than only that something is.
-        if (event.type === 'progress' && isStage(event.stage)) {
-          onStage?.(event.stage);
-        }
-
-        /*
-         * The agent has stopped to ask its owner to sign in. The SDK has
-         * already checked the frame's shape; this projection only turns wire
-         * nulls and empty optional strings into UI absence.
-         */
-        if (event.type === 'sign_in_required' && typeof event.url === 'string') {
-          const code = event.code;
-          const message = event.message;
-          onSignIn?.({
-            url: event.url,
-            code: typeof code === 'string' && code !== '' ? code : undefined,
-            message: typeof message === 'string' && message !== '' ? message : undefined,
-          });
-        }
-
-        if (event.type === 'status_changed') {
-          const lifecycle = lifecycleFrom(event.status);
-          if (lifecycle !== undefined) {
-            // The detail explains a failure. Without it a session that could
-            // not start is indistinguishable from one that ended normally.
-            onStatus(lifecycle, typeof event.detail === 'string' ? event.detail : undefined);
-          }
-        }
-      }
-    } catch (cause) {
-      if (!controller.signal.aborted) {
-        onError(cause instanceof Error ? cause.message : String(cause));
-      }
-    }
-  })();
-
-  return () => controller.abort();
+function unavailable<T>(): Promise<T> {
+  return Promise.reject(new ClientUnavailableError());
 }
 
-/** URL of the terminal relay for a session. */
-export function terminalUrl(id: string): string {
-  const scheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${scheme}//${window.location.host}/api/v1/sessions/${encodeURIComponent(id)}/terminal`;
+/** Explicit fallback for unbound tests and unavailable public capabilities. */
+export const unavailableClient: CmaWebClient = {
+  listSandboxes: async () => ({ items: [] }),
+  readSandbox: unavailable,
+  readWorkspace: unavailable,
+  readAgent: unavailable,
+  readAgentEvents: unavailable,
+  readAgentTranscript: unavailable,
+  exportAgentHistory: unavailable,
+  readAgentUsage: unavailable,
+  readAgentResources: unavailable,
+  readAgentSource: unavailable,
+  readAgentProvenance: unavailable,
+  readSandboxAllocation: unavailable,
+  readSandboxProfileSettings: unavailable,
+  readSandboxEvents: unavailable,
+  replayAgent: unavailable,
+  runAgent: unavailable,
+  createSandbox: unavailable,
+  createWorkspace: unavailable,
+  createInlineWorkspace: unavailable,
+  createAgent: unavailable,
+  pauseSandbox: unavailable,
+  reviveSandbox: unavailable,
+  setSandboxAlwaysOn: unavailable,
+  deleteSandbox: unavailable,
+  removeWorkspace: unavailable,
+  interruptAgent: unavailable,
+  stopAgent: unavailable,
+  deleteAgent: unavailable,
+};
+
+type KeyFactory = () => string;
+
+function randomKey(): string {
+  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (value) => value.toString(16).padStart(2, '0')).join('');
+}
+
+/** Holds one key per logical command until its outcome is known. */
+export class CommandKeys {
+  readonly #keys = new Map<string, string>();
+
+  constructor(private readonly makeKey: KeyFactory = randomKey) {}
+
+  for(command: string): string {
+    const retained = this.#keys.get(command);
+    if (retained !== undefined) return retained;
+    const key = this.makeKey();
+    this.#keys.set(command, key);
+    return key;
+  }
+
+  settle(command: string): void {
+    this.#keys.delete(command);
+  }
 }

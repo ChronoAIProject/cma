@@ -1,0 +1,1173 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "shared-stream-member",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "1",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "0",
+              "delta": [],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "2",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "0",
+              "delta": [],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "3",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "4",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "delta": [],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "role": "user",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "delta": "Please review",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "5",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "role": "assistant",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "delta": "Review complete",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "6",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "7",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "delta": [],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "8",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/usage/inputTokens",
+                  "value": 5
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/outputTokens",
+                  "value": 8
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextUsed",
+                  "value": 13
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextWindow",
+                  "value": null
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "9",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "code": "agent_turn_failed",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-resume",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false&starting_after=7",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "8",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/usage/inputTokens",
+                  "value": 5
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/outputTokens",
+                  "value": 8
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextUsed",
+                  "value": 13
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextWindow",
+                  "value": null
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "9",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "code": "agent_turn_failed",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-whole",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_whole",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "1",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "0",
+              "delta": [],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "2",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "0",
+              "delta": [],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "3",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "4",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "delta": [],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "role": "user",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "delta": "Please review",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "5",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "role": "assistant",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "delta": "Review complete",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "6",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "7",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "delta": [],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "8",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/usage/inputTokens",
+                  "value": 5
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/outputTokens",
+                  "value": 8
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextUsed",
+                  "value": 13
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextWindow",
+                  "value": null
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "9",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "code": "agent_turn_failed",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-owner",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "2",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "0",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/signIn",
+                  "value": null
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "3",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "role": "user",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "delta": "Please review",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "5",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "role": "assistant",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "delta": "Review complete",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "6",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "7",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/signIn",
+                  "value": {
+                    "url": "https://private-sign-in.test",
+                    "code": "private-code",
+                    "message": null
+                  }
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "8",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/usage/inputTokens",
+                  "value": 5
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/outputTokens",
+                  "value": 8
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextUsed",
+                  "value": 13
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextWindow",
+                  "value": null
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "9",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "code": "agent_turn_failed",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-owner-outage",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_owner_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "2",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "0",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/signIn",
+                  "value": null
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "3",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "role": "user",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "delta": "Please review",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "5",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "role": "assistant",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "delta": "Review complete",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "6",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "7",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/signIn",
+                  "value": {
+                    "url": "https://private-sign-in.test",
+                    "code": "private-code",
+                    "message": null
+                  }
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "8",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/usage/inputTokens",
+                  "value": 5
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/outputTokens",
+                  "value": 8
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextUsed",
+                  "value": 13
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextWindow",
+                  "value": null
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "9",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "code": "agent_turn_failed",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-owner-legacy",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_owner_absent_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "2",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "0",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/signIn",
+                  "value": null
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "3",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "role": "user",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "delta": "Please review",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "5",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_5",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "role": "assistant",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "delta": "Review complete",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "6",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "messageId": "msg_6",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "7",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/signIn",
+                  "value": {
+                    "url": "https://private-sign-in.test",
+                    "code": "private-code",
+                    "message": null
+                  }
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "8",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/usage/inputTokens",
+                  "value": 5
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/outputTokens",
+                  "value": 8
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextUsed",
+                  "value": 13
+                },
+                {
+                  "op": "replace",
+                  "path": "/usage/contextWindow",
+                  "value": null
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "9",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_shared_stream",
+              "runId": "3",
+              "code": "agent_turn_failed",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-missing",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_missing",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/thread-not-found",
+          "title": "thread not found",
+          "status": 404,
+          "detail": "The Agent is not available to this caller.",
+          "code": "thread_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-outage",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-revoked",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/thread-not-found",
+          "title": "thread not found",
+          "status": 404,
+          "detail": "The Agent is not available to this caller.",
+          "code": "thread_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-no-credential",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-invalid-context",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-anonymous",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-legacy-recipient",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_absent_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/thread-not-found",
+          "title": "thread not found",
+          "status": 404,
+          "detail": "The Agent is not available to this caller.",
+          "code": "thread_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-forbidden",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-cursor-beyond-end",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_shared_stream&follow=false&starting_after=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/cursor-beyond-end",
+          "title": "cursor beyond end",
+          "status": 400,
+          "detail": "The replay cursor exceeds this Agent's durable log head.",
+          "code": "cursor_beyond_end",
+          "head": 9
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "shared-stream-sibling",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "shared_stream_member",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_sibling&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/thread-not-found",
+          "title": "thread not found",
+          "status": 404,
+          "detail": "The Agent is not available to this caller.",
+          "code": "thread_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

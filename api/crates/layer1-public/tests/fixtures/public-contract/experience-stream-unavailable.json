@@ -1,0 +1,44 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "responses-create-durable-read-unavailable",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_response_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue",
+          "stream": true,
+          "previous_response_id": "resp_agt_contract_3"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json",
+          "x-cma-command-id": "cmd_contract_responses_create_durable_read_unavailable",
+          "x-cma-response-id": "resp_contract_responses_create_durable_read_unavailable"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {},
+      "headerCaptures": {
+        "responses_create_durable_read_unavailable_command": "x-cma-command-id",
+        "responses_create_durable_read_unavailable_response": "x-cma-response-id"
+      }
+    }
+  ]
+}

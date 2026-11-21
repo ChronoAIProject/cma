@@ -1,7 +1,7 @@
 //! Authenticated encryption for durable authentication secrets.
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
-use layer2_core::store::StoreError;
+use layer2_core::StoreError;
 use mongodb::bson::{spec::BinarySubtype, Binary};
 use ring::{
     aead::{self, Aad, LessSafeKey, Nonce, UnboundKey},
@@ -45,6 +45,49 @@ impl AuthEncryptionKey {
         self.0.as_ref()
     }
 
+    pub(crate) fn metrics_cursor_key(&self, deployment: &str) -> Zeroizing<Vec<u8>> {
+        let root = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.as_bytes());
+        let mut context = ring::hmac::Context::with_key(&root);
+        context.update(b"chrono.usage.metrics.cursor.v1\0");
+        context.update(deployment.as_bytes());
+        Zeroizing::new(context.sign().as_ref().to_vec())
+    }
+
+    pub(crate) fn usage_cursor_key(&self, deployment: &str) -> Zeroizing<[u8; 32]> {
+        let root = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.as_bytes());
+        let mut context = ring::hmac::Context::with_key(&root);
+        context.update(b"chrono.usage.continuation.v1\0");
+        context.update(deployment.as_bytes());
+        let mut key = Zeroizing::new([0; 32]);
+        key.copy_from_slice(context.sign().as_ref());
+        key
+    }
+
+    /// Derive a separate signing key without exposing the encryption key bytes.
+    pub(super) fn agent_access_signing_key(&self, namespace: &str) -> ring::hmac::Key {
+        let root = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.as_bytes());
+        let mut context = ring::hmac::Context::with_key(&root);
+        context.update(b"chrono.agent.access.signing-key.v1\0");
+        context.update(namespace.as_bytes());
+        ring::hmac::Key::new(ring::hmac::HMAC_SHA256, context.sign().as_ref())
+    }
+
+    pub(super) fn provider_tool_signing_key(&self, namespace: &str) -> ring::hmac::Key {
+        let root = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.as_bytes());
+        let mut context = ring::hmac::Context::with_key(&root);
+        context.update(b"chrono.provider.tool.relay.signing-key.v1\0");
+        context.update(namespace.as_bytes());
+        ring::hmac::Key::new(ring::hmac::HMAC_SHA256, context.sign().as_ref())
+    }
+
+    pub(crate) fn agent_manager_signing_key(&self, namespace: &str) -> ring::hmac::Key {
+        let root = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, self.as_bytes());
+        let mut context = ring::hmac::Context::with_key(&root);
+        context.update(b"chrono.agent.manager.relay.v1\0");
+        context.update(namespace.as_bytes());
+        ring::hmac::Key::new(ring::hmac::HMAC_SHA256, context.sign().as_ref())
+    }
+
     #[cfg(test)]
     fn from_bytes(bytes: [u8; KEY_LEN]) -> Self {
         Self(Zeroizing::new(bytes))
@@ -59,7 +102,7 @@ impl std::fmt::Debug for AuthEncryptionKey {
 
 /// One encrypted field as it is stored in BSON.
 #[derive(Clone, Serialize, Deserialize)]
-pub(super) struct CipherEnvelope {
+pub(crate) struct CipherEnvelope {
     version: i32,
     nonce: Binary,
     ciphertext: Binary,
@@ -76,14 +119,14 @@ impl std::fmt::Debug for CipherEnvelope {
 }
 
 /// AES-256-GCM bound to this deployment's durable record namespace.
-pub(super) struct AuthCipher {
+pub(crate) struct AuthCipher {
     key: LessSafeKey,
     random: SystemRandom,
     deployment: String,
 }
 
 impl AuthCipher {
-    pub(super) fn new(
+    pub(crate) fn new(
         deployment: impl Into<String>,
         key: &AuthEncryptionKey,
     ) -> Result<Self, StoreError> {
@@ -97,7 +140,7 @@ impl AuthCipher {
         })
     }
 
-    pub(super) fn seal(
+    pub(crate) fn seal(
         &self,
         record_kind: &str,
         record_id: &[u8],
@@ -125,7 +168,7 @@ impl AuthCipher {
         })
     }
 
-    pub(super) fn open(
+    pub(crate) fn open(
         &self,
         record_kind: &str,
         record_id: &[u8],
@@ -201,8 +244,27 @@ fn binary(bytes: Vec<u8>) -> Binary {
 }
 
 #[cfg(test)]
+mod restore_evidence_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn usage_cursor_keys_are_stable_and_isolated_from_metrics_deployments_and_roots() {
+        let root = AuthEncryptionKey::from_bytes([7; 32]);
+        let key = root.usage_cursor_key("deployment-a");
+        assert_eq!(key, root.clone().usage_cursor_key("deployment-a"));
+        assert_ne!(
+            key.as_slice(),
+            root.metrics_cursor_key("deployment-a").as_slice()
+        );
+        assert_ne!(key, root.usage_cursor_key("deployment-b"));
+        assert_ne!(
+            key,
+            AuthEncryptionKey::from_bytes([8; 32]).usage_cursor_key("deployment-a")
+        );
+    }
 
     fn test_cipher(key: u8, deployment: &str) -> AuthCipher {
         AuthCipher::new(deployment, &AuthEncryptionKey::from_bytes([key; KEY_LEN])).unwrap()

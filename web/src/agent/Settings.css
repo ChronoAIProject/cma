@@ -1,0 +1,53 @@
+.agent-settings-scopes {
+  display: grid;
+  gap: 6px;
+}
+
+.agent-settings-scopes {
+  margin-top: 18px;
+  padding: 0;
+  border: 0;
+}
+.agent-settings-scopes > div {
+  grid-template-columns: minmax(0, 1fr);
+}
+.agent-settings-scopes label > span {
+  min-width: 0;
+  overflow: hidden;
+}
+.agent-settings-scopes ul > li {
+  box-sizing: border-box;
+  height: 64px;
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+}
+.agent-settings-scopes ul label {
+  min-width: 0;
+  width: 100%;
+}
+.agent-settings-scopes ul label > span {
+  display: grid;
+  gap: 4px;
+  flex: 1;
+}
+.agent-settings-scopes ul label > span > * {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.agent-settings-scopes legend {
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.agent-settings-scopes > label {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.agent-settings-scopes small {
+  color: var(--dsw-alias-label-secondary);
+}

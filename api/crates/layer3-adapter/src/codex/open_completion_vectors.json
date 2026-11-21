@@ -1,0 +1,226 @@
+[
+  {
+    "name": "access_only",
+    "input": {
+      "cwd": "/workspace",
+      "mcpServers": [
+        {
+          "type": "http",
+          "name": "cma_access",
+          "url": "https://cma.example/api/v1/agent-tools",
+          "headers": [
+            {
+              "name": "Authorization",
+              "value": "Bearer access-fixture"
+            }
+          ]
+        }
+      ]
+    },
+    "canonical": "{\"cwd\":\"/workspace\",\"mcpServers\":[{\"headers\":[{\"name\":\"Authorization\",\"value\":\"Bearer access-fixture\"}],\"name\":\"cma_access\",\"type\":\"http\",\"url\":\"https://cma.example/api/v1/agent-tools\"}]}",
+    "bindingDigest": "v1:b42b6737ba3919bc2ba53f3e15ae9a60880889ed4d09d85cd8287a9b69fc1972"
+  },
+  {
+    "name": "provider_only",
+    "input": {
+      "cwd": "/workspace",
+      "mcpServers": [
+        {
+          "type": "http",
+          "name": "cmaeg",
+          "url": "http://127.0.0.1:9093/",
+          "headers": []
+        }
+      ]
+    },
+    "canonical": "{\"cwd\":\"/workspace\",\"mcpServers\":[{\"headers\":[],\"name\":\"cmaeg\",\"type\":\"http\",\"url\":\"http://127.0.0.1:9093/\"}]}",
+    "bindingDigest": "v1:9f2591922cd94dcb6390c40a6c5e07d34f082c52c9eef11f7b05fe25ec8fd4f5"
+  },
+  {
+    "name": "channel_only",
+    "input": {
+      "cwd": "/workspace",
+      "mcpServers": [
+        {
+          "type": "http",
+          "name": "cma_channel",
+          "url": "https://cma.example/api/v1/channel-tools",
+          "headers": [
+            {
+              "name": "Authorization",
+              "value": "Bearer channel-fixture"
+            }
+          ]
+        }
+      ]
+    },
+    "canonical": "{\"cwd\":\"/workspace\",\"mcpServers\":[{\"headers\":[{\"name\":\"Authorization\",\"value\":\"Bearer channel-fixture\"}],\"name\":\"cma_channel\",\"type\":\"http\",\"url\":\"https://cma.example/api/v1/channel-tools\"}]}",
+    "bindingDigest": "v1:59bb75c149713b970d2605a06245f6d1d576bf3be1167cf12f3f89c5ea2a14b7"
+  },
+  {
+    "name": "combined_handshake_order",
+    "input": {
+      "cwd": "/workspace",
+      "mcpServers": [
+        {
+          "type": "http",
+          "name": "cma_channel",
+          "url": "https://cma.example/api/v1/channel-tools",
+          "headers": [
+            {
+              "name": "Authorization",
+              "value": "Bearer channel-fixture"
+            }
+          ]
+        },
+        {
+          "type": "http",
+          "name": "cmaeg",
+          "url": "http://127.0.0.1:9093/",
+          "headers": []
+        },
+        {
+          "type": "http",
+          "name": "cma_access",
+          "url": "https://cma.example/api/v1/agent-tools",
+          "headers": [
+            {
+              "name": "Authorization",
+              "value": "Bearer access-fixture"
+            }
+          ]
+        }
+      ]
+    },
+    "canonical": "{\"cwd\":\"/workspace\",\"mcpServers\":[{\"headers\":[{\"name\":\"Authorization\",\"value\":\"Bearer channel-fixture\"}],\"name\":\"cma_channel\",\"type\":\"http\",\"url\":\"https://cma.example/api/v1/channel-tools\"},{\"headers\":[],\"name\":\"cmaeg\",\"type\":\"http\",\"url\":\"http://127.0.0.1:9093/\"},{\"headers\":[{\"name\":\"Authorization\",\"value\":\"Bearer access-fixture\"}],\"name\":\"cma_access\",\"type\":\"http\",\"url\":\"https://cma.example/api/v1/agent-tools\"}]}",
+    "bindingDigest": "v1:17e721ee5e82011891ed4fe511460aadb90cb76364bb990e33cc5650bf12869a"
+  },
+  {
+    "name": "provider_object_keys_reordered",
+    "input": {
+      "mcpServers": [
+        {
+          "headers": [],
+          "url": "http://127.0.0.1:9093/",
+          "name": "cmaeg",
+          "type": "http"
+        }
+      ],
+      "cwd": "/workspace"
+    },
+    "canonical": "{\"cwd\":\"/workspace\",\"mcpServers\":[{\"headers\":[],\"name\":\"cmaeg\",\"type\":\"http\",\"url\":\"http://127.0.0.1:9093/\"}]}",
+    "bindingDigest": "v1:9f2591922cd94dcb6390c40a6c5e07d34f082c52c9eef11f7b05fe25ec8fd4f5"
+  },
+  {
+    "name": "combined_array_order_reversed",
+    "input": {
+      "cwd": "/workspace",
+      "mcpServers": [
+        {
+          "type": "http",
+          "name": "cma_access",
+          "url": "https://cma.example/api/v1/agent-tools",
+          "headers": [
+            {
+              "name": "Authorization",
+              "value": "Bearer access-fixture"
+            }
+          ]
+        },
+        {
+          "type": "http",
+          "name": "cmaeg",
+          "url": "http://127.0.0.1:9093/",
+          "headers": []
+        },
+        {
+          "type": "http",
+          "name": "cma_channel",
+          "url": "https://cma.example/api/v1/channel-tools",
+          "headers": [
+            {
+              "name": "Authorization",
+              "value": "Bearer channel-fixture"
+            }
+          ]
+        }
+      ]
+    },
+    "canonical": "{\"cwd\":\"/workspace\",\"mcpServers\":[{\"headers\":[{\"name\":\"Authorization\",\"value\":\"Bearer access-fixture\"}],\"name\":\"cma_access\",\"type\":\"http\",\"url\":\"https://cma.example/api/v1/agent-tools\"},{\"headers\":[],\"name\":\"cmaeg\",\"type\":\"http\",\"url\":\"http://127.0.0.1:9093/\"},{\"headers\":[{\"name\":\"Authorization\",\"value\":\"Bearer channel-fixture\"}],\"name\":\"cma_channel\",\"type\":\"http\",\"url\":\"https://cma.example/api/v1/channel-tools\"}]}",
+    "bindingDigest": "v1:4d20a62fdb8991f178bf16670f545d15179e1d3c23203826d77500da0f5b1dce"
+  },
+  {
+    "name": "unicode_and_escaping",
+    "input": {
+      "cwd": "/workspace/café/😀",
+      "mcpServers": [
+        {
+          "type": "http",
+          "name": "cmaeg",
+          "url": "http://127.0.0.1:9093/",
+          "headers": [],
+          "_meta": {
+            "": "bmp",
+            "😀": "supplementary",
+            "text": "quote\" reverse\\ solidus/ line\n tab\t"
+          }
+        }
+      ]
+    },
+    "canonical": "{\"cwd\":\"/workspace/café/😀\",\"mcpServers\":[{\"_meta\":{\"text\":\"quote\\\" reverse\\\\ solidus/ line\\n tab\\t\",\"😀\":\"supplementary\",\"\":\"bmp\"},\"headers\":[],\"name\":\"cmaeg\",\"type\":\"http\",\"url\":\"http://127.0.0.1:9093/\"}]}",
+    "bindingDigest": "v1:ce6dc8c8ae5e774b1d30b1223f498c6815e0e7a05938b5ecc57f006d83dfa020"
+  },
+  {
+    "name": "provider_headers_absent",
+    "input": {
+      "cwd": "/workspace",
+      "mcpServers": [
+        {
+          "type": "http",
+          "name": "cmaeg",
+          "url": "http://127.0.0.1:9093/"
+        }
+      ]
+    },
+    "canonical": "{\"cwd\":\"/workspace\",\"mcpServers\":[{\"name\":\"cmaeg\",\"type\":\"http\",\"url\":\"http://127.0.0.1:9093/\"}]}",
+    "bindingDigest": "v1:5ececc4896d63a731a977adac03d2bb0fb6d7df10e14915fc5621ebec129fab8",
+    "exerciseReceipt": false
+  },
+  {
+    "name": "empty_servers",
+    "input": {
+      "cwd": "/workspace",
+      "mcpServers": []
+    },
+    "canonical": "{\"cwd\":\"/workspace\",\"mcpServers\":[]}",
+    "bindingDigest": "v1:c24b8b520f19fc7ebd069e21f290baf4dd38be7b27bd86a4dff8fece1230d4f0",
+    "exerciseReceipt": false
+  },
+  {
+    "name": "absent_servers",
+    "input": {
+      "cwd": "/workspace"
+    },
+    "canonical": "{\"cwd\":\"/workspace\",\"mcpServers\":[]}",
+    "bindingDigest": "v1:c24b8b520f19fc7ebd069e21f290baf4dd38be7b27bd86a4dff8fece1230d4f0",
+    "exerciseReceipt": false
+  },
+  {
+    "name": "provider_meta_null",
+    "input": {
+      "cwd": "/workspace",
+      "mcpServers": [
+        {
+          "type": "http",
+          "name": "cmaeg",
+          "url": "http://127.0.0.1:9093/",
+          "headers": [],
+          "_meta": null
+        }
+      ]
+    },
+    "canonical": "{\"cwd\":\"/workspace\",\"mcpServers\":[{\"_meta\":null,\"headers\":[],\"name\":\"cmaeg\",\"type\":\"http\",\"url\":\"http://127.0.0.1:9093/\"}]}",
+    "bindingDigest": "v1:f7fd96f500cb2917adb1803002db3c8040097d77ca321bccf077517d2a75981c",
+    "exerciseReceipt": false
+  }
+]

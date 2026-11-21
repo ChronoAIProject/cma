@@ -1,209 +1,338 @@
-//! What the bridge must do with a kernel it does not understand.
-//!
-//! Driven against real processes rather than a stub, because the properties
-//! under test are about process boundaries: piped stdio, a stream that ends,
-//! a stream that says something on the wrong channel.
+use layer3_adapter::agent_capacity_recovery::{
+    CapacityRecoveryRequest, ConfirmedAgentState, RetainedAgentTarget,
+};
+use layer3_adapter::AgentSlot;
+use layer3_adapter::RuntimeHandle;
 
 use super::*;
 
-/// Wait for a condition, or give up.
-///
-/// Polls rather than sleeps a fixed time, so these are neither flaky nor
-/// slower than the thing they wait for.
-async fn until(mut ready: impl AsyncFnMut() -> bool) -> bool {
-    for _ in 0..400 {
-        if ready().await {
-            return true;
+fn launch() -> AgentLaunch {
+    AgentLaunch {
+        operation_id: "agent:test-agent:open:v1".into(),
+        request_sha256: "a".repeat(64),
+        agent_id: AgentSlot::new("test-agent"),
+        cwd: "/tmp".into(),
+        home: "/tmp".into(),
+        program: "/bin/sh".into(),
+        args: vec![
+            "-c".into(),
+            "while IFS= read -r line; do printf '%s\\n' \"$line\"; done".into(),
+        ],
+        env: BTreeMap::new(),
+    }
+}
+
+fn recovery_request(challenge: &str, writer_fence: u64) -> CapacityRecoveryRequest {
+    CapacityRecoveryRequest {
+        operation_key: "agent:test-agent:open:v1".into(),
+        target: RetainedAgentTarget {
+            sandbox_id: "sandbox".into(),
+            agent_id: "test-agent".into(),
+            runtime: RuntimeHandle::new("runtime"),
+            boot_id: "a".repeat(32),
+            provision_generation: 1,
+            home_identity: "a".repeat(43),
+            conversation_id: "conversation".into(),
+            conversation_generation: 1,
+            original_open_operation: "agent:test-agent:open:v1".into(),
+            original_open_sha256: "b".repeat(64),
+            active_turn: None,
+        },
+        writer_fence,
+        challenge: challenge.into(),
+    }
+}
+
+#[tokio::test]
+async fn separate_bridges_have_independent_streams() {
+    let first = Bridge::start(&launch(), &BTreeMap::new()).unwrap();
+    let second = Bridge::start(&launch(), &BTreeMap::new()).unwrap();
+    let mut first_output = first.subscribe();
+    let mut second_output = second.subscribe();
+    assert!(first.send(b"one".to_vec()).await);
+    assert!(second.send(b"two".to_vec()).await);
+    assert_eq!(
+        first_output.recv().await.unwrap(),
+        Outbound::Frame(b"one".to_vec())
+    );
+    assert_eq!(
+        second_output.recv().await.unwrap(),
+        Outbound::Frame(b"two".to_vec())
+    );
+    first.terminate().await.unwrap();
+    second.terminate().await.unwrap();
+}
+
+#[tokio::test]
+async fn detached_output_is_replayed() {
+    let bridge = Bridge::start(&launch(), &BTreeMap::new()).unwrap();
+    assert!(bridge.send(b"held".to_vec()).await);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        let backlog = bridge.backlog().await;
+        if !backlog.is_empty() {
+            assert_eq!(backlog, vec![Outbound::Frame(b"held".to_vec())]);
+            break;
         }
-        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        assert!(tokio::time::Instant::now() < deadline);
+        tokio::task::yield_now().await;
     }
-    false
+    bridge.terminate().await.unwrap();
 }
 
+#[cfg(unix)]
 #[tokio::test]
-async fn frames_cross_in_both_directions_untouched() {
-    // `cat` is the honest test double here: it is a real process on real
-    // pipes, and it reads exactly as much of a frame as this module does —
-    // none of it.
-    let bridge = Bridge::start("cat").expect("cat starts");
-    let mut heard = bridge.subscribe();
-
-    // Deliberately awkward: an escaped quote, a brace, and a byte outside
-    // ASCII. Nothing here reads a frame, so nothing here may be confused by
-    // what one contains.
-    let sent =
-        r#"{"jsonrpc":"2.0","method":"session/prompt","params":{"x":"e\u0301 \" }"}}"#.as_bytes();
-    assert!(bridge.send(sent.to_vec()).await);
-
-    let got = tokio::time::timeout(std::time::Duration::from_secs(5), heard.recv())
-        .await
-        .expect("a frame comes back")
-        .expect("the channel is open");
-    assert_eq!(
-        got,
-        Outbound::Frame(sent.to_vec()),
-        "a frame must survive the crossing byte for byte"
-    );
-}
-
-#[tokio::test]
-async fn frames_keep_the_order_the_bridge_produced_them_in() {
-    let bridge = Bridge::start("cat").expect("cat starts");
-    let mut heard = bridge.subscribe();
-    for n in 0..20 {
-        assert!(bridge.send(format!(r#"{{"seq":{n}}}"#).into_bytes()).await);
-    }
-
-    for n in 0..20 {
-        let got = tokio::time::timeout(std::time::Duration::from_secs(5), heard.recv())
-            .await
-            .expect("a frame arrives")
-            .expect("the channel is open");
-        assert_eq!(
-            got,
-            Outbound::Frame(format!(r#"{{"seq":{n}}}"#).into_bytes())
-        );
-    }
-}
-
-#[tokio::test]
-async fn what_is_said_with_nobody_listening_is_held_for_whoever_comes_back() {
-    // The §5 property this exists for. Everything a conversation session did
-    // during a control-plane restart would otherwise be gone, where a terminal
-    // session simply re-derives its screen.
-    let bridge = Bridge::start("cat").expect("cat starts");
-    assert!(bridge.send(br#"{"said":"while away"}"#.to_vec()).await);
-
-    let held = until(async || !bridge.pending.lock().await.held.is_empty()).await;
-    assert!(held, "a frame with no listener must be held, not dropped");
-
-    let backlog = bridge.backlog().await;
-    assert_eq!(
-        backlog,
-        vec![Outbound::Frame(br#"{"said":"while away"}"#.to_vec())]
-    );
-    assert!(
-        bridge.backlog().await.is_empty(),
-        "taking the backlog must empty it, or a reconnect replays twice"
-    );
-}
-
-#[tokio::test]
-async fn a_bridge_that_exits_is_reported_rather_than_going_quiet() {
-    // A stream that stops and a runtime that died look identical from the
-    // outside, and only one of them is somebody's session ending.
-    let bridge = Bridge::start("true").expect("true starts");
-    let writer_root = bridge
-        .writer_session_root()
-        .expect("the bridge has a process-session root");
-    assert!(
-        tokio::time::timeout(std::time::Duration::from_secs(5), bridge.ended())
-            .await
-            .is_ok(),
-        "the end of the bridge process must be observable"
-    );
-    assert_eq!(
-        bridge.writer_session_root(),
-        Some(writer_root),
-        "primary exit must not discard authority over possible descendants"
-    );
-}
-
-#[cfg(target_os = "linux")]
-#[tokio::test]
-async fn an_ended_bridge_retains_authority_over_a_live_descendant() {
-    let bridge = Bridge::start("/bin/sh").expect("the bridge shell starts");
-    let root = bridge
-        .writer_session_root()
-        .expect("the bridge has a process-session root");
-    assert!(
-        bridge
-            .send(b"trap '' HUP TERM; sleep 3 & exit 0".to_vec())
-            .await
-    );
-    tokio::time::timeout(std::time::Duration::from_secs(1), bridge.ended())
-        .await
-        .expect("the primary bridge exits while its child remains");
-
-    assert_eq!(bridge.writer_session_root(), Some(root));
-    let writer_count = tokio::task::spawn_blocking(move || {
-        let mut fence = crate::writer_fence::WriterFence::quiesce(
-            [root],
-            crate::writer_fence::SupervisorBoundary::default(),
-        )?;
-        let count = fence.writer_count()?;
-        fence.resume()?;
-        Ok::<_, String>(count)
+async fn primary_exit_remains_observable_without_active_subscribers() {
+    let mut launch = launch();
+    launch.args = vec!["-c".into(), "exit 0".into()];
+    let bridge = Bridge::start(&launch, &BTreeMap::new()).unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !bridge.is_ended() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     })
     .await
-    .expect("the writer-fence task joins")
-    .expect("the retained process session quiesces");
+    .expect("exit state remains observable without a waiting subscriber");
+    tokio::time::timeout(Duration::from_millis(100), bridge.ended())
+        .await
+        .expect("late subscribers observe the retained exit state");
+}
 
-    assert!(writer_count >= 1, "the live descendant must be fenced");
+#[cfg(unix)]
+#[tokio::test]
+async fn close_terminates_descendants_after_the_primary_has_exited() {
+    let mut launch = launch();
+    launch.args = vec!["-c".into(), "sleep 30 & printf '%s\\n' $!".into()];
+    let bridge = Bridge::start(&launch, &BTreeMap::new()).unwrap();
+    let mut output = bridge.subscribe();
+    let descendant = match tokio::time::timeout(Duration::from_secs(2), output.recv())
+        .await
+        .unwrap()
+        .unwrap()
+    {
+        Outbound::Frame(bytes) => String::from_utf8(bytes).unwrap().parse::<i32>().unwrap(),
+        other => panic!("expected descendant PID, got {other:?}"),
+    };
+    tokio::time::timeout(Duration::from_secs(2), bridge.ended())
+        .await
+        .expect("bridge primary exited");
+    assert_eq!(unsafe { libc::kill(descendant, 0) }, 0);
+    bridge.terminate().await.unwrap();
+    assert_ne!(unsafe { libc::kill(descendant, 0) }, 0);
 }
 
 #[tokio::test]
-async fn a_command_that_does_not_exist_fails_at_the_start() {
-    // Rather than a bridge that appears to be running and never says anything.
-    assert!(Bridge::start("/nonexistent/bridge-binary").is_err());
-    assert!(Bridge::start("   ").is_err(), "an empty command is not one");
+async fn native_stdout_replay_over_both_windows_preserves_every_original_frame() {
+    let mut launch = launch();
+    let payload = "x".repeat(1024);
+    let count = 16_421_u64;
+    launch.args = vec!["-c".into(), format!("i=1; while [ \"$i\" -le {count} ]; do printf '%s:%s\\n' \"$i\" '{payload}'; i=$((i+1)); done")];
+    let bridge = Bridge::start(&launch, &BTreeMap::new()).unwrap();
+    assert_eq!(bridge.select_output_acknowledgement(true), Ok(true));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let mut changed = bridge.retained_output.subscribe();
+    let mut cursor = 0;
+    let mut bytes = 0;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        while cursor < count {
+            let snapshot = bridge.retained_output.snapshot(cursor).await.unwrap();
+            if snapshot.frames.is_empty() {
+                changed.changed().await.unwrap();
+                continue;
+            }
+            for frame in snapshot.frames {
+                cursor += 1;
+                assert_eq!(frame.cursor, cursor);
+                assert_eq!(
+                    frame.bytes.as_ref(),
+                    format!("{cursor}:{payload}").as_bytes()
+                );
+                bytes += frame.bytes.len();
+                assert!(
+                    bridge
+                        .retained_output
+                        .acknowledge(bridge.retained_output.stream_id(), cursor)
+                        .await
+                );
+            }
+        }
+        bridge.ended().await;
+    })
+    .await
+    .expect("native stdout must drain without retention loss");
+    assert!(bytes > BUFFER_BYTES);
+    bridge.terminate().await.unwrap();
 }
 
-#[test]
-fn the_buffer_drops_the_oldest_and_leaves_a_boundary_where_they_were() {
-    // A pod cannot grow without limit while its control plane is away, and a
-    // conversation that silently skips is worse than one that says where.
-    let mut pending = Pending::default();
-    let big = vec![b'x'; BUFFER_BYTES / 2];
-    for _ in 0..4 {
-        pending.push(big.clone());
-    }
+#[tokio::test]
+async fn retiring_a_detached_bridge_cancels_a_backpressured_stdout_reader() {
+    let mut launch = launch();
+    launch.args = vec![
+        "-c".into(),
+        format!("while :; do printf '%s\\n' '{}'; done", "x".repeat(1024)),
+    ];
+    let bridge = Bridge::start(&launch, &BTreeMap::new()).unwrap();
+    assert_eq!(bridge.select_output_acknowledgement(true), Ok(true));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    tokio::time::timeout(Duration::from_secs(5), bridge.terminate())
+        .await
+        .unwrap()
+        .unwrap();
+    let reader = bridge.reader.clone();
+    drop(bridge);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !reader.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("retired detached bridge must not leave a capacity waiter behind");
+}
 
-    let held = pending.drain();
-    assert!(
-        matches!(held.first(), Some(Outbound::Gap { frames }) if *frames > 0),
-        "the gap must be recorded where it happened: {held:?}"
-    );
-    assert!(
-        held.iter()
-            .filter(|o| matches!(o, Outbound::Gap { .. }))
-            .count()
-            == 1,
-        "one boundary, not one marker per dropped frame"
-    );
-    let kept: usize = held
-        .iter()
-        .filter_map(|o| match o {
-            Outbound::Frame(f) => Some(f.len()),
-            Outbound::Gap { .. } => None,
+#[tokio::test]
+async fn recovery_lease_is_single_use_and_binds_the_writer_fence() {
+    let bridge = Bridge::start_with_recovery(&launch(), &BTreeMap::new(), true).unwrap();
+    let request = recovery_request("a".repeat(32).as_str(), 7);
+    assert!(bridge
+        .reserve_capacity_recovery(&request.challenge, request.writer_fence)
+        .await
+        .is_ok());
+    assert!(matches!(
+        bridge
+            .reserve_capacity_recovery(&request.challenge, request.writer_fence + 1)
+            .await,
+        Err(layer3_adapter::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict)
+    ));
+    assert!(!bridge.consume_capacity_recovery(&request.challenge).await);
+    observe_input(&bridge, serde_json::json!({"id":"load", "method":"session/load", "params":{"sessionId":"conversation"}})).await;
+    observe_output(&bridge, serde_json::json!({"id":"load", "result":{}})).await;
+    bridge
+        .capacity_recovery_proof(&request, "/tmp".into())
+        .await
+        .unwrap();
+    assert!(bridge.consume_capacity_recovery(&request.challenge).await);
+    assert!(!bridge.consume_capacity_recovery(&request.challenge).await);
+    bridge.terminate().await.unwrap();
+}
+
+#[tokio::test]
+async fn recovery_proof_requires_the_reserved_lease_and_preserves_no_input_path() {
+    let bridge = Bridge::start_with_recovery(&launch(), &BTreeMap::new(), true).unwrap();
+    let request = recovery_request("c".repeat(32).as_str(), 9);
+    assert!(matches!(
+        bridge
+            .capacity_recovery_proof(&request, "/tmp".into())
+            .await,
+        Err(layer3_adapter::agent_capacity_recovery::CapacityRecoveryError::IdentityConflict)
+    ));
+    bridge
+        .reserve_capacity_recovery(&request.challenge, request.writer_fence)
+        .await
+        .unwrap();
+    observe_input(&bridge, serde_json::json!({"id":"load", "method":"session/load", "params":{"sessionId":"conversation"}})).await;
+    observe_output(&bridge, serde_json::json!({"id":"load", "result":{}})).await;
+    bridge.retained_output.retain(b"retained").await;
+    assert_eq!(bridge.select_output_acknowledgement(true), Ok(true));
+    let proof = bridge
+        .capacity_recovery_proof(&request, "/tmp".into())
+        .await
+        .unwrap();
+    assert_eq!(proof.confirmation.request, request);
+    assert_eq!(proof.confirmation.output.acknowledged_through, 0);
+    assert_eq!(proof.confirmation.output.first_retained, 1);
+    assert_eq!(proof.confirmation.output.observed_through, 1);
+    bridge.terminate().await.unwrap();
+}
+
+async fn observe_input(bridge: &Bridge, frame: serde_json::Value) {
+    bridge
+        .observation
+        .as_ref()
+        .unwrap()
+        .lock()
+        .await
+        .input(&serde_json::to_vec(&frame).unwrap());
+}
+
+async fn observe_output(bridge: &Bridge, frame: serde_json::Value) {
+    bridge
+        .observation
+        .as_ref()
+        .unwrap()
+        .lock()
+        .await
+        .output(&serde_json::to_vec(&frame).unwrap());
+}
+
+#[tokio::test]
+async fn recovery_failed_load_cannot_authorize_a_proof() {
+    let bridge = Bridge::start_with_recovery(&launch(), &BTreeMap::new(), true).unwrap();
+    let request = recovery_request(&"d".repeat(32), 10);
+    observe_input(&bridge, serde_json::json!({"id":"load", "method":"session/load", "params":{"sessionId":"conversation"}})).await;
+    observe_output(
+        &bridge,
+        serde_json::json!({"id":"load", "error":{"code":-32603, "message":"load failed"}}),
+    )
+    .await;
+    bridge
+        .reserve_capacity_recovery(&request.challenge, request.writer_fence)
+        .await
+        .unwrap();
+    let proof = bridge
+        .capacity_recovery_proof(&request, "/tmp".into())
+        .await;
+    bridge.terminate().await.unwrap();
+    assert!(proof.is_err(), "failed load authorized proof: {proof:?}");
+}
+
+#[tokio::test]
+async fn recovery_unrelated_response_preserves_a_working_prompt() {
+    let bridge = Bridge::start_with_recovery(&launch(), &BTreeMap::new(), true).unwrap();
+    observe_input(&bridge, serde_json::json!({"id":"load", "method":"session/load", "params":{"sessionId":"conversation"}})).await;
+    observe_output(&bridge, serde_json::json!({"id":"load", "result":{}})).await;
+    let prompt = layer3_adapter::PromptIdentity::new("conversation", 1, 1);
+    observe_input(&bridge, serde_json::json!({"id":prompt.as_str(), "method":"session/prompt", "params":{"sessionId":"conversation"}})).await;
+    observe_output(&bridge, serde_json::json!({"id":"initialize", "error":{"code":-32603, "message":"Already initialized"}})).await;
+    let state = bridge
+        .observation
+        .as_ref()
+        .unwrap()
+        .lock()
+        .await
+        .native_state
+        .clone();
+    bridge.terminate().await.unwrap();
+    assert_eq!(
+        state,
+        Some(ConfirmedAgentState::Working {
+            prompt_id: prompt.as_str().into()
         })
-        .sum();
-    assert!(kept <= BUFFER_BYTES, "the bound must hold: {kept}");
-}
-
-#[test]
-fn nothing_is_dropped_while_there_is_room() {
-    let mut pending = Pending::default();
-    for n in 0..50 {
-        pending.push(format!(r#"{{"seq":{n}}}"#).into_bytes());
-    }
-    let held = pending.drain();
-    assert_eq!(held.len(), 50);
-    assert!(!held.iter().any(|o| matches!(o, Outbound::Gap { .. })));
-}
-
-#[test]
-fn a_gap_already_recorded_survives_later_dropping() {
-    // Losing the record of an earlier gap to make room would leave a
-    // conversation that skips with nothing to say it did.
-    let mut pending = Pending::default();
-    let big = vec![b'x'; BUFFER_BYTES / 2];
-    for _ in 0..8 {
-        pending.push(big.clone());
-    }
-    let held = pending.drain();
-    assert!(
-        held.iter().any(|o| matches!(o, Outbound::Gap { .. })),
-        "the boundary must still be there: {held:?}"
     );
 }
+
+#[tokio::test]
+async fn recovery_default_off_bypasses_native_observation() {
+    let bridge = Bridge::start(&launch(), &BTreeMap::new()).unwrap();
+    let mut output = bridge.subscribe();
+    for frame in [
+        serde_json::json!({"id":"load","method":"session/load","params":{"sessionId":"conversation"}}),
+        serde_json::json!({"id":"load","result":{}}),
+    ] {
+        let bytes = serde_json::to_vec(&frame).unwrap();
+        assert!(bridge.send(bytes.clone()).await);
+        assert_eq!(output.recv().await.unwrap(), Outbound::Frame(bytes));
+    }
+    let bypassed = bridge.observation.is_none();
+    assert_eq!(
+        bridge.reserve_capacity_recovery(&"a".repeat(32), 1).await,
+        Err(CapacityRecoveryError::Unsupported)
+    );
+    bridge.terminate().await.unwrap();
+    assert!(
+        bypassed,
+        "default-off runtime performed native state tracking"
+    );
+}
+
+#[path = "bridge_recovery_tests.rs"]
+mod recovery_tests;

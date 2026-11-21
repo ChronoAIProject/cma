@@ -1,5 +1,5 @@
 /*
- * The risk confirmation — `docs/Web_Style.md` §12.4.
+ * The risk confirmation — the shared style contracts
  *
  * Wider than the plain card because the sentence explaining the consequence
  * has to be readable in one go: broken over five lines it stops being a
@@ -20,7 +20,9 @@
 }
 
 .risk__warning p {
+  min-width: 0;
   margin: 0;
+  overflow-wrap: anywhere;
 }
 
 /* The one red thing on the card. The button is not red — see the component. */

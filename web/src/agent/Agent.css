@@ -1,0 +1,534 @@
+.agent-workspace {
+  container: agent-workspace / inline-size;
+  display: flex;
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+}
+
+.agent-workspace__panes {
+  display: grid;
+  flex: 1;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+
+.agent-workspace__panes[data-desktop] {
+  grid-template-columns: minmax(360px, 2fr) minmax(0, 3fr);
+}
+
+@container agent-workspace (max-width: 56rem) {
+  .agent-workspace__panes[data-desktop] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) min(42dvh, 420px);
+  }
+}
+
+.agent-surface {
+  container: agent-conversation / inline-size;
+  flex: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  color: var(--dsw-alias-workspace-text);
+  background: var(--dsw-alias-bg-base);
+}
+
+.agent-surface__history-notice {
+  margin: 0;
+  color: var(--dsw-alias-workspace-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.agent-quick-messages {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+  max-height: min(144px, 24vh);
+  margin: -4px -4px 4px;
+  padding: 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.agent-quick-message {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.agent-quick-message .button {
+  max-width: 100%;
+  height: auto;
+  min-height: 32px;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+
+.agent-quick-message__description {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 1100;
+  width: min(320px, calc(100vw - 24px));
+  max-height: min(160px, calc(100dvh - 24px));
+  overflow-y: auto;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-2);
+  color: var(--dsw-alias-workspace-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 48rem) {
+  .agent-quick-message .button {
+    min-height: 44px;
+  }
+}
+
+.agent-surface__conversation {
+  grid-row: 3;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/*
+ * One centred reading axis of at most 768px, shared with the composer, so a reply
+ * keeps a comfortable measure on any screen. Pixels, not rem: the text-size
+ * preference scales the text, not the measure.
+ */
+.agent-surface__conversation > section {
+  width: 100%;
+  padding: 24px max(24px, calc((100% - 768px) / 2));
+  margin: 0 auto;
+}
+
+.message-stream {
+  width: 100%;
+  min-height: 100%;
+  padding: 28px max(24px, calc((100% - 768px) / 2)) 40px;
+  margin: 0 auto;
+}
+
+.message {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  max-width: 100%;
+  margin-bottom: 8px;
+}
+
+.message--user {
+  grid-template-columns: minmax(0, 1fr) 32px;
+}
+
+.message__body {
+  min-width: 0;
+}
+
+.message__avatar {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  overflow: hidden;
+  color: var(--dsw-alias-avatar-label);
+  background: var(--dsw-alias-avatar-bg);
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 50%;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+.message__avatar img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  outline: 1px solid var(--dsw-alias-image-outline);
+  outline-offset: -1px;
+}
+
+/* A continuation keeps the column so its text aligns, but draws nothing in it. */
+.message__avatar[data-continued] {
+  visibility: hidden;
+}
+
+/* The Agent's mark takes the brand ink on a layer circle, so it follows both appearances. */
+.message__avatar[data-agent] {
+  color: var(--dsw-alias-brand-primary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.message__avatar svg {
+  display: block;
+}
+
+.message--user > .message__avatar {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.message--user > .message__body {
+  grid-column: 1;
+  grid-row: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.message--user .message__body > p {
+  max-width: min(525px, 100%);
+  padding: 10px 16px;
+  margin-left: auto;
+  background: var(--dsw-specific-bubble);
+  border-radius: 22px;
+}
+
+.message--assistant {
+  margin-right: auto;
+}
+
+.message__role {
+  display: block;
+  max-width: 100%;
+  margin-bottom: 4px;
+  color: var(--dsw-alias-workspace-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.message__delivery {
+  color: var(--dsw-alias-workspace-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.message p,
+.agent-event p {
+  font: inherit;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message--user p {
+  line-height: 24px;
+}
+
+.message[data-streaming] .message__body > p::after {
+  display: inline-block;
+  width: 5px;
+  height: 14px;
+  margin-left: 3px;
+  vertical-align: -2px;
+  background: var(--dsw-alias-state-business-primary);
+  content: '';
+  animation: agent-caret 1s steps(1) infinite;
+}
+
+@keyframes agent-caret {
+  50% {
+    opacity: 0;
+  }
+}
+
+.message-stream__recovery,
+.agent-surface__alerts {
+  grid-row: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 20px 0;
+}
+
+.agent-surface__desktop-action {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+
+.agent-surface__alerts:empty {
+  display: none;
+}
+
+.agent-action-error {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  color: var(--dsw-alias-workspace-secondary);
+  background: var(--dsw-alias-interactive-bg-hover-danger);
+  border-left: 2px solid var(--dsw-alias-state-warn-primary);
+}
+
+.message-stream__recovery {
+  margin-bottom: 16px;
+  border-radius: 6px;
+}
+
+.message-stream__recovery > svg {
+  flex: none;
+  margin-top: 3px;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.message-stream__recovery strong,
+.message-stream__recovery p,
+.message-stream__recovery code,
+.message-stream__recovery a {
+  display: block;
+}
+
+.message-stream__recovery p {
+  margin-top: 2px;
+  font-size: 13px;
+}
+
+.message-stream__recovery code {
+  margin-top: 6px;
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+}
+
+.message-stream__recovery a {
+  margin-top: 8px;
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.message-stream__recovery a svg {
+  vertical-align: -3px;
+}
+
+.agent-action-error {
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.agent-event {
+  width: 100%;
+  margin: 10px 0;
+  color: var(--dsw-alias-workspace-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-border-l1);
+  border-radius: 7px;
+}
+
+.agent-event summary {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 40px;
+  padding: 8px 10px;
+}
+
+.agent-event summary {
+  cursor: pointer;
+}
+
+.agent-event summary > span {
+  margin-left: auto;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+}
+
+.agent-event > p {
+  padding: 0 12px 12px;
+  color: var(--dsw-alias-workspace-secondary);
+  font-family: var(--ds-font-family-code);
+  font-size: 12px;
+  line-height: 19px;
+}
+
+.message-stream__usage {
+  margin-top: 28px;
+  color: var(--dsw-alias-label-tertiary);
+  font-family: var(--ds-font-family-code);
+  font-size: 11px;
+  text-align: center;
+}
+
+.agent-loading {
+  grid-row: 3;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: min(100% - 48px, 720px);
+  margin: 64px auto;
+}
+
+.agent-surface--error {
+  place-items: center;
+}
+
+.agent-surface--error > div {
+  max-width: 440px;
+  padding: 24px;
+  text-align: center;
+}
+
+.agent-surface--error h1 {
+  margin: 4px 0 8px;
+  font-size: 22px;
+}
+
+.agent-surface--error h1 + p {
+  margin-bottom: 16px;
+  color: var(--dsw-alias-workspace-secondary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .message[data-streaming] .message__body > p::after {
+    animation: none;
+  }
+}
+
+@media (max-width: 30rem) {
+  .message-stream {
+    padding: 20px 14px 32px;
+  }
+
+  .message {
+    max-width: 96%;
+  }
+}
+.agent-channel-pending__message {
+  padding: 12px 14px;
+  color: var(--dsw-alias-workspace-secondary);
+  background: var(--dsw-alias-bg-layer-1);
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+
+.agent-channel-pending__text {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.message--queued .message__body {
+  border: 1px dashed var(--dsw-alias-border-l2);
+  border-radius: 12px;
+  padding: 8px;
+}
+/* Conversation text follows the same inherited preference as the rest of CMA. */
+.message-stream {
+  font-size: var(--text-ui);
+  line-height: 1.5;
+}
+
+/* Use the space left by the sidebar, not only the browser viewport. */
+@container agent-conversation (max-width: 48rem) {
+  .agent-surface__conversation > section,
+  .message-stream {
+    padding-inline: 24px;
+  }
+}
+
+@container agent-conversation (max-width: 30rem) {
+  .agent-surface__conversation > section,
+  .message-stream {
+    padding-inline: 14px;
+  }
+}
+
+.message-footer {
+  max-width: 100%;
+  color: var(--dsw-alias-workspace-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.message-footer__row,
+.message-footer__actions,
+.message-footer__error {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.message-footer__row {
+  column-gap: 8px;
+}
+.message__timestamp {
+  font-variant-numeric: tabular-nums;
+}
+.message-footer__actions {
+  flex-wrap: nowrap;
+}
+/* Icons are always visible. Supplemental time reveals without moving controls. */
+.message__timestamp {
+  opacity: 0;
+  transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+.message:hover .message__timestamp,
+.message--assistant:hover .message__timestamp,
+.message--assistant:focus-within .message__timestamp,
+.message:focus-within .message__timestamp,
+.message-footer:hover .message__timestamp,
+.message-footer:focus-within .message__timestamp {
+  opacity: 1;
+}
+/* Compact keys: the footer is reserved under every message, so its height is the rhythm. */
+.message-footer__actions .button {
+  position: relative;
+  width: 28px;
+  height: 28px;
+}
+/* Each 28px key answers a 32px square; with the 4px gap the squares meet but never overlap. */
+.message-footer__actions .button::after {
+  position: absolute;
+  inset: -2px;
+  content: '';
+}
+.message-footer__actions .button[aria-pressed='true'] {
+  color: var(--dsw-alias-state-business-primary);
+}
+.message--user .message-footer__row {
+  justify-content: flex-end;
+}
+.message-footer__error {
+  margin-top: 4px;
+}
+@media (pointer: coarse), (hover: none) {
+  .message__timestamp,
+  .message-footer__actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+@media (pointer: coarse), (max-width: 30rem) {
+  .message-footer .button {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .message-footer__actions .button {
+    width: 44px;
+    height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .message__timestamp,
+  .message-footer__actions {
+    transition: none;
+  }
+}
+
+.message {
+  font: var(--dsw-alias-workspace-body-font);
+}

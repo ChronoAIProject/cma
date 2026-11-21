@@ -1,0 +1,56 @@
+.connection-wizard {
+  display: grid;
+  gap: 1rem;
+}
+.connection-wizard p {
+  margin: 0;
+}
+.connection-wizard__count {
+  font-weight: 600;
+}
+.connection-wizard__group {
+  display: grid;
+  gap: 0.65rem;
+}
+.connection-wizard__group h3 {
+  margin: 0;
+  font-size: 1rem;
+}
+.connection-wizard__row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-width: 0;
+}
+/* The status dot, then the connection's name taking the rest of the row. */
+.connection-wizard__row > :first-child {
+  flex: none;
+}
+.connection-wizard__row > :nth-child(2) {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+.connection-wizard__row small {
+  opacity: 0.75;
+  text-align: right;
+}
+.connection-wizard__handoff {
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid currentColor;
+  border-radius: 0.8rem;
+  padding: 1rem;
+}
+.connection-wizard__code {
+  font-size: 1.8rem;
+  letter-spacing: 0.12em;
+  text-align: center;
+}
+.connection-wizard__actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.connection-wizard__error {
+  color: var(--fail);
+}

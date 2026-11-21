@@ -1,0 +1,117 @@
+use super::{cursor, error::Error, parse, projection, shapes::EventPage, AgentV2State};
+use crate::AuthenticatedResourceCaller;
+use axum::{
+    extract::{Path, RawQuery, State},
+    http::HeaderMap,
+    response::{IntoResponse, Response},
+    Json,
+};
+use layer2_core::{sandbox::AgentEventStreamAuthorization, AgentId};
+
+pub(super) async fn authorize(
+    state: &AgentV2State,
+    auth: &AuthenticatedResourceCaller,
+    id: &AgentId,
+) -> Result<AgentEventStreamAuthorization, Error> {
+    Ok(state
+        .reads
+        .authorize_event_stream(
+            &auth.context,
+            auth.credential
+                .as_ref()
+                .map(crate::DelegatedCredential::value),
+            id,
+        )
+        .await?)
+}
+
+#[utoipa::path(get, path = "/api/v2/agents/{agent_id}/events/snapshot", tag = "agent events v2",
+    params(("agent_id" = String, Path), ("limit" = Option<u16>, Query), ("page_cursor" = Option<String>, Query), ("Prefer" = Option<String>, Header)),
+    responses((status = 200, body = EventPage), (status = 400, body = crate::rest::ProblemDocument),
+    (status = 404, body = crate::rest::ProblemDocument), (status = 409, body = crate::rest::ProblemDocument),
+    (status = 503, body = crate::rest::ProblemDocument)))]
+pub(super) async fn read(
+    State(state): State<AgentV2State>,
+    auth: AuthenticatedResourceCaller,
+    Path(id): Path<String>,
+    RawQuery(raw): RawQuery,
+    headers: HeaderMap,
+) -> Response {
+    match page(
+        &state,
+        &auth,
+        AgentId(id),
+        raw,
+        projection::message_bindings(&headers),
+        projection::tool_output(&headers),
+        projection::retained_output(&headers),
+    )
+    .await
+    {
+        Ok(page) => {
+            let mut response = Json(page).into_response();
+            response
+                .headers_mut()
+                .insert("cache-control", "private, no-store".parse().unwrap());
+            response
+        }
+        Err(error) => error.response(),
+    }
+}
+
+async fn page(
+    state: &AgentV2State,
+    auth: &AuthenticatedResourceCaller,
+    id: AgentId,
+    raw: Option<String>,
+    message_bindings: bool,
+    tool_output: bool,
+    retained_output: bool,
+) -> Result<EventPage, Error> {
+    if state.single_fence_pages {
+        return super::buffered::page(
+            state,
+            auth,
+            id,
+            raw,
+            message_bindings,
+            tool_output,
+            retained_output,
+        )
+        .await;
+    }
+    let (limit, page_cursor) = parse::snapshot(raw)?;
+    let authorization = authorize(state, auth, &id).await?;
+    let header = state.reads.event_stream_header(&authorization).await?;
+    let identity = cursor::incarnation(&header);
+    let (through, after) = match page_cursor {
+        Some(value) => cursor::parse_page(&value, &identity, header.head)?,
+        None => (header.head, 0),
+    };
+    let window = projection::window(
+        state,
+        &authorization,
+        after,
+        Some(through),
+        limit,
+        message_bindings,
+    )
+    .await?;
+    let items = projection::items(&window, &identity, tool_output, retained_output)?;
+    let delivered = items.last().map_or(after, |item| item.sequence);
+    let page = EventPage {
+        object: "cma.agent.event_page",
+        schema_version: 1,
+        agent_id: id.to_string(),
+        incarnation: identity.clone(),
+        through_cursor: cursor::event(&identity, through),
+        items,
+        next_page_cursor: (delivered < through)
+            .then(|| cursor::page(&identity, through, delivered)),
+    };
+    if serde_json::to_vec(&page).map_err(|_| Error::History)?.len() > projection::MAX_BYTES {
+        return Err(Error::History);
+    }
+    state.reads.validate_event_stream(&authorization).await?;
+    Ok(page)
+}

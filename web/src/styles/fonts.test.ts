@@ -3,7 +3,7 @@ import { join, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 /**
- * The faces this product ships — `docs/Web_Style.md` §4 and §20.3.
+ * The faces this product ships — the shared style contractsand §20.3.
  *
  * These rules are about the product's typography and about nothing else, but
  * they lived inside `shell/Mark.test.tsx` because the mark used to be a glyph
@@ -55,19 +55,24 @@ function stack(value: string): string[] {
 }
 
 describe('the platform faces', () => {
-  it('vendors the four selected families, their six faces, and nothing else', () => {
+  it('vendors the seven selected families, their nine faces, and nothing else', () => {
     // Exact equality: a retired face lingering here would still ship dead bytes.
     expect(readdirSync(FONTS).sort()).toEqual([
       'Archivo-Variable.woff2',
       'FamiljenGrotesk-Variable.woff2',
+      'Geist-Variable.woff2',
+      'GeistMono-Variable.woff2',
       'IBMPlexMono-Medium.woff2',
       'IBMPlexMono-Regular.woff2',
       'IBMPlexMono-SemiBold.woff2',
       'JetBrainsMono-Variable.woff2',
       'OFL-Archivo.txt',
       'OFL-FamiljenGrotesk.txt',
+      'OFL-Geist.txt',
       'OFL-IBMPlexMono.txt',
       'OFL-JetBrainsMono.txt',
+      'OFL-Shrikhand.txt',
+      'Shrikhand-Regular.woff2',
     ]);
   });
 
@@ -87,7 +92,7 @@ describe('the platform faces', () => {
     const faces = styleSheets().flatMap((css) =>
       [...css.matchAll(/@font-face\s*\{([^}]*)\}/g)].map((match) => match[1] ?? ''),
     );
-    expect(faces).toHaveLength(6);
+    expect(faces).toHaveLength(9);
 
     const declarations = faces.map((face) => ({
       family: /font-family:\s*'([^']+)'/.exec(face)?.[1] ?? '',
@@ -97,6 +102,13 @@ describe('the platform faces', () => {
       display: /font-display:\s*([^;]+)/.exec(face)?.[1]?.trim() ?? '',
     }));
     expect(declarations).toEqual([
+      {
+        family: 'Shrikhand',
+        file: 'Shrikhand-Regular.woff2',
+        format: 'woff2',
+        weight: '400',
+        display: 'swap',
+      },
       {
         family: 'Archivo',
         file: 'Archivo-Variable.woff2',
@@ -139,6 +151,20 @@ describe('the platform faces', () => {
         weight: '100 800',
         display: 'swap',
       },
+      {
+        family: 'Geist',
+        file: 'Geist-Variable.woff2',
+        format: 'woff2-variations',
+        weight: '100 900',
+        display: 'swap',
+      },
+      {
+        family: 'Geist Mono',
+        file: 'GeistMono-Variable.woff2',
+        format: 'woff2-variations',
+        weight: '100 900',
+        display: 'swap',
+      },
     ]);
 
     const files = readdirSync(FONTS);
@@ -147,20 +173,21 @@ describe('the platform faces', () => {
     }
   });
 
-  it('switches both branded stacks on body while retaining deliberate fallbacks', () => {
+  it('sets Geist and Geist Mono on body for both appearances with deliberate fallbacks', () => {
     const light = blocks(TOKENS, 'body');
     const dark = blocks(TOKENS, 'body[data-ds-dark-theme]');
     const root = blocks(TOKENS, ':root').join('\n');
     expect(root).not.toContain('--dsw-font-family');
     expect(root).not.toContain('--ds-font-family-code');
+    // §4: one interface face and one code face, the same in both appearances.
+    expect(property(dark, '--dsw-font-family')).toBe('');
+    expect(property(dark, '--ds-font-family-code')).toBe('');
 
-    const lightUi = stack(property(light, '--dsw-font-family'));
-    const darkUi = stack(property(dark, '--dsw-font-family'));
-    const lightCode = stack(property(light, '--ds-font-family-code'));
-    const darkCode = stack(property(dark, '--ds-font-family-code'));
+    const ui = stack(property(light, '--dsw-font-family'));
+    const code = stack(property(light, '--ds-font-family-code'));
 
-    expect(lightUi).toEqual([
-      "'Familjen Grotesk'",
+    expect(ui).toEqual([
+      "'Geist'",
       "'Noto Sans SC'",
       '-apple-system',
       'BlinkMacSystemFont',
@@ -174,9 +201,8 @@ describe('the platform faces', () => {
       'Arial',
       'sans-serif',
     ]);
-    expect(darkUi).toEqual(["'Archivo'", ...lightUi.slice(1)]);
-    expect(lightCode).toEqual([
-      "'IBM Plex Mono'",
+    expect(code).toEqual([
+      "'Geist Mono'",
       "'SF Mono'",
       "'JetBrains Mono'",
       "'Fira Code'",
@@ -187,39 +213,26 @@ describe('the platform faces', () => {
       "'PingFang SC'",
       "'Microsoft YaHei'",
     ]);
-    expect(darkCode).toEqual(["'JetBrains Mono'", "'SF Mono'", ...lightCode.slice(3)]);
-
-    const sans = ["'Archivo'", "'Familjen Grotesk'"];
-    const mono = ["'IBM Plex Mono'", "'JetBrains Mono'"];
-    for (const ui of [lightUi, darkUi]) {
-      expect(ui.filter((family) => sans.includes(family))).toHaveLength(1);
-      expect(ui.some((family) => mono.includes(family))).toBe(false);
-      expect(ui).toContain('-apple-system');
-    }
-    for (const code of [lightCode, darkCode]) {
-      expect(code).not.toContain('monospace');
-    }
-
-    const everyStack = [...lightUi, ...darkUi, ...lightCode, ...darkCode];
-    for (const family of [...sans, ...mono]) {
-      expect(everyStack).toContain(family);
-    }
+    expect(ui.some((family) => family.includes('Mono'))).toBe(false);
+    expect(code).not.toContain('monospace');
   });
 
-  it('keeps the display width conventional in light and widens Archivo in dark', () => {
+  it('keeps the display width conventional in both appearances', () => {
     const effects = readFileSync(join(STYLES, 'effects-typography.css'), 'utf8');
     expect(property(blocks(effects, 'body'), '--ds-font-variation-display')).toBe('normal');
     expect(
       property(blocks(effects, 'body[data-ds-dark-theme]'), '--ds-font-variation-display'),
-    ).toBe("'wdth' 118");
+    ).toBe('normal');
   });
 
   it('licenses every family under OFL 1.1 with its own copyright line', () => {
     const licenses = [
       ['OFL-Archivo.txt', 'The Archivo Project Authors'],
       ['OFL-FamiljenGrotesk.txt', 'The Familjen Grotesk Project Authors'],
+      ['OFL-Geist.txt', 'Vercel'],
       ['OFL-IBMPlexMono.txt', 'Copyright \u00a9 2017 IBM Corp.'],
       ['OFL-JetBrainsMono.txt', 'JetBrains Mono Project Authors'],
+      ['OFL-Shrikhand.txt', 'Jonny Pinhorn'],
     ] as const;
     expect(
       readdirSync(FONTS)

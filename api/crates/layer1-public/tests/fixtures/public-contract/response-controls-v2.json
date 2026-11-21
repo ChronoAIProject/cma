@@ -1,0 +1,1052 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "response-controls-v2-owner-observe",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.controls",
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_control_source",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_control_source",
+              "admitted_at": "2026-09-05T00:00:00Z",
+              "agent_order": 1,
+              "event_cursor": 2
+            },
+            "status": "in_progress",
+            "queue_deadline": "2030-09-05T00:00:00Z",
+            "turn_sequence": 4,
+            "observed_cursor": null,
+            "delivery": "dispatch_fenced",
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "turn_sequence": 4
+          },
+          "agent_revision": 4,
+          "target_active": true,
+          "runtime_support": {
+            "cancel": true,
+            "steer": true,
+            "resolve_approval": true
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "control_revision": "/agent_revision",
+        "control_turn": "/target/turn_sequence"
+      }
+    },
+    {
+      "id": "response-controls-v2-unsupported-observe",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_unsupported",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.controls",
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_control_source",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_control_source",
+              "admitted_at": "2026-09-05T00:00:00Z",
+              "agent_order": 1,
+              "event_cursor": 2
+            },
+            "status": "in_progress",
+            "queue_deadline": "2030-09-05T00:00:00Z",
+            "turn_sequence": 4,
+            "observed_cursor": null,
+            "delivery": "dispatch_fenced",
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "turn_sequence": 4
+          },
+          "agent_revision": 4,
+          "target_active": true,
+          "runtime_support": {
+            "cancel": false,
+            "steer": false,
+            "resolve_approval": true
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "control_revision": "/agent_revision",
+        "control_turn": "/target/turn_sequence"
+      }
+    },
+    {
+      "id": "response-controls-v2-queued-observe",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_queued",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.controls",
+          "response": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_control_source",
+              "agent_id": "agt_fixture",
+              "response_id": "resp_control_source",
+              "admitted_at": "2026-09-05T00:00:00Z",
+              "agent_order": 1,
+              "event_cursor": 2
+            },
+            "status": "queued",
+            "queue_deadline": "2030-09-05T00:00:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "target": null,
+          "agent_revision": 1,
+          "target_active": false,
+          "runtime_support": {
+            "cancel": true,
+            "steer": true,
+            "resolve_approval": true
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-cancel",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "cancel-key",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "command": {
+            "type": "cancel"
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.control",
+          "control": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_cancel_contract",
+              "agent_id": "agt_fixture",
+              "response_id": null,
+              "admitted_at": "2026-09-16T00:00:00Z",
+              "agent_order": 2,
+              "event_cursor": 10
+            },
+            "status": "queued",
+            "queue_deadline": "2026-09-16T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "turn_sequence": 4
+          },
+          "expected_agent_revision": 4
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "cancel_admitted": "/control/receipt/admitted_at",
+        "cancel_command": "/control/receipt/command_id",
+        "cancel_deadline": "/control/queue_deadline"
+      }
+    },
+    {
+      "id": "response-controls-v2-cancel-retry",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "cancel-key",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "command": {
+            "type": "cancel"
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.control",
+          "control": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_cancel_contract",
+              "agent_id": "agt_fixture",
+              "response_id": null,
+              "admitted_at": "2026-09-16T00:00:00Z",
+              "agent_order": 2,
+              "event_cursor": 10
+            },
+            "status": "queued",
+            "queue_deadline": "2026-09-16T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "turn_sequence": 4
+          },
+          "expected_agent_revision": 4
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-cancel-status",
+      "operation": "GET /api/v2/commands/{command_id}",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/commands/$cancel_command",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.command",
+          "receipt": {
+            "command_id": "cmd_cancel_contract",
+            "agent_id": "agt_fixture",
+            "response_id": null,
+            "admitted_at": "2026-09-16T00:00:00Z",
+            "agent_order": 2,
+            "event_cursor": 10
+          },
+          "status": "queued",
+          "queue_deadline": "2026-09-16T00:05:00Z",
+          "turn_sequence": null,
+          "observed_cursor": null,
+          "delivery": null,
+          "failure": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-cancel-conflict",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "cancel-key",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": 999,
+          "command": {
+            "type": "cancel"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "agent_command_key_conflict",
+            "message": "This idempotency key already identifies different input.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-steer",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "steer-key",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "command": {
+            "type": "steer",
+            "text": "Review the current issue first"
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.control",
+          "control": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_steer_contract",
+              "agent_id": "agt_fixture",
+              "response_id": null,
+              "admitted_at": "2026-09-16T00:00:00Z",
+              "agent_order": 3,
+              "event_cursor": 10
+            },
+            "status": "queued",
+            "queue_deadline": "2026-09-16T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "turn_sequence": 4
+          },
+          "expected_agent_revision": 4
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "steer_admitted": "/control/receipt/admitted_at",
+        "steer_command": "/control/receipt/command_id",
+        "steer_deadline": "/control/queue_deadline"
+      }
+    },
+    {
+      "id": "response-controls-v2-approval",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "approval-key",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "command": {
+            "type": "resolve_approval",
+            "approval_id": "approval-contract",
+            "decision": "allow"
+          }
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.response.control",
+          "control": {
+            "object": "cma.agent.command",
+            "receipt": {
+              "command_id": "cmd_approval_contract",
+              "agent_id": "agt_fixture",
+              "response_id": null,
+              "admitted_at": "2026-09-16T00:00:00Z",
+              "agent_order": 4,
+              "event_cursor": 10
+            },
+            "status": "queued",
+            "queue_deadline": "2026-09-16T00:05:00Z",
+            "turn_sequence": null,
+            "observed_cursor": null,
+            "delivery": null,
+            "failure": null
+          },
+          "target": {
+            "response_id": "resp_control_source",
+            "turn_sequence": 4
+          },
+          "expected_agent_revision": 4
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "approval_admitted": "/control/receipt/admitted_at",
+        "approval_command": "/control/receipt/command_id",
+        "approval_deadline": "/control/queue_deadline"
+      }
+    },
+    {
+      "id": "response-controls-v2-source-status",
+      "operation": "GET /api/v2/commands/{command_id}",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/commands/cmd_control_source",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.command",
+          "receipt": {
+            "command_id": "cmd_control_source",
+            "agent_id": "agt_fixture",
+            "response_id": "resp_control_source",
+            "admitted_at": "2026-09-05T00:00:00Z",
+            "agent_order": 1,
+            "event_cursor": 2
+          },
+          "status": "in_progress",
+          "queue_deadline": "2030-09-05T00:00:00Z",
+          "turn_sequence": 4,
+          "observed_cursor": null,
+          "delivery": "dispatch_fenced",
+          "failure": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-capability-refusal",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_unsupported",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "unsupported-key",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "command": {
+            "type": "cancel"
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "capability_unsupported",
+            "message": "The observed Agent runtime does not support this control operation.",
+            "param": "command.type"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-stale-target",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_unsupported",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "stale-key",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": 999,
+          "expected_agent_revision": "$control_revision",
+          "command": {
+            "type": "cancel"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_control_conflict",
+            "message": "The observed Agent, response turn or pending approval cannot accept this control. Recover an uncertain admission with the original key and body; observe again before creating a new intent.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-wrong-approval",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "wrong-approval-key",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "command": {
+            "type": "resolve_approval",
+            "approval_id": "wrong-approval",
+            "decision": "deny"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_control_conflict",
+            "message": "The observed Agent, response turn or pending approval cannot accept this control. Recover an uncertain admission with the original key and body; observe again before creating a new intent.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-foreign-observe",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-foreign-status",
+      "operation": "GET /api/v2/commands/{command_id}",
+      "scenario": "response_controls_v2_foreign",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/commands/cmd_control_source",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-foreign-submit",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "foreign",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": 4,
+          "expected_agent_revision": 4,
+          "command": {
+            "type": "cancel"
+          }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-anonymous-observe",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-anonymous-status",
+      "operation": "GET /api/v2/commands/{command_id}",
+      "scenario": "response_controls_v2_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/commands/cmd_control_source",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-anonymous-submit",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "anonymous",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": 4,
+          "expected_agent_revision": 4,
+          "command": {
+            "type": "cancel"
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-missing-key",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "command": {
+            "type": "cancel"
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_idempotency_key",
+            "message": "Supply exactly one retained idempotency key.",
+            "param": "Idempotency-Key"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-unknown-body",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "unknown",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": "$control_turn",
+          "expected_agent_revision": "$control_revision",
+          "command": {
+            "type": "cancel"
+          },
+          "actor": "forged"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_control_request",
+            "message": "Supply only turn_sequence, expected_agent_revision and a supported control command.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-invalid-observation",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "invalid",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": 0,
+          "expected_agent_revision": "$control_revision",
+          "command": {
+            "type": "cancel"
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_control_observation",
+            "message": "Use a positive signed-64-bit value from the controls observation.",
+            "param": "turn_sequence"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-invalid-json",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "json",
+          "content-type": "application/json"
+        },
+        "rawBody": "{"
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "invalid_json",
+            "message": "A JSON response control request is required.",
+            "param": "body"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-missing-source",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_missing/controls",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-missing-command",
+      "operation": "GET /api/v2/commands/{command_id}",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/commands/cmd_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-observe-query",
+      "operation": "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls?unexpected=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "controls_field_unsupported",
+            "message": "This control endpoint accepts no query parameters.",
+            "param": "query"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-status-query",
+      "operation": "GET /api/v2/commands/{command_id}",
+      "scenario": "response_controls_v2_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/commands/cmd_control_source?unexpected=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "controls_field_unsupported",
+            "message": "This control endpoint accepts no query parameters.",
+            "param": "query"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "response-controls-v2-stale-not-admitted",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls",
+      "scenario": "response_controls_v2_stale",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/resp_control_source/controls",
+        "headers": {
+          "Idempotency-Key": "stale-original",
+          "content-type": "application/json"
+        },
+        "body": {
+          "turn_sequence": 4,
+          "expected_agent_revision": 3,
+          "command": {
+            "type": "cancel"
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_control_not_admitted",
+            "message": "The original control was not admitted and its Agent revision is permanently stale. Observe again before creating a new intent.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

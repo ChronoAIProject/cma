@@ -19,10 +19,8 @@
 //! clients share a `/64`, so rotating privacy addresses does not mint fresh
 //! budgets.
 //!
-//! Counters live in this process. That is exact while the deployment is pinned
-//! to one replica. Running N replicas makes the effective allowance up to N
-//! times larger, so scale-out must first choose a shared limiter if configured
-//! numbers must remain deployment-wide.
+//! Cheap pre-authentication guards protect each pod. Authenticated operation
+//! budgets are shared through MongoDB, so rolling overlap retains one allowance.
 
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
@@ -32,19 +30,33 @@ use std::{
     },
 };
 
+use crate::{
+    config::{RateLimitConfig, TrustedProxyConfig},
+    is_cors_preflight, REST_LINKS,
+};
 use axum::{
-    extract::{ConnectInfo, MatchedPath, Request, State},
-    http::{header, HeaderMap, Method},
+    extract::{ConnectInfo, Request, State},
+    http::{header, HeaderMap},
     middleware::Next,
     response::{IntoResponse, Response},
 };
 use governor::{clock::Clock, DefaultKeyedRateLimiter, Quota, RateLimiter};
 use layer1_public::{rest::HttpProblem, AuthenticatedSubject};
 
-use crate::{
-    config::{RateLimitConfig, TrustedProxyConfig},
-    is_cors_preflight, REST_LINKS,
-};
+mod anonymous;
+mod lease;
+mod shared;
+mod tiers;
+mod visitor;
+
+use anonymous::{is_anonymous_public_route, AnonymousPublicBudget};
+use tiers::{is_rest_path, request_tier, uses_client_operation_key, RequestTier};
+#[allow(unused_imports)] // Consumed by the Trigger route composition that injects this slice.
+pub(crate) use visitor::CmaLaunchQuota;
+use visitor::VisitorLaunchQuota;
+
+#[cfg(test)]
+use axum::http::Method;
 
 const RETAIN_RECENT_EVERY: u64 = 1024;
 
@@ -62,25 +74,6 @@ enum RateKey {
     Client(ClientKey),
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RequestTier {
-    Health,
-    Default,
-    Create,
-    Input,
-}
-
-impl RequestTier {
-    fn name(self) -> &'static str {
-        match self {
-            Self::Health => "health",
-            Self::Default => "default",
-            Self::Create => "create",
-            Self::Input => "input",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy)]
 enum Budget {
     Admission,
@@ -88,15 +81,26 @@ enum Budget {
     Default,
     Create,
     Input,
+    Control,
 }
 
 /// Independent admission, health, and operation budgets.
 pub(crate) struct RateLimiters {
+    shared: Option<(
+        Arc<crate::store::request_limits::MongoRequestLimits>,
+        RateLimitConfig,
+    )>,
     admission: KeyedLimiter,
     health: KeyedLimiter,
     default: KeyedLimiter,
     create: KeyedLimiter,
     input: KeyedLimiter,
+    control: KeyedLimiter,
+    response_input_tier_enabled: bool,
+    control_tier_enabled: bool,
+    default_leases: lease::LeaseTable,
+    anonymous_public: Option<AnonymousPublicBudget>,
+    visitor_launches: VisitorLaunchQuota,
     trusted_proxies: TrustedProxyConfig,
     decisions: AtomicU64,
     rejections: AtomicU64,
@@ -107,15 +111,27 @@ impl RateLimiters {
     pub(crate) fn from_config(
         config: RateLimitConfig,
         trusted_proxies: TrustedProxyConfig,
+        shared: Arc<crate::store::request_limits::MongoRequestLimits>,
     ) -> Arc<Self> {
-        Arc::new(Self::from_quotas(
+        let mut limiters = Self::from_quotas(
             Quota::per_minute(config.admission_per_minute),
             Quota::per_minute(config.health_per_minute),
             Quota::per_minute(config.default_per_minute),
             Quota::per_minute(config.create_per_minute),
             Quota::per_minute(config.input_per_minute),
+            Quota::per_minute(config.control_per_minute),
             trusted_proxies,
-        ))
+        );
+        limiters.anonymous_public = config.anonymous_public.enabled.then(|| {
+            AnonymousPublicBudget::new(
+                config.anonymous_public.per_minute,
+                config.anonymous_public.concurrency,
+            )
+        });
+        limiters.response_input_tier_enabled = config.response_input_tier_enabled;
+        limiters.control_tier_enabled = config.control_tier_enabled;
+        limiters.shared = Some((shared, config));
+        Arc::new(limiters)
     }
 
     fn from_quotas(
@@ -124,49 +140,26 @@ impl RateLimiters {
         default: Quota,
         create: Quota,
         input: Quota,
+        control: Quota,
         trusted_proxies: TrustedProxyConfig,
     ) -> Self {
         Self {
+            shared: None,
             admission: RateLimiter::keyed(admission),
             health: RateLimiter::keyed(health),
             default: RateLimiter::keyed(default),
             create: RateLimiter::keyed(create),
             input: RateLimiter::keyed(input),
+            control: RateLimiter::keyed(control),
+            response_input_tier_enabled: false,
+            control_tier_enabled: false,
+            default_leases: lease::LeaseTable::default(),
+            anonymous_public: None,
+            visitor_launches: VisitorLaunchQuota::default(),
             trusted_proxies,
             decisions: AtomicU64::new(0),
             rejections: AtomicU64::new(0),
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_test(default: Quota, create: Quota, input: Quota) -> Arc<Self> {
-        Self::for_test_complete(
-            generous_test_quota(),
-            generous_test_quota(),
-            default,
-            create,
-            input,
-            TrustedProxyConfig::sample(),
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_test_complete(
-        admission: Quota,
-        health: Quota,
-        default: Quota,
-        create: Quota,
-        input: Quota,
-        trusted_proxies: TrustedProxyConfig,
-    ) -> Arc<Self> {
-        Arc::new(Self::from_quotas(
-            admission,
-            health,
-            default,
-            create,
-            input,
-            trusted_proxies,
-        ))
     }
 
     fn check(&self, budget: Budget, key: &RateKey) -> Result<(), u64> {
@@ -176,6 +169,7 @@ impl RateLimiters {
             Budget::Default => &self.default,
             Budget::Create => &self.create,
             Budget::Input => &self.input,
+            Budget::Control => &self.control,
         };
         let decision = limiter
             .check_key(key)
@@ -195,6 +189,7 @@ impl RateLimiters {
             self.default.retain_recent();
             self.create.retain_recent();
             self.input.retain_recent();
+            self.control.retain_recent();
         }
     }
 
@@ -224,7 +219,31 @@ pub(crate) async fn admit(
         return next.run(request).await;
     }
 
-    let tier = request_tier(&request);
+    let tier = request_tier(
+        &request,
+        limiters.response_input_tier_enabled,
+        limiters.control_tier_enabled,
+    );
+    let _anonymous_permit = if let Some(budget) = limiters
+        .anonymous_public
+        .as_ref()
+        .filter(|_| is_anonymous_public_route(request.uri().path()))
+    {
+        match budget.try_admit() {
+            Ok(permit) => Some(permit),
+            Err(retry_after_seconds) => {
+                return limited_response(
+                    &limiters,
+                    &request,
+                    retry_after_seconds,
+                    "anonymous_public",
+                    tier,
+                )
+            }
+        }
+    } else {
+        None
+    };
     let client = resolve_client(&request, &limiters.trusted_proxies);
     request.extensions_mut().insert(client.clone());
     let budget = if tier == RequestTier::Health {
@@ -249,7 +268,11 @@ pub(crate) async fn enforce(
     if is_cors_preflight(&request) {
         return next.run(request).await;
     }
-    let tier = request_tier(&request);
+    let tier = request_tier(
+        &request,
+        limiters.response_input_tier_enabled,
+        limiters.control_tier_enabled,
+    );
     if tier == RequestTier::Health {
         return next.run(request).await;
     }
@@ -272,13 +295,15 @@ pub(crate) async fn enforce(
         RequestTier::Default => Budget::Default,
         RequestTier::Create => Budget::Create,
         RequestTier::Input => Budget::Input,
+        RequestTier::Control => Budget::Control,
         RequestTier::Health => unreachable!("health is admitted above"),
     };
-    match limiters.check(budget, &key) {
+    match limiters.check_operation(budget, &key).await {
         Ok(()) => next.run(request).await,
-        Err(retry_after_seconds) => {
+        Err(shared::Refusal::Limited(retry_after_seconds)) => {
             limited_response(&limiters, &request, retry_after_seconds, "operation", tier)
         }
+        Err(shared::Refusal::Unavailable) => shared::unavailable_response(),
     }
 }
 
@@ -300,121 +325,6 @@ fn limited_response(
             .append(header::LINK, REST_LINKS.clone());
     }
     response
-}
-
-fn request_tier(request: &Request) -> RequestTier {
-    let path = request
-        .extensions()
-        .get::<MatchedPath>()
-        .map(MatchedPath::as_str)
-        .unwrap_or_else(|| request.uri().path());
-    if matches!(request.method(), &Method::GET | &Method::HEAD)
-        && matches!(path, "/livez" | "/ready")
-    {
-        return RequestTier::Health;
-    }
-    if request.method() != Method::POST {
-        return RequestTier::Default;
-    }
-    if path == "/api/v1/sessions"
-        || path == "/api/v1/conversations"
-        || path == "/api/v1/agui/run"
-        || is_session_operation(path, "plane")
-        || is_session_operation(path, "revive")
-        || is_launch_operation(path, "start")
-    {
-        return RequestTier::Create;
-    }
-    if path == "/api/v1/responses"
-        || is_session_operation(path, "input")
-        || is_session_operation(path, "steer")
-    {
-        return RequestTier::Input;
-    }
-    RequestTier::Default
-}
-
-fn is_session_operation(path: &str, operation: &str) -> bool {
-    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
-    matches!(
-        (
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-        ),
-        (Some("api"), Some("v1"), Some("sessions"), Some(_), Some(found), None)
-            if found == operation
-    )
-}
-
-fn is_launch_operation(path: &str, operation: &str) -> bool {
-    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
-    matches!(
-        (
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-            segments.next(),
-        ),
-        (Some("api"), Some("v1"), Some("launches"), Some(_), Some(found), None)
-            if found == operation
-    )
-}
-
-/// Routes that never require identity keep a network budget even when a
-/// browser happens to attach a cookie. Otherwise the same public operation
-/// changes buckets based on ambient credentials and can be used to exhaust a
-/// subject's protected-route allowance.
-fn uses_client_operation_key(path: &str) -> bool {
-    path == "/openapi.json"
-        || path == "/api/v1/conformance"
-        || path == "/api/v1/agui/capabilities"
-        || path == "/api/v1/mcp"
-        || path == "/api/v1/a2a"
-        || is_public_trigger_preview(path)
-        || is_agui_trigger_preview(path)
-        || path == "/.well-known/agent-card.json"
-        || path == "/auth"
-        || path.starts_with("/auth/")
-}
-
-fn is_rest_path(path: &str) -> bool {
-    if path == "/openapi.json" {
-        return true;
-    }
-    if path != "/api/v1" && path != "/api/v1/" && !path.starts_with("/api/v1/") {
-        return false;
-    }
-    path != "/api/v1/agui"
-        && !path.starts_with("/api/v1/agui/")
-        && path != "/api/v1/mcp"
-        && path != "/api/v1/a2a"
-        && path
-            .strip_prefix("/api/v1/sessions/")
-            .and_then(|tail| tail.split_once('/'))
-            .is_none_or(|(id, tail)| id.is_empty() || tail != "terminal")
-}
-
-fn is_public_trigger_preview(path: &str) -> bool {
-    exact_path_segments(path, &["api", "v1", "triggers", "public", "*"])
-}
-
-fn is_agui_trigger_preview(path: &str) -> bool {
-    exact_path_segments(path, &["api", "v1", "agui", "triggers", "*"])
-}
-
-fn exact_path_segments(path: &str, expected: &[&str]) -> bool {
-    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
-    expected.iter().all(|expected| {
-        segments
-            .next()
-            .is_some_and(|actual| *expected == "*" || actual == *expected)
-    }) && segments.next().is_none()
 }
 
 fn resolve_client(request: &Request, trusted: &TrustedProxyConfig) -> ClientKey {
@@ -523,6 +433,29 @@ fn retry_after_seconds(wait: std::time::Duration) -> u64 {
 }
 
 #[cfg(test)]
-fn generous_test_quota() -> Quota {
-    Quota::per_second(std::num::NonZeroU32::new(1_000_000).unwrap())
-}
+#[path = "rate_limit_tests.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "rate_limit_input_tests.rs"]
+mod input_tests;
+
+#[cfg(test)]
+#[path = "rate_limit_control_tests.rs"]
+mod control_tests;
+
+#[cfg(test)]
+#[path = "rate_limit/desktop_tests.rs"]
+mod desktop_tests;
+
+#[cfg(test)]
+#[path = "rate_limit/anonymous_tests.rs"]
+mod anonymous_tests;
+
+#[cfg(test)]
+#[path = "rate_limit/anonymous_policy_tests.rs"]
+mod anonymous_policy_tests;
+
+#[cfg(test)]
+#[path = "rate_limit/anonymous_mongo_tests.rs"]
+mod anonymous_mongo_tests;

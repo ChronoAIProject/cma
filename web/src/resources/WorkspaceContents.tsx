@@ -1,0 +1,220 @@
+import { useAccessSummaries } from './useAccessSummaries';
+import { SkeletonRows } from '../ui/Skeleton';
+import { ResourceAccessSummary, ResourceAccessDetails } from './ResourceAccessSummary';
+import { useMemo, useState, type ReactNode } from 'react';
+import { ApiError } from '@cma/client';
+import type { ResourceViewsClient } from './client';
+import { routePath, type AppRoute } from '../routing/routes';
+import { PageHeader } from '../ui/PageHeader';
+import { StatusBadge } from '../ui/Badge';
+import { useDocumentTitle } from '../ui/useDocumentTitle';
+import { useAuthorizedRead } from './useAuthorizedRead';
+import { loadWorkspace } from './loadHierarchy';
+import { ResourceLink } from './ResourceLink';
+import { statusLabel } from '../vocabulary/status';
+import { resourceCount } from '../vocabulary/count';
+import { IconChevronDownOutline14, IconChevronRightOutline14 } from '../ui/icons';
+import '../sandbox/SandboxPage.css';
+import './SharedHierarchy.css';
+import { Button } from '../ui/Button';
+import { useChannelFacts } from './useChannelFacts';
+import { channelLabel } from './channelLabels';
+
+export function WorkspaceBranch({
+  client,
+  id,
+  sandboxId,
+  name,
+  onNavigate,
+  onAccessChanged,
+}: {
+  readonly client: ResourceViewsClient;
+  readonly id: string;
+  readonly sandboxId: string;
+  readonly name: string;
+  readonly onNavigate: (route: AppRoute) => void;
+  readonly onAccessChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <li className="sandbox-page__workspace">
+      <div className="sandbox-page__header">
+        <h3>
+          <ResourceLink route={{ kind: 'workspace', workspaceId: id }} onNavigate={onNavigate}>
+            {name}
+          </ResourceLink>
+        </h3>
+        <Button
+          size="sm"
+          icon={open ? <IconChevronDownOutline14 /> : <IconChevronRightOutline14 />}
+          aria-label={`${open ? 'Hide' : 'Show'} Agents in ${name}`}
+          aria-expanded={open}
+          onClick={() => setOpen((value) => !value)}
+        >
+          {open ? 'Hide Agents' : 'Show Agents'}
+        </Button>
+      </div>
+      {open ? (
+        <WorkspaceContents
+          client={client}
+          id={id}
+          sandboxId={sandboxId}
+          onNavigate={onNavigate}
+          onAccessChanged={onAccessChanged}
+        />
+      ) : null}
+    </li>
+  );
+}
+
+export function WorkspaceContents({
+  client,
+  id,
+  sandboxId,
+  personal,
+  onNavigate,
+  onAccessChanged,
+}: {
+  readonly client: ResourceViewsClient;
+  readonly id: string;
+  readonly sandboxId?: string;
+  /**
+   * The owner's own page, shown instead of this shared projection once the
+   * accessible read classifies the Workspace as the viewer's own.
+   */
+  readonly personal?: ReactNode;
+  readonly onNavigate: (route: AppRoute) => void;
+  readonly onAccessChanged?: () => void;
+}) {
+  const read = useMemo(
+    () => async (signal: AbortSignal) => {
+      try {
+        return await loadWorkspace(client, id, signal, sandboxId);
+      } catch (error) {
+        if (
+          !signal.aborted &&
+          error instanceof ApiError &&
+          [401, 403, 404, 409].includes(error.status)
+        )
+          onAccessChanged?.();
+        throw error;
+      }
+    },
+    [client, id, sandboxId, onAccessChanged],
+  );
+  const current = useAuthorizedRead(read);
+  // Once classified as the viewer's own, stay on the owner page while access
+  // is revalidated, so its state and reads are not torn down each time; only
+  // a failed check returns to this classification.
+  const [knownPersonal, setKnownPersonal] = useState<{ client: ResourceViewsClient; id: string }>();
+  const owned =
+    personal !== undefined &&
+    sandboxId === undefined &&
+    current.state.status === 'ready' &&
+    current.state.value.detail.access !== 'shared';
+  if (owned && (knownPersonal?.client !== client || knownPersonal.id !== id))
+    setKnownPersonal({ client, id });
+  if (knownPersonal !== undefined && current.state.status === 'error') setKnownPersonal(undefined);
+  const showPersonal =
+    owned ||
+    (knownPersonal?.client === client &&
+      knownPersonal.id === id &&
+      current.state.status !== 'error');
+  // The shared projection's per-Agent facts are not read for the owner page.
+  const sharedAgents =
+    current.state.status === 'ready' && !showPersonal
+      ? current.state.value.detail.agents.map((agent) => agent.id)
+      : [];
+  const accessSummaries = useAccessSummaries(client, 'agent', sharedAgents, id);
+  const channelFacts = useChannelFacts(
+    client,
+    sharedAgents,
+    current.state.status === 'ready' && !showPersonal,
+  );
+  // The owner page names its own tab.
+  useDocumentTitle(
+    sandboxId === undefined && !showPersonal && current.state.status === 'ready'
+      ? current.state.value.detail.name
+      : undefined,
+  );
+  if (showPersonal) return personal;
+  if (current.state.status === 'loading')
+    return <SkeletonRows rows={2} label="Loading authorized Workspace" />;
+  if (current.state.status === 'error')
+    return (
+      <section className="sandbox-page" role="alert">
+        <h1>Workspace unavailable</h1>
+        <p>{current.state.message}</p>
+        <Button onClick={current.reload}>Check Workspace access</Button>
+      </section>
+    );
+  const workspace = current.state.value.detail;
+  const agents = (
+    <>
+      <ul className="sandbox-page__agents">
+        {workspace.agents.map((agent) => (
+          <li key={agent.id}>
+            <div className="sandbox-page__header">
+              <h3>
+                <ResourceLink route={{ kind: 'agent', agentId: agent.id }} onNavigate={onNavigate}>
+                  {agent.title?.trim() || 'Untitled agent'}
+                </ResourceLink>
+              </h3>
+              <span>{statusLabel(agent.status)}</span>
+            </div>
+            <ResourceAccessSummary value={accessSummaries.get(agent.id)} />
+            <p>{channelLabel(channelFacts.get(agent.id))}</p>
+          </li>
+        ))}
+      </ul>
+      {workspace.agents.length === 0 ? <p>No authorized Agents in this Workspace.</p> : null}
+    </>
+  );
+  const worktrees = (
+    <ul className="shared-hierarchy__worktrees" aria-label="Workspace Worktrees">
+      {workspace.worktrees.map((worktree) => (
+        <li key={worktree.id}>
+          <span>{worktree.name}</span>
+          <span>{statusLabel(worktree.status)}</span>
+        </li>
+      ))}
+    </ul>
+  );
+  if (sandboxId !== undefined)
+    return (
+      <div>
+        <ResourceAccessDetails client={client} access={current.state.value.access} />
+        <p>
+          {statusLabel(workspace.status)} · {resourceCount(workspace.agent_count, 'Agent')}
+        </p>
+        {agents}
+        {worktrees}
+      </div>
+    );
+  return (
+    <section className="sandbox-page">
+      <PageHeader
+        breadcrumb={[
+          {
+            label: 'Agent Manager',
+            href: routePath({ kind: 'agent_manager' }),
+            onSelect: () => onNavigate({ kind: 'agent_manager' }),
+          },
+          { label: workspace.name },
+        ]}
+        title={workspace.name}
+        badge={<StatusBadge status={workspace.status} live />}
+        description={<ResourceAccessDetails client={client} access={current.state.value.access} />}
+        actions={<Button onClick={current.reload}>Refresh Workspace access</Button>}
+      />
+      <section className="sandbox-page__band">
+        <h2>Agents</h2>
+        {agents}
+      </section>
+      <section className="sandbox-page__band">
+        <h2>Worktrees</h2>
+        {worktrees}
+      </section>
+    </section>
+  );
+}

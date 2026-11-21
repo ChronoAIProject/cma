@@ -1,3 +1,5 @@
+import { DragHandle } from './ColumnDragHandle';
+import { SidebarContext } from './sidebarContext';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
@@ -10,11 +12,14 @@ import {
   DETAILS_MIN,
   clampWidth,
   computeColumns,
+  computeWorkspaceColumns,
 } from './columns';
+import { IconPanelLeftOutline16 } from '../ui/icons';
 import './AppFrame.css';
+import { usePlateFocus } from '../ui/plate';
 
 /**
- * The page — `docs/Web_Style.md` §9.
+ * The page — the shared style contracts
  *
  * Three columns filling the viewport, and nothing above or below them. There
  * is no app bar and no footer: every band that used to hold chrome is column
@@ -34,12 +39,21 @@ import './AppFrame.css';
 interface AppFrameProps {
   readonly sidebar:
     | ReactNode
-    | ((state: { readonly collapsed: boolean; readonly onToggle: () => void }) => ReactNode);
+    | ((state: {
+        readonly collapsed: boolean;
+        readonly onToggle: () => void;
+        readonly onNavigate: () => void;
+      }) => ReactNode);
   readonly center: ReactNode;
   /** Always rendered. A closed details column is zero-wide, never unmounted. */
   readonly details?: ReactNode;
   /** Whether the details column is asked for. */
   readonly detailsOpen: boolean;
+  readonly workspaceDetails?: boolean;
+  readonly taskLayout?: boolean;
+  readonly compactDetailsOverlay?: boolean;
+  readonly compactDetailsInline?: boolean;
+  readonly onDetailsClose?: () => void;
   /**
    * Whether the owner has asked for the sidebar to be closed.
    *
@@ -48,10 +62,14 @@ interface AppFrameProps {
    * inside a track that was still 280px wide, and the control read as broken.
    */
   readonly sidebarCollapsed?: boolean;
+  /** Landing pages retain a collapsed rail without any expansion interaction. */
+  readonly sidebarLocked?: boolean;
   /** Records an explicit collapse or expansion; automatic collapse stays derived. */
   readonly onSidebarCollapsedChange?: (collapsed: boolean) => void;
   /** Things that float over every column — a banner, a dialog's own layer. */
   readonly overlay?: ReactNode;
+  /** What the phone top bar names, beside its navigation button. */
+  readonly phoneTitle?: string;
 }
 
 export function AppFrame({
@@ -59,14 +77,24 @@ export function AppFrame({
   center,
   details,
   detailsOpen,
+  workspaceDetails = false,
+  taskLayout = false,
+  compactDetailsOverlay = false,
+  compactDetailsInline = false,
+  onDetailsClose,
   overlay,
   sidebarCollapsed = false,
+  sidebarLocked = false,
   onSidebarCollapsedChange,
+  phoneTitle = 'CMA',
 }: AppFrameProps) {
   const frameRef = useRef<HTMLDivElement>(null);
+  const detailsRef = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState(0);
-  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT);
+  const [taskSidebarChoice, setTaskSidebarChoice] = useState<boolean>();
+  const [sidebarWidth, setSidebarWidth] = useState(taskLayout ? SIDEBAR_MIN : SIDEBAR_DEFAULT);
   const [detailsWidth, setDetailsWidth] = useState(DETAILS_MIN);
+  const [workspaceWidth, setWorkspaceWidth] = useState<number>();
   const [dragging, setDragging] = useState(false);
   /*
    * A handle reports displacement from pointer-down, so its width must be
@@ -137,7 +165,11 @@ export function AppFrame({
     };
   }, []);
 
-  const narrow = viewport > 0 && viewport < SIDEBAR_AUTO_COLLAPSE;
+  const narrow =
+    viewport > 0 &&
+    (taskLayout
+      ? viewport < CENTER_MIN || (detailsOpen && viewport < 1180)
+      : viewport < SIDEBAR_AUTO_COLLAPSE);
   /*
    * Asked for, or forced by the width. Both reach the solver as a preference
    * of zero, which is what `computeColumns` already reads as closed — so the
@@ -147,12 +179,34 @@ export function AppFrame({
    * a hand-opened sidebar open against the automatic rule, not against its
    * owner asking a second time for it to close.
    */
-  const effectiveSidebarCollapsed = sidebarCollapsed || (narrow && !expandedAnyway);
+  const effectiveSidebarCollapsed =
+    sidebarLocked ||
+    (taskLayout
+      ? taskSidebarChoice === undefined
+        ? sidebarCollapsed || narrow
+        : onSidebarCollapsedChange
+          ? sidebarCollapsed
+          : taskSidebarChoice
+      : sidebarCollapsed || (narrow && !expandedAnyway));
   const sidebarPreference = effectiveSidebarCollapsed ? 0 : sidebarWidth;
-  const columns = computeColumns(viewport, sidebarPreference, detailsOpen ? detailsWidth : 0);
-  const sidebarOverlay = viewport > 0 && viewport < CENTER_MIN && !effectiveSidebarCollapsed;
+  /*
+   * A phone has no room for a permanent rail: 56px is a seventh of a 375px
+   * screen. Below the centre's floor the sidebar is therefore either gone or
+   * a sheet over the page, and a top bar holds the way back to it.
+   */
+  const phone = viewport > 0 && viewport < CENTER_MIN;
+  const solved =
+    workspaceDetails && detailsOpen
+      ? computeWorkspaceColumns(viewport, sidebarPreference, workspaceWidth)
+      : computeColumns(viewport, sidebarPreference, detailsOpen ? detailsWidth : 0);
+  const columns = phone
+    ? { sidebar: effectiveSidebarCollapsed ? 0 : solved.sidebar, center: viewport, details: 0 }
+    : solved;
+  const sidebarOverlay = phone && !effectiveSidebarCollapsed;
 
   const toggleSidebar = useCallback(() => {
+    if (sidebarLocked) return;
+    setTaskSidebarChoice(!effectiveSidebarCollapsed);
     if (effectiveSidebarCollapsed) {
       onSidebarCollapsedChange?.(false);
       if (narrow) {
@@ -163,64 +217,152 @@ export function AppFrame({
 
     onSidebarCollapsedChange?.(true);
     setExpandedAnyway(false);
-  }, [effectiveSidebarCollapsed, narrow, onSidebarCollapsedChange]);
+  }, [effectiveSidebarCollapsed, narrow, onSidebarCollapsedChange, sidebarLocked]);
 
   const sidebarOwnsToggle = typeof sidebar === 'function';
   const renderedSidebar = sidebarOwnsToggle
-    ? sidebar({ collapsed: effectiveSidebarCollapsed, onToggle: toggleSidebar })
+    ? sidebar({
+        collapsed: effectiveSidebarCollapsed,
+        onToggle: toggleSidebar,
+        onNavigate: () => {
+          if (narrow && !taskLayout) setExpandedAnyway(false);
+          if (taskLayout && phone) {
+            setTaskSidebarChoice(true);
+            onSidebarCollapsedChange?.(true);
+          }
+        },
+      })
     : sidebar;
+
+  /* Escape closes the sheet, as it closes any other layer over the page. */
+  useEffect(() => {
+    if (!sidebarOverlay) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.target instanceof Element && event.target.closest('[role="dialog"]')) return;
+      if (event.key === 'Escape' && !event.defaultPrevented) toggleSidebar();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [sidebarOverlay, toggleSidebar]);
 
   const onSidebarDrag = useCallback((to: number) => {
     setSidebarWidth(clampWidth(to, SIDEBAR_MIN, SIDEBAR_MAX));
   }, []);
-  const onDetailsDrag = useCallback((to: number) => {
-    setDetailsWidth(clampWidth(to, DETAILS_MIN, DETAILS_MAX));
-  }, []);
+  const onDetailsDrag = useCallback(
+    (to: number) => {
+      if (workspaceDetails) setWorkspaceWidth(clampWidth(to, 360, viewport - solved.sidebar - 420));
+      else setDetailsWidth(clampWidth(to, DETAILS_MIN, DETAILS_MAX));
+    },
+    [workspaceDetails, viewport, solved.sidebar],
+  );
+  const detailsInline = detailsOpen && columns.details === 0 && compactDetailsInline;
+  const detailsOverlay =
+    detailsOpen && columns.details === 0 && compactDetailsOverlay && !detailsInline;
+  usePlateFocus(
+    detailsRef,
+    onDetailsClose ?? (() => {}),
+    detailsOverlay && onDetailsClose !== undefined,
+  );
 
-  return (
+  const content = (
     <div
       ref={frameRef}
       className="frame"
+      data-workspace={taskLayout || undefined}
       data-dragging={dragging ? '' : undefined}
       data-details-collapsed={columns.details === 0 ? '' : undefined}
+      data-details-overlay={detailsOverlay ? '' : undefined}
+      data-details-inline={detailsInline ? '' : undefined}
       data-sidebar-overlay={sidebarOverlay ? '' : undefined}
+      data-phone={phone ? '' : undefined}
       style={{
-        gridTemplateColumns: `${String(columns.sidebar)}px ${String(columns.center)}px ${String(columns.details)}px`,
+        gridTemplateColumns: sidebarOverlay
+          ? `0px ${String(viewport)}px 0px`
+          : `${String(columns.sidebar)}px ${String(columns.center)}px ${String(columns.details)}px`,
       }}
     >
       <div
         className="frame__sidebar"
-        style={sidebarOverlay ? { width: Math.min(columns.sidebar, viewport) } : undefined}
+        inert={detailsOverlay || undefined}
+        hidden={phone && effectiveSidebarCollapsed}
+        style={
+          sidebarOverlay
+            ? { width: Math.min(columns.sidebar, Math.max(0, viewport - 48)) }
+            : undefined
+        }
       >
         {renderedSidebar}
       </div>
-      <div className="frame__center">{center}</div>
-      <div className="frame__details">{details}</div>
+      <div className="frame__center" inert={sidebarOverlay || detailsOverlay || undefined}>
+        {phone && sidebarOwnsToggle ? (
+          <div className="frame__topbar">
+            {sidebarLocked ? null : (
+              <button
+                type="button"
+                className="frame__menu"
+                aria-label="Show navigation"
+                aria-expanded={!effectiveSidebarCollapsed}
+                onClick={toggleSidebar}
+              >
+                <IconPanelLeftOutline16 />
+              </button>
+            )}
+            <span className="frame__title">{phoneTitle}</span>
+          </div>
+        ) : null}
+        {center}
+      </div>
+      {sidebarOverlay ? (
+        <div className="frame__scrim" aria-hidden="true" onClick={toggleSidebar} />
+      ) : null}
+      <div
+        className="frame__details"
+        ref={detailsRef}
+        role={detailsOverlay ? 'dialog' : undefined}
+        aria-modal={detailsOverlay || undefined}
+        aria-label={detailsOverlay ? 'Agent panel' : undefined}
+      >
+        {details}
+      </div>
 
       {/*
         The handles are children of the frame rather than of the columns they
         move: a column clips its own overflow, so a strip straddling its border
         would be cut in half by the thing it is there to resize.
       */}
-      <DragHandle
-        side="sidebar"
-        at={columns.sidebar}
-        label="Resize the session list"
-        onDrag={(dx) => {
-          onSidebarDrag(sidebarDragStart.current + dx);
-        }}
-        onDraggingChange={(active) => {
-          if (active) {
-            sidebarDragStart.current = columns.sidebar;
-          }
-          setDragging(active);
-        }}
-      />
+      {sidebarLocked ? null : (
+        <DragHandle
+          side="sidebar"
+          at={columns.sidebar}
+          label="Resize navigation"
+          value={columns.sidebar}
+          min={SIDEBAR_MIN}
+          max={SIDEBAR_MAX}
+          onResize={onSidebarDrag}
+          onDrag={(dx) => {
+            onSidebarDrag(sidebarDragStart.current + dx);
+          }}
+          onDraggingChange={(active) => {
+            if (active) {
+              sidebarDragStart.current = columns.sidebar;
+            }
+            setDragging(active);
+          }}
+        />
+      )}
       {columns.details === 0 ? null : (
         <DragHandle
           side="details"
           at={columns.sidebar + columns.center}
           label="Resize the details column"
+          value={columns.details}
+          min={workspaceDetails ? 360 : DETAILS_MIN}
+          max={
+            workspaceDetails
+              ? viewport - columns.sidebar - 360
+              : Math.min(DETAILS_MAX, viewport - columns.sidebar - CENTER_MIN)
+          }
+          onResize={onDetailsDrag}
           onDrag={(dx) => {
             // Dragging left widens: the column grows from its leading edge.
             onDetailsDrag(detailsDragStart.current - dx);
@@ -235,84 +377,21 @@ export function AppFrame({
       )}
 
       <div className="frame__overlay">{overlay}</div>
-      {narrow && !sidebarOwnsToggle ? (
+      {narrow && !sidebarOwnsToggle && !sidebarLocked ? (
         <button
           type="button"
           className="frame__narrowtoggle"
           aria-expanded={!effectiveSidebarCollapsed}
           onClick={toggleSidebar}
         >
-          {effectiveSidebarCollapsed ? 'Show sessions' : 'Hide sessions'}
+          {effectiveSidebarCollapsed ? 'Show navigation' : 'Hide navigation'}
         </button>
       ) : null}
     </div>
   );
-}
-
-interface DragHandleProps {
-  readonly side: 'sidebar' | 'details';
-  /** Where the border it straddles currently is. */
-  readonly at: number;
-  readonly label: string;
-  readonly onDrag: (dx: number) => void;
-  readonly onDraggingChange: (dragging: boolean) => void;
-}
-
-function DragHandle({ side, at, label, onDrag, onDraggingChange }: DragHandleProps) {
-  const [dragging, setDragging] = useState(false);
-  const origin = useRef(0);
-  const latest = useRef(0);
-  const frame = useRef<number | null>(null);
-
-  const report = useCallback(() => {
-    frame.current = null;
-    onDrag(latest.current - origin.current);
-  }, [onDrag]);
-
   return (
-    <div
-      className="frame__handle"
-      style={{ left: at }}
-      data-side={side}
-      data-dragging={dragging ? 'true' : undefined}
-      role="separator"
-      aria-orientation="vertical"
-      aria-label={label}
-      onPointerDown={(event) => {
-        event.preventDefault();
-        /*
-         * Captured, so the drag survives the pointer leaving the 8px strip.
-         * Without it a fast drag stops the moment the pointer outruns the
-         * column, which is exactly when somebody is dragging fast.
-         */
-        event.currentTarget.setPointerCapture(event.pointerId);
-        origin.current = event.clientX;
-        latest.current = event.clientX;
-        setDragging(true);
-        onDraggingChange(true);
-      }}
-      onPointerMove={(event) => {
-        if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
-          return;
-        }
-        latest.current = event.clientX;
-        // One report per frame. Pointer events arrive faster than layout.
-        frame.current ??= requestAnimationFrame(report);
-      }}
-      onPointerUp={(event) => {
-        if (!event.currentTarget.hasPointerCapture(event.pointerId)) {
-          return;
-        }
-        event.currentTarget.releasePointerCapture(event.pointerId);
-        if (frame.current !== null) {
-          cancelAnimationFrame(frame.current);
-          frame.current = null;
-        }
-        // The last position, which the throttle may not have reported yet.
-        onDrag(latest.current - origin.current);
-        setDragging(false);
-        onDraggingChange(false);
-      }}
-    />
+    <SidebarContext value={{ collapsed: effectiveSidebarCollapsed, toggle: toggleSidebar }}>
+      {content}
+    </SidebarContext>
   );
 }

@@ -1,5 +1,5 @@
 /**
- * Where a portalled menu goes — `docs/Web_Style.md` §7.
+ * Where a portalled menu goes — the shared style contracts
  *
  * Separate from the component because it is arithmetic with no React in it,
  * and because it is the part worth testing directly: every case here is a

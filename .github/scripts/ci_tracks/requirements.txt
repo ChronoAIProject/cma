@@ -1,0 +1,5 @@
+# Parsers inspect source as data; selection never executes PR build scripts.
+tree-sitter==0.25.2
+tree-sitter-rust==0.24.2
+tree-sitter-typescript==0.23.2
+PyYAML==6.0.3

@@ -1,0 +1,106 @@
+import { agentPreferencesClient } from './agentPreferences';
+import {
+  agentUpdateHeaders,
+  agentUpdateProblem,
+  type AgentUpdateReason,
+} from './agentUpdateProblem';
+import { ApiError, ProtocolError, retryAfterMilliseconds } from '@cma/client';
+import type { AgentSettingsView, CmaWebClient } from '../client';
+
+export class AgentSettingsError extends ApiError {
+  constructor(
+    message: string,
+    status: number,
+    retryAfterMs?: number,
+    code?: string,
+    reason?: AgentUpdateReason,
+  ) {
+    super(status, message, code, undefined, retryAfterMs, { settings_update_reason: reason });
+  }
+}
+
+async function settingsRequest(id: string, init: RequestInit): Promise<AgentSettingsView> {
+  const response = await fetch(`/api/agent-manager/v1/agents/${encodeURIComponent(id)}/settings`, {
+    credentials: 'same-origin',
+    cache: 'no-store',
+    ...init,
+  });
+  if (!response.ok) {
+    const problem = await agentUpdateProblem(response);
+    throw new AgentSettingsError(
+      'Agent settings could not be loaded or updated.',
+      response.status,
+      retryAfterMilliseconds(response),
+      problem.code,
+      problem.reason,
+    );
+  }
+  const value = (await response.json()) as AgentSettingsView;
+  if (
+    !value ||
+    typeof value.model !== 'string' ||
+    value.model.trim() === '' ||
+    !['minimal', 'low', 'medium', 'high', 'x_high'].includes(value.reasoning_effort) ||
+    !['guarded', 'autonomous'].includes(value.permission_mode) ||
+    (value.pending !== undefined && typeof value.pending !== 'boolean')
+  )
+    throw new ProtocolError('Agent Manager returned invalid Agent settings.');
+  return value;
+}
+
+export function agentSettingsClient(): Pick<
+  CmaWebClient,
+  | 'readAgentSettings'
+  | 'updateAgentSettings'
+  | 'readAgentModels'
+  | 'readAgentPreferences'
+  | 'updateAgentPreferences'
+> {
+  return {
+    ...agentPreferencesClient(),
+    readAgentModels: async (id, options) => {
+      const response = await fetch(`/api/v1/agents/${encodeURIComponent(id)}/models`, {
+        credentials: 'same-origin',
+        cache: 'no-store',
+        signal: options?.signal,
+      });
+      if (!response.ok)
+        throw new AgentSettingsError('Available models could not be loaded.', response.status);
+      const value = (await response.json()) as { models?: unknown };
+      if (
+        !Array.isArray(value?.models) ||
+        value.models.length > 2000 ||
+        value.models.some(
+          (model: unknown) =>
+            !model ||
+            typeof model !== 'object' ||
+            !('id' in model) ||
+            typeof model.id !== 'string' ||
+            !model.id.trim() ||
+            model.id.length > 256 ||
+            !('label' in model) ||
+            typeof model.label !== 'string' ||
+            !model.label.trim() ||
+            ('available' in model && typeof model.available !== 'boolean'),
+        ) ||
+        new Set(value.models.map((model: { id: string }) => model.id)).size !== value.models.length
+      )
+        throw new ProtocolError('Agent Manager returned an invalid model catalog.');
+      return (value.models as { id: string; label: string; available?: boolean }[]).map(
+        (model) => ({ ...model, available: model.available === true }),
+      );
+    },
+    readAgentSettings: (id, options) => settingsRequest(id, { signal: options?.signal }),
+    updateAgentSettings: (id, settings, options) =>
+      settingsRequest(id, {
+        method: 'PATCH',
+        signal: options.signal,
+        headers: agentUpdateHeaders(options.idempotencyKey),
+        body: JSON.stringify({
+          model: settings.model,
+          reasoning_effort: settings.reasoning_effort,
+          permission_mode: settings.permission_mode,
+        }),
+      }),
+  };
+}

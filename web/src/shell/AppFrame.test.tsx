@@ -1,13 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AppFrame } from './AppFrame';
 import { DETAILS_MIN, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns';
 
 /**
- * The page frame — `docs/Web_Style.md` §9.
+ * The page frame — the shared style contracts
  *
  * jsdom lays nothing out, so what is checked here is what the frame *decides*:
  * the tracks it writes, what it keeps mounted, and how it behaves when it is
@@ -117,7 +117,7 @@ function renderFrame(detailsOpen = true) {
   return render(
     <AppFrame
       detailsOpen={detailsOpen}
-      sidebar={<p>sessions</p>}
+      sidebar={<p>navigation</p>}
       center={<p>surface</p>}
       details={<p>details</p>}
       overlay={<p>banner</p>}
@@ -228,27 +228,59 @@ describe('the page frame', () => {
     renderFrame();
     measure(900);
 
-    const toggle = screen.getByRole('button', { name: /show sessions/i });
+    const toggle = screen.getByRole('button', { name: /show navigation/i });
     act(() => {
       toggle.click();
     });
 
     expect(tracks().startsWith(`${SIDEBAR_DEFAULT}px`)).toBe(true);
-    expect(screen.getByRole('button', { name: /hide sessions/i })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: /hide navigation/i })).toHaveAttribute(
       'aria-expanded',
       'true',
     );
   });
 
-  it('gives its sidebar subtree the derived rail state and overlays it below the centre floor', () => {
+  it.each([390, 800, 1440])(
+    'locks landing navigation at %dpx even after a prior explicit expansion',
+    (width) => {
+      const onChange = vi.fn();
+      const draw = (locked: boolean) => (
+        <AppFrame
+          detailsOpen={false}
+          sidebarLocked={locked}
+          onSidebarCollapsedChange={onChange}
+          sidebar={({ onToggle }) => <button onClick={onToggle}>External toggle</button>}
+          center={<p>landing</p>}
+        />
+      );
+      const view = render(draw(false));
+      measure(width);
+      act(() =>
+        screen
+          .getByRole('button', { name: width < 640 ? 'Show navigation' : 'External toggle' })
+          .click(),
+      );
+      view.rerender(draw(true));
+      onChange.mockClear();
+      if (width >= 640) act(() => screen.getByRole('button', { name: 'External toggle' }).click());
+      expect(tracks().startsWith(`${width < 640 ? 0 : SIDEBAR_COLLAPSED}px`)).toBe(true);
+      expect(screen.queryByRole('button', { name: /show navigation/i })).toBeNull();
+      expect(screen.queryByRole('separator', { name: 'Resize navigation' })).toBeNull();
+      expect(document.querySelector('.frame')).not.toHaveAttribute('data-sidebar-overlay');
+      expect(onChange).not.toHaveBeenCalled();
+    },
+  );
+
+  it('replaces the rail on a phone with a top bar and opens the sidebar as a sheet', () => {
     render(
       <AppFrame
         detailsOpen={false}
+        phoneTitle="Agent Manager"
         sidebar={({ collapsed, onToggle }) => (
           <>
             <p>{collapsed ? 'sidebar rail' : 'sidebar panel'}</p>
             <button type="button" onClick={onToggle}>
-              {collapsed ? 'Show sessions' : 'Hide sessions'}
+              {collapsed ? 'Show navigation' : 'Hide navigation'}
             </button>
           </>
         )}
@@ -257,20 +289,48 @@ describe('the page frame', () => {
     );
     measure(390);
 
-    expect(screen.getByText('sidebar rail')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: 'Show sessions' })).toHaveLength(1);
+    // No rail: the collapsed sidebar takes no width and leaves the tab order.
+    expect(tracks().startsWith('0px')).toBe(true);
+    expect(document.querySelector('.frame__sidebar')).toHaveAttribute('hidden');
+    expect(screen.getByText('Agent Manager')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Show navigation' })).toHaveLength(1);
     act(() => {
-      screen.getByRole('button', { name: 'Show sessions' }).click();
+      screen.getByRole('button', { name: 'Show navigation' }).click();
     });
 
     expect(screen.getByText('sidebar panel')).toBeInTheDocument();
-    expect(screen.getAllByRole('button', { name: 'Hide sessions' })).toHaveLength(1);
     expect(document.querySelector('.frame')).toHaveAttribute('data-sidebar-overlay');
+    expect(document.querySelector('.frame__center')).toHaveAttribute('inert');
+    expect(screen.getAllByRole('button', { name: 'Hide navigation' })).toHaveLength(1);
 
-    const css = readFileSync(resolve(process.cwd(), 'src/shell/AppFrame.css'), 'utf8');
-    expect(css).toMatch(
-      /\.frame\[data-sidebar-overlay\] \.frame__center,\s*\.frame\[data-sidebar-overlay\] \.frame__details\s*\{[^}]*visibility: hidden/,
+    // The scrim closes it, as does Escape.
+    act(() => {
+      (document.querySelector('.frame__scrim') as HTMLElement).click();
+    });
+    expect(document.querySelector('.frame')).not.toHaveAttribute('data-sidebar-overlay');
+    expect(document.querySelector('.frame__center')).not.toHaveAttribute('inert');
+    act(() => {
+      screen.getByRole('button', { name: 'Show navigation' }).click();
+    });
+    act(() => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    });
+    expect(document.querySelector('.frame')).not.toHaveAttribute('data-sidebar-overlay');
+    expect(document.querySelector('.frame__scrim')).toBeNull();
+  });
+
+  it('keeps the rail and no top bar between the phone and the auto-collapse widths', () => {
+    render(
+      <AppFrame
+        detailsOpen={false}
+        sidebar={({ collapsed }) => <p>{collapsed ? 'sidebar rail' : 'sidebar panel'}</p>}
+        center={<p>surface</p>}
+      />,
     );
+    measure(800);
+    expect(tracks().startsWith(`${SIDEBAR_COLLAPSED}px`)).toBe(true);
+    expect(document.querySelector('.frame__topbar')).toBeNull();
+    expect(document.querySelector('.frame__sidebar')).not.toHaveAttribute('hidden');
   });
 
   it('offers no way back when the sidebar has not collapsed', () => {
@@ -278,7 +338,15 @@ describe('the page frame', () => {
     // nothing collapsed, it would be a second control for the same thing.
     renderFrame();
     measure(1600);
-    expect(screen.queryByRole('button', { name: /sessions/i })).toBeNull();
+    expect(screen.queryByRole('button', { name: /navigation/i })).toBeNull();
+  });
+
+  it('clips rather than scrolls, so bringing content into view never shifts the page', () => {
+    // A scrollable frame moved 16px sideways when a header was scrolled into
+    // view, because the closed details column still counted toward its width.
+    const css = readFileSync(resolve(process.cwd(), 'src/shell/AppFrame.css'), 'utf8');
+    expect(css).toMatch(/\.frame\s*\{[^}]*overflow: clip/);
+    expect(css).not.toMatch(/\.frame\s*\{[^}]*overflow: hidden/);
   });
 
   it('gives each resizable border one named handle', () => {
@@ -287,7 +355,7 @@ describe('the page frame', () => {
     measure(1600);
     const handles = screen.getAllByRole('separator');
     expect(handles.map((handle) => handle.getAttribute('aria-label'))).toEqual([
-      'Resize the session list',
+      'Resize navigation',
       'Resize the details column',
     ]);
   });
@@ -308,13 +376,37 @@ describe('the page frame', () => {
     renderFrame();
     measure(1600);
 
-    const sidebar = screen.getByRole('separator', { name: 'Resize the session list' });
+    const sidebar = screen.getByRole('separator', { name: 'Resize navigation' });
     dragAcrossFrames(sidebar, [SIDEBAR_DEFAULT, 300, 320, 340]);
     expect(tracks().startsWith('340px ')).toBe(true);
 
     const details = screen.getByRole('separator', { name: 'Resize the details column' });
     dragAcrossFrames(details, [1300, 1280, 1260, 1240]);
     expect(tracks().endsWith(' 360px')).toBe(true);
+  });
+
+  it('resizes Files by keyboard with an announced bounded width and preserves the center node', () => {
+    const view = renderFrame();
+    measure(1600);
+    const center = screen.getByText('surface');
+    const handle = screen.getByRole('separator', { name: 'Resize the details column' });
+    expect(handle).toHaveAttribute('tabindex', '0');
+    expect(handle).toHaveAttribute('aria-valuenow', '300');
+    fireEvent.keyDown(handle, { key: 'ArrowLeft' });
+    expect(handle).toHaveAttribute('aria-valuenow', '316');
+    fireEvent.keyDown(handle, { key: 'End' });
+    expect(handle).toHaveAttribute('aria-valuenow', '520');
+    fireEvent.keyDown(handle, { key: 'Home' });
+    expect(handle).toHaveAttribute('aria-valuenow', '300');
+    view.rerender(
+      <AppFrame
+        detailsOpen={false}
+        sidebar={<p>navigation</p>}
+        center={<p>surface</p>}
+        details={<p>details</p>}
+      />,
+    );
+    expect(screen.getByText('surface')).toBe(center);
   });
 
   it('offers no details handle when there is no details column', () => {

@@ -1,0 +1,31 @@
+.channel-history {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  color: var(--dsw-alias-label-primary);
+}
+.channel-history p {
+  color: var(--dsw-alias-label-secondary);
+}
+.channel-history ol,
+.channel-history ul {
+  list-style: none;
+  padding: 0;
+}
+.channel-history li {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l1);
+}
+.channel-history dl {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 8px;
+}
+.channel-history dd {
+  margin: 0;
+}
+.channel-history__pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

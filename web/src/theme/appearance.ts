@@ -1,3 +1,5 @@
+import { useSyncExternalStore } from 'react';
+
 /**
  * Light or dark, and remembering which.
  *
@@ -16,29 +18,21 @@
  * never expressed a preference gets pinned to whatever the page loaded with.
  */
 
-import { observeBrowserCompatibility } from '../observability/browserCompatibility';
-
 export type Appearance = 'light' | 'dark' | 'system';
 
 const STORAGE_KEY = 'cma:appearance';
-const LEGACY_STORAGE_KEY = 'chrono-bot:appearance';
+let transientAppearance: Appearance | undefined;
 
 /** Whether a stored value is one we understand. */
 function isAppearance(value: unknown): value is Appearance {
   return value === 'light' || value === 'dark' || value === 'system';
 }
 
-function readAppearance(key: string): Appearance | null {
+function readAppearance(): Appearance | null {
   try {
-    const raw = window.localStorage.getItem(key);
-    if (key === STORAGE_KEY) {
-      observeBrowserCompatibility(['appearance', 'canonical', 'read-ok']);
-    }
+    const raw = window.localStorage.getItem(STORAGE_KEY);
     return isAppearance(raw) ? raw : null;
   } catch {
-    if (key === STORAGE_KEY) {
-      observeBrowserCompatibility(['appearance', 'canonical', 'read-blocked']);
-    }
     return null;
   }
 }
@@ -46,9 +40,9 @@ function readAppearance(key: string): Appearance | null {
 function writeAppearance(appearance: Appearance): void {
   try {
     window.localStorage.setItem(STORAGE_KEY, appearance);
-    observeBrowserCompatibility(['appearance', 'canonical', 'write-ok']);
+    transientAppearance = undefined;
   } catch {
-    observeBrowserCompatibility(['appearance', 'canonical', 'write-blocked']);
+    transientAppearance = appearance;
     // Applying the preference does not depend on remembering it.
   }
 }
@@ -60,19 +54,10 @@ function writeAppearance(appearance: Appearance): void {
  * theme preference is never worth failing to render the page over.
  */
 export function storedAppearance(): Appearance {
-  const canonical = readAppearance(STORAGE_KEY);
-  if (canonical !== null) {
-    return canonical;
-  }
-
-  const historical = readAppearance(LEGACY_STORAGE_KEY);
-  if (historical === null) {
-    return 'system';
-  }
-
-  observeBrowserCompatibility(['appearance', 'historical-key', 'fallback-used']);
-  writeAppearance(historical);
-  return historical;
+  // CMA is a dense operations surface; keep the first visit aligned with the
+  // production console's dark chrome while still allowing an explicit light or
+  // system preference from the account menu.
+  return transientAppearance ?? readAppearance() ?? 'dark';
 }
 
 /**
@@ -98,6 +83,7 @@ export function applyAppearance(appearance: Appearance): void {
 export function setAppearance(appearance: Appearance): void {
   applyAppearance(appearance);
   writeAppearance(appearance);
+  window.dispatchEvent(new Event('cma:appearance'));
 }
 
 /** What the page is actually showing, resolving "system" against the browser. */
@@ -136,21 +122,21 @@ export function startAppearance(): () => void {
   applyAppearance(storedAppearance());
 
   const query = systemQuery();
-  if (query === null) {
-    return () => {};
-  }
-
   const reapply = () => {
-    // Re-read rather than closing over the value: the preference may have been
-    // changed since boot, and a stale "system" would fight the explicit choice.
-    const current = storedAppearance();
-    if (current === 'system') {
-      applyAppearance(current);
+    if (storedAppearance() === 'system') applyAppearance('system');
+  };
+  const storage = (event: StorageEvent) => {
+    if (event.key === STORAGE_KEY || event.key === null) {
+      transientAppearance = undefined;
+      applyAppearance(storedAppearance());
     }
   };
-
-  query.addEventListener('change', reapply);
-  return () => query.removeEventListener('change', reapply);
+  query?.addEventListener('change', reapply);
+  window.addEventListener('storage', storage);
+  return () => {
+    query?.removeEventListener('change', reapply);
+    window.removeEventListener('storage', storage);
+  };
 }
 
 /** The order the control cycles through. */
@@ -166,4 +152,17 @@ export function appearanceLabel(appearance: Appearance): string {
     default:
       return 'System';
   }
+}
+
+function subscribeAppearance(listener: () => void) {
+  window.addEventListener('storage', listener);
+  window.addEventListener('cma:appearance', listener);
+  return () => {
+    window.removeEventListener('storage', listener);
+    window.removeEventListener('cma:appearance', listener);
+  };
+}
+/** Keep retained account menus synchronized with browser-local preferences. */
+export function useAppearance(): Appearance {
+  return useSyncExternalStore(subscribeAppearance, storedAppearance);
 }

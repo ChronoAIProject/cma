@@ -1,286 +1,248 @@
-//! Durable storage, wired to concrete backends.
-//!
-//! The core defines the ports; these are the implementations. Keeping them in
-//! the binary is what lets the core stay free of any particular database or
-//! object store.
+//! Durable adapters that do not depend on a resource aggregate.
+mod admission_capacity;
+mod admission_checks;
 
+pub(crate) mod account_deletions;
+pub(crate) mod account_erasure;
 pub mod activity;
+pub(crate) mod admission_ceilings;
+pub(crate) mod admission_control;
+#[cfg(test)]
+mod admission_wake_test_support;
+pub(crate) mod agent_access_requests;
+mod agent_access_tools;
+mod agent_admission;
+mod agent_admission_records;
+pub(crate) mod agent_capacity_recovery;
+mod agent_capacity_recovery_presence;
+mod agent_channel_usage;
+mod agent_commands;
+mod agent_connection_observations;
+mod agent_control_lineage;
+mod agent_control_receipt;
+mod agent_control_store;
+mod agent_control_transaction;
+mod agent_conversation_store;
+mod agent_failure_pacing;
+mod agent_lifecycle_operations;
+mod agent_log;
+mod agent_log_codec;
+mod agent_log_integrity;
+mod agent_log_reads;
+pub(crate) mod agent_log_segment_reads;
+pub(crate) mod agent_log_segments;
+mod agent_log_store;
+pub(crate) mod agent_log_telemetry;
+mod agent_log_transcript;
+mod agent_log_usage;
+pub(crate) mod agent_observation;
+mod agent_opening_reads;
+pub(crate) mod agent_ownership;
+mod agent_profiles;
+mod agent_provenance;
+mod agent_provenance_backfill;
+mod agent_provenance_inventory;
+mod agent_reads;
+mod agent_task_status;
+mod agent_title_claims;
+mod agent_title_effect;
+mod agent_title_retry;
+mod agent_title_state;
+mod agent_title_writes;
+mod agent_titles;
+mod agent_worker_capacity;
+mod agent_worker_reconcile;
+mod agent_worker_store;
+mod agent_worker_transaction;
+mod agent_worktree_recovery;
+mod agent_worktree_recovery_records;
+mod agent_write_coordination;
+mod agents;
 pub mod auth;
-pub mod chat;
-pub mod context;
+mod bindings;
+pub(crate) mod bot_setup_contexts;
+pub(crate) mod bot_setups;
+pub(crate) mod bots;
+#[cfg(test)]
+mod bots_mongo_integration_tests;
+mod budget;
+mod channel_storage_retention;
+mod checkpoint_capture;
+mod checkpoint_objects;
+mod checkpoint_storage;
+mod checkpoints;
+mod child_writer_claims;
+mod codex_subscriptions;
+mod contention;
+mod cooperative_budget;
+mod default_profiles;
 pub mod directory;
 mod durability;
+mod empty_discovery;
 mod encryption;
-pub mod environment;
-mod event_doc;
+mod execution_sections;
+mod media_uploads;
+pub(crate) mod provenance_progress;
+pub(crate) mod registration_capacity;
+mod segment_response;
+mod transaction_scope;
+pub(crate) use segment_response::emit as emit_response_reads;
+// Retain legacy persistence contracts for migration verification; production
+// Gateway records belong to the independently deployed Event Gateway.
+#[cfg(test)]
+mod gateway_interactions;
+#[cfg(test)]
+mod gateway_records;
+#[cfg(test)]
+mod gateway_records_mongo_integration_tests;
+mod hierarchy;
+#[allow(dead_code)] // Foundation primitives have no production capture worker.
+pub(crate) mod home_backups;
+mod launch_context;
+#[cfg(test)]
+mod launch_context_mongo_integration_tests;
+pub(crate) mod launch_home_capacity;
+pub(crate) mod ledger_census;
+pub(crate) mod ledger_collection;
+mod ledger_collection_progress;
+pub(crate) mod ledger_retirement;
+mod legacy_history;
+mod lifecycle_execution;
+pub(crate) mod lifecycle_transaction;
+mod marketplace;
+#[cfg(test)]
+mod marketplace_mongo_integration_tests;
+mod marketplace_mutations;
+mod marketplace_query;
+mod marketplace_support;
+mod marketplace_visibility;
+mod message_feedback;
+pub(crate) mod migrations;
 pub mod mongo;
+mod mongo_diagnostics;
+pub(crate) mod pending_launch_homes;
+#[cfg(test)]
+pub(crate) use mongo_diagnostics::attach_readiness_fixture;
+pub(crate) mod mongo_latency;
+pub(crate) mod mongo_read_telemetry;
+pub(crate) mod native_prepared;
 pub mod operation;
+mod operator_profiles;
+mod operator_sandboxes;
+mod platform_write_coordination;
+mod profile_documents;
+mod profile_draft_admission;
+#[cfg(test)]
+mod profile_index_tests;
+mod profile_mongo;
+#[cfg(test)]
+mod profile_operator_mongo_integration_tests;
+mod profile_pin_admission;
+mod profile_references;
+mod profiles;
+pub(crate) mod request_limits;
+mod resource_access;
+mod retained_reopen;
+pub(crate) mod retirement_archive;
+mod sandbox_admission;
+#[cfg(test)]
+pub(crate) mod sandbox_admission_mongo_integration_tests;
+pub(crate) mod sandbox_billing;
+pub(crate) mod sandbox_colors;
+mod sandbox_controls;
+mod sandbox_credentials;
+mod sandbox_events;
+pub(crate) mod sandbox_maintenance;
+mod sandbox_mongo;
+#[cfg(test)]
+mod sandbox_mongo_integration_tests;
+mod snapshot_collection;
+#[cfg(test)]
+mod worker_runtime_supervision_tests;
+#[cfg(test)]
+pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_normal_capacity as fill_agent_capacity_fixture;
+#[cfg(test)]
+pub(crate) use sandbox_mongo_integration_tests::capacity_fixtures::fill_to as fill_agent_capacity_to_fixture;
+#[cfg(test)]
+mod sandbox_operator_mongo_integration_tests;
+mod sandbox_profiles;
+mod sandbox_reconciliation;
+mod sandbox_sessions;
+mod sandbox_transactions;
+mod sandbox_unpublished_recovery;
+pub(crate) mod sandbox_usage;
+mod sandbox_worker_store;
+mod sandboxes;
+#[cfg(test)]
+mod sandboxes_tests;
+mod schema;
+#[cfg(test)]
+mod schema_mongo_integration_tests;
+pub(crate) mod segment_operations;
 pub mod settings;
-pub mod skill_packs;
-pub mod sponsorship;
-mod sponsorship_encryption;
-pub mod tickets;
-pub mod token;
-pub mod trigger;
-pub mod trigger_workspace;
-
-use std::{sync::Arc, time::Duration};
-
-use async_trait::async_trait;
-use layer2_core::{
-    store::StoreError, SponsorshipGateFence, SponsorshipOperationalPseudonymizer,
-    SponsorshipStoreError,
-};
-use mongodb::Client;
+pub(crate) mod settings_defaults;
+mod shared_child_capacity;
+mod suggestions;
+mod trigger_definitions;
+mod trigger_first_messages;
+mod warm_sandboxes;
+pub(crate) mod worker_observations;
+pub(crate) use native_prepared::{NativePreparedClaim, NativePreparedPlan};
+mod work_claim_authority;
+mod work_lease_parent;
+mod work_lease_renewal;
+mod work_lease_update;
+mod work_publication;
+mod work_schema;
+mod workspace_admission;
+mod workspace_prepare_recovery;
+mod workspace_profiles;
+mod workspace_removal;
+mod workspace_worker_store;
+mod workspaces;
+mod worktrees;
 
 pub use activity::MongoActivityStore;
-pub use auth::MongoAuthStore;
-pub use chat::MongoChatHostStore;
-pub use context::ChronoStorageContextStore;
-pub use directory::MongoUserDirectoryStore;
-pub use environment::MongoEnvironmentProfileStore;
-pub use mongo::MongoSessionStore;
-pub use operation::MongoOperationStore;
-pub use settings::MongoPlatformSettingsStore;
-pub use skill_packs::ChronoStorageSkillPackStore;
-pub use sponsorship::MongoSponsorshipStore;
-pub use tickets::MongoTerminalTicketStore;
-pub use trigger::MongoTriggerStore;
-pub use trigger_workspace::ChronoStorageTriggerWorkspaceStore;
-
-pub(crate) use encryption::AuthEncryptionKey;
-
-use sponsorship_encryption::{SponsorshipKeyring, SponsorshipOperationalKeyring};
-
-/// Everything this deployment keeps in MongoDB.
-///
-/// Returned together because they are opened together: a control plane that
-/// started with one and not the others would serve part of its surface, and
-/// the failure would be discovered by a user rather than at startup.
-pub struct MongoStores {
-    /// Sessions and their event history.
-    pub sessions: MongoSessionStore,
-    /// Reusable environment profiles.
-    pub profiles: MongoEnvironmentProfileStore,
-    /// What the service has been asked to do.
-    pub activity: MongoActivityStore,
-    /// Who has used the service.
-    pub users: MongoUserDirectoryStore,
-    /// Deployment-wide settings changed by administrators.
-    pub settings: MongoPlatformSettingsStore,
-    /// One deployment-managed shared chat runtime per owner.
-    pub chat_hosts: MongoChatHostStore,
-    /// One-time grants used to authenticate terminal upgrades.
-    pub tickets: MongoTerminalTicketStore,
-    /// Browser, OAuth, provider-token, and session-credential authority.
-    pub auth: MongoAuthStore,
-    /// Subject-scoped operation claims and their replay outcomes.
-    pub operations: MongoOperationStore,
-    /// Publisher revisions and contributor Launch aggregates.
-    pub triggers: MongoTriggerStore,
-    client: Client,
-}
-
-impl MongoStores {
-    /// The one Mongo client shared by every authority composed in this process.
-    pub(crate) fn client(&self) -> &Client {
-        &self.client
-    }
-}
-
-/// Validated sponsorship persistence plus composition-only rotation material.
-pub(crate) struct OpenedSponsorshipStore {
-    pub store: Arc<MongoSponsorshipStore>,
-    pub operational: Arc<SponsorshipOperationalPseudonymizer>,
-    pub retiring_encryption_key_ids: Vec<String>,
-}
-
-#[async_trait]
-trait LegacyCutoverClient: Sized {
-    async fn stage_legacy_cutover(&self, database: &str) -> Result<(), StoreError>;
-    async fn shutdown(self);
-}
-
-struct MongoLegacyCutoverClient(Client);
-
-#[async_trait]
-impl LegacyCutoverClient for MongoLegacyCutoverClient {
-    async fn stage_legacy_cutover(&self, database: &str) -> Result<(), StoreError> {
-        MongoSessionStore::stage_legacy_cutover(&self.0, database).await
-    }
-
-    async fn shutdown(self) {
-        self.0.shutdown().await;
-    }
-}
-
-async fn run_legacy_cutover_with_client(
-    client: impl LegacyCutoverClient,
-    database: &str,
-) -> Result<(), StoreError> {
-    let result = client.stage_legacy_cutover(database).await;
-    client.shutdown().await;
-    result
-}
-
-/// Run only the legacy session-namespace cutover, then close MongoDB completely.
-pub async fn run_legacy_cutover_stage(uri: &str, database: &str) -> Result<(), StoreError> {
-    let client = MongoLegacyCutoverClient(
-        Client::with_uri_str(uri)
-            .await
-            .map_err(|e| StoreError::Unavailable(format!("connect: {e}")))?,
-    );
-    run_legacy_cutover_with_client(client, database).await
-}
-
-/// Open every MongoDB-backed store over one connection.
-///
-/// One client rather than one per store: they address the same database, and a
-/// second connection pool to it costs a control plane real connections for no
-/// gain. Several ports over one connection is the point — the core still sees
-/// independent stores and could have any of them replaced without the others.
-///
-/// `activity_retention` is how long a recorded action lives. It reaches the
-/// database as an index, so changing it changes what is already stored rather
-/// than only what is stored next.
-pub async fn connect(
-    uri: &str,
-    database: &str,
-    activity_retention: Duration,
-    legacy_cutover_confirmed: bool,
-    coordination_cutover_confirmed: bool,
-    deployment: &str,
-    auth_encryption_key: &AuthEncryptionKey,
-) -> Result<MongoStores, StoreError> {
-    let client = Client::with_uri_str(uri)
-        .await
-        .map_err(|e| StoreError::Unavailable(format!("connect: {e}")))?;
-    Ok(MongoStores {
-        sessions: MongoSessionStore::open(
-            &client,
-            database,
-            legacy_cutover_confirmed,
-            coordination_cutover_confirmed,
-        )
-        .await?,
-        profiles: MongoEnvironmentProfileStore::open(&client, database).await?,
-        activity: MongoActivityStore::open(&client, database, activity_retention).await?,
-        users: MongoUserDirectoryStore::open(&client, database).await?,
-        settings: MongoPlatformSettingsStore::open(&client, database).await?,
-        chat_hosts: MongoChatHostStore::open(&client, database).await?,
-        tickets: MongoTerminalTicketStore::open(&client, database).await?,
-        auth: MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
-        operations: MongoOperationStore::open(&client, database).await?,
-        triggers: MongoTriggerStore::open(&client, database)
-            .await
-            .map_err(|error| StoreError::Unavailable(format!("open trigger store: {error}")))?,
-        client,
-    })
-}
-
-/// Open sponsorship persistence over the control plane's existing Mongo pool.
-///
-/// Parsing happens only after binary composition has selected an enabled
-/// runtime. Raw secret payloads are borrowed, never formatted into an error,
-/// and remain owned by their zeroizing configuration wrapper.
-pub(crate) async fn open_sponsorship(
-    client: &Client,
-    database: &str,
-    deployment: &str,
-    encryption_keyring_json: &str,
-    operational_keyring_json: &str,
-    initial_gate: SponsorshipGateFence,
-) -> Result<OpenedSponsorshipStore, SponsorshipStoreError> {
-    let encryption_keyring = SponsorshipKeyring::from_json(encryption_keyring_json)
-        .map_err(SponsorshipStoreError::Malformed)?;
-    let retiring_encryption_key_ids = encryption_keyring.retiring_key_ids();
-    let operational_keyring = SponsorshipOperationalKeyring::from_json(operational_keyring_json)
-        .map_err(SponsorshipStoreError::Malformed)?;
-    let operational = Arc::new(operational_keyring.pseudonymizer(deployment)?);
-    let store = Arc::new(
-        MongoSponsorshipStore::open(
-            client,
-            database,
-            deployment,
-            encryption_keyring,
-            operational_keyring,
-            initial_gate,
-        )
-        .await?,
-    );
-    Ok(OpenedSponsorshipStore {
-        store,
-        operational,
-        retiring_encryption_key_ids,
-    })
-}
-
+pub use admission_ceilings::MongoAdmissionCeilingsStore;
+pub use admission_control::MongoAdmissionControlStore;
 #[cfg(test)]
-mod tests {
-    use std::sync::{Arc, Mutex};
+pub(crate) use agent_access_tools::fixtures as agent_access_fixtures;
+pub(crate) use agent_access_tools::MongoAgentAccessToolSource;
+#[cfg(test)]
+pub(crate) use agent_lifecycle_operations::LifecycleRecord;
+pub(crate) use agent_lifecycle_operations::{
+    CreateResult, LifecycleBehavior, LifecycleCreateError, LifecycleInput, LifecycleLease,
+    MongoAgentLifecycleStore, DISCOVERY_BATCH, HEARTBEAT,
+};
+pub use auth::MongoAuthStore;
+pub(crate) use bindings::{MongoBindingCredentials, MongoProviderToolSource};
+pub use checkpoint_objects::MongoCheckpointObjectStore;
+pub(crate) use checkpoint_storage::CheckpointBlobStore;
+pub(crate) use codex_subscriptions::MongoSubscriptionStore;
+pub(crate) use default_profiles::DefaultProfileSpec;
+pub use directory::MongoUserDirectoryStore;
+pub(crate) use encryption::AuthEncryptionKey;
+pub use mongo::MongoStores;
+pub use operation::MongoOperationStore;
+pub use registration_capacity::MongoRegistrationCapacityStore;
+pub(crate) use sandbox_credentials::MongoSandboxCredentialStore;
+pub use sandbox_mongo::{MongoProfileStore, MongoSandboxStore};
+pub use settings::MongoPlatformSettingsStore;
+pub use trigger_definitions::MongoTriggerDefinitionStore;
+pub(crate) use warm_sandboxes::WarmSandboxClaim;
 
-    use super::*;
+pub(crate) mod event_workers;
+pub(crate) mod isolation;
+mod legacy_finalization;
+mod legacy_reuse_lifecycle;
+mod legacy_sandbox;
+pub(crate) mod runtime_routing;
 
-    struct ProbeLegacyCutoverClient {
-        events: Arc<Mutex<Vec<&'static str>>>,
-        fail_stage: bool,
-    }
+pub(crate) mod native_warm_pools;
 
-    #[async_trait]
-    impl LegacyCutoverClient for ProbeLegacyCutoverClient {
-        async fn stage_legacy_cutover(&self, database: &str) -> Result<(), StoreError> {
-            assert_eq!(database, "stage_database");
-            self.events.lock().unwrap().push("stage-complete");
-            if self.fail_stage {
-                Err(StoreError::Unavailable("deliberate stage failure".into()))
-            } else {
-                Ok(())
-            }
-        }
-
-        async fn shutdown(self) {
-            self.events.lock().unwrap().push("client-shutdown");
-        }
-    }
-
-    #[tokio::test]
-    async fn legacy_cutover_closes_the_client_after_success() {
-        let events = Arc::new(Mutex::new(Vec::new()));
-
-        run_legacy_cutover_with_client(
-            ProbeLegacyCutoverClient {
-                events: Arc::clone(&events),
-                fail_stage: false,
-            },
-            "stage_database",
-        )
-        .await
-        .expect("the staged migration succeeds");
-
-        assert_eq!(
-            *events.lock().unwrap(),
-            ["stage-complete", "client-shutdown"]
-        );
-    }
-
-    #[tokio::test]
-    async fn legacy_cutover_closes_the_client_after_a_stage_error() {
-        let events = Arc::new(Mutex::new(Vec::new()));
-
-        let error = run_legacy_cutover_with_client(
-            ProbeLegacyCutoverClient {
-                events: Arc::clone(&events),
-                fail_stage: true,
-            },
-            "stage_database",
-        )
-        .await
-        .expect_err("the deliberate stage failure is returned after shutdown");
-
-        assert!(matches!(error, StoreError::Unavailable(_)));
-        assert_eq!(
-            *events.lock().unwrap(),
-            ["stage-complete", "client-shutdown"]
-        );
-    }
-}
+// Measured reporting read models (#1332); independent of lifecycle writes.
+pub(crate) mod allocation_buckets;
+pub(crate) mod sandbox_metric_bindings;
+pub(crate) mod sandbox_metric_rollups;
+pub(crate) mod sandbox_usage_rollups;
+pub(crate) mod usage_reports;

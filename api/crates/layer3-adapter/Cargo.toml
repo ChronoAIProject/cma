@@ -7,21 +7,42 @@ publish = false
 [dependencies]
 agent-client-protocol-schema = { workspace = true }
 async-trait = { workspace = true }
+base64 = { workspace = true }
 futures-util = { workspace = true }
+http = "1"
+bytes = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+hyper-timeout = "0.5"
+ipnet = { workspace = true }
+libc = { workspace = true }
+metrics = { workspace = true }
 k8s-openapi = { workspace = true }
 kube = { workspace = true }
 reqwest = { workspace = true }
+ring = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+similar = { workspace = true }
 thiserror = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true }
-tokio-tungstenite = { workspace = true }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
+tower = { version = "0.5", features = ["util", "buffer", "retry"] }
+tower-http = { workspace = true }
 tracing = { workspace = true }
 url = { workspace = true }
-# The vt parser that folds a runtime's terminal bytes into a screen. It lives
-# with the layer that owns the terminal, not with the session core.
-# For its CSPRNG-backed v4 generator, which is what a permission request is
-# correlated by. Already a workspace dependency.
 uuid = { workspace = true }
-vt100 = { workspace = true }
+
+[build-dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+metrics-exporter-prometheus = { workspace = true }
+tracking-allocator = { version = "=0.4.0", default-features = false }
+flate2 = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }
+tracing-subscriber = { workspace = true }

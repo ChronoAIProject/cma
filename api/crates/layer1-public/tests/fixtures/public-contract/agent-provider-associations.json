@@ -1,0 +1,454 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "provider-associations-empty",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_empty",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "owner": "owner-a",
+          "agent_created_at": "2026-09-05T00:00:00Z",
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-owner",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "owner": "owner-a",
+          "agent_created_at": "2026-09-05T00:00:00Z",
+          "items": [
+            {
+              "binding_id": "binding-private",
+              "binding_generation": 1,
+              "provider_conversation_id": "existing_agent",
+              "relationship": "borrowed",
+              "sandbox_id": "sbx_route",
+              "workspace_id": "wks_route",
+              "worktree_id": "wkt_agt_shared_read",
+              "conversation_state": "ready",
+              "binding_state": "ready",
+              "current_binding_generation": 1,
+              "is_current_generation": true,
+              "association_created_at": "2026-09-22T00:00:00Z",
+              "association_updated_at": "2026-09-22T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-retired",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_retired",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "owner": "owner-a",
+          "agent_created_at": "2026-09-05T00:00:00Z",
+          "items": [
+            {
+              "binding_id": "binding-private",
+              "binding_generation": 1,
+              "provider_conversation_id": "existing_agent",
+              "relationship": "borrowed",
+              "sandbox_id": "sbx_route",
+              "workspace_id": "wks_route",
+              "worktree_id": "wkt_agt_shared_read",
+              "conversation_state": "retired",
+              "binding_state": "retired",
+              "current_binding_generation": 1,
+              "is_current_generation": true,
+              "association_created_at": "2026-09-22T00:00:00Z",
+              "association_updated_at": "2026-09-22T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-legacy",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_legacy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "owner": "owner-a",
+          "agent_created_at": "2026-09-05T00:00:00Z",
+          "items": [
+            {
+              "binding_id": "binding-private",
+              "binding_generation": 1,
+              "provider_conversation_id": "existing_agent",
+              "relationship": "borrowed",
+              "sandbox_id": "sbx_route",
+              "workspace_id": "wks_route",
+              "worktree_id": "wkt_agt_shared_read",
+              "conversation_state": "ready",
+              "binding_state": "ready",
+              "current_binding_generation": 1,
+              "is_current_generation": true,
+              "association_created_at": "2026-09-22T00:00:00Z",
+              "association_updated_at": "2026-09-22T00:00:00Z"
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-shared",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-revoked",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-outage",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-anonymous",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-forbidden",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-invalid_context",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-changed",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_changed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-unavailable",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-zero-limit",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Provider associations require a limit from 1 through 200 and a continuation from the same Agent incarnation.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-large-limit",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations?limit=201",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Provider associations require a limit from 1 through 200 and a continuation from the same Agent incarnation.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "provider-associations-invalid-cursor",
+      "operation": "GET /api/v1/agents/{id}/provider-associations",
+      "scenario": "provider_associations_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/provider-associations?cursor=01",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Provider associations require a limit from 1 through 200 and a continuation from the same Agent incarnation.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

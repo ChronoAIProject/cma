@@ -1,0 +1,417 @@
+.resource-tree {
+  flex: 1;
+  min-height: 0;
+  margin: 8px -4px;
+  overflow-y: auto;
+}
+
+.tree-row__origin {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.resource-tree__branch,
+.resource-tree [role='group'] {
+  display: contents;
+}
+
+.resource-tree__section + .resource-tree__section {
+  margin-top: 16px;
+}
+
+.resource-tree__heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 4px 8px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+  text-align: left;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.resource-tree__heading[data-back-to-tasks]:focus-visible {
+  outline: 0;
+  box-shadow: inset 0 0 0 2px var(--dsw-alias-brand-primary);
+}
+
+.resource-tree__heading:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.resource-tree__heading > svg {
+  flex: none;
+}
+
+.resource-tree__count {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+
+.tree-row {
+  display: grid;
+  grid-template-columns: 20px 1fr auto;
+  gap: 2px;
+  align-items: center;
+  min-height: 38px;
+  padding: 2px 4px;
+  color: var(--dsw-alias-label-secondary);
+  border-radius: 7px;
+}
+
+.tree-row[data-level='2'] {
+  padding-left: 18px;
+}
+
+.tree-row[data-level='3'] {
+  padding-left: 36px;
+}
+
+.tree-row:hover,
+.tree-row[aria-selected='true'] {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The current row takes the active-item ground (§10), so it never reads as a hovered one. */
+.tree-row[aria-selected='true'] {
+  background: var(--dsw-specific-sidebar-nav-item-active);
+}
+
+.tree-row[data-dimmed] .tree-row__label {
+  opacity: 0.55;
+}
+
+.tree-row__disclosure,
+.tree-row__menu {
+  display: inline-grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  color: var(--dsw-alias-label-tertiary);
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+}
+
+.tree-row__disclosure {
+  width: 20px;
+}
+
+.tree-row__menu:hover,
+.tree-row__disclosure:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-active);
+}
+
+.tree-row__label {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  min-height: 32px;
+  padding: 2px 0;
+  color: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+
+.tree-row__icon {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.tree-row__content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tree-row__name,
+.tree-row__meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-row__name {
+  color: inherit;
+  font-size: 13px;
+  line-height: 17px;
+}
+
+.tree-row__meta {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.tree-row__state {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.task-state-dot {
+  width: 8px;
+  height: 8px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--dsw-specific-task-muted-icon);
+}
+.task-state-dot[data-tone='ready'] {
+  background: var(--dsw-specific-task-accent);
+}
+
+/* A person must act: the word takes the tone as well as the dot. */
+.tree-row__state[data-tone='warning'] {
+  color: var(--dsw-alias-state-warn-label);
+}
+
+.tree-row__state[data-tone='error'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+
+.tree-row__paused {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  color: var(--dsw-alias-state-warn-primary);
+}
+
+.tree-row[data-reviving] .tree-row__icon {
+  animation: tree-reviving var(--ds-transition-duration-slow) var(--ds-ease-in-out) infinite
+    alternate;
+}
+
+@keyframes tree-reviving {
+  to {
+    opacity: 0.45;
+  }
+}
+
+/* Agent cards do not reserve hierarchy indentation or disclosure space. */
+.agent-navigation .tree-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.agent-navigation .tree-row__disclosure {
+  display: none;
+}
+
+/*
+ * One-line rows (§10, §28): a quiet list of titles, each led by its Agent's
+ * 24px character. The 8px inset and 4px gap put the character's centre under
+ * the action-row glyphs and the title on the action-row labels' edge.
+ */
+.tree-row[data-layout='line'] {
+  gap: 4px;
+  min-height: 32px;
+  padding: 0 4px 0 8px;
+}
+
+.tree-row[data-layout='line'] .tree-row__label {
+  gap: 4px;
+  min-height: 32px;
+  padding: 0;
+}
+
+.tree-row[data-layout='line'] .tree-row__icon {
+  width: 24px;
+  height: 24px;
+}
+
+.tree-row[data-layout='line'] .tree-row__content {
+  flex-direction: row;
+  gap: 8px;
+  align-items: center;
+}
+
+.tree-row[data-layout='line'] .tree-row__name {
+  flex: 1;
+  min-width: 0;
+  line-height: 18px;
+}
+
+.tree-row[data-layout='line'] .tree-row__meta {
+  flex: none;
+  overflow: visible;
+}
+
+.tree-row[data-layout='line'] .tree-row__menu {
+  position: relative;
+  width: 24px;
+  height: 24px;
+}
+
+/* The drawn key stays 24px; its hit area is the 32px square the row height allows (§15). */
+.tree-row[data-layout='line'] .tree-row__menu::after {
+  position: absolute;
+  inset: -4px;
+  content: '';
+}
+
+.tree-row__signal {
+  display: inline-grid;
+  place-items: center;
+  width: 100%;
+  height: 100%;
+}
+
+.tree-row__age {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+ * Facts and the menu key wait for hover, focus or the current row. The menu
+ * keeps its place while hidden, so revealing it never shifts the title, and it
+ * stays visible while its portalled list is open.
+ */
+.tree-row[data-layout='line']:not(:hover, :focus-within, [aria-selected='true']) .tree-row__age {
+  display: none;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .tree-row[data-layout='line']:not(:hover, :focus-within, [aria-selected='true'])
+    .tree-row__menu:not([aria-expanded='true']),
+  .agent-navigation
+    .tree-row:not(:hover, :focus-within, [aria-selected='true'])
+    .tree-row__menu:not([aria-expanded='true']) {
+    opacity: 0;
+  }
+}
+
+.resource-tree__empty {
+  padding: 16px 8px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px;
+  text-align: center;
+}
+
+.resource-tree__notice {
+  padding: 16px 8px;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+  overflow-wrap: anywhere;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tree-row[data-reviving] .tree-row__icon {
+    animation: none;
+  }
+}
+
+@media (max-width: 30rem) {
+  .tree-row {
+    min-height: 44px;
+  }
+
+  .tree-row__disclosure,
+  .tree-row__menu,
+  .tree-row__label,
+  .resource-tree__heading,
+  .tree-row[data-layout='line'],
+  .tree-row[data-layout='line'] .tree-row__label {
+    min-height: 44px;
+  }
+
+  .tree-row[data-layout='line'] .tree-row__menu {
+    width: 44px;
+  }
+}
+
+/* Agent Workspace v3 task rows — the shared style contracts*/
+.task-group__heading {
+  margin: 8px 8px 4px;
+  font: var(--dsw-alias-workspace-group-font);
+  color: var(--dsw-alias-workspace-weak);
+}
+.agent-navigation .tree-row[data-layout='line'] {
+  height: var(--dsw-alias-workspace-row-height);
+  min-height: var(--dsw-alias-workspace-row-height);
+  padding-block: 0;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+.agent-navigation .tree-row__disclosure {
+  display: none;
+}
+.agent-navigation .tree-row__content {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.agent-navigation .tree-row__name {
+  flex: 1;
+  min-width: 0;
+}
+.agent-navigation .tree-row__meta {
+  flex: none;
+  opacity: 1;
+}
+.agent-navigation .tree-row[data-layout='stacked'] .tree-row__content {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+}
+.agent-navigation .tree-row[data-layout='stacked'] .tree-row__meta {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.task-environment-notice {
+  color: var(--dsw-alias-label-secondary);
+}
+.agent-navigation .tree-row__icon {
+  width: 24px;
+  height: 24px;
+}
+.task-ready {
+  padding: 0 8px;
+  border-radius: 8px;
+  background: var(--dsw-alias-workspace-ready-bg);
+  color: var(--dsw-alias-workspace-ready-text);
+}
+.task-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--dsw-alias-workspace-accent);
+}
+.task-running__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--dsw-alias-workspace-accent);
+  animation: workspace-breathe var(--dsw-alias-workspace-status-duration) var(--ds-ease-in-out)
+    infinite;
+}
+@keyframes workspace-breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
+@media (pointer: coarse) {
+  .agent-navigation .tree-row[data-layout='line'] {
+    height: 44px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .task-running__dot {
+    animation: none;
+  }
+}

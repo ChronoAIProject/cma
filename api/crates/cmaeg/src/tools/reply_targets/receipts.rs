@@ -1,0 +1,349 @@
+//! A durable claim precedes every external send. An abandoned claim is never resent.
+use super::unavailable;
+use crate::{
+    delivery::{
+        intents::{DeliveryOutcome, IntentReceipt},
+        retained_receipt::{ReceiptStore, StoredReceipt},
+    },
+    records::{RecordClient, RecordError},
+};
+use cmaeg_core::{
+    ids::RecordId,
+    message::{OutboundMessage, RenderingOutcome, RenderingReport},
+    problem::{Problem, ProblemCode},
+    profile::canonical_json,
+    seal::{
+        open_interaction, seal_interaction, MasterKeyRing, ReplyTargetPayload, REPLY_TARGET_TTL,
+    },
+};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::sync::Arc;
+
+pub(crate) struct Store {
+    records: RecordClient,
+    keys: Arc<MasterKeyRing>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Claim {
+    kind: String,
+    id: String,
+    owner: String,
+    scope: String,
+    request_hash: String,
+    expires_at: i64,
+    receipt: Option<StoredReceipt>,
+    #[serde(skip)]
+    version: u64,
+    #[serde(skip)]
+    fence: Option<Box<super::fence::Fence>>,
+}
+pub(crate) enum Admission {
+    Claimed(Claim),
+    Replay(IntentReceipt),
+}
+impl Claim {
+    pub(crate) fn id(&self) -> &str {
+        &self.id
+    }
+}
+impl Store {
+    pub fn new(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
+        Self {
+            records: records.interactions(),
+            keys,
+        }
+    }
+    pub(crate) fn whatsapp_reaction(records: RecordClient, keys: Arc<MasterKeyRing>) -> Self {
+        Self {
+            records: records.whatsapp_reaction_records(),
+            keys,
+        }
+    }
+    /// Participating writers honor receipts and uncertainty created before
+    /// cutover. This lookup never creates a claim or releases its legacy fence.
+    pub(crate) async fn lookup_target(
+        &self,
+        target: &ReplyTargetPayload,
+        request_id: &str,
+        message: &OutboundMessage,
+        owner: &str,
+    ) -> Result<Option<IntentReceipt>, Problem> {
+        let scope = target_scope(target);
+        if let Some(receipt) = self
+            .lookup_scoped(
+                "reply_delivery_v1",
+                "cmaeg.reply-delivery.v1",
+                scope,
+                request_id,
+                hash(message),
+                owner,
+                target.event.expires_at.saturating_add(REPLY_TARGET_TTL),
+            )
+            .await?
+        {
+            return Ok(Some(receipt));
+        }
+        if super::fence::Fence::unresolved(&self.records, &self.keys, target, owner).await? {
+            return Ok(Some(uncertain("reply_target_delivery_uncertain")));
+        }
+        Ok(None)
+    }
+    pub async fn claim(
+        &self,
+        target: &ReplyTargetPayload,
+        request_id: &str,
+        message: &OutboundMessage,
+        owner: &str,
+    ) -> Result<Admission, Problem> {
+        // Exclude randomized token ciphertext and issuance time so reminting cannot bypass dedupe.
+        let scope = target_scope(target);
+        let admission = self
+            .claim_scoped(
+                "reply_delivery_v1",
+                "cmaeg.reply-delivery.v1",
+                scope,
+                request_id,
+                hash(message),
+                owner,
+                target.event.expires_at.saturating_add(REPLY_TARGET_TTL),
+            )
+            .await?;
+        let Admission::Claimed(mut claim) = admission else {
+            return Ok(admission);
+        };
+        match super::fence::Fence::acquire(&self.records, &self.keys, target, owner).await? {
+            Some(fence) => {
+                claim.fence = Some(Box::new(fence));
+                Ok(Admission::Claimed(claim))
+            }
+            None => {
+                tracing::warn!(
+                    outcome = "unknown",
+                    "reply target blocked by unresolved delivery"
+                );
+                let receipt = uncertain("reply_target_delivery_uncertain");
+                self.finish(claim, &receipt).await?;
+                Ok(Admission::Replay(receipt))
+            }
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn claim_scoped(
+        &self,
+        kind: &str,
+        namespace: &str,
+        scope: String,
+        request_id: &str,
+        request_hash: String,
+        owner: &str,
+        expires_at: i64,
+    ) -> Result<Admission, Problem> {
+        let mut claim = Self::scoped_claim(
+            kind,
+            namespace,
+            scope,
+            request_id,
+            request_hash,
+            owner,
+            expires_at,
+        );
+        let url = self
+            .records
+            .record_url(&claim.id)
+            .map_err(|_| unavailable())?;
+        match self.records.get(url.as_str()).await {
+            Ok(value) => return self.replay(&claim, &value.blob).await,
+            Err(RecordError::NotFound) => {}
+            Err(_) => return Err(unavailable()),
+        }
+        match self.save(&claim, None).await {
+            Ok(version) => {
+                claim.version = version;
+                Ok(Admission::Claimed(claim))
+            }
+            Err(RecordError::Conflict { .. }) => {
+                let value = self
+                    .records
+                    .get(url.as_str())
+                    .await
+                    .map_err(|_| unavailable())?;
+                self.replay(&claim, &value.blob).await
+            }
+            Err(_) => Err(unavailable()),
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn scoped_claim(
+        kind: &str,
+        namespace: &str,
+        scope: String,
+        request_id: &str,
+        request_hash: String,
+        owner: &str,
+        expires_at: i64,
+    ) -> Claim {
+        let digest = Sha256::digest(format!("{namespace}\0{scope}\0{request_id}").as_bytes());
+        let mut bytes: [u8; 16] = digest[..16].try_into().unwrap();
+        bytes[6] = (bytes[6] & 0x0f) | 0x40;
+        bytes[8] = (bytes[8] & 0x3f) | 0x80;
+        Claim {
+            kind: kind.into(),
+            id: uuid::Uuid::from_bytes(bytes).to_string(),
+            owner: owner.into(),
+            scope,
+            request_hash,
+            // Retain through every target that can be minted from this original event.
+            expires_at,
+            receipt: None,
+            version: 0,
+            fence: None,
+        }
+    }
+    /// Check retained results before deciding whether a stale card may start new work.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) async fn lookup_scoped(
+        &self,
+        kind: &str,
+        namespace: &str,
+        scope: String,
+        request_id: &str,
+        request_hash: String,
+        owner: &str,
+        expires_at: i64,
+    ) -> Result<Option<IntentReceipt>, Problem> {
+        let claim = Self::scoped_claim(
+            kind,
+            namespace,
+            scope,
+            request_id,
+            request_hash,
+            owner,
+            expires_at,
+        );
+        let url = self
+            .records
+            .record_url(&claim.id)
+            .map_err(|_| unavailable())?;
+        match self.records.get(url.as_str()).await {
+            Ok(value) => match self.replay(&claim, &value.blob).await? {
+                Admission::Replay(receipt) => Ok(Some(receipt)),
+                Admission::Claimed(_) => unreachable!("replay never claims"),
+            },
+            Err(RecordError::NotFound) => Ok(None),
+            Err(_) => Err(unavailable()),
+        }
+    }
+    async fn replay(&self, expected: &Claim, blob: &[u8]) -> Result<Admission, Problem> {
+        let opened = open_interaction(&self.keys, &expected.id, blob).map_err(|_| unavailable())?;
+        let saved: Claim = serde_json::from_slice(&opened.payload).map_err(|_| unavailable())?;
+        if saved.kind != expected.kind
+            || saved.id != expected.id
+            || saved.owner != expected.owner
+            || saved.scope != expected.scope
+            || saved.request_hash != expected.request_hash
+        {
+            return Err(Problem::new(
+                ProblemCode::Conflict,
+                409,
+                if expected.kind == "native_media_update_v1" {
+                    "native_media_update_idempotency_conflict"
+                } else if matches!(
+                    expected.kind.as_str(),
+                    "lark_message_effect_v1"
+                        | "native_lark_message_effect_v1"
+                        | "telegram_message_effect_v1"
+                        | "discord_message_effect_v1"
+                        | "discord_card_effect_v1"
+                        | "whatsapp_received_reaction_v1"
+                ) {
+                    "message_effect_idempotency_conflict"
+                } else {
+                    "reply_idempotency_conflict"
+                },
+            ));
+        }
+        let receipt = match &saved.receipt {
+            Some(receipt) => self
+                .parts(&saved)
+                .load(receipt)
+                .await
+                .map_err(|_| unavailable())?,
+            None => uncertain("delivery_in_progress_or_uncertain"),
+        };
+        Ok(Admission::Replay(receipt))
+    }
+    pub async fn finish(&self, mut claim: Claim, receipt: &IntentReceipt) -> Result<(), Problem> {
+        let fence = claim.fence.take();
+        claim.receipt = Some(
+            self.parts(&claim)
+                .retain(receipt)
+                .await
+                .map_err(|_| unavailable())?,
+        );
+        self.save(&claim, Some(claim.version))
+            .await
+            .map_err(|_| unavailable())?;
+        if !matches!(receipt.delivery, DeliveryOutcome::Unknown { .. }) {
+            if let Some(fence) = fence {
+                fence.release(&self.records, &self.keys).await?;
+            }
+        }
+        Ok(())
+    }
+    fn parts<'a>(&'a self, claim: &'a Claim) -> ReceiptStore<'a> {
+        ReceiptStore {
+            records: &self.records,
+            keys: &self.keys,
+            scope: &claim.id,
+            owner: &claim.owner,
+            retained_until: claim.expires_at,
+        }
+    }
+    async fn save(&self, claim: &Claim, expected: Option<u64>) -> Result<u64, RecordError> {
+        let bytes = serde_json::to_vec(claim).map_err(|e| RecordError::Malformed(e.to_string()))?;
+        let blob = seal_interaction(&self.keys, &claim.id, &bytes)
+            .map_err(|e| RecordError::Malformed(e.to_string()))?;
+        self.records
+            .put_expiring(
+                &RecordId::new(&claim.id).map_err(|e| RecordError::Malformed(e.to_string()))?,
+                &claim.owner,
+                &blob,
+                expected,
+                Some(claim.expires_at),
+            )
+            .await
+    }
+}
+pub(crate) fn hash(value: &impl Serialize) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(
+            canonical_json(serde_json::to_value(value).expect("wire value serializes")).as_bytes()
+        )
+    )
+}
+pub(crate) fn uncertain(reason: &str) -> IntentReceipt {
+    IntentReceipt {
+        message_parts: vec![],
+        message_ref: None,
+        rendering: RenderingReport {
+            outcome: RenderingOutcome::Unsupported,
+            blocks: vec![],
+        },
+        delivery: DeliveryOutcome::Unknown {
+            reason: reason.into(),
+        },
+    }
+}
+
+#[cfg(test)]
+#[path = "receipt_tests.rs"]
+mod tests;
+
+fn target_scope(target: &ReplyTargetPayload) -> String {
+    hash(&serde_json::json!({"channel":target.event.channel_id,
+        "record":target.event.record_id,"provider":target.provider,"binding":target.binding_id,
+        "key":target.agent_key_hash,"event":target.event}))
+}

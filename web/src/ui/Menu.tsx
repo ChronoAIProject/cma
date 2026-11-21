@@ -1,12 +1,14 @@
 import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { IconCheckOutline16 } from './icons';
+import { MenuRow } from './MenuRow';
+import { Input } from './Input';
 import { placeMenu, type MenuAlign, type MenuSide } from './menuPlacement';
+import { presenceAttributes, usePresence, usePresenceExiting } from './Presence';
 import './Menu.css';
 
 /**
- * The product's one dropdown — `docs/Web_Style.md` §12.3.
+ * The product's one dropdown — the shared style contracts
  *
  * A value picker and an overflow menu are the same control here. They were
  * two before, and the second one had no keyboard route at all.
@@ -21,7 +23,7 @@ import './Menu.css';
  * **The list always goes on the body, positioned from the anchor's box.** It
  * used to be a choice, defaulting to rendering in place, and every caller that
  * took the default was placed wrongly: a picker inside a dialog was cut off by
- * the dialog's scrollport, and the session list's own options menu opened 53px
+ * the dialog's scrollport, and a resource list's own options menu opened 53px
  * to the left of the window. A trigger cannot know what encloses it or how
  * near an edge it sits, so the in-place default asked each caller a question
  * none of them could answer. On the body, `placeMenu` reads the anchor and the
@@ -34,10 +36,20 @@ export interface MenuItem {
   readonly id: string;
   readonly label: ReactNode;
   readonly disabled?: boolean;
+  readonly reason?: string;
+  readonly role?: 'menuitemradio' | 'menuitemcheckbox';
   /** A leading 16px glyph. */
   readonly icon?: ReactNode;
   /** Destructive: error-coloured, with its own hover fill. */
   readonly danger?: boolean;
+  /**
+   * Where choosing this row goes, when it is navigation.
+   *
+   * The row becomes a real link, so a modified click or a middle click opens
+   * the destination in a new tab as any other link does; an ordinary click
+   * still reports the selection and leaves navigation to the owner.
+   */
+  readonly href?: string;
 }
 
 /** A hairline between groups. Not selectable, not focusable. */
@@ -53,11 +65,16 @@ export interface MenuLabel {
   readonly text: string;
 }
 
-export type MenuEntry = MenuItem | MenuSeparator | MenuLabel;
-
-function isChoosable(entry: MenuEntry): entry is MenuItem {
-  return !('type' in entry);
+/** Compact alternatives within one menu, with independent radio semantics. */
+export interface MenuChoices {
+  readonly type: 'choices';
+  readonly id: string;
+  readonly text: string;
+  readonly selectedId: string;
+  readonly choices: readonly { readonly id: string; readonly label: string }[];
 }
+
+export type MenuEntry = MenuItem | MenuSeparator | MenuLabel | MenuChoices;
 
 /**
  * Laid out but invisible, so the placement effect can measure a real box.
@@ -69,7 +86,14 @@ function isChoosable(entry: MenuEntry): entry is MenuItem {
 const MEASURING: CSSProperties = { visibility: 'hidden', left: 0, top: 0 };
 
 interface MenuProps {
+  readonly search?: {
+    readonly label: string;
+    readonly value: string;
+    readonly onChange: (value: string) => void;
+  };
+  readonly footer?: ReactNode;
   readonly open: boolean;
+  readonly presentation?: 'run-target';
   /** The trigger, rendered in place. */
   readonly anchor: ReactNode;
   readonly items: readonly MenuEntry[];
@@ -105,6 +129,7 @@ interface MenuProps {
 
 export function Menu({
   open,
+  presentation,
   anchor,
   items,
   selectedId,
@@ -117,9 +142,14 @@ export function Menu({
   placement,
   matchAnchorWidth = false,
   label,
+  search,
+  footer,
 }: MenuProps) {
   const rootRef = useRef<HTMLSpanElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const parentExiting = usePresenceExiting();
+  const interactive = open && !parentExiting;
+  const { present, exiting } = usePresence(interactive);
 
   /*
    * The list is positioned by writing to its node rather than by holding
@@ -131,7 +161,7 @@ export function Menu({
    * thing a layout effect exists for.
    */
   useLayoutEffect(() => {
-    if (!open) {
+    if (!interactive) {
       return;
     }
     const place = () => {
@@ -164,14 +194,27 @@ export function Menu({
      */
     window.addEventListener('scroll', place, true);
     window.addEventListener('resize', place);
+    let frame: number | undefined;
+    const schedulePlace = () => {
+      frame ??= requestAnimationFrame(() => {
+        frame = undefined;
+        place();
+      });
+    };
+    const observer =
+      typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(schedulePlace);
+    if (listRef.current) observer?.observe(listRef.current);
+    if (rootRef.current) observer?.observe(rootRef.current);
     return () => {
+      observer?.disconnect();
+      if (frame !== undefined) cancelAnimationFrame(frame);
       window.removeEventListener('scroll', place, true);
       window.removeEventListener('resize', place);
     };
-  }, [open, side, align, matchAnchorWidth]);
+  }, [interactive, side, align, matchAnchorWidth]);
 
   useEffect(() => {
-    if (!open) {
+    if (!interactive) {
       return;
     }
     const onPointerDown = (event: PointerEvent) => {
@@ -198,7 +241,7 @@ export function Menu({
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };
-  }, [open, onClose]);
+  }, [interactive, onClose]);
 
   /*
    * Focus lands on the first row when the list opens, and on the selected one
@@ -206,13 +249,13 @@ export function Menu({
    * from the keyboard rather than merely reachable.
    */
   useEffect(() => {
-    if (!open) {
+    if (!interactive) {
       return;
     }
     const rows = rowsIn(listRef.current);
     const chosen = rows.find((row) => row.dataset.id === selectedId);
-    (chosen ?? rows[0])?.focus();
-  }, [open, selectedId]);
+    (listRef.current?.querySelector('input') ?? chosen ?? rows[0])?.focus();
+  }, [interactive, selectedId]);
 
   /*
    * And returns to the trigger when the list closes, if it was still inside
@@ -225,9 +268,9 @@ export function Menu({
    */
   const wasOpen = useRef(false);
   useEffect(() => {
-    const closing = wasOpen.current && !open;
-    wasOpen.current = open;
-    if (!closing) {
+    const closing = wasOpen.current && !interactive;
+    wasOpen.current = interactive;
+    if (!closing || parentExiting) {
       return;
     }
     const active = document.activeElement;
@@ -235,25 +278,43 @@ export function Menu({
     if (inList || active === document.body) {
       rootRef.current?.querySelector('button')?.focus();
     }
-  }, [open]);
+  }, [interactive, parentExiting]);
 
   const onListKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!interactive) return;
+    if (
+      event.target instanceof HTMLInputElement &&
+      !['ArrowDown', 'ArrowUp', 'Escape'].includes(event.key)
+    )
+      return;
     const rows = rowsIn(listRef.current);
     if (rows.length === 0) {
       return;
     }
-    const here = rows.indexOf(document.activeElement as HTMLButtonElement);
+    const here = rows.indexOf(document.activeElement as HTMLElement);
     const move = (to: number) => {
       event.preventDefault();
       rows[(to + rows.length) % rows.length]?.focus();
     };
 
     switch (event.key) {
+      case 'ArrowLeft':
+      case 'ArrowRight': {
+        const group = (document.activeElement as HTMLElement | null)?.closest('.menu__choices');
+        if (!group) return;
+        const choices = [...group.querySelectorAll<HTMLButtonElement>('button')];
+        const current = choices.indexOf(document.activeElement as HTMLButtonElement);
+        event.preventDefault();
+        choices[
+          (current + (event.key === 'ArrowRight' ? 1 : -1) + choices.length) % choices.length
+        ]?.focus();
+        return;
+      }
       case 'ArrowDown':
         move(here + 1);
         return;
       case 'ArrowUp':
-        move(here - 1);
+        move(here < 0 ? rows.length - 1 : here - 1);
         return;
       case 'Home':
         move(0);
@@ -265,13 +326,15 @@ export function Menu({
     }
   };
 
-  const list = !open ? null : (
+  const list = !present ? null : (
     <div
       ref={listRef}
       className={['menu', dense ? 'menu--dense' : '', 'menu--portal'].filter(Boolean).join(' ')}
       style={MEASURING}
       role="menu"
+      data-presentation={presentation}
       aria-label={label}
+      {...presenceAttributes(exiting)}
       onKeyDown={onListKeyDown}
       /*
        * A portal's events still bubble through the React tree, so without
@@ -282,20 +345,44 @@ export function Menu({
         event.stopPropagation();
       }}
     >
+      {search && (
+        <Input
+          aria-label={search.label}
+          placeholder="Search by name"
+          value={search.value}
+          maxLength={128}
+          onChange={(event) => search.onChange(event.target.value)}
+        />
+      )}
       {items.map((entry) => (
         <MenuRow
           key={entry.id}
           entry={entry}
           selected={entry.id === selectedId || selectedIds?.includes(entry.id) === true}
           choosing={selectedId !== undefined || selectedIds !== undefined}
-          onSelect={onSelect}
+          onSelect={(id) => {
+            if (interactive) onSelect(id);
+          }}
         />
       ))}
+      {footer}
     </div>
   );
 
   return (
-    <span ref={rootRef} className={['menu-root', placement ?? ''].filter(Boolean).join(' ')}>
+    <span
+      ref={rootRef}
+      className={['menu-root', placement ?? ''].filter(Boolean).join(' ')}
+      onKeyDown={(event) => {
+        // Portalled rows bubble here too. Dismiss this menu before Escape
+        // reaches an enclosing dialog, including when its trigger has focus.
+        if (interactive && event.key === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          onClose();
+        }
+      }}
+    >
       {anchor}
       {list === null ? null : createPortal(list, document.body)}
     </span>
@@ -303,72 +390,6 @@ export function Menu({
 }
 
 /** Every focusable row, in order. Separators and headings are neither. */
-function rowsIn(list: HTMLElement | null): HTMLButtonElement[] {
-  return list === null ? [] : [...list.querySelectorAll<HTMLButtonElement>('button.menu__item')];
-}
-
-function MenuRow({
-  entry,
-  selected,
-  choosing,
-  onSelect,
-}: {
-  readonly entry: MenuEntry;
-  readonly selected: boolean;
-  /** Whether this menu is picking a value rather than running an action. */
-  readonly choosing: boolean;
-  readonly onSelect: (id: string) => void;
-}) {
-  if ('type' in entry && entry.type === 'separator') {
-    return <div className="menu__separator" role="separator" />;
-  }
-  if ('type' in entry && entry.type === 'label') {
-    return (
-      <div className="menu__label" role="presentation">
-        {entry.text}
-      </div>
-    );
-  }
-  if (!isChoosable(entry)) {
-    return null;
-  }
-
-  const unavailable = entry.disabled === true;
-  return (
-    <button
-      type="button"
-      /*
-       * A menu with a current value is a set of alternatives, not a list of
-       * actions, and `menuitemradio` is what says so — it is also the role
-       * `aria-checked` is actually defined for.
-       */
-      role={choosing ? 'menuitemradio' : 'menuitem'}
-      data-id={entry.id}
-      className={['menu__item', entry.danger === true ? 'menu__item--danger' : '']
-        .filter(Boolean)
-        .join(' ')}
-      /*
-       * `aria-disabled` rather than `disabled`, so the row keeps its place in
-       * the keyboard order. A row that cannot be reached cannot have its
-       * reason read, and the reason is the whole point of listing something
-       * that cannot be chosen (§12.3).
-       */
-      aria-disabled={unavailable}
-      aria-checked={choosing ? selected : undefined}
-      onClick={() => {
-        if (unavailable) {
-          return;
-        }
-        onSelect(entry.id);
-      }}
-    >
-      {entry.icon === undefined ? null : (
-        <span className="menu__icon" aria-hidden="true">
-          {entry.icon}
-        </span>
-      )}
-      <span className="menu__itemlabel">{entry.label}</span>
-      {selected ? <IconCheckOutline16 className="menu__check" /> : null}
-    </button>
-  );
+function rowsIn(list: HTMLElement | null): HTMLElement[] {
+  return list === null ? [] : [...list.querySelectorAll<HTMLElement>('.menu__item')];
 }

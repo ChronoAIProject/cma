@@ -1,0 +1,299 @@
+import { routePath } from './routing/routes';
+import { refreshSandboxCapacity } from './sandbox/useSandboxCapacity';
+import { Presence, usePresenceExiting } from './ui/Presence';
+import { useEffect, useRef, useState } from 'react';
+import type { CmaWebClient } from './api/client';
+import { ApiError } from '@cma/client';
+import {
+  deletionTarget,
+  observeDeletion,
+  requestDeletion,
+  type DeletionObservation,
+  type DeletionRequest,
+} from './deletion';
+import { forgetDeletion, persistDeletion } from './deletionRecovery';
+import { RiskConfirmation } from './ui/RiskConfirmation';
+import { Modal } from './ui/Modal';
+import { Button } from './ui/Button';
+import { ProvisioningProgress } from './sandbox/ProvisioningProgress';
+import { LiveActivity } from './sandbox/LiveActivity';
+import { activityEntries } from './sandbox/activity';
+import { transitionRefreshDelay } from './sandbox/lifecycle';
+
+export function DeletionDialog({
+  client,
+  viewerId,
+  initial,
+  restored,
+  onChanged,
+  onAccepted,
+  backgroundOnAcceptance = false,
+  onClose,
+}: {
+  readonly client: CmaWebClient;
+  readonly viewerId: string;
+  readonly initial: DeletionRequest;
+  readonly restored: boolean;
+  readonly onChanged: () => void;
+  readonly onAccepted?: (request: DeletionRequest) => void;
+  readonly backgroundOnAcceptance?: boolean;
+  readonly onClose: () => void;
+}) {
+  const exiting = usePresenceExiting();
+  const [request, setRequest] = useState(initial);
+  const [started, setStarted] = useState(restored);
+  const [sending, setSending] = useState(false);
+  const [observation, setObservation] = useState<DeletionObservation>();
+  const [readError, setReadError] = useState<string>();
+  const [commandError, setCommandError] = useState<string>();
+  const [revision, setRevision] = useState(0);
+  const inFlight = useRef(false);
+  const backgrounded = useRef(false);
+  const changed = useRef(onChanged);
+  const completed = useRef(false);
+  useEffect(() => {
+    changed.current = onChanged;
+  }, [onChanged]);
+  const target = deletionTarget(request.action);
+  const persist = (value: DeletionRequest | undefined) => {
+    if (value === undefined) forgetDeletion(viewerId, request.key);
+    else persistDeletion(viewerId, value);
+  };
+
+  useEffect(() => {
+    if (exiting) return;
+    backgrounded.current = false;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let events: DeletionObservation['events'] = [];
+    let agentEvents: DeletionObservation['agentEvents'] = [];
+    let reading = false;
+    const startedAt = Date.now();
+    const poll = () => {
+      if (
+        reading ||
+        controller.signal.aborted ||
+        document.hidden ||
+        completed.current ||
+        backgrounded.current
+      )
+        return;
+      clearTimeout(timer);
+      reading = true;
+      void observeDeletion(
+        client,
+        request.action,
+        controller.signal,
+        request.accepted,
+        events,
+        agentEvents,
+      )
+        .then((next) => {
+          if (controller.signal.aborted) return;
+          events = next.events;
+          agentEvents = next.agentEvents;
+          setObservation(next);
+          setReadError(undefined);
+          if (next.inProgress && !request.accepted) {
+            const accepted = { ...request, accepted: true };
+            persistDeletion(viewerId, accepted);
+            setRequest(accepted);
+            setStarted(true);
+            changed.current();
+          }
+          if (next.complete) {
+            completed.current = true;
+            if (request.action.kind === 'delete_sandbox')
+              void refreshSandboxCapacity(client, viewerId);
+            forgetDeletion(viewerId, request.key);
+            changed.current();
+          } else
+            timer = setTimeout(poll, request.accepted ? transitionRefreshDelay(startedAt) : 1500);
+        })
+        .catch((error: unknown) => {
+          if (controller.signal.aborted) return;
+          if (error instanceof ApiError && [401, 403, 404].includes(error.status)) {
+            events = [];
+            agentEvents = [];
+            setObservation(undefined);
+          }
+          // A missing resource can mean access loss, not proven deletion.
+          setReadError(
+            error instanceof ApiError && [401, 403, 404].includes(error.status)
+              ? 'Deletion could not be verified. The resource is no longer accessible with this account.'
+              : 'Deletion status could not be refreshed. Reconnecting; completion is not yet confirmed.',
+          );
+          timer = setTimeout(poll, 5000);
+        })
+        .finally(() => {
+          reading = false;
+        });
+    };
+    document.addEventListener('visibilitychange', poll);
+    poll();
+    return () => {
+      controller.abort();
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', poll);
+    };
+  }, [client, request, revision, viewerId, exiting]);
+
+  const submit = async () => {
+    if (inFlight.current || request.accepted) return;
+    if (
+      !started &&
+      (observation === undefined || readError !== undefined || observation.blocked !== undefined)
+    )
+      return;
+    inFlight.current = true;
+    setStarted(true);
+    setSending(true);
+    setCommandError(undefined);
+    persist(request);
+    try {
+      await requestDeletion(client, request);
+      const accepted = { ...request, accepted: true };
+      persist(accepted);
+      backgrounded.current = backgroundOnAcceptance;
+      setRequest(accepted);
+      changed.current();
+      onAccepted?.(accepted);
+    } catch (error: unknown) {
+      setCommandError(
+        error instanceof Error ? error.message : 'The delete request could not be confirmed.',
+      );
+      if (error instanceof ApiError && [400, 401, 403, 404, 422].includes(error.status)) {
+        persist(undefined);
+        setStarted(false);
+      }
+    } finally {
+      inFlight.current = false;
+      setSending(false);
+    }
+  };
+  const close = () => {
+    if (!started || completed.current) persist(undefined);
+    onClose();
+  };
+  const name = observation?.name ?? target;
+  if (!started && !observation?.complete)
+    return (
+      <RiskConfirmation
+        open
+        title={`Delete ${target}`}
+        description={
+          <>
+            {observation?.stopsRuntimeUpdate
+              ? `Delete "${name}" and stop the paused runtime update. This cannot be undone. Cleanup continues in the background; retained history follows the retention policy.`
+              : `Delete "${name}"${target === 'Agent' ? ' and its Worktree' : ' and its contained runtime resources'}. This cannot be undone. Retained history follows the retention policy.`}
+            {target === 'Sandbox'
+              ? ' This deletes the whole Sandbox environment, including all Agents, Workspaces, and files inside it.'
+              : null}
+            {target === 'Agent' ? (
+              <>
+                {' '}
+                Its Sandbox environment remains and still counts toward your environment limit.{' '}
+                {observation?.sandboxId ? (
+                  <a href={routePath({ kind: 'sandbox', sandboxId: observation.sandboxId })}>
+                    Review parent environment
+                  </a>
+                ) : null}
+              </>
+            ) : null}
+          </>
+        }
+        acknowledgeLabel={`I understand this ${target} will be deleted.`}
+        confirmLabel={`Delete ${target}`}
+        busy={
+          observation === undefined || readError !== undefined || observation.blocked !== undefined
+        }
+        status={observation === undefined ? 'Checking deletion availability.' : observation.blocked}
+        failure={commandError ?? readError}
+        onCancel={close}
+        onConfirm={() => {
+          void submit();
+        }}
+      />
+    );
+  return (
+    <Modal
+      open
+      title={observation?.complete ? `${target} deleted` : `Deleting ${target}`}
+      description={name}
+      dismissible={!sending}
+      onClose={close}
+      footer={
+        <>
+          <Button disabled={sending} onClick={close}>
+            {observation?.complete ? 'Done' : 'Close'}
+          </Button>
+          {!request.accepted && !observation?.complete ? (
+            <Button
+              variant="primary"
+              disabled={sending}
+              onClick={() => {
+                void submit();
+              }}
+            >
+              Check request
+            </Button>
+          ) : null}
+          {readError === undefined ? null : (
+            <Button onClick={() => setRevision((value) => value + 1)}>Refresh status</Button>
+          )}
+        </>
+      }
+    >
+      <p role="status">
+        {observation?.complete
+          ? `${target} deletion is confirmed.`
+          : sending
+            ? 'Submitting delete request.'
+            : request.accepted
+              ? 'Delete request accepted. Cleanup continues even if you close this page.'
+              : 'The delete request has not been confirmed. Check the same request before trying another action.'}
+      </p>
+      {target === 'Agent' ? (
+        <p>
+          {observation?.complete
+            ? 'Agent deleted. Its Sandbox environment is retained and still counts toward your environment limit.'
+            : 'Only this Agent and its Worktree are being removed. Its Sandbox environment remains.'}{' '}
+          {observation?.sandboxId ? (
+            <a href={routePath({ kind: 'sandbox', sandboxId: observation.sandboxId })}>
+              Review parent environment
+            </a>
+          ) : null}
+        </p>
+      ) : target === 'Sandbox' && request.accepted && !observation?.complete ? (
+        <p>
+          Deleting — still uses one Sandbox slot. The slot becomes available when deletion is
+          confirmed.
+        </p>
+      ) : null}
+      <details>
+        <summary>Cleanup progress</summary>
+        {observation === undefined ? null : (
+          <ProvisioningProgress title="Deletion progress" steps={observation.steps} />
+        )}
+        <LiveActivity
+          entries={activityEntries(
+            observation?.agentEvents ?? observation?.events ?? [],
+            request.action.kind === 'delete_agent' ? 'agent' : 'sandbox',
+          )}
+          syncedAt={observation?.observedAt}
+          stale={readError !== undefined}
+          loading={observation === undefined && readError === undefined}
+        />
+      </details>
+      <Presence>
+        {observation?.failure === undefined ? null : (
+          <p role="alert">
+            Cleanup reported: {observation.failure.detail}. Deletion is not complete.
+          </p>
+        )}
+      </Presence>
+      <Presence>{commandError === undefined ? null : <p role="alert">{commandError}</p>}</Presence>
+      <Presence>{readError === undefined ? null : <p role="alert">{readError}</p>}</Presence>
+    </Modal>
+  );
+}

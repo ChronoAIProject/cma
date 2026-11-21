@@ -1,965 +1,237 @@
-name: CI
-
+name: "CI"
 on:
-  pull_request:
-    branches: [develop, main]
   push:
-    branches: [develop]
-
+    branches:
+      - "develop"
+  pull_request:
+    branches:
+      - "develop"
+      - "main"
+    types:
+      - "opened"
+      - "reopened"
+      - "synchronize"
+      - "edited"
+      - "labeled"
+      - "unlabeled"
+  # Required checks must also report on the develop merge queue's group refs.
+  # Each entry's ref is unique, so a PR or push run never cancels it.
+  merge_group:
+    types:
+      - "checks_requested"
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
+  group: "ci-${{ github.workflow }}-${{ github.ref }}"
+  # A develop push run is the only writer of the image and cargo caches every
+  # PR restores, so a newer merge must not cancel it mid-build (14 of 15 were
+  # cancelled on 20 Nov). The group still runs one at a time, and a newer
+  # pending run still replaces an older pending one. PRs and release refs
+  # keep cancelling superseded runs.
+  cancel-in-progress: "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"
 permissions:
-  contents: read
-
+  contents: "read"
 jobs:
-  trigger-release-contract:
-    name: Trigger release contract
-    runs-on: ubuntu-latest
+  changes:
+    name: "Select tracks"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    outputs:
+      repo: "${{ steps.select.outputs.repo }}"
+      am: "${{ steps.select.outputs.am }}"
+      eg: "${{ steps.select.outputs.eg }}"
+      web: "${{ steps.select.outputs.web }}"
+      am_packages: "${{ steps.select.outputs.am_packages }}"
+      eg_packages: "${{ steps.select.outputs.eg_packages }}"
+      test_tracks: "${{ steps.select.outputs.test_tracks }}"
+      deployables: "${{ steps.select.outputs.deployables }}"
     steps:
-      - uses: actions/checkout@v5
-      - name: Runtime provenance and release evidence stay mandatory
-        run: |
-          set -euo pipefail
-          ruby -c .github/scripts/cma-trigger-gateway-source-contract.rb
-          ruby -c .github/scripts/cma-trigger-gateway-projection.rb
-          ruby -c .github/scripts/cma-trigger-gateway-tls-sanitize.rb
-          ruby .github/scripts/cma-trigger-gateway-source-contract.rb
-          ruby .github/scripts/cma-trigger-gateway-source-contract.rb --self-test
-          ruby .github/scripts/cma-trigger-gateway-projection.rb --self-test
-          bash -n .github/scripts/cma-trigger-gateway-*.sh
-          shellcheck -x .github/scripts/cma-trigger-gateway-*.sh
-          bash .github/scripts/cma-trigger-gateway-tls-sanitize-tests.sh
-          bash .github/scripts/cma-trigger-gateway-projection-tests.sh
-          bash .github/scripts/cma-trigger-gateway-admission-bootstrap-tests.sh
-          bash .github/scripts/cma-trigger-gateway-cloudflare-capture-tests.sh
-          bash .github/scripts/cma-trigger-gateway-launch-tests.sh
-          bash .github/scripts/cma-trigger-gateway-origin-evidence-tests.sh
-          .github/scripts/cma-trigger-gateway-state.sh --self-test
-          .github/scripts/cma-trigger-gateway-adoption.sh --self-test
-          .github/scripts/cma-trigger-gateway-adoption-tests.sh
-          .github/scripts/cma-trigger-gateway-restore-traffic-tests.sh
-          ruby .github/scripts/cma-trigger-publish-contract.rb
-          ruby .github/scripts/cma-trigger-publish-contract.rb --self-test
-          ruby .github/scripts/cma-trigger-publish-contract.rb --emit-step10 | bash -n
-          ruby .github/scripts/cma-trigger-publish-contract.rb --emit-step10 | shellcheck -s bash -
-          ruby .github/scripts/cma-trigger-publish-contract.rb --emit-step10-invocation | bash -n
-          ruby .github/scripts/cma-trigger-publish-contract.rb --emit-step10-invocation | shellcheck -s bash -
-
-  trigger-provider-smoke-contract:
-    name: Trigger provider smoke contract
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 26
-      - name: Harness and fixture configuration are closed and valid
-        run: |
-          set -euo pipefail
-          node --check .github/scripts/cma-trigger-provider-smoke.mjs
-          node .github/scripts/cma-trigger-provider-smoke.mjs --self-test
-          node .github/scripts/cma-trigger-provider-smoke.mjs \
-            --validate-config .github/cma-trigger-provider-smoke.example.json
-          node --check .github/scripts/cma-trigger-provider-object-settlement.mjs
-          node --check .github/scripts/cma-trigger-provider-object-settlement-tests.mjs
-          node .github/scripts/cma-trigger-provider-object-settlement-tests.mjs
-          node --check .github/scripts/cma-trigger-nyxid-smoke-bootstrap.mjs
-          node --check .github/scripts/cma-trigger-nyxid-smoke-bootstrap-tests.mjs
-          node .github/scripts/cma-trigger-nyxid-smoke-bootstrap-tests.mjs
-          node --check .github/tools/cma-trigger-smoke-environment/operator.mjs
-          node --check .github/tools/cma-trigger-smoke-environment/operator-tests.mjs
-          node --check .github/tools/cma-trigger-smoke-environment/operator-contract-tests.mjs
-          node .github/tools/cma-trigger-smoke-environment/operator.mjs --self-test
-          node --test .github/tools/cma-trigger-smoke-environment/operator-tests.mjs
-          node .github/tools/cma-trigger-smoke-environment/operator-contract-tests.mjs
-      - name: Ephemeral Kind staging custody stays closed
-        run: |
-          set -euo pipefail
-          node --check .github/scripts/cma-trigger-kind-staging-fixture.mjs
-          bash -n .github/scripts/cma-trigger-kind-staging.sh
-          bash -n .github/scripts/cma-trigger-kind-staging-tests.sh
-          shellcheck .github/scripts/cma-trigger-kind-staging.sh
-          shellcheck .github/scripts/cma-trigger-kind-staging-tests.sh
-          .github/scripts/cma-trigger-kind-staging-tests.sh
-      - name: Provider workflow is valid YAML
-        run: |
-          ruby .github/scripts/cma-trigger-provider-contract.rb
-          ruby .github/scripts/cma-trigger-provider-contract.rb --self-test
-
-  structure:
-    name: Repository structure
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - name: Release notes validator regressions
-        run: .github/release-notes-tests.sh
-      - name: Release planning tests
-        run: bash .github/plan-release-tests.sh
-      - name: Release image reconciliation tests
-        run: bash .github/reconcile-release-image-tests.sh
-      - name: Release image pre-publish absence tests
-        run: bash .github/assert-release-image-tags-absent-tests.sh
-      - name: GitHub release reconciliation tests
-        run: bash .github/reconcile-github-release-tests.sh
-      - name: Release image export tests
-        run: bash .github/export-release-image-tests.sh
-      - name: Release image import tests
-        run: bash .github/import-release-images-tests.sh
-      - name: Pinned Skopeo transport integration
-        run: bash .github/skopeo-transport-tests.sh
-      - name: Root contains only permitted entries
-        run: |
-          allowed=".git .github api web infra docs sdk CLAUDE.md README.md .gitignore .dockerignore"
-          fail=0
-          shopt -s dotglob nullglob
-          for entry in *; do
-            case " $allowed " in
-              *" $entry "*) ;;
-              *) echo "::error::disallowed root entry: $entry"; fail=1 ;;
-            esac
-          done
-          exit $fail
-      - name: sdk/ contains only the fixed directory list
-        run: |
-          expected=$(printf '%s\n' sdk/rust sdk/typescript | sort)
-          actual=$(find sdk -mindepth 1 -maxdepth 1 -print | sort)
-          if [ "$expected" != "$actual" ]; then
-            echo "::error::sdk/ contents differ from the fixed directory list"
-            diff <(echo "$expected") <(echo "$actual") || true
-            exit 1
-          fi
-          for directory in $expected; do
-            if [ ! -d "$directory" ] || [ -L "$directory" ]; then
-              echo "::error::$directory must be a directory"
-              exit 1
-            fi
-          done
-      - name: infra/ contains only the fixed file list
-        run: |
-          # infra/runtime/ holds the bot-pod image only. It has no manifests of
-          # its own by design: the sandbox provider schedules that image, so
-          # this repository never declares a Deployment or Service for it.
-          expected=$(printf '%s\n' \
-            infra/api/Dockerfile infra/api/configmap.yaml infra/api/deployment.yaml \
-            infra/api/secret.yaml infra/api/service.yaml \
-            infra/api/serviceaccount.yaml infra/api/secretproviderclass.yaml \
-            infra/api/httproute.yaml infra/api/healthcheckpolicy.yaml \
-            infra/api/gcpbackendpolicy.yaml \
-            infra/runtime/Dockerfile \
-            infra/web/Dockerfile infra/web/configmap.yaml infra/web/deployment.yaml \
-            infra/web/secret.yaml infra/web/service.yaml \
-            infra/web/gcpbackendpolicy.yaml | sort)
-          actual=$(find infra -type f | sort)
-          if [ "$expected" != "$actual" ]; then
-            echo "::error::infra/ contents differ from the fixed list"
-            diff <(echo "$expected") <(echo "$actual") || true
-            exit 1
-          fi
-      - name: docs/ contains only markdown
-        run: |
-          bad=$(find docs -type f ! -name '*.md' || true)
-          if [ -n "$bad" ]; then echo "::error::non-markdown in docs/: $bad"; exit 1; fi
-      - name: SDK docs contain only markdown
-        run: |
-          bad=$(find sdk/*/docs -type f ! -name '*.md' || true)
-          if [ -n "$bad" ]; then echo "::error::non-markdown in SDK docs: $bad"; exit 1; fi
-      - name: Layer dependency rule
-        run: |
-          fail=0
-          grep -q 'layer3-adapter' api/crates/layer1-public/Cargo.toml \
-            && { echo "::error::layer1-public must not depend on layer3-adapter"; fail=1; }
-          grep -q 'layer1-public' api/crates/layer2-core/Cargo.toml \
-            && { echo "::error::layer2-core must not depend on layer1-public"; fail=1; }
-          grep -qE 'layer1-public|layer2-core' api/crates/layer3-adapter/Cargo.toml \
-            && { echo "::error::layer3-adapter must not depend on layer1 or layer2"; fail=1; }
-          grep -q 'layer4-runtime' api/crates/cma/Cargo.toml \
-            && { echo "::error::control plane must not depend on layer4-runtime"; fail=1; }
-          exit $fail
-      - name: Layer 2 is protocol- and kernel-agnostic
-        run: |
-          hits=$(grep -rniE 'agui|\ba2a\b|\bmcp\b|codex|claude[_-]?code' api/crates/layer2-core/src || true)
-          if [ -n "$hits" ]; then
-            echo "::error::protocol or kernel name found in layer2-core:"; echo "$hits"; exit 1
-          fi
-
-  secrets:
-    name: Secret scanning
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
+      -
+        uses: "actions/checkout@v5"
         with:
           fetch-depth: 0
-      - name: gitleaks
-        # The gitleaks GitHub Action requires a paid licence for organisations.
-        # The scanner itself is open source, so run the binary directly.
-        run: |
-          # Download outside the working tree: the gitleaks binary itself
-          # contains the annotation strings the next step forbids.
-          curl -sSL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
-            https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
-          tar xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP" gitleaks
-          "$RUNNER_TEMP/gitleaks" detect --source . --redact --verbose --exit-code 1
-      - name: Reject any gitleaks allowlist
-        run: |
-          if find . -name '.gitleaks.toml' -o -name 'gitleaks.toml' | grep -q .; then
-            echo "::error::gitleaks configuration is not permitted; fix the offending string instead"
-            exit 1
-          fi
-          needle="gitleaks:""allow"
-          if grep -rnF "$needle" --exclude-dir=.git . ; then
-            echo "::error::bypass annotations are not permitted; fix the offending string instead"
-            exit 1
-          fi
-
-  backend:
-    name: Backend
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: api
+      -
+        name: "Read pinned Rust toolchain"
+        id: "toolchain"
+        working-directory: "."
+        run: "python3 -c 'import os,tomllib; v=tomllib.load(open(\"api/rust-toolchain.toml\",\"rb\"))[\"toolchain\"][\"channel\"]; open(os.environ[\"GITHUB_OUTPUT\"],\"a\").write(\"channel=\"+v+\"\\n\")'"
+      -
+        uses: "dtolnay/rust-toolchain@stable"
+        with:
+          toolchain: "${{ steps.toolchain.outputs.channel }}"
+          components: "rustfmt, clippy"
+      -
+        uses: "actions/setup-python@v6"
+        with:
+          python-version: "3.12"
+      -
+        name: "Install selector parsers"
+        run: "python3 -m pip install --disable-pip-version-check -r .github/scripts/ci_tracks/requirements.txt"
+      -
+        name: "Select from changed paths and Cargo dependencies"
+        id: "select"
+        run: "python3 -B .github/scripts/ci_tracks/selection.py --ci"
+  version-label:
+    permissions:
+      contents: "read"
+      pull-requests: "read"
+    name: "CI / Version label"
+    needs:
+      - "changes"
+    if: "always()"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: api
-      - name: Format
-        run: cargo fmt --all --check
-      - name: Lint
-        run: cargo clippy --all-targets --all-features --locked -- -D warnings
-      - name: Build
-        run: cargo build --workspace --locked
-      - uses: taiki-e/install-action@nextest
-      - name: Tests
-        run: cargo nextest run --workspace --locked
-      - name: Doctests
-        run: cargo test --doc --workspace --locked
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          manifest-path: api/Cargo.toml
-          command: check advisories licenses bans sources
-
-  sdk-typescript:
-    name: TypeScript SDK
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: sdk/typescript
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: sdk/typescript/package-lock.json
-      - name: Install (lockfile integrity)
-        run: npm ci
-      - name: Server fixtures are byte-identical
-        run: |
-          diff -ru ../../api/crates/layer1-public/tests/fixtures/rest-sdk tests/fixtures
-          diff -ru ../../api/crates/layer1-public/tests/fixtures/agui-sdk tests/agui-fixtures
-      - name: Format
-        run: npm run format:check
-      - name: Lint
-        run: npm run lint
-      - name: Type check
-        run: npm run typecheck
-      - name: Tests and coverage
-        run: npm run test:coverage
-      - name: Build
-        run: npm run build
-      - name: Documentation examples
-        run: npm run docs:check
-      - name: Repository package contents
-        run: npm pack --dry-run
-      - name: Scratch Node consumer
-        run: |
-          archive=$(npm pack --silent --pack-destination "$RUNNER_TEMP")
-          scratch=$(mktemp -d)
-          cd "$scratch"
-          npm init --yes >/dev/null
-          npm install --silent --ignore-scripts "$RUNNER_TEMP/$archive"
-          node --input-type=module <<'NODE'
-          import { createClient } from '@chronoai/cma-sdk';
-          import { transcriptNamed } from '@chronoai/cma-sdk/testing';
-
-          const client = createClient({ baseUrl: 'https://example.invalid' });
-          if (typeof client.createSession !== 'function' || typeof client.streamEvents !== 'function') {
-            throw new Error('the package entry point did not expose the client surface');
-          }
-          if (transcriptNamed('plain-turn').frames.length === 0) {
-            throw new Error('the package testing entry point did not expose its fixtures');
-          }
-          NODE
-      - name: Dependency audit
-        run: npm audit --audit-level=high
-
-  sdk-rust:
-    name: Rust SDK
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: sdk/rust
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: 1.96.1
-          components: rustfmt, clippy, llvm-tools-preview
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: sdk/rust
-      - name: Server fixtures are byte-identical
-        run: diff -ru ../../api/crates/layer1-public/tests/fixtures/rest-sdk tests/fixtures
-      - name: No service crate dependency
-        run: |
-          if cargo tree --locked --prefix none | grep -Eq '^layer[0-9]'; then
-            echo "::error::the client SDK must not link a service layer crate"
-            exit 1
-          fi
-      - name: Format
-        run: cargo fmt --all --check
-      - name: Lint
-        run: cargo clippy --all-targets --all-features --locked -- -D warnings
-      - name: Build
-        run: cargo build --all-targets --locked
-      - uses: taiki-e/install-action@nextest
-      - name: Tests
-        run: cargo nextest run --locked
-      - name: Doctests
-        run: cargo test --doc --locked
-      - name: Scratch consumer
-        run: |
-          scratch=$(mktemp -d)
-          cargo new --quiet --bin "$scratch/consumer"
-          cargo add --quiet --manifest-path "$scratch/consumer/Cargo.toml" \
-            cma-sdk --path "$GITHUB_WORKSPACE/sdk/rust"
-          cargo add --quiet --manifest-path "$scratch/consumer/Cargo.toml" \
-            tokio --features macros,rt-multi-thread
-          cp examples/readme.rs "$scratch/consumer/src/main.rs"
-          CMA_SDK_EXAMPLE_DRY_RUN=1 \
-            cargo run --quiet --locked --manifest-path "$scratch/consumer/Cargo.toml"
-      - uses: taiki-e/install-action@cargo-llvm-cov
-      - name: Coverage
-        run: cargo llvm-cov nextest --locked --fail-under-lines 80
-      - uses: EmbarkStudios/cargo-deny-action@v2
-        with:
-          manifest-path: sdk/rust/Cargo.toml
-          command: check advisories licenses bans sources
-
-  frontend:
-    name: Frontend
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: web
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 26
-          cache: npm
-          cache-dependency-path: |
-            sdk/typescript/package-lock.json
-            web/package-lock.json
-      - name: Install TypeScript SDK (lockfile integrity)
-        working-directory: sdk/typescript
-        run: npm ci
-      - name: Build TypeScript SDK
-        working-directory: sdk/typescript
-        run: npm run build
-      - name: Install (lockfile integrity)
-        run: npm ci
-      - name: Format
-        run: npx prettier --check .
-      - name: Lint
-        run: npm run lint
-      - name: Type check
-        run: npm run typecheck
-      - name: Tests
-        run: npm run test
-      - name: Production build
-        run: npm run build
-      # The one check the rest of this job cannot make. Everything above runs
-      # under jsdom, which resolves no custom properties at all — so a
-      # stylesheet that parses and computes to nothing passes every one of
-      # them. #339 shipped through twenty-two green pull requests that way,
-      # with the whole product rendering on browser defaults.
-      #
-      # Runs against the built output rather than the source: a sheet that is
-      # correct in src/ and broken after bundling is still broken.
-      - name: CSS collisions
-        # These sheets are global, so a class declared in two files silently
-        # merges and load order decides. That is how an unrelated selection
-        # list handed every picker in the product an overflow it never asked
-        # for, which clipped the picker's own menu inside its own anchor.
-        run: npm run check:css
-      - name: Computed styles
-        # Bounded: a browser that never answers should fail this job rather
-        # than hold a runner for the workflow's whole timeout.
-        timeout-minutes: 5
-        run: npm run check:styles
-      - name: Signed-in surfaces
-        # The check above cannot get past identity, and the interface is
-        # mostly behind it — a picker whose list was clipped to two of five
-        # options shipped underneath a green suite because of that.
-        timeout-minutes: 5
-        run: npm run check:surfaces
-      - name: Trigger browser journey
-        timeout-minutes: 5
-        run: npm run check:trigger-journey
-      - name: Dependency audit
-        run: npm audit --audit-level=high
-
-  manifests:
-    name: Manifests
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.4"
-      - name: HTTPRoute ownership
-        run: ruby .github/scripts/check-http-route-backends.rb
-      - name: kubeconform
-        run: |
-          curl -sSL -o kubeconform.tar.gz \
-            https://github.com/yannh/kubeconform/releases/download/v0.8.0/kubeconform-linux-amd64.tar.gz
-          tar xzf kubeconform.tar.gz kubeconform
-          # The routes and the secret-provider class are custom resources, and
-          # kubeconform ships schemas only for built-in kinds. They are given a
-          # schema catalogue rather than -ignore-missing-schemas: skipping
-          # validation for exactly the manifests most likely to be hand-edited
-          # would leave the gate reporting success on files it never read.
-          ./kubeconform -strict -summary -output text \
-            -schema-location default \
-            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
-            infra/api/*.yaml infra/web/*.yaml
-      - name: kube-linter
-        uses: stackrox/kube-linter-action@v1
-        with:
-          directory: infra
-
-  images:
-    name: Images
-    runs-on: ubuntu-24.04
-    # A build or short-lived image transfer that hangs must fail rather than
-    # occupy a runner for six hours. This matches the release image budget.
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        # Adding a value here adds a check named "Images (<value>)" and leaves
-        # the existing names untouched, so branch protection keeps reporting.
-        # The new check is not required until it is added to the ruleset.
-        component: [api, web, runtime]
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      # arm64 builds run under emulation on the amd64 runner.
-      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      # Proves the Dockerfile builds for every architecture the cluster may
-      # schedule onto. Discarded via cacheonly rather than loaded: the docker
-      # exporter behind `load: true` cannot export a multi-platform manifest
-      # list, so a combined build-and-load would fail outright.
-      #
-      # Architecture is chosen per component because emulation is not equally
-      # priced. arm64 runs under QEMU on an amd64 runner, which a Node build
-      # absorbs in minutes and a Rust release build does not — emulated, the
-      # api and runtime compiles ran for hours and timed out, while web
-      # finished normally.
-      #
-      # Every node in the target cluster is amd64 and there is no arm64 pool,
-      # so an emulated arm64 Rust image is spending the bulk of CI on an
-      # artifact nothing can schedule. web keeps both because it costs little
-      # and still exercises multi-platform assembly.
-      #
-      # If an arm64 pool ever appears, the place to restore this is a publish
-      # job on merge, not the PR path: the guarantee is worth having on images
-      # that ship, not on every push.
-      - name: Build image for all target platforms
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: infra/${{ matrix.component }}/Dockerfile
-          platforms: ${{ matrix.component == 'web' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
-          push: false
-          outputs: type=cacheonly
-          build-args: |
-            CHRONO_BUILD_SHA=${{ github.sha }}
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
-          # Scoped per component so api and web never overwrite each other's
-          # cache. A branch's first run is still cold, since it can only read
-          # what the base branch has already populated.
-          cache-from: type=gha,scope=${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
-      # Reuses the layers just cached above, so this is near-free.
-      - name: Load native image for scanning
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: .
-          file: infra/${{ matrix.component }}/Dockerfile
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: cma-${{ matrix.component }}:ci
-          build-args: |
-            CHRONO_BUILD_SHA=${{ github.sha }}
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
-          cache-from: type=gha,scope=${{ matrix.component }}
-      - name: Initialize closed Trigger runtime evidence
-        if: ${{ always() && matrix.component == 'runtime' }}
+      -
+        uses: "actions/checkout@v5"
+      -
         env:
-          D09_EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-d09.json
-          D09_FALLBACK_PATH: ${{ runner.temp }}/cma-trigger-d09-fallback.json
-        run: |
-          set -euo pipefail
-          now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-          jq -n \
-            --arg started_at "$now" \
-            --arg recorded_at "$now" \
-            --arg build_commit "$GITHUB_SHA" \
-            '{
-              schema: "cma-trigger-d09-v3",
-              evidenceClass: "D",
-              result: "inconclusive",
-              startedAt: $started_at,
-              recordedAt: $recorded_at,
-              buildCommit: $build_commit,
-              image: null,
-              artifacts: null,
-              failure: {code: "ci_runtime_gate_incomplete"},
-              cleanup: {status: "not_started", failureCodes: []},
-              redaction: "Only closed outcomes, status classes, artifact hashes, synthetic identities, and counts are retained; provider bodies and credential values are discarded."
-            }' > "$D09_FALLBACK_PATH"
-          cp "$D09_FALLBACK_PATH" "$D09_EVIDENCE_PATH"
-      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
-        if: matrix.component == 'runtime'
-        with:
-          node-version: 26
-      - name: Prepare Codex bubblewrap AppArmor profile
-        if: matrix.component == 'runtime'
-        run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            apparmor-profiles \
-            apparmor-utils
-          sudo install -m 0644 \
-            /usr/share/apparmor/extra-profiles/bwrap-userns-restrict \
-            /etc/apparmor.d/bwrap-userns-restrict
-          sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
-      - name: Pinned Trigger runtime network boundary
-        if: matrix.component == 'runtime'
-        run: |
-          node --check .github/scripts/cma-trigger-runtime-image-smoke.mjs
-          node .github/scripts/cma-trigger-runtime-image-smoke.mjs --self-test
-          node .github/scripts/cma-trigger-runtime-image-smoke.mjs \
-            --image cma-runtime:ci \
-            --build-commit "${{ github.sha }}" \
-            --expected-architecture amd64 \
-            --output "$RUNNER_TEMP/cma-trigger-d09.json"
-      - name: Close Trigger runtime evidence
-        if: ${{ always() && matrix.component == 'runtime' }}
+          DEPLOYABLES: "${{ needs.changes.outputs.deployables }}"
+          SELECTOR_RESULT: "${{ needs.changes.result }}"
+          GH_TOKEN: "${{ github.token }}"
+        run: "python3 -B .github/scripts/ci_tracks/version_label.py"
+  repo:
+    name: "Repo checks"
+    uses: "./.github/workflows/ci-repo.yml"
+  rust-test-build:
+    name: "Rust test build"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
+    uses: "./.github/workflows/ci-rust-archive.yml"
+  am:
+    name: "Agent Manager checks"
+    needs:
+      - "changes"
+      - "rust-test-build"
+    if: "needs.changes.outputs.am == 'true'"
+    uses: "./.github/workflows/ci-rust.yml"
+    with:
+      track: "am"
+      packages: "${{ needs.changes.outputs.am_packages }}"
+  eg:
+    name: "Event Gateway checks"
+    needs:
+      - "changes"
+      - "rust-test-build"
+    if: "needs.changes.outputs.eg == 'true'"
+    uses: "./.github/workflows/ci-rust.yml"
+    with:
+      track: "eg"
+      packages: "${{ needs.changes.outputs.eg_packages }}"
+  web:
+    name: "Web checks"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.web == 'true'"
+    uses: "./.github/workflows/ci-web.yml"
+  am-images:
+    name: "AM images"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.am == 'true'"
+    uses: "./.github/workflows/ci-images.yml"
+    with:
+      components: "[\"api\"]"
+  eg-images:
+    name: "EG images"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.eg == 'true'"
+    uses: "./.github/workflows/ci-images.yml"
+    with:
+      components: "[\"cmaeg\"]"
+  web-images:
+    name: "WEB images"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.web == 'true'"
+    uses: "./.github/workflows/ci-images.yml"
+    with:
+      components: "[\"web\"]"
+  runtime-images:
+    name: "Shared runtime images"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
+    uses: "./.github/workflows/ci-images.yml"
+    with:
+      components: "[\"runtime\"]"
+  omarchy:
+    name: "Runtime Omarchy"
+    needs:
+      - "changes"
+    if: "needs.changes.outputs.am == 'true' || needs.changes.outputs.eg == 'true'"
+    uses: "./.github/workflows/ci-omarchy.yml"
+  gate-repo:
+    name: "CI / Repo"
+    needs:
+      - "changes"
+      - "repo"
+      - "version-label"
+    if: "always()"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      -
+        uses: "actions/checkout@v5"
+      -
+        name: "Validate track result"
         env:
-          D09_EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-d09.json
-          D09_FALLBACK_PATH: ${{ runner.temp }}/cma-trigger-d09-fallback.json
-        run: |
-          set -euo pipefail
-          if ! jq -e \
-            --arg build_commit "$GITHUB_SHA" \
-            --arg source_reference "cma-runtime:ci" \
-            'def sha256:
-               (type == "string") and test("^[0-9a-f]{64}$");
-             def bounded_body:
-               ((.bodyBytes | type) == "number")
-               and (.bodyBytes >= 0 and .bodyBytes <= 65536)
-               and ((.bodyBytes | floor) == .bodyBytes)
-               and (.bodySha256 | sha256);
-             type == "object"
-              and (.schema == "cma-trigger-d09-v3")
-              and (.evidenceClass == "D")
-              and (.result == "pass" or .result == "fail" or .result == "inconclusive")
-              and ((.startedAt | type) == "string" and (.startedAt | length) > 0)
-              and ((.recordedAt | type) == "string" and (.recordedAt | length) > 0)
-              and (.buildCommit == $build_commit)
-              and (has("image"))
-              and (has("artifacts"))
-              and ((.cleanup | type) == "object")
-              and ((.cleanup.status | type) == "string")
-              and ((.cleanup.failureCodes | type) == "array")
-              and (.redaction == "Only closed outcomes, status classes, artifact hashes, synthetic identities, and counts are retained; provider bodies and credential values are discarded.")
-              and (if .result == "pass"
-                   then ((keys == [
-                           "artifacts", "buildCommit", "capability", "cleanup",
-                           "connect", "evidenceClass", "image", "isolationDenials",
-                           "listeners", "managedDenials", "outcomes",
-                           "permissionProfile", "providerFixture", "recordedAt",
-                           "redaction", "result", "schema", "startedAt",
-                           "startupRefusals", "traversal", "workspaceFence"
-                         ])
-                         and ((.image | type) == "object")
-                         and ((.image | keys) == [
-                           "architecture", "id", "os", "reference",
-                           "repoDigests", "revision"
-                         ])
-                         and (.image.reference == $source_reference)
-                         and (.image.id | test("^sha256:[0-9a-f]{64}$"))
-                         and ((.image.repoDigests | type) == "array")
-                         and (all(.image.repoDigests[];
-                           (type == "string") and test("@sha256:[0-9a-f]{64}$")
-                         ))
-                         and (.image.os == "linux")
-                         and (.image.architecture == "amd64")
-                         and (.image.revision == $build_commit)
-                         and ((.artifacts | type) == "object")
-                         and ((.artifacts | keys) == [
-                           "acpHash", "acpVersion", "architecture",
-                           "bwrapHash", "bwrapPath", "bwrapVersion",
-                           "codexLauncherHash", "codexNativeHash", "codexVersion",
-                           "platform", "runtimeHash", "uid"
-                         ])
-                         and (.artifacts.codexVersion == "codex-cli 0.147.0")
-                         and (.artifacts.acpVersion == "1.4.0")
-                         and (.artifacts.acpHash == "2c370f2337a5cc689d9a76b4bba1289d42afe6c17de824e2ca48004ba9670ab6")
-                         and (.artifacts.bwrapPath == "/usr/bin/bwrap")
-                         and (.artifacts.bwrapVersion | test("^bubblewrap [0-9]+\\.[0-9]+(\\.[0-9]+)?([-+~].*)?$"))
-                         and (.artifacts.bwrapHash | sha256)
-                         and (.artifacts.codexLauncherHash == "134063e133f0b4244fa3b251acf973d4fe4b4aeeacbdc135211bf480f59f1477")
-                         and (.artifacts.codexNativeHash == "cb0a15567e9a60a5820d54b0f6ae86d504dc3805c1eab21a47f70e3eb7b73a40")
-                         and (.artifacts.runtimeHash | sha256)
-                         and (.artifacts.uid == 10001)
-                         and (.artifacts.platform == "linux")
-                         and (.artifacts.architecture == "x64")
-                         and (.permissionProfile == {
-                           name: "cma-trigger",
-                           approvalPolicy: "never",
-                           sha256: "65ce3deca2d907481d999d1ec56a52ad3017644417e262a89cdf9ca1ad649be2",
-                           allowedDomains: ["127.0.0.2"],
-                           socks5: false,
-                           upstreamProxy: false,
-                           localBinding: false
-                         })
-                         and ((.listeners | type) == "array")
-                         and ((.listeners | length) == 5)
-                         and (.listeners == (.listeners | sort))
-                         and ((.listeners | map(select(startswith("127.")))) == [
-                           "127.0.0.1:9091", "127.0.0.2:9090",
-                           "127.0.0.2:9091", "127.0.0.2:9092"
-                         ])
-                         and ((.listeners | map(select(startswith("127.") | not)) | length) == 1)
-                         and ((.listeners | map(select(startswith("127.") | not))[0]
-                           | test("^[0-9]{1,3}(\\.[0-9]{1,3}){3}:9090$")
-                             and (startswith("0.0.0.0:") | not)))
-                         and (.outcomes == {
-                           missingPolicy: "policy_denied",
-                           wrongGeneration: "stale_generation",
-                           allowed: "allowed",
-                           providerDenied: "provider_denied",
-                           brokerTransient: "transient_broker_failure",
-                           wrongService: "policy_denied",
-                           wrongCatalogService: "policy_denied",
-                           wrongUserServiceSlug: "policy_denied",
-                           wrongResource: "policy_denied"
-                         })
-                         and (.capability == {
-                           firstGeneration: 2,
-                           lastGeneration: 9,
-                           renewedBeforeEveryProviderProbe: true
-                         })
-                         and ((.workspaceFence | keys) == [
-                           "adoptedBySupervisor", "boundary",
-                           "escapedOriginalSession", "fullyDaemonized",
-                           "quiescedWriters", "reapedAfterExit", "resumed",
-                           "stableWhileHeld"
-                         ])
-                         and (.workspaceFence.boundary == "linux_child_subreaper_v1")
-                         and (.workspaceFence.fullyDaemonized == true)
-                         and (.workspaceFence.adoptedBySupervisor == true)
-                         and (.workspaceFence.escapedOriginalSession == true)
-                         and ((.workspaceFence.quiescedWriters | type) == "number")
-                         and (.workspaceFence.quiescedWriters >= 2)
-                         and ((.workspaceFence.quiescedWriters | floor) == .workspaceFence.quiescedWriters)
-                         and (.workspaceFence.stableWhileHeld == true)
-                         and (.workspaceFence.resumed == true)
-                         and (.workspaceFence.reapedAfterExit == true)
-                         and ((.managedDenials | map(.target)) == [
-                           "127.0.0.1", "localhost", "public-destination",
-                           "pod-address"
-                         ])
-                         and (all(.managedDenials[];
-                           (keys == ["bodyBytes", "bodySha256", "marker", "status", "target"])
-                           and (.status == 403)
-                           and (.marker == "blocked-by-allowlist")
-                           and bounded_body
-                         ))
-                         and ((.isolationDenials | map(.target)) == [
-                           "supervisor-front", "model-front"
-                         ])
-                         and (all(.isolationDenials[];
-                           (keys == ["bodyBytes", "bodySha256", "marker", "status", "target"])
-                           and (.status == 403)
-                           and (.marker == "denied")
-                           and (.bodyBytes == 0)
-                           and (.bodySha256 == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
-                         ))
-                         and ((.traversal | map(.form)) == [
-                           "literal-dot-dot", "encoded-dot-dot",
-                           "double-encoded-dot-dot", "mixed-dot-dot",
-                           "encoded-slash", "backslash",
-                           "canonical-github-slug-route", "suffixed-github-slug-route",
-                           "pat-lookalike-slug-route", "user-service-id-as-slug-route",
-                           "catalog-service-id-as-slug-route"
-                         ])
-                         and (all(.traversal[];
-                           (keys == ["bodyBytes", "bodySha256", "form", "outcome", "status"])
-                           and (.status == 403)
-                           and (.outcome == "policy_denied")
-                           and bounded_body
-                         ))
-                         and ((.connect | map([.path, .target])) == [
-                           ["direct-listener", "supervisor"],
-                           ["direct-listener", "model-proxy"],
-                           ["direct-listener", "platform-upstream"],
-                           ["direct-listener", "public-destination"],
-                           ["cma-trigger-sandbox", "supervisor"],
-                           ["cma-trigger-sandbox", "model-proxy"],
-                           ["cma-trigger-sandbox", "platform-upstream"],
-                           ["cma-trigger-sandbox", "public-via-gateway"],
-                           ["cma-trigger-sandbox", "public-direct"],
-                           ["cma-trigger-sandbox", "platform-direct"]
-                         ])
-                         and (all(.connect[];
-                           ((.status | type) == "number")
-                           and ((.status | floor) == .status)
-                           and (.status < 200 or .status >= 300)
-                           and bounded_body
-                           and (if .path == "direct-listener"
-                                then (keys == ["bodyBytes", "bodySha256", "path", "status", "target"])
-                                else (keys == ["bodyBytes", "bodySha256", "marker", "path", "status", "target"])
-                                end)
-                         ))
-                         and ([.connect[] | select(.path == "cma-trigger-sandbox") | [.target, .marker]] == [
-                           ["supervisor", "blocked-by-allowlist"],
-                           ["model-proxy", "blocked-by-allowlist"],
-                           ["platform-upstream", null],
-                           ["public-via-gateway", null],
-                           ["public-direct", "blocked-by-allowlist"],
-                           ["platform-direct", "blocked-by-allowlist"]
-                         ])
-                         and ((.startupRefusals | map(.name)) == [
-                           "occupied-supervisor-ingress", "occupied-model-proxy",
-                           "occupied-supervisor-denial", "occupied-model-denial",
-                           "occupied-platform-gateway", "loopback-supervisor-ingress",
-                           "missing-model-upstream", "missing-platform-upstream",
-                           "missing-gateway-command", "missing-policy-keyring"
-                         ])
-                         and (all(.startupRefusals[];
-                           (keys == [
-                             "exitCode", "markerObserved", "name", "readyAnswered",
-                             "readyStatusCount", "signal"
-                           ])
-                           and (.exitCode == 2)
-                           and (.signal == null)
-                           and (.readyAnswered == false)
-                           and (.readyStatusCount == 0)
-                           and (.markerObserved == true)
-                         ))
-                         and (.providerFixture == {
-                           githubCalls: 3,
-                           modelCalls: 0,
-                           connectCalls: 0,
-                           unexpectedCalls: 0,
-                           authorizationFailures: 0,
-                           probeHeaderLeaks: 0
-                         })
-                         and (.cleanup == {status: "verified", failureCodes: []}))
-                   else ((keys == [
-                           "artifacts", "buildCommit", "cleanup", "evidenceClass",
-                           "failure", "image", "recordedAt", "redaction", "result",
-                           "schema", "startedAt"
-                         ])
-                         and (.result == "fail" or .result == "inconclusive")
-                         and (.image == null or (.image | type) == "object")
-                         and (.artifacts == null or (.artifacts | type) == "object")
-                         and ((.failure | type) == "object")
-                         and ((.failure | keys) == ["code"])
-                         and ((.failure.code | type) == "string")
-                         and ((.failure.code | length) > 0)
-                         and ((.cleanup | keys) == ["failureCodes", "status"])
-                         and (.cleanup.status == "not_started"
-                              or .cleanup.status == "verified"
-                              or .cleanup.status == "failed")
-                         and (all(.cleanup.failureCodes[];
-                           (type == "string") and (length > 0)
-                         )))
-                   end)' \
-            "$D09_EVIDENCE_PATH" >/dev/null 2>&1; then
-            now=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
-            jq \
-              --arg recorded_at "$now" \
-              '.recordedAt = $recorded_at
-                | .failure = {code: "evidence_record_invalid"}' \
-              "$D09_FALLBACK_PATH" > "$D09_EVIDENCE_PATH.tmp"
-            mv "$D09_EVIDENCE_PATH.tmp" "$D09_EVIDENCE_PATH"
-          fi
-      - name: Retain Trigger runtime boundary evidence
-        if: ${{ always() && matrix.component == 'runtime' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: cma-trigger-d09-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/cma-trigger-d09.json
-          if-no-files-found: error
-          retention-days: 90
-      - name: Require passing Trigger runtime evidence
-        if: ${{ always() && matrix.component == 'runtime' }}
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/ci_tracks/gate.py repo"
+  gate-am:
+    name: "CI / Agent Manager"
+    needs:
+      - "changes"
+      - "rust-test-build"
+      - "am"
+      - "am-images"
+      - "runtime-images"
+      - "omarchy"
+    if: "always()"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      -
+        uses: "actions/checkout@v5"
+      -
+        name: "Validate track result"
         env:
-          D09_EVIDENCE_PATH: ${{ runner.temp }}/cma-trigger-d09.json
-        run: jq -e '.result == "pass"' "$D09_EVIDENCE_PATH" >/dev/null
-      - name: Vulnerability scan
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: cma-${{ matrix.component }}:ci
-          format: table
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          ignore-unfixed: true
-
-      # A protected provider smoke must consume the exact images that passed
-      # this job, not rebuild them from mutable package indexes after approval.
-      # Keep the transfer short-lived and bind every byte to the successful
-      # develop push that produced it.
-      - name: Export scanned image provenance
-        if: ${{ success() && github.repository_id == '1330597394' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && (matrix.component == 'api' || matrix.component == 'runtime') }}
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/ci_tracks/gate.py am"
+  gate-eg:
+    name: "CI / Event Gateway"
+    needs:
+      - "changes"
+      - "rust-test-build"
+      - "eg"
+      - "eg-images"
+      - "runtime-images"
+      - "omarchy"
+    if: "always()"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      -
+        uses: "actions/checkout@v5"
+      -
+        name: "Validate track result"
         env:
-          COMPONENT: ${{ matrix.component }}
-          EXPECTED_REPOSITORY_ID: "1330597394"
-          IMAGE_EXPORT_ROOT: ${{ runner.temp }}/cma-trigger-ci-image-${{ matrix.component }}-${{ github.sha }}
-        run: |
-          set -euo pipefail
-          umask 077
-
-          # COMPONENT is supplied by this step's reviewed env binding.
-          # shellcheck disable=SC2153
-          component="$COMPONENT"
-          case "$component" in
-            api|runtime) ;;
-            *)
-              echo "::error::only the api and runtime images may enter provider provenance"
-              exit 1
-              ;;
-          esac
-          if [ "$GITHUB_EVENT_NAME" != push ] || [ "$GITHUB_REF" != refs/heads/develop ]; then
-            echo "::error::CI image provenance is restricted to develop push runs"
-            exit 1
-          fi
-          if [ "$GITHUB_REPOSITORY_ID" != "$EXPECTED_REPOSITORY_ID" ]; then
-            echo "::error::CI image provenance ran in an unreviewed repository"
-            exit 1
-          fi
-          if [[ ! "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] \
-            || [[ ! "$GITHUB_RUN_ID" =~ ^[1-9][0-9]*$ ]] \
-            || [[ ! "$GITHUB_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::CI image provenance has malformed GitHub run identity"
-            exit 1
-          fi
-
-          reference="cma-${component}:ci"
-          archive_name="cma-trigger-${component}.tar"
-          metadata_name="cma-trigger-${component}.json"
-          if [ -e "$IMAGE_EXPORT_ROOT" ]; then
-            echo "::error::CI image provenance output already exists"
-            exit 1
-          fi
-          install -d -m 0700 "$IMAGE_EXPORT_ROOT"
-          archive_path="$IMAGE_EXPORT_ROOT/$archive_name"
-          metadata_path="$IMAGE_EXPORT_ROOT/$metadata_name"
-
-          image_id=$(docker image inspect --format '{{.Id}}' "$reference")
-          if [[ ! "$image_id" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "::error::scanned image has a malformed immutable image ID"
-            exit 1
-          fi
-          docker image save --output "$archive_path" "$reference"
-          chmod 0400 "$archive_path"
-          archive_sha256=$(sha256sum "$archive_path" | awk '{print $1}')
-          archive_size=$(stat --format='%s' "$archive_path")
-          if [[ ! "$archive_sha256" =~ ^[0-9a-f]{64}$ ]] \
-            || [[ ! "$archive_size" =~ ^[1-9][0-9]*$ ]]; then
-            echo "::error::exported image archive has malformed immutable metadata"
-            exit 1
-          fi
-
-          jq -n \
-            --arg archive_name "$archive_name" \
-            --arg archive_sha256 "$archive_sha256" \
-            --argjson archive_size "$archive_size" \
-            --arg component "$component" \
-            --arg image_id "$image_id" \
-            --arg image_reference "$reference" \
-            --argjson repository_id "$GITHUB_REPOSITORY_ID" \
-            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
-            --argjson run_id "$GITHUB_RUN_ID" \
-            --arg source_sha "$GITHUB_SHA" \
-            '{
-              schema_version: 1,
-              kind: "cma-trigger-ci-image",
-              repository_id: $repository_id,
-              source_sha: $source_sha,
-              run_id: $run_id,
-              run_attempt: $run_attempt,
-              component: $component,
-              image_reference: $image_reference,
-              image_id: $image_id,
-              archive_name: $archive_name,
-              archive_sha256: $archive_sha256,
-              archive_size: $archive_size
-            }' > "$metadata_path"
-          jq -e \
-            --arg archive_name "$archive_name" \
-            --arg archive_sha256 "$archive_sha256" \
-            --argjson archive_size "$archive_size" \
-            --arg component "$component" \
-            --arg image_id "$image_id" \
-            --arg image_reference "$reference" \
-            --argjson repository_id "$GITHUB_REPOSITORY_ID" \
-            --argjson run_attempt "$GITHUB_RUN_ATTEMPT" \
-            --argjson run_id "$GITHUB_RUN_ID" \
-            --arg source_sha "$GITHUB_SHA" \
-            'type == "object"
-             and (keys == [
-               "archive_name", "archive_sha256", "archive_size", "component",
-               "image_id", "image_reference", "kind", "repository_id",
-               "run_attempt", "run_id", "schema_version", "source_sha"
-             ])
-             and .schema_version == 1
-             and .kind == "cma-trigger-ci-image"
-             and .repository_id == $repository_id
-             and .source_sha == $source_sha
-             and .run_id == $run_id
-             and .run_attempt == $run_attempt
-             and .component == $component
-             and .image_reference == $image_reference
-             and .image_id == $image_id
-             and .archive_name == $archive_name
-             and .archive_sha256 == $archive_sha256
-             and .archive_size == $archive_size' \
-            "$metadata_path" >/dev/null
-          chmod 0400 "$metadata_path"
-
-      - name: Upload scanned image provenance
-        if: ${{ success() && github.repository_id == '1330597394' && github.event_name == 'push' && github.ref == 'refs/heads/develop' && (matrix.component == 'api' || matrix.component == 'runtime') }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: cma-trigger-ci-image-${{ matrix.component }}-${{ github.sha }}
-          path: |
-            ${{ runner.temp }}/cma-trigger-ci-image-${{ matrix.component }}-${{ github.sha }}/cma-trigger-${{ matrix.component }}.tar
-            ${{ runner.temp }}/cma-trigger-ci-image-${{ matrix.component }}-${{ github.sha }}/cma-trigger-${{ matrix.component }}.json
-          if-no-files-found: error
-          retention-days: 1
-          compression-level: 0
-          overwrite: true
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/ci_tracks/gate.py eg"
+  gate-web:
+    name: "CI / Web"
+    needs:
+      - "changes"
+      - "web"
+      - "web-images"
+    if: "always()"
+    runs-on: "ubuntu-latest"
+    timeout-minutes: 5
+    steps:
+      -
+        uses: "actions/checkout@v5"
+      -
+        name: "Validate track result"
+        env:
+          NEEDS: "${{ toJSON(needs) }}"
+        run: "python3 -B .github/scripts/ci_tracks/gate.py web"

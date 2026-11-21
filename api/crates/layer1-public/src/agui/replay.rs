@@ -1,300 +1,387 @@
-//! Reading a session's history, and following it, in AG-UI's own vocabulary.
-//!
-//! §7 of the document tells a client that a dropped stream is recovered by
-//! reading the durable log rather than by re-posting the run — which would
-//! start a second turn. It then sent them to a REST route, which answers in
-//! the core's vocabulary and not this one. A client that followed the
-//! instruction received frames it could not read, and drew nothing.
-//!
-//! So the replay lives here, beside the run it recovers, and projects through
-//! exactly the same `project` the run stream uses. One projection, two ways in:
-//! a client that reconnects sees the frames it would have seen live, which is
-//! the equivalence §18.1 of `Web_Style.md` asks the surface to preserve.
-//!
-//! An interface projects the core in its own idiom (`CLAUDE.md` §3). That is
-//! why this is not a mode on the REST route: REST emitting AG-UI frames would
-//! be one interface wearing another's vocabulary, and a client would have no
-//! way to know which it was being handed.
-
-use std::convert::Infallible;
-use std::sync::Arc;
+#[path = "replay_queue.rs"]
+mod replay_queue;
+use crate::stream_telemetry::{self, Kind, Poll};
+use std::{collections::VecDeque, time::Duration};
 
 use axum::{
     extract::{Query, State},
     http::StatusCode,
-    response::{
-        sse::{Event as SseEvent, KeepAlive, Sse},
-        IntoResponse, Response,
-    },
+    response::{sse::KeepAlive, IntoResponse, Response, Sse},
 };
-use futures_util::stream::{self, Stream};
-use layer2_core::{CoreError, SessionId};
+use futures_util::stream;
+use layer2_core::{
+    sandbox::{
+        AgentEventStreamAuthorization, AgentLiveDelivery, AgentLiveFragmentKind,
+        AgentLiveSubscription, AgentLogEntry, AgentLogKind, PendingAgentApprovals,
+    },
+    AgentId, Caller,
+};
 use serde::Deserialize;
 
-use super::project::project;
-use super::resources::{next_frame, project_reading, Woke, POLL_INTERVAL};
-use super::{SessionsState, KEEPALIVE_INTERVAL};
-use crate::auth::AuthenticatedCaller;
-use crate::rest::{problem_document, problem_response, Problem};
+#[cfg(test)]
+#[path = "replay_compatibility_tests.rs"]
+mod compatibility_tests;
 
-/// A replay refusal, including the one condition owned by this projection.
-#[derive(Debug)]
-pub(super) enum ReplayProblem {
-    /// Layer 2 refused the authenticated read.
-    Core(CoreError),
-    /// The offered cursor names a position this session's log has not reached.
-    CursorBeyondEnd { cursor: u64, head: u64 },
-}
+#[cfg(test)]
+#[path = "replay_bounded_tests.rs"]
+mod bounded_tests;
+#[cfg(test)]
+#[path = "replay_live_tests.rs"]
+mod live_tests;
+#[cfg(test)]
+#[path = "replay_tests.rs"]
+mod tests;
 
-impl From<CoreError> for ReplayProblem {
-    fn from(error: CoreError) -> Self {
-        Self::Core(error)
-    }
-}
+#[cfg(test)]
+#[path = "replay_observation_tests.rs"]
+mod observation_tests;
 
-impl IntoResponse for ReplayProblem {
-    fn into_response(self) -> Response {
-        match self {
-            Self::Core(error) => Problem(error).into_response(),
-            Self::CursorBeyondEnd { cursor, head } => {
-                let detail = format!(
-                    "The starting_after cursor {cursor} is beyond this session's durable event \
-                     head {head}; resume from {head} or earlier."
-                );
-                let mut body = problem_document(
-                    StatusCode::BAD_REQUEST,
-                    "cursor-beyond-end",
-                    &detail,
-                    "cursor_beyond_end",
-                );
-                body.as_object_mut()
-                    .expect("a problem document is an object")
-                    .insert("head".into(), head.into());
-                problem_response(StatusCode::BAD_REQUEST, body)
-            }
-        }
-    }
-}
+#[path = "replay_authorized.rs"]
+mod authorized;
 
-/// Where a client is resuming from, and which conversation it wants.
-#[derive(Debug, Deserialize)]
-pub(super) struct Replay {
-    /// The session, in this protocol's word for one.
+#[cfg(test)]
+use layer2_core::sandbox::{Agent, AgentStatus};
+
+use super::events::{ending, project_bounded as project, AguiEvent};
+
+#[path = "replay_legacy.rs"]
+mod legacy;
+use crate::{
+    conversation::{failure, read_failure},
+    AgentConversationState, AuthenticatedCaller, AuthenticatedResourceCaller,
+};
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ReplayQuery {
     thread_id: String,
-    /// Resume after this sequence. Absent means from the beginning.
-    ///
-    /// Named as the client sends it. The name is part of the contract and is
-    /// documented; a server reading a different one silently replays
-    /// everything on every reconnect, which is what happened here.
     #[serde(default, alias = "after")]
     starting_after: Option<u64>,
-    /// Whether to keep the stream open once the log has been drained.
-    ///
-    /// Absent means yes, because that is what a client watching a session
-    /// wants and what every existing caller expects.
-    ///
-    /// `follow=false` makes this a **bounded** read that ends when it reaches
-    /// the end of the log, and a caller that needs history as a value rather
-    /// than as a subscription has no other way to get it: reading an endless
-    /// stream to completion never completes. The reference client did exactly
-    /// that — `await response.text()` against this route — so its history read
-    /// could only ever settle by failing, and everything downstream of it,
-    /// including every live frame, waited behind a promise that never
-    /// resolved.
-    #[serde(default)]
     follow: Option<bool>,
 }
 
-impl Replay {
-    /// Where this client is resuming from.
-    ///
-    /// Read through a method so a test asserts the parsed query rather than
-    /// the struct's shape: the bug this guards was a name the server never
-    /// read, and a test that constructs the struct directly cannot see one.
-    pub(super) fn starting_after(&self) -> Option<u64> {
-        self.starting_after
+#[utoipa::path(get, path = "/api/v1/agui/events", tag = "ag-ui",
+    params(("thread_id" = String, Query), ("starting_after" = Option<u64>, Query),
+    ("after" = Option<u64>, Query), ("follow" = Option<bool>, Query)),
+    responses((status = 200, body = String, content_type = "text/event-stream"),
+    (status = 400, body = crate::rest::ProblemDocument), (status = 404, body = crate::rest::ProblemDocument)))]
+pub(super) async fn replay(
+    State(state): State<AgentConversationState>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
+    query: Result<Query<ReplayQuery>, axum::extract::rejection::QueryRejection>,
+) -> Response {
+    let Query(query) = match query {
+        Ok(query) => query,
+        Err(_) => {
+            return failure(
+                StatusCode::BAD_REQUEST,
+                "invalid_replay_query",
+                "The replay query is invalid.",
+            )
+        }
+    };
+    let id = AgentId(query.thread_id);
+    let watching = match state.watch(&id).await {
+        Ok(watching) => watching,
+        Err(response) => return response,
+    };
+    if let Some(resource) = resource {
+        return authorized::open(
+            state,
+            resource,
+            id,
+            query.starting_after.unwrap_or(0),
+            query.follow.unwrap_or(true),
+            None,
+            watching,
+        )
+        .await;
     }
-
-    /// Whether this client wants the stream held open past the end of the log.
-    pub(super) fn follows(&self) -> bool {
-        self.follow.unwrap_or(true)
-    }
+    open(
+        state,
+        caller,
+        id,
+        query.starting_after.unwrap_or(0),
+        query.follow.unwrap_or(true),
+        None,
+        watching,
+    )
+    .await
 }
 
-/// Read a session's history, and keep following it unless asked not to.
-///
-/// Followed, this never ends on its own: it is the session's stream rather
-/// than one turn's, so a client holds it open across turns and the run
-/// lifecycle events arrive on it like any other.
-pub(super) async fn replay(
-    State(state): State<SessionsState>,
-    AuthenticatedCaller(caller): AuthenticatedCaller,
-    Query(query): Query<Replay>,
-) -> Result<Sse<impl Stream<Item = Result<SseEvent, Infallible>>>, ReplayProblem> {
-    let seq = query.starting_after().unwrap_or(0);
-    let follows = query.follows();
-    let id = SessionId(query.thread_id);
+pub(super) async fn open_run(
+    state: AgentConversationState,
+    resource: AuthenticatedResourceCaller,
+    id: AgentId,
+    after: u64,
+    run: u64,
+    watching: Option<AgentLiveSubscription>,
+) -> Response {
+    authorized::open(state, resource, id, after, true, Some(run), watching).await
+}
 
-    // Read once before answering, so a caller who may not see this session is
-    // refused with a status rather than handed an empty stream that never says
-    // why.
-    let first = state.sessions.events_since(&caller, &id, Some(seq)).await?;
-
-    if seq > 0 {
-        let head = state.sessions.event_log_head(&caller, &id).await?;
-        if seq > head {
-            tracing::warn!(
-                session_id = %id,
-                cursor = seq,
-                head,
-                "AG-UI replay cursor is beyond the durable event log head"
-            );
-            return Err(ReplayProblem::CursorBeyondEnd { cursor: seq, head });
-        }
+pub(super) async fn open(
+    state: AgentConversationState,
+    caller: Caller,
+    id: AgentId,
+    after: u64,
+    follow: bool,
+    run: Option<u64>,
+    watching: Option<AgentLiveSubscription>,
+) -> Response {
+    if !state.bounded_replay {
+        return legacy::open(state, caller, id, after, follow, run, watching).await;
     }
+    begin(state, (caller, None), id, after, follow, run, watching).await
+}
 
-    // The live lane, on the session's own stream.
-    //
-    // This is the stream a client holds open across turns, so it is where what
-    // is happening belongs. Offering liveness only on the run stream would
-    // require a client to hold two connections and decide for itself how to
-    // interleave them — which is exactly the ordering question §18.1 of
-    // `Web_Style.md` says must have one answer — and a client that posts a run
-    // without consuming its response would never see any of it.
-    //
-    // Absent for a session with no conversation, or none running. The durable
-    // lane is unaffected either way: that is the difference between a turn
-    // nobody can watch and a turn nobody can read.
-    let watching = state.sessions.subscribe_live(&caller, &id).await.ok();
-    let resources = state.sessions.subscribe_resources(&caller, &id).await.ok();
-
-    struct Following {
-        service: Arc<layer2_core::SessionService>,
-        caller: layer2_core::Caller,
-        id: SessionId,
-        seq: u64,
-        pending: std::collections::VecDeque<super::project::AguiEvent>,
-        watching: Option<tokio::sync::broadcast::Receiver<layer2_core::LiveFrame>>,
-        resources: Option<tokio::sync::broadcast::Receiver<layer2_core::ResourceReading>>,
-        /// Polls since the last attempt to attach to the live lane.
-        ///
-        /// A client opens this stream as soon as it has a session, which is
-        /// routinely before that session is running — so the first attempt
-        /// fails and, without this, the client would never see a live frame
-        /// however long it stayed connected. Retried on a much slower cadence
-        /// than the log is polled, because attaching costs a read and the
-        /// window it covers is a session starting rather than anything urgent.
-        since_attempt: u8,
-        /// Whether to hold the stream open once the log has been drained.
-        follows: bool,
-    }
-
-    /// Poll cycles between attempts to attach to a session's live lane.
-    const ATTACH_EVERY: u8 = 8;
-
-    let mut opening = Following {
-        service: Arc::clone(&state.sessions),
-        caller,
-        id: id.clone(),
-        seq,
-        pending: Default::default(),
-        watching,
-        resources,
-        since_attempt: 0,
-        follows,
-    };
-    for event in first {
-        opening.seq = event.seq;
-        // The run identifier a replayed frame carries is the session's own.
-        // A client reconnecting has no run in flight to attribute history to,
-        // and inventing one would make the same turn read differently
-        // depending on how it was reached.
-        opening.pending.extend(project(&event, &id.0, &id.0).events);
-    }
-
-    Ok(Sse::new(stream::unfold(opening, |mut open| async move {
-        loop {
-            if let Some(event) = open.pending.pop_front() {
-                let frame = super::project::sse_frame(&event);
-                return Some((Ok(frame), open));
-            }
-            // Everything the log held has been sent. A bounded read is done,
-            // and ending it is what lets a caller await this route as a value
-            // rather than as a subscription.
-            if !open.follows {
-                return None;
-            }
-            // Whichever lane speaks first. Sleeping the poll interval
-            // unconditionally would hold a piece of a message for up to that
-            // long, which on a fast agent is most of what makes the difference
-            // between watching a turn and waiting on one.
-            let run = open.id.0.clone();
-            let woke = tokio::time::timeout(
-                POLL_INTERVAL,
-                next_frame(&mut open.watching, &mut open.resources),
-            )
+async fn begin(
+    state: AgentConversationState,
+    authority: (Caller, Option<AgentEventStreamAuthorization>),
+    id: AgentId,
+    after: u64,
+    follow: bool,
+    run: Option<u64>,
+    watching: Option<AgentLiveSubscription>,
+) -> Response {
+    let (caller, mut authorization) = authority;
+    if authorization.is_none() {
+        authorization = match state
+            .reads
+            .owner_observation_authorization(&caller, &id)
             .await
-            .unwrap_or(Woke::Idle);
-            match woke {
-                Woke::Live(frame) => open
-                    .pending
-                    .extend(super::live::project_live(&frame, &run, &run)),
-                Woke::Reading(reading) => {
-                    open.pending
-                        .push_back(project_reading(&reading, &run, &run));
-                }
-                Woke::Idle => {}
+        {
+            Ok(value) => value,
+            Err(error) => return read_failure(error, "thread_not_found"),
+        };
+    }
+    let observation = if let Some(authorization) = &mut authorization {
+        match state.reads.observe_event_stream(authorization) {
+            Ok(value) => value,
+            Err(error) => return read_failure(error, "thread_not_found"),
+        }
+    } else {
+        None
+    };
+    let heads = state.watch_head(&id);
+    let mut open = Following {
+        state,
+        caller,
+        id,
+        after,
+        turn: 0,
+        pending: VecDeque::new(),
+        replay_queue: Default::default(),
+        follow,
+        run,
+        ended: false,
+        watching,
+        committed_message_seq: 0,
+        held: None,
+        authorization,
+        observation,
+        cursor: Default::default(),
+        header: None,
+        through: None,
+        approvals: Default::default(),
+        heads,
+        fallback_due: tokio::time::Instant::now() + Duration::from_secs(1),
+        discarded_fragments: 0,
+        observed_at: tokio::time::Instant::now(),
+        observed_header: None,
+    };
+    if let Err(error) = open.initialize().await {
+        let error = match error {
+            following::OpenError::UnknownRun => {
+                return crate::rest::instance_problem::InstanceProblem::Unavailable.into_response();
             }
+            following::OpenError::Read(error) => error,
+        };
+        if matches!(error, layer2_core::sandbox::AgentReadError::InvalidPage) {
+            if let Some(header) = &open.header {
+                if after > header.head {
+                    let mut problem = crate::rest::problem_document(
+                        StatusCode::BAD_REQUEST,
+                        "cursor-beyond-end",
+                        "The replay cursor exceeds this Agent's durable log head.",
+                        "cursor_beyond_end",
+                    );
+                    problem["head"] = header.head.into();
+                    return crate::rest::problem_response(StatusCode::BAD_REQUEST, problem);
+                }
+            }
+        }
+        return read_failure(error, "thread_not_found");
+    }
+    response(open)
+}
 
-            if open.watching.is_none() || open.resources.is_none() {
-                open.since_attempt = open.since_attempt.saturating_add(1);
-                if open.since_attempt >= ATTACH_EVERY {
-                    open.since_attempt = 0;
-                    if open.watching.is_none() {
-                        open.watching = open
-                            .service
-                            .subscribe_live(&open.caller, &open.id)
-                            .await
-                            .ok();
-                    }
-                    if open.resources.is_none() {
-                        open.resources = open
-                            .service
-                            .subscribe_resources(&open.caller, &open.id)
-                            .await
-                            .ok();
-                    }
-                }
-            } else {
-                open.since_attempt = 0;
-            }
-            if !open.pending.is_empty() {
+#[path = "replay_follow.rs"]
+mod following;
+use following::response;
+
+struct Following {
+    state: AgentConversationState,
+    caller: Caller,
+    id: AgentId,
+    after: u64,
+    turn: u64,
+    pending: VecDeque<AguiEvent>,
+    replay_queue: replay_queue::ReplayQueue,
+    follow: bool,
+    run: Option<u64>,
+    ended: bool,
+    watching: Option<AgentLiveSubscription>,
+    committed_message_seq: u64,
+    held: Option<AgentLiveDelivery>,
+    authorization: Option<AgentEventStreamAuthorization>,
+    observation: Option<layer2_core::sandbox::agent_observation::AgentObservationSubscription>,
+    cursor: layer2_core::sandbox::AgentHistoryCursor,
+    header: Option<layer2_core::sandbox::AgentEventStreamHeader>,
+    through: Option<u64>,
+    approvals: PendingAgentApprovals,
+    heads: Option<layer2_core::sandbox::AgentHeadSubscription>,
+    fallback_due: tokio::time::Instant,
+    discarded_fragments: u64,
+    observed_at: tokio::time::Instant,
+    observed_header: Option<layer2_core::sandbox::AgentEventStreamHeader>,
+}
+
+impl Following {
+    fn queue(&mut self, history: &[AgentLogEntry]) {
+        for entry in history {
+            if entry.seq <= self.after {
                 continue;
             }
-            let read = open
-                .service
-                .events_since(&open.caller, &open.id, Some(open.seq))
-                .await;
-            let Ok(events) = read else {
-                // Gone, or no longer readable by this caller. Ending the
-                // stream says so; polling on would keep asking about
-                // something they may no longer be entitled to.
-                return None;
-            };
-            for event in events {
-                open.seq = event.seq;
-                let id = open.id.0.clone();
-                open.pending.extend(project(&event, &id, &id).events);
+            if let AgentLogKind::TurnStarted { turn_sequence, .. } = entry.kind {
+                if self.run.is_some_and(|run| run != turn_sequence) {
+                    self.ended = true;
+                    break;
+                }
+                self.turn = turn_sequence;
+            }
+            self.approvals.observe(entry);
+            self.after = entry.seq;
+            if matches!(entry.kind, AgentLogKind::AgentMessage { .. }) {
+                self.committed_message_seq = entry.seq;
+            }
+            self.pending.extend(project(entry, self.turn));
+            if self.run.is_some() && ending(&entry.kind) {
+                self.ended = true;
+                break;
             }
         }
-    }))
-    // The run stream has always carried one and this did not, so an idle
-    // session's stream was torn down by an intermediary after roughly two
-    // minutes and the surface silently stopped updating. This is the stream a
-    // client holds open across turns, so idle is its normal state.
-    .keep_alive(KeepAlive::new().interval(KEEPALIVE_INTERVAL)))
-}
+    }
 
-#[cfg(test)]
-#[path = "replay_tests.rs"]
-mod replay_tests;
+    #[cfg(test)]
+    fn interrupt_pending(&mut self, agent: &Agent, history: &[AgentLogEntry]) {
+        if self.ended
+            || self.run.is_none()
+            || self.run != agent.conversation.active_turn
+            || agent.status != AgentStatus::WaitingApproval
+        {
+            return;
+        }
+        self.interrupt_current(agent.conversation.active_turn, history);
+    }
+
+    fn interrupt_current(&mut self, active_turn: Option<u64>, history: &[AgentLogEntry]) {
+        if self.ended || self.run.is_none() || self.run != active_turn {
+            return;
+        }
+        let mut approvals = PendingAgentApprovals::default();
+        for entry in history {
+            approvals.observe(entry);
+        }
+        let mut interrupts = Vec::new();
+        for entry in approvals.into_entries() {
+            for mut event in project(&entry, self.turn) {
+                // These are current pending state, not a replay of older cursor positions.
+                event.seq = None;
+                if event.kind == "RUN_FINISHED" {
+                    if let Some(values) = event.body["outcome"]["interrupts"].as_array() {
+                        interrupts.extend(values.iter().cloned());
+                    }
+                } else {
+                    self.pending.push_back(event);
+                }
+            }
+        }
+        if !interrupts.is_empty() {
+            // Complete this committed-state projection at the current head, never an old request.
+            if let Some(event) = self
+                .pending
+                .iter_mut()
+                .rev()
+                .find(|event| event.seq == Some(self.after))
+            {
+                event.seq = None;
+            }
+            self.pending.push_back(AguiEvent {
+                kind: "RUN_FINISHED",
+                thread_id: self.id.to_string(),
+                run_id: self.turn.to_string(),
+                body: serde_json::json!({"outcome": {"type": "interrupt", "interrupts": interrupts}}),
+                timestamp: None,
+                seq: Some(self.after),
+                live: false,
+            });
+            self.ended = true;
+        }
+    }
+
+    #[cfg(test)]
+    fn queue_live(&mut self, agent: &Agent) {
+        self.queue_fragments(
+            &agent.id,
+            agent.conversation.runtime_generation,
+            agent.conversation.active_turn,
+            agent.conversation.last_seq,
+        );
+    }
+
+    fn queue_fragments(
+        &mut self,
+        id: &AgentId,
+        generation: Option<u64>,
+        turn: Option<u64>,
+        head: u64,
+    ) {
+        if self.ended || !self.follow {
+            return;
+        }
+        let Some(watching) = self.watching.as_mut() else {
+            return;
+        };
+        for _ in 0..32 {
+            match self
+                .held
+                .take()
+                .map(Ok)
+                .unwrap_or_else(|| watching.try_recv())
+            {
+                Ok(fragment)
+                    if &fragment.agent_id == id
+                        && Some(fragment.runtime_generation) == generation
+                        && Some(fragment.turn_sequence) == turn
+                        && (fragment.kind == AgentLiveFragmentKind::Thought
+                            || fragment.after_seq >= self.committed_message_seq) =>
+                {
+                    if fragment.after_seq > head {
+                        self.held = Some(fragment);
+                        break;
+                    }
+                    self.pending.push_back(super::live::project(fragment));
+                }
+                Ok(_) => {}
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(frames)) => {
+                    self.pending.push_back(AguiEvent { kind: "STATE_DELTA", thread_id: self.id.to_string(), run_id: self.turn.to_string(),
+                        body: serde_json::json!({"delta": [{"op": "replace", "path": "/conversationGap", "value": {"frames": frames}}]}),
+                        timestamp: None, seq: None, live: true });
+                }
+                Err(_) => break,
+            }
+        }
+    }
+}

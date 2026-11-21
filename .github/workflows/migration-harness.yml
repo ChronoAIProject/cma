@@ -1,0 +1,52 @@
+name: Migration harness
+
+on:
+  pull_request:
+    branches: [develop, main]
+    paths:
+      - '.github/scripts/migration*'
+      - '.github/scripts/test_migration*'
+      - '.github/scripts/multi-am-features/owner/identity.py'
+      - '.github/workflows/migration-harness.yml'
+  push:
+    branches: [develop]
+    paths:
+      - '.github/scripts/migration*'
+      - '.github/scripts/test_migration*'
+      - '.github/scripts/multi-am-features/owner/identity.py'
+      - '.github/workflows/migration-harness.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: migration-harness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'cma-develop-cache-readers' || format('migration-contracts-{0}-{1}', github.run_id, github.run_attempt) }}
+      queue: max
+      cancel-in-progress: false
+    name: Migration harness contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24.15.0
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      # These tests use temporary files and loopback HTTP fixtures. They do not
+      # start kind, Docker, application images, or external database services.
+      - name: Inventory, runner and application-fixture regressions
+        run: python3 -B -m unittest discover -s .github/scripts -p 'test_migration*.py'
+      - name: Evidence envelope and Mongo catalog regressions
+        run: >-
+          node --test .github/scripts/migration-matrix.test.mjs
+          .github/scripts/migration_catalog.test.cjs
+          .github/scripts/migration-matrix-inventory.test.mjs
+          .github/scripts/migration-matrix-inventory-files.test.mjs

@@ -1,5 +1,5 @@
 /*
- * The token layer — `docs/Web_Style.md` §2, §3, §4.
+ * The token layer — the shared style contracts
  *
  * Three first-party sheets carry the palette itself beside this one:
  * `design-platform.css` (the ramps and aliases), `effects-typography.css`
@@ -22,6 +22,14 @@
 }
 
 /* Every face is self-hosted, OFL-licensed, and visible through fallback while loading. */
+@font-face {
+  font-family: 'Shrikhand';
+  src: url('../assets/fonts/Shrikhand-Regular.woff2') format('woff2');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
 @font-face {
   font-family: 'Archivo';
   src: url('../assets/fonts/Archivo-Variable.woff2') format('woff2-variations');
@@ -70,24 +78,30 @@
   font-display: swap;
 }
 
-body {
-  --dsw-font-family:
-    'Familjen Grotesk', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI',
-    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica,
-    Arial, sans-serif;
-  /* No bare `monospace`: on Windows it may resolve to a CJK serif. */
-  --ds-font-family-code:
-    'IBM Plex Mono', 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo,
-    Courier, 'PingFang SC', 'Microsoft YaHei';
+@font-face {
+  font-family: 'Geist';
+  src: url('../assets/fonts/Geist-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
 }
 
-body[data-ds-dark-theme] {
+@font-face {
+  font-family: 'Geist Mono';
+  src: url('../assets/fonts/GeistMono-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+body {
   --dsw-font-family:
-    'Archivo', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Geist', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
     'Hiragino Sans GB', 'Microsoft YaHei', system-ui, 'Helvetica Neue', Helvetica, Arial, sans-serif;
+  /* No bare `monospace`: on Windows it may resolve to a CJK serif. */
   --ds-font-family-code:
-    'JetBrains Mono', 'SF Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo, Courier,
-    'PingFang SC', 'Microsoft YaHei';
+    'Geist Mono', 'SF Mono', 'JetBrains Mono', 'Fira Code', Consolas, 'Liberation Mono', Menlo,
+    Courier, 'PingFang SC', 'Microsoft YaHei';
 }
 
 /*
@@ -153,7 +167,7 @@ body {
 
   --primary-fill: var(--dsw-alias-button-primary-fill);
   --primary-fill-hover: var(--dsw-alias-button-primary-hover);
-  --on-primary: var(--dsw-alias-label-primary-foreground);
+  --on-primary: var(--dsw-alias-button-primary-foreground);
 
   --lift-rest: var(--dsw-shadow-lv1);
   --lift-plate: var(--dsw-shadow-lv3);
@@ -255,4 +269,56 @@ body {
     --control-h-lg: 44px;
     --read-column: 100%;
   }
+}
+
+/* Agent Workspace v3 — the shared style contracts*/
+body {
+  --dsw-alias-workspace-text: #1d1d1b;
+  --dsw-alias-workspace-secondary: #6e6e69;
+  --dsw-alias-workspace-weak: #a3a39e;
+  --dsw-alias-workspace-border: #ececea;
+  --dsw-alias-workspace-border-strong: #e4e4e0;
+  --dsw-alias-workspace-sidebar: #f7f7f5;
+  --dsw-alias-workspace-selected: #efefec;
+  --dsw-alias-workspace-accent: #4f8a35;
+  --dsw-alias-workspace-task-blue: #245b98;
+  --dsw-alias-workspace-task-purple: #7b3f93;
+  --dsw-alias-workspace-link: #456f2e;
+  --dsw-alias-workspace-success: #8fb07a;
+  --dsw-alias-workspace-danger: #c4493b;
+  --dsw-alias-workspace-ready-text: #8a6416;
+  --dsw-alias-workspace-ready-bg: #f5ecd8;
+  --dsw-alias-workspace-terminal-highlight: rgba(143, 191, 115, 0.18);
+  --dsw-alias-workspace-control-bg: #1d1d1b;
+  --dsw-alias-workspace-control-text: #ffffff;
+  --dsw-alias-workspace-row-height: 36px;
+  --dsw-alias-workspace-group-font: 400 11.5px/18px var(--dsw-font-family);
+  --dsw-alias-workspace-body-font: 400 15px/1.75 var(--dsw-font-family);
+  --dsw-alias-workspace-mono: 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+  --dsw-alias-workspace-tool-font: 400 12.5px/20px var(--dsw-alias-workspace-mono);
+  --dsw-alias-workspace-conversation-min: 420px;
+  --dsw-alias-workspace-title-min: 96px;
+  --dsw-alias-workspace-command-inset: 16px;
+  --dsw-alias-workspace-highlight-duration: 1.8s;
+  --dsw-alias-workspace-status-duration: 1.6s;
+}
+body[data-ds-dark-theme] {
+  --dsw-alias-workspace-text: #fafafa;
+  --dsw-alias-workspace-secondary: #b4b4ae;
+  --dsw-alias-workspace-weak: #969690;
+  --dsw-alias-workspace-border: #27272a;
+  --dsw-alias-workspace-border-strong: #3f3f46;
+  --dsw-alias-workspace-sidebar: #111113;
+  --dsw-alias-workspace-selected: #27272a;
+  --dsw-alias-workspace-accent: #a9cf90;
+  --dsw-alias-workspace-task-blue: #9acbff;
+  --dsw-alias-workspace-task-purple: #d9abee;
+  --dsw-alias-workspace-link: #b9dca4;
+  --dsw-alias-workspace-success: #a4c38e;
+  --dsw-alias-workspace-danger: #ff9689;
+  --dsw-alias-workspace-ready-text: #f0ce82;
+  --dsw-alias-workspace-ready-bg: #332a18;
+  --dsw-alias-workspace-terminal-highlight: rgba(143, 191, 115, 0.24);
+  --dsw-alias-workspace-control-bg: #fafafa;
+  --dsw-alias-workspace-control-text: #1d1d1b;
 }

@@ -1,0 +1,199 @@
+"""Stable scan engine; archive reader, detector, and policy are injected contracts."""
+
+import shutil
+import tarfile
+from functools import partial
+from pathlib import PurePosixPath
+
+from . import arch_trust, nested_certificates
+from .binary_view import TEXT_BYTES, prepare
+from .common import MAX_NESTED_MEMBER_BYTES, ScanError, archive_path, copy_stream, tar_metadata
+from .containers import inspect_nested
+from .policy import inspect_tar_xattrs, path_rule
+from .tar_trailer import verify_trailer
+from .trust_store import TrustStore
+
+
+class Stage:
+    def __init__(self, root, backend, findings, budget, nested_certificate_observations=None):
+        self.root, self.backend, self.findings, self.budget = root, backend, findings, budget
+        self.locations = {}
+        self.nested_certificate_observations = nested_certificate_observations
+        root.mkdir()
+
+    @property
+    def timeout(self):
+        return self.backend.timeout
+
+    def add(self, data, location, original_path=None):
+        self.budget.reserve(len(data))
+        destination = self.root / f"entry-{len(self.locations):08d}.txt"
+        destination.write_bytes(data)
+        self.locations[destination] = location
+        self.findings.inspect(destination, location, original_path)
+
+    def add_tar_metadata(self, name, member, location, *, ascii_only=False):
+        self.add(tar_metadata(name, member, ascii_only=ascii_only), location)
+        inspect_tar_xattrs(member, location, self.findings, self.budget, self.root)
+
+    def file(self, stream, size, location, original_path=None, depth=0, *, regular=True):
+        if depth and size > MAX_NESTED_MEMBER_BYTES:
+            raise ScanError("nested-member-size-limit")
+        self.budget.reserve(size)
+        # Decode containers ourselves by bytes, including disguised nested members.
+        # Synthetic names also prevent image-controlled Gitleaks path exclusions.
+        destination = self.root / f"entry-{len(self.locations):08d}.txt"
+        actual = copy_stream(stream, destination, size)
+        if actual != size:
+            raise ScanError("truncated-layer-entry")
+        self.locations[destination] = location
+        original_path = original_path if original_path is not None else location["path"]
+        empty_whiteout = size == 0 and PurePosixPath(original_path).name.startswith(".wh.")
+        self.findings.inspect(destination, location, None if empty_whiteout else original_path)
+        inspect_nested(self, destination, location, depth)
+        if (self.nested_certificate_observations is not None and regular and depth == 1
+                and location["path"] == nested_certificates.PATH):
+            checked = nested_certificates.inspect_bundle(destination, partial(self.certificate, location=location))
+            if checked:
+                coordinate = {key: location[key] for key in ("image", "layer", "entry", "member")}
+                self.nested_certificate_observations.append(dict(coordinate, **checked))
+        return destination
+
+    def certificate(self, data, location):
+        self.add(data, dict(location, view="x509-der"))
+        self.add(data.translate(TEXT_BYTES), dict(location, view="x509-text"))
+
+    def inspect_path(self, location, original_path):
+        rule = path_rule(original_path)
+        if rule:
+            self.findings.add(rule, location)
+
+    def finish(self, diff_id=None):
+        if self.locations:
+            for physical, location in self.locations.items():
+                original = prepare(physical, self.budget)
+                if original:
+                    self.locations[physical] = dict(location, _file_sha256=original)
+            if diff_id is not None and hasattr(self.backend, "scan_layer"):
+                self.backend.scan_layer(self.root, self.locations, self.findings, diff_id)
+            else:
+                self.backend.scan(self.root, self.locations, self.findings)
+        shutil.rmtree(self.root)
+
+
+def decoded_strings(value, pointer="", depth=0):
+    if depth > 64:
+        raise ScanError("config-nesting-limit")
+    if isinstance(value, str):
+        yield pointer, value
+    elif isinstance(value, dict):
+        for key, child in value.items():
+            escaped = key.replace("~", "~0").replace("/", "~1")
+            # Secret-bearing label keys and values are also inspected as assignments.
+            if isinstance(child, str):
+                yield pointer + "/" + escaped + "/@assignment", key + "=" + child
+            yield from decoded_strings(child, pointer + "/" + escaped, depth + 1)
+    elif isinstance(value, list):
+        if value and all(isinstance(child, str) for child in value):
+            yield pointer + "/@joined", " ".join(value)
+        for index, child in enumerate(value):
+            yield from decoded_strings(child, pointer + "/" + str(index), depth + 1)
+
+
+def scan_archive(archive, backend, findings, workspace, budget, progress, *, trust_component=None):
+    kind, images = archive.images()
+    inventory = {"archive_format": kind, "images": [], "layers": [], "entries": 0}
+    nested_certificates_seen = None
+    arch_trust_seen = None
+    if trust_component == nested_certificates.COMPONENT:
+        nested_certificates_seen = inventory["nested_certificates"] = []
+        arch_trust_seen = inventory["arch_trust"] = {"files": [], "aliases": []}
+    stage = Stage(workspace / "metadata", backend, findings, budget)
+    for path, raw in archive.metadata:
+        stage.add(raw, {"scope": "archive", "image": -1, "layer": -1, "entry": -1, "path": path})
+    stage.finish()
+    for image_index, image in enumerate(images):
+        inventory["images"].append(
+            {
+                "index": image_index,
+                "config_digest": image["config_digest"],
+                "manifest": image["manifest"],
+                "layers": len(image["layers"]),
+            }
+        )
+        stage = Stage(workspace / "config", backend, findings, budget)
+        location = {
+            "scope": "config",
+            "image": image_index,
+            "layer": -1,
+            "entry": -1,
+            "path": "config/full.json",
+        }
+        stage.add(image["raw"], location)
+        for pointer, value in decoded_strings(image["config"]):
+            stage.add(value.encode("utf-8"), dict(location, path="config" + pointer))
+        stage.finish()
+        trust = TrustStore() if trust_component in ("runtime", "runtime-omarchy") else None
+        arch_alias = None
+        for layer_index, (name, diff_id) in enumerate(zip(image["layers"], image["diff_ids"])):
+            layer_path = archive.layer(name, diff_id)
+            stage = Stage(workspace / "layer", backend, findings, budget, nested_certificates_seen)
+            summary = {
+                "image": image_index,
+                "index": layer_index,
+                "diff_id": diff_id,
+                "entries": 0,
+                "files": 0,
+                "links": 0,
+                "whiteouts": 0,
+                "bytes": 0,
+            }
+            with tarfile.open(layer_path, "r:") as layer:
+                for entry_index, entry in enumerate(layer):
+                    budget.entry()
+                    path = archive_path(entry.name, posix_tar=True)
+                    if entry.issparse():
+                        raise ScanError("sparse-layer-unsupported")
+                    location = {
+                        "scope": "layer",
+                        "image": image_index,
+                        "layer": layer_index,
+                        "entry": entry_index,
+                        "path": path,
+                    }
+                    summary["entries"] += 1
+                    if PurePosixPath(path).name.startswith(".wh."):
+                        summary["whiteouts"] += 1
+                    stage.add_tar_metadata(path, entry, location)
+                    physical = None
+                    if entry.isfile():
+                        with layer.extractfile(entry) as stream:
+                            physical = stage.file(stream, entry.size, location)
+                        summary["files"] += 1
+                        summary["bytes"] += entry.size
+                    elif entry.issym() or entry.islnk() or entry.isdir() or entry.isdev():
+                        if entry.issym() or entry.islnk():
+                            summary["links"] += 1
+                        rule = path_rule(path)
+                        if rule:
+                            findings.add(rule, location)
+                    else:
+                        raise ScanError("unsupported-layer-entry-type")
+                    if trust is not None:
+                        trust.observe(entry, location, physical, partial(stage.certificate, location=location))
+                    if arch_trust_seen is not None and layer_index == arch_trust.LAYER:
+                        if physical is not None and path in arch_trust.FILES:
+                            arch_trust.observe_file(physical, location, stage, arch_trust_seen["files"])
+                        elif path == arch_trust.ALIAS and entry.issym() and entry.linkname == arch_trust.LINK:
+                            arch_alias = {"image": image_index, "layer": layer_index, "entry": entry_index}
+                verify_trailer(layer, budget.max_bytes)
+            stage.finish(diff_id)
+            layer_path.unlink()
+            inventory["layers"].append(summary)
+            inventory["entries"] += summary["entries"]
+            progress(image_index, layer_index, summary["files"])
+        if trust is not None:
+            trust.classify(findings.items, image_index)
+            if arch_alias is not None and trust.direct_alias(arch_trust.ALIAS, arch_trust.TLS, arch_trust.LAYER):
+                arch_trust_seen["aliases"].append(arch_alias)
+    return inventory

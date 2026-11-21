@@ -1,0 +1,4157 @@
+{
+  "version": 1,
+  "openapi_operations": 304,
+  "operations": {
+    "GET /api/v1/agents/{id}/environment": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_environment.rs# Authorized read-only Agent environment observations preserve file scope and explicit feature availability without contacting the runtime.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/organizations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/organizations.rs# Authenticated current organization choices contain presentation roles and no reusable resource evidence.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_forbidden",
+        "organization_authority_unavailable"
+      ]
+    },
+    "GET /api/v1/profile-authoring/bounds": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profile_authoring.rs# Fixed deployment bounds require profile management authority and perform no upstream read.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/profile-authoring/services": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profile_authoring.rs# Owner-visible service catalog projects Core validated source data and typed refusal.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_services_unavailable"
+      ]
+    },
+    "GET /api/v1/profile-authoring/skills": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profile_authoring.rs# Skill query validation and owner-scoped source failures are projected through Core.",
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_authoring_query",
+        "not_authenticated",
+        "profile_skills_unavailable"
+      ]
+    },
+    "POST /api/v1/profile-authoring/repositories/resolve": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profile_authoring.rs# Read-only repository verification has typed body and Core repository refusals without idempotency or admission.",
+      "required_problems": [
+        "forbidden",
+        "invalid_json",
+        "invalid_repository",
+        "invalid_repository_reference",
+        "not_authenticated",
+        "repository_not_found",
+        "repository_reference_not_found",
+        "repository_unavailable"
+      ]
+    },
+    "DELETE /api/v1/agents/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_not_found",
+        "agent_not_stopped",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/agents.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/agents.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/agents.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "DELETE /api/v1/responses/{response_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "responses_field_unsupported"
+      ],
+      "unsupported_success": "api/crates/layer1-public/src/responses/retrieve.rs# Delete always calls field_refusal(delete); durable Agent history cannot be deleted as a separate Response resource."
+    },
+    "DELETE /api/v1/sandboxes/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_invalid_state",
+        "sandbox_not_found",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "DELETE /api/v1/triggers/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "trigger_not_found",
+        "trigger_service_unavailable"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable.",
+        "trigger_already_published": "api/crates/layer2-core/src/trigger_domain/store/memory.rs# Owner deletion archives published and retired Trigger definitions while preserving immutable revisions and Launch authority; publication no longer refuses deletion. Draft deletion still removes the definition."
+      }
+    },
+    "DELETE /api/v1/workspaces/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/workspaces.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "workspace_not_found"
+      ],
+      "unreachable_problems": {
+        "workspace_has_live_agents": "api/crates/layer2-core/src/sandbox/store/memory/workspace_lifecycle.rs# Workspace removal now fences new admission and schedules durable child cleanup, including live Agents. The legacy typed refusal is retained for compatibility but neither production nor in-memory admission emits it.",
+        "invalid_json": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "GET /api/v1/admin/activity": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/runtime-inventory": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/sandboxes/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "operator_service_unavailable",
+        "sandbox_not_found"
+      ]
+    },
+    "GET /api/v1/admin/sandboxes/{id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_service_unavailable",
+        "sandbox_not_found"
+      ]
+    },
+    "GET /api/v1/admin/settings": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "settings_unavailable"
+      ]
+    },
+    "GET /api/v1/agent-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_page",
+        "not_authenticated",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/agent-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/agent-profiles/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_page",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/agent-profiles/{id}/revisions/{revision}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/agents": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "invalid_instance_query",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden"
+      ]
+    },
+    "GET /api/v1/agents/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "invalid_instance_query",
+        "not_authenticated",
+        "organization_authority_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/resources": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_not_found",
+        "agent_resources_unsupported",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/source": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_source.rs# Current-authority personal provenance and safe shared creation categories, fenced after IO.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "trigger_service_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/terminal": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/pty/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_not_found",
+        "capability_unsupported",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated"
+      ],
+      "unsupported_success": "api/crates/layer1-public/src/pty/mod.rs# The terminal handler always returns capability_unsupported after successful ownership lookup; terminal attachment is not implemented."
+    },
+    "GET /api/v1/agents/{id}/transcript": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/usage": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable"
+      ]
+    },
+    "GET /api/v1/agui/agents/{id}/sandbox": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "thread_not_found"
+      ]
+    },
+    "GET /api/v1/agui/capabilities": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": []
+    },
+    "GET /api/v1/agui/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
+      "required_problems": [
+        "cursor_beyond_end",
+        "forbidden",
+        "instance_service_unavailable",
+        "invalid_replay_query",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "relay_observer_capacity_exhausted",
+        "thread_not_found"
+      ],
+      "required_protocol_failures": [
+        "agent_deleted",
+        "agent_log_capacity_exceeded",
+        "agent_turn_failed",
+        "failed",
+        "operator",
+        "owner",
+        "runtime_lost",
+        "sandbox_retired"
+      ],
+      "unreachable_protocol_failures": {
+        "provisioning_timeout": "api/crates/layer1-public/src/agui/replay.rs# GET replay does not perform readiness admission; provisioning_timeout belongs to initiating requests, not durable AgentLog projection.",
+        "response_unavailable": "api/crates/layer1-public/src/agui/replay.rs# A failed following read ends AG-UI silently; fixed response_unavailable is emitted only by the Responses stream projection.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_failure_projection.rs# Retained input_not_written failures project as agent_turn_failed. The internal send disposition and no-replay policy remain unchanged."
+      }
+    },
+    "GET /api/v1/agui/launches/{id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "cursor_beyond_end",
+        "invalid_launch_event_query",
+        "launch_not_found",
+        "launch_store_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/conformance": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": []
+    },
+    "GET /api/v1/conversations/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "conversation_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/conversations/{id}/items": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "conversation_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "responses_field_unsupported"
+      ]
+    },
+    "GET /api/v1/defaults": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/defaults.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "defaults_unavailable",
+        "forbidden",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/launches": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "invalid_launch_cursor",
+        "launch_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/launches/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "launch_not_found",
+        "launch_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/launches/{id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "cursor_beyond_end",
+        "invalid_launch_event_query",
+        "launch_not_found",
+        "launch_service_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/launches/{id}/requirements": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "launch_not_found",
+        "launch_service_unavailable",
+        "not_authenticated",
+        "service_connection_unavailable"
+      ]
+    },
+    "GET /api/v1/marketplace/{kind}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_marketplace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "invalid_profile_page",
+        "marketplace_disabled",
+        "not_authenticated",
+        "profile_store_unavailable"
+      ],
+      "unreachable_problems": {
+        "forbidden": "api/crates/layer1-public/src/rest/profiles_marketplace.rs# Marketplace GET handlers require authentication and enabled settings, but no management capability."
+      }
+    },
+    "GET /api/v1/marketplace/{kind}/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_marketplace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "marketplace_disabled",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ],
+      "unreachable_problems": {
+        "forbidden": "api/crates/layer1-public/src/rest/profiles_marketplace.rs# Marketplace GET handlers require authentication and enabled settings, but no management capability."
+      }
+    },
+    "GET /api/v1/responses/{response_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
+      "required_problems": [
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "response_not_found",
+        "responses_field_unsupported"
+      ],
+      "required_protocol_failures": [
+        "agent_turn_failed"
+      ],
+      "unreachable_protocol_failures": {
+        "agent_deleted": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Deleted is not converted into a ResponseError.",
+        "failed": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Failed is not converted into a ResponseError.",
+        "operator": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Operator is not converted into a ResponseError.",
+        "owner": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Owner is not converted into a ResponseError.",
+        "provisioning_timeout": "api/crates/layer1-public/src/responses/stream.rs# provisioning_timeout creates a failure frame during POST readiness admission; retrieval has no readiness wait or persisted timeout failure.",
+        "response_unavailable": "api/crates/layer1-public/src/responses/retrieve.rs# GET read failures return typed HTTP refusals; fixed response_unavailable is only produced by the admitted POST stream.",
+        "runtime_lost": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::RuntimeLost is not converted into a ResponseError.",
+        "sandbox_retired": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::SandboxRetired is not converted into a ResponseError.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_failure_projection.rs# Retained input_not_written failures project as agent_turn_failed. The internal send disposition and no-replay policy remain unchanged."
+      }
+    },
+    "GET /api/v1/sandbox-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_page",
+        "not_authenticated",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/sandbox-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/sandbox-profiles/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_page",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/sandbox-profiles/{id}/revisions/{revision}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "invalid_page",
+        "invalid_query",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden"
+      ]
+    },
+    "GET /api/v1/sandboxes/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "sandbox_not_found"
+      ]
+    },
+    "GET /api/v1/sandboxes/{id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "invalid_page",
+        "not_authenticated",
+        "sandbox_not_found"
+      ]
+    },
+    "GET /api/v1/sandboxes/{id}/workspaces": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/workspaces.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "sandbox_not_found"
+      ]
+    },
+    "GET /api/v1/service-connections/{handoff_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/service_connections.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "service_connection_changed",
+        "service_connection_not_found",
+        "service_connection_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_trigger_page",
+        "not_authenticated",
+        "trigger_service_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers/public/{public_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "trigger_not_found",
+        "trigger_service_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers/public/{public_id}/badge.svg": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "badge-unavailable",
+        "invalid-badge-query"
+      ]
+    },
+    "GET /api/v1/triggers/public/{public_id}/open/{placement_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/trigger_entry.rs# External navigation records deliberate click evidence without creating a Launch or resources.",
+      "required_problems": [],
+      "non_problem_statuses": {
+        "404": "api/crates/layer1-public/src/rest/trigger_entry.rs# Invalid, unpublished or retired destinations return an empty not-found response.",
+        "503": "api/crates/layer1-public/src/rest/trigger_entry.rs# Unavailable Trigger or Placement storage returns an empty service-unavailable response."
+      }
+    },
+    "GET /api/v1/triggers/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "trigger_not_found",
+        "trigger_service_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers/{id}/embed": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "invalid_embed_query",
+        "not_authenticated",
+        "trigger_embed_not_found",
+        "trigger_not_published",
+        "trigger_store_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers/{id}/placements": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "invalid_placement_query",
+        "not_authenticated",
+        "trigger_not_found",
+        "trigger_service_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "trigger_not_found",
+        "trigger_service_unavailable"
+      ]
+    },
+    "GET /api/v1/triggers/{id}/stats": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "trigger_not_found",
+        "trigger_service_unavailable"
+      ]
+    },
+    "GET /api/v1/workspace-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_page",
+        "not_authenticated",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/workspace-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/workspace-profiles/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_profile_page",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/workspace-profiles/{id}/revisions/{revision}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable"
+      ]
+    },
+    "GET /api/v1/workspaces/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/workspaces.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "workspace_not_found"
+      ]
+    },
+    "GET /api/v1/workspaces/{id}/worktrees": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/worktrees.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "workspace_not_found"
+      ]
+    },
+    "GET /api/v1/worktrees/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/worktrees.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "worktree_not_found"
+      ]
+    },
+    "GET /auth/callback": {
+      "classification": "supplemental_auth",
+      "source": "api/crates/cma/src/auth/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "login_browser_binding_missing",
+        "login_cancelled",
+        "login_code_missing",
+        "login_state_expired",
+        "login_state_invalid",
+        "login_state_missing",
+        "store_failed"
+      ]
+    },
+    "GET /auth/login": {
+      "classification": "supplemental_auth",
+      "source": "api/crates/cma/src/auth/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "identity_discovery_failed",
+        "store_failed"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/cma/src/auth/flow.rs# Invalid return destinations use the redirect-flow error document without a code field."
+      }
+    },
+    "GET /auth/logout": {
+      "classification": "supplemental_auth",
+      "source": "api/crates/cma/src/auth/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "store_failed"
+      ]
+    },
+    "GET /auth/session": {
+      "classification": "supplemental_auth",
+      "source": "api/crates/cma/src/auth/middleware.rs# Session identity outages return identity_unavailable with Retry-After; only GET /auth/session may use bounded recent browser identity evidence. Other operations remain fail closed.",
+      "required_problems": [
+        "store_failed",
+        "identity_unavailable"
+      ],
+      "non_problem_statuses": {
+        "401": "api/crates/cma/src/auth/session_routes.rs# Unsigned browser session is an authentication-state response with authenticated false, not a problem document."
+      }
+    },
+    "GET /auth/signup-options": {
+      "classification": "openapi",
+      "source": "api/crates/cma/src/auth/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": []
+    },
+    "PATCH /api/v1/admin/settings": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_request",
+        "malformed_json",
+        "not_authenticated",
+        "request_too_large",
+        "settings_conflict",
+        "settings_unavailable",
+        "unsupported_media_type"
+      ]
+    },
+    "POST /api/v1/admin/profiles/{kind}/{id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "operator_conflict",
+        "operator_service_unavailable",
+        "profile_not_found",
+        "profile_protected"
+      ]
+    },
+    "POST /api/v1/admin/sandboxes/{id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "operator_conflict",
+        "operator_service_unavailable",
+        "sandbox_not_found"
+      ]
+    },
+    "POST /api/v1/admin/sandboxes/{id}/runtime-update": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/runtime_update.rs# Operator runtime updates require control capability and retain exact managed target and audit identity.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "sandbox_not_found",
+        "invalid_runtime_update",
+        "runtime_update_target_changed",
+        "hierarchy_service_unavailable",
+        "runtime_update_not_available"
+      ]
+    },
+    "POST /api/v1/admin/settings/reset": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_request",
+        "malformed_json",
+        "not_authenticated",
+        "request_too_large",
+        "settings_conflict",
+        "settings_unavailable",
+        "unsupported_media_type"
+      ]
+    },
+    "POST /api/v1/admin/triggers/pause": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "operator_conflict",
+        "operator_service_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/triggers/resume": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "operator_conflict",
+        "operator_service_unavailable"
+      ]
+    },
+    "POST /api/v1/agent-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_invalid",
+        "profile_store_unavailable",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/agent-profiles/{id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/profiles_agent.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/profiles_agent.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/profiles_agent.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/agent-profiles/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable",
+        "profile_version_conflict",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "profile_secret_scanner_unavailable": "api/crates/layer2-core/src/profiles/store/marketplace_memory.rs# Public-value scanning applies to Sandbox environment variables; Agent and Workspace publication and visibility do not invoke the scanner."
+      }
+    },
+    "POST /api/v1/agents/{id}/approvals/{request_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_approval_not_pending",
+        "agent_capability_unsupported",
+        "agent_delivery_ambiguous",
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/agents/{id}/input": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_delivery_ambiguous",
+        "agent_message_queue_full",
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_checkpoint_in_progress",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/agents/{id}/interrupt": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_delivery_ambiguous",
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/agent_operate.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/agent_operate.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/agent_operate.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/agents/{id}/steer": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_delivery_ambiguous",
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/agents/{id}/stop": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_not_found",
+        "agent_not_ready",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/agui/run/receipt": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/run.rs# Current authorization and the exact original input identify a retained command without admission.",
+      "required_problems": [
+        "thread_not_found",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agui/run": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
+      "required_problems": [
+        "agent_approval_not_pending",
+        "agent_command_observation_timeout",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_json",
+        "invalid_run_request",
+        "not_authenticated",
+        "thread_not_found",
+        "relay_observer_capacity_exhausted"
+      ],
+      "required_protocol_failures": [
+        "agent_turn_failed",
+        "failed",
+        "operator",
+        "owner",
+        "runtime_lost",
+        "sandbox_retired"
+      ],
+      "unreachable_protocol_failures": {
+        "agent_deleted": "api/crates/layer1-public/src/agui/replay.rs# Following::queue ends an admitted run at its first terminal turn or Stopped event. Core deletion requires Stopped or Failed, and startup failure cannot follow run admission, so a later Deleted event cannot be the admitted run's terminal outcome.",
+        "provisioning_timeout": "api/crates/layer1-public/src/conversation/commands.rs# Unbound readiness observation timeout is HTTP agent_command_observation_timeout and cannot invent a failed turn.",
+        "response_unavailable": "api/crates/layer1-public/src/responses/stream.rs# Loss of current read or authorization evidence closes the stream without fabricating a durable outcome.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_failure_projection.rs# Retained input_not_written failures project as agent_turn_failed. The internal send disposition and no-replay policy remain unchanged."
+      },
+      "unreachable_problems": {
+        "agent_capability_unsupported": "api/crates/layer1-public/src/conversation/commands/errors.rs# Common admission rejects an Agent without Conversation as agent_not_ready; later worker capability refusal is a committed agent_command_execution_failed.",
+        "agent_delivery_ambiguous": "api/crates/layer1-public/src/conversation/commands.rs# A retained dispatch binding opens the original turn stream while the common command stays unresolved; ambiguous runtime delivery is not fabricated as an HTTP failure.",
+        "sandbox_checkpoint_in_progress": "api/crates/layer1-public/src/conversation/commands.rs# Ordinary input reserves queued work during checkpoint; the observer can return agent_command_observation_timeout while the receipt remains retained.",
+        "provisioning_timeout": "api/crates/layer1-public/src/conversation/commands.rs# The common worker owns readiness; HTTP observation reports agent_command_observation_timeout with its retained receipt."
+      }
+    },
+    "POST /api/v1/conversations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_limit_reached",
+        "forbidden",
+        "instance_service_unavailable",
+        "invalid_context_override",
+        "invalid_json",
+        "not_authenticated",
+        "provisioning_timeout",
+        "responses_field_unsupported",
+        "sandbox_credential_setup_required",
+        "sandbox_not_found",
+        "sandbox_required",
+        "workspace_not_found"
+      ]
+    },
+    "POST /api/v1/launches/{id}/cancel": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "launch_changed",
+        "launch_not_found",
+        "launch_not_startable",
+        "launch_service_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/launches.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/launches.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/launches.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/launches/{id}/start": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_launch_request",
+        "json_content_type_required",
+        "launch_changed",
+        "launch_not_found",
+        "launch_not_startable",
+        "launch_requirements_not_met",
+        "launch_service_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_credential_setup_required",
+        "store_failed",
+        "triggers_disabled",
+        "trust_confirmation_mismatch"
+      ]
+    },
+    "POST /api/v1/marketplace/{kind}/{id}/fork": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_marketplace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "marketplace_disabled",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/responses": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
+      "required_problems": [
+        "agent_command_observation_timeout",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "conversation_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_json",
+        "not_authenticated",
+        "previous_response_id_conflict",
+        "responses_field_unsupported",
+        "relay_observer_capacity_exhausted"
+      ],
+      "required_protocol_failures": [
+        "agent_turn_failed"
+      ],
+      "unreachable_protocol_failures": {
+        "agent_deleted": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Deleted is not converted into a ResponseError.",
+        "failed": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Failed is not converted into a ResponseError.",
+        "operator": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Operator is not converted into a ResponseError.",
+        "owner": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::Owner is not converted into a ResponseError.",
+        "runtime_lost": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::RuntimeLost is not converted into a ResponseError.",
+        "sandbox_retired": "api/crates/layer1-public/src/responses/retrieve.rs# Response errors project TurnFailed only; Stopped with AgentStopReason::SandboxRetired is not converted into a ResponseError.",
+        "provisioning_timeout": "api/crates/layer1-public/src/conversation/commands.rs# Unbound readiness observation timeout is HTTP agent_command_observation_timeout and cannot invent a failed turn.",
+        "response_unavailable": "api/crates/layer1-public/src/responses/stream.rs# Loss of current read or authorization evidence closes the stream without fabricating a durable outcome.",
+        "input_not_written": "api/crates/layer2-core/src/sandbox/agent_failure_projection.rs# Retained input_not_written failures project as agent_turn_failed. The internal send disposition and no-replay policy remain unchanged."
+      },
+      "unreachable_problems": {
+        "agent_capability_unsupported": "api/crates/layer1-public/src/conversation/commands/errors.rs# Common admission rejects an Agent without Conversation as agent_not_ready; later worker capability refusal is a committed agent_command_execution_failed.",
+        "agent_delivery_ambiguous": "api/crates/layer1-public/src/conversation/commands.rs# A retained dispatch binding opens the original turn stream while the common command stays unresolved; ambiguous runtime delivery is not fabricated as an HTTP failure.",
+        "sandbox_checkpoint_in_progress": "api/crates/layer1-public/src/conversation/commands.rs# Ordinary input reserves queued work during checkpoint; the observer can return agent_command_observation_timeout while the receipt remains retained.",
+        "response_in_progress": "api/crates/layer1-public/src/responses/create.rs# Legacy AfterTurn input reserves a queued command; its predecessor is checked when its own execution lane is acquired."
+      }
+    },
+    "POST /api/v1/responses/{response_id}/cancel": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/mod.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "not_authenticated",
+        "responses_field_unsupported"
+      ],
+      "unsupported_success": "api/crates/layer1-public/src/responses/retrieve.rs# Cancel always calls field_refusal(background); background execution and cancellation are outside the supported Responses subset."
+    },
+    "POST /api/v1/sandbox-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_invalid",
+        "profile_reference_invalid",
+        "profile_store_unavailable",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/sandbox-profiles/{id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/sandbox-profiles/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_reference_invalid",
+        "profile_secret_scanner_unavailable",
+        "profile_store_unavailable",
+        "profile_version_conflict",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_sandbox_name",
+        "invalid_trust_confirmation",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_credential_setup_required",
+        "sandbox_limit_reached",
+        "sandbox_name_conflict",
+        "sandbox_profile_not_found",
+        "store_failed",
+        "trust_confirmation_required"
+      ],
+      "unreachable_problems": {
+        "invalid_sandbox_origin": "api/crates/layer1-public/src/rest/sandboxes.rs# create constructs SandboxOrigin::Manual; callers cannot submit an origin, and service_creation.rs validates Manual successfully before the manual admission path.",
+        "sandbox_origin_conflict": "api/crates/layer2-core/src/sandbox/service_creation.rs# REST create supplies Manual origin and does not call create_for_launch or reconcile_launch_replay, where conflicting frozen Launch-origin requests produce this error."
+      }
+    },
+    "POST /api/v1/sandboxes/{id}/pause": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_lifecycle_unavailable",
+        "sandbox_not_active",
+        "sandbox_not_found",
+        "store_failed",
+        "stored_sandbox_corrupt"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/sandboxes/{id}/revive": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandboxes.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_lifecycle_unavailable",
+        "sandbox_not_found",
+        "sandbox_not_paused",
+        "store_failed",
+        "stored_sandbox_corrupt"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/sandboxes.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/sandboxes/{id}/service-access": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_service_access.rs# Owner-only service access uses the shared durable command admission and typed refusals.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_sandbox_service_access",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_not_found",
+        "sandbox_service_access_requires_pause",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/workspaces": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/workspaces.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_trust_confirmation",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_not_ready",
+        "store_failed",
+        "trust_confirmation_required",
+        "workspace_limit_reached",
+        "workspace_name_conflict",
+        "workspace_not_found",
+        "workspace_profile_invalid",
+        "workspace_profile_not_found"
+      ],
+      "unreachable_problems": {
+        "invalid_workspace_origin": "api/crates/layer2-core/src/sandbox/workspace_service.rs# REST calls create, which constructs WorkspaceOrigin::Manual and WorkspaceAdmissionKind::Manual; InvalidOrigin validates the separate create_for_launch launch_id argument.",
+        "workspace_origin_conflict": "api/crates/layer2-core/src/sandbox/store/memory/workspace_lifecycle.rs# REST WorkspaceService::create always admits Manual origin/kind: origin_matches_sandbox_profile returns true for Manual, and origin replay conflicts are checked only for non-Manual admission. The production workspace_admission.rs applies the same branches."
+      }
+    },
+    "POST /api/v1/service-connections": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/service_connections.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_service_connection",
+        "json_content_type_required",
+        "launch_service_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "service_connection_changed",
+        "service_connection_intent_reused",
+        "service_connection_not_found",
+        "service_connection_unavailable",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/triggers": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "description_too_long",
+        "first_message_too_long",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_profile_reference",
+        "invalid_title",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "signup_hint_too_long",
+        "store_failed",
+        "trigger_already_exists",
+        "trigger_service_unavailable"
+      ]
+    },
+    "POST /api/v1/triggers/public/{public_id}/entry-intent": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/trigger_entry.rs# Same-origin consumption clears bounded browser evidence and returns its acceptance and Placement.",
+      "required_problems": [],
+      "non_problem_statuses": {
+        "403": "api/crates/layer1-public/src/rest/trigger_entry.rs# Missing or cross-origin Origin and cross-site fetch metadata cannot consume click evidence.",
+        "404": "api/crates/layer1-public/src/rest/trigger_entry.rs# Malformed public identifiers return an empty not-found response."
+      }
+    },
+    "POST /api/v1/triggers/public/{public_id}/launches": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/launches.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_launch_request",
+        "json_content_type_required",
+        "launch_changed",
+        "launch_quota_unavailable",
+        "launch_service_unavailable",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "resource_quota",
+        "sandbox_credential_setup_required",
+        "store_failed",
+        "trigger_not_found",
+        "trigger_repeat_choice_required",
+        "trigger_retired",
+        "triggers_disabled"
+      ]
+    },
+    "POST /api/v1/triggers/{id}/placements": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_placement_url",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "placement_label_too_long",
+        "placement_source_already_exists",
+        "placement_url_too_long",
+        "store_failed",
+        "too_many_placements",
+        "trigger_not_found",
+        "trigger_retired",
+        "trigger_service_unavailable"
+      ]
+    },
+    "POST /api/v1/triggers/{id}/placements/{placement_id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "placement_not_found",
+        "store_failed",
+        "trigger_not_found",
+        "trigger_retired",
+        "trigger_service_unavailable"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/trigger_placements.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/trigger_placements.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/trigger_placements.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/triggers/{id}/publish": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# The publish handler calls the real TriggerService and projects typed Core-store errors. trigger_revision_overflow is emitted by Trigger::publish in layer2-core/src/trigger_domain/mod.rs when its retained-revision count cannot increment as u32; the corpus proves this exact Core-port error projection, not dynamic execution of a four-billion-entry model boundary.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "trigger_draft_changed",
+        "trigger_not_found",
+        "trigger_reference_not_public",
+        "trigger_reference_unavailable",
+        "trigger_retired",
+        "trigger_revision_overflow",
+        "trigger_service_unavailable"
+      ]
+    },
+    "POST /api/v1/triggers/{id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "trigger_not_found",
+        "trigger_not_published",
+        "trigger_service_unavailable"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/triggers.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/workspace-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_invalid",
+        "profile_reference_invalid",
+        "profile_store_unavailable",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/workspace-profiles/{id}/retire": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_store_unavailable",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/profiles_workspace.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/profiles_workspace.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/profiles_workspace.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/workspace-profiles/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_reference_invalid",
+        "profile_store_unavailable",
+        "profile_version_conflict",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "profile_secret_scanner_unavailable": "api/crates/layer2-core/src/profiles/store/marketplace_memory.rs# Public-value scanning applies to Sandbox environment variables; Agent and Workspace publication and visibility do not invoke the scanner."
+      }
+    },
+    "POST /api/v1/workspaces/{id}/agents": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_limit_reached",
+        "agent_profile_not_found",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "workspace_not_found",
+        "workspace_not_ready"
+      ],
+      "unreachable_problems": {
+        "agent_operation_in_flight": "api/crates/layer2-core/src/sandbox/agent_service.rs# REST create supplies Manual origin and generates a fresh AgentId, yielding manual:{agent_id}; admission creation-key reuse is reachable through repeated Trigger origin, not a manual request under the generated-identity invariant. Agent input/control concurrency remains independently required on its operations."
+      }
+    },
+    "PUT /api/v1/admin/settings": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_request",
+        "malformed_json",
+        "not_authenticated",
+        "request_too_large",
+        "settings_conflict",
+        "settings_unavailable",
+        "unsupported_media_type"
+      ]
+    },
+    "PUT /api/v1/agent-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_invalid",
+        "profile_not_found",
+        "profile_store_unavailable",
+        "profile_version_conflict",
+        "store_failed"
+      ]
+    },
+    "PUT /api/v1/agent-profiles/{id}/visibility": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_agent.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_public_refused",
+        "profile_store_unavailable",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "profile_secret_scanner_unavailable": "api/crates/layer2-core/src/profiles/store/marketplace_memory.rs# Public-value scanning applies to Sandbox environment variables; Agent and Workspace publication and visibility do not invoke the scanner."
+      }
+    },
+    "PUT /api/v1/sandbox-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_invalid",
+        "profile_not_found",
+        "profile_reference_invalid",
+        "profile_store_unavailable",
+        "profile_version_conflict",
+        "store_failed"
+      ]
+    },
+    "PUT /api/v1/sandbox-profiles/{id}/visibility": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_sandbox.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_public_refused",
+        "profile_secret_scanner_unavailable",
+        "profile_store_unavailable",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "profile_reference_invalid": "api/crates/layer1-public/src/rest/profiles_problem.rs# Visibility dependency refusals are projected through from_marketplace as profile_public_refused, not the draft reference-validation problem."
+      }
+    },
+    "PUT /api/v1/triggers/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/triggers.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "description_too_long",
+        "first_message_too_long",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_profile_reference",
+        "invalid_title",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "signup_hint_too_long",
+        "store_failed",
+        "trigger_draft_changed",
+        "trigger_not_found",
+        "trigger_retired",
+        "trigger_service_unavailable",
+        "trigger_version_overflow"
+      ]
+    },
+    "PUT /api/v1/workspace-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_invalid",
+        "profile_not_found",
+        "profile_reference_invalid",
+        "profile_store_unavailable",
+        "profile_version_conflict",
+        "store_failed"
+      ]
+    },
+    "PUT /api/v1/workspace-profiles/{id}/visibility": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/profiles_workspace.rs# Public handler and typed error projection define the operation contract.",
+      "required_problems": [
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "profile_not_found",
+        "profile_public_refused",
+        "profile_store_unavailable",
+        "store_failed"
+      ],
+      "unreachable_problems": {
+        "profile_secret_scanner_unavailable": "api/crates/layer2-core/src/profiles/store/marketplace_memory.rs# Public-value scanning applies to Sandbox environment variables; Agent and Workspace publication and visibility do not invoke the scanner.",
+        "profile_reference_invalid": "api/crates/layer1-public/src/rest/profiles_problem.rs# Visibility dependency refusals are projected through from_marketplace as profile_public_refused, not the draft reference-validation problem."
+      }
+    },
+    "GET /api/v1/resource-access/{kind}/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/resource-shares/{kind}/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/resource-shares/{kind}/{id}/{share_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "POST /api/v1/resource-shares/{kind}/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "idempotency_key_reused",
+        "invalid_share_command",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found",
+        "share_capacity",
+        "unsafe_interactive_share"
+      ],
+      "unreachable_problems": {
+        "share_recipient_unavailable": "api/crates/layer2-core/src/resource_access/sharing_service.rs# Organization-only share creation does not treat an organization ID as a personal account recipient; personal recipient refusals belong to selected-user links and redemption."
+      }
+    },
+    "PATCH /api/v1/resource-shares/{kind}/{id}/{share_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "DELETE /api/v1/resource-shares/{kind}/{id}/{share_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/resource_access.rs# Authenticated service checks current ancestry, ownership and fresh organization evidence; permanent share receipts preserve CAS and retry outcomes.",
+      "required_problems": [
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/gateway/channel-records": {
+      "classification": "legacy_gateway",
+      "source": "api/crates/layer1-public/src/rest/gateway_records.rs# Capability-gated opaque record listing is exercised by the gateway contract fixture.",
+      "required_problems": []
+    },
+    "PUT /api/v1/gateway/channel-records/{record_id}": {
+      "classification": "legacy_gateway",
+      "source": "api/crates/layer1-public/src/rest/gateway_records.rs# Opaque record creation and compare-and-set updates are exercised by the gateway contract fixture.",
+      "required_problems": []
+    },
+    "GET /api/v1/gateway/channel-records/{record_id}": {
+      "classification": "legacy_gateway",
+      "source": "api/crates/layer1-public/src/rest/gateway_records.rs# Opaque record reads are exercised by the gateway contract fixture.",
+      "required_problems": []
+    },
+    "DELETE /api/v1/gateway/channel-records/{record_id}": {
+      "classification": "legacy_gateway",
+      "source": "api/crates/layer1-public/src/rest/gateway_records.rs# Compare-and-set record deletion is exercised by the gateway contract fixture.",
+      "required_problems": []
+    },
+    "GET /api/v2": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required"
+      ]
+    },
+    "POST /api/v2/responses": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "stream_required",
+        "conversation_previous_response_conflict",
+        "model_mismatch",
+        "responses_field_unsupported",
+        "store_required",
+        "invalid_metadata",
+        "invalid_response_input",
+        "invalid_conversation",
+        "agent_command_key_conflict",
+        "authentication_required",
+        "response_not_found"
+      ],
+      "required_protocol_failures": [
+        "agent_command_authority_revoked"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/receipt": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/input_receipt.rs# Current authorization and the exact original input identify a retained command without admission.",
+      "required_problems": [
+        "response_not_found",
+        "authentication_required"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "conversation_alias_mismatch",
+        "authentication_required",
+        "response_not_found"
+      ],
+      "required_protocol_failures": [
+        "agent_command_authority_revoked"
+      ]
+    },
+    "GET /api/v2/responses/{response_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "responses_field_unsupported"
+      ],
+      "required_protocol_failures": [
+        "agent_command_authority_revoked",
+        "agent_log_capacity_exceeded",
+        "agent_turn_failed"
+      ]
+    },
+    "GET /api/v2/responses/{response_id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "invalid_replay_cursor"
+      ],
+      "required_protocol_failures": [
+        "agent_command_authority_revoked",
+        "agent_log_capacity_exceeded",
+        "agent_turn_failed"
+      ]
+    },
+    "GET /api/v2/conversations/{conversation_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found"
+      ]
+    },
+    "GET /api/v2/conversations/{conversation_id}/items": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/mod.rs# Versioned Responses routes use durable command admission and current history access.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "invalid_items_limit",
+        "invalid_items_order",
+        "invalid_items_cursor"
+      ]
+    },
+    "GET /api/v1/agents/{id}/provenance": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_provenance.rs# Immutable creation categories and authorized attribution, fenced after IO.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/provenance": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_provenance_inventory.rs# Bounded retained creation inventory with fresh scope authorization and category filtering.",
+      "required_problems": [
+        "invalid_instance_query",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/sandbox-commands/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_commands.rs# Public lifecycle receipts and typed errors, with current actor authorization.",
+      "required_problems": [
+        "command_authority_required",
+        "not_authenticated",
+        "sandbox_command_not_found"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/commands": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_commands.rs# Public lifecycle receipts and typed errors, with current actor authorization.",
+      "required_problems": [
+        "command_authority_required",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_sandbox_command",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_forbidden",
+        "resource_not_found",
+        "sandbox_command_busy",
+        "sandbox_command_conflict",
+        "sandbox_command_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/artifacts": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_artifacts.rs# Explicit approved artifacts preserve current publication and viewing authority across durable storage and downloads.",
+      "required_problems": [
+        "invalid_artifact_request",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/artifacts/{artifact_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_artifacts.rs# Explicit approved artifacts preserve current publication and viewing authority across durable storage and downloads.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/artifacts/{artifact_id}/download": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_artifacts.rs# Explicit approved artifacts preserve current publication and viewing authority across durable storage and downloads.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/channel-usage": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_channel_usage.rs# Current resource authority fences explicit channel facts; private binding history requires management authority.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/channel-usage/history": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_channel_usage.rs# Current resource authority fences explicit channel facts; private binding history requires management authority.",
+      "required_problems": [
+        "invalid_query",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "POST /api/v1/agents/{id}/artifacts": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_artifacts.rs# Explicit approved artifacts preserve current publication and viewing authority across durable storage and downloads.",
+      "required_problems": [
+        "artifact_capacity",
+        "idempotency_key_reused",
+        "invalid_artifact_request",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/responses/{response_id}/controls": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/controls.rs# Additive response controls and safe command polling use core authorization and exact retained intent.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "controls_field_unsupported"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/{response_id}/controls": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/controls.rs# Additive response controls and safe command polling use core authorization and exact retained intent.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "agent_command_key_conflict",
+        "response_control_conflict",
+        "response_control_not_admitted",
+        "capability_unsupported",
+        "invalid_control_request",
+        "invalid_control_observation",
+        "invalid_idempotency_key",
+        "invalid_json"
+      ]
+    },
+    "GET /api/v2/commands/{command_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/controls.rs# Additive response controls and safe command polling use core authorization and exact retained intent.",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "controls_field_unsupported"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/events/snapshot": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/snapshot.rs# Authenticated bounded immutable Agent operation replay uses current-policy frame fences, distinct incarnation-bound cursors and opt-in cma-tool-output; operation-replay.json covers commands, recorded output, plan and fixed page boundaries through the real handler and both typed SDKs. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_not_found",
+        "invalid_agent_events_query",
+        "invalid_agent_cursor",
+        "agent_cursor_beyond_head",
+        "agent_incarnation_changed",
+        "agent_history_unavailable",
+        "agent_read_unavailable"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/stream.rs# Authenticated bounded immutable Agent replay uses current-policy frame fences and distinct incarnation-bound cursors; operation-replay.json covers finite read-only catch-up with after_cursor and opt-in cma-tool-output through the real handler and both typed SDKs. Typed retained-output availability is additive and derived before redaction; strict Agent Events v2 consumers opt in with Prefer: cma-retained-output.",
+      "required_problems": [
+        "agent_cursor_beyond_head",
+        "agent_history_unavailable",
+        "agent_incarnation_changed",
+        "agent_not_found",
+        "agent_read_unavailable",
+        "invalid_agent_cursor",
+        "invalid_agent_events_query",
+        "not_authenticated",
+        "relay_observer_capacity_exhausted"
+      ]
+    },
+    "GET /api/v2/ui/transport": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/eligibility.rs# Current process flag and complete composition select new tabs only; authenticated no-store discovery is not command authority.",
+      "required_problems": [
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v2/ui/task-experience": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/task_experience.rs# Current caller policy is private/no-store and separate from environment capability or accepted recovery.",
+      "required_problems": [
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/queued_cancellation.rs# Exact unbound source cancellation uses current human/API authority and committed effect receipts.",
+      "required_problems": [
+        "authentication_required",
+        "invalid_queued_cancellation_request",
+        "response_not_found"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-cancellation": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/queued_cancellation.rs# Exact unbound source cancellation uses current human/API authority and committed effect receipts.",
+      "required_problems": [
+        "agent_command_key_conflict",
+        "authentication_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_queued_cancellation_request",
+        "queued_response_cancellation_conflict",
+        "queued_response_cancellation_not_admitted",
+        "response_not_found"
+      ]
+    },
+    "PUT /api/v1/cmaeg/bindings/{binding_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings.rs# Binding lifecycle or immutable context is exercised through real handlers and both SDKs.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_binding",
+        "binding_skill_version_update_unsupported",
+        "sandbox_capacity_unavailable"
+      ]
+    },
+    "GET /api/v1/cmaeg/bindings/{binding_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings.rs# Binding lifecycle or immutable context is exercised through real handlers and both SDKs.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found"
+      ]
+    },
+    "DELETE /api/v1/cmaeg/bindings/{binding_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings.rs# Binding lifecycle or immutable context is exercised through real handlers and both SDKs.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden"
+      ]
+    },
+    "PUT /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings.rs# Binding lifecycle or immutable context is exercised through real handlers and both SDKs.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "binding_not_ready"
+      ]
+    },
+    "DELETE /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings.rs# Binding lifecycle or immutable context is exercised through real handlers and both SDKs.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found"
+      ]
+    },
+    "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/event_context.rs# Binding lifecycle or immutable context is exercised through real handlers and both SDKs.",
+      "required_problems": [
+        "authentication_required",
+        "binding_key_required",
+        "event_context_not_found"
+      ]
+    },
+    "GET /.well-known/agent-card.json": {
+      "classification": "supplemental_asset",
+      "source": "api/crates/layer1-public/src/a2a/mod.rs# Public provider card is anonymous discovery outside the REST OpenAPI document.",
+      "required_problems": []
+    },
+    "POST /api/v1/bots": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_conflict",
+        "invalid_bot"
+      ]
+    },
+    "GET /api/v1/bots": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "invalid_bot"
+      ]
+    },
+    "GET /api/v1/bots/nyxid-bots": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable"
+      ]
+    },
+    "GET /api/v1/bots/{bot_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_not_found"
+      ]
+    },
+    "POST /api/v1/bots/{bot_id}/test": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_not_found",
+        "bot_conflict"
+      ]
+    },
+    "POST /api/v1/bots/{bot_id}/disable": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_not_found",
+        "bot_conflict"
+      ]
+    },
+    "POST /api/v1/bots/{bot_id}/enable": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_not_found",
+        "bot_conflict"
+      ]
+    },
+    "POST /api/v1/bots/{bot_id}/rotate-keys": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_not_found",
+        "bot_conflict"
+      ]
+    },
+    "DELETE /api/v1/bots/{bot_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Owner Bot operations use durable core admission and expose typed lifecycle problems without credential custody.",
+      "required_problems": [
+        "not_authenticated",
+        "bot_forbidden",
+        "bot_unavailable",
+        "bot_not_found",
+        "bot_conflict"
+      ]
+    },
+    "POST /api/v1/event-worker-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": [
+        "event_worker_profile_invalid"
+      ]
+    },
+    "GET /api/v1/event-worker-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": [
+        "event_worker_profile_not_found",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/event-worker-profiles/{id}/revisions/{revision}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": []
+    },
+    "GET /api/v1/event-worker-profiles": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": [
+        "event_worker_profile_forbidden",
+        "event_worker_profile_unavailable"
+      ]
+    },
+    "PUT /api/v1/event-worker-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": [
+        "event_worker_profile_conflict"
+      ]
+    },
+    "DELETE /api/v1/event-worker-profiles/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/event_workers/mod.rs# Public Event Worker Profile management; the web uses these same operations.",
+      "required_problems": []
+    },
+    "PUT /api/v1/gateway/interaction-records/{record_id}": {
+      "classification": "legacy_gateway",
+      "source": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Real REST fixtures exercise opaque records, permission checks, expiry admission, optimistic concurrency and store failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_gateway_record",
+        "store_failed",
+        "conflict",
+        "gateway_record_too_large"
+      ]
+    },
+    "GET /api/v1/gateway/interaction-records/{record_id}": {
+      "classification": "legacy_gateway",
+      "source": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Real REST fixtures exercise opaque records, permission checks, expiry admission, optimistic concurrency and store failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_gateway_record",
+        "store_failed"
+      ],
+      "non_problem_statuses": {
+        "404": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Missing or expired interaction reads and deletes return an empty 404 response."
+      }
+    },
+    "DELETE /api/v1/gateway/interaction-records/{record_id}": {
+      "classification": "legacy_gateway",
+      "source": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Real REST fixtures exercise opaque records, permission checks, expiry admission, optimistic concurrency and store failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_gateway_record",
+        "store_failed",
+        "conflict"
+      ],
+      "non_problem_statuses": {
+        "404": "api/crates/layer1-public/src/rest/gateway_interactions.rs# Missing or expired interaction reads and deletes return an empty 404 response."
+      }
+    },
+    "POST /api/v1/bot-setups/advance": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bot_setups.rs# Binding-authenticated setup workflow returns the real core view and maps all BotError outcomes. Gateway attestation dependencies are fixture ports.",
+      "required_problems": [
+        "setup_authority_required",
+        "setup_not_found",
+        "setup_changed",
+        "setup_unavailable",
+        "invalid_setup"
+      ]
+    },
+    "POST /api/v1/bot-setups/actions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bot_setups.rs# Binding-authenticated typed actions use the real setup state machine, replay fences and error mapping.",
+      "required_problems": [
+        "setup_authority_required",
+        "setup_not_found",
+        "setup_changed",
+        "setup_unavailable",
+        "invalid_setup"
+      ]
+    },
+    "POST /api/v1/agent-delegations/identity": {
+      "classification": "openapi",
+      "source": "api/crates/cma/src/bot_setups/delegation.rs# CMA-owned binding authentication resolves the admitted source actor and dispatches real consent and resource operations; external dependencies are fixture ports.",
+      "required_problems": [
+        "delegated_operation_refused"
+      ]
+    },
+    "POST /api/v1/agent-delegations/operations": {
+      "classification": "openapi",
+      "source": "api/crates/cma/src/bot_setups/delegation.rs# CMA-owned binding authentication resolves the admitted source actor and dispatches real consent and resource operations; external dependencies are fixture ports.",
+      "required_problems": [
+        "delegated_operation_refused"
+      ]
+    },
+    "DELETE /api/v1/gateway/connection-records/{record_id}": {
+      "classification": "legacy_gateway",
+      "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
+      "required_problems": [
+        "conflict",
+        "forbidden",
+        "gateway_record_not_found",
+        "invalid_gateway_record",
+        "invalid_query",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "GET /api/v1/gateway/connection-records": {
+      "classification": "legacy_gateway",
+      "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
+      "required_problems": [
+        "forbidden",
+        "invalid_gateway_record",
+        "invalid_query",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "GET /api/v1/gateway/connection-records/{record_id}": {
+      "classification": "legacy_gateway",
+      "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
+      "required_problems": [
+        "forbidden",
+        "gateway_record_not_found",
+        "invalid_gateway_record",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "PUT /api/v1/gateway/connection-records/{record_id}": {
+      "classification": "legacy_gateway",
+      "source": "api/crates/layer1-public/src/rest/gateway_connections.rs# Connection records reuse capability-gated record handlers with an independent namespace; the executable gateway-connections corpus covers success, authority, validation, storage and CAS outcomes.",
+      "required_problems": [
+        "conflict",
+        "forbidden",
+        "gateway_record_too_large",
+        "invalid_gateway_record",
+        "invalid_json",
+        "not_authenticated",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/agents": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Typed lifecycle migration handlers preserve authenticated admission and owner-visible recovery.",
+      "required_problems": [
+        "connection_required",
+        "forbidden",
+        "not_authenticated",
+        "permission_denied",
+        "temporarily_unavailable",
+        "desktop_unsupported",
+        "invalid_request",
+        "task_template_field_placeholder",
+        "task_template_field_required",
+        "task_template_field_unknown",
+        "task_template_id_unknown",
+        "task_template_message_mismatch",
+        "task_template_message_too_large",
+        "task_template_version_unsupported",
+        "sandbox_limit_reached"
+      ]
+    },
+    "GET /api/v1/agent-lifecycle/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agents.rs# Typed lifecycle migration handlers preserve authenticated admission and owner-visible recovery.",
+      "required_problems": [
+        "not_authenticated",
+        "not_found",
+        "temporarily_unavailable"
+      ]
+    },
+    "GET /api/v1/bots/connections": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bots/mod.rs# Typed lifecycle migration handlers preserve authenticated admission and owner-visible recovery.",
+      "required_problems": [
+        "bot_forbidden",
+        "bot_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/workspaces/inline": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/workspaces.rs# Typed lifecycle migration handlers preserve authenticated admission and owner-visible recovery.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/admin/warm-pools": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/warm_pools.rs# Authenticated native pool handlers and typed service errors define the wire contract.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "operator_service_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/warm-pools": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/warm_pools.rs# Authenticated native pool handlers and typed service errors define the wire contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_conflict",
+        "operator_service_unavailable"
+      ]
+    },
+    "PUT /api/v1/admin/warm-pools/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/warm_pools.rs# Authenticated native pool handlers and typed service errors define the wire contract.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated",
+        "operator_conflict",
+        "operator_resource_not_found",
+        "operator_service_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/settings": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_settings.rs# Owner settings projection and durable absolute runtime configuration.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated"
+      ]
+    },
+    "PATCH /api/v1/agents/{id}/settings": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_settings.rs# Owner settings projection and durable absolute runtime configuration.",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_delivery_ambiguous",
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_checkpoint_in_progress",
+        "store_failed"
+      ]
+    },
+    "GET /api/v1/agents/{id}/access-requests": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_access_requests.rs# Authenticated transport projects injected Core durable access decisions and their typed failures.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_access_invalid",
+        "agent_access_forbidden",
+        "agent_access_not_found",
+        "agent_access_conflict",
+        "agent_access_unavailable"
+      ]
+    },
+    "POST /api/v1/agents/{id}/access-requests/{request_id}/approve": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_access_requests.rs# Authenticated transport projects injected Core durable access decisions and their typed failures.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_access_invalid",
+        "agent_access_forbidden",
+        "agent_access_not_found",
+        "agent_access_conflict",
+        "agent_access_unavailable",
+        "missing_idempotency_key",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required"
+      ]
+    },
+    "POST /api/v1/agents/{id}/access-requests/{request_id}/deny": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_access_requests.rs# Authenticated transport projects injected Core durable access decisions and their typed failures.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_access_invalid",
+        "agent_access_forbidden",
+        "agent_access_not_found",
+        "agent_access_conflict",
+        "agent_access_unavailable",
+        "missing_idempotency_key",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required"
+      ]
+    },
+    "GET /api/v1/agents/{id}/models": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_models.rs# Owner authority, exact runtime support, and durable admission define the customization contract.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "runtime_request_capacity_exhausted"
+      ]
+    },
+    "GET /api/v1/agents/{id}/skills": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_skills.rs# Owner authority, exact runtime support, and durable admission define the customization contract.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "runtime_request_capacity_exhausted"
+      ]
+    },
+    "POST /api/v1/agents/{id}/skills": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_skills.rs# Owner authority, exact runtime support, and durable admission define the customization contract.",
+      "required_problems": [
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_skill_history_full",
+        "agent_skill_install_unsupported",
+        "agent_skill_upgrade_disabled",
+        "agent_skill_version_upgrade_unsupported",
+        "connections_required",
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_checkpoint_in_progress",
+        "sandbox_credential_setup_required",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/agents/{id}/attachments": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_attachments.rs# Bounded raw binary uploads preserve exact owner, Agent lineage, runtime capability and persisted file receipt.",
+      "required_problems": [
+        "attachment_conflict",
+        "attachment_runtime_upgrade_required",
+        "attachment_unavailable",
+        "invalid_attachment",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "resource_not_found",
+        "runtime_request_capacity_exhausted"
+      ]
+    },
+    "PUT /api/v1/agents/{id}/service-access": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_access_requests/scope.rs# Owner Save projects exact desired scope and compare-and-set expectation through Core.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_access_invalid",
+        "agent_access_forbidden",
+        "agent_access_not_found",
+        "agent_access_conflict",
+        "agent_access_unavailable",
+        "missing_idempotency_key",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/queued-inputs": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/public_contract_tests/queued_input_cases.rs# Real queued input handlers share the durable source fixture with queued_input/tests.rs and cover current authority, exact edit replay, and revision refusal.",
+      "required_problems": [
+        "authentication_required",
+        "invalid_queued_input_request",
+        "response_not_found"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/{response_id}/queued-input": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/public_contract_tests/queued_input_cases.rs# Real queued input handlers share the durable source fixture with queued_input/tests.rs and cover current authority, exact edit replay, and revision refusal.",
+      "required_problems": [
+        "agent_command_key_conflict",
+        "authentication_required",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_queued_input_request",
+        "queued_input_conflict",
+        "queued_input_not_admitted",
+        "response_not_found"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/{response_id}/interrupt": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/interruption.rs# Cancellation and a distinct priority replacement response are admitted atomically with immutable target and retained idempotency.",
+      "required_problems": [
+        "agent_command_key_conflict",
+        "authentication_required",
+        "capability_unsupported",
+        "controls_field_unsupported",
+        "invalid_control_observation",
+        "invalid_idempotency_key",
+        "invalid_interrupt_request",
+        "invalid_json",
+        "response_interrupt_not_admitted",
+        "response_not_found"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/runtime-update": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_runtime_update.rs# Owner runtime update uses durable idempotent admission and exact pinned target.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "sandbox_not_found",
+        "missing_idempotency_key",
+        "runtime_update_target_changed",
+        "idempotency_key_reused",
+        "hierarchy_service_unavailable",
+        "runtime_update_not_available"
+      ]
+    },
+    "GET /api/v1/agents/{id}/suggestions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/suggestions.rs# Owner-scoped saved contextual suggestions; reads do not generate or send input.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable",
+        "invalid_instance_query"
+      ]
+    },
+    "GET /api/v1/agents/{id}/message-feedback": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/message_feedback.rs# Owner message metadata, separate from Agent conversation commands.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable",
+        "invalid_instance_query"
+      ]
+    },
+    "PUT /api/v1/agents/{id}/messages/{message_id}/feedback": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/message_feedback.rs# Owner message metadata, separate from Agent conversation commands.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/share-links": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_share_links.rs # Authenticated Agent link management, audience redemption, and canonical recipient search use the resource access service.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
+    "POST /api/v1/agents/{id}/share-links": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_share_links.rs # Authenticated Agent link management, audience redemption, and canonical recipient search use the resource access service.",
+      "required_problems": [
+        "idempotency_key_reused",
+        "invalid_share_command",
+        "not_authenticated",
+        "resource_not_found",
+        "share_recipient_unavailable"
+      ]
+    },
+    "DELETE /api/v1/agents/{id}/share-links/{share_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_share_links.rs # Authenticated Agent link management, audience redemption, and canonical recipient search use the resource access service.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_access_changed",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/share-recipients": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_share_links.rs # Authenticated Agent link management, audience redemption, and canonical recipient search use the resource access service.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_access_unavailable",
+        "resource_not_found"
+      ]
+    },
+    "POST /api/v1/agent-share-links/{share_id}/redeem": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_share_links.rs # Authenticated Agent link management, audience redemption, and canonical recipient search use the resource access service.",
+      "required_problems": [
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_not_found",
+        "share_recipient_unavailable"
+      ]
+    },
+    "DELETE /api/v1/agents/{id}/files": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_filesystem.rs # Current Agent file authority and bound runtime validate persistent home reads, writes, deletes and downloads.",
+      "required_problems": [
+        "file_conflict",
+        "file_not_found",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "invalid_file_request",
+        "not_authenticated",
+        "resource_forbidden",
+        "resource_not_found",
+        "runtime_request_capacity_exhausted"
+      ]
+    },
+    "GET /api/v1/agents/{id}/files/content": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_filesystem.rs # Current Agent file authority and bound runtime validate persistent home reads, writes, deletes and downloads.",
+      "required_problems": [
+        "file_conflict",
+        "file_not_found",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_too_large",
+        "file_unavailable",
+        "invalid_file_request",
+        "not_authenticated",
+        "resource_not_found",
+        "runtime_request_capacity_exhausted"
+      ]
+    },
+    "GET /api/v1/agents/{id}/files/download": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_filesystem.rs # Current Agent file authority and bound runtime validate persistent home reads, writes, deletes and downloads.",
+      "required_problems": [
+        "file_conflict",
+        "file_not_found",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_too_large",
+        "file_unavailable",
+        "invalid_file_request",
+        "not_authenticated",
+        "resource_not_found",
+        "runtime_request_capacity_exhausted"
+      ]
+    },
+    "GET /api/v1/agents/{id}/files/tree": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_filesystem.rs # Current Agent file authority and bound runtime validate persistent home reads, writes, deletes and downloads.",
+      "required_problems": [
+        "file_conflict",
+        "file_not_found",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "invalid_file_request",
+        "not_authenticated",
+        "resource_not_found",
+        "runtime_request_capacity_exhausted"
+      ]
+    },
+    "POST /api/v1/agents/{id}/files": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_filesystem.rs # Current Agent file authority and bound runtime validate persistent home reads, writes, deletes and downloads.",
+      "required_problems": [
+        "file_conflict",
+        "file_not_found",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "invalid_file_request",
+        "not_authenticated",
+        "resource_forbidden",
+        "resource_not_found",
+        "runtime_request_capacity_exhausted"
+      ]
+    },
+    "GET /api/v2/agents/{agent_id}/events/head": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agent_v2/head.rs# Current Agent head reads at most one active turn and revalidates held history authority before publication.",
+      "required_problems": [
+        "not_authenticated",
+        "agent_not_found",
+        "invalid_agent_events_query",
+        "agent_history_unavailable",
+        "agent_read_unavailable"
+      ]
+    },
+    "GET /api/v1/documents": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/documents": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_document_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/documents/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated"
+      ]
+    },
+    "PATCH /api/v1/documents/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_document_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/documents/{id}/source": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/documents/{id}/revisions": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/documents/{id}/shares": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/documents/{id}/share-recipients": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Owner-authorized bounded search returns public document recipient identities.",
+      "required_problems": [
+        "account_deletion_in_progress",
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated",
+        "recipient_directory_unavailable"
+      ]
+    },
+    "PUT /api/v1/documents/{id}/shares/{subject}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "invalid_share_recipient",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "recipient_directory_unavailable",
+        "share_recipient_unavailable"
+      ]
+    },
+    "DELETE /api/v1/documents/{id}/shares/{subject}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/documents/{id}/share-links": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/documents/{id}/share-links": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "DELETE /api/v1/documents/{id}/share-links/{link_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/documents/{id}/comments": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/documents/{id}/comments": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_document_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "DELETE /api/v1/documents/{id}/comments/{comment_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
+      "required_problems": [
+        "document_capacity",
+        "document_not_found",
+        "document_revision_conflict",
+        "document_unavailable",
+        "idempotency_key_reused",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/preferences": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_preferences.rs# Explicit owner preference edits and revision-fenced runtime instruction updates.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated"
+      ]
+    },
+    "PATCH /api/v1/agents/{id}/preferences": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_preferences.rs# Explicit owner preference edits and revision-fenced runtime instruction updates.",
+      "required_problems": [
+        "agent_not_found",
+        "agent_not_ready",
+        "agent_operation_in_flight",
+        "forbidden",
+        "idempotency_in_flight",
+        "idempotency_key_reused",
+        "idempotency_recovery_required",
+        "invalid_agent_request",
+        "invalid_idempotency_key",
+        "invalid_json",
+        "json_content_type_required",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "sandbox_checkpoint_in_progress",
+        "store_failed"
+      ]
+    },
+    "GET /api/v1/agents/{id}/messages/{message_id}/feedback": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/message_feedback_reasons.rs# Conditional owner feedback metadata.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable",
+        "invalid_agent_request"
+      ]
+    },
+    "PUT /api/v1/agents/{id}/messages/{message_id}/feedback/reasons": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/message_feedback_reasons.rs# Conditional owner feedback metadata.",
+      "required_problems": [
+        "agent_not_found",
+        "forbidden",
+        "not_authenticated",
+        "instance_service_unavailable",
+        "invalid_agent_request",
+        "feedback_version_conflict",
+        "invalid_json"
+      ]
+    },
+    "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Explicit selected-resource descriptors and completed-answer deliveries retain independent resource authority, revision/hash identity, opaque downloads and named refusals. Shared cases replay the real composition for documents, artifacts and mounted-home files.",
+      "required_problems": [
+        "agent_not_found",
+        "invalid_deliverable_reference",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/deliverable-references": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Explicit selected-resource descriptors and completed-answer deliveries retain independent resource authority, revision/hash identity, opaque downloads and named refusals. Shared cases replay the real composition for documents, artifacts and mounted-home files.",
+      "required_problems": [
+        "agent_not_found",
+        "deliverable_unavailable",
+        "invalid_deliverable_reference",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Explicit selected-resource descriptors and completed-answer deliveries retain independent resource authority, revision/hash identity, opaque downloads and named refusals. Shared cases replay the real composition for documents, artifacts and mounted-home files.",
+      "required_problems": [
+        "agent_not_found",
+        "deliverable_not_found",
+        "invalid_deliverable_reference",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Explicit selected-resource descriptors and completed-answer deliveries retain independent resource authority, revision/hash identity, opaque downloads and named refusals. Shared cases replay the real composition for documents, artifacts and mounted-home files.",
+      "required_problems": [
+        "agent_not_found",
+        "deliverable_changed",
+        "deliverable_unavailable",
+        "document_not_found",
+        "not_authenticated"
+      ]
+    },
+    "GET /api/v1/agents/{id}/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_browser.rs# Current authorized Agent, runtime incarnation and bounded browser context observation; explicit owner enablement and observer release.",
+      "required_problems": [
+        "browser_runtime_conflict",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "not_authenticated",
+        "resource_not_found",
+        "invalid_file_request"
+      ]
+    },
+    "PUT /api/v1/agents/{id}/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_browser.rs# Current authorized Agent, runtime incarnation and bounded browser context observation; explicit owner enablement and observer release.",
+      "required_problems": [
+        "browser_runtime_conflict",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "not_authenticated",
+        "resource_not_found",
+        "resource_forbidden"
+      ]
+    },
+    "DELETE /api/v1/agents/{id}/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_browser.rs# Current authorized Agent, runtime incarnation and bounded browser context observation; explicit owner enablement and observer release.",
+      "required_problems": [
+        "browser_runtime_conflict",
+        "file_runtime_not_ready",
+        "file_runtime_unsupported",
+        "file_unavailable",
+        "not_authenticated",
+        "resource_not_found",
+        "invalid_file_request"
+      ]
+    },
+    "GET /api/v1/agents/{id}/browser/control": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_browser_control.rs# Current authorized control status and original operation recovery, scoped to Agent, incarnation and browser context.",
+      "required_problems": [
+        "browser_control_conflict",
+        "browser_control_not_ready",
+        "browser_control_unknown",
+        "browser_control_unsupported",
+        "invalid_browser_control",
+        "not_authenticated",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "POST /api/v1/agents/{id}/browser/control": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_browser_control.rs# Owner-only revision-fenced control mutation with exact operation identity and bounded input.",
+      "required_problems": [
+        "browser_control_conflict",
+        "browser_control_not_ready",
+        "browser_control_unknown",
+        "browser_control_unsupported",
+        "invalid_browser_control",
+        "not_authenticated",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/desktop-capability": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/desktop_creation.rs# Read-only verified creation capability; no resource allocation.",
+      "required_problems": [
+        "not_authenticated",
+        "permission_denied",
+        "invalid_instance_query",
+        "invalid_request",
+        "temporarily_unavailable"
+      ]
+    },
+    "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/inspection.rs# Read-only mapping inspection uses binding management authority.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "invalid_binding"
+      ]
+    },
+    "GET /api/v1/agents/{id}/desktop": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/desktop.rs# Owner desktop availability and same-origin stream discovery.",
+      "required_problems": [
+        "not_authenticated",
+        "desktop_unavailable"
+      ]
+    },
+    "GET /api/v1/agents/{id}/desktop/ws": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/desktop.rs# Owner-authenticated desktop WebSocket admission and binary relay.",
+      "required_problems": [
+        "desktop_busy",
+        "desktop_runtime_unavailable",
+        "desktop_unavailable",
+        "not_authenticated",
+        "runtime_stream_capacity_exhausted"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/desktop.rs# The Axum extractor refuses a request without an HTTP WebSocket upgrade.",
+        "403": "api/crates/layer1-public/src/rest/desktop.rs# Origin checks refuse foreign origins and cookie requests without Origin before runtime access."
+      }
+    },
+    "POST /api/v1/workspaces/{id}/recover-prepare": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/workspaces.rs# Exact original Workspace prepare recovery is a required-key empty command with guarded durable admission.",
+      "required_problems": [
+        "forbidden",
+        "hierarchy_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "workspace_not_found",
+        "workspace_prepare_recovery_conflict"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/workspaces.rs# This bodyless command has no RequestBody or Json extractor and calls execute_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/preparation-inspections": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/preparation.rs# Authenticated fresh-event inspection and exact-key reservation retain named refusals and never expose supplied credentials.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "invalid_binding",
+        "invalid_json",
+        "binding_not_ready",
+        "binding_unavailable",
+        "binding_resources_unavailable"
+      ]
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/preparations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/preparation.rs# Authenticated fresh-event inspection and exact-key reservation retain named refusals and never expose supplied credentials.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "invalid_binding",
+        "invalid_json",
+        "binding_not_ready",
+        "binding_unavailable"
+      ]
+    },
+    "POST /api/v1/agents/{id}/recover-worktree": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_worktree_recovery.rs# Owner or administrator recovery preserves the never-ready Agent and retained failed worktree under exact durable admission.",
+      "required_problems": [
+        "forbidden",
+        "instance_service_unavailable",
+        "idempotency_in_flight",
+        "idempotency_recovery_required",
+        "invalid_idempotency_key",
+        "missing_idempotency_key",
+        "not_authenticated",
+        "store_failed",
+        "agent_not_found",
+        "agent_worktree_recovery_conflict",
+        "agent_limit_reached"
+      ],
+      "unreachable_problems": {
+        "invalid_json": "api/crates/layer1-public/src/rest/agent_worktree_recovery.rs# This bodyless command has no RequestBody or Json extractor and calls required_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "json_content_type_required": "api/crates/layer1-public/src/rest/agent_worktree_recovery.rs# This bodyless command has no RequestBody or Json extractor and calls required_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "request_too_large": "api/crates/layer1-public/src/rest/agent_worktree_recovery.rs# This bodyless command has no RequestBody or Json extractor and calls required_empty_command; request bytes and Content-Type are not decoded or subject to an extractor body limit.",
+        "idempotency_key_reused": "api/crates/layer1-public/src/rest/idempotency.rs# required_empty_command always fingerprints SHA256(empty). Current operation scopes isolate fixed command names and opaque resource IDs, so same-subject/key/scope requests cannot disagree on body fingerprint; pending, recovery and storage failures remain reachable."
+      }
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/binding_media.rs# Bound event file publication requires authorization before bounded body reception.",
+      "required_problems": [
+        "runtime_request_capacity_exhausted"
+      ],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "403": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "409": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "413": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "503": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal."
+      }
+    },
+    "GET /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/attachment": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/binding_media.rs# Exact retained file receipt recovery rechecks current binding and source.",
+      "required_problems": [],
+      "non_problem_statuses": {
+        "403": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "404": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "503": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal."
+      }
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/events/{event_id}/media/{attachment_index}/supplement": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/binding_media.rs# Immutable late media admits a separate command with server parent metadata.",
+      "required_problems": [],
+      "non_problem_statuses": {
+        "400": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "403": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "409": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal.",
+        "503": "api/crates/layer1-public/src/rest/binding_media.rs# Media handlers retain the agreed JSON string error envelope for this refusal."
+      }
+    },
+    "POST /api/v1/cmaeg/worker-credentials/classify": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/worker_credentials.rs# Narrow service-only digest classification with fail-closed storage and bounded lookup.",
+      "required_problems": [
+        "worker_classifier_auth_required",
+        "worker_classifier_invalid_digest",
+        "worker_classifier_unavailable"
+      ],
+      "unreachable_problems": {
+        "worker_classifier_forbidden": "api/crates/cma/src/auth/worker_credentials/tests.rs# Composition verifies the exact machine bearer and both current service capabilities before Layer 1; rejected or revoked authority never installs its service marker."
+      }
+    },
+    "GET /api/v1/agents/{id}/provider-associations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_provider_associations.rs# Retained associations require current Agent management authority and never infer event-use history.",
+      "required_problems": [
+        "invalid_query",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "resource_access_changed",
+        "resource_access_unavailable",
+        "resource_forbidden",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/admin/usage": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "forbidden",
+        "invalid_query",
+        "not_authenticated",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/usage/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "forbidden",
+        "invalid_query",
+        "not_authenticated",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/usage": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/usage/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "forbidden",
+        "invalid_query",
+        "not_authenticated",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/usage/sandboxes/{id}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "not_authenticated",
+        "not_found",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/usage/sandboxes/{id}/events": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_usage.rs# Owner and administrator lifecycle usage handlers project retained allocation intervals and typed store failures.",
+      "required_problems": [
+        "invalid_query",
+        "not_authenticated",
+        "not_found",
+        "usage_unavailable"
+      ]
+    },
+    "POST /api/v1/usage/metrics/reports": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/usage/metrics/reports/{report}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/usage/metrics/reports/{report}/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/usage/metrics/reports/{report}/sandboxes/{sandbox}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/usage/metrics/reports/{report}/series": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "POST /api/v1/admin/usage/metrics/reports": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/reports/{report}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/reports/{report}/sandboxes": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/reports/{report}/sandboxes/{sandbox}": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/reports/{report}/series": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/reports/{report}/owners": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped report routes reauthorize every request and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/always-on": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_always_on.rs# Owners may only relinquish Always on; approval requires an administrator. Disable retains revision and idempotency checks.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "always_on_approval_required"
+      ]
+    },
+    "POST /api/v1/admin/sandboxes/{id}/always-on": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/sandboxes.rs# Administrator Always on approval and revocation use revision CAS and record configure activities.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "operator_resource_not_found"
+      ]
+    },
+    "GET /api/v1/admin/auto-pause/preview": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/auto_pause.rs# Operator preview evaluates the same maintenance eligibility proof without persisting a pause.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/admin/auto-pause/pause-idle-now": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/auto_pause.rs# Confirmed operator action schedules eligible idle Sandboxes through the durable maintenance lifecycle.",
+      "required_problems": [
+        "forbidden",
+        "invalid_admin_request",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/admin/usage/metrics/options": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Administrator option discovery reauthorizes every request, validates bounded queries and maps reporting pressure and availability failures. Duplicate names use distinct final secondary text, exhausting safe human context before a reference. Precise owner observation times require current ReadUserDirectory authority; Sandbox-only callers retain dates. Primary labels stay plain.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/reports/{report}/owner-allocations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/mod.rs# Principal-scoped owner allocations reauthorize every page, resolve cohort-wide labels with current directory precision authority, and map typed reporting problems.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_expired"
+      ]
+    },
+    "GET /api/v1/sandboxes/{id}/runtime-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_retained_recovery.rs# Owner-only bounded read-only assessment; explicit POST repeats stronger admission proof.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "sandbox_not_found",
+        "hierarchy_service_unavailable"
+      ]
+    },
+    "POST /api/v1/sandboxes/{id}/runtime-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_retained_recovery.rs# Explicit owner consent and fresh proof admit the existing same-image reopening suffix with immutable request receipts.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "sandbox_not_found",
+        "missing_idempotency_key",
+        "retained_recovery_consent_required",
+        "retained_recovery_authority_changed",
+        "retained_recovery_not_proved",
+        "retained_recovery_unavailable",
+        "hierarchy_service_unavailable"
+      ]
+    },
+    "GET /api/v2/responses/{response_id}/output": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/routes_output.rs# pub(in crate::responses::v2) async fn output_page(",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "invalid_output_cursor"
+      ]
+    },
+    "POST /api/v1/telemetry/browser": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/browser_telemetry.rs# Anonymous fixed-category diagnostics have a 256-byte body limit and no durable effects; success and malformed/private fields are covered by real-handler tests.",
+      "required_problems": []
+    },
+    "GET /api/v1/agents/{id}/capacity-recovery/dry-run": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "not_authenticated",
+        "resource_not_found"
+      ]
+    },
+    "GET /api/v1/agents/{id}/capacity-recovery": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/capacity-recovery/status": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/capacity-recovery/admit": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_disabled",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ],
+      "non_problem_statuses": {
+        "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
+      }
+    },
+    "POST /api/v1/agents/{id}/capacity-recovery/resume": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# Explicit authorized recovery operations preserve the original request and redact private native facts.",
+      "required_problems": [
+        "capacity_recovery_conflict",
+        "capacity_recovery_unavailable",
+        "not_authenticated"
+      ],
+      "non_problem_statuses": {
+        "409": "api/crates/layer1-public/src/rest/agent_capacity_recovery/commands.rs# A recorded known-abort disposition preserves the original request identity."
+      }
+    },
+    "GET /api/v1/admin/admission": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/admission.rs# ConfigurePlatform protects the shared control snapshot and its at most twenty newest immutable changes; writes require the independent rollout gate and revision CAS.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_control_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/admission/stop": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/admission.rs# ConfigurePlatform protects shared operator stop state; writes require the independent rollout gate and revision CAS.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_control_unavailable",
+        "admission_control_writes_unavailable",
+        "invalid_request",
+        "admission_control_conflict"
+      ]
+    },
+    "POST /api/v1/admin/admission/resume": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/admission.rs# ConfigurePlatform protects shared operator stop state; writes require the independent rollout gate and revision CAS.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_control_unavailable",
+        "admission_control_writes_unavailable",
+        "invalid_request",
+        "admission_control_conflict"
+      ]
+    },
+    "PUT /api/v1/admin/admission/ceilings": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/ceilings.rs# ConfigurePlatform protects independently revised capacity policy; the separate gate and revision CAS protect writes.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "admission_ceilings_unavailable",
+        "admission_ceilings_writes_unavailable",
+        "invalid_request",
+        "admission_ceilings_conflict"
+      ]
+    },
+    "GET /api/v1/usage/metrics/view": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/view.rs# Latest view uses current authority and explicit typed retained-admission failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_view_disabled"
+      ]
+    },
+    "GET /api/v1/admin/usage/metrics/view": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_metrics/view.rs# Latest view uses current authority and explicit typed retained-admission failures.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "not_found",
+        "invalid_query",
+        "reporting_budget_exceeded",
+        "usage_unavailable",
+        "report_view_disabled"
+      ]
+    },
+    "GET /api/v1/agents/{id}/retained-output": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/agent_retained_output.rs# async fn read(",
+      "required_problems": [
+        "agent_capability_unsupported",
+        "agent_not_found",
+        "forbidden",
+        "instance_service_unavailable",
+        "not_authenticated",
+        "organization_authority_unavailable",
+        "invalid_instance_query"
+      ]
+    },
+    "GET /api/v2/responses/{response_id}/retained-output": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/routes_retained_output.rs# pub(in crate::responses::v2) async fn read(",
+      "required_problems": [
+        "authentication_required",
+        "response_not_found",
+        "invalid_retained_output_cursor"
+      ]
+    },
+    "POST /api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}/resets": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/bindings/reset.rs# Explicit owner reset retains predecessor history and authenticates both target and idempotency scope.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "binding_not_found",
+        "invalid_binding",
+        "partition_reset_key_conflict"
+      ]
+    },
+    "GET /api/v1/admin/spend": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/spend.rs# Existing operator spend handlers preserve capability, availability, validation and write-gate precedence.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "platform_spend_unavailable"
+      ]
+    },
+    "POST /api/v1/admin/spend/observations": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/spend.rs# Existing operator spend handlers preserve capability, availability, validation and write-gate precedence.",
+      "required_problems": [
+        "not_authenticated",
+        "forbidden",
+        "invalid_request",
+        "model_budget_writes_unavailable",
+        "platform_spend_unavailable"
+      ]
+    },
+    "GET /api/v1/sandboxes/capacity": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/sandbox_capacity.rs# Authenticated owner quota snapshot.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "hierarchy_service_unavailable"
+      ]
+    },
+    "POST /api/v1/account/deletion": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/account_deletion.rs# Owner-only account deletion acceptance and safe progress reads use the durable deletion ledger and typed refusals.",
+      "required_problems": [
+        "not_authenticated",
+        "account_deletion_unavailable",
+        "account_deletion_acknowledgement_required",
+        "account_deletion_requires_owner_session",
+        "missing_idempotency_key",
+        "invalid_idempotency_key",
+        "idempotency_recovery_required",
+        "invalid_json",
+        "json_content_type_required",
+        "store_failed"
+      ]
+    },
+    "GET /api/v1/account/deletion": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/account_deletion.rs# Owner-only account deletion acceptance and safe progress reads use the durable deletion ledger and typed refusals.",
+      "required_problems": [
+        "not_authenticated",
+        "account_deletion_requires_owner_session",
+        "account_deletion_not_found",
+        "store_failed"
+      ]
+    },
+    "POST /api/v1/admin/admission/pending-homes/reconcile": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/pending_homes.rs# ConfigurePlatform and the ceilings write gate protect preview and audited correction; observed counter CAS rejects stale apply commands.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "pending_homes_unavailable",
+        "admission_ceilings_writes_unavailable",
+        "invalid_request",
+        "pending_homes_conflict"
+      ]
+    }
+  },
+  "shared_capacity_problems": [
+    "runtime_request_capacity_exhausted",
+    "runtime_stream_capacity_exhausted",
+    "relay_observer_capacity_exhausted",
+    "relay_capacity_exhausted"
+  ]
+}

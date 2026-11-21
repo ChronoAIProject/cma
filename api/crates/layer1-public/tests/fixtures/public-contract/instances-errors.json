@@ -1,0 +1,1578 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "sandbox-list-anonymous",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-list-denied",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-list-invalid-page",
+      "operation": "GET /api/v1/sandboxes",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-page",
+          "title": "invalid page",
+          "status": 400,
+          "detail": "The page or event cursor parameters are not valid.",
+          "code": "invalid_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-read-anonymous",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-read-denied",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-events-anonymous",
+      "operation": "GET /api/v1/sandboxes/{id}/events",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/events?after=0&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-events-denied",
+      "operation": "GET /api/v1/sandboxes/{id}/events",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/events?after=0&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-events-invalid-page",
+      "operation": "GET /api/v1/sandboxes/{id}/events",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/events?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-page",
+          "title": "invalid page",
+          "status": 400,
+          "detail": "The page or event cursor parameters are not valid.",
+          "code": "invalid_page"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-list-anonymous",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-list-denied",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-read-anonymous",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-read-denied",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "worktree-list-anonymous",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "worktree-list-denied",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_route/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "worktree-read-anonymous",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "worktree-read-denied",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/wkt_agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-live-agent-conflict-anonymous",
+      "operation": "DELETE /api/v1/workspaces/{id}",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {
+          "idempotency-key": "workspace-live-agent-conflict-anonymous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-live-agent-conflict-denied",
+      "operation": "DELETE /api/v1/workspaces/{id}",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {
+          "idempotency-key": "workspace-live-agent-conflict-denied"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-live-agent-conflict-missing-key",
+      "operation": "DELETE /api/v1/workspaces/{id}",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-live-agent-conflict-invalid-key",
+      "operation": "DELETE /api/v1/workspaces/{id}",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/workspaces/wks_route",
+        "headers": {
+          "idempotency-key": "contains spaces"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-create-anonymous",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-create-anonymous"
+        },
+        "body": {
+          "sandbox_profile": {
+            "id": "sbp_contract",
+            "revision": 1
+          },
+          "name": "contract-created"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-create-denied",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-create-denied"
+        },
+        "body": {
+          "sandbox_profile": {
+            "id": "sbp_contract",
+            "revision": 1
+          },
+          "name": "contract-created"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-create-missing-key",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "sandbox_profile": {
+            "id": "sbp_contract",
+            "revision": 1
+          },
+          "name": "contract-created"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-create-invalid-key",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "sandbox_profile": {
+            "id": "sbp_contract",
+            "revision": 1
+          },
+          "name": "contract-created"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-create-invalid-body",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-create-invalid-body"
+        },
+        "body": []
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid length 0, expected struct CreateSandboxRequest with 4 elements at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-create-missing-media-type",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "idempotency-key": "sandbox-create-missing-media-type"
+        },
+        "body": {
+          "sandbox_profile": {
+            "id": "sbp_contract",
+            "revision": 1
+          },
+          "name": "contract-created"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-create-anonymous",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-create-anonymous"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-create-denied",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-create-denied"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-create-missing-key",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-create-invalid-key",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-create-invalid-body",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-create-invalid-body"
+        },
+        "body": []
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid length 0, expected struct CreateWorkspaceRequest with 3 elements at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-create-missing-media-type",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "idempotency-key": "workspace-create-missing-media-type"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-delete-anonymous",
+      "operation": "DELETE /api/v1/sandboxes/{id}",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/sandboxes/sbx_11111111111111111111111111111111",
+        "headers": {
+          "idempotency-key": "sandbox-delete-anonymous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-delete-denied",
+      "operation": "DELETE /api/v1/sandboxes/{id}",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/sandboxes/sbx_11111111111111111111111111111111",
+        "headers": {
+          "idempotency-key": "sandbox-delete-denied"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-delete-missing-key",
+      "operation": "DELETE /api/v1/sandboxes/{id}",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/sandboxes/sbx_11111111111111111111111111111111",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-delete-invalid-key",
+      "operation": "DELETE /api/v1/sandboxes/{id}",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/sandboxes/sbx_11111111111111111111111111111111",
+        "headers": {
+          "idempotency-key": "contains spaces"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-pause-anonymous",
+      "operation": "POST /api/v1/sandboxes/{id}/pause",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/pause",
+        "headers": {
+          "idempotency-key": "sandbox-pause-anonymous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-pause-denied",
+      "operation": "POST /api/v1/sandboxes/{id}/pause",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/pause",
+        "headers": {
+          "idempotency-key": "sandbox-pause-denied"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-pause-missing-key",
+      "operation": "POST /api/v1/sandboxes/{id}/pause",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/pause",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-pause-invalid-key",
+      "operation": "POST /api/v1/sandboxes/{id}/pause",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/pause",
+        "headers": {
+          "idempotency-key": "contains spaces"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-revive-not-paused-anonymous",
+      "operation": "POST /api/v1/sandboxes/{id}/revive",
+      "scenario": "instances_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/revive",
+        "headers": {
+          "idempotency-key": "sandbox-revive-not-paused-anonymous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-revive-not-paused-denied",
+      "operation": "POST /api/v1/sandboxes/{id}/revive",
+      "scenario": "instances_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/revive",
+        "headers": {
+          "idempotency-key": "sandbox-revive-not-paused-denied"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-revive-not-paused-missing-key",
+      "operation": "POST /api/v1/sandboxes/{id}/revive",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/revive",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-revive-not-paused-invalid-key",
+      "operation": "POST /api/v1/sandboxes/{id}/revive",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/revive",
+        "headers": {
+          "idempotency-key": "contains spaces"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-create-invalid-body-reused-key",
+      "operation": "POST /api/v1/sandboxes",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "sandbox-create-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-create-invalid-body-reused-key",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-create-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-read-target-missing",
+      "operation": "GET /api/v1/sandboxes/{id}",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-events-target-missing",
+      "operation": "GET /api/v1/sandboxes/{id}/events",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_missing/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-list-target-missing",
+      "operation": "GET /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/sandboxes/sbx_missing/workspaces",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-read-target-missing",
+      "operation": "GET /api/v1/workspaces/{id}",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "worktree-list-target-missing",
+      "operation": "GET /api/v1/workspaces/{id}/worktrees",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/workspaces/wks_missing/worktrees",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "worktree-read-target-missing",
+      "operation": "GET /api/v1/worktrees/{id}",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/worktrees/missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "worktree_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-live-agent-conflict-target-missing",
+      "operation": "DELETE /api/v1/workspaces/{id}",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/workspaces/wks_missing",
+        "headers": {
+          "idempotency-key": "workspace-live-agent-conflict-target-missing"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-create-target-missing",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_missing/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "workspace-create-target-missing"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 1
+          }
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-delete-target-missing",
+      "operation": "DELETE /api/v1/sandboxes/{id}",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/sandboxes/sbx_missing",
+        "headers": {
+          "idempotency-key": "sandbox-delete-target-missing"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-pause-target-missing",
+      "operation": "POST /api/v1/sandboxes/{id}/pause",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_missing/pause",
+        "headers": {
+          "idempotency-key": "sandbox-pause-target-missing"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "sandbox-revive-not-paused-target-missing",
+      "operation": "POST /api/v1/sandboxes/{id}/revive",
+      "scenario": "instances_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_missing/revive",
+        "headers": {
+          "idempotency-key": "sandbox-revive-not-paused-target-missing"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "sandbox_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

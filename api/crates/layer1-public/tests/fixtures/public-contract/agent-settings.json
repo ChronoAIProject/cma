@@ -1,0 +1,852 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agent-settings-initial-read",
+      "operation": "GET /api/v1/agents/{id}/settings",
+      "scenario": "agents_operating",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "model": "gpt-proof",
+          "reasoning_effort": "high",
+          "permission_mode": "guarded",
+          "pending": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-settings-update",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_operating",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-settings-update"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous",
+          "pending": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-settings-update-replayed",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_operating",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-settings-update"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous",
+          "pending": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-settings-read-updated",
+      "operation": "GET /api/v1/agents/{id}/settings",
+      "scenario": "agents_operating",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous",
+          "pending": false
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-settings-read-anonymous",
+      "operation": "GET /api/v1/agents/{id}/settings",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-settings-read-forbidden",
+      "operation": "GET /api/v1/agents/{id}/settings",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-settings-read-missing",
+      "operation": "GET /api/v1/agents/{id}/settings",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing/settings",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-input-unavailable-anonymous",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable-anonymous"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-input-unavailable-denied",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable-denied"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-input-unavailable-missing-key",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-input-unavailable-invalid-key",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-input-unavailable-invalid-body",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct UpdateAgentSettingsRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-input-unavailable-missing-media-type",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "idempotency-key": "agent-input-unavailable-missing-media-type"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-input-unavailable-invalid-body-reused-key",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-input-unavailable-target-missing",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_missing/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable-target-missing"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-input-unavailable-operation-pending",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_operation_pending",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable-operation-pending"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-input-unavailable-operation-recovery",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_operation_recovery",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable-operation-recovery"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-input-unavailable-operation-unavailable",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_operation_unavailable",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable-operation-unavailable"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation store unavailable",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-malformed-post-api-v1-agents-id-input",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "malformed-post-api-v1-agents-id-input"
+        },
+        "rawBody": "{\""
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 400,
+          "detail": "Failed to parse the request body as JSON: EOF while parsing a string at line 1 column 2",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-rest-checkpoint-input-not-admitted",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_checkpoint",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "checkpoint-input-one"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-checkpoint-in-progress",
+          "title": "sandbox checkpoint in progress",
+          "status": 409,
+          "detail": "The Sandbox is saving a checkpoint. Input was not accepted; retry after the checkpoint completes.",
+          "code": "sandbox_checkpoint_in_progress"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-state-agent-capability-input",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agent_state_no_capabilities",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-capability-input"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-capability-unsupported",
+          "title": "agent capability unsupported",
+          "status": 422,
+          "detail": "The agent runtime does not support this operation.",
+          "code": "agent_capability_unsupported",
+          "capability": "conversation"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-state-agent-input-stopped",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_stopped",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-input-stopped"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-ready",
+          "title": "agent not ready",
+          "status": 409,
+          "detail": "The agent is not ready for this operation.",
+          "code": "agent_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-state-agent-invalid-input",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-agent-invalid-input"
+        },
+        "body": {
+          "model": "\n",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-agent-request",
+          "title": "invalid agent request",
+          "status": 422,
+          "detail": "The agent request does not satisfy its validation contract.",
+          "code": "invalid_agent_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-input-unavailable",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",
+          "title": "instance service unavailable",
+          "status": 503,
+          "detail": "An instance dependency could not complete this request.",
+          "code": "instance_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-runtime-ambiguous",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_ambiguous",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-runtime-ambiguous"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-delivery-ambiguous",
+          "title": "agent delivery ambiguous",
+          "status": 503,
+          "detail": "The operation outcome is ambiguous and requires durable reconciliation.",
+          "code": "agent_delivery_ambiguous"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "settings-agent-runtime-ambiguous-recovery",
+      "operation": "PATCH /api/v1/agents/{id}/settings",
+      "scenario": "agents_ambiguous",
+      "request": {
+        "method": "PATCH",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-runtime-ambiguous-recovery"
+        },
+        "body": {
+          "model": "gpt-5.6-sol",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-operation-in-flight",
+          "title": "agent operation in flight",
+          "status": 409,
+          "detail": "Another durable operation currently owns this agent.",
+          "code": "agent_operation_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-settings-read-pending",
+      "operation": "GET /api/v1/agents/{id}/settings",
+      "scenario": "agents_ambiguous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/settings",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "model": "gpt-6",
+          "reasoning_effort": "high",
+          "permission_mode": "autonomous",
+          "pending": true
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

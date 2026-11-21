@@ -1,0 +1,99 @@
+/*
+ * The approval card — the shared style contracts
+ *
+ * The request reads first and the answers sit below it, each over a caption
+ * naming its effect. The warning hairline is the card's only tone: it marks
+ * the one entry in the timeline that is waiting on a person.
+ */
+
+.approval {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 16px 0;
+  padding: 14px 16px;
+  background: var(--dsw-alias-bg-layer-1);
+  border: 1px solid var(--dsw-alias-state-warn-secondary);
+  border-radius: 8px;
+}
+
+/* The waiting character leads the request; a decided card keeps only its words. */
+.approval__head {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+.approval__character {
+  margin-top: -4px;
+}
+
+.approval__request {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.approval__eyebrow {
+  color: var(--dsw-alias-state-warn-label);
+  font: var(--dsw-font-xxs-strong-12);
+}
+
+.approval h2 {
+  color: var(--dsw-alias-label-primary);
+  font-size: 15px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.approval__detail,
+.approval__waiting {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 13px;
+  line-height: 20px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* Three equal answers that fall into a column once their captions no longer fit side by side. */
+.approval__actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+  gap: 12px;
+}
+
+.approval__choice {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+  min-width: 0;
+}
+
+/* The three answers fill their equal columns, so they read as one choice rather than three. */
+.approval__choice > .button {
+  align-self: stretch;
+}
+
+.approval__effect {
+  color: var(--dsw-alias-label-caption);
+  font-size: 12px;
+  line-height: 18px;
+  overflow-wrap: anywhere;
+}
+
+.approval__decision {
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  text-transform: capitalize;
+}
+
+@media (max-width: 30rem) {
+  .approval__choice > .button {
+    min-height: 44px;
+    max-height: 44px;
+  }
+}

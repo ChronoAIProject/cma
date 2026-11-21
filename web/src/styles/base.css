@@ -1,5 +1,5 @@
 /*
- * Base layer — reset plus the page-level rules from docs/Web_Style.md.
+ * Base layer — reset plus the page-level rules from the shared style contracts.
  * Component styling does not live here.
  */
 
@@ -16,8 +16,8 @@
 
 /*
  * Web_Style.md section 5: the page does not scroll. The app fills exactly the
- * viewport and the terminal owns its own scrollback. dvh rather than vh so the
- * iOS toolbar collapsing does not leave the prompt under the fold.
+ * viewport. dvh rather than vh so the iOS toolbar collapsing does not leave
+ * content under the fold.
  */
 html,
 body,
@@ -41,7 +41,7 @@ body {
   font-size: var(--text-ui);
   line-height: var(--leading-ui);
   -webkit-font-smoothing: antialiased;
-  text-rendering: optimizeLegibility;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 /* §4: selected text uses the appearance's accent and its paired foreground. */
@@ -113,7 +113,10 @@ button {
   white-space: normal;
 }
 
-/* Digit columns take tabular numerals, per Web_Style.md section 4. */
-.tabular {
+/*
+ * Figures that change or line up take tabular numerals (§4, §29): every timestamp and
+ * age is a <time>, so a ticking clock never nudges the words beside it.
+ */
+time {
   font-variant-numeric: tabular-nums;
 }

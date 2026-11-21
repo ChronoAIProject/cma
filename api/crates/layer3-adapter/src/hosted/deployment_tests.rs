@@ -1,258 +1,267 @@
-//! What every hosted kernel is started with, and what it is refused.
-
 use super::*;
-use crate::{RuntimeEnvironment, RuntimeSpec, TermSize};
-
-/// A provisioning request carrying this session's own environment.
-fn spec_with(environment: RuntimeEnvironment) -> RuntimeSpec {
-    RuntimeSpec {
-        restore_from: None,
-        workspace: None,
-        skills: Vec::new(),
-        reaches: Vec::new(),
-        runtime_policy_required: false,
-        sponsored_model_required: false,
-        workspace_source_required: false,
-        conversation_slots_required: None,
-        platform_briefing: String::new(),
-        created_by: None,
-        environment,
-        session_id: "sesn_x".into(),
-        chat_host: None,
-        generation: None,
-        reservation_token: None,
-        size: TermSize {
-            cols: 120,
-            rows: 40,
-        },
-        capacity: None,
-        timeout_seconds: None,
-        subject_credential: None,
-        options: Default::default(),
-    }
-}
-
-/// A deployment with an upstream configured, as a real one has.
-fn deployed() -> Deployment {
-    Deployment {
-        upstream_base_url: "https://models.example/v1".into(),
-        upstream_model: "a-default-model".into(),
-        upstream_wire_api: "responses".into(),
-        platform_base_url: "https://platform.example".into(),
-        ..Deployment::default()
-    }
-}
 
 #[test]
-fn no_credential_travels_as_environment() {
-    // The reason the proxy exists: a terminal attachment is equivalent to
-    // shell access, so anything reachable from the environment is reachable by
-    // whoever is typing. This is the assertion that fails if somebody ever
-    // decides passing the real one would be simpler.
-    let env = deployed().base_environment(&spec_with(Default::default()));
-    assert_eq!(
-        env.get("NYXID_ACCESS_TOKEN").map(String::as_str),
-        Some(PLACEHOLDER_CREDENTIAL)
-    );
-    assert!(
-        env.values().all(|v| !v.contains("Bearer")),
-        "no credential-shaped value may be handed to a sandbox"
-    );
-}
-
-#[test]
-fn trigger_sensitive_proxies_have_distinct_fixed_loopback_bindings() {
-    let env = deployed().base_environment(&spec_with(Default::default()));
-    assert_eq!(
-        env.get("CHRONO_UPSTREAM_BIND").map(String::as_str),
-        Some("127.0.0.1:9091")
-    );
-    assert_eq!(
-        env.get("CHRONO_PLATFORM_PROXY_BIND").map(String::as_str),
-        Some("127.0.0.2:9092")
-    );
-    assert_eq!(
-        env.get("NYXID_URL").map(String::as_str),
-        Some("http://127.0.0.2:9092")
-    );
-}
-
-#[test]
-fn a_sessions_own_model_wins_over_the_deployments_default() {
-    let mut spec = spec_with(Default::default());
-    spec.options.model = Some("a-model-this-session-asked-for".into());
-    let env = deployed().base_environment(&spec);
-    assert_eq!(
-        env.get("CHRONO_UPSTREAM_MODEL").map(String::as_str),
-        Some("a-model-this-session-asked-for")
-    );
-}
-
-#[test]
-fn an_unconfigured_session_gets_the_deployments_model() {
-    let env = deployed().base_environment(&spec_with(Default::default()));
-    assert_eq!(
-        env.get("CHRONO_UPSTREAM_MODEL").map(String::as_str),
-        Some("a-default-model")
-    );
-}
-
-#[test]
-fn the_sandbox_is_told_the_geometry_it_was_asked_for() {
-    let env = deployed().base_environment(&spec_with(Default::default()));
-    assert_eq!(
-        env.get("CHRONO_RUNTIME_COLS").map(String::as_str),
-        Some("120")
-    );
-    assert_eq!(
-        env.get("CHRONO_RUNTIME_ROWS").map(String::as_str),
-        Some("40")
-    );
-}
-
-#[test]
-fn software_the_image_does_not_carry_is_refused_by_name() {
-    let err = deployed()
-        .refuse_undeliverable(&RuntimeEnvironment {
-            packages: vec!["a-package-this-image-lacks".into()],
-            ..Default::default()
-        })
-        .expect_err("an undeliverable requirement must not provision");
-    assert!(matches!(err, AdapterError::Unsupported(_)), "got {err:?}");
-    assert!(
-        err.to_string().contains("a-package-this-image-lacks"),
-        "the refusal must name what is missing, got {err}"
-    );
-}
-
-#[test]
-fn a_skill_the_agent_cannot_load_is_refused_by_name() {
-    let err = deployed()
-        .refuse_undeliverable(&RuntimeEnvironment {
-            skills: vec!["a-skill-this-agent-lacks".into()],
-            ..Default::default()
-        })
-        .expect_err("an undeliverable skill must not provision");
-    assert!(matches!(err, AdapterError::Unsupported(_)), "got {err:?}");
-    assert!(
-        err.to_string().contains("a-skill-this-agent-lacks"),
-        "{err}"
-    );
-}
-
-#[test]
-fn what_the_image_already_carries_is_honoured() {
-    // The success path, and the one that matters most: every session carries
-    // this deployment's baseline, so a blanket refusal would refuse all of them.
-    let d = Deployment {
-        provided_packages: vec!["nyxid".into()],
-        skills_root: ".codex/skills".into(),
-        ..deployed()
+fn only_explicit_retained_tool_authority_changes_the_runtime_specification() {
+    let deployment = HostedDeployment::default();
+    let spec = SandboxSpec {
+        sandbox_id: "ordinary-sandbox".into(),
+        ..SandboxSpec::default()
     };
-    assert!(d
-        .refuse_undeliverable(&RuntimeEnvironment {
-            packages: vec!["nyxid".into()],
-            skills: vec!["nyxid".into(), "ornn-agent-manual-cli".into()],
-            ..Default::default()
-        })
-        .is_ok());
-}
-
-#[test]
-fn a_session_asking_for_nothing_is_never_refused() {
-    // A deployment that states no baseline still runs ordinary sessions.
-    assert!(Deployment::default()
-        .refuse_undeliverable(&RuntimeEnvironment::default())
-        .is_ok());
-}
-
-#[test]
-fn the_agent_is_told_what_its_session_may_reach() {
-    // The gap this closes: a sandbox carried a credential broker and a CLI to
-    // call it with, and nothing that said what either was for. An agent left
-    // to infer its own scope reasons about why it cannot act, and produces a
-    // confident wrong answer.
-    let mut spec = spec_with(Default::default());
-    spec.reaches = vec!["api-github".into(), "chrono-llm".into()];
-
-    let env = deployed().base_environment(&spec);
-
-    assert_eq!(
-        env.get("CHRONO_SESSION_REACHES").map(String::as_str),
-        Some("api-github,chrono-llm")
+    let old = deployment.render(&spec).unwrap();
+    assert!(!old.env.contains_key("CHRONO_TOOL_PROXY_URL"));
+    let old_json = serde_json::to_value(&spec).unwrap();
+    assert!(old_json.get("tool_proxy_url").is_none());
+    let recovered: SandboxSpec = serde_json::from_value(old_json).unwrap();
+    assert_eq!(deployment.render(&recovered).unwrap(), old);
+    let mut supplied = spec.clone();
+    supplied.environment.insert(
+        "CHRONO_TOOL_PROXY_URL".into(),
+        "https://untrusted.example/mcp".into(),
     );
-}
-
-#[test]
-fn reaching_nothing_is_said_rather_than_left_unsaid() {
-    // "This session reaches nothing" and "nothing told me" are different
-    // facts, and an agent acts differently on them. The variable is always
-    // present, so an absent one can only mean a control plane that predates
-    // this — never a session that was granted none.
-    let env = deployed().base_environment(&spec_with(Default::default()));
-
+    assert!(deployment.render(&supplied).is_err());
+    let mut native = spec;
+    native.tool_proxy_url = Some("https://gateway.example/mcp".into());
+    let retained: SandboxSpec =
+        serde_json::from_value(serde_json::to_value(&native).unwrap()).unwrap();
+    let rendered = deployment.render(&retained).unwrap();
     assert_eq!(
-        env.get("CHRONO_SESSION_REACHES").map(String::as_str),
-        Some(""),
-        "a session granted nothing must still be told so"
+        rendered.env["CHRONO_TOOL_PROXY_URL"],
+        "https://gateway.example/mcp"
     );
+    assert_ne!(
+        rendered.metadata[SPEC_FINGERPRINT_METADATA],
+        old.metadata[SPEC_FINGERPRINT_METADATA]
+    );
+    let mut expected = old;
+    expected.env.insert(
+        "CHRONO_TOOL_PROXY_URL".into(),
+        "https://gateway.example/mcp".into(),
+    );
+    expected.metadata.insert(
+        SPEC_FINGERPRINT_METADATA.into(),
+        rendered.metadata[SPEC_FINGERPRINT_METADATA].clone(),
+    );
+    assert_eq!(rendered, expected);
+}
+
+fn request() -> ProviderSandboxRequest {
+    ProviderSandboxRequest {
+        funded_until: None,
+        image: ProviderImage {
+            uri: "registry.example/runtime@sha256:abc".into(),
+        },
+        entrypoint: vec!["/runtime".into(), "serve".into()],
+        env: BTreeMap::from([
+            ("HOME".into(), "/home/cma".into()),
+            ("TERM".into(), "xterm-256color".into()),
+        ]),
+        resource_limits: BTreeMap::from([
+            ("cpu".into(), "1000m".into()),
+            ("memory".into(), "1024Mi".into()),
+        ]),
+        timeout: Some(3_600),
+        volumes: Vec::new(),
+        metadata: BTreeMap::from([
+            (SANDBOX_METADATA.into(), "sandbox-1".into()),
+            ("cma/runtime-contract".into(), "2".into()),
+            (CONTROL_PLANE_METADATA.into(), "rollout-a".into()),
+        ]),
+    }
 }
 
 #[test]
-fn what_a_session_reaches_carries_names_and_never_a_credential() {
-    // Names are a fact about a session's configuration; a token is not. The
-    // whole reason the broker sits behind a loopback proxy is that anything in
-    // this map is readable by whoever holds the terminal.
-    let mut spec = spec_with(Default::default());
-    spec.reaches = vec!["api-github".into()];
-    spec.subject_credential = Some("a-real-credential-value".into());
+fn managed_llm_route_follows_pinned_service_scope_during_creation_and_revival() {
+    for configured_service in ["chrono-llm", "chrono-llm-public"] {
+        let deployment = HostedDeployment {
+            upstream_base_url: format!("https://nyx.example/api/v1/proxy/s/{configured_service}"),
+            platform_base_url: "https://nyx.example".into(),
+            ..HostedDeployment::default()
+        };
+        for (services, expected) in [
+            (vec!["chrono-llm", "ornn-api", "api-github"], "chrono-llm"),
+            (
+                vec!["chrono-llm-public", "ornn-api", "api-github"],
+                "chrono-llm-public",
+            ),
+            (vec!["chrono-llm", "chrono-llm-public"], "chrono-llm-public"),
+        ] {
+            let spec = SandboxSpec {
+                sandbox_id: "sandbox-model-scope".into(),
+                reaches: services.into_iter().map(str::to_owned).collect(),
+                ..SandboxSpec::default()
+            };
+            for generation in [1, 2] {
+                let rendered = deployment.render_runtime(&spec, generation).unwrap();
+                assert_eq!(
+                    rendered.env["CHRONO_UPSTREAM_BASE_URL"],
+                    format!("https://nyx.example/api/v1/proxy/s/{expected}")
+                );
+                assert_eq!(
+                    rendered.env["CHRONO_SANDBOX_REACHES"],
+                    spec.reaches.join(",")
+                );
+            }
+            let own = SandboxSpec {
+                own_credential: true,
+                ..spec
+            };
+            assert_eq!(
+                deployment.render(&own).unwrap().env["CHRONO_UPSTREAM_BASE_URL"],
+                ""
+            );
+        }
+    }
+}
 
-    let env = deployed().base_environment(&spec);
-
-    for (name, value) in &env {
-        assert!(
-            !value.contains("a-real-credential-value"),
-            "{name} carried the owner's credential"
+#[test]
+fn public_llm_selection_preserves_custom_upstreams() {
+    let spec = SandboxSpec {
+        sandbox_id: "sandbox-model-scope".into(),
+        reaches: vec!["chrono-llm-public".into()],
+        ..SandboxSpec::default()
+    };
+    for upstream in [
+        "https://models.example/v1",
+        "https://other.example/api/v1/proxy/s/chrono-llm",
+        "https://nyx.example/api/v1/proxy/s/custom-model",
+    ] {
+        let deployment = HostedDeployment {
+            upstream_base_url: upstream.into(),
+            platform_base_url: "https://nyx.example".into(),
+            ..HostedDeployment::default()
+        };
+        assert_eq!(
+            deployment.render(&spec).unwrap().env["CHRONO_UPSTREAM_BASE_URL"],
+            upstream
         );
     }
+}
+
+#[test]
+fn provider_fingerprint_has_a_stable_golden_encoding() {
     assert_eq!(
-        env.get("CHRONO_SESSION_REACHES").map(String::as_str),
-        Some("api-github")
+        provider_request_fingerprint(&request()).unwrap(),
+        "vhTpfKGCsjfSjaATszKeZPGILJ9GDZqjjDNnDtxLpi0"
     );
 }
 
 #[test]
-fn trigger_policy_environment_contains_only_identity_requirement_and_public_keys() {
-    let mut spec = spec_with(Default::default());
-    spec.session_id = "sesn_trigger".into();
-    spec.runtime_policy_required = true;
-    let deployment = Deployment {
-        runtime_policy_verification_keys: r#"{"key-current":"public-key-material"}"#.into(),
-        ..deployed()
+fn persistent_mount_identity_cannot_be_replayed_with_another_claim_or_path() {
+    use crate::provider::{ProviderPersistentVolumeClaim, ProviderVolume};
+
+    let mut original = request();
+    let without_volume = provider_request_fingerprint(&original).unwrap();
+    original.volumes.push(ProviderVolume {
+        name: "home".into(),
+        pvc: ProviderPersistentVolumeClaim {
+            claim_name: "home-one".into(),
+            create_if_not_exists: false,
+            delete_on_sandbox_termination: false,
+        },
+        mount_path: "/home/cma".into(),
+        read_only: false,
+        sub_path: Some("home".into()),
+    });
+    let expected = provider_request_fingerprint(&original).unwrap();
+    assert_ne!(expected, without_volume);
+    for field in 0..6 {
+        let mut changed = original.clone();
+        let volume = &mut changed.volumes[0];
+        match field {
+            0 => volume.pvc.claim_name = "home-two".into(),
+            1 => volume.name = "different".into(),
+            2 => volume.mount_path = "/different".into(),
+            3 => volume.read_only = true,
+            4 => volume.sub_path = Some("other".into()),
+            _ => volume.sub_path = None,
+        }
+        assert_ne!(provider_request_fingerprint(&changed).unwrap(), expected);
+    }
+    original.volumes[0].pvc.create_if_not_exists = true;
+    assert!(provider_request_fingerprint(&original).is_err());
+}
+
+#[test]
+fn provider_fingerprint_covers_every_stable_request_field() {
+    let original = request();
+    let expected = provider_request_fingerprint(&original).unwrap();
+    let mut variants = Vec::new();
+
+    let mut changed = original.clone();
+    changed.image.uri.push_str("-changed");
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.entrypoint.push("--changed".into());
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.env.insert("EXTRA".into(), "changed".into());
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.resource_limits.insert("cpu".into(), "2000m".into());
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed.timeout = None;
+    variants.push(changed);
+    let mut changed = original.clone();
+    changed
+        .metadata
+        .insert("cma/runtime-contract".into(), "changed".into());
+    variants.push(changed);
+
+    assert!(variants
+        .iter()
+        .all(|changed| provider_request_fingerprint(changed).unwrap() != expected));
+}
+
+#[test]
+fn provider_fingerprint_ignores_observational_control_plane_metadata() {
+    let original = request();
+    let expected = provider_request_fingerprint(&original).unwrap();
+    let mut changed = original;
+    changed
+        .metadata
+        .insert(CONTROL_PLANE_METADATA.into(), "rollout-b".into());
+
+    assert_eq!(provider_request_fingerprint(&changed).unwrap(), expected);
+}
+
+#[test]
+fn provider_fingerprint_cannot_include_itself() {
+    let mut recursive = request();
+    recursive
+        .metadata
+        .insert(SPEC_FINGERPRINT_METADATA.into(), "recursive".into());
+    assert!(provider_request_fingerprint(&recursive).is_err());
+}
+
+#[test]
+fn rendered_runtime_identity_covers_nonzero_generation_image_and_contract() {
+    let deployment = HostedDeployment::default();
+    let spec = SandboxSpec {
+        sandbox_id: "sandbox-1".into(),
+        ..SandboxSpec::default()
     };
+    let first = deployment.render_runtime(&spec, 1).unwrap();
+    let replacement = deployment.render_runtime(&spec, 2).unwrap();
 
-    let env = deployment.base_environment(&spec);
-
-    assert_eq!(env["CHRONO_SESSION_ID"], "sesn_trigger");
-    assert_eq!(env["CHRONO_GITHUB_CAPABILITY_REQUIRED"], "true");
+    assert_eq!(first.metadata[RUNTIME_GENERATION_METADATA], "1");
+    assert_eq!(replacement.metadata[RUNTIME_GENERATION_METADATA], "2");
+    assert_eq!(replacement.env["CHRONO_RUNTIME_GENERATION"], "2");
     assert_eq!(
-        env["CHRONO_GITHUB_CAPABILITY_VERIFY_KEYS"],
-        r#"{"key-current":"public-key-material"}"#
+        replacement.metadata[RUNTIME_IMAGE_METADATA],
+        image_sha256(&replacement.image.uri)
     );
-    assert!(env.keys().all(|name| !name.contains("SIGNING_KEY")));
-}
-
-#[test]
-fn a_policy_required_session_is_refused_before_provision_without_a_verifier() {
-    let mut spec = spec_with(Default::default());
-    spec.runtime_policy_required = true;
-
-    let error = deployed()
-        .refuse_missing_policy_verifier(&spec)
-        .expect_err("a Trigger runtime must fail closed without public verification keys");
-
-    assert!(matches!(error, AdapterError::Unsupported(_)));
-    assert!(Deployment::default()
-        .refuse_missing_policy_verifier(&spec_with(Default::default()))
-        .is_ok());
+    assert_eq!(replacement.metadata[RUNTIME_IMAGE_METADATA].len(), 43);
+    assert_eq!(
+        replacement.metadata[RUNTIME_CONTRACT_METADATA],
+        RUNTIME_CONTRACT_VERSION
+    );
+    assert_ne!(
+        first.metadata[SPEC_FINGERPRINT_METADATA],
+        replacement.metadata[SPEC_FINGERPRINT_METADATA]
+    );
+    assert!(matches!(
+        deployment.render_runtime(&spec, 0),
+        Err(AdapterError::Rejected(_))
+    ));
 }

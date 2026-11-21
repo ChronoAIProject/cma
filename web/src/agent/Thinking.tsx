@@ -1,0 +1,134 @@
+import { useEffect, useId, useRef, useState } from 'react';
+import markMarkup from '../assets/brand/cma-mark.svg?raw';
+import { elapsedTime } from './workspaceTime';
+import { ThinkingProgress } from './ThinkingProgress';
+const markHtml = { __html: markMarkup };
+import './Thinking.css';
+
+export interface ThinkingActivityBody {
+  readonly text: string;
+  readonly truncated: boolean;
+}
+
+/** A currently pending tool call, removed from this disclosure when it settles. */
+export interface ThinkingActivity {
+  readonly id: string;
+  readonly kind: string;
+  readonly target: string;
+  readonly status: string;
+  readonly durationMs?: number | null;
+  readonly arguments?: ThinkingActivityBody | null;
+  readonly result?: ThinkingActivityBody | null;
+  readonly detail?: ThinkingActivityBody;
+}
+
+interface ThinkingProps {
+  readonly progressKey?: string;
+  readonly text?: string;
+  readonly activities?: readonly ThinkingActivity[];
+  readonly startedAt?: string;
+}
+
+export function activityDuration(activity: ThinkingActivity): string {
+  const duration = activity.durationMs;
+  if (duration === undefined || duration === null) {
+    return ['started', 'pending', 'running', 'in_progress'].includes(activity.status.toLowerCase())
+      ? 'ongoing'
+      : 'not reported';
+  }
+  if (duration < 1000) return `${String(duration)}ms`;
+  const seconds = duration / 1000;
+  return `${Number.isInteger(seconds) ? String(seconds) : seconds.toFixed(1)}s`;
+}
+
+export function activitySummary(activity: ThinkingActivity): string {
+  return `${activity.kind} - ${activity.target} - ${activity.status} - ${activityDuration(activity)}`;
+}
+
+/** Active-turn liveness, with a clock anchored to the public turn record rather than mount. */
+export function Thinking({ text = '', activities = [], startedAt, progressKey }: ThinkingProps) {
+  const [open, setOpen] = useState(false);
+  const [now, setNow] = useState(Date.now);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const bodyId = useId();
+  const start = Date.parse(startedAt ?? '');
+  const seconds = Number.isFinite(start)
+    ? Math.max(0, Math.floor((now - start) / 1000))
+    : undefined;
+
+  useEffect(() => {
+    if (!Number.isFinite(start)) return;
+    const update = () => setNow(Date.now());
+    const timer = window.setInterval(update, 1000);
+    document.addEventListener('visibilitychange', update);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', update);
+    };
+  }, [start]);
+
+  useEffect(() => {
+    const body = bodyRef.current;
+    if (body !== null && open) body.scrollTop = body.scrollHeight;
+  }, [activities, text, open]);
+
+  return (
+    <section className="thinking" aria-label="What the agent is working through">
+      <div className="thinking__key">
+        <span className="thinking__logo" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
+        <span className="thinking__title" role="status">
+          Thinking
+        </span>
+        {seconds === undefined ? null : (
+          <span className="thinking__elapsed">{elapsedTime(seconds * 1000)}</span>
+        )}
+        <span aria-hidden="true">·</span>
+        <button
+          type="button"
+          className="thinking__activity-toggle"
+          aria-expanded={open}
+          aria-controls={open ? bodyId : undefined}
+          onClick={() => setOpen((value) => !value)}
+        >
+          View activity
+        </button>
+      </div>
+      <ThinkingProgress key={progressKey ?? JSON.stringify([text, activities])} />
+      {open ? (
+        <div className="thinking__body" id={bodyId} ref={bodyRef}>
+          {text === '' ? null : <div className="thinking__reasoning">{text}</div>}
+          {text === '' && activities.length === 0 ? 'Waiting for the next update.' : null}
+          {activities.length === 0 ? null : (
+            <ul className="thinking__activities">
+              {activities.map((item) => (
+                <li className="thinking__activity" key={item.id}>
+                  <p className="thinking__activityline">{activitySummary(item)}</p>
+                  <ActivityBody label="Arguments" body={item.arguments} />
+                  <ActivityBody label="Result" body={item.result} />
+                  <ActivityBody label="Details" body={item.detail} />
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+export function ActivityBody({
+  label,
+  body,
+}: {
+  readonly label: string;
+  readonly body?: ThinkingActivityBody | null;
+}) {
+  if (body === undefined || body === null) return null;
+  return (
+    <details className="thinking__activitybody">
+      <summary>{label}</summary>
+      <pre>{body.text}</pre>
+      {body.truncated ? <p>The recorded body was truncated.</p> : null}
+    </details>
+  );
+}

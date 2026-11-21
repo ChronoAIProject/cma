@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+
 die() {
   printf 'error: %s\n' "$*" >&2
   exit 1
@@ -244,15 +245,17 @@ printf '## Release Notes %s\n\n' "$version" > "$assembled"
 cat "$notes_file" >> "$assembled"
 {
   printf '\n### Images\n\n'
-  printf 'Published to GitHub Container Registry, private to the organisation.\n\n'
+  printf 'Published to GitHub Container Registry.\n\n'
   printf '```\n'
-  for component in api web runtime; do
-    printf 'ghcr.io/%s/cma-%s:%s\n' "$owner_lower" "$component" "$version"
+  for component in api web runtime cmaeg runtime-omarchy; do
+    image_name=$(python3 "$script_dir/scripts/deployables.py" "$component") || die "unknown deployable"
+    printf 'ghcr.io/%s/%s:%s\n' "$owner_lower" "$image_name" "$version"
   done
   printf '```\n\n'
-  for component in api web runtime; do
-    printf -- '- [cma-%s](%s/orgs/%s/packages/container/package/cma-%s)\n' \
-      "$component" "$server_url" "$owner" "$component"
+  for component in api web runtime cmaeg runtime-omarchy; do
+    image_name=$(python3 "$script_dir/scripts/deployables.py" "$component") || die "unknown deployable"
+    printf -- '- [%s](%s/orgs/%s/packages/container/package/%s)\n' \
+      "$image_name" "$server_url" "$owner" "$image_name"
   done
 } >> "$assembled"
 

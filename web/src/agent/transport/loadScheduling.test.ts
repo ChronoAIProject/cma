@@ -1,0 +1,151 @@
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { AGENT_DETAIL, AGENT_TRANSCRIPT, AGENT_USAGE } from '../../test/agent';
+import { workspaceFixture } from '../../test/hierarchy';
+import { cursor, harness, incarnation, json, page } from './controller.fixture';
+import { loadV2Agent } from './load';
+import { readAgentProjections } from './projections';
+
+beforeEach(() => sessionStorage.clear());
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
+});
+
+it('offers an already completed route transcript before metadata publication authorization starts', async () => {
+  const h = harness();
+  const session = (await h.client.agentTransport!.open('agt_1'))!;
+  await session.authorizeLoad(new AbortController().signal);
+  const reads = readAgentProjections(h.client, 'agt_1', new AbortController().signal);
+  await Promise.all([reads.hierarchy, reads.transcript, reads.usage]);
+  h.currentUser.mockClear();
+  const proofCounts: number[] = [];
+  const result = await loadV2Agent(
+    h.client,
+    'agt_1',
+    new AbortController().signal,
+    session,
+    true,
+    undefined,
+    undefined,
+    () => {
+      proofCounts.push(h.currentUser.mock.calls.length);
+    },
+    undefined,
+    async () => ({
+      owner: 'alice',
+      reads,
+      assertCurrent: () => {
+        session.journal.read();
+      },
+    }),
+  );
+  expect(proofCounts).toEqual([2, 2]);
+  expect(h.currentUser).toHaveBeenCalledTimes(3);
+  expect(result.historyLoading).toBe(false);
+  expect(h.post).not.toHaveBeenCalled();
+});
+
+it('batches completed projections behind one fresh check, then checks again after their callbacks', async () => {
+  const h = harness();
+  const session = (await h.client.agentTransport!.open('agt_1'))!;
+  vi.useFakeTimers();
+  const delay = <Value>(ms: number, value: Value) =>
+    new Promise<Value>((resolve) => setTimeout(() => resolve(value), ms));
+  h.currentUser.mockClear().mockImplementation(() => delay(250, 'alice'));
+  vi.spyOn(h.client, 'readAgent').mockImplementation(() => delay(300, AGENT_DETAIL));
+  vi.spyOn(h.client, 'readWorkspace').mockImplementation(() => delay(300, workspaceFixture()));
+  vi.spyOn(h.client, 'readAgentUsage').mockImplementation(() => delay(300, AGENT_USAGE));
+  vi.spyOn(h.client, 'readAgentTranscript').mockImplementation(() =>
+    delay(300, { ...AGENT_TRANSCRIPT, turns: [], throughSeq: 0 }),
+  );
+  h.snapshot.mockImplementation(() => delay(300, json(page([], 0))));
+  h.head.mockImplementation(() =>
+    delay(
+      300,
+      json({
+        object: 'cma.agent.event_head',
+        schema_version: 1,
+        agent_id: 'agt_1',
+        incarnation,
+        through_cursor: cursor(0),
+        active_turn: null,
+      }),
+    ),
+  );
+  const input = vi.fn();
+  const settled = vi.fn();
+  const result = loadV2Agent(
+    h.client,
+    'agt_1',
+    new AbortController().signal,
+    session,
+    false,
+    undefined,
+    {
+      agentId: AGENT_DETAIL.id,
+      workspaceId: AGENT_DETAIL.workspace.id,
+      sandboxId: AGENT_DETAIL.sandbox.id,
+    },
+    input,
+  ).then((value) => {
+    settled();
+    return value;
+  });
+  await vi.advanceTimersByTimeAsync(250);
+  expect(h.currentUser).toHaveBeenCalledOnce();
+  expect(input).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(300);
+  // All three projections finished before this batch starts. They can share
+  // that proof, while the final check must still follow their callbacks.
+  expect(h.currentUser).toHaveBeenCalledTimes(2);
+  expect(input).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(250);
+  // The later projection completions queue behind the already-started proof.
+  expect(input).toHaveBeenCalledTimes(1);
+  expect(h.currentUser).toHaveBeenCalledTimes(3);
+  await vi.advanceTimersByTimeAsync(250);
+  // A complete fixed prefix will publish at final completion, so it does not
+  // need a separate live-head preview. The late transcript still needs proof.
+  expect(input).toHaveBeenCalledTimes(2);
+  expect(input.mock.calls.some(([ready]) => ready.conversation.agentCursor === cursor(0))).toBe(
+    false,
+  );
+  expect(h.currentUser).toHaveBeenCalledTimes(4);
+  expect(settled).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(249);
+  expect(settled).not.toHaveBeenCalled();
+  await vi.advanceTimersByTimeAsync(1);
+  expect((await result).conversation.agentCursor).toBe(cursor(0));
+  expect(settled).toHaveBeenCalledOnce();
+});
+
+it('rejects an account switch made by an early publication before releasing the full snapshot', async () => {
+  const h = harness();
+  const session = (await h.client.agentTransport!.open('agt_1'))!;
+  h.head.mockResolvedValue(
+    json({
+      object: 'cma.agent.event_head',
+      schema_version: 1,
+      agent_id: 'agt_1',
+      incarnation,
+      through_cursor: cursor(0),
+      active_turn: null,
+    }),
+  );
+  const input = vi.fn(() => h.currentUser.mockResolvedValue('bob'));
+  await expect(
+    loadV2Agent(
+      h.client,
+      'agt_1',
+      new AbortController().signal,
+      session,
+      false,
+      undefined,
+      undefined,
+      input,
+    ),
+  ).rejects.toMatchObject({ name: 'IdentityChangedError' });
+  expect(input).toHaveBeenCalled();
+  expect(sessionStorage.length).toBe(0);
+  expect(h.post).not.toHaveBeenCalled();
+});

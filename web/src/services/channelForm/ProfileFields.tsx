@@ -1,0 +1,363 @@
+import { AdvancedFields } from './AdvancedFields';
+import { Button } from '../../ui/Button';
+import { Choice, NumberField, Section, StringList, TextField } from './Fields';
+import { object, optional, records, strings, type Fields } from './model';
+import { ValueBuilder } from './ValueBuilder';
+export function ProviderFields({
+  value,
+  onChange,
+  immutable = false,
+}: {
+  value: Fields;
+  onChange: (v: Fields) => void;
+  immutable?: boolean;
+}) {
+  const target = object(value.target);
+  if (immutable)
+    return (
+      <Section
+        title="Agent destination"
+        description="Choose which provider and agent will receive this channel’s events."
+      >
+        <p>Provider: {String(value.slug ?? 'Unavailable')}</p>
+        <p>
+          {target.type === 'existing_agent'
+            ? `Existing agent: ${String(target.agent_id)}`
+            : 'Agent created from this channel’s settings'}
+        </p>
+        <p className="channel-field-hint">
+          This destination stays attached to the channel. Create another channel to choose a
+          different agent.
+        </p>
+      </Section>
+    );
+  return (
+    <Section
+      title="Agent destination"
+      description="Choose which provider and agent will receive this channel’s events."
+    >
+      <TextField
+        label="Provider"
+        value={value.slug}
+        onChange={(slug) => onChange({ ...value, slug })}
+        required
+      />
+      <Choice
+        label="Agent target"
+        value={target.type ?? 'profile'}
+        options={[
+          { value: 'profile', label: 'Create an agent from these settings' },
+          { value: 'existing_agent', label: 'Use an existing agent' },
+        ]}
+        onChange={(type) =>
+          onChange({ ...value, target: type === 'profile' ? { type } : { type, agent_id: '' } })
+        }
+      />
+      {target.type === 'existing_agent' ? (
+        <TextField
+          label="Agent ID"
+          value={target.agent_id}
+          onChange={(agent_id) => onChange({ ...value, target: { ...target, agent_id } })}
+          required
+        />
+      ) : null}
+    </Section>
+  );
+}
+export function ProfileFields({
+  value,
+  onChange,
+  immutableIdentity = false,
+  guided = false,
+}: {
+  value: Fields;
+  onChange: (v: Fields) => void;
+  immutableIdentity?: boolean;
+  guided?: boolean;
+}) {
+  const metadata = object(value.metadata),
+    owner = object(metadata.owner),
+    model = object(value.model),
+    permission = object(value.permission),
+    context = object(value.context);
+  const set = (key: string, next: unknown) => onChange({ ...value, [key]: next });
+  const setModel = (key: string, next: unknown) => set('model', { ...model, [key]: next });
+  const skills = records(context.skills),
+    servers = records(context.mcp_servers);
+  return (
+    <>
+      <Section
+        title="Agent settings"
+        description="Name this agent configuration and describe the work it should do."
+      >
+        <TextField
+          path="/profile/metadata/name"
+          label="Agent configuration name"
+          value={metadata.name}
+          onChange={(name) => set('metadata', { ...metadata, name })}
+          required
+        />
+        <TextField
+          path="/profile/metadata/description"
+          label="Description"
+          value={metadata.description}
+          onChange={(description) => set('metadata', { ...metadata, description })}
+          multiline
+        />
+      </Section>
+      <AdvancedFields title="Advanced Agent identity and queue" enabled={guided}>
+        <Section
+          path="/profile/metadata"
+          title="Ownership"
+          description="The provider and owner identify this binding. Existing bindings retain their original identity."
+        >
+          <fieldset className="channel-form-section" disabled={immutableIdentity}>
+            <TextField
+              path="/profile/metadata/provider"
+              label="Profile provider"
+              value={metadata.provider}
+              onChange={(provider) => set('metadata', { ...metadata, provider })}
+              required
+            />
+            <TextField
+              path="/profile/metadata/owner/subject"
+              label="Owner subject"
+              value={owner.subject}
+              onChange={(subject) => set('metadata', { ...metadata, owner: { ...owner, subject } })}
+              required
+            />
+            <Choice
+              path="/profile/metadata/owner/kind"
+              label="Owner type"
+              value={owner.kind}
+              options={['human', 'service_account', 'agent_key', 'organization']}
+              onChange={(kind) => set('metadata', { ...metadata, owner: { ...owner, kind } })}
+            />
+          </fieldset>
+        </Section>
+        <Section
+          path="/profile/queue_lifetime_seconds"
+          title="Queue wait"
+          description="Messages can wait five minutes by default, or up to one day. When this time runs out, the message fails without starting. Changes apply to new messages."
+        >
+          <NumberField
+            path="/profile/queue_lifetime_seconds"
+            label="Maximum wait (seconds)"
+            value={value.queue_lifetime_seconds ?? 300}
+            min={1}
+            max={86400}
+            onChange={(seconds) => set('queue_lifetime_seconds', seconds)}
+          />
+        </Section>
+      </AdvancedFields>
+      <Section
+        title="Model and behavior"
+        description="Select the model, reasoning effort and the permissions used to carry out incoming requests."
+      >
+        <div className="channel-form-grid">
+          <TextField
+            path="/profile/model/model"
+            label="Model"
+            value={model.model}
+            onChange={(v) => setModel('model', v)}
+            required
+          />
+          <Choice
+            path="/profile/model/thinking_effort"
+            label="Thinking effort"
+            value={model.thinking_effort}
+            options={['minimal', 'low', 'medium', 'high', 'very_high']}
+            onChange={(v) => setModel('thinking_effort', v)}
+          />
+        </div>
+        <AdvancedFields title="Advanced model connection" enabled={guided}>
+          <Choice
+            path="/profile/model/access"
+            label="Model access"
+            value={model.access}
+            options={['managed', 'custom']}
+            onChange={(v) => setModel('access', v)}
+          />
+          <TextField
+            path="/profile/model/service"
+            label="Model service"
+            value={model.service}
+            onChange={(v) => setModel('service', v)}
+            required
+          />
+          <Choice
+            path="/profile/model/api_type"
+            label="Model API"
+            value={model.api_type}
+            options={['responses', 'chat_completions']}
+            onChange={(v) => setModel('api_type', v)}
+          />
+        </AdvancedFields>
+        <Choice
+          path="/profile/permission/action_mode"
+          label="Permission mode"
+          value={permission.action_mode}
+          options={[
+            { value: 'guarded', label: 'Ask before sensitive actions' },
+            { value: 'autonomous', label: 'Autonomous' },
+          ]}
+          onChange={(action_mode) => set('permission', { ...permission, action_mode })}
+        />
+      </Section>
+      <Section
+        title="Services and instructions"
+        description="Limit which services the agent can use and give it instructions for handling messages."
+      >
+        <StringList
+          path="/profile/permission/service_scope"
+          label="Service scope"
+          value={strings(permission.service_scope)}
+          onChange={(service_scope) => set('permission', { ...permission, service_scope })}
+        />
+        <TextField
+          path="/profile/context/system_prompt"
+          label="System prompt"
+          value={context.system_prompt}
+          onChange={(system_prompt) => set('context', { ...context, system_prompt })}
+          multiline
+        />
+      </Section>
+      <AdvancedFields title="Advanced Agent tools and environment" enabled={guided}>
+        <Section
+          path="/profile/context/skills"
+          title="Skills"
+          description="Attach Ornn skills by ID. Leave this empty if the agent does not need additional skills."
+        >
+          {skills.map((skill, index) => (
+            <Section key={index} title={`Skill ${index + 1}`}>
+              <TextField
+                path={`/profile/context/skills/${index}/id`}
+                label={`Skill ${index + 1} ID`}
+                value={skill.id}
+                onChange={(id) =>
+                  set('context', {
+                    ...context,
+                    skills: skills.map((v, i) => (i === index ? { ...v, id } : v)),
+                  })
+                }
+                required
+              />
+              <TextField
+                path={`/profile/context/skills/${index}/version`}
+                label={`Skill ${index + 1} version`}
+                value={skill.version}
+                onChange={(version) =>
+                  set('context', {
+                    ...context,
+                    skills: skills.map((v, i) =>
+                      i === index ? optional(v, 'version', version || undefined) : v,
+                    ),
+                  })
+                }
+              />
+              <Button
+                onClick={() =>
+                  set('context', { ...context, skills: skills.filter((_, i) => i !== index) })
+                }
+              >
+                Remove skill {index + 1}
+              </Button>
+            </Section>
+          ))}
+          <Button
+            disabled={skills.length >= 32}
+            onClick={() =>
+              set('context', { ...context, skills: [...skills, { source: 'ornn', id: '' }] })
+            }
+          >
+            Add skill
+          </Button>
+        </Section>
+        <Section
+          path="/profile/context/mcp_servers"
+          title="MCP servers"
+          description="Additional tool servers requested in this profile. Provider support is required; the CMA provider currently does not install these extra servers. Saved values are retained."
+        >
+          {servers.map((server, index) => {
+            const auth = object(server.auth),
+              update = (next: Fields) =>
+                set('context', {
+                  ...context,
+                  mcp_servers: servers.map((v, i) => (i === index ? next : v)),
+                });
+            return (
+              <Section key={index} title={`MCP server ${index + 1}`}>
+                <TextField
+                  path={`/profile/context/mcp_servers/${index}/url`}
+                  label={`Server ${index + 1} URL`}
+                  value={server.url}
+                  onChange={(url) => update({ ...server, url })}
+                  required
+                />
+                <Choice
+                  path={`/profile/context/mcp_servers/${index}/auth/type`}
+                  label={`Server ${index + 1} authentication`}
+                  value={auth.type}
+                  options={['none', 'nyxid_service']}
+                  onChange={(type) =>
+                    update({ ...server, auth: type === 'none' ? { type } : { type, slug: '' } })
+                  }
+                />
+                {auth.type === 'nyxid_service' ? (
+                  <TextField
+                    path={`/profile/context/mcp_servers/${index}/auth/slug`}
+                    label={`Server ${index + 1} service`}
+                    value={auth.slug}
+                    onChange={(slug) => update({ ...server, auth: { ...auth, slug } })}
+                    required
+                  />
+                ) : null}
+                <Button
+                  onClick={() =>
+                    set('context', {
+                      ...context,
+                      mcp_servers: servers.filter((_, i) => i !== index),
+                    })
+                  }
+                >
+                  Remove server {index + 1}
+                </Button>
+              </Section>
+            );
+          })}
+          <Button
+            disabled={servers.length >= 8}
+            onClick={() =>
+              set('context', {
+                ...context,
+                mcp_servers: [...servers, { url: '', auth: { type: 'none' } }],
+              })
+            }
+          >
+            Add MCP server
+          </Button>
+        </Section>
+        <Section
+          path="/profile/environment"
+          title="Environment"
+          description="Optional provider environment overrides. Keep the defaults unless your agent needs a specific environment."
+        >
+          {value.environment != null ? (
+            <>
+              <ValueBuilder
+                label="Environment values"
+                value={value.environment}
+                onChange={(v) => set('environment', v)}
+              />
+              <Button onClick={() => onChange(optional(value, 'environment', undefined))}>
+                Remove environment override
+              </Button>
+            </>
+          ) : (
+            <Button onClick={() => set('environment', {})}>Add environment settings</Button>
+          )}
+        </Section>
+      </AdvancedFields>
+    </>
+  );
+}

@@ -1,0 +1,215 @@
+//! Read-only Discord bot discovery. Credentials never leave the fixed API origin.
+use super::{
+    protocol::endpoint,
+    status::{FailureCode, Stage, StatusAttempt},
+    DiscordRest, GatewayError, RestError,
+};
+use cmaeg_core::channel::Secret;
+use reqwest::{Client, Url};
+use serde::Deserialize;
+use std::time::Duration;
+
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionLimit {
+    pub total: u64,
+    pub remaining: u64,
+    pub reset_after: u64,
+    pub max_concurrency: u64,
+}
+#[derive(Deserialize)]
+pub struct Discovery {
+    pub url: String,
+    pub shards: u64,
+    pub session_start_limit: SessionLimit,
+}
+#[derive(Clone)]
+pub struct DiscordApi {
+    pub(super) client: Client,
+    pub(super) origin: Url,
+    pub(super) components: Option<std::sync::Arc<super::components::Runtime>>,
+    limits: DiscordRest,
+    status: StatusAttempt,
+    pub(super) thread_metadata: bool,
+    pub(super) message_events: bool,
+    pub(super) quoted_context: bool,
+    pub(super) rich_content: bool,
+    pub(super) forwards: bool,
+    pub(super) reactions: bool,
+}
+impl DiscordApi {
+    pub fn new() -> Result<Self, GatewayError> {
+        Ok(Self {
+            components: None,
+            client: Client::builder()
+                .connect_timeout(Duration::from_secs(2))
+                .timeout(Duration::from_secs(4))
+                .redirect(reqwest::redirect::Policy::none())
+                .no_proxy()
+                .build()
+                .map_err(|_| GatewayError::Unavailable)?,
+            origin: Url::parse("https://discord.com/api/v10/")
+                .map_err(|_| GatewayError::InvalidConfiguration)?,
+            limits: DiscordRest::new().map_err(|_| GatewayError::Unavailable)?,
+            status: Default::default(),
+            thread_metadata: false,
+            message_events: false,
+            quoted_context: false,
+            rich_content: false,
+            forwards: false,
+            reactions: false,
+        })
+    }
+    pub(super) fn with_status(mut self, status: StatusAttempt) -> Self {
+        self.status = status;
+        self
+    }
+    pub(super) fn with_reactions(mut self, enabled: bool) -> Self {
+        self.reactions = enabled;
+        self
+    }
+    pub(super) fn with_quoted_context(mut self, enabled: bool) -> Self {
+        self.quoted_context = enabled;
+        self
+    }
+    pub(super) fn with_forwards(mut self, enabled: bool) -> Self {
+        self.forwards = enabled;
+        self
+    }
+    pub(super) fn with_rich_content(mut self, enabled: bool) -> Self {
+        self.rich_content = enabled;
+        self
+    }
+    pub(super) fn with_message_events(mut self, enabled: bool) -> Self {
+        self.message_events = enabled;
+        self
+    }
+    pub(super) fn with_thread_metadata(mut self, enabled: bool) -> Self {
+        self.thread_metadata = enabled;
+        self
+    }
+    pub(super) fn retry_after(&self, token: &Secret) -> Duration {
+        match self.limits.ready(token) {
+            Err(RestError::RateLimited(seconds)) => Duration::from_secs(seconds),
+            _ => Duration::ZERO,
+        }
+    }
+    pub async fn discover(
+        &self,
+        token: &Secret,
+        expected_bot: &str,
+    ) -> Result<Discovery, GatewayError> {
+        self.status.step(Stage::Discovery);
+        self.status
+            .result(self.discover_inner(token, expected_bot).await)
+    }
+    async fn discover_inner(
+        &self,
+        token: &Secret,
+        expected_bot: &str,
+    ) -> Result<Discovery, GatewayError> {
+        #[derive(Deserialize)]
+        struct User {
+            id: String,
+            #[serde(default)]
+            bot: bool,
+        }
+        let user: User = self.get("users/@me", token).await?;
+        if !user.bot || user.id != expected_bot {
+            self.status.failure(FailureCode::BotIdentityMismatch);
+            return Err(GatewayError::Authentication);
+        }
+        let discovery: Discovery = self.get("gateway/bot", token).await?;
+        endpoint(&discovery.url)?;
+        // This transport is deliberately one shard. Discord may require sharding
+        // for larger bots; refusing is safer than missing guilds silently.
+        if discovery.shards != 1 {
+            self.status.failure(FailureCode::ShardingUnsupported);
+            return Err(GatewayError::InvalidConfiguration);
+        }
+        super::discovery_limits::validate(&discovery, &self.status)?;
+        Ok(discovery)
+    }
+    pub(super) async fn get<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        token: &Secret,
+    ) -> Result<T, GatewayError> {
+        self.limits.ready(token).map_err(|error| match error {
+            RestError::RateLimited(_) => GatewayError::RateLimited,
+            _ => GatewayError::Unavailable,
+        })?;
+        let url = self
+            .origin
+            .join(path)
+            .map_err(|_| GatewayError::InvalidConfiguration)?;
+        let mut response = self
+            .client
+            .get(url)
+            .header("Authorization", format!("Bot {}", token.as_str()))
+            .send()
+            .await
+            .map_err(|_| GatewayError::Unavailable)?;
+        let status = response.status().as_u16();
+        let retry = response
+            .headers()
+            .get("retry-after")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<f64>().ok())
+            .filter(|value| value.is_finite() && *value > 0.0);
+        if response
+            .headers()
+            .get("x-ratelimit-remaining")
+            .is_some_and(|value| value.as_bytes() == b"0")
+        {
+            let reset = response
+                .headers()
+                .get("x-ratelimit-reset-after")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.parse::<f64>().ok())
+                .unwrap_or(1.0);
+            self.limits.cooldown(token, reset.max(retry.unwrap_or(0.0)));
+        }
+        if status == 429 {
+            self.limits.cooldown(token, retry.unwrap_or(60.0));
+        }
+        if matches!(status, 401 | 403) {
+            if matches!(path, "users/@me" | "gateway/bot") {
+                self.status.failure(FailureCode::DiscoveryUnauthorized);
+                return Err(GatewayError::Authentication);
+            }
+            return Err(GatewayError::Authority);
+        }
+        if status != 429 && !response.status().is_success() {
+            return Err(GatewayError::Unavailable);
+        }
+        let mut body = Vec::new();
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|_| GatewayError::Unavailable)?
+        {
+            if body.len() + chunk.len() > 65_536 {
+                return Err(GatewayError::Protocol);
+            }
+            body.extend_from_slice(&chunk);
+        }
+        if status == 429 {
+            let body_retry = serde_json::from_slice::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|value| value["retry_after"].as_f64())
+                .filter(|value| value.is_finite() && *value > 0.0);
+            self.limits
+                .cooldown(token, body_retry.unwrap_or(60.0).max(retry.unwrap_or(0.0)));
+            return Err(GatewayError::RateLimited);
+        }
+        serde_json::from_slice(&body).map_err(|_| GatewayError::Protocol)
+    }
+    #[cfg(test)]
+    pub(super) fn fixture(origin: &str) -> Self {
+        let mut result = Self::new().unwrap();
+        result.origin = Url::parse(origin).unwrap();
+        result.limits = DiscordRest::fixture(origin);
+        result
+    }
+}

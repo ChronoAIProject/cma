@@ -1,11 +1,11 @@
 import { useState } from 'react';
-import { Button } from './Button';
+import { Button, type ButtonSize } from './Button';
 import { Menu, type MenuEntry } from './Menu';
 import { IconChevronDownOutline14 } from './icons';
 import './Picker.css';
 
 /**
- * Choosing one value from a list — `docs/Web_Style.md` §12.3.
+ * Choosing one value from a list — the shared style contracts
  *
  * A button and a menu, packaged. Every picker needs the same open state, and
  * seven call sites each holding their own copy is seven places for it to be
@@ -24,6 +24,7 @@ export interface PickerOption<Value extends string> {
 }
 
 interface PickerProps<Value extends string> {
+  readonly searchable?: boolean;
   /** Names the control for a screen reader, and never drawn by it. */
   readonly label: string;
   readonly value: Value;
@@ -34,6 +35,8 @@ interface PickerProps<Value extends string> {
   readonly filter?: boolean;
   /** Associates the control with a label rendered outside it. */
   readonly id?: string;
+  readonly describedBy?: string;
+  readonly invalid?: boolean;
   /**
    * A class for placing this picker in its row.
    *
@@ -42,6 +45,7 @@ interface PickerProps<Value extends string> {
    * hand every picker in the product an `overflow-y` it never asked for.
    */
   readonly placement?: string;
+  readonly size?: ButtonSize;
 }
 
 export function Picker<Value extends string>({
@@ -52,52 +56,75 @@ export function Picker<Value extends string>({
   disabled = false,
   filter = false,
   id,
+  describedBy,
+  invalid,
   placement,
+  size,
+  searchable,
 }: PickerProps<Value>) {
   const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
   const chosen = options.find((option) => option.value === value);
 
-  const items: MenuEntry[] = options.map((option) => ({
-    id: option.value,
-    /*
-     * The reason rides with the row rather than in a tooltip: §7 wants a
-     * disabled control to say why where it is, and a tooltip is not there for
-     * anybody reading with the keyboard.
-     */
-    label:
-      option.unavailable === undefined ? (
-        option.label
-      ) : (
-        <span className="picker__unavailable">
-          {option.label}
-          <span className="picker__reason">{option.unavailable}</span>
-        </span>
-      ),
-    disabled: option.unavailable !== undefined,
-  }));
+  const items: MenuEntry[] = options
+    .filter(
+      (option) =>
+        !searchable || option.label.toLocaleLowerCase().includes(search.toLocaleLowerCase()),
+    )
+    .map((option) => ({
+      id: option.value,
+      /*
+       * The reason rides with the row rather than in a tooltip: §7 wants a
+       * disabled control to say why where it is, and a tooltip is not there for
+       * anybody reading with the keyboard.
+       */
+      label:
+        option.unavailable === undefined ? (
+          option.label
+        ) : (
+          <span className="picker__unavailable">
+            {option.label} <span className="picker__reason">{option.unavailable}</span>
+          </span>
+        ),
+      disabled: option.unavailable !== undefined,
+    }));
 
   return (
     <Menu
       open={open}
       label={label}
+      search={
+        searchable
+          ? { label: `Search ${label.toLowerCase()}`, value: search, onChange: setSearch }
+          : undefined
+      }
+      footer={
+        searchable && items.length === 0 ? <p role="status">No matching choices.</p> : undefined
+      }
       selectedId={value}
       items={items}
       placement={[filter ? 'picker--filter' : 'picker', placement].filter(Boolean).join(' ')}
       onSelect={(id_) => {
         setOpen(false);
+        setSearch('');
         onChange(id_ as Value);
       }}
       onClose={() => {
         setOpen(false);
+        setSearch('');
       }}
       anchor={
         <Button
+          size={size}
+          title={`${label}: ${chosen?.label ?? value}`}
           id={id}
           variant="outline"
           placement="picker__anchor"
           aria-haspopup="menu"
           aria-expanded={open}
           aria-label={label}
+          aria-describedby={describedBy}
+          aria-invalid={invalid || undefined}
           disabled={disabled}
           onClick={() => {
             setOpen((was) => !was);

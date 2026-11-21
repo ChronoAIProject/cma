@@ -1,18 +1,18 @@
 /*
- * First-party. Values are governed by docs/Web_Style.md Sections 4 and 5.
+ * First-party. Values are governed by the shared style contracts.
  * Change the design authority before changing this sheet.
  */
 
 body {
   --dsw-linear-gradient-think: linear-gradient(180deg, #faf2e0 20.19%, rgba(250, 242, 224, 0) 100%);
   --dsw-linear-think-select: linear-gradient(180deg, #f5ead3 20.19%, rgba(245, 234, 211, 0) 100%);
-  --dsw-shadow-lv1: 0 1px 2px rgba(122, 96, 52, 0.1);
-  --dsw-shadow-lv1-blur: 0 4px 12px rgba(122, 96, 52, 0.08);
-  --dsw-shadow-lv2: 0 2px 4px rgba(122, 96, 52, 0.1), 0 8px 20px -8px rgba(122, 96, 52, 0.22);
-  --dsw-shadow-lv3: 0 18px 44px -14px rgba(82, 62, 30, 0.32);
+  --dsw-shadow-lv1: 0 1px 2px rgba(9, 9, 11, 0.06);
+  --dsw-shadow-lv1-blur: 0 4px 12px rgba(9, 9, 11, 0.06);
+  --dsw-shadow-lv2: 0 2px 4px rgba(9, 9, 11, 0.06), 0 8px 20px -8px rgba(9, 9, 11, 0.12);
+  --dsw-shadow-lv3: 0 18px 44px -14px rgba(9, 9, 11, 0.18);
   --dsw-shadow-accent-hover: var(--dsw-shadow-lv2);
   --dsw-glow-accent: none;
-  --dsw-ring-accent-soft: 0 0 0 3px rgba(14, 97, 172, 0.08);
+  --dsw-ring-accent-soft: 0 0 0 3px rgba(77, 124, 15, 0.08);
   --dsw-mask-blur: blur(2px);
 }
 
@@ -23,9 +23,9 @@ body[data-ds-dark-theme] {
   --dsw-shadow-lv1-blur: 0 8px 20px -8px #000;
   --dsw-shadow-lv2: 0 20px 44px -14px #000;
   --dsw-shadow-lv3: 0 40px 90px -30px #000;
-  --dsw-shadow-accent-hover: 0 6px 26px -8px rgba(195, 253, 67, 0.35);
-  --dsw-glow-accent: 0 0 14px rgba(195, 253, 67, 0.35);
-  --dsw-ring-accent-soft: 0 0 0 3px rgba(195, 253, 67, 0.1);
+  --dsw-shadow-accent-hover: 0 6px 26px -8px rgba(200, 245, 66, 0.35);
+  --dsw-glow-accent: 0 0 14px rgba(200, 245, 66, 0.35);
+  --dsw-ring-accent-soft: 0 0 0 3px rgba(200, 245, 66, 0.1);
 }
 
 /* Section 4's composite type ramp and display convention. */
@@ -245,5 +245,5 @@ body {
 }
 
 body[data-ds-dark-theme] {
-  --ds-font-variation-display: 'wdth' 118;
+  --ds-font-variation-display: normal;
 }

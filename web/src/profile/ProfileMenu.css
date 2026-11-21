@@ -1,5 +1,5 @@
 /*
- * The account row at the foot of the sidebar — `docs/Web_Style.md` §10, §12.
+ * The account row at the foot of the sidebar — the shared style contracts
  *
  * The menu itself is `.menu`, shared with every other dropdown, and its
  * placement is the primitive's. Only the trigger is decided here.
@@ -133,4 +133,21 @@
 .profile--collapsed .profile__trigger {
   justify-content: center;
   padding: 6px 0;
+}
+
+.profile__build {
+  display: block;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.profile__build-fallback {
+  display: block;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+}
+
+.profile__build-fallback code {
+  display: block;
+  user-select: all;
 }

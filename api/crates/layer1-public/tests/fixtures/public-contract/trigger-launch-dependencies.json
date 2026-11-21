@@ -1,0 +1,5073 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "trigger-store_unavailable-triggers-create",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-store_unavailable-triggers-create"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-save",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/trg_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-store_unavailable-triggers-save"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "try_it",
+              "theme": "dark"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-delete-published-refused",
+      "operation": "DELETE /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/triggers/trg_contract",
+        "headers": {
+          "idempotency-key": "trigger-store_unavailable-triggers-delete-published-refused"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-publish",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_contract/publish",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-store_unavailable-triggers-publish"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-retire",
+      "operation": "POST /api/v1/triggers/{id}/retire",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_contract/retire",
+        "headers": {
+          "idempotency-key": "trigger-store_unavailable-triggers-retire"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-placement-create",
+      "operation": "POST /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_contract/placements",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-store_unavailable-triggers-placement-create"
+        },
+        "body": {
+          "source_url": "https://source.example/docs",
+          "label": "Documentation"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-placement-retire",
+      "operation": "POST /api/v1/triggers/{id}/placements/{placement_id}/retire",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_contract/placements/plc_contract/retire",
+        "headers": {
+          "idempotency-key": "trigger-store_unavailable-triggers-placement-retire"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-list",
+      "operation": "GET /api/v1/triggers",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers?limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-read",
+      "operation": "GET /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-revisions",
+      "operation": "GET /api/v1/triggers/{id}/revisions",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-placements-list",
+      "operation": "GET /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract/placements?include_retired=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-stats",
+      "operation": "GET /api/v1/triggers/{id}/stats",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract/stats",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-preview",
+      "operation": "GET /api/v1/triggers/public/{public_id}",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/public/pub_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-embed",
+      "operation": "GET /api/v1/triggers/{id}/embed",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract/embed?placement_id=plc_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-store-unavailable",
+          "title": "trigger store unavailable",
+          "status": 503,
+          "detail": "The Trigger store could not be read.",
+          "code": "trigger_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_unavailable-triggers-badge",
+      "operation": "GET /api/v1/triggers/public/{public_id}/badge.svg",
+      "scenario": "trigger_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/public/pub_contract/badge.svg?label=try_it&theme=dark&placement=plc_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-security-policy": "default-src 'none'",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/badge-unavailable",
+          "title": "badge unavailable",
+          "status": 503,
+          "detail": "The badge could not be read from the Trigger store.",
+          "code": "badge-unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_unavailable-launch-review-create",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_fault_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/pub_contract/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-store_unavailable-launch-review-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_unavailable-launch-review-start-unmet",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_fault_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/lch_contract/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-store_unavailable-launch-review-start-unmet"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_unavailable-launch-review-cancel",
+      "operation": "POST /api/v1/launches/{id}/cancel",
+      "scenario": "launch_fault_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/lch_contract/cancel",
+        "headers": {
+          "idempotency-key": "launch-store_unavailable-launch-review-cancel"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_unavailable-connection-create",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_store_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-store_unavailable-connection-create"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "lch_contract",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_unavailable-launch-review-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/lch_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_unavailable-launch-review-list",
+      "operation": "GET /api/v1/launches",
+      "scenario": "launch_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches?trigger=trg_contract&state=draft&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_unavailable-launch-review-requirements",
+      "operation": "GET /api/v1/launches/{id}/requirements",
+      "scenario": "launch_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/lch_contract/requirements",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_unavailable-launch-review-events",
+      "operation": "GET /api/v1/launches/{id}/events",
+      "scenario": "launch_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/lch_contract/events?after=0&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_unavailable-launch-review-stream",
+      "operation": "GET /api/v1/agui/launches/{id}/events",
+      "scenario": "launch_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/launches/lch_contract/events?follow=false&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-store-unavailable",
+          "title": "launch store unavailable",
+          "status": 503,
+          "detail": "The Launch store could not complete this operation.",
+          "code": "launch_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_unavailable-connection-read",
+      "operation": "GET /api/v1/service-connections/{handoff_id}",
+      "scenario": "launch_fault_store_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/service-connections/sch_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/service-connection-unavailable",
+          "title": "service connection unavailable",
+          "status": 503,
+          "detail": "The service connection provider could not complete this operation.",
+          "code": "service_connection_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-create",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-store_corrupt-triggers-create"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-save",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/trg_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-store_corrupt-triggers-save"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "try_it",
+              "theme": "dark"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-delete-published-refused",
+      "operation": "DELETE /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/triggers/trg_contract",
+        "headers": {
+          "idempotency-key": "trigger-store_corrupt-triggers-delete-published-refused"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-publish",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_contract/publish",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-store_corrupt-triggers-publish"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-retire",
+      "operation": "POST /api/v1/triggers/{id}/retire",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_contract/retire",
+        "headers": {
+          "idempotency-key": "trigger-store_corrupt-triggers-retire"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-placement-create",
+      "operation": "POST /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_contract/placements",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-store_corrupt-triggers-placement-create"
+        },
+        "body": {
+          "source_url": "https://source.example/docs",
+          "label": "Documentation"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-placement-retire",
+      "operation": "POST /api/v1/triggers/{id}/placements/{placement_id}/retire",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/trg_contract/placements/plc_contract/retire",
+        "headers": {
+          "idempotency-key": "trigger-store_corrupt-triggers-placement-retire"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-list",
+      "operation": "GET /api/v1/triggers",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers?limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-read",
+      "operation": "GET /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-revisions",
+      "operation": "GET /api/v1/triggers/{id}/revisions",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract/revisions",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-placements-list",
+      "operation": "GET /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract/placements?include_retired=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-stats",
+      "operation": "GET /api/v1/triggers/{id}/stats",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract/stats",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-preview",
+      "operation": "GET /api/v1/triggers/public/{public_id}",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/public/pub_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-service-unavailable",
+          "title": "trigger service unavailable",
+          "status": 503,
+          "detail": "The Trigger service could not complete this operation.",
+          "code": "trigger_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-embed",
+      "operation": "GET /api/v1/triggers/{id}/embed",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/trg_contract/embed?placement_id=plc_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-store-unavailable",
+          "title": "trigger store unavailable",
+          "status": 503,
+          "detail": "The Trigger store could not be read.",
+          "code": "trigger_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-store_corrupt-triggers-badge",
+      "operation": "GET /api/v1/triggers/public/{public_id}/badge.svg",
+      "scenario": "trigger_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/public/pub_contract/badge.svg?label=try_it&theme=dark&placement=plc_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-security-policy": "default-src 'none'",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/badge-unavailable",
+          "title": "badge unavailable",
+          "status": 503,
+          "detail": "The badge could not be read from the Trigger store.",
+          "code": "badge-unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_corrupt-launch-review-create",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_fault_store_corrupt",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/pub_contract/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-store_corrupt-launch-review-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_corrupt-launch-review-start-unmet",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_fault_store_corrupt",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/lch_contract/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-store_corrupt-launch-review-start-unmet"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_corrupt-launch-review-cancel",
+      "operation": "POST /api/v1/launches/{id}/cancel",
+      "scenario": "launch_fault_store_corrupt",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/lch_contract/cancel",
+        "headers": {
+          "idempotency-key": "launch-store_corrupt-launch-review-cancel"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_corrupt-connection-create",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_store_corrupt",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch-store_corrupt-connection-create"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "lch_contract",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_corrupt-launch-review-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/lch_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_corrupt-launch-review-list",
+      "operation": "GET /api/v1/launches",
+      "scenario": "launch_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches?trigger=trg_contract&state=draft&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_corrupt-launch-review-requirements",
+      "operation": "GET /api/v1/launches/{id}/requirements",
+      "scenario": "launch_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/lch_contract/requirements",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_corrupt-launch-review-events",
+      "operation": "GET /api/v1/launches/{id}/events",
+      "scenario": "launch_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/lch_contract/events?after=0&limit=10",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_corrupt-launch-review-stream",
+      "operation": "GET /api/v1/agui/launches/{id}/events",
+      "scenario": "launch_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/launches/lch_contract/events?follow=false&limit=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-store-unavailable",
+          "title": "launch store unavailable",
+          "status": 503,
+          "detail": "The Launch store could not complete this operation.",
+          "code": "launch_store_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch-store_corrupt-connection-read",
+      "operation": "GET /api/v1/service-connections/{handoff_id}",
+      "scenario": "launch_fault_store_corrupt",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/service-connections/sch_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/service-connection-unavailable",
+          "title": "service connection unavailable",
+          "status": 503,
+          "detail": "The service connection provider could not complete this operation.",
+          "code": "service_connection_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger-create-duplicate",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_fault_duplicate",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger-create-duplicate"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-already-exists",
+          "title": "trigger already exists",
+          "status": 409,
+          "detail": "A Trigger with this identity already exists.",
+          "code": "trigger_already_exists"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_pending-seed-read",
+      "operation": "GET /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_operation_pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "trg_contract",
+          "draft": {
+            "presentation": {
+              "title": "Launch a proof Agent",
+              "description": "A public Trigger used by route tests.",
+              "button_label": "open_in_cma",
+              "theme": "auto",
+              "signup_hint": "Use your existing NyxID account"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "consent": {
+              "always_review": false
+            }
+          },
+          "draft_version": 1,
+          "availability": "draft",
+          "revision_count": 0,
+          "placements": [],
+          "stats": {
+            "launches_total": 0,
+            "agents_ready_total": 0
+          },
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "created_at": "/created_at",
+        "trigger_id": "/id",
+        "updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "trigger_fault_operation_pending-triggers-create",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_fault_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger_fault_operation_pending-triggers-create"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_pending-triggers-save",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_operation_pending",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger_fault_operation_pending-triggers-save"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "try_it",
+              "theme": "dark"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_pending-triggers-delete-published-refused",
+      "operation": "DELETE /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_operation_pending",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "idempotency-key": "trigger_fault_operation_pending-triggers-delete-published-refused"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_pending-triggers-publish",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_fault_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/publish",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger_fault_operation_pending-triggers-publish"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_pending-triggers-retire",
+      "operation": "POST /api/v1/triggers/{id}/retire",
+      "scenario": "trigger_fault_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/retire",
+        "headers": {
+          "idempotency-key": "trigger_fault_operation_pending-triggers-retire"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_pending-triggers-placement-create",
+      "operation": "POST /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_fault_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger_fault_operation_pending-triggers-placement-create"
+        },
+        "body": {
+          "source_url": "https://source.example/docs",
+          "label": "Documentation"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_pending-triggers-placement-retire",
+      "operation": "POST /api/v1/triggers/{id}/placements/{placement_id}/retire",
+      "scenario": "trigger_fault_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements/plc_contract/retire",
+        "headers": {
+          "idempotency-key": "trigger_fault_operation_pending-triggers-placement-retire"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_operation_pending-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_operation_pending",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_operation_pending-launch-review-create",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_fault_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_operation_pending-launch-review-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_operation_pending-launch-review-start-unmet",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_fault_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_operation_pending-launch-review-start-unmet"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_operation_pending-launch-review-cancel",
+      "operation": "POST /api/v1/launches/{id}/cancel",
+      "scenario": "launch_fault_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/cancel",
+        "headers": {
+          "idempotency-key": "launch_fault_operation_pending-launch-review-cancel"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_operation_pending-connection-create",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_operation_pending-connection-create"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "$launch_id",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_recovery-seed-read",
+      "operation": "GET /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_operation_recovery",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "trg_contract",
+          "draft": {
+            "presentation": {
+              "title": "Launch a proof Agent",
+              "description": "A public Trigger used by route tests.",
+              "button_label": "open_in_cma",
+              "theme": "auto",
+              "signup_hint": "Use your existing NyxID account"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "consent": {
+              "always_review": false
+            }
+          },
+          "draft_version": 1,
+          "availability": "draft",
+          "revision_count": 0,
+          "placements": [],
+          "stats": {
+            "launches_total": 0,
+            "agents_ready_total": 0
+          },
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "created_at": "/created_at",
+        "trigger_id": "/id",
+        "updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "trigger_fault_operation_recovery-triggers-create",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_fault_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger_fault_operation_recovery-triggers-create"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_recovery-triggers-save",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_operation_recovery",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger_fault_operation_recovery-triggers-save"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "try_it",
+              "theme": "dark"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_recovery-triggers-delete-published-refused",
+      "operation": "DELETE /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_operation_recovery",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "idempotency-key": "trigger_fault_operation_recovery-triggers-delete-published-refused"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_recovery-triggers-publish",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_fault_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/publish",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger_fault_operation_recovery-triggers-publish"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_recovery-triggers-retire",
+      "operation": "POST /api/v1/triggers/{id}/retire",
+      "scenario": "trigger_fault_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/retire",
+        "headers": {
+          "idempotency-key": "trigger_fault_operation_recovery-triggers-retire"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_recovery-triggers-placement-create",
+      "operation": "POST /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_fault_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger_fault_operation_recovery-triggers-placement-create"
+        },
+        "body": {
+          "source_url": "https://source.example/docs",
+          "label": "Documentation"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_recovery-triggers-placement-retire",
+      "operation": "POST /api/v1/triggers/{id}/placements/{placement_id}/retire",
+      "scenario": "trigger_fault_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements/plc_contract/retire",
+        "headers": {
+          "idempotency-key": "trigger_fault_operation_recovery-triggers-placement-retire"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_operation_recovery-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_operation_recovery",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_operation_recovery-launch-review-create",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_fault_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_operation_recovery-launch-review-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_operation_recovery-launch-review-start-unmet",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_fault_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_operation_recovery-launch-review-start-unmet"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_operation_recovery-launch-review-cancel",
+      "operation": "POST /api/v1/launches/{id}/cancel",
+      "scenario": "launch_fault_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/cancel",
+        "headers": {
+          "idempotency-key": "launch_fault_operation_recovery-launch-review-cancel"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_operation_recovery-connection-create",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_operation_recovery-connection-create"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "$launch_id",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_unavailable-seed-read",
+      "operation": "GET /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_operation_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "trg_contract",
+          "draft": {
+            "presentation": {
+              "title": "Launch a proof Agent",
+              "description": "A public Trigger used by route tests.",
+              "button_label": "open_in_cma",
+              "theme": "auto",
+              "signup_hint": "Use your existing NyxID account"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+            "consent": {
+              "always_review": false
+            }
+          },
+          "draft_version": 1,
+          "availability": "draft",
+          "revision_count": 0,
+          "placements": [],
+          "stats": {
+            "launches_total": 0,
+            "agents_ready_total": 0
+          },
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "created_at": "/created_at",
+        "trigger_id": "/id",
+        "updated_at": "/updated_at"
+      }
+    },
+    {
+      "id": "trigger_fault_operation_unavailable-triggers-create",
+      "operation": "POST /api/v1/triggers",
+      "scenario": "trigger_fault_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger_fault_operation_unavailable-triggers-create"
+        },
+        "body": {
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "open_in_cma",
+              "theme": "auto"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation fault",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_unavailable-triggers-save",
+      "operation": "PUT /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_operation_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger_fault_operation_unavailable-triggers-save"
+        },
+        "body": {
+          "draft_version": 1,
+          "content": {
+            "presentation": {
+              "title": "Contract Agent",
+              "description": "Public contract fixture",
+              "button_label": "try_it",
+              "theme": "dark"
+            },
+            "target": {
+              "sandbox_profile": {
+                "id": "sbp_route_sandbox",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_route_workspace",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_route_agent",
+                "revision": 1
+              }
+            },
+            "reuse": {
+              "sandbox": "always_new",
+              "workspace": "always_new",
+              "agent": "always_new"
+            },
+            "first_message": "Inspect the project.",
+            "consent": {
+              "always_review": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation fault",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_unavailable-triggers-delete-published-refused",
+      "operation": "DELETE /api/v1/triggers/{id}",
+      "scenario": "trigger_fault_operation_unavailable",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/triggers/$trigger_id",
+        "headers": {
+          "idempotency-key": "trigger_fault_operation_unavailable-triggers-delete-published-refused"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation fault",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_unavailable-triggers-publish",
+      "operation": "POST /api/v1/triggers/{id}/publish",
+      "scenario": "trigger_fault_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/publish",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger_fault_operation_unavailable-triggers-publish"
+        },
+        "body": {
+          "draft_version": 2
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation fault",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_unavailable-triggers-retire",
+      "operation": "POST /api/v1/triggers/{id}/retire",
+      "scenario": "trigger_fault_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/retire",
+        "headers": {
+          "idempotency-key": "trigger_fault_operation_unavailable-triggers-retire"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation fault",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_unavailable-triggers-placement-create",
+      "operation": "POST /api/v1/triggers/{id}/placements",
+      "scenario": "trigger_fault_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "trigger_fault_operation_unavailable-triggers-placement-create"
+        },
+        "body": {
+          "source_url": "https://source.example/docs",
+          "label": "Documentation"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation fault",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "trigger_fault_operation_unavailable-triggers-placement-retire",
+      "operation": "POST /api/v1/triggers/{id}/placements/{placement_id}/retire",
+      "scenario": "trigger_fault_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/$trigger_id/placements/plc_contract/retire",
+        "headers": {
+          "idempotency-key": "trigger_fault_operation_unavailable-triggers-placement-retire"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation fault",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_operation_unavailable-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_operation_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_operation_unavailable-launch-review-create",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_fault_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_operation_unavailable-launch-review-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation fault",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_operation_unavailable-launch-review-start-unmet",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_fault_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_operation_unavailable-launch-review-start-unmet"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation fault",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_operation_unavailable-launch-review-cancel",
+      "operation": "POST /api/v1/launches/{id}/cancel",
+      "scenario": "launch_fault_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/cancel",
+        "headers": {
+          "idempotency-key": "launch_fault_operation_unavailable-launch-review-cancel"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation fault",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_operation_unavailable-connection-create",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_operation_unavailable-connection-create"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "$launch_id",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation fault",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_broker_unavailable-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_broker_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_broker_unavailable-seed-connection",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_broker_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "connection-create"
+        },
+        "body": {
+          "launch_id": "$launch_id",
+          "service_id": "github",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "hosted_url": "https://identity.example/connect/contract-intent",
+          "expires_at": "2026-09-07T00:15:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "connection_create_expires_at": "/expires_at",
+        "handoff_id": "/handoff_id"
+      }
+    },
+    {
+      "id": "launch_fault_broker_unavailable-launch-review-create",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_fault_broker_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_broker_unavailable-launch-review-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_broker_unavailable-launch-review-start-unmet",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_fault_broker_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_broker_unavailable-launch-review-start-unmet"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_broker_unavailable-launch-review-requirements",
+      "operation": "GET /api/v1/launches/{id}/requirements",
+      "scenario": "launch_fault_broker_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id/requirements",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/service-connection-unavailable",
+          "title": "service connection unavailable",
+          "status": 503,
+          "detail": "The service connection provider could not complete this operation.",
+          "code": "service_connection_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_broker_unavailable-connection-create",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_broker_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_broker_unavailable-connection-create"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "$launch_id",
+          "intent_id": "new-intent"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/service-connection-unavailable",
+          "title": "service connection unavailable",
+          "status": 503,
+          "detail": "The service connection provider could not complete this operation.",
+          "code": "service_connection_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_broker_unavailable-connection-read",
+      "operation": "GET /api/v1/service-connections/{handoff_id}",
+      "scenario": "launch_fault_broker_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/service-connections/$handoff_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/service-connection-unavailable",
+          "title": "service connection unavailable",
+          "status": 503,
+          "detail": "The service connection provider could not complete this operation.",
+          "code": "service_connection_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_broker_malformed-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_broker_malformed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_broker_malformed-seed-connection",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_broker_malformed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "connection-create"
+        },
+        "body": {
+          "launch_id": "$launch_id",
+          "service_id": "github",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "hosted_url": "https://identity.example/connect/contract-intent",
+          "expires_at": "2026-09-07T00:15:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "connection_create_expires_at": "/expires_at",
+        "handoff_id": "/handoff_id"
+      }
+    },
+    {
+      "id": "launch_fault_broker_malformed-launch-review-create",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_fault_broker_malformed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_broker_malformed-launch-review-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_broker_malformed-launch-review-start-unmet",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_fault_broker_malformed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_broker_malformed-launch-review-start-unmet"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_broker_malformed-launch-review-requirements",
+      "operation": "GET /api/v1/launches/{id}/requirements",
+      "scenario": "launch_fault_broker_malformed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id/requirements",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/service-connection-unavailable",
+          "title": "service connection unavailable",
+          "status": 503,
+          "detail": "The service connection provider could not complete this operation.",
+          "code": "service_connection_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_broker_malformed-connection-create",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_broker_malformed",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_broker_malformed-connection-create"
+        },
+        "body": {
+          "service_id": "github",
+          "launch_id": "$launch_id",
+          "intent_id": "new-intent"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/service-connection-unavailable",
+          "title": "service connection unavailable",
+          "status": 503,
+          "detail": "The service connection provider could not complete this operation.",
+          "code": "service_connection_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_broker_malformed-connection-read",
+      "operation": "GET /api/v1/service-connections/{handoff_id}",
+      "scenario": "launch_fault_broker_malformed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/service-connections/$handoff_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/service-connection-unavailable",
+          "title": "service connection unavailable",
+          "status": 503,
+          "detail": "The service connection provider could not complete this operation.",
+          "code": "service_connection_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_policy_unavailable-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_policy_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_policy_unavailable-launch-review-create",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_fault_policy_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_policy_unavailable-launch-review-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_policy_unavailable-launch-review-start-unmet",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_fault_policy_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_policy_unavailable-launch-review-start-unmet"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-service-unavailable",
+          "title": "launch service unavailable",
+          "status": 503,
+          "detail": "The Launch service could not complete this operation.",
+          "code": "launch_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_disabled-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_disabled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_disabled-launch-review-create",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_fault_disabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_disabled-launch-review-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/triggers-disabled",
+          "title": "triggers disabled",
+          "status": 503,
+          "detail": "Trigger launches are disabled by the operator.",
+          "code": "triggers_disabled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_disabled-launch-review-start-unmet",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_fault_disabled",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_disabled-launch-review-start-unmet"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/triggers-disabled",
+          "title": "triggers disabled",
+          "status": 503,
+          "detail": "Trigger launches are disabled by the operator.",
+          "code": "triggers_disabled"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_quota_unavailable-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_quota_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_quota_unavailable-create",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_fault_quota_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_quota_unavailable-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-quota-unavailable",
+          "title": "launch quota unavailable",
+          "status": 503,
+          "detail": "Visitor Launch capacity could not be checked.",
+          "code": "launch_quota_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_quota_refused-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_quota_refused",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_quota_refused-create",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_fault_quota_refused",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_quota_refused-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 429,
+        "headers": {
+          "content-type": "application/problem+json",
+          "retry-after": "60"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-quota",
+          "title": "resource quota",
+          "status": 429,
+          "detail": "This visitor has exhausted the daily Trigger Launch allowance.",
+          "code": "resource_quota",
+          "resource": "visitor_launches",
+          "limit": 5,
+          "reset_at": "2026-09-07T00:01:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "quota_reset": "/reset_at"
+      }
+    },
+    {
+      "id": "launch_fault_commit_conflict-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_commit_conflict",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "satisfied"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "satisfied"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [],
+            "can_start_now": true
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_completed_at": "/steps/1/completed_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_commit_conflict-launch-ready-start",
+      "operation": "POST /api/v1/launches/{id}/start",
+      "scenario": "launch_fault_commit_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/start",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_commit_conflict-launch-ready-start"
+        },
+        "body": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-changed",
+          "title": "launch changed",
+          "status": 409,
+          "detail": "The Launch changed before this operation completed.",
+          "code": "launch_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_commit_conflict-launch-review-cancel",
+      "operation": "POST /api/v1/launches/{id}/cancel",
+      "scenario": "launch_fault_commit_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/launches/$launch_id/cancel",
+        "headers": {
+          "idempotency-key": "launch_fault_commit_conflict-launch-review-cancel"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/launch-changed",
+          "title": "launch changed",
+          "status": 409,
+          "detail": "The Launch changed before this operation completed.",
+          "code": "launch_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_handoff_conflict-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_handoff_conflict",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_conflict-seed-connection",
+      "operation": "POST /api/v1/service-connections",
+      "scenario": "launch_fault_handoff_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/service-connections",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "connection-create"
+        },
+        "body": {
+          "launch_id": "$launch_id",
+          "service_id": "github",
+          "intent_id": "contract-intent"
+        }
+      },
+      "response": {
+        "status": 201,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "handoff_id": "sch_contract",
+          "hosted_url": "https://identity.example/connect/contract-intent",
+          "expires_at": "2026-09-07T00:15:00Z"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "connection_create_expires_at": "/expires_at",
+        "handoff_id": "/handoff_id"
+      }
+    },
+    {
+      "id": "launch_fault_handoff_conflict-read",
+      "operation": "GET /api/v1/service-connections/{handoff_id}",
+      "scenario": "launch_fault_handoff_conflict",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/service-connections/$handoff_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/service-connection-changed",
+          "title": "service connection changed",
+          "status": 409,
+          "detail": "The service connection changed before it could be saved.",
+          "code": "service_connection_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "launch_fault_trigger_retired-seed-read",
+      "operation": "GET /api/v1/launches/{id}",
+      "scenario": "launch_fault_trigger_retired",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/launches/$launch_id",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "lch_contract",
+          "trigger_id": "trg_contract",
+          "revision_digest": "99c37e06273ae4a6c3fe64593254086bb5f938db25cad7c6ed09910406b776c9",
+          "public_id": "public_contract",
+          "state": "draft",
+          "steps": [
+            {
+              "key": "signing_in",
+              "status": "completed",
+              "safe_detail": "",
+              "started_at": "2026-09-07T00:00:00Z",
+              "completed_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "checking_requirements",
+              "status": "blocked",
+              "safe_detail": "Connect required accounts to continue",
+              "started_at": "2026-09-07T00:00:00Z"
+            },
+            {
+              "key": "sandbox",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "workspace",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "agent",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "first_message",
+              "status": "pending",
+              "safe_detail": ""
+            },
+            {
+              "key": "ready",
+              "status": "pending",
+              "safe_detail": ""
+            }
+          ],
+          "resolution": {
+            "sandbox": {
+              "state": "pending"
+            },
+            "workspace": {
+              "state": "pending"
+            },
+            "agent": {
+              "state": "pending"
+            },
+            "choice_required": false
+          },
+          "requirements": {
+            "services": [
+              {
+                "service": "github",
+                "state": "missing"
+              },
+              {
+                "service": "chrono-llm-public",
+                "state": "missing"
+              }
+            ],
+            "checked_at": "2026-09-07T00:00:00Z"
+          },
+          "review": {
+            "needs": [
+              {
+                "type": "connection",
+                "service": "github"
+              },
+              {
+                "type": "connection",
+                "service": "chrono-llm-public"
+              }
+            ],
+            "can_start_now": false
+          },
+          "trust": {
+            "version": 1,
+            "disclosures": []
+          },
+          "first_message": "queued",
+          "confirmations": [],
+          "event_head": 1,
+          "created_at": "2026-09-07T00:00:00Z",
+          "updated_at": "2026-09-07T00:00:00Z",
+          "revision": 1
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "launch_id": "/id",
+        "launch_review_create_created_at": "/created_at",
+        "launch_review_create_requirements_checked_at": "/requirements/checked_at",
+        "launch_review_create_steps_0_completed_at": "/steps/0/completed_at",
+        "launch_review_create_steps_0_started_at": "/steps/0/started_at",
+        "launch_review_create_steps_1_started_at": "/steps/1/started_at",
+        "launch_review_create_updated_at": "/updated_at",
+        "public_id": "/public_id",
+        "trigger_id": "/trigger_id"
+      }
+    },
+    {
+      "id": "launch_fault_trigger_retired-create",
+      "operation": "POST /api/v1/triggers/public/{public_id}/launches",
+      "scenario": "launch_fault_trigger_retired",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/triggers/public/$public_id/launches",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "launch_fault_trigger_retired-create"
+        },
+        "body": {
+          "start_if_ready": false
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/trigger-retired",
+          "title": "trigger retired",
+          "status": 409,
+          "detail": "This Trigger is retired and no longer accepts launches. Choose another Trigger to start a new Launch.",
+          "code": "trigger_retired"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

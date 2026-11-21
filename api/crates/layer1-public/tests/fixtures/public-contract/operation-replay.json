@@ -1,0 +1,657 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "operation-replay-head-before",
+      "operation": "GET /api/v2/agents/{agent_id}/events/head",
+      "scenario": "agent_events_v2_operation_replay",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/head",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.event_head",
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.16",
+          "active_turn": {
+            "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+            "sequence": 4,
+            "appended_at": "2026-11-03T06:00:19Z",
+            "kind": {
+              "type": "turn_started",
+              "turn_sequence": 4
+            },
+            "response_binding": {
+              "command_id": "cmd_control_source",
+              "response_id": "resp_control_source",
+              "turn_sequence": 4
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "replay_turn_at": "/active_turn/appended_at"
+      }
+    },
+    {
+      "id": "operation-replay-first-page",
+      "operation": "GET /api/v2/agents/{agent_id}/events/snapshot",
+      "scenario": "agent_events_v2_operation_replay",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/snapshot?limit=10",
+        "headers": {
+          "prefer": "cma-tool-output"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.event_page",
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.16",
+          "items": [
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_available"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-03T06:00:19Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-03T06:00:19Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-03T06:00:19Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-03T06:00:19Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-03T06:00:19Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-03T06:00:19Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "plan_set",
+                "entries": [
+                  {
+                    "title": "Inspect recorded commands",
+                    "status": "in_progress"
+                  }
+                ]
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.10",
+              "sequence": 10,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "tool_started",
+                "call_id": "replay-1",
+                "title": "printf replay-1",
+                "kind": "execute",
+                "status": "running"
+              },
+              "response_binding": null
+            }
+          ],
+          "next_page_cursor": "ags1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.16.10"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "replay_event_3_at": "/items/2/appended_at",
+        "replay_event_4_at": "/items/3/appended_at",
+        "replay_event_5_at": "/items/4/appended_at",
+        "replay_event_6_at": "/items/5/appended_at",
+        "replay_event_7_at": "/items/6/appended_at",
+        "replay_event_8_at": "/items/7/appended_at"
+      }
+    },
+    {
+      "id": "operation-replay-next-page",
+      "operation": "GET /api/v2/agents/{agent_id}/events/snapshot",
+      "scenario": "agent_events_v2_operation_replay",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/snapshot?limit=10&page_cursor=ags1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.16.10",
+        "headers": {
+          "prefer": "cma-tool-output"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.event_page",
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.16",
+          "items": [
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.11",
+              "sequence": 11,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "tool_updated",
+                "call_id": "replay-1",
+                "status": "completed",
+                "title": null,
+                "output": {
+                  "text": "replay-1\n",
+                  "truncated": false
+                }
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.12",
+              "sequence": 12,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "tool_started",
+                "call_id": "replay-2",
+                "title": "printf replay-2",
+                "kind": "execute",
+                "status": "running"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.13",
+              "sequence": 13,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "tool_updated",
+                "call_id": "replay-2",
+                "status": "completed",
+                "title": null,
+                "output": {
+                  "text": "replay-2\n",
+                  "truncated": false
+                }
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+              "sequence": 14,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "tool_started",
+                "call_id": "replay-3",
+                "title": "printf replay-3",
+                "kind": "execute",
+                "status": "running"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
+              "sequence": 15,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "tool_updated",
+                "call_id": "replay-3",
+                "status": "completed",
+                "title": null,
+                "output": {
+                  "text": "replay-3\n",
+                  "truncated": true
+                }
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.16",
+              "sequence": 16,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "plan_set",
+                "entries": []
+              },
+              "response_binding": null
+            }
+          ],
+          "next_page_cursor": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "operation-replay-reload-first-page",
+      "operation": "GET /api/v2/agents/{agent_id}/events/snapshot",
+      "scenario": "agent_events_v2_operation_replay",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/snapshot?limit=10",
+        "headers": {
+          "prefer": "cma-tool-output"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.event_page",
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.16",
+          "items": [
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_available"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-03T06:00:19Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-03T06:00:19Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-03T06:00:19Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-03T06:00:19Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-03T06:00:19Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-03T06:00:19Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "plan_set",
+                "entries": [
+                  {
+                    "title": "Inspect recorded commands",
+                    "status": "in_progress"
+                  }
+                ]
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.10",
+              "sequence": 10,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "tool_started",
+                "call_id": "replay-1",
+                "title": "printf replay-1",
+                "kind": "execute",
+                "status": "running"
+              },
+              "response_binding": null
+            }
+          ],
+          "next_page_cursor": "ags1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.16.10"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "operation-replay-finite-catch-up",
+      "operation": "GET /api/v2/agents/{agent_id}/events",
+      "scenario": "agent_events_v2_operation_replay",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events?after_cursor=ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.10&follow=false",
+        "headers": {
+          "prefer": "cma-tool-output"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.11",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.11",
+              "sequence": 11,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "tool_updated",
+                "call_id": "replay-1",
+                "status": "completed",
+                "title": null,
+                "output": {
+                  "text": "replay-1\n",
+                  "truncated": false
+                }
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.12",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.12",
+              "sequence": 12,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "tool_started",
+                "call_id": "replay-2",
+                "title": "printf replay-2",
+                "kind": "execute",
+                "status": "running"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.13",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.13",
+              "sequence": 13,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "tool_updated",
+                "call_id": "replay-2",
+                "status": "completed",
+                "title": null,
+                "output": {
+                  "text": "replay-2\n",
+                  "truncated": false
+                }
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.14",
+              "sequence": 14,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "tool_started",
+                "call_id": "replay-3",
+                "title": "printf replay-3",
+                "kind": "execute",
+                "status": "running"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.15",
+              "sequence": 15,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "tool_updated",
+                "call_id": "replay-3",
+                "status": "completed",
+                "title": null,
+                "output": {
+                  "text": "replay-3\n",
+                  "truncated": true
+                }
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.16",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.16",
+              "sequence": 16,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "plan_set",
+                "entries": []
+              },
+              "response_binding": null
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "operation-replay-head-after",
+      "operation": "GET /api/v2/agents/{agent_id}/events/head",
+      "scenario": "agent_events_v2_operation_replay",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/head",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.event_head",
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.16",
+          "active_turn": {
+            "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+            "sequence": 4,
+            "appended_at": "2026-11-03T06:00:19Z",
+            "kind": {
+              "type": "turn_started",
+              "turn_sequence": 4
+            },
+            "response_binding": {
+              "command_id": "cmd_control_source",
+              "response_id": "resp_control_source",
+              "turn_sequence": 4
+            }
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

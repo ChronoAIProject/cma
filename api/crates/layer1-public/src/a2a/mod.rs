@@ -1,13 +1,16 @@
-//! A2A interface (priority 5) — for agent clients.
-//!
-//! A projection of the Layer 2 core session model into A2A idiom.
+//! Public provider discovery; the A2A message protocol remains unavailable.
 
-use axum::{response::Response, routing::any, routing::get, Router};
+use axum::{
+    extract::State,
+    http::{header, HeaderValue, StatusCode},
+    response::Response,
+    routing::{any, get},
+    Json, Router,
+};
 
-use crate::unavailable::interface_unavailable;
+use crate::rest::{problem_document, problem_response};
 use crate::{InterfaceProfile, Operation};
 
-/// The A2A projection of the core session model.
 #[derive(Debug, Default)]
 pub struct A2aInterface;
 
@@ -17,26 +20,51 @@ impl InterfaceProfile for A2aInterface {
     }
 
     fn operations(&self) -> &'static [Operation] {
-        &[
-            Operation::CreateSession,
-            Operation::SendInput,
-            Operation::StreamEvents,
-            Operation::ResolveApproval,
-            Operation::Interrupt,
-            Operation::GetUsage,
-        ]
+        &[]
     }
 }
 
-/// Routes that name the documented A2A surface without claiming to serve it.
-pub fn router() -> Router {
+pub fn router(public_base: &str) -> Router {
     Router::new()
-        .route("/.well-known/agent-card.json", get(not_available))
+        .route("/.well-known/agent-card.json", get(agent_card))
         .route("/api/v1/a2a", any(not_available))
+        .with_state(public_base.trim_end_matches('/').to_owned())
+}
+async fn agent_card(State(public_base): State<String>) -> impl axum::response::IntoResponse {
+    (
+        [(header::CACHE_CONTROL, "no-store")],
+        Json(serde_json::json!({
+            "name": "CMA Codex provider",
+            "version": env!("CARGO_PKG_VERSION"),
+            "url": public_base,
+            "capabilities": {
+                "streaming": true, "activity_items": true, "client_tools": false,
+                "cancel": true, "rich_input": false
+            },
+            "provider_contract": {
+                "binding": "/api/v1/cmaeg/bindings/{binding_id}",
+                "conversation": "/api/v1/cmaeg/bindings/{binding_id}/conversations/{conversation_id}",
+                "responses": "/api/v2/responses"
+            },
+            "authentication": { "schemes": ["bearer-agent-key"] }
+        })),
+    )
 }
 
 async fn not_available() -> Response {
-    interface_unavailable("a2a")
+    let status = StatusCode::NOT_IMPLEMENTED;
+    let mut body = problem_document(
+        status,
+        "interface-not-available",
+        "The a2a interface is not yet available.",
+        "interface_not_available",
+    );
+    body["interface"] = "a2a".into();
+    let mut response = problem_response(status, body);
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 #[cfg(test)]

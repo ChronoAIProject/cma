@@ -1,0 +1,22 @@
+[data-presence] {
+  opacity: 1;
+  transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+
+[data-presence='exiting'] {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* Only a new node starts transparent. Reversals retain the presented opacity. */
+@starting-style {
+  [data-presence='visible'] {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-presence] {
+    transition: none;
+  }
+}

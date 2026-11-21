@@ -1,14 +1,17 @@
 # Rust
 api/target/
-sdk/rust/target/
 
 # Node
 web/node_modules
 web/dist/
 web/coverage/
-sdk/typescript/node_modules/
-sdk/typescript/dist/
-sdk/typescript/coverage/
+web/e2e/.auth/
+web/e2e/test-results/
+web/e2e/playwright-report/
+
+# Python bytecode is generated; it is never committed.
+__pycache__/
+*.pyc
 
 # Editors / OS
 .DS_Store
@@ -24,3 +27,13 @@ sdk/typescript/coverage/
 # Agent tool scratch, including git worktrees. A root-level entry here would
 # fail the repository-structure gate if it were ever committed.
 .claude/
+
+# Private deployment inputs and internal documentation stay outside GitHub.
+/infra/
+/docs/
+/sdk/
+*.tfstate
+*.tfstate.*
+
+# Temporary private checkout for the protected deployment job.
+.github/.cd-private/

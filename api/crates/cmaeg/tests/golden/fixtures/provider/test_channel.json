@@ -1,0 +1,26 @@
+[
+  {
+    "method": "PUT",
+    "path": "/api/v1/cmaeg/bindings/<binding_id:1>",
+    "content_type": "application/json",
+    "idempotency_key": null,
+    "authorization": "sha256:7c8199a4e0f2b8012923afd78725fa1555a80502de42b202a98166664ac492da",
+    "body": "{\"agent_key\":\"sha256:9d2c7b1ddf19a36e7f7a918a5250164f6992ee42ae692d2f42378de6362a7044\",\"profile\":{\"context\":{\"mcp_servers\":[],\"skills\":[],\"system_prompt\":\"\"},\"metadata\":{\"description\":\"A test profile\",\"name\":\"Example\",\"owner\":{\"kind\":\"human\",\"subject\":\"alice\"},\"provider\":\"cma_codex\"},\"model\":{\"access\":\"managed\",\"api_type\":\"responses\",\"model\":\"gpt-test\",\"service\":\"openai\",\"thinking_effort\":\"medium\"},\"permission\":{\"action_mode\":\"guarded\",\"service_scope\":[\"github\"]},\"schema_version\":1},\"profile_digest\":\"sha256:ab8f0d947a41bcded9c547cee27c6274a9b275541f410d2878566ab752c05d13\",\"schema_version\":1,\"tools\":{\"native_mcp_url\":\"http://127.0.0.1:8090/mcp\",\"nyxid_service_slug\":\"cmaeg\"}}"
+  },
+  {
+    "method": "PUT",
+    "path": "/api/v1/cmaeg/bindings/<binding_id:1>/conversations/<conversation_id:1>",
+    "content_type": "application/json",
+    "idempotency_key": null,
+    "authorization": "sha256:7c8199a4e0f2b8012923afd78725fa1555a80502de42b202a98166664ac492da",
+    "body": "{}"
+  },
+  {
+    "method": "POST",
+    "path": "/api/v2/responses",
+    "content_type": "application/json",
+    "idempotency_key": "test_<test_turn:1>",
+    "authorization": "sha256:7c8199a4e0f2b8012923afd78725fa1555a80502de42b202a98166664ac492da",
+    "body": "{\"conversation\":\"<conversation_id:1>\",\"input\":[{\"content\":[{\"text\":\"CMAEG channel test\",\"type\":\"input_text\"}],\"role\":\"user\"}],\"metadata\":{},\"stream\":true}"
+  }
+]

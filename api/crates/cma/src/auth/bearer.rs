@@ -1,196 +1,244 @@
-//! Establishing who is calling from a bearer token.
-//!
-//! The browser signs in and gets a cookie. Nothing else can: CMA's
-//! stated clients are other products' backends, and a server has no cookie jar,
-//! no redirect to follow and no browser to be sent to a login page. Without
-//! this the REST interface is reachable only by the one client it was not
-//! primarily built for.
-//!
-//! The token is not decoded here, and deliberately so. Reading a token's claims
-//! without checking who issued it accepts anything shaped like a token; the
-//! provider is asked instead, which answers both "is this valid" and "whose is
-//! it" in one call, and stops answering the moment the token is revoked.
-//!
-//! That call is cached, because it happens on every request and a round trip
-//! per request would put the provider on the critical path of the terminal. The
-//! cache is short and holds only what a request needs, so a revoked token stops
-//! working within that window rather than at some later renewal.
-
-use std::collections::HashMap;
-use std::time::{Duration, Instant};
+//! Strict extraction of one HTTP bearer credential.
 
 use axum::http::{header, HeaderMap};
-use layer2_core::{Authorization, SubjectId};
-use tokio::sync::RwLock;
+use base64::Engine as _;
 
-use crate::auth::profile::Profile;
-
-/// How long an answer about a token is reused.
-///
-/// Short enough that a withdrawn token stops working promptly, long enough that
-/// a client making a burst of calls does not make the provider answer the same
-/// question for each. This is the window in which a revoked token still works,
-/// so it is stated as such rather than tuned for throughput.
-const CACHE_TTL: Duration = Duration::from_secs(60);
-
-/// What the provider said about a token, and when.
-struct Known {
-    subject: SubjectId,
-    authorization: Authorization,
-    profile: Profile,
-    at: Instant,
+/// A negative filter, never evidence of authentication. NyxID relay tokens
+/// resolve to their owner's subject and RBAC at userinfo, but their authority
+/// is restricted to bridge ingress/reply. Ordinary CMA authentication must not
+/// turn that subject projection into a dashboard or owner-operation credential.
+/// Every token that passes this filter still requires provider verification.
+pub(super) fn permits_ambient_auth(token: &str) -> bool {
+    if token.len() > 64 * 1024 {
+        return false;
+    }
+    let mut parts = token.split('.');
+    let (Some(header), Some(payload), Some(_), None) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return true;
+    };
+    if base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(header)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(header))
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .is_some_and(|value| {
+            value.get("typ").and_then(serde_json::Value::as_str)
+                == Some("nyxid-resource-request+jwt")
+        })
+    {
+        return false;
+    }
+    let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(payload)
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(payload))
+    else {
+        return true;
+    };
+    let Ok(serde_json::Value::Object(claims)) = serde_json::from_slice::<serde_json::Value>(&bytes)
+    else {
+        return true;
+    };
+    if claims
+        .get("relay")
+        .is_some_and(|value| !value.is_null() && value != &serde_json::Value::Bool(false))
+        || claims
+            .get("token_type")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|kind| {
+                matches!(kind, "relay_reply" | "relay_callback" | "resource_request")
+            })
+        || claims
+            .get("nyx_request")
+            .is_some_and(|value| !value.is_null())
+    {
+        return false;
+    }
+    ![
+        "relay_api_key_id",
+        "relay_api_key_name",
+        "relay_allowed_service_ids",
+        "relay_allowed_node_ids",
+        "relay_allow_all_services",
+        "relay_allow_all_nodes",
+    ]
+    .iter()
+    .any(|field| claims.get(*field).is_some_and(|value| !value.is_null()))
 }
 
-/// Answers about bearer tokens, remembered briefly.
-#[derive(Default)]
-pub struct BearerCache {
-    known: RwLock<HashMap<String, Known>>,
-}
-
-impl BearerCache {
-    /// What is known about this token, if it was asked about recently.
-    pub async fn get(&self, token: &str) -> Option<(SubjectId, Authorization, Profile)> {
-        let known = self.known.read().await;
-        let entry = known.get(token)?;
-        if entry.at.elapsed() > CACHE_TTL {
-            return None;
+/// Negative restriction only. The provider still verifies the complete token.
+/// Service-account and delegated actor tokens cannot acquire ambient org rights.
+pub(super) fn permits_personal_authority(token: &str) -> bool {
+    if !permits_ambient_auth(token) {
+        return false;
+    }
+    let pieces: Vec<_> = token.split('.').collect();
+    if pieces.len() != 3 {
+        return true;
+    }
+    let decode = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(pieces[1])
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(pieces[1]));
+    let Ok(bytes) = decode else {
+        return false;
+    };
+    let Ok(body) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return false;
+    };
+    if !body.is_object() {
+        return false;
+    }
+    for key in ["sa", "delegated"] {
+        if body
+            .get(key)
+            .is_some_and(|value| !value.is_null() && value.as_bool() != Some(false))
+        {
+            return false;
         }
-        Some((
-            entry.subject.clone(),
-            entry.authorization.clone(),
-            entry.profile.clone(),
-        ))
     }
-
-    /// Remember what the provider said, and forget what has gone stale.
-    ///
-    /// Swept on write rather than on a timer: entries are only added by a
-    /// request, so there is no moment where the map can grow without one, and a
-    /// process nobody is calling should not be waking up to tidy an empty map.
-    pub async fn remember(
-        &self,
-        token: &str,
-        subject: SubjectId,
-        authorization: Authorization,
-        profile: Profile,
-    ) {
-        let mut known = self.known.write().await;
-        known.retain(|_, e| e.at.elapsed() <= CACHE_TTL);
-        known.insert(
-            token.to_string(),
-            Known {
-                subject,
-                authorization,
-                profile,
-                at: Instant::now(),
-            },
-        );
-    }
+    body.get("act").is_none_or(serde_json::Value::is_null)
 }
 
-/// The bearer token on a request, if it carries one.
-///
-/// The scheme is matched case-insensitively because RFC 7235 says it is, and a
-/// client sending `bearer` in lower case is not making a mistake worth failing
-/// their request over.
-pub fn bearer_token(headers: &HeaderMap) -> Option<String> {
-    let raw = headers.get(header::AUTHORIZATION)?.to_str().ok()?;
-    let (scheme, value) = raw.split_once(' ')?;
-    if !scheme.eq_ignore_ascii_case("bearer") {
+/// Negative restriction for independently retained API authority. NyxID agent
+/// keys require separate service-bound introspection. Other opaque tokens cannot
+/// prove an ordinary access-token shape. JWT
+/// content only restricts eligibility; provider introspection authenticates
+/// the exact token, current permissions, subject and expiry separately.
+pub(super) fn permits_independent_commands(token: &str) -> bool {
+    if super::agent_keys::is_agent_key(token) {
+        return token.len() <= 64 * 1024;
+    }
+    if !permits_personal_authority(token) {
+        return false;
+    }
+    let pieces: Vec<_> = token.split('.').collect();
+    if pieces.len() != 3 {
+        return false;
+    }
+    let Ok(bytes) = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(pieces[1])
+        .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(pieces[1]))
+    else {
+        return false;
+    };
+    let Ok(serde_json::Value::Object(claims)) = serde_json::from_slice(&bytes) else {
+        return false;
+    };
+    claims.get("token_type").and_then(serde_json::Value::as_str) == Some("access")
+        && ![
+            "cnf",
+            "resources",
+            "resource",
+            "allowed_service_ids",
+            "allowed_node_ids",
+            "allow_all_services",
+            "allow_all_nodes",
+            "api_key_id",
+            "assistant_forward",
+        ]
+        .iter()
+        .any(|field| claims.get(*field).is_some_and(|value| !value.is_null()))
+}
+
+pub(super) fn bearer_token(headers: &HeaderMap) -> Option<String> {
+    let mut values = headers.get_all(header::AUTHORIZATION).iter();
+    let value = values.next()?.to_str().ok()?;
+    if values.next().is_some() {
         return None;
     }
-    let token = value.trim();
-    if token.is_empty() {
+    let (scheme, token) = value.split_once(' ')?;
+    if !scheme.eq_ignore_ascii_case("bearer")
+        || token.is_empty()
+        || token != token.trim()
+        || token
+            .bytes()
+            .any(|byte| byte.is_ascii_control() || byte == b' ')
+    {
         return None;
     }
-    Some(token.to_string())
+    Some(token.to_owned())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use layer2_core::Capability;
 
-    fn headers(value: &str) -> HeaderMap {
-        let mut h = HeaderMap::new();
-        h.insert(header::AUTHORIZATION, value.parse().expect("valid header"));
-        h
+    #[test]
+    fn exactly_one_well_formed_bearer_is_accepted() {
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer token-a".parse().unwrap());
+        assert_eq!(bearer_token(&headers).as_deref(), Some("token-a"));
+
+        for invalid in [
+            "Basic token-a",
+            "Bearer",
+            "Bearer  token-a",
+            "Bearer token a",
+        ] {
+            headers.insert(header::AUTHORIZATION, invalid.parse().unwrap());
+            assert!(bearer_token(&headers).is_none(), "accepted {invalid:?}");
+        }
+        headers.append(header::AUTHORIZATION, "Bearer token-b".parse().unwrap());
+        assert!(bearer_token(&headers).is_none());
     }
 
     #[test]
-    fn a_bearer_token_is_found() {
-        assert_eq!(
-            bearer_token(&headers("Bearer abc.def.ghi")).as_deref(),
-            Some("abc.def.ghi")
+    fn channel_tokens_are_refused_even_when_their_subject_has_owner_permissions() {
+        for claims in [
+            serde_json::json!({"sub":"owner", "permissions":["cma:*"], "relay":true}),
+            serde_json::json!({"token_type":"relay_reply"}),
+            serde_json::json!({"token_type":"relay_callback"}),
+            serde_json::json!({"relay":false, "relay_api_key_id":"selected-key"}),
+            serde_json::json!({"relay_allowed_service_ids":[]}),
+            serde_json::json!({"relay_allow_all_services":false}),
+            serde_json::json!({"relay":"true"}),
+            serde_json::json!({"token_type":"resource_request"}),
+            serde_json::json!({"nyx_request": {"version":1}}),
+        ] {
+            let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&claims).unwrap());
+            assert!(!permits_ambient_auth(&format!(
+                "header.{payload}.signature"
+            )));
+        }
+    }
+
+    #[test]
+    fn request_proof_header_type_cannot_be_downgraded_to_an_ambient_bearer() {
+        let header = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(
+                &serde_json::json!({"alg":"RS256", "typ":"nyxid-resource-request+jwt"}),
+            )
+            .unwrap(),
         );
+        let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
+            serde_json::to_vec(&serde_json::json!({"sub":"owner", "permissions":["cma:*"]}))
+                .unwrap(),
+        );
+        assert!(!permits_ambient_auth(&format!(
+            "{header}.{payload}.signature"
+        )));
     }
 
     #[test]
-    fn the_scheme_is_matched_case_insensitively() {
-        // RFC 7235 says the scheme is case-insensitive, and a client that sends
-        // it in lower case is not making a mistake worth a 401 over.
-        assert_eq!(bearer_token(&headers("bearer abc")).as_deref(), Some("abc"));
-    }
-
-    #[test]
-    fn another_scheme_is_not_a_bearer_token() {
-        // Reading a basic credential as a token would send someone's password
-        // to the provider as though it were one.
-        assert!(bearer_token(&headers("Basic dXNlcjpwYXNz")).is_none());
-    }
-
-    #[test]
-    fn an_empty_token_is_no_token() {
-        // Otherwise an empty string is asked about, which the provider answers
-        // for with a 401 that reads as "your token is bad" rather than "you
-        // sent none".
-        assert!(bearer_token(&headers("Bearer   ")).is_none());
-    }
-
-    #[test]
-    fn a_request_with_no_authorization_carries_no_token() {
-        assert!(bearer_token(&HeaderMap::new()).is_none());
-    }
-
-    #[tokio::test]
-    async fn a_remembered_token_is_answered_without_asking_again() {
-        // The provider is otherwise on the critical path of every request,
-        // including the ones driving a terminal.
-        let cache = BearerCache::default();
-        let subject = SubjectId("subject-a".into());
-        cache
-            .remember(
-                "tok",
-                subject.clone(),
-                Authorization::from_capabilities([Capability::CreateSession]),
-                Profile::default(),
-            )
-            .await;
-
-        let (found, authorization, _) = cache.get("tok").await.expect("remembered");
-        assert_eq!(found, subject);
-        assert!(authorization.allows(Capability::CreateSession));
-    }
-
-    #[tokio::test]
-    async fn an_unknown_token_is_not_answered_for() {
-        let cache = BearerCache::default();
-        assert!(cache.get("never-seen").await.is_none());
-    }
-
-    #[tokio::test]
-    async fn one_token_does_not_answer_for_another() {
-        // The obvious catastrophe: a cache keyed loosely would hand one
-        // caller's identity to another.
-        let cache = BearerCache::default();
-        cache
-            .remember(
-                "tok-a",
-                SubjectId("subject-a".into()),
-                Authorization::from_capabilities([]),
-                Profile::default(),
-            )
-            .await;
-        assert!(cache.get("tok-b").await.is_none());
+    fn ordinary_credentials_still_require_the_existing_provider_verifier() {
+        for value in [
+            "opaque",
+            "unverified.payload.signature",
+            "opaque.with.extra.parts",
+        ] {
+            assert!(permits_ambient_auth(value));
+        }
+        for claims in [
+            serde_json::json!({"sub":"owner", "token_type":"access"}),
+            serde_json::json!({"relay":false}),
+            serde_json::json!({"relay":null}),
+        ] {
+            let payload = base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .encode(serde_json::to_vec(&claims).unwrap());
+            assert!(permits_ambient_auth(&format!("header.{payload}.signature")));
+        }
+        assert!(!permits_ambient_auth(&"a".repeat(64 * 1024 + 1)));
     }
 }

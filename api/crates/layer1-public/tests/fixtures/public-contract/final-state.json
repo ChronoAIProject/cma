@@ -1,0 +1,261 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "state-admin-replace-conflict",
+      "operation": "PUT /api/v1/admin/settings",
+      "scenario": "operator_conflict",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/admin/settings",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 0,
+          "settings": {
+            "defaults": {
+              "sandbox_profile": {
+                "id": "sbp_default_v2",
+                "revision": 1
+              },
+              "workspace_profile": {
+                "id": "wkp_default_v2",
+                "revision": 1
+              },
+              "agent_profile": {
+                "id": "agp_default_v2",
+                "revision": 1
+              }
+            },
+            "inactivity": {
+              "pause_after_seconds": 900,
+              "auto_pause_enabled": false
+            },
+            "retention": {
+              "agent_log_days": 90
+            },
+            "limits": {
+              "max_sandboxes_per_user": 9,
+              "visitor_max_sandboxes": 1,
+              "visitor_max_launches_per_day": 5
+            },
+            "triggers": {
+              "enabled": false,
+              "orchestration_paused": false
+            },
+            "marketplace": {
+              "enabled": false
+            }
+          }
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/settings-conflict",
+          "title": "settings conflict",
+          "status": 409,
+          "detail": "Platform settings changed before this operation completed.",
+          "code": "settings_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-admin-reset-conflict",
+      "operation": "POST /api/v1/admin/settings/reset",
+      "scenario": "operator_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/settings/reset",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "expected_revision": 0
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/settings-conflict",
+          "title": "settings conflict",
+          "status": 409,
+          "detail": "Platform settings changed before this operation completed.",
+          "code": "settings_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-admin-pause-conflict",
+      "operation": "POST /api/v1/admin/triggers/pause",
+      "scenario": "operator_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/triggers/pause",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-conflict",
+          "title": "operator conflict",
+          "status": 409,
+          "detail": "The operator action conflicts with current resource state.",
+          "code": "operator_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-admin-resume-conflict",
+      "operation": "POST /api/v1/admin/triggers/resume",
+      "scenario": "operator_resume_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/triggers/resume",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-conflict",
+          "title": "operator conflict",
+          "status": 409,
+          "detail": "The operator action conflicts with current resource state.",
+          "code": "operator_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-admin-retire-sandbox-conflict",
+      "operation": "POST /api/v1/admin/sandboxes/{id}/retire",
+      "scenario": "operator_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/sandboxes/sbx_contract/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-conflict",
+          "title": "operator conflict",
+          "status": 409,
+          "detail": "The operator action conflicts with current resource state.",
+          "code": "operator_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-admin-retire-profile-conflict",
+      "operation": "POST /api/v1/admin/profiles/{kind}/{id}/retire",
+      "scenario": "operator_conflict",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/admin/profiles/agent/agp_contract/retire",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/operator-conflict",
+          "title": "operator conflict",
+          "status": 409,
+          "detail": "The operator action conflicts with current resource state.",
+          "code": "operator_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-workspace-invalid-derived-name",
+      "operation": "POST /api/v1/sandboxes/{id}/workspaces",
+      "scenario": "instances_invalid_workspace_name",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/sandboxes/sbx_route/workspaces",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "state-workspace-invalid-derived-name"
+        },
+        "body": {
+          "workspace_profile": {
+            "id": "wkp_contract",
+            "revision": 2
+          }
+        }
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-resource-request",
+          "title": "invalid resource request",
+          "status": 422,
+          "detail": "The request does not satisfy the resource contract.",
+          "code": "workspace_profile_invalid"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "state-sandbox-revision-exhausted",
+      "operation": "DELETE /api/v1/sandboxes/{id}",
+      "scenario": "instances_revision_exhausted",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/sandboxes/sbx_route",
+        "headers": {
+          "idempotency-key": "state-sandbox-revision-exhausted"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
+          "title": "resource conflict",
+          "status": 409,
+          "detail": "The operation conflicts with current resource state.",
+          "code": "sandbox_invalid_state"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "max_login_url_bytes": 4096,
+  "measurement": "ASCII bytes of the complete encoded absolute /auth/login URL, including origin, return_to and screen/prompt parameters",
+  "rationale": "Half the smallest configured hop budget (nginx 8192-byte request line), leaving room for method/protocol and canonical-host redirects. Cloudflare URI limit is 32768 bytes; GCLB URL plus headers limit is at least 61440 bytes. Independent SDK constants must match this contract; the web imports the TypeScript SDK constant."
+}

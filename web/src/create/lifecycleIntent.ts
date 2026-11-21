@@ -1,0 +1,247 @@
+import { refreshSandboxCapacity } from '../sandbox/useSandboxCapacity';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ApiError, ProtocolError } from '@cma/client';
+import { AgentLifecycleCreateError } from '../api/client';
+import { discardSubmittedTaskDraft } from './taskDraft';
+import { lifecycleFailure, type LifecycleFailure } from './lifecycleFailure';
+import type {
+  AgentLifecycleCreateInput,
+  AgentLifecycleOperationView,
+  CmaWebClient,
+} from '../api/client';
+
+export { lifecycleStorageKey, lifecycleScopeForAgent } from './lifecycleIntentStorage';
+import {
+  loadLifecycleIntent,
+  hasPendingLifecycleIntent,
+  retainLifecycleIntent,
+  type Intent,
+  type AgentBinding,
+} from './lifecycleIntentStorage';
+
+export function useLifecycleIntent(
+  client: CmaWebClient,
+  owner?: string,
+  workspaceId?: string,
+  sandboxId?: string,
+  binding?: AgentBinding,
+) {
+  const storageScope = { owner, workspaceId, sandboxId };
+  const scope = JSON.stringify([owner ?? null, workspaceId ?? null, sandboxId ?? null, binding]);
+  const [loadedScope, setLoadedScope] = useState(scope);
+  const [saved, setSaved] = useState(() => loadLifecycleIntent(storageScope, binding));
+  const current = useRef(saved.intent);
+  const active = useRef<AbortController | undefined>(undefined);
+  const [pending, setPending] = useState(false);
+  const [failure, setFailure] = useState<LifecycleFailure>();
+  const [operation, setOperation] = useState<AgentLifecycleOperationView>();
+  const [connection, setConnection] = useState<AgentLifecycleOperationView['connection']>();
+  const [pollVersion, setPollVersion] = useState(0);
+  if (loadedScope !== scope) {
+    // Another location is another retained request with its own slot. Read
+    // that slot and drop every observation of the previous one; nothing from
+    // one location may be shown as, or resubmitted for, another.
+    setLoadedScope(scope);
+    setSaved(loadLifecycleIntent(storageScope, binding));
+    setPending(false);
+    setFailure(undefined);
+    setOperation(undefined);
+    setConnection(undefined);
+  }
+  useLayoutEffect(() => {
+    current.current = saved.intent;
+  }, [saved.intent]);
+  // An unsettled request belongs to the scope that sent it. Leaving that scope
+  // abandons only its response; its key stays retained there for recovery.
+  const generation = useMemo(() => ({ scope, client }), [scope, client]);
+  const live = useRef<typeof generation | undefined>(undefined);
+  useLayoutEffect(() => {
+    live.current = generation;
+    return () => {
+      if (live.current === generation) live.current = undefined;
+      active.current?.abort();
+      active.current = undefined;
+    };
+  }, [generation]);
+  const retain = (expected: Intent | undefined, intent?: Intent) => {
+    if (live.current !== generation) return false;
+    try {
+      retainLifecycleIntent(storageScope, expected, intent);
+      current.current = intent;
+      setSaved({ intent });
+      return true;
+    } catch {
+      setSaved((previous) => ({
+        ...previous,
+        error:
+          'The Agent request could not be saved. Copy your task and restore browser session storage before retrying.',
+      }));
+      return false;
+    }
+  };
+  const receipt = saved.intent?.receipt;
+  useEffect(() => {
+    if (!receipt || !client.readAgentLifecycle) return;
+    const abort = new AbortController();
+    const requestKey = current.current?.key;
+    const currentRequest = () =>
+      !abort.signal.aborted &&
+      current.current?.key === requestKey &&
+      current.current?.receipt?.id === receipt.id;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let phase: string | undefined;
+    let phaseStartedAt = Date.now();
+    let retryDelay = 500;
+    const poll = async () => {
+      const readStartedAt = Date.now();
+      try {
+        const value = await client.readAgentLifecycle!(receipt.id, { signal: abort.signal });
+        if (!currentRequest()) return;
+        if (
+          value.id !== receipt.id ||
+          (current.current?.agentId && value.agent_id !== current.current.agentId)
+        )
+          throw new ProtocolError('Agent setup identity could not be verified.');
+        if (value.phase !== phase) {
+          phase = value.phase;
+          phaseStartedAt = Date.now();
+        }
+        setOperation(value);
+        if (owner && value.status === 'failed' && value.failure?.code === 'sandbox_limit_reached')
+          void refreshSandboxCapacity(client, owner);
+        setFailure(undefined);
+        retryDelay = 500;
+        setConnection(value.status === 'waiting_for_connection' ? value.connection : undefined);
+        if (value.status === 'queued' || value.status === 'running') {
+          // A slow earlier phase must not add a full second to observing Agent readiness.
+          // Count the read itself toward the cadence without overlapping requests.
+          // Keep each new phase responsive, then back off if that phase stalls.
+          const interval = Date.now() - phaseStartedAt < 10000 ? 250 : 1000;
+          const elapsed = Math.max(0, Date.now() - readStartedAt);
+          timer = setTimeout(() => void poll(), Math.max(0, interval - elapsed));
+        }
+      } catch (error: unknown) {
+        if (!currentRequest()) return;
+        setFailure(
+          lifecycleFailure(error, 'status', current.current?.body.initial_message !== undefined),
+        );
+        if (
+          error instanceof ProtocolError ||
+          (error instanceof ApiError && !error.isRetryable && error.status !== 408)
+        ) {
+          // Lost access or identity invalidates the visible observation, but
+          // never erases the retained command or submits a replacement.
+          setOperation(undefined);
+          setConnection(undefined);
+          return;
+        }
+        timer = setTimeout(() => void poll(), retryDelay);
+        retryDelay = Math.min(retryDelay * 2, 5000);
+      }
+    };
+    void poll();
+    return () => {
+      abort.abort();
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [client, receipt, pollVersion, owner, scope]);
+  const submit = async (body?: AgentLifecycleCreateInput, draftRevision?: string) => {
+    if (
+      live.current !== generation ||
+      active.current ||
+      !client.createAgentLifecycle ||
+      saved.error
+    )
+      return;
+    if (body && current.current) return;
+    const intent =
+      current.current ??
+      (body
+        ? { key: crypto.randomUUID(), body, ...(draftRevision ? { draftRevision } : {}) }
+        : undefined);
+    if (!intent || !retain(current.current, intent)) return;
+    const abort = new AbortController();
+    active.current = abort;
+    setPending(true);
+    setFailure(undefined);
+    try {
+      const result = await client.createAgentLifecycle(intent.body, {
+        idempotencyKey: intent.key,
+        signal: abort.signal,
+      });
+      if (!abort.signal.aborted) {
+        if (intent.receipt && result.id !== intent.receipt.id)
+          throw new Error('Agent setup identity changed. Your original request has been saved.');
+        setOperation(undefined);
+        retain(intent, { ...intent, receipt: result });
+      }
+    } catch (error: unknown) {
+      if (abort.signal.aborted) return;
+      if (error instanceof AgentLifecycleCreateError && error.connection)
+        setConnection(error.connection);
+      else {
+        setFailure(lifecycleFailure(error, 'submit', intent.body.initial_message !== undefined));
+        if (
+          error instanceof AgentLifecycleCreateError &&
+          ([400, 422].includes(error.status) ||
+            (error.status === 429 && error.failure !== undefined)) &&
+          !intent.receipt
+        )
+          retain(intent);
+        if (
+          owner &&
+          error instanceof AgentLifecycleCreateError &&
+          error.status === 429 &&
+          error.failure
+        )
+          void refreshSandboxCapacity(client, owner);
+      }
+    } finally {
+      if (active.current === abort) active.current = undefined;
+      if (!abort.signal.aborted) setPending(false);
+    }
+  };
+  return {
+    intent: saved.intent,
+    pending,
+    failure:
+      saved.error === undefined ? failure : { kind: 'message' as const, message: saved.error },
+    operation,
+    connection,
+    setConnection,
+    submit,
+    retryStatus: () => setPollVersion((value) => value + 1),
+    clear: () => {
+      const intent = saved.intent;
+      if (!intent || !retain(intent)) return false;
+      if (
+        owner &&
+        intent &&
+        !hasPendingLifecycleIntent(storageScope) &&
+        operation?.status === 'succeeded' &&
+        operation.id === intent.receipt?.id &&
+        operation.agent_id &&
+        (intent.agentId === undefined || intent.agentId === operation.agent_id)
+      )
+        discardSubmittedTaskDraft(owner, intent.body, intent.draftRevision);
+      return true;
+    },
+    bindAgent: (agentId: string) => {
+      const intent = saved.intent;
+      if (
+        !intent?.receipt ||
+        operation?.id !== intent.receipt.id ||
+        operation.agent_id !== agentId ||
+        (intent.agentId !== undefined && intent.agentId !== agentId)
+      )
+        return false;
+      return retain(intent, { ...intent, agentId });
+    },
+    abandon: () => {
+      if (live.current !== generation) return;
+      live.current = undefined;
+      active.current?.abort();
+    },
+    blocked: saved.error !== undefined,
+  };
+}

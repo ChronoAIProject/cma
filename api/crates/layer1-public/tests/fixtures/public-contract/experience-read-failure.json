@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "responses-read-durable-turn-failure",
+      "operation": "GET /api/v1/responses/{response_id}",
+      "scenario": "experience_failed_turn",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/responses/resp_agt_contract_3",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "callback_url": "https://cma.example/agents/agt_contract",
+          "id": "resp_agt_contract_3",
+          "object": "response",
+          "created_at": 1788566400,
+          "status": "failed",
+          "background": false,
+          "error": {
+            "code": "agent_turn_failed",
+            "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
+          },
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "gpt-proof",
+          "output": [
+            {
+              "id": "msg_agt_contract_3",
+              "type": "message",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "First answer",
+                  "annotations": [],
+                  "logprobs": []
+                }
+              ]
+            },
+            {
+              "id": "msg_agt_contract_3_1",
+              "type": "message",
+              "status": "completed",
+              "role": "assistant",
+              "content": [
+                {
+                  "type": "output_text",
+                  "text": "Second answer",
+                  "annotations": [],
+                  "logprobs": []
+                }
+              ]
+            }
+          ],
+          "parallel_tool_calls": false,
+          "previous_response_id": null,
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": true,
+          "temperature": null,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "none",
+          "tools": [],
+          "top_p": null,
+          "truncation": "disabled",
+          "usage": {
+            "input_tokens": 10,
+            "input_tokens_details": {
+              "cached_tokens": 0
+            },
+            "output_tokens": 7,
+            "output_tokens_details": {
+              "reasoning_tokens": 0
+            },
+            "total_tokens": 17
+          },
+          "metadata": {
+            "project": "proof"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

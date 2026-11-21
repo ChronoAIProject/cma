@@ -1,4 +1,4 @@
-//! Idempotent execution for the two side-effecting REST operations that opt in.
+//! Idempotent execution for REST commands that opt in.
 
 use std::{sync::Arc, time::Duration};
 
@@ -16,9 +16,15 @@ use sha2::{Digest, Sha256};
 use super::{problem_document, problem_response, BodyProblem, RequestFailure};
 
 const IDEMPOTENCY_KEY: &str = "idempotency-key";
+#[cfg(test)]
 const MAX_KEY_BYTES: usize = 255;
 pub(super) const RETENTION: Duration = Duration::from_secs(24 * 60 * 60);
 const EXECUTION_LEASE: Duration = Duration::from_secs(2 * 60);
+
+/// Encode resource boundaries without letting opaque IDs alter the operation namespace.
+pub(super) fn operation_scope(operation: &str, resources: &[&str]) -> String {
+    serde_json::to_string(&(operation, resources)).expect("operation scopes contain only strings")
+}
 
 /// A JSON decoding result accompanied by the digest of the bytes that carried it.
 pub(super) struct RequestBody<T> {
@@ -29,6 +35,10 @@ pub(super) struct RequestBody<T> {
 impl<T> RequestBody<T> {
     pub(super) fn into_parts(self) -> (Result<T, BodyProblem>, [u8; 32]) {
         (self.value, self.fingerprint)
+    }
+
+    pub(super) fn value(&self) -> Option<&T> {
+        self.value.as_ref().ok()
     }
 }
 
@@ -79,6 +89,11 @@ fn is_json_content_type(headers: &HeaderMap) -> bool {
 pub(super) struct IdempotencyKey(Option<String>);
 
 impl IdempotencyKey {
+    /// Durable domain ledgers own their receipts and retain keys permanently.
+    pub(super) fn into_required_value(self) -> Result<String, IdempotencyProblem> {
+        self.0.ok_or(IdempotencyProblem::Missing)
+    }
+
     pub(super) fn required(self) -> Result<Self, IdempotencyProblem> {
         if self.0.is_some() {
             Ok(self)
@@ -116,10 +131,7 @@ where
             return Err(IdempotencyProblem::Invalid);
         }
         let bytes = value.as_bytes();
-        if bytes.is_empty()
-            || bytes.len() > MAX_KEY_BYTES
-            || !bytes.iter().all(|byte| (0x21..=0x7e).contains(byte))
-        {
+        if !layer2_core::operation::valid_idempotency_key(bytes) {
             return Err(IdempotencyProblem::Invalid);
         }
         let key = std::str::from_utf8(bytes)
@@ -185,11 +197,29 @@ pub(super) enum Idempotency {
         claim: OperationClaim,
     },
     Replay(Response),
+    /// A newer domain ledger may prove acceptance without repeating execution.
+    /// Generic legacy commands continue returning their original refusal.
+    Fenced(IdempotencyProblem),
 }
 
 impl Idempotency {
     /// Reserve a key, identify a duplicate, or leave an unkeyed request alone.
     pub(super) async fn begin(
+        key: IdempotencyKey,
+        store: Arc<dyn OperationStore>,
+        caller: &Caller,
+        operation: impl Into<String>,
+        fingerprint: [u8; 32],
+    ) -> Result<Self, Response> {
+        match Self::begin_recoverable(key, store, caller, operation, fingerprint).await? {
+            Self::Fenced(problem) => Err(problem.into_response()),
+            other => Ok(other),
+        }
+    }
+
+    /// Inspect the existing outer receipt before consulting an additive ledger.
+    /// Pending/recovery never grants permission to run the command again.
+    pub(super) async fn begin_recoverable(
         key: IdempotencyKey,
         store: Arc<dyn OperationStore>,
         caller: &Caller,
@@ -214,11 +244,9 @@ impl Idempotency {
             .map_err(|error| RequestFailure::from(error).into_response())?;
         Ok(match reservation {
             OperationReservation::Acquired => Self::Acquired { store, claim },
-            OperationReservation::Pending => {
-                return Err(IdempotencyProblem::Pending.into_response())
-            }
+            OperationReservation::Pending => Self::Fenced(IdempotencyProblem::Pending),
             OperationReservation::RecoveryRequired => {
-                return Err(IdempotencyProblem::RecoveryRequired.into_response())
+                Self::Fenced(IdempotencyProblem::RecoveryRequired)
             }
             OperationReservation::FingerprintMismatch => {
                 return Err(IdempotencyProblem::Reused.into_response())
@@ -275,6 +303,22 @@ pub(super) async fn required_command<T: DeserializeOwned>(
     Ok((guard, body, confirmation_hash))
 }
 
+/// Begin a required command whose route deliberately has no request body.
+pub(super) async fn required_empty_command(
+    key: IdempotencyKey,
+    store: Arc<dyn OperationStore>,
+    caller: &Caller,
+    operation: String,
+) -> Result<Idempotency, Response> {
+    let key = key.required().map_err(IntoResponse::into_response)?;
+    let fingerprint = Sha256::digest([]).into();
+    match Idempotency::begin(key, store, caller, operation, fingerprint).await {
+        Ok(Idempotency::Replay(response)) => Err(response),
+        Ok(guard) => Ok(guard),
+        Err(response) => Err(response),
+    }
+}
+
 #[derive(Serialize, Deserialize)]
 struct RecordedResponse {
     status: u16,
@@ -326,6 +370,26 @@ mod tests {
     use layer2_core::{Authorization, SubjectId};
 
     use super::*;
+
+    #[test]
+    fn operation_scopes_preserve_opaque_resource_boundaries() {
+        for operation in ["agent:approval", "trigger:placement:retire"] {
+            assert_ne!(
+                operation_scope(operation, &["one:two", "three"]),
+                operation_scope(operation, &["one", "two:three"]),
+            );
+        }
+        let resources = ["colon:inside", "quoted\"id", "back\\slash", "nul\0id", ""];
+        let scope = operation_scope("workspace:create", &resources);
+        let decoded: (String, Vec<String>) = serde_json::from_str(&scope).unwrap();
+        assert_eq!(decoded.0, "workspace:create");
+        assert_eq!(decoded.1, resources);
+        assert_ne!(scope, operation_scope("workspace:delete", &resources));
+        assert_ne!(
+            operation_scope("operation", &[]),
+            operation_scope("operation", &[""])
+        );
+    }
 
     #[tokio::test]
     async fn keys_are_visible_ascii_and_bounded() {

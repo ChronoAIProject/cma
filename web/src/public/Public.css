@@ -1,0 +1,217 @@
+.public-frame {
+  min-height: 100dvh;
+  padding: 24px;
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-base);
+  font: var(--dsw-font-markdown-base);
+  overflow-wrap: anywhere;
+}
+.public-brand {
+  display: block;
+  width: 120px;
+  margin-bottom: 32px;
+}
+.public-brand img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.public-axis {
+  width: 100%;
+  max-width: 748px;
+  margin: 0 auto;
+}
+.public-heading,
+.public-section,
+.public-signup,
+.public-details,
+.public-progress {
+  margin-bottom: 24px;
+}
+.public-frame h1 {
+  margin: 8px 0 16px;
+  font: var(--dsw-font-markdown-h1);
+}
+.public-frame h2 {
+  font: var(--dsw-font-markdown-h3);
+}
+.public-frame h3,
+.public-review h3 {
+  font: var(--dsw-font-s-strong-14);
+}
+.public-frame p,
+.public-review p {
+  margin: 8px 0;
+}
+.public-heading > p:first-child,
+.public-signup,
+.public-observed {
+  color: var(--dsw-alias-label-secondary);
+}
+.public-section ol {
+  padding-left: 24px;
+}
+.public-section li {
+  padding: 4px 0;
+}
+.public-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0;
+}
+.public-actions .button,
+.public-review .button {
+  max-width: 100%;
+  white-space: normal;
+  height: auto;
+  min-height: 40px;
+}
+.public-details {
+  border-top: 1px solid var(--dsw-alias-border-l2);
+  padding-top: 16px;
+}
+.public-details summary {
+  min-height: 40px;
+  cursor: pointer;
+}
+.public-details dl,
+.public-software dl {
+  margin: 16px 0;
+}
+.public-details dl > div,
+.public-software dl > div {
+  display: grid;
+  grid-template-columns: minmax(100px, 1fr) minmax(0, 2fr);
+  gap: 12px;
+  margin: 8px 0;
+}
+.public-details dd,
+.public-software dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.public-details pre,
+.public-software pre {
+  max-height: 240px;
+  margin: 8px 0;
+  padding: 12px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--dsw-alias-bg-layer-1);
+  font-family: var(--ds-font-family-code);
+  font-size: 13px;
+}
+.public-review {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.public-review section {
+  min-width: 0;
+}
+.public-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  min-height: 44px;
+}
+.public-confirm input {
+  margin-top: 4px;
+}
+.public-connection {
+  padding: 16px 0;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+.public-connection ol {
+  padding-left: 24px;
+}
+.public-frame a,
+.public-review a {
+  color: var(--dsw-alias-brand-text);
+}
+.public-connection > a {
+  display: flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 44px;
+}
+.public-timeline {
+  list-style: none;
+  margin: 24px 0;
+  padding: 0;
+}
+.public-step {
+  padding: 16px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+}
+/* A fixed dot slot keeps every step's name on one edge whatever its state. */
+.public-step__line {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+.public-step__icon {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+}
+.public-step__line h2 {
+  margin: 0;
+  font: var(--dsw-font-markdown-base-strong);
+}
+.public-step__state {
+  font: var(--dsw-font-s-14);
+  color: var(--dsw-alias-label-secondary);
+}
+.public-step__state[data-tone='warning'] {
+  color: var(--dsw-alias-state-warn-label);
+}
+.public-step__state[data-tone='error'] {
+  color: var(--dsw-alias-state-error-primary);
+}
+/* Two classes, to outrank the frame's paragraph margin. */
+.public-step .public-step__detail {
+  margin: 4px 0 0 28px;
+  color: var(--dsw-alias-label-secondary);
+}
+.public-alert {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+@media (max-width: 30rem) {
+  .public-frame {
+    padding: 16px;
+  }
+  .public-details dl > div,
+  .public-software dl > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .public-actions .button,
+  .public-review .button {
+    min-height: 44px;
+  }
+}
+.public-service-verified {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.5rem 0;
+}
+
+.public-service-verified > span:first-child {
+  width: 2rem;
+  height: 2rem;
+  flex: 0 0 2rem;
+}
+
+.public-service-verified > span:last-child {
+  margin-left: auto;
+  color: var(--live);
+}

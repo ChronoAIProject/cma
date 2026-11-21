@@ -4,10 +4,11 @@ import { createPortal } from 'react-dom';
 import { IconCloseOutline16 } from './icons';
 import { Button } from './Button';
 import { usePlateFocus } from './plate';
+import { Presence, presenceAttributes, usePresence, usePresenceExiting } from './Presence';
 import './Modal.css';
 
 /**
- * The product's one dialog — `docs/Web_Style.md` §12.4.
+ * The product's one dialog — the shared style contracts
  *
  * Portalled to `document.body`, which is not a detail: an ancestor that
  * establishes a stacking context leaves sticky page chrome floating above the
@@ -27,6 +28,7 @@ import './Modal.css';
 
 interface ModalProps {
   readonly open: boolean;
+  readonly presentation?: 'repository' | 'task';
   readonly onClose: () => void;
   /** The heading, and the dialog's accessible name in every mode. */
   readonly title: string;
@@ -45,12 +47,17 @@ interface ModalProps {
    * header, close key and body padding are dropped.
    */
   readonly headless?: boolean;
-  /** Extra class for width only. The card's other geometry is fixed. */
+  /** Additional surface class; card sizing and placement remain shared. */
   readonly placement?: string;
+  /** Preserve an editor's draft while its closed dialog is hidden and inert. */
+  readonly keepMounted?: boolean;
+  /** A fixed viewport shell with independently scrolling configuration sections. */
+  readonly layout?: 'sections';
 }
 
 export function Modal({
   open,
+  presentation,
   onClose,
   title,
   description,
@@ -59,11 +66,14 @@ export function Modal({
   dismissible = true,
   headless = false,
   placement,
+  keepMounted = false,
+  layout,
 }: ModalProps) {
   const panelRef = useRef<HTMLDivElement>(null);
 
-  return open ? (
+  const content = (
     <ModalBody
+      presentation={presentation}
       onClose={onClose}
       title={title}
       description={description}
@@ -71,11 +81,52 @@ export function Modal({
       dismissible={dismissible}
       headless={headless}
       placement={placement}
+      layout={layout}
       panelRef={panelRef}
     >
       {children}
     </ModalBody>
-  ) : null;
+  );
+  return keepMounted ? (
+    <RetainedModal open={open} content={content} />
+  ) : (
+    <Presence>
+      {open ? (
+        <ModalBody
+          presentation={presentation}
+          onClose={onClose}
+          title={title}
+          description={description}
+          footer={footer}
+          dismissible={dismissible}
+          headless={headless}
+          placement={placement}
+          layout={layout}
+          panelRef={panelRef}
+        >
+          {children}
+        </ModalBody>
+      ) : null}
+    </Presence>
+  );
+}
+
+function RetainedModal({
+  open,
+  content,
+}: {
+  readonly open: boolean;
+  readonly content: React.ReactElement<React.ComponentProps<typeof ModalBody>>;
+}) {
+  const parentExiting = usePresenceExiting();
+  const { present, exiting } = usePresence(open && !parentExiting);
+  return (
+    <ModalBody
+      {...content.props}
+      hidden={!present}
+      data-presence={exiting ? 'exiting' : 'visible'}
+    />
+  );
 }
 
 /**
@@ -86,6 +137,7 @@ export function Modal({
  */
 function ModalBody({
   onClose,
+  presentation,
   title,
   description,
   children,
@@ -94,17 +146,24 @@ function ModalBody({
   headless,
   placement,
   panelRef,
+  hidden = false,
+  layout,
+  'data-presence': presence,
 }: Omit<ModalProps, 'open' | 'headless' | 'dismissible'> & {
   readonly headless: boolean;
   readonly dismissible: boolean;
   readonly panelRef: React.RefObject<HTMLDivElement | null>;
+  readonly 'data-presence'?: 'visible' | 'exiting';
+  readonly hidden?: boolean;
 }) {
+  const exiting = presence === 'exiting';
   const close = () => {
-    if (dismissible) onClose();
+    if (dismissible && !exiting) onClose();
   };
-  usePlateFocus(panelRef, close);
+  usePlateFocus(panelRef, close, !exiting && !hidden);
 
   useEffect(() => {
+    if (exiting || hidden) return;
     /*
      * The page behind a modal does not scroll. Without this the mask stays
      * put while the page moves under it, which reads as the dialog sliding.
@@ -114,13 +173,20 @@ function ModalBody({
     return () => {
       document.body.style.overflow = previous;
     };
-  }, []);
+  }, [exiting, hidden]);
 
   return createPortal(
-    <div className="modal" role="presentation">
+    <div
+      className="modal"
+      data-presentation={presentation}
+      role="presentation"
+      hidden={hidden}
+      {...presenceAttributes(exiting)}
+    >
       <div className="modal__mask" aria-hidden="true" onClick={close} />
       <div
         className={['modal__card', placement ?? ''].filter(Boolean).join(' ')}
+        data-layout={layout}
         role="dialog"
         aria-modal="true"
         aria-label={title}

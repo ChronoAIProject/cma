@@ -13,7 +13,7 @@ import {
 } from './columns';
 
 /**
- * The concession chain — `docs/Web_Style.md` §9.
+ * The concession chain — the shared style contracts
  *
  * Tested as arithmetic rather than through a render, because that is what it
  * is: jsdom lays nothing out, so a layout test here would assert only that
@@ -56,22 +56,32 @@ describe('solving the three columns', () => {
   it('shrinks the details column before anything else', () => {
     /*
      * The squeeze band is narrow and worth stating: everything fits at
-     * 280 + 360 + 640 = 1280, and the details column cannot go under
-     * 280 + 300 + 640 = 1220. So shrinking happens between those two, and
-     * below 1220 there is nothing left to shrink.
+     * 344 + 360 + 640 = 1344, and the details column cannot go under
+     * 344 + 300 + 640 = 1284. So shrinking happens between those two, and
+     * below 1284 there is nothing left to shrink.
      */
-    const at = computeColumns(1250, SIDEBAR_DEFAULT, DETAILS_DEFAULT);
+    const viewport = SIDEBAR_DEFAULT + CENTER_MIN + (DETAILS_DEFAULT + DETAILS_MIN) / 2;
+    const at = computeColumns(viewport, SIDEBAR_DEFAULT, DETAILS_DEFAULT);
     expect(at.sidebar).toBe(SIDEBAR_DEFAULT);
     expect(at.center).toBe(CENTER_MIN);
-    expect(at.details).toBe(1250 - SIDEBAR_DEFAULT - CENTER_MIN);
+    expect(at.details).toBe(viewport - SIDEBAR_DEFAULT - CENTER_MIN);
     expect(at.details).toBeLessThan(DETAILS_DEFAULT);
     expect(at.details).toBeGreaterThanOrEqual(DETAILS_MIN);
   });
 
   it('closes the details column the moment shrinking would go under its floor', () => {
     // One pixel either side of the boundary the test above names.
-    expect(computeColumns(1220, SIDEBAR_DEFAULT, DETAILS_DEFAULT).details).toBe(DETAILS_MIN);
-    expect(computeColumns(1219, SIDEBAR_DEFAULT, DETAILS_DEFAULT).details).toBe(0);
+    expect(
+      computeColumns(SIDEBAR_DEFAULT + CENTER_MIN + DETAILS_MIN, SIDEBAR_DEFAULT, DETAILS_DEFAULT)
+        .details,
+    ).toBe(DETAILS_MIN);
+    expect(
+      computeColumns(
+        SIDEBAR_DEFAULT + CENTER_MIN + DETAILS_MIN - 1,
+        SIDEBAR_DEFAULT,
+        DETAILS_DEFAULT,
+      ).details,
+    ).toBe(0);
   });
 
   it('closes the details column rather than taking it under its minimum', () => {
@@ -85,7 +95,7 @@ describe('solving the three columns', () => {
 
   it('never takes width from the sidebar', () => {
     /*
-     * It is the way to every other session. A layout that took it away to
+     * It is the way to every other resource. A layout that took it away to
      * make room would be one where the fix for "this is too narrow" is
      * itself unreachable.
      */

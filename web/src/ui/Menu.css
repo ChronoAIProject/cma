@@ -1,5 +1,5 @@
 /*
- * The dropdown — `docs/Web_Style.md` §12.3.
+ * The dropdown — the shared style contracts
  *
  * The card carries its own scrollbar elevation rather than leaving it to the
  * page's: a menu floats above whatever is behind it, so a thumb tinted for
@@ -30,8 +30,8 @@
   border-radius: 12px;
   box-shadow: var(--dsw-shadow-lv3);
 
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --cma-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
+  --cma-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
 
 /*
@@ -48,6 +48,7 @@
 
 .menu__item {
   display: flex;
+  box-sizing: border-box;
   gap: 8px;
   align-items: center;
   width: 100%;
@@ -60,18 +61,23 @@
   background: transparent;
   border: none;
   border-radius: 7px;
+  text-decoration: none;
   cursor: pointer;
+  transition:
+    background var(--ds-transition-duration-fast) var(--ds-ease-in-out),
+    color var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 
+/* Hover is neutral (§12.3, §29): lime is kept for selection, live state, focus and data. */
 .menu__item:hover:not([aria-disabled='true']) {
-  color: var(--dsw-alias-state-business-primary);
-  background: var(--dsw-alias-interactive-bg-hover-accent);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
 }
 
 .menu__item:focus-visible {
   outline: none;
-  color: var(--dsw-alias-state-business-primary);
-  background: var(--dsw-alias-interactive-bg-hover-accent);
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
   box-shadow: var(--focus-ring);
 }
 
@@ -104,6 +110,25 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.menu__item[data-has-reason] .menu__itemlabel {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.menu__reason {
+  display: block;
+  color: var(--dsw-alias-label-secondary);
+  font: var(--dsw-font-xs-13);
+}
+
+.menu__item[data-has-reason][aria-disabled='true'] {
+  opacity: 1;
+}
+
+.menu__item[aria-disabled='true'] .menu__labeltext {
+  opacity: 0.4;
 }
 
 /*
@@ -141,4 +166,75 @@
   height: 1px;
   margin: 4px 2px;
   background: var(--dsw-alias-border-l1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu__item {
+    transition: none;
+  }
+}
+
+.menu__choice-group {
+  padding-bottom: 4px;
+}
+
+.menu__choices {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0 6px;
+  /* Concentric with its 6px choices: 4px padding plus 6px inside makes the 10px track. */
+  padding: 4px;
+  background: var(--dsw-alias-bg-layer-1);
+  border-radius: 10px;
+}
+
+.menu__choice {
+  justify-content: center;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 6px;
+}
+
+.menu__choice[aria-checked='true'] {
+  color: var(--dsw-alias-label-primary);
+  font-weight: 600;
+  background: var(--dsw-specific-sidebar-nav-item-active);
+}
+
+/* Run location and independent computer choices share the same menu mechanics. */
+.menu[data-presentation='run-target'] {
+  width: 320px;
+  min-width: 0;
+  max-width: calc(100vw - 32px);
+  padding: 8px;
+  border-radius: 18px;
+  background: var(--dsw-specific-task-menu);
+}
+.menu[data-presentation='run-target'] .menu__label {
+  color: var(--dsw-specific-task-weak);
+  font-size: 12.5px;
+  line-height: 20px;
+}
+.menu[data-presentation='run-target'] .menu__item {
+  min-height: 44px;
+  gap: 12px;
+  padding: 8px;
+  color: var(--dsw-specific-task-primary);
+}
+.menu[data-presentation='run-target'] .menu__icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--dsw-specific-task-panel-border);
+}
+.menu[data-presentation='run-target'] .menu__reason {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+  line-height: 18px;
+}
+.menu[data-presentation='run-target'] .menu__check {
+  color: var(--dsw-specific-task-accent);
 }

@@ -1,186 +1,174 @@
-import type { ReactNode } from 'react';
-import markMarkup from '../assets/brand/cma-mark-animated.svg?raw';
-import type { CreationAbility } from '../sessions/availability';
-import { BUILD } from './build';
-import type { SurfaceMode } from './surfaceMode';
-import { IconNewChatOutline16, IconPanelLeftOutline16, IconSearchOutline16 } from '../ui/icons';
+import { IconPanelLeftOutline16, IconPlusOutline16, IconSearchOutline16 } from '../ui/icons';
+import { useState, type ReactNode } from 'react';
+import { NavigationSettingsContext } from './sidebarContext';
+import type { AppRoute } from '../routing/routes';
+import { routePath } from '../routing/routes';
+import { ServiceMenu } from '../services/ServiceMenu';
+import markMarkup from '../assets/brand/cma-mark.svg?raw';
 import './Sidebar.css';
+const markHtml = { __html: markMarkup };
+
+/** One navigation row under the action row, such as Triggers. */
+export interface SidebarLink {
+  readonly id: string;
+  readonly label: string;
+  readonly icon: ReactNode;
+  readonly route: AppRoute;
+  readonly current: boolean;
+}
 
 /**
- * The sidebar — `docs/Web_Style.md` §10.
+ * New agent, shown whenever the caller could ever create one.
  *
- * Everything the app bar and the status band used to hold, in the one column
- * that is always on screen. That is not a rearrangement for its own sake: a
- * bar and a band cost 100px of height on every page, and height is the axis a
- * terminal and a conversation both run out of first.
- *
- * Collapsed it is a 56px rail of 36px controls rather than nothing. A panel
- * that disappears takes its own way back with it, and the rail is what keeps
- * "show me the other sessions" reachable at any width.
+ * A reason makes it disabled rather than absent (§12.4): in Shared or
+ * Organization scope the control used to vanish, which read as the feature
+ * having gone away rather than as "switch scope first".
  */
+export interface SidebarNewAgent {
+  readonly current?: boolean;
+  readonly onCreate: () => void;
+  readonly label?: string;
+  readonly icon?: ReactNode;
+  readonly unavailableReason?: string;
+}
 
 interface SidebarProps {
   readonly collapsed: boolean;
-  readonly creation: CreationAbility;
-  readonly surface: SurfaceMode;
-  readonly chatAvailable: boolean;
-  readonly onSurfaceChange: (surface: SurfaceMode) => void;
-  readonly onToggleCollapsed: () => void;
-  readonly onCreate: () => void;
-  /** Opens the command plate. The rail expands the sidebar instead. */
-  readonly onSearch: () => void;
-  /** The session list, which takes whatever height is left. */
-  readonly children: ReactNode;
-  /**
-   * What the list is showing, and what it is not.
-   *
-   * The status band's one irreplaceable fact: the canvas drops sessions past
-   * its attachment budget, and truncation that says nothing reads as
-   * breakage. It sits with the list rather than in a band because the list is
-   * what it is about.
-   */
-  readonly status?: ReactNode;
-  /** Whether operations is the view currently showing. */
-  /** The account control. */
+  readonly onToggleCollapsed?: () => void;
   readonly account: ReactNode;
+  readonly navigation?: ReactNode;
+  readonly newAgent?: SidebarNewAgent;
+  /** Opens the command menu. Absent where there is nothing to search. */
+  readonly onSearch?: () => void;
+  readonly links?: readonly SidebarLink[];
+  readonly onHome?: () => void;
+  readonly route?: AppRoute;
+  readonly onNavigate?: (route: AppRoute) => void;
+}
+
+const SHORTCUT_HINT =
+  typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.userAgent) ? '⌘K' : 'Ctrl K';
+
+function plainClick(event: React.MouseEvent) {
+  return !(event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey);
 }
 
 export function Sidebar({
   collapsed,
-  creation,
-  surface,
-  chatAvailable,
-  onSurfaceChange,
   onToggleCollapsed,
-  onCreate,
-  onSearch,
-  children,
-  status,
   account,
+  navigation,
+  newAgent,
+  onSearch,
+  links = [],
+  onHome,
+  route = { kind: 'agent_manager' },
+  onNavigate,
 }: SidebarProps) {
-  const reasonId = 'sidebar-creation-reason';
-  const describedBy = creation.reason === undefined ? undefined : reasonId;
+  const unavailableId = 'sidebar-new-agent-reason';
+  const [settingsHost, setSettingsHost] = useState<HTMLDivElement | null>(null);
   return (
-    <div className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`}>
-      <div className="sidebar__logorow">
-        {/*
-          The mark is a shortcut to a new session and carries no hover chrome:
-          the pointer is the only affordance it needs, and a hover fill on a
-          wordmark reads as the product name being a control.
-
-          The animated mark mounts with this authenticated shell rather than
-          with a session or view, so it draws once after sign-in and does not
-          replay while somebody navigates their work. Its wrapper stays still.
-        */}
-        <button
-          type="button"
+    <aside
+      className={`sidebar${collapsed ? ' sidebar--collapsed' : ''}`}
+      aria-label="Application navigation"
+    >
+      <div className="sidebar__head">
+        <a
           className="sidebar__brand"
-          disabled={!creation.canCreate}
-          aria-describedby={describedBy}
-          onClick={onCreate}
+          href="/"
+          aria-label="CMA home"
+          title="ChronoAI Managed Agent"
+          onClick={(event) => {
+            if (!plainClick(event)) return;
+            if (!onHome && !onNavigate) return;
+            event.preventDefault();
+            if (onHome) onHome();
+            else onNavigate?.({ kind: 'home' });
+          }}
         >
-          <span
-            className="sidebar__mark"
-            aria-hidden="true"
-            dangerouslySetInnerHTML={{ __html: markMarkup }}
-          />
-          {collapsed ? null : <span className="sidebar__name">CMA</span>}
-        </button>
-        <button
-          type="button"
-          className="sidebar__icon sidebar__toggle"
-          aria-expanded={!collapsed}
-          aria-label={collapsed ? 'Show the session list' : 'Hide the session list'}
-          onClick={onToggleCollapsed}
-        >
-          <IconPanelLeftOutline16 />
-        </button>
+          <span className="sidebar__mark" aria-hidden="true" dangerouslySetInnerHTML={markHtml} />
+        </a>
+        <ServiceMenu route={route} collapsed={collapsed} onNavigate={onNavigate ?? (() => {})} />
+        {onToggleCollapsed === undefined ? null : (
+          <button
+            type="button"
+            className="sidebar__toggle"
+            aria-label={collapsed ? 'Show navigation' : 'Hide navigation'}
+            aria-expanded={!collapsed}
+            onClick={onToggleCollapsed}
+          >
+            <IconPanelLeftOutline16 />
+          </button>
+        )}
       </div>
-
-      {collapsed ? null : (
-        <span className="sidebar__build" title="The build this page was served from">
-          {BUILD}
-        </span>
-      )}
-
-      {!collapsed && chatAvailable ? (
-        <div className="sidebar__surfaces" role="group" aria-label="Session surface">
-          {(['chat', 'agent'] as const).map((candidate) => (
+      {newAgent === undefined && onSearch === undefined && links.length === 0 ? null : (
+        <div className="sidebar__actions">
+          {newAgent === undefined ? null : (
+            <>
+              <button
+                type="button"
+                className="sidebar__new"
+                aria-current={newAgent.current ? 'page' : undefined}
+                aria-label={newAgent.label ?? 'New agent'}
+                title={collapsed ? (newAgent.label ?? 'New agent') : undefined}
+                aria-disabled={newAgent.unavailableReason === undefined ? undefined : true}
+                aria-describedby={
+                  newAgent.unavailableReason === undefined ? undefined : unavailableId
+                }
+                onClick={() => {
+                  if (newAgent.unavailableReason === undefined) newAgent.onCreate();
+                }}
+              >
+                {newAgent.icon ?? <IconPlusOutline16 />}
+                <span>{newAgent.label ?? 'New agent'}</span>
+              </button>
+              {newAgent.unavailableReason === undefined ? null : (
+                <p id={unavailableId} className="sidebar__reason" hidden={collapsed}>
+                  {newAgent.unavailableReason}
+                </p>
+              )}
+            </>
+          )}
+          {onSearch === undefined ? null : (
             <button
-              key={candidate}
               type="button"
-              aria-pressed={surface === candidate}
-              onClick={() => {
-                onSurfaceChange(candidate);
+              className="sidebar__search"
+              aria-label="Search"
+              aria-keyshortcuts="Meta+K Control+K"
+              title={collapsed ? `Search (${SHORTCUT_HINT})` : undefined}
+              onClick={onSearch}
+            >
+              <IconSearchOutline16 />
+              <span>Search</span>
+              <kbd className="sidebar__kbd">{SHORTCUT_HINT}</kbd>
+            </button>
+          )}
+          {links.map((link) => (
+            <a
+              key={link.id}
+              className="sidebar__link"
+              href={routePath(link.route)}
+              aria-current={link.current ? 'page' : undefined}
+              title={collapsed ? link.label : undefined}
+              onClick={(event) => {
+                if (!plainClick(event) || onNavigate === undefined) return;
+                event.preventDefault();
+                onNavigate(link.route);
               }}
             >
-              {candidate === 'chat' ? 'Chat' : 'Agent'}
-            </button>
+              {link.icon}
+              <span>{link.label}</span>
+            </a>
           ))}
         </div>
-      ) : null}
-
-      <button
-        type="button"
-        className="sidebar__new"
-        disabled={!creation.canCreate}
-        aria-describedby={describedBy}
-        onClick={onCreate}
-      >
-        <IconNewChatOutline16 />
-        {collapsed ? null : (
-          <span className="sidebar__newlabel">
-            {surface === 'chat' ? 'New Chat' : 'New session'}
-          </span>
-        )}
-      </button>
-      {creation.reason === undefined ? null : (
-        <span className="control-reason" id={reasonId}>
-          {creation.reason}
-        </span>
       )}
-
-      {/*
-        Searching opens the command plate, closed or open. It used to expand
-        the sidebar when closed, on the reasoning that results are a list and a
-        list needs a column — but the plate carries its own list, over whatever
-        is behind it, and a control that does something else depending on a
-        state somewhere else is a control nobody can predict. Pressing search
-        and being given a sidebar is not a slower way to search.
-      */}
-      <button
-        type="button"
-        className="sidebar__icon sidebar__search"
-        aria-label="Find a session, or type a command"
-        onClick={onSearch}
-      >
-        <IconSearchOutline16 />
-        {collapsed ? null : (
-          <>
-            <span className="sidebar__searchlabel">Find a session, or type a command</span>
-            <kbd className="sidebar__key">⌘K</kbd>
-          </>
-        )}
-      </button>
-
-      <div className="sidebar__list">{children}</div>
-
-      {collapsed || status === undefined ? null : <p className="sidebar__status">{status}</p>}
-
-      {/*
-       * Operations moved into the account menu. It is one of §1's three views
-       * and was the app bar's switch until §9 retired the bar; a row of its
-       * own here made the foot a two-item navigation strip beside an account
-       * control that omitted the one place an operator goes.
-       *
-       * The account control is rendered collapsed or not. It used to be
-       * replaced by a static settings glyph when the sidebar was closed, which
-       * left no way to sign out — invisible while the toggle did nothing, and
-       * reachable the moment it worked.
-       */}
-      <div className="sidebar__foot">
-        <div className="sidebar__account">{account}</div>
+      <div className="sidebar__navigation" hidden={collapsed}>
+        <NavigationSettingsContext value={settingsHost}>{navigation}</NavigationSettingsContext>
       </div>
-    </div>
+      <div className="sidebar__account">
+        {account}
+        <div className="sidebar__settings" ref={setSettingsHost} />
+      </div>
+    </aside>
   );
 }

@@ -1,0 +1,78 @@
+import { useEffect, useMemo, useState } from 'react';
+import type { TaskExperienceCapabilities } from '@cma/client';
+import type { CmaWebClient } from './api/client';
+
+const disabled: TaskExperienceCapabilities = {
+  task_home_admission: false,
+  suggested_followup_admission: false,
+  desktop_enable: false,
+  browser_takeover: false,
+  replay_presentation: false,
+};
+
+export function useTaskExperience(client: CmaWebClient, accountId?: string) {
+  const scope = useMemo(() => ({ client, accountId }), [client, accountId]);
+  const [result, setResult] = useState<{
+    scope: object;
+    capabilities: TaskExperienceCapabilities;
+    confirmed: boolean;
+  }>();
+  useEffect(() => {
+    let request: AbortController | undefined;
+    const refresh = () => {
+      request?.abort();
+      const current = new AbortController();
+      request = current;
+      if (!navigator.onLine) {
+        setResult(undefined);
+        return;
+      }
+      if (!accountId || !client.taskExperience) {
+        setResult({ scope, capabilities: disabled, confirmed: false });
+        return;
+      }
+      void client.taskExperience.read({ signal: current.signal }).then(
+        (value) => {
+          if (!current.signal.aborted)
+            setResult({
+              scope,
+              capabilities: value.account_id === accountId ? value.capabilities : disabled,
+              confirmed: value.account_id === accountId,
+            });
+        },
+        () => {
+          if (!current.signal.aborted)
+            setResult({ scope, capabilities: disabled, confirmed: false });
+        },
+      );
+    };
+    const visible = () => {
+      if (document.visibilityState !== 'hidden') refresh();
+    };
+    const offline = () => {
+      request?.abort();
+      setResult(undefined);
+    };
+    refresh();
+    window.addEventListener('focus', refresh);
+    window.addEventListener('online', refresh);
+    window.addEventListener('offline', offline);
+    document.addEventListener('visibilitychange', visible);
+    return () => {
+      request?.abort();
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('online', refresh);
+      window.removeEventListener('offline', offline);
+      document.removeEventListener('visibilitychange', visible);
+    };
+  }, [scope, client, accountId]);
+  const current = result?.scope === scope ? result : undefined;
+  return useMemo(
+    () => ({
+      ...(current?.capabilities ?? disabled),
+      settled: current !== undefined,
+      confirmed: current?.confirmed === true,
+    }),
+    [current],
+  );
+}

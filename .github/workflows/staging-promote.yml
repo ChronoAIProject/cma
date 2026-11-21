@@ -1,0 +1,98 @@
+name: Admit and deploy staging components
+
+on:
+  workflow_call:
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY:
+        required: true
+      CD_NYXID_CLIENT_ID:
+        required: true
+      CD_NYXID_CLIENT_SECRET:
+        required: true
+    inputs:
+      lane:
+        type: string
+        required: true
+      publication_matrix:
+        type: string
+        required: true
+      infra_ref:
+        type: string
+        required: true
+    outputs:
+      component_result:
+        value: ${{ jobs.deploy.outputs.component_result }}
+      admit:
+        value: ${{ jobs.admit.outputs.status }}
+      deploy:
+        value: ${{ jobs.deploy.outputs.status }}
+      deploy_disposition:
+        value: ${{ jobs.deploy.outputs.disposition }}
+      admit_disposition:
+        value: ${{ jobs.admit.outputs.disposition }}
+      admitted:
+        value: ${{ jobs.admit.outputs.admitted }}
+      failures:
+        value: ${{ jobs.admit.outputs.failures }}
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  admit:
+    name: Admit qualified components
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      status: ${{ job.status }}
+      release_set: ${{ steps.set.outputs.release_set }}
+      started_at: ${{ steps.set.outputs.started_at }}
+      changed: ${{ steps.set.outputs.changed }}
+      admitted: ${{ steps.set.outputs.admitted }}
+      failures: ${{ steps.set.outputs.failures }}
+      disposition: ${{ steps.set.outputs.disposition }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Qualify each component and record compatible admission
+        id: set
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_RESOLVE_MODE: automatic
+          CD_PROMOTION_LANE: ${{ inputs.lane }}
+          CD_PUBLICATION_MATRIX: ${{ inputs.publication_matrix }}
+        run: python3 -B .github/scripts/staging_cd_resolve.py
+      - name: Retain public component admission evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: staging-admission-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.lane }}
+          path: ${{ runner.temp }}/public-admission/admission.json
+          if-no-files-found: ignore
+          retention-days: 90
+  deploy:
+    name: Deploy admitted components
+    needs: admit
+    if: >-
+      always() && !cancelled() && needs.admit.result == 'success' &&
+      needs.admit.outputs.changed == 'true'
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/staging-deploy.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
+    with:
+      release_set: ${{ needs.admit.outputs.release_set }}
+      started_at: ${{ needs.admit.outputs.started_at }}
+      mode: release
+      infra_ref: ${{ inputs.infra_ref }}
+      evidence_suffix: ${{ format('-{0}', inputs.lane) }}

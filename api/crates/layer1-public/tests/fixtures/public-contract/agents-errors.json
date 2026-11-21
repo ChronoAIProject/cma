@@ -1,0 +1,1983 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agent-list-anonymous",
+      "operation": "GET /api/v1/agents",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-list-denied",
+      "operation": "GET /api/v1/agents",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-list-invalid-page",
+      "operation": "GET /api/v1/agents",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
+          "title": "invalid instance query",
+          "status": 400,
+          "detail": "The instance query parameters are not valid.",
+          "code": "invalid_instance_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-read-anonymous",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-read-denied",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-events-anonymous",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/events?after=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-events-denied",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/events?after=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-events-invalid-page",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/events?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
+          "title": "invalid instance query",
+          "status": 400,
+          "detail": "The instance query parameters are not valid.",
+          "code": "invalid_instance_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-transcript-anonymous",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-transcript-denied",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-usage-anonymous",
+      "operation": "GET /api/v1/agents/{id}/usage",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-usage-denied",
+      "operation": "GET /api/v1/agents/{id}/usage",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-resources-anonymous",
+      "operation": "GET /api/v1/agents/{id}/resources",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/resources",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-resources-denied",
+      "operation": "GET /api/v1/agents/{id}/resources",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_contract/resources",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-create-anonymous",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_route/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-create-anonymous"
+        },
+        "body": {
+          "agent_profile": {
+            "id": "agp_route",
+            "revision": 1
+          },
+          "title": "Contract agent"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-create-denied",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_route/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-create-denied"
+        },
+        "body": {
+          "agent_profile": {
+            "id": "agp_route",
+            "revision": 1
+          },
+          "title": "Contract agent"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-create-missing-key",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_route/agents",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_profile": {
+            "id": "agp_route",
+            "revision": 1
+          },
+          "title": "Contract agent"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-create-invalid-key",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_route/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "agent_profile": {
+            "id": "agp_route",
+            "revision": 1
+          },
+          "title": "Contract agent"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-create-invalid-body",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_route/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-create-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct CreateAgentRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-create-missing-media-type",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_route/agents",
+        "headers": {
+          "idempotency-key": "agent-create-missing-media-type"
+        },
+        "body": {
+          "agent_profile": {
+            "id": "agp_route",
+            "revision": 1
+          },
+          "title": "Contract agent"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-delete-not-stopped-anonymous",
+      "operation": "DELETE /api/v1/agents/{id}",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_contract",
+        "headers": {
+          "idempotency-key": "agent-delete-not-stopped-anonymous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-delete-not-stopped-denied",
+      "operation": "DELETE /api/v1/agents/{id}",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_contract",
+        "headers": {
+          "idempotency-key": "agent-delete-not-stopped-denied"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-delete-not-stopped-missing-key",
+      "operation": "DELETE /api/v1/agents/{id}",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_contract",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-delete-not-stopped-invalid-key",
+      "operation": "DELETE /api/v1/agents/{id}",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_contract",
+        "headers": {
+          "idempotency-key": "contains spaces"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-steer-no-turn-anonymous",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-steer-no-turn-anonymous"
+        },
+        "body": {
+          "text": "Adjust the result"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-steer-no-turn-denied",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-steer-no-turn-denied"
+        },
+        "body": {
+          "text": "Adjust the result"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-steer-no-turn-missing-key",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "text": "Adjust the result"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-steer-no-turn-invalid-key",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "text": "Adjust the result"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-steer-no-turn-invalid-body",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-steer-no-turn-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct AgentTextRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-steer-no-turn-missing-media-type",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "idempotency-key": "agent-steer-no-turn-missing-media-type"
+        },
+        "body": {
+          "text": "Adjust the result"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-interrupt-no-turn-anonymous",
+      "operation": "POST /api/v1/agents/{id}/interrupt",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/interrupt",
+        "headers": {
+          "idempotency-key": "agent-interrupt-no-turn-anonymous"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-interrupt-no-turn-denied",
+      "operation": "POST /api/v1/agents/{id}/interrupt",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/interrupt",
+        "headers": {
+          "idempotency-key": "agent-interrupt-no-turn-denied"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-interrupt-no-turn-missing-key",
+      "operation": "POST /api/v1/agents/{id}/interrupt",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/interrupt",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-interrupt-no-turn-invalid-key",
+      "operation": "POST /api/v1/agents/{id}/interrupt",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/interrupt",
+        "headers": {
+          "idempotency-key": "contains spaces"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-approval-not-pending-anonymous",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/request_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-approval-not-pending-anonymous"
+        },
+        "body": {
+          "decision": "deny"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-approval-not-pending-denied",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/request_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-approval-not-pending-denied"
+        },
+        "body": {
+          "decision": "deny"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-approval-not-pending-missing-key",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/request_contract",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "decision": "deny"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-approval-not-pending-invalid-key",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/request_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "decision": "deny"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-approval-not-pending-invalid-body",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/request_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-approval-not-pending-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct ApprovalDecisionRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-approval-not-pending-missing-media-type",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/request_contract",
+        "headers": {
+          "idempotency-key": "agent-approval-not-pending-missing-media-type"
+        },
+        "body": {
+          "decision": "deny"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-input-unavailable-anonymous",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable-anonymous"
+        },
+        "body": {
+          "text": "Run the contract"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-input-unavailable-denied",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable-denied"
+        },
+        "body": {
+          "text": "Run the contract"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-input-unavailable-missing-key",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "text": "Run the contract"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-input-unavailable-invalid-key",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "text": "Run the contract"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-input-unavailable-invalid-body",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct AgentTextRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-input-unavailable-missing-media-type",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "idempotency-key": "agent-input-unavailable-missing-media-type"
+        },
+        "body": {
+          "text": "Run the contract"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-stop-anonymous",
+      "operation": "POST /api/v1/agents/{id}/stop",
+      "scenario": "agents_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_11111111111111111111111111111111/stop",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-stop-anonymous"
+        },
+        "body": {
+          "reason": "owner"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-stop-denied",
+      "operation": "POST /api/v1/agents/{id}/stop",
+      "scenario": "agents_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_11111111111111111111111111111111/stop",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-stop-denied"
+        },
+        "body": {
+          "reason": "owner"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
+          "title": "sandbox use forbidden",
+          "status": 403,
+          "detail": "This operation requires authority to use the caller's sandboxes.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-stop-missing-key",
+      "operation": "POST /api/v1/agents/{id}/stop",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_11111111111111111111111111111111/stop",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "reason": "owner"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-stop-invalid-key",
+      "operation": "POST /api/v1/agents/{id}/stop",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_11111111111111111111111111111111/stop",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contains spaces"
+        },
+        "body": {
+          "reason": "owner"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-stop-invalid-body",
+      "operation": "POST /api/v1/agents/{id}/stop",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_11111111111111111111111111111111/stop",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-stop-invalid-body"
+        },
+        "body": "not-an-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_json",
+          "title": "invalid_json",
+          "status": 422,
+          "detail": "Failed to deserialize the JSON body into the target type: invalid type: string \"not-an-object\", expected struct StopAgentRequest at line 1 column 15",
+          "code": "invalid_json"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-stop-missing-media-type",
+      "operation": "POST /api/v1/agents/{id}/stop",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_11111111111111111111111111111111/stop",
+        "headers": {
+          "idempotency-key": "agent-stop-missing-media-type"
+        },
+        "body": {
+          "reason": "owner"
+        }
+      },
+      "response": {
+        "status": 415,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/json_content_type_required",
+          "title": "json_content_type_required",
+          "status": 415,
+          "detail": "The request body must use an application/json content type.",
+          "code": "json_content_type_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-create-invalid-body-reused-key",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_route/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-create-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-steer-no-turn-invalid-body-reused-key",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/steer",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-steer-no-turn-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-approval-not-pending-invalid-body-reused-key",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/approvals/request_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-approval-not-pending-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-input-unavailable-invalid-body-reused-key",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-stop-invalid-body-reused-key",
+      "operation": "POST /api/v1/agents/{id}/stop",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_11111111111111111111111111111111/stop",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-stop-invalid-body"
+        },
+        "body": "a-different-invalid-object"
+      },
+      "response": {
+        "status": 422,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-key-reused",
+          "title": "idempotency key reused",
+          "status": 422,
+          "detail": "This Idempotency-Key already names a different request.",
+          "code": "idempotency_key_reused"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-read-target-missing",
+      "operation": "GET /api/v1/agents/{id}",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-events-target-missing",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-transcript-target-missing",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-usage-target-missing",
+      "operation": "GET /api/v1/agents/{id}/usage",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing/usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-resources-target-missing",
+      "operation": "GET /api/v1/agents/{id}/resources",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_missing/resources",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-create-target-missing",
+      "operation": "POST /api/v1/workspaces/{id}/agents",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_missing/agents",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-create-target-missing"
+        },
+        "body": {
+          "agent_profile": {
+            "id": "agp_route",
+            "revision": 1
+          },
+          "title": "Contract agent"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/workspace-not-found",
+          "title": "workspace not found",
+          "status": 404,
+          "detail": "No workspace matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-delete-not-stopped-target-missing",
+      "operation": "DELETE /api/v1/agents/{id}",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/agents/agt_missing",
+        "headers": {
+          "idempotency-key": "agent-delete-not-stopped-target-missing"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-steer-no-turn-target-missing",
+      "operation": "POST /api/v1/agents/{id}/steer",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_missing/steer",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-steer-no-turn-target-missing"
+        },
+        "body": {
+          "text": "Adjust the result"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-interrupt-no-turn-target-missing",
+      "operation": "POST /api/v1/agents/{id}/interrupt",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_missing/interrupt",
+        "headers": {
+          "idempotency-key": "agent-interrupt-no-turn-target-missing"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-approval-not-pending-target-missing",
+      "operation": "POST /api/v1/agents/{id}/approvals/{request_id}",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_missing/approvals/request_contract",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-approval-not-pending-target-missing"
+        },
+        "body": {
+          "decision": "deny"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-input-unavailable-target-missing",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_missing/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-input-unavailable-target-missing"
+        },
+        "body": {
+          "text": "Run the contract"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agent-stop-target-missing",
+      "operation": "POST /api/v1/agents/{id}/stop",
+      "scenario": "agents_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_missing/stop",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "agent-stop-target-missing"
+        },
+        "body": {
+          "reason": "owner"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
+          "title": "agent not found",
+          "status": 404,
+          "detail": "No agent matches this request.",
+          "code": "agent_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

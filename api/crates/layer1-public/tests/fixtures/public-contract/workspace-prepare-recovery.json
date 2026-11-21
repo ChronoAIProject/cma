@@ -1,0 +1,408 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "workspace-prepare-recovery-accepted",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "workspace_prepare_recovery_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_recovery/recover-prepare",
+        "headers": {
+          "idempotency-key": "recover"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wks_recovery",
+          "sandbox_id": "sbx_recovery",
+          "name": "project",
+          "path": "/home/cma/project",
+          "source": {
+            "type": "empty"
+          },
+          "status": "preparing",
+          "profile": {
+            "id": "wkp_stored",
+            "revision": 2
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-prepare-recovery-replay",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "workspace_prepare_recovery_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_recovery/recover-prepare",
+        "headers": {
+          "idempotency-key": "recover"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wks_recovery",
+          "sandbox_id": "sbx_recovery",
+          "name": "project",
+          "path": "/home/cma/project",
+          "source": {
+            "type": "empty"
+          },
+          "status": "preparing",
+          "profile": {
+            "id": "wkp_stored",
+            "revision": 2
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-prepare-recovery-conflict",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "workspace_prepare_recovery_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_recovery/recover-prepare",
+        "headers": {
+          "idempotency-key": "new-attempt"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-conflict",
+          "title": "resource conflict",
+          "status": 409,
+          "detail": "The operation conflicts with current resource state.",
+          "code": "workspace_prepare_recovery_conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-prepare-recovery-admin",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "workspace_prepare_recovery_admin",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_recovery/recover-prepare",
+        "headers": {
+          "idempotency-key": "admin"
+        }
+      },
+      "response": {
+        "status": 202,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "id": "wks_recovery",
+          "sandbox_id": "sbx_recovery",
+          "name": "project",
+          "path": "/home/cma/project",
+          "source": {
+            "type": "empty"
+          },
+          "status": "preparing",
+          "profile": {
+            "id": "wkp_stored",
+            "revision": 2
+          },
+          "created_at": "2026-09-05T00:00:00Z",
+          "revision": 2
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-prepare-recovery-anonymous",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "workspace_prepare_recovery_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_recovery/recover-prepare",
+        "headers": {
+          "idempotency-key": "recover"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-prepare-recovery-forbidden",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "workspace_prepare_recovery_forbidden",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_recovery/recover-prepare",
+        "headers": {
+          "idempotency-key": "recover"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "This caller is not allowed to use this resource.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-prepare-recovery-foreign",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "workspace_prepare_recovery_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_recovery/recover-prepare",
+        "headers": {
+          "idempotency-key": "recover"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-prepare-recovery-missing",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "workspace_prepare_recovery_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_missing/recover-prepare",
+        "headers": {
+          "idempotency-key": "recover"
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource-not-found",
+          "title": "resource not found",
+          "status": 404,
+          "detail": "No resource matches this request.",
+          "code": "workspace_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-prepare-recovery-missing-key",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "workspace_prepare_recovery_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_recovery/recover-prepare",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/missing-idempotency-key",
+          "title": "missing idempotency key",
+          "status": 400,
+          "detail": "This operation requires an Idempotency-Key header.",
+          "code": "missing_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-prepare-recovery-invalid-key",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "workspace_prepare_recovery_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_recovery/recover-prepare",
+        "headers": {
+          "idempotency-key": "invalid key"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-idempotency-key",
+          "title": "invalid idempotency key",
+          "status": 400,
+          "detail": "Idempotency-Key must contain between 1 and 255 visible ASCII bytes.",
+          "code": "invalid_idempotency_key"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-prepare-recovery-pending",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "instances_operation_pending",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_recovery/recover-prepare",
+        "headers": {
+          "idempotency-key": "recover"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-in-flight",
+          "title": "idempotency in flight",
+          "status": 409,
+          "detail": "An operation with this Idempotency-Key is still in progress. Retry shortly.",
+          "code": "idempotency_in_flight"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-prepare-recovery-recovery-required",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "instances_operation_recovery",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_recovery/recover-prepare",
+        "headers": {
+          "idempotency-key": "recover"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/idempotency-recovery-required",
+          "title": "idempotency recovery required",
+          "status": 409,
+          "detail": "The previous execution ended without a replay receipt. This Idempotency-Key remains fenced unless the original execution records its exact result; manual review of durable state is required.",
+          "code": "idempotency_recovery_required"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-prepare-recovery-operation-store-unavailable",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "instances_operation_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_recovery/recover-prepare",
+        "headers": {
+          "idempotency-key": "recover"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store-failed",
+          "title": "store failed",
+          "status": 503,
+          "detail": "store unavailable: contract operation store unavailable",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "workspace-prepare-recovery-store-unavailable",
+      "operation": "POST /api/v1/workspaces/{id}/recover-prepare",
+      "scenario": "instances_dependency_unavailable",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/workspaces/wks_recovery/recover-prepare",
+        "headers": {
+          "idempotency-key": "recover"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/hierarchy-service-unavailable",
+          "title": "hierarchy service unavailable",
+          "status": 503,
+          "detail": "The resource service could not complete this operation.",
+          "code": "hierarchy_service_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

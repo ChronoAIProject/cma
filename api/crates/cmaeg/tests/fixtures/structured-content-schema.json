@@ -1,0 +1,101 @@
+{
+  "oneOf": [
+    {
+      "properties": {
+        "first_name": {
+          "type": "string"
+        },
+        "last_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "phone_number": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "contact"
+          ],
+          "type": "string"
+        },
+        "vcard": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "phone_number",
+        "first_name",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "horizontal_accuracy": {
+          "format": "double",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "latitude": {
+          "format": "double",
+          "type": "number"
+        },
+        "longitude": {
+          "format": "double",
+          "type": "number"
+        },
+        "type": {
+          "enum": [
+            "location"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude",
+        "type"
+      ],
+      "type": "object"
+    },
+    {
+      "properties": {
+        "address": {
+          "type": "string"
+        },
+        "latitude": {
+          "format": "double",
+          "type": "number"
+        },
+        "longitude": {
+          "format": "double",
+          "type": "number"
+        },
+        "title": {
+          "type": "string"
+        },
+        "type": {
+          "enum": [
+            "venue"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "latitude",
+        "longitude",
+        "title",
+        "address",
+        "type"
+      ],
+      "type": "object"
+    }
+  ]
+}

@@ -1,0 +1,788 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "gateway-interaction-create",
+      "operation": "PUT /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "gateway-owner",
+          "blob": "AQID",
+          "expected_version": null,
+          "expires_at": "$interaction_expiry"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "record_id": "123e4567-e89b-42d3-a456-426614174000",
+          "version": 1,
+          "updated_at": "now"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-create-conflict",
+      "operation": "PUT /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "gateway-owner",
+          "blob": "AQID",
+          "expected_version": null,
+          "expires_at": "$interaction_expiry"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/conflict",
+          "title": "conflict",
+          "status": 409,
+          "detail": "gateway record version conflict: expected 0, found 1",
+          "code": "conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-get",
+      "operation": "GET /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "record_id": "123e4567-e89b-42d3-a456-426614174000",
+          "owner": "gateway-owner",
+          "blob": "AQID",
+          "version": 1,
+          "created_at": "now",
+          "updated_at": "now"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-update",
+      "operation": "PUT /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "gateway-owner",
+          "blob": "BAUG",
+          "expected_version": 1,
+          "expires_at": "$interaction_expiry"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "record_id": "123e4567-e89b-42d3-a456-426614174000",
+          "version": 2,
+          "updated_at": "now"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-get-updated",
+      "operation": "GET /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "record_id": "123e4567-e89b-42d3-a456-426614174000",
+          "owner": "gateway-owner",
+          "blob": "BAUG",
+          "version": 2,
+          "created_at": "now",
+          "updated_at": "now"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-stale-update",
+      "operation": "PUT /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "gateway-owner",
+          "blob": "AQID",
+          "expected_version": 1,
+          "expires_at": "$interaction_expiry"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/conflict",
+          "title": "conflict",
+          "status": 409,
+          "detail": "gateway record version conflict: expected 1, found 2",
+          "code": "conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-owner-change",
+      "operation": "PUT /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "foreign-owner",
+          "blob": "AQID",
+          "expected_version": 2,
+          "expires_at": "$interaction_expiry"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/conflict",
+          "title": "conflict",
+          "status": 409,
+          "detail": "gateway record version conflict: expected 2, found 2",
+          "code": "conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-stale-delete",
+      "operation": "DELETE /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000?expected_version=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/conflict",
+          "title": "conflict",
+          "status": 409,
+          "detail": "gateway record version conflict: expected 1, found 2",
+          "code": "conflict"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-delete",
+      "operation": "DELETE /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000?expected_version=2",
+        "headers": {}
+      },
+      "response": {
+        "status": 204,
+        "headers": {
+          "cache-control": "no-store"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-get-missing",
+      "operation": "GET /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-delete-missing",
+      "operation": "DELETE /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000?expected_version=2",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "no-store"
+        },
+        "body": null,
+        "bodyKind": "empty"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-put-forbidden",
+      "operation": "PUT /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_forbidden",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "gateway-owner",
+          "blob": "AQID",
+          "expected_version": null,
+          "expires_at": "$interaction_expiry"
+        }
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit gateway record management.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-put-anonymous",
+      "operation": "PUT /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_anonymous",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "gateway-owner",
+          "blob": "AQID",
+          "expected_version": null,
+          "expires_at": "$interaction_expiry"
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-put-unavailable",
+      "operation": "PUT /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_unavailable",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "gateway-owner",
+          "blob": "AQID",
+          "expected_version": null,
+          "expires_at": "$interaction_expiry"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store_failed",
+          "title": "store_failed",
+          "status": 503,
+          "detail": "store unavailable: fixture unavailable",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-put-invalid-id",
+      "operation": "PUT /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/interaction-records/bad-id",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "gateway-owner",
+          "blob": "AQID",
+          "expected_version": null,
+          "expires_at": "$interaction_expiry"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_gateway_record",
+          "title": "invalid_gateway_record",
+          "status": 400,
+          "detail": "record_id must be a UUID v4",
+          "code": "invalid_gateway_record"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-get-forbidden",
+      "operation": "GET /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit gateway record management.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-get-anonymous",
+      "operation": "GET /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-get-unavailable",
+      "operation": "GET /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store_failed",
+          "title": "store_failed",
+          "status": 503,
+          "detail": "store unavailable: fixture unavailable",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-get-invalid-id",
+      "operation": "GET /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/gateway/interaction-records/bad-id",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_gateway_record",
+          "title": "invalid_gateway_record",
+          "status": 400,
+          "detail": "record_id must be a UUID v4",
+          "code": "invalid_gateway_record"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-delete-forbidden",
+      "operation": "DELETE /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_forbidden",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000?expected_version=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/forbidden",
+          "title": "forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit gateway record management.",
+          "code": "forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-delete-anonymous",
+      "operation": "DELETE /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_anonymous",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000?expected_version=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-delete-unavailable",
+      "operation": "DELETE /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_unavailable",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000?expected_version=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/store_failed",
+          "title": "store_failed",
+          "status": 503,
+          "detail": "store unavailable: fixture unavailable",
+          "code": "store_failed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-delete-invalid-id",
+      "operation": "DELETE /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "DELETE",
+        "path": "/api/v1/gateway/interaction-records/bad-id?expected_version=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_gateway_record",
+          "title": "invalid_gateway_record",
+          "status": 400,
+          "detail": "record_id must be a UUID v4",
+          "code": "invalid_gateway_record"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-invalid-base64",
+      "operation": "PUT /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "gateway-owner",
+          "blob": "%%%",
+          "expected_version": null,
+          "expires_at": "$interaction_expiry"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_gateway_record",
+          "title": "invalid_gateway_record",
+          "status": 400,
+          "detail": "blob must be base64",
+          "code": "invalid_gateway_record"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-empty-blob",
+      "operation": "PUT /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "gateway-owner",
+          "blob": "",
+          "expected_version": null,
+          "expires_at": "$interaction_expiry"
+        }
+      },
+      "response": {
+        "status": 413,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/gateway_record_too_large",
+          "title": "gateway_record_too_large",
+          "status": 413,
+          "detail": "The gateway record blob must be between 1 and 65536 decoded bytes.",
+          "code": "gateway_record_too_large"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-expired",
+      "operation": "PUT /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "gateway-owner",
+          "blob": "AQID",
+          "expected_version": null,
+          "expires_at": 0
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_gateway_record",
+          "title": "invalid_gateway_record",
+          "status": 400,
+          "detail": "interaction expiry must be in the next seven days",
+          "code": "invalid_gateway_record"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "gateway-interaction-excess-retention",
+      "operation": "PUT /api/v1/gateway/interaction-records/{record_id}",
+      "scenario": "gateway_interactions_active",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/gateway/interaction-records/123e4567-e89b-42d3-a456-426614174000",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "owner": "gateway-owner",
+          "blob": "AQID",
+          "expected_version": null,
+          "expires_at": 4102444800
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "no-store",
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_gateway_record",
+          "title": "invalid_gateway_record",
+          "status": 400,
+          "detail": "interaction expiry must be in the next seven days",
+          "code": "invalid_gateway_record"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

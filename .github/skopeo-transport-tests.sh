@@ -6,6 +6,10 @@ script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd -P)
 export_script="$script_dir/export-release-image.sh"
 import_script="$script_dir/import-release-images.sh"
 
+image_name() {
+  python3 "$script_dir/scripts/deployables.py" "$1"
+}
+
 skopeo_image='quay.io/skopeo/stable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810'
 registry_image='registry:2.8.3@sha256:a3d8aaa63ed8681a604f1dea0aa03f100d5895b6a58ace528858a7b332415373'
 buildkit_image='moby/buildkit:v0.26.2@sha256:de10faf919fc71ba4eb1dd7bd6449566d012b0c9436b1c61bfee21d621b009aa'
@@ -73,6 +77,23 @@ copy_count() {
 
 clear_skopeo_log() {
   : > "$skopeo_log"
+}
+
+pull_pinned_image() {
+  local image attempt delay
+  image=$1
+  for attempt in 1 2 3 4; do
+    if docker pull "$image" >/dev/null; then
+      return 0
+    fi
+    if [ "$attempt" -lt 4 ]; then
+      delay=$((attempt * 10))
+      printf 'Pinned image pull failed (%s/4); retrying in %ss: %s\n' \
+        "$attempt" "$delay" "$image" >&2
+      sleep "$delay"
+    fi
+  done
+  fail "could not pull pinned image $image after 4 attempts"
 }
 
 cleanup() {
@@ -171,7 +192,7 @@ for image in "$skopeo_image" "$registry_image" "$buildkit_image"; do
   if ! docker image inspect "$image" >/dev/null 2>&1; then
     pulled_images+=("$image")
   fi
-  docker pull "$image" >/dev/null || fail "could not pull pinned image $image"
+  pull_pinned_image "$image"
 done
 
 docker network create "$network_name" >/dev/null \
@@ -302,7 +323,7 @@ build_fixture() {
   platforms=$2
   oci_media=$3
   context="$work_dir/context-$component-$oci_media"
-  repository="$registry_host/source/cma-$component"
+  repository="$registry_host/source/$(image_name "$component")"
   mkdir -p "$context"
   printf 'fixture payload for %s\n' "$component" > "$context/payload"
   cat > "$context/Dockerfile" <<'DOCKERFILE'
@@ -342,7 +363,7 @@ DOCKERFILE
 create_source_alias() {
   local component repository raw digest
   component=$1
-  repository="$registry_host/source/cma-$component"
+  repository="$registry_host/source/$(image_name "$component")"
   raw="$work_dir/$component-source.raw"
   run_skopeo inspect --raw "docker://${repository}:${version}" > "$raw"
   digest=$(sha256_file "$raw")
@@ -373,21 +394,23 @@ pass 'the real exporter rejects Docker media types before archive copy'
 build_fixture api 'linux/amd64' true
 build_fixture web 'linux/amd64,linux/arm64' true
 build_fixture runtime 'linux/amd64' true
-for component in api web runtime; do
+build_fixture cmaeg 'linux/amd64' true
+build_fixture runtime-omarchy 'linux/amd64' true
+for component in api web runtime cmaeg runtime-omarchy; do
   create_source_alias "$component"
 done
 pass 'release-shaped OCI fixtures and digest aliases were published locally'
 
 transfer_dir="$work_dir/transfer"
 mkdir "$transfer_dir"
-for component in api web runtime; do
+for component in api web runtime cmaeg runtime-omarchy; do
   mkdir "$transfer_dir/$component"
   SKOPEO_COMMAND="$skopeo_wrapper" \
     "$export_script" "$component" "$version" "$full_revision" \
-    "ghcr.io/chronoaiproject/cma-$component" \
+    "ghcr.io/chronoaiproject/$(image_name "$component")" \
     "$transfer_dir/$component" >/dev/null
 done
-pass 'the real exporter preserved all three source root digests in OCI archives'
+pass 'the real exporter preserved all five source root digests in OCI archives'
 
 verify_platform_config() {
   local component architecture manifest source_reference destination_reference prefix
@@ -432,10 +455,10 @@ verify_destination() {
   local expected_digest tag source_raw destination_raw architecture child_digest
   local source_child destination_child prefix
   destination_prefix=$1
-  for component in api web runtime; do
+  for component in api web runtime cmaeg runtime-omarchy; do
     metadata="$transfer_dir/$component/cma-${component}-${version}-${revision}.json"
-    source_repository="ghcr.io/chronoaiproject/cma-$component"
-    destination_repository="${destination_prefix}/cma-$component"
+    source_repository="ghcr.io/chronoaiproject/$(image_name "$component")"
+    destination_repository="${destination_prefix}/$(image_name "$component")"
     expected_digest=$(jq -er '.sourceDigest' "$metadata")
     for tag in "$version" "$revision"; do
       prefix=$(printf '%s-%s-%s' "${destination_prefix//\//-}" "$component" "$tag")
@@ -501,10 +524,10 @@ run_import() {
 absent_destination=registry.example.com/all-absent
 clear_skopeo_log
 run_import "$absent_destination" "$work_dir/absent.stdout" \
-  "$work_dir/absent.stderr" || fail 'the six-absent-tag import failed'
-[ "$(copy_count)" -eq 6 ] || fail 'the six-absent-tag import did not copy six tags'
+  "$work_dir/absent.stderr" || fail 'the ten-absent-tag import failed'
+[ "$(copy_count)" -eq 10 ] || fail 'the ten-absent-tag import did not copy ten tags'
 verify_destination "$absent_destination"
-pass 'six absent destination tags copy with exact roots, children, and configs'
+pass 'ten absent destination tags copy with exact roots, children, and configs'
 
 clear_skopeo_log
 run_import "$absent_destination" "$work_dir/equal.stdout" \
@@ -515,24 +538,24 @@ pass 'an all-equal retry performs zero copies'
 partial_destination=registry.example.com/partial
 api_digest=$(<"$work_dir/api.digest")
 run_skopeo copy --all --preserve-digests \
-  "docker://${registry_host}/source/cma-api@${api_digest}" \
-  "docker://${partial_destination}/cma-api:${version}" >/dev/null
+  "docker://${registry_host}/source/$(image_name api)@${api_digest}" \
+  "docker://${partial_destination}/$(image_name api):${version}" >/dev/null
 clear_skopeo_log
 run_import "$partial_destination" "$work_dir/partial.stdout" \
   "$work_dir/partial.stderr" || fail 'the one-preseeded-tag import failed'
-[ "$(copy_count)" -eq 5 ] || fail 'the one-preseeded-tag import did not copy five tags'
+[ "$(copy_count)" -eq 9 ] || fail 'the one-preseeded-tag import did not copy nine tags'
 verify_destination "$partial_destination"
 clear_skopeo_log
 run_import "$partial_destination" "$work_dir/partial-retry.stdout" \
   "$work_dir/partial-retry.stderr" || fail 'the completed partial retry failed'
 [ "$(copy_count)" -eq 0 ] || fail 'the completed partial retry copied a tag'
-pass 'one exact preseed copies five tags, then a retry copies zero'
+pass 'one exact preseed copies nine tags, then a retry copies zero'
 
 mismatch_destination=registry.example.com/mismatch
 runtime_digest=$(<"$work_dir/runtime.digest")
 run_skopeo copy --all --preserve-digests \
   "docker://${registry_host}/source/cma-runtime@${runtime_digest}" \
-  "docker://${mismatch_destination}/cma-api:${version}" >/dev/null
+  "docker://${mismatch_destination}/$(image_name api):${version}" >/dev/null
 clear_skopeo_log
 if run_import "$mismatch_destination" "$work_dir/mismatch.stdout" \
   "$work_dir/mismatch.stderr"; then

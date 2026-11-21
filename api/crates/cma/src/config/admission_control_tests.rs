@@ -1,0 +1,62 @@
+use super::FeatureFlags;
+
+#[test]
+fn admission_control_write_gate_is_independent_default_closed_and_strict() {
+    const KEY: &str = "CHRONO_ADMISSION_CONTROL_WRITES_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |name| {
+            Ok((name == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.admission_control_writes_enabled, expected);
+        assert!(!flags.model_budget_writes_enabled);
+        assert!(!flags.platform_spend_writes_enabled);
+    }
+    for value in ["", "1", "TRUE", " true "] {
+        assert!(FeatureFlags::from_lookup(&mut |name| {
+            Ok((name == KEY).then(|| value.to_owned()))
+        })
+        .is_err());
+    }
+}
+
+#[test]
+fn admission_ceilings_write_gate_is_independent_default_closed_and_strict() {
+    const KEY: &str = "CHRONO_ADMISSION_CEILINGS_WRITES_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |name| {
+            Ok((name == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.admission_ceilings_writes_enabled, expected);
+        assert!(flags.agent_control_write_coordination);
+        assert!(!flags.model_budget_writes_enabled);
+        assert!(!flags.platform_spend_writes_enabled);
+    }
+    for value in ["", "1", "TRUE", " true "] {
+        assert!(FeatureFlags::from_lookup(&mut |name| {
+            Ok((name == KEY).then(|| value.to_owned()))
+        })
+        .is_err());
+    }
+}
+
+#[test]
+fn agent_control_write_coordination_is_default_on_with_explicit_off_and_strict() {
+    const KEY: &str = "CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED";
+    for (value, expected) in [(None, true), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |name| {
+            Ok((name == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.agent_control_write_coordination, expected);
+        assert!(!flags.admission_ceilings_writes_enabled);
+        assert!(!flags.admission_control_writes_enabled);
+    }
+    for value in ["", "1", "TRUE", " true "] {
+        assert!(FeatureFlags::from_lookup(&mut |name| {
+            Ok((name == KEY).then(|| value.to_owned()))
+        })
+        .is_err());
+    }
+}

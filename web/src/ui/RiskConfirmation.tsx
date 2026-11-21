@@ -1,11 +1,12 @@
-import { useState } from 'react';
+import { Presence } from './Presence';
+import { useState, type ReactNode } from 'react';
 import { Button } from './Button';
 import { Modal } from './Modal';
 import { IconWarningOutline16 } from './icons';
 import './RiskConfirmation.css';
 
 /**
- * Confirming something that cannot be undone — `docs/Web_Style.md` §7.
+ * Confirming something that cannot be undone — the shared style contracts
  *
  * The safeguard is the tick, not the colour. A red button is a colour a
  * person can click as fast as any other; a checkbox is a second, deliberate
@@ -26,7 +27,7 @@ interface RiskConfirmationProps {
   readonly open: boolean;
   readonly title: string;
   /** What will happen, in a sentence. */
-  readonly description: string;
+  readonly description: ReactNode;
   /** The sentence beside the tick, in the first person. */
   readonly acknowledgeLabel: string;
   readonly confirmLabel: string;
@@ -34,6 +35,8 @@ interface RiskConfirmationProps {
   readonly onConfirm: () => void;
   /** Something is already in flight; the confirm key waits for it. */
   readonly busy?: boolean;
+  /** Current authority or revisions can prevent confirmation while keeping Cancel available. */
+  readonly confirmDisabled?: boolean;
   /** An unresolved write cannot be dismissed until its same-key result is known. */
   readonly dismissible?: boolean;
   /** A command failure announced without replacing the consequence. */
@@ -51,6 +54,7 @@ export function RiskConfirmation({
   onCancel,
   onConfirm,
   busy = false,
+  confirmDisabled = false,
   dismissible = true,
   failure,
   status,
@@ -83,7 +87,7 @@ export function RiskConfirmation({
           <Button
             variant="primary"
             placement="risk__confirm"
-            disabled={busy || !acknowledged}
+            disabled={busy || confirmDisabled || !acknowledged}
             onClick={() => {
               setAcknowledged(false);
               onConfirm();
@@ -109,16 +113,20 @@ export function RiskConfirmation({
         />
         {acknowledgeLabel}
       </label>
-      {status === undefined ? null : (
-        <p className="risk__status" role="status" aria-live="polite">
-          {status}
-        </p>
-      )}
-      {failure === undefined ? null : (
-        <p className="risk__failure" role="alert">
-          {failure}
-        </p>
-      )}
+      <Presence>
+        {status === undefined ? null : (
+          <p className="risk__status" role="status" aria-live="polite">
+            {status}
+          </p>
+        )}
+      </Presence>
+      <Presence>
+        {failure === undefined ? null : (
+          <p className="risk__failure" role="alert">
+            {failure}
+          </p>
+        )}
+      </Presence>
     </Modal>
   );
 }

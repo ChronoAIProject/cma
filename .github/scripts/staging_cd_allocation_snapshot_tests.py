@@ -1,0 +1,284 @@
+"""Single-snapshot allocation preserves authority with exact-ref settlement."""
+import json
+from pathlib import Path
+import subprocess
+import unittest
+from unittest.mock import Mock
+
+from staging_cd_allocate import allocate_queue
+from staging_cd_allocation_fixture import AllocationServer
+from staging_cd_allocation_io import ALLOCATION_SECONDS, AllocationIO
+from staging_cd_allocation_snapshot import AllocationSnapshot, SnapshotAPI
+from staging_cd_common import Refusal
+from staging_cd_github import GitHubNotFound
+from staging_cd_receipts_tests import fixture_receipt
+from staging_cd_receipts import canonical
+from staging_cd_versions import DEPLOYABLES
+
+
+class AllocationSnapshotTests(unittest.TestCase):
+    def fixture(self, count=3, **kwargs):
+        server = AllocationServer(count, **kwargs)
+        store = AllocationSnapshot(server, "fixture", Path.cwd(), AllocationIO(server.command))
+        return server, store
+
+    def allocate(self, server, store):
+        store.load()
+        matrix = allocate_queue(server.queue(), SnapshotAPI(server, store), store, 999, 1)
+        store.commit()
+        return matrix
+
+    def test_one_snapshot_one_push_and_no_older_owner_read(self):
+        for component in sorted(DEPLOYABLES):
+            with self.subTest(component=component):
+                server, store = self.fixture(25, latency=0.001, components=(component,))
+                matrix = self.allocate(server, store)
+                tasks = json.loads(matrix["include"][0]["tasks"])
+                self.assertEqual(len(tasks), 1)
+                self.assertEqual(tasks[0]["reservation"]["version"], "0.10.26")
+                self.assertEqual([args[1] for args in server.commands].count("ls-remote"), 1)
+                pushes = [args for args in server.commands if args[1] == "push"]
+                self.assertEqual(len(pushes), 1)
+                # The reservation and its claim; a started predecessor keeps its outcome ref.
+                self.assertEqual(len([arg for arg in pushes[0] if ":refs/tags/" in arg]), 2)
+                self.assertFalse(any("cma-allocation-outcome/" in arg for arg in pushes[0]))
+                self.assertEqual([path for path in server.calls if path.startswith("actions/")],
+                                 [])
+                self.assertFalse(any("matching-refs" in path for path in server.calls))
+                self.assertGreater(server.peak, 1)
+                self.assertLessEqual(server.peak, 8)
+                self.assertTrue(all(server.refs[name] == oid for name, oid in server.original.items()))
+                with self.assertRaises(Refusal):
+                    store.load()
+
+    def test_fifteen_queued_merges_reserve_only_five_distinct_latest_sources(self):
+        server, store = self.fixture(14, reserved=False, components=tuple(DEPLOYABLES))
+        queue = server.queue()
+        # All 15 change the first component. Each peer stops changing one merge earlier.
+        for index, change in enumerate(queue["changes"]):
+            change["deployables"] = sorted(name for offset, name in enumerate(DEPLOYABLES.values())
+                                           if index <= 14 - offset)
+        queue["changes"].reverse()
+        store.load()
+        result = allocate_queue(queue, SnapshotAPI(server, store), store, 99, 1)
+        store.commit()
+        self.assertEqual(len(result["include"]), 5)
+        expected = {key: server.sources[14 - i] for i, key in enumerate(DEPLOYABLES)}
+        self.assertEqual({item["component"]: item["source"] for item in store.planned}, expected)
+        self.assertTrue(all(item["version"] == "0.10.1" for item in store.list()))
+        self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
+        self.assertEqual(len([path for path in server.calls if path.startswith("git/ref/tags/")]), 5)
+        self.assertEqual({p.split("/")[1] for p in server.calls if p.startswith("commits/")}, set(expected.values()))
+
+    def test_same_source_active_owner_is_still_respected(self):
+        server, store = self.fixture()
+        queue = server.queue()
+        queue["changes"].pop()
+        request = server.request
+        def active(path, **kwargs):
+            result = request(path, **kwargs)
+            if path.startswith("actions/"):
+                self.assertEqual(path, "actions/runs/12/attempts/1")
+                return dict(result, status="in_progress")
+            return result
+        server.request = active
+        store.load()
+        self.assertEqual(allocate_queue(queue, SnapshotAPI(server, store), store, 999, 1), {"include": []})
+        store.commit()
+        self.assertFalse(any(args[1] == "push" for args in server.commands))
+
+    def test_inventory_refusal_has_no_write_or_partial_success(self):
+        for output in ("invalid", "a" * 40 + "\trefs/tags/cma-agent-manager/pending/vinvalid\n",
+                       ("a" * 40 + "\trefs/tags/fixture\n") * 2):
+            server, store = self.fixture()
+            store.io.runner = Mock(return_value=subprocess.CompletedProcess([], 0, output, ""))
+            with self.assertRaises(Refusal):
+                store.load()
+            self.assertFalse(store.loaded)
+            self.assertEqual(store.planned, [])
+
+    def test_annotation_binding_and_partial_reads_fail_closed(self):
+        for field, value in (("sha", "0" * 40), ("tag", "wrong"), ("object", {"type": "commit", "sha": "e" * 40}),
+                             ("message", "{}")):
+            server, store = self.fixture()
+            server.objects[next(iter(server.objects))][field] = value
+            with self.assertRaises(Refusal):
+                store.load()
+            self.assertFalse(store.loaded)
+            self.assertFalse(any(args[1] == "push" for args in server.commands))
+
+    def test_final_receipt_is_bound_to_snapshot_oid_and_history(self):
+        server, store = self.fixture()
+        receipt = fixture_receipt(source=server.sources[-1])
+        oid = "f" * 40
+        server.refs[receipt["tag"]] = oid
+        server.objects[oid] = {"sha": oid, "tag": receipt["tag"], "message": canonical(receipt),
+                               "object": {"type": "commit", "sha": receipt["source"]}}
+        store.load()
+        self.assertEqual(store.finals[0]["receipt"], receipt)
+        server.objects[oid]["object"]["sha"] = server.sources[0]
+        replacement = AllocationSnapshot(server, "fixture", Path.cwd(), AllocationIO(server.command))
+        with self.assertRaisesRegex(Refusal, "receipt"):
+            replacement.load()
+
+    def test_collision_and_mismatched_readback_never_retry_push(self):
+        for mode in ("collision", "corrupt_readback"):
+            server, store = self.fixture()
+            setattr(server, mode, True)
+            with self.assertRaises(Refusal):
+                self.allocate(server, store)
+            self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
+            self.assertTrue(all(server.refs[name] == oid for name, oid in server.original.items()))
+
+    def test_ambiguous_response_requires_exact_ref_readback_after_each_push(self):
+        server, store = self.fixture(3, reserved=False)
+        server.ambiguous = True
+        self.allocate(server, store)
+        self.assertEqual(len(server.refs), 2)
+        self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
+        self.assertEqual(store.list(), store.planned)
+
+    def test_expired_push_window_after_building_five_objects_never_writes(self):
+        server, store = self.fixture(14, reserved=False, components=tuple(DEPLOYABLES))
+        now = [0]
+        created = []
+        def runner(args, **kwargs):
+            if args[1] == "mktag":
+                created.append(args)
+                if len(created) == 5:
+                    now[0] = ALLOCATION_SECONDS - 1
+            return server.command(args, **kwargs)
+        store.io = AllocationIO(runner, clock=lambda: now[0])
+        with self.assertRaisesRegex(Refusal, "deadline"):
+            self.allocate(server, store)
+        self.assertEqual(server.refs, {})
+        self.assertFalse(any(args[1] == "push" for args in server.commands))
+
+    def test_timed_out_atomic_push_settles_only_the_exact_batch_without_replay(self):
+        for damaged in (None, "missing", "wrong"):
+            server, store = self.fixture(14, reserved=False, components=tuple(DEPLOYABLES))
+            def runner(args, **kwargs):
+                result = server.command(args, **kwargs)
+                if args[1] == "push":
+                    claim = next(name for name in server.refs if name.startswith("cma-allocation/"))
+                    if damaged == "missing":
+                        del server.refs[claim]
+                    if damaged == "wrong":
+                        server.refs[claim] = "0" * 40
+                    raise subprocess.TimeoutExpired("git", kwargs["timeout"])
+                return result
+            store.io.runner = runner
+            with self.subTest(damaged=damaged):
+                if damaged:
+                    with self.assertRaisesRegex(Refusal, "settlement is uncertain"):
+                        self.allocate(server, store)
+                    self.assertEqual(store.list(), [])
+                else:
+                    self.allocate(server, store)
+                    self.assertEqual(len(store.list()), 5)
+                    self.assertEqual(len([p for p in server.calls if p.startswith("git/ref/tags/")]), 5)
+                self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
+
+    def test_missing_readbacks_retry_only_the_exact_ref_then_settle_or_refuse(self):
+        for misses in (2, 3):
+            server, store = self.fixture(0)
+            request, marks = server.request, []
+            store.progress = lambda *args: marks.append(args)
+            store.io.sleep = Mock()
+            reads = []
+            def delayed(path, **kwargs):
+                if path.startswith("git/ref/tags/"):
+                    reads.append(path)
+                    if len(reads) <= misses:
+                        raise GitHubNotFound("GitHub resource was not found")
+                return request(path, **kwargs)
+            server.request = delayed
+            if misses == 2:
+                self.allocate(server, store)
+                self.assertEqual(store.list(), store.planned)
+                self.assertIn(("am", "reservation-readback"), marks)
+            else:
+                with self.assertRaisesRegex(Refusal, "unavailable"):
+                    self.allocate(server, store)
+                self.assertEqual(store.list(), [])
+                self.assertEqual(len(server.refs), 2)  # Remote version remains burned.
+            self.assertEqual(len(reads), 3)
+            self.assertEqual(len(set(reads)), 1)
+            self.assertEqual(store.io.sleep.call_count, 2)
+            self.assertEqual(marks.count(("am", "readback-missing")), misses)
+            self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
+            self.assertEqual(len([args for args in server.commands if args[1] == "ls-remote"]), 1)
+            with self.assertRaisesRegex(Refusal, "already attempted"):
+                store.commit()
+
+    def test_conflicting_or_unreadable_ref_refuses_without_visibility_retries(self):
+        for response in (Refusal("private transport"), {},
+                         {"ref": "refs/tags/cma-agent-manager/pending/v0.10.1",
+                          "object": {"type": "commit", "sha": "a" * 40}}):
+            server, store = self.fixture(0)
+            request, reads, marks = server.request, [], []
+            store.progress = lambda *args: marks.append(args)
+            store.io.sleep = Mock()
+            def invalid(path, **kwargs):
+                if path.startswith("git/ref/tags/"):
+                    reads.append(path)
+                    if isinstance(response, Exception):
+                        raise response
+                    return response
+                return request(path, **kwargs)
+            server.request = invalid
+            with self.assertRaises(Refusal):
+                self.allocate(server, store)
+            self.assertEqual(len(reads), 1)
+            store.io.sleep.assert_not_called()
+            self.assertEqual(store.list(), [])
+            if not isinstance(response, Exception):
+                self.assertIn(("am", "readback-conflict"), marks)
+
+    def test_five_components_keep_one_inventory_and_update_only_verified_memory(self):
+        server, store = self.fixture(4, components=tuple(DEPLOYABLES))
+        matrix = self.allocate(server, store)
+        self.assertEqual(len(matrix["include"]), 5)
+        self.assertEqual(len(store.list()), 25)
+        self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
+        self.assertEqual(len([args for args in server.commands if args[1] == "ls-remote"]), 1)
+        self.assertEqual(len([path for path in server.calls if path.startswith("git/ref/tags/")]), 5)
+        self.assertEqual(len([path for path in server.calls if path.startswith("actions/")]), 0)
+        for group in matrix["include"]:
+            self.assertEqual(json.loads(group["tasks"])[0]["reservation"]["version"], "0.10.5")
+
+    def test_unknown_label_prevents_the_entire_batch(self):
+        server, store = self.fixture(3, reserved=False)
+        request = server.request
+        def missing(path, **kwargs):
+            result = request(path, **kwargs)
+            return dict(result, labels=[]) if path == "pulls/4" else result
+        server.request = missing
+        with self.assertRaisesRegex(Refusal, "version-upgrade"):
+            self.allocate(server, store)
+        self.assertEqual(store.planned, [])
+        self.assertEqual(server.refs, {})
+
+    def test_successor_claims_require_a_matching_burned_reservation(self):
+        server, store = self.fixture(0)
+        self.allocate(server, store)
+        claim = next(name for name in server.refs if name.startswith("cma-allocation/"))
+        oid = server.refs[claim]
+        server.refs[claim] = "e" * 40
+        with self.assertRaisesRegex(Refusal, "claim owner differs"):
+            AllocationSnapshot(server, "fixture", Path.cwd(), store.io).load()
+        server.refs = {claim: oid}
+        with self.assertRaisesRegex(Refusal, "claim has no durable version"):
+            AllocationSnapshot(server, "fixture", Path.cwd(), store.io).load()
+
+    def test_noop_never_pushes_and_snapshot_is_not_usable_before_load(self):
+        server, store = self.fixture()
+        with self.assertRaises(Refusal):
+            store.list()
+        with self.assertRaises(Refusal):
+            SnapshotAPI(server, store).tags()
+        with self.assertRaises(Refusal):
+            store.commit()
+        store.load()
+        store.commit()
+        self.assertFalse(any(args[1] == "push" for args in server.commands))

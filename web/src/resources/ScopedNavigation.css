@@ -1,0 +1,38 @@
+.scoped-navigation {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  min-width: 0;
+  padding-top: 8px;
+  color: var(--dsw-alias-label-primary);
+  overflow-wrap: anywhere;
+}
+.scoped-navigation > p,
+.scoped-navigation__tree > p {
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary);
+}
+.scoped-navigation > a,
+.scoped-navigation__tree > a {
+  color: var(--dsw-alias-brand-text);
+  font-size: 13px;
+}
+.scoped-navigation__tree {
+  min-height: 0;
+  overflow: auto;
+}
+.scoped-navigation__tree ul {
+  list-style: none;
+  padding: 0 0 0 8px;
+}
+.scoped-navigation__tree li {
+  margin: 8px 0;
+}
+.scoped-navigation__pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}

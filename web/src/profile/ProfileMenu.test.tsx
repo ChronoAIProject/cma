@@ -1,247 +1,184 @@
-import { describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ProfileMenu } from './ProfileMenu';
-import type { User } from '../auth/types';
+import { describe, expect, it, vi } from 'vitest';
+import { BUILD_INFO } from '../shell/build';
+import { ProfileMenu, initialsFor } from './ProfileMenu';
 
-const USER: User = { id: 'subject-1', handle: 'operator', capabilities: [] };
+const user = {
+  id: 'subject-a',
+  handle: 'ada',
+  displayName: 'Ada Lovelace',
+  email: 'ada@example.test',
+  capabilities: [],
+  visitor: false,
+} as const;
 
-describe('ProfileMenu', () => {
-  it('stays closed until asked', () => {
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} />);
-    expect(screen.queryByRole('menu')).toBeNull();
-  });
-
-  it('opens and moves focus into the menu', async () => {
-    const user = userEvent.setup();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} />);
-
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-
-    /*
-     * The first row, which is what the shared menu does everywhere. This used
-     * to land on Sign out — the last item — because the hand-rolled version
-     * carried its focus ref on whichever button happened to be written last.
-     * Opening a menu onto its most destructive entry is not a decision anybody
-     * made.
-     */
-    expect(screen.getByRole('menuitem', { name: /appearance/i })).toHaveFocus();
-  });
-
-  it('signs out', async () => {
-    const user = userEvent.setup();
+describe('account menu', () => {
+  it('keeps Docs, appearance and sign out without service or developer actions', async () => {
     const onSignOut = vi.fn();
-    render(<ProfileMenu user={USER} onSignOut={onSignOut} />);
+    const onNavigate = vi.fn();
+    const actor = userEvent.setup();
+    render(<ProfileMenu user={user} onSignOut={onSignOut} onNavigate={onNavigate} />);
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    for (const name of ['Event Gateway consumers', 'Developer']) {
+      expect(screen.queryByRole('menuitem', { name })).not.toBeInTheDocument();
+    }
+    expect(screen.queryByRole('menuitem', { name: 'Marketplace' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Operations' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'CMA Trigger' })).not.toBeInTheDocument();
+    expect(screen.getByRole('group', { name: 'Appearance' })).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-    await user.click(screen.getByRole('menuitem', { name: /sign out/i }));
-
-    expect(onSignOut).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('menu')).toBeNull();
-  });
-
-  it('closes on Escape and returns focus to the trigger', async () => {
-    const user = userEvent.setup();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} />);
-    const trigger = screen.getByRole('button', { name: /account menu/i });
-
-    await user.click(trigger);
-    await user.keyboard('{Escape}');
-
-    expect(screen.queryByRole('menu')).toBeNull();
-    // Otherwise the user is dropped at the top of the document.
-    expect(trigger).toHaveFocus();
-  });
-
-  it('closes on an outside click', async () => {
-    const user = userEvent.setup();
-    render(
-      <div>
-        <ProfileMenu user={USER} onSignOut={vi.fn()} />
-        <button type="button">elsewhere</button>
-      </div>,
-    );
-
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-    await user.click(screen.getByRole('button', { name: 'elsewhere' }));
-
-    expect(screen.queryByRole('menu')).toBeNull();
-  });
-
-  it('is operable from the keyboard alone', async () => {
-    const user = userEvent.setup();
-    const onSignOut = vi.fn();
-    render(<ProfileMenu user={USER} onSignOut={onSignOut} />);
-
-    await user.tab();
-    await user.keyboard('{Enter}');
-    // Focus opens on the first row, so Sign out is reached by walking to it.
-    // Arrow keys are the shared menu's, and this is the account menu proving
-    // it inherited them rather than each menu growing its own.
-    await user.keyboard('{ArrowUp}');
-    await user.keyboard('{Enter}');
-
+    await actor.click(screen.getByRole('menuitem', { name: 'Docs' }));
+    expect(onNavigate).toHaveBeenCalledWith({ kind: 'docs' });
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    await actor.click(screen.getByRole('menuitem', { name: 'Sign out' }));
     expect(onSignOut).toHaveBeenCalledOnce();
   });
 
-  it('reports its expanded state to assistive technology', async () => {
-    const user = userEvent.setup();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} />);
-    const trigger = screen.getByRole('button', { name: /account menu/i });
-
-    expect(trigger).toHaveAttribute('aria-expanded', 'false');
-    await user.click(trigger);
-    expect(trigger).toHaveAttribute('aria-expanded', 'true');
-  });
-
-  it('falls back to initials when there is no avatar', () => {
+  it('shows Operations only with an operator capability', async () => {
+    const actor = userEvent.setup();
     render(
       <ProfileMenu
-        user={{ id: 'x', handle: 'ada.lovelace', capabilities: [] }}
+        user={{ ...user, capabilities: ['read_activity_log'] }}
         onSignOut={vi.fn()}
+        onNavigate={vi.fn()}
       />,
     );
-    expect(screen.getByRole('button', { name: /account menu/i }).textContent).toContain('AL');
-  });
-
-  it('renders an avatar when one is supplied', () => {
-    render(
-      <ProfileMenu
-        user={{ id: 'x', handle: 'ada', avatarUrl: 'https://example.test/a.png', capabilities: [] }}
-        onSignOut={vi.fn()}
-      />,
-    );
-    // Decorative: the accessible name already comes from the trigger's label.
-    expect(
-      screen.getByRole('button', { name: /account menu/i }).querySelector('img'),
-    ).toHaveAttribute('alt', '');
-  });
-
-  it('survives a blank handle rather than rendering an empty control', () => {
-    render(<ProfileMenu user={{ id: 'x', handle: '   ', capabilities: [] }} onSignOut={vi.fn()} />);
-    expect(screen.getByRole('button', { name: /account menu/i }).textContent).toContain('?');
-  });
-});
-
-describe('the operator entry point', () => {
-  /*
-   * Operations lives here now. It was the app bar's view switch until §9
-   * retired the bar, and then a row of its own in the sidebar foot — which
-   * made the foot a two-item navigation strip beside an account control that
-   * omitted the one place an operator goes. It is still one of §1's three views
-   * and still not navigation: one entry, which names where it goes.
-   */
-  it('is offered to a caller who may operate', async () => {
-    const user = userEvent.setup();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onOperations={vi.fn()} />);
-
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
     expect(screen.getByRole('menuitem', { name: 'Operations' })).toBeInTheDocument();
   });
-
-  it('is absent, never disabled, for anybody else', async () => {
-    // §12: an action that will never work is omitted rather than drawn dead.
-    // Presentation, never protection — the control plane refuses on its own.
-    const user = userEvent.setup();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} />);
-
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-    expect(screen.queryByRole('menuitem', { name: /operations/i })).toBeNull();
-  });
-
-  it('names where it goes when the panel is already showing', async () => {
-    // Rather than marking itself current: a check would make it a value among
-    // alternatives, and these rows are actions.
-    const user = userEvent.setup();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onOperations={vi.fn()} operationsActive />);
-
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-    expect(screen.getByRole('menuitem', { name: 'Back to sessions' })).toBeInTheDocument();
-  });
-
-  it('takes the caller there', async () => {
-    const user = userEvent.setup();
-    const onOperations = vi.fn();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onOperations={onOperations} />);
-
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-    await user.click(screen.getByRole('menuitem', { name: 'Operations' }));
-    expect(onOperations).toHaveBeenCalledOnce();
-  });
 });
 
-describe('the Developer entry point', () => {
-  it('is present when the surface is wired and remains an action', async () => {
-    const user = userEvent.setup();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onDeveloper={vi.fn()} />);
-
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-    expect(screen.getByRole('menuitem', { name: 'Developer' })).toBeInTheDocument();
-    expect(screen.queryByRole('menuitemradio')).toBeNull();
-  });
-
-  it('names the return destination while Developer is active', async () => {
-    const user = userEvent.setup();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onDeveloper={vi.fn()} developerActive />);
-
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-    expect(screen.getByRole('menuitem', { name: 'Back to sessions' })).toBeInTheDocument();
-  });
-
-  it('opens the surface and closes the menu', async () => {
-    const user = userEvent.setup();
-    const onDeveloper = vi.fn();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onDeveloper={onDeveloper} />);
-
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-    await user.click(screen.getByRole('menuitem', { name: 'Developer' }));
-
-    expect(onDeveloper).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('menu')).toBeNull();
-  });
+it('derives stable initials from the display name', () => {
+  expect(initialsFor(user)).toBe('AL');
 });
 
-describe('the GitHub Trigger publisher entry point', () => {
-  it('is an account action available to every signed-in user', async () => {
-    const user = userEvent.setup();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onPublisher={vi.fn()} />);
-
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-    expect(screen.getByRole('menuitem', { name: 'GitHub Triggers' })).toBeInTheDocument();
-    expect(screen.queryByRole('menuitemradio')).toBeNull();
-  });
-
-  it('names the return destination while the publisher is active', async () => {
-    const user = userEvent.setup();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onPublisher={vi.fn()} publisherActive />);
-
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-    expect(screen.getByRole('menuitem', { name: 'Back to sessions' })).toBeInTheDocument();
-  });
-
-  it('opens the publisher and closes the menu', async () => {
-    const user = userEvent.setup();
-    const onPublisher = vi.fn();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} onPublisher={onPublisher} />);
-
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-    await user.click(screen.getByRole('menuitem', { name: 'GitHub Triggers' }));
-    expect(onPublisher).toHaveBeenCalledOnce();
-    expect(screen.queryByRole('menu')).toBeNull();
-  });
+it('provides docs and explicit text sizes without the relocated Agent/trigger actions', async () => {
+  const actor = userEvent.setup();
+  const navigate = vi.fn();
+  render(
+    <ProfileMenu
+      user={{
+        ...user,
+        capabilities: ['use_own_sandboxes', 'publish_triggers', 'read_activity_log'],
+      }}
+      onNavigate={navigate}
+      onSignOut={vi.fn()}
+    />,
+  );
+  await actor.click(screen.getByRole('button', { name: /account menu/i }));
+  expect(screen.queryByRole('menuitem', { name: 'Agents' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('menuitem', { name: 'CMA Trigger' })).not.toBeInTheDocument();
+  const menu = screen.getByRole('menu');
+  const docs = within(menu).getByRole('menuitem', { name: 'Docs' });
+  const ops = within(menu).getByRole('menuitem', { name: 'Operations' });
+  expect(docs.compareDocumentPosition(ops) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const sizes = screen.getByRole('group', { name: 'System text size' });
+  await actor.click(within(sizes).getByRole('menuitemradio', { name: 'Large' }));
+  expect(within(sizes).getByRole('menuitemradio', { name: 'Large' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  expect(document.documentElement.dataset.systemTextSize).toBe('large');
+  expect(localStorage.getItem('cma:system-text-size')).toBe('large');
+  await actor.click(docs);
+  expect(navigate).toHaveBeenCalledWith({ kind: 'docs' });
 });
 
-describe('the terminal palette', () => {
-  it('is not an account setting', async () => {
-    /*
-     * It sat here, applying to a plane most sessions are not on — an account
-     * setting for a surface its owner may never open. It belongs to the
-     * session that draws a terminal, in that session's own overflow menu.
-     */
-    const user = userEvent.setup();
-    render(<ProfileMenu user={USER} onSignOut={vi.fn()} />);
+it('keeps text preferences in sync between retained portal account menus', async () => {
+  const actor = userEvent.setup();
+  const one = render(<ProfileMenu user={user} onSignOut={vi.fn()} />);
+  const two = render(
+    <ProfileMenu user={{ ...user, displayName: 'Second surface' }} onSignOut={vi.fn()} />,
+  );
+  await actor.click(within(one.container).getByRole('button'));
+  await actor.click(screen.getByRole('menuitemradio', { name: 'Small' }));
+  await actor.click(within(two.container).getByRole('button'));
+  expect(screen.getByRole('menuitemradio', { name: 'Small' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  await actor.click(screen.getByRole('menuitemradio', { name: 'Medium' }));
+});
 
-    await user.click(screen.getByRole('button', { name: /account menu/i }));
-    expect(screen.queryByRole('menuitem', { name: /terminal theme/i })).toBeNull();
+it('copies the immutable build identity from the account menu', async () => {
+  const writeText = vi.fn().mockResolvedValue(undefined);
+  // After setup, which installs its own clipboard on the navigator.
+  const actor = userEvent.setup();
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  render(<ProfileMenu user={user} onSignOut={vi.fn()} onNavigate={vi.fn()} />);
+  await actor.click(screen.getByRole('button', { name: /account menu/i }));
+  await actor.click(screen.getByRole('menuitem', { name: /Copy build version · dev \(local\)/ }));
+  expect(writeText).toHaveBeenCalledWith(BUILD_INFO.copyText);
+  expect(await screen.findByRole('menuitem', { name: 'Build version copied' })).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Build version copied');
+  expect(screen.getByRole('menu')).not.toContainElement(screen.getByRole('status'));
+});
+
+it('keeps the build revision readable when the clipboard refuses it', async () => {
+  const writeText = vi.fn().mockRejectedValue(new Error('denied'));
+  // After setup, which installs its own clipboard on the navigator.
+  const actor = userEvent.setup();
+  Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+  render(<ProfileMenu user={user} onSignOut={vi.fn()} onNavigate={vi.fn()} />);
+  await actor.click(screen.getByRole('button', { name: /account menu/i }));
+  await actor.click(screen.getByRole('menuitem', { name: /Copy build version · dev \(local\)/ }));
+  expect(writeText).toHaveBeenCalledOnce();
+  expect(screen.getByRole('status')).toHaveTextContent('Could not copy');
+  expect(screen.getByText(BUILD_INFO.copyText)).toBeInTheDocument();
+  expect(window.getSelection()?.toString()).toBe(BUILD_INFO.copyText);
+  writeText.mockResolvedValue(undefined);
+  await actor.click(screen.getByRole('menuitem', { name: /Copy build version/ }));
+  expect(screen.getByRole('status')).toHaveTextContent('Build version copied');
+});
+
+it('provides a selectable identity when the Clipboard API is absent', async () => {
+  const actor = userEvent.setup();
+  Object.defineProperty(navigator, 'clipboard', { value: undefined, configurable: true });
+  render(<ProfileMenu user={user} onSignOut={vi.fn()} />);
+  await actor.click(screen.getByRole('button', { name: /account menu/i }));
+  await actor.click(screen.getByRole('menuitem', { name: /Copy build version/ }));
+  expect(screen.getByRole('status')).toHaveTextContent('Could not copy');
+  expect(screen.getByText(BUILD_INFO.copyText)).toBeInTheDocument();
+  expect(screen.getByRole('menuitem', { name: /Copy build version/ })).toBeEnabled();
+});
+
+it('replaces Settings with Usage and focuses the retained trigger before navigation', async () => {
+  const actor = userEvent.setup();
+  let focused: Element | null = null;
+  const onNavigate = vi.fn(() => {
+    focused = document.activeElement;
   });
+  render(<ProfileMenu user={user} onSignOut={vi.fn()} onNavigate={onNavigate} />);
+  const trigger = screen.getByRole('button', { name: /Account menu for/ });
+  await actor.click(trigger);
+  expect(screen.queryByRole('menuitem', { name: 'Settings' })).not.toBeInTheDocument();
+  await actor.click(screen.getByRole('menuitem', { name: 'Usage' }));
+  expect(onNavigate).toHaveBeenCalledWith({ kind: 'usage' });
+  expect(focused).toBe(trigger);
+});
+it('offers one explicit Appearance group and synchronizes retained menus and storage', async () => {
+  const actor = userEvent.setup();
+  const one = render(<ProfileMenu user={user} onSignOut={vi.fn()} />);
+  const two = render(
+    <ProfileMenu user={{ ...user, displayName: 'Second surface' }} onSignOut={vi.fn()} />,
+  );
+  await actor.click(within(one.container).getByRole('button'));
+  const appearance = screen.getByRole('group', { name: 'Appearance' });
+  for (const value of ['System', 'Light', 'Dark']) {
+    await actor.click(within(appearance).getByRole('menuitemradio', { name: value }));
+    expect(localStorage.getItem('cma:appearance')).toBe(value.toLowerCase());
+    expect(within(appearance).getByRole('menuitemradio', { name: value })).toHaveAttribute(
+      'aria-checked',
+      'true',
+    );
+  }
+  await actor.click(within(two.container).getByRole('button'));
+  expect(screen.getByRole('menuitemradio', { name: 'Dark' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  localStorage.setItem('cma:appearance', 'light');
+  window.dispatchEvent(new StorageEvent('storage', { key: 'cma:appearance' }));
+  await screen.findByRole('menuitemradio', { name: 'Light', checked: true });
 });

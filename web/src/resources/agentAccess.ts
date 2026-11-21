@@ -1,0 +1,116 @@
+import { useMemo, useState } from 'react';
+import type { AccessibleAgent, EffectiveAccess } from '@cma/client';
+import type { ResourceViewsClient } from './client';
+import { useAuthorizedRead, type AuthorizedValue } from './useAuthorizedRead';
+import { readLifecycleHandoff } from './lifecycleHandoff';
+
+export interface AgentAccessValue {
+  readonly detail: AccessibleAgent;
+  readonly access?: EffectiveAccess;
+}
+
+export function useAgentAccess(
+  client: ResourceViewsClient | undefined,
+  agentId: string | undefined,
+  viewerId?: string,
+  context?: object,
+) {
+  const [known, setKnown] = useState<
+    readonly {
+      readonly client: ResourceViewsClient;
+      readonly agentId: string;
+      readonly viewerId?: string;
+      readonly context?: object;
+      readonly lineage: {
+        readonly agentId: string;
+        readonly workspaceId: string;
+        readonly sandboxId: string;
+      };
+    }[]
+  >([]);
+  const personal = known.find(
+    (value) =>
+      value.client === client &&
+      value.agentId === agentId &&
+      value.viewerId === viewerId &&
+      value.context === context,
+  );
+  const handoff = readLifecycleHandoff(client, viewerId, agentId);
+  const seededFromHandoff = personal === undefined && handoff !== undefined;
+  const seeded =
+    personal ??
+    (handoff === undefined
+      ? undefined
+      : {
+          client,
+          agentId,
+          viewerId,
+          context,
+          lineage: {
+            agentId: handoff.agentId,
+            workspaceId: handoff.workspaceId,
+            sandboxId: handoff.sandboxId,
+          },
+        });
+  const read = useMemo(
+    () =>
+      client === undefined || agentId === undefined
+        ? undefined
+        : async (signal: AbortSignal): Promise<AuthorizedValue<AgentAccessValue>> => {
+            const detail = await client.agents.readAccessible(agentId, { signal });
+            signal.throwIfAborted();
+            if (detail.id !== agentId) throw new Error('Agent access identity changed.');
+            if (detail.access !== 'shared') {
+              const value = {
+                client,
+                agentId,
+                viewerId,
+                context,
+                lineage: {
+                  agentId: detail.id,
+                  workspaceId: detail.workspace.id,
+                  sandboxId: detail.sandbox.id,
+                },
+              };
+              setKnown((current) =>
+                [
+                  ...current.filter(
+                    (item) =>
+                      item.client === client &&
+                      item.viewerId === viewerId &&
+                      item.context === context &&
+                      item.agentId !== agentId,
+                  ),
+                  value,
+                ].slice(-6),
+              );
+              return { value: { detail } };
+            }
+            setKnown((current) => current.filter((item) => item.agentId !== agentId));
+            const access = await client.resourceAccess.effective('agent', agentId, { signal });
+            if (!access.capabilities.includes('view_details'))
+              throw new Error('Agent access is unavailable.');
+            return { value: { detail, access }, revalidateAt: access.revalidate_at };
+          },
+    [client, agentId, viewerId, context],
+  );
+  const result = useAuthorizedRead(read);
+  // Only transient uncertainty can retain an already authorized personal view.
+  // Refusal discards the classification permanently, including during later retries.
+  if (personal !== undefined && result.state.status === 'error' && !result.state.transient)
+    setKnown(known.filter((item) => item !== personal));
+  const personalReady =
+    seeded !== undefined &&
+    seeded.client === client &&
+    seeded.agentId === agentId &&
+    seeded.viewerId === viewerId &&
+    seeded.context === context &&
+    (result.state.status !== 'error' || result.state.transient === true) &&
+    (result.state.status !== 'ready' || result.state.value.detail.access !== 'shared');
+  return {
+    ...result,
+    personalReady,
+    personalLineage: personalReady ? seeded.lineage : undefined,
+    personalReadOnly: personalReady && result.state.status !== 'ready' && !seededFromHandoff,
+  };
+}

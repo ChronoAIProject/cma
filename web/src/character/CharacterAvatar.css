@@ -1,0 +1,49 @@
+/*
+ * The shared character avatar (Web_Style.md §28). Its square is reserved before Three.js
+ * loads, so a list never reflows when its characters arrive.
+ */
+.character-avatar {
+  position: relative;
+  display: inline-block;
+  flex: none;
+  width: 24px;
+  height: 24px;
+  color: var(--dsw-alias-character-brand);
+  pointer-events: none;
+}
+.character-avatar[data-tone='warning'] {
+  color: var(--dsw-alias-character-pending);
+}
+.character-avatar[data-tone='error'] {
+  color: var(--dsw-alias-character-failed);
+}
+.character-avatar__canvas,
+.character-avatar__fallback {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.character-avatar[data-status='unavailable'] .character-avatar__canvas {
+  display: none;
+}
+.character-avatar__fallback {
+  box-sizing: border-box;
+  padding: 12%;
+}
+.character-avatar__fallback svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.character-avatar__fallback svg * {
+  stroke: currentColor;
+}
+.character-avatar__fallback svg rect {
+  fill: var(--dsw-alias-avatar-bg);
+  stroke: var(--dsw-alias-avatar-bg);
+}
+.character-avatar__fallback svg path:last-child {
+  stroke: var(--dsw-alias-avatar-bg);
+}

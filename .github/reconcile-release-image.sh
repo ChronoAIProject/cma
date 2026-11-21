@@ -141,7 +141,7 @@ validate_image() {
       validate_config amd64 "$source_reference"
       validate_config arm64 "$source_reference"
       ;;
-    api | runtime)
+    api | runtime | cmaeg | runtime-omarchy)
       jq -e '
         (.mediaType == "application/vnd.oci.image.manifest.v1+json"
           or .mediaType == "application/vnd.docker.distribution.manifest.v2+json")
@@ -159,18 +159,21 @@ component=$1
 version=$2
 full_revision=$3
 source_repository=$4
+script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+image_name=$(python3 "$script_dir/scripts/deployables.py" "$component") \
+  || die "unknown deployable component"
 skopeo_command=${SKOPEO_COMMAND:-skopeo}
 skopeo_authfile=${SKOPEO_AUTHFILE:-}
 
 case "$component" in
-  api | web | runtime) ;;
-  *) die "component must be api, web, or runtime" ;;
+  api | web | runtime | cmaeg | runtime-omarchy) ;;
+  *) die "component must be api, web, runtime, cmaeg, or runtime-omarchy" ;;
 esac
 is_match "$version" '^v[0-9]+\.[0-9]+\.[0-9]+$' \
   || die "version must have the form vMAJOR.MINOR.PATCH"
 is_match "$full_revision" '^[0-9a-f]{40}$' \
   || die "revision must be a full 40-character lowercase commit SHA"
-is_match "$source_repository" "^ghcr\\.io/[a-z0-9]+([._-][a-z0-9]+)*/cma-${component}$" \
+is_match "$source_repository" "^ghcr\\.io/[a-z0-9]+([._-][a-z0-9]+)*/${image_name}$" \
   || die "source must be the matching lowercase GHCR component repository"
 command -v "$skopeo_command" >/dev/null 2>&1 \
   || die "Skopeo command is not executable: $skopeo_command"

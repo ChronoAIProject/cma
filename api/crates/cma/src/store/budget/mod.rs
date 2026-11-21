@@ -1,0 +1,486 @@
+//! Transactional reservations backed by CMA's recorded model usage.
+
+use layer2_core::budget::{BudgetError, BudgetPolicy, OwnerBudget, TurnReservation};
+use layer2_core::sandbox::{store::AgentConversationMutation, Agent, AgentLogKind};
+use mongodb::bson::{doc, Document};
+use mongodb::ClientSession;
+use serde::{Deserialize, Serialize};
+
+use super::agent_conversation_store::ApplyError;
+use super::sandbox_mongo::{MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
+
+mod baseline;
+mod cancellation;
+mod counter_accounting;
+#[cfg(test)]
+mod counter_tests;
+mod counters;
+mod period;
+mod period_storage;
+mod requests;
+mod source;
+mod spend_ledger;
+mod stop_authority;
+mod transitions;
+pub(super) use cancellation::release_unexecuted;
+pub(super) use period::require_open_with_ceilings;
+pub(super) use period::require_open_with_collections_and_ceilings;
+pub(super) use period::{now_seconds, require_open};
+#[cfg(test)]
+pub(super) use period::{period_key, require_open_with};
+pub(super) use source::PlatformStopCache;
+pub(super) use stop_authority::fence_stop;
+
+pub(super) const COLLECTION: &str = "model_budget_reservations";
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct TurnRecord {
+    owner: layer2_core::SubjectId,
+    agent_id: layer2_core::AgentId,
+    turn_sequence: Option<u64>,
+    runtime_generation: Option<u64>,
+    reservation: TurnReservation,
+    /// The platform period this liability was charged to; absent for
+    /// reservations made before a platform policy was enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    period_start: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    period_shard: Option<u16>,
+}
+
+fn domain(reason: BudgetError) -> ApplyError {
+    ApplyError::Domain(layer2_core::sandbox::store::SandboxStoreError::Budget(
+        reason,
+    ))
+}
+
+fn decode<T: serde::de::DeserializeOwned>(document: &Document) -> Result<T, ApplyError> {
+    super::sandbox_mongo::read_record(document).map_err(|_| domain(BudgetError::Unavailable))
+}
+
+async fn save<T: Serialize>(
+    store: &MongoSandboxStore,
+    key: &str,
+    record: &T,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    let record =
+        mongodb::bson::serialize_to_bson(record).map_err(|_| domain(BudgetError::Unavailable))?;
+    store
+        .model_budget
+        .replace_one(
+            doc! {"_id": key},
+            doc! {
+                "_id": key, "document_schema_version": DOCUMENT_SCHEMA_VERSION, "record": record,
+            },
+        )
+        .upsert(true)
+        .session(session)
+        .await
+        .map_err(ApplyError::Driver)?;
+    Ok(())
+}
+
+/// Initialize outside admission transactions: concurrent first admissions must
+/// not contend on implicit collection creation or the singleton's first insert.
+pub(super) async fn initialize_settings(
+    store: &MongoSandboxStore,
+    initial_settings: super::settings_defaults::InitialSettings,
+) -> Result<(), layer2_core::StoreError> {
+    let settings = mongodb::bson::serialize_to_bson(&initial_settings.platform())
+        .map_err(|_| layer2_core::StoreError::Malformed("default budget settings".into()))?;
+    store
+        .budget_settings
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {"$setOnInsert": {
+                "document_schema_version": DOCUMENT_SCHEMA_VERSION, "revision": 0_i64,
+                "settings": settings
+            }},
+        )
+        .upsert(true)
+        .await
+        .map_err(|_| {
+            layer2_core::StoreError::Unavailable("initialize budget settings fence".into())
+        })?;
+    Ok(())
+}
+
+async fn owner_budget(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    policy: &BudgetPolicy,
+    now: u64,
+    session: &mut ClientSession,
+) -> Result<OwnerBudget, ApplyError> {
+    match store
+        .model_budget
+        .find_one(doc! {"_id": owner_key(agent)})
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+    {
+        Some(document) => decode(&document),
+        None => baseline::recorded_owner_usage(store, &agent.owner, policy, now, session).await,
+    }
+}
+
+fn owner_key(agent: &Agent) -> String {
+    format!("owner:{}", agent.owner.as_str())
+}
+fn turn_key(agent: &Agent, turn: u64) -> String {
+    format!("turn:{}:{turn}", agent.id.as_str())
+}
+fn command_key(command: &str) -> String {
+    format!("command:{command}")
+}
+
+/// Reserve at the durable command boundary, after authorization and exact replay.
+pub(super) async fn reserve_command(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    command: &str,
+    now: u64,
+    cause: layer2_core::admission::AdmissionCause,
+    existing_consumer: bool,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    let snapshot = period::fenced_snapshot(store, &agent.owner, session).await?;
+    let Some(policy) = snapshot.owner.clone() else {
+        period::require_unbudgeted(store, &snapshot, now, cause, session).await?;
+        return require_command_capacity(
+            store,
+            agent,
+            &snapshot,
+            cause,
+            existing_consumer,
+            session,
+        )
+        .await;
+    };
+    reserve(
+        store,
+        agent,
+        command_key(command),
+        policy,
+        &snapshot,
+        now,
+        session,
+    )
+    .await?;
+    period::require_operator_open(&snapshot, cause)?;
+    require_command_capacity(store, agent, &snapshot, cause, existing_consumer, session).await
+}
+
+async fn require_command_capacity(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    snapshot: &period::PolicySnapshot,
+    cause: layer2_core::admission::AdmissionCause,
+    existing_consumer: bool,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    if cause == layer2_core::admission::AdmissionCause::Continuation {
+        return Ok(());
+    }
+    super::admission_capacity::require_sessions(
+        store,
+        agent,
+        &snapshot.ceilings,
+        cause,
+        existing_consumer,
+        session,
+    )
+    .await
+}
+
+async fn reserve(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    key: String,
+    policy: BudgetPolicy,
+    snapshot: &period::PolicySnapshot,
+    now: u64,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    require_runtime(agent)?;
+    if let Some(document) = store
+        .model_budget
+        .find_one(doc! {"_id": &key})
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+    {
+        let existing: TurnRecord = decode(&document)?;
+        if existing.owner != agent.owner || existing.agent_id != agent.id {
+            return Err(domain(BudgetError::Unavailable));
+        }
+        return Ok(());
+    }
+    let mut owner = owner_budget(store, agent, &policy, now, session).await?;
+    owner.reserve(&policy, now).map_err(domain)?;
+    let charge = period::admit_liability(
+        store,
+        snapshot,
+        &agent.owner,
+        policy.turn_limit,
+        now,
+        session,
+    )
+    .await?;
+    save(store, &owner_key(agent), &owner, session).await?;
+    save(
+        store,
+        &key,
+        &TurnRecord {
+            owner: agent.owner.clone(),
+            agent_id: agent.id.clone(),
+            turn_sequence: None,
+            runtime_generation: None,
+            reservation: TurnReservation::new(policy, now),
+            period_start: charge.map(|charge| charge.start),
+            period_shard: charge.and_then(|charge| charge.shard),
+        },
+        session,
+    )
+    .await
+}
+
+/// This participates in the Agent/log transaction for every turn entry path.
+pub(super) async fn apply(
+    store: &MongoSandboxStore,
+    current: &Agent,
+    mutation: &AgentConversationMutation,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    let now = layer2_core::seconds_from_rfc3339(&mutation.appended_at)
+        .ok_or_else(|| domain(BudgetError::Unavailable))?;
+    for log in &mutation.agent_logs {
+        if let AgentLogKind::TurnStarted { turn_sequence, .. } = log {
+            start_turn(store, current, mutation, *turn_sequence, now, session).await?;
+        }
+    }
+    let Some(turn) = current.conversation.active_turn else {
+        return Ok(());
+    };
+    let key = turn_key(current, turn);
+    let Some(document) = store
+        .model_budget
+        .find_one(doc! {"_id": &key})
+        .session(&mut *session)
+        .await
+        .map_err(ApplyError::Driver)?
+    else {
+        return Ok(());
+    };
+    let mut record: TurnRecord = decode(&document)?;
+    if record.reservation.settled {
+        return Ok(());
+    }
+    if record.owner != current.owner || record.turn_sequence != Some(turn) {
+        return Err(domain(BudgetError::Unavailable));
+    }
+    if let Some(usage) = mutation
+        .agent
+        .conversation
+        .observations
+        .usage
+        .as_ref()
+        .and_then(|usage| usage.current_turn.as_ref())
+        .filter(|usage| usage.turn_sequence == turn)
+    {
+        // Only a new usage observation refreshes freshness, never a text/tool frame.
+        if mutation
+            .agent_logs
+            .iter()
+            .any(|log| matches!(log, AgentLogKind::UsageUpdated { .. }))
+        {
+            if let Err(reason) =
+                record
+                    .reservation
+                    .observe(usage.input_tokens, usage.output_tokens, now)
+            {
+                record.reservation.stop.get_or_insert(reason);
+            }
+        }
+    }
+    if mutation.agent.conversation.active_turn != Some(turn)
+        || record
+            .reservation
+            .observed
+            .saturating_add(record.reservation.policy.max_unobserved_units)
+            > record.reservation.reserved_units
+    {
+        let mut owner: OwnerBudget = store
+            .model_budget
+            .find_one(doc! {"_id": owner_key(current)})
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?
+            .as_ref()
+            .map(decode)
+            .transpose()?
+            .ok_or_else(|| domain(BudgetError::Unavailable))?;
+        // Existing observations do not prove a complete provider settlement.
+        // Keep the full allowance as a debit until an authoritative source can reconcile.
+        let before = record.reservation.reserved_units;
+        owner
+            .retain_observed_liability(&mut record.reservation)
+            .map_err(domain)?;
+        let extra = record.reservation.reserved_units - before;
+        let ended = mutation.agent.conversation.active_turn != Some(turn);
+        if ended {
+            owner.settle(&record.reservation, now).map_err(domain)?;
+            record.reservation.settled = true;
+        }
+        if extra > 0 || ended {
+            let (reserved, debit) = (
+                record.reservation.reserved_units,
+                record.reservation.settlement_debit(),
+            );
+            counter_accounting::mirror(
+                store,
+                record.period_start,
+                record.period_shard,
+                counters::Change {
+                    retained: extra,
+                    released: if ended { reserved } else { 0 },
+                    debit: if ended { debit } else { 0 },
+                },
+                session,
+            )
+            .await?;
+        }
+        save(store, &owner_key(current), &owner, session).await?;
+    }
+    save(store, &key, &record, session).await
+}
+
+async fn start_turn(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    mutation: &AgentConversationMutation,
+    turn: u64,
+    now: u64,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    let key = turn_key(agent, turn);
+    // Publication has already validated this server-attributed execution fence
+    // against the current binding and parent in this same transaction.
+    let existing_consumer = mutation
+        .execution_fence
+        .as_ref()
+        .is_some_and(|fence| fence.binding_authority().is_some());
+    let snapshot = period::fenced_snapshot(store, &agent.owner, session).await?;
+    let live_policy = snapshot.owner.clone();
+    let command = mutation
+        .command_claim
+        .as_ref()
+        .map(|claim| command_key(claim.command_id.as_str()));
+    let prior = match &command {
+        Some(command) => store
+            .model_budget
+            .find_one(doc! {"_id": command})
+            .session(&mut *session)
+            .await
+            .map_err(ApplyError::Driver)?,
+        None => None,
+    };
+    let mut record: TurnRecord = match prior.as_ref().map(decode).transpose()? {
+        Some(record) => record,
+        None => {
+            let Some(policy) = live_policy.clone() else {
+                // Activation after command admission still requires a valued
+                // reservation before the first upstream turn is dispatched.
+                period::require_unbudgeted(
+                    store,
+                    &snapshot,
+                    now,
+                    layer2_core::admission::AdmissionCause::Continuation,
+                    session,
+                )
+                .await?;
+                return super::admission_capacity::require_sessions(
+                    store,
+                    agent,
+                    &snapshot.ceilings,
+                    layer2_core::admission::AdmissionCause::Continuation,
+                    existing_consumer,
+                    session,
+                )
+                .await;
+            };
+            reserve(store, agent, key.clone(), policy, &snapshot, now, session).await?;
+            let document = store
+                .model_budget
+                .find_one(doc! {"_id": &key})
+                .session(&mut *session)
+                .await
+                .map_err(ApplyError::Driver)?
+                .ok_or_else(|| domain(BudgetError::Unavailable))?;
+            decode(&document)?
+        }
+    };
+    if record.owner != agent.owner
+        || record.agent_id != agent.id
+        || record.reservation.settled
+        || record
+            .turn_sequence
+            .is_some_and(|existing| existing != turn)
+    {
+        return Err(domain(BudgetError::Unavailable));
+    }
+    require_runtime(agent)?;
+    if prior.is_some() {
+        // The admitted hold remains valued if its owner policy is removed;
+        // current platform STOP authority still applies before dispatch.
+        period::require_open(
+            store,
+            now,
+            layer2_core::admission::AdmissionCause::Continuation,
+            session,
+        )
+        .await?;
+    }
+    if let Some(policy) = &live_policy {
+        record.reservation.revalidate(policy).map_err(domain)?;
+        let mut owner = owner_budget(store, agent, policy, now, session).await?;
+        owner.advance(policy, now).map_err(domain)?;
+        if owner
+            .spent
+            .checked_add(owner.reserved)
+            .is_none_or(|total| total > policy.owner_day_limit)
+        {
+            return Err(domain(BudgetError::OwnerExhausted));
+        }
+    }
+    super::admission_capacity::require_sessions(
+        store,
+        agent,
+        &snapshot.ceilings,
+        layer2_core::admission::AdmissionCause::Continuation,
+        existing_consumer,
+        session,
+    )
+    .await?;
+    record.turn_sequence = Some(turn);
+    record.runtime_generation = Some(mutation.runtime_generation);
+    record.reservation.last_usage_at = now;
+    save(store, &key, &record, session).await?;
+    if let Some(command) = command.filter(|_| prior.is_some()) {
+        // Retain the immutable command binding; its reservation transfers, not duplicates.
+        save(store, &command, &record, session).await?;
+    }
+    Ok(())
+}
+
+fn require_runtime(agent: &Agent) -> Result<(), ApplyError> {
+    agent
+        .capabilities
+        .require([
+            layer2_core::RuntimeCapability::Usage,
+            layer2_core::RuntimeCapability::Interrupt,
+        ])
+        .map_err(|_| domain(BudgetError::Unavailable))
+}

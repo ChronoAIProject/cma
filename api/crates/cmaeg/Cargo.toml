@@ -1,0 +1,89 @@
+[package]
+name = "cmaeg"
+default-run = "cmaeg"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+cma-allocator-qualification = { path = "../cma-allocator-qualification" }
+aes = "0.8"
+cbc = "0.1"
+cfb = "=0.7.3"
+cma-service-auth = { path = "../cma-service-auth" }
+base64 = { workspace = true }
+bytes = { workspace = true }
+h2 = { workspace = true }
+http-body-util = { workspace = true }
+httpdate = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+image = { workspace = true }
+infer = { workspace = true }
+moka = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+webpki-roots = { workspace = true }
+cmaeg-core = { path = "../cmaeg-core" }
+axum = { workspace = true }
+dashmap = { workspace = true }
+futures-util = { workspace = true }
+governor = { workspace = true }
+metrics = { workspace = true }
+mongodb = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+# Speech-to-text uploads are multipart forms.
+reqwest = { workspace = true, features = ["multipart"] }
+ring = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_path_to_error = "0.1"
+sha2 = { workspace = true }
+subtle = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-native-roots"] }
+tower-http = { workspace = true, features = ["catch-panic"] }
+tracing = { workspace = true }
+tracing-appender = "=0.2.5"
+tracing-subscriber = { workspace = true }
+utoipa = { workspace = true }
+url = { workspace = true }
+uuid = { workspace = true }
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+quick-xml = "=0.41.0"
+zip = { workspace = true }
+
+# A stand-in for ffmpeg and ffprobe that the media sandbox tests execute. The
+# image builds `--bin cmaeg` only, so it never ships.
+[[bin]]
+name = "cmaeg-media-probe"
+path = "tests/support/media_probe.rs"
+test = false
+doc = false
+bench = false
+
+# Isolated admission diagnostic fixture; production images build --bin cmaeg.
+[[bin]]
+name = "cmaeg-admission-fixture"
+path = "tests/admission_fixture/fixture.rs"
+doc = false
+bench = false
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Process hardening: prctl(PR_SET_DUMPABLE).
+libc = { workspace = true }
+# The media job's seccomp filters.
+seccompiler = { workspace = true }
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true, features = ["json"] }
+# Process CPU measurements include the asynchronous trace serializer.
+libc = { workspace = true }
+# Validate generated OpenAPI payloads without network reference retrieval.
+jsonschema = { version = "0.33.0", default-features = false }
+# The progressive JPEG fixture of the image decode bound test.
+jpeg-encoder = { workspace = true }
+# Paused time drives the media deadline and job tests deterministically.
+tokio = { workspace = true, features = ["test-util"] }
+tracing-log = { workspace = true }

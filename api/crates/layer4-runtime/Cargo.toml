@@ -7,20 +7,25 @@ publish = false
 [dependencies]
 axum = { workspace = true }
 base64 = { workspace = true }
+flate2 = { workspace = true }
 futures-util = { workspace = true }
+layer3-adapter = { workspace = true }
 libc = { workspace = true }
-portable-pty = { workspace = true }
 reqwest = { workspace = true, features = ["stream"] }
-ring = { workspace = true }
+rusqlite = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
-sha1 = { workspace = true }
+serde_json = { workspace = true, features = ["raw_value"] }
 sha2 = { workspace = true }
-tokio = { workspace = true }
+subtle = { workspace = true }
+tokio = { workspace = true, features = ["fs"] }
+tokio-tungstenite = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-unicode-normalization = { workspace = true }
 url = { workspace = true }
+uuid = { workspace = true }
+zip = { workspace = true }
 
 [dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+tower = { version = "0.5", features = ["util"] }
 tokio-tungstenite = { workspace = true }

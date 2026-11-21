@@ -1,0 +1,218 @@
+.sandbox-page {
+  min-width: 0;
+  padding: 24px;
+  overflow: auto;
+}
+.sandbox-page h1 {
+  margin: 0;
+  font: var(--dsw-font-xl-24);
+}
+.sandbox-page h2 {
+  margin: 0 0 16px;
+  font: var(--dsw-font-m-18);
+}
+.sandbox-page h3 {
+  margin: 0;
+  font: var(--dsw-font-base-16);
+  font-weight: 600;
+}
+.sandbox-page p {
+  color: var(--dsw-alias-label-secondary);
+}
+.sandbox-page__hint {
+  margin: -8px 0 16px;
+}
+/* Links in the content; the header's breadcrumb keeps its own quieter ink. */
+.sandbox-page__band a {
+  color: var(--dsw-alias-brand-primary);
+}
+.sandbox-page code {
+  font-family: var(--ds-font-family-code);
+  overflow-wrap: anywhere;
+}
+.sandbox-page__header {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+/* The one alert stack under the header (§17); it hides itself when empty. */
+.sandbox-page > [data-sandbox-alerts] {
+  margin-top: 16px;
+}
+/* Why a header action is unavailable, under the header it belongs to (§17). */
+.sandbox-page__reasons {
+  margin-top: 8px;
+}
+.sandbox-page__reasons p {
+  margin: 0;
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+.sandbox-page__band {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+.sandbox-page dl,
+.sandbox-advanced dl {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+.sandbox-page dl > div,
+.sandbox-advanced dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 16px;
+}
+.sandbox-page dt,
+.sandbox-advanced dt {
+  color: var(--dsw-alias-label-secondary);
+}
+.sandbox-page dd,
+.sandbox-advanced dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.sandbox-page__workspace {
+  padding: 16px 0;
+}
+.sandbox-page__workspace ul,
+.sandbox-page__events {
+  padding: 0;
+  list-style: none;
+}
+.sandbox-page__agents > li {
+  padding: 16px 0;
+  border-top: 1px solid var(--dsw-alias-border-l2);
+}
+.sandbox-page__agents > li > .sandbox-page__header {
+  margin-bottom: 12px;
+}
+/*
+ * The Workspaces table. On a narrow screen it scrolls inside its own box, so
+ * the page itself never scrolls sideways.
+ */
+.sandbox-table {
+  min-width: 0;
+  overflow-x: auto;
+}
+.sandbox-table:focus-visible {
+  border-radius: 6px;
+}
+.sandbox-table table {
+  width: 100%;
+  min-width: 40rem;
+  border-collapse: collapse;
+}
+.sandbox-table th,
+.sandbox-table td {
+  padding: 12px 16px 12px 0;
+  border-bottom: 1px solid var(--dsw-alias-border-l2);
+  text-align: left;
+  vertical-align: top;
+  overflow-wrap: anywhere;
+}
+.sandbox-table thead th {
+  padding-top: 0;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  line-height: 1.25rem;
+}
+.sandbox-table tbody th {
+  font-weight: 600;
+}
+.sandbox-table th:last-child,
+.sandbox-table td:last-child {
+  padding-right: 0;
+}
+.sandbox-table .sandbox-table__actions {
+  text-align: right;
+  white-space: nowrap;
+}
+/* A path is read whole; on a phone the table scrolls rather than breaking it. */
+.sandbox-table td > code {
+  overflow-wrap: normal;
+  white-space: nowrap;
+}
+/* A heading with its section's own action beside it. */
+.sandbox-page__toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+.sandbox-page .sandbox-page__toolbar h2 {
+  margin: 0;
+}
+/* The scope editor's save sits under the list, sized to its label. */
+.sandbox-page [data-scope-editor] > div > button {
+  justify-self: start;
+}
+.sandbox-table__agents {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.sandbox-table__agents li {
+  display: grid;
+  gap: 2px;
+}
+.sandbox-table__agent {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.sandbox-table__quiet {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 0.8125rem;
+  line-height: 1.25rem;
+}
+.sandbox-page__references {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+.sandbox-advanced {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.sandbox-advanced h3 {
+  font: var(--dsw-font-base-16);
+}
+.sandbox-advanced code {
+  overflow-wrap: anywhere;
+}
+.sandbox-advanced a {
+  color: var(--dsw-alias-brand-primary);
+}
+.sandbox-page__events li {
+  display: flex;
+  gap: 16px;
+  justify-content: space-between;
+  padding: 8px 0;
+  overflow-wrap: anywhere;
+}
+.sandbox-page__events time {
+  color: var(--dsw-alias-label-secondary);
+}
+@media (max-width: 30rem) {
+  .sandbox-page {
+    padding: 16px;
+  }
+  .sandbox-page__events li {
+    flex-direction: column;
+    gap: 8px;
+  }
+}

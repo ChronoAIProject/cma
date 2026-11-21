@@ -1,276 +1,493 @@
-//! Generated OpenAPI document and its anonymous discovery route.
-
-use std::sync::Arc;
-
-use axum::{Extension, Json, Router};
-use utoipa::{openapi, PartialSchema, ToSchema};
-use utoipa_axum::{router::OpenApiRouter, routes};
-
-use super::openapi_shapes::SessionSurfaceFilter;
-use super::{ProblemDocument, SERVICE_VERSION};
-use super::{REQUEST_ID_LENGTH, REQUEST_ID_PATTERN};
-
-pub(super) const DOCUMENT_PATH: &str = "/openapi.json";
-
-/// The stable top-level shape returned by the OpenAPI discovery route.
-#[allow(dead_code)]
-#[derive(ToSchema)]
-struct OpenApiDocument {
-    openapi: String,
-    info: OpenApiDocumentInfo,
-    #[schema(value_type = Object)]
-    paths: serde_json::Value,
-}
-
-#[allow(dead_code)]
-#[derive(ToSchema)]
-struct OpenApiDocumentInfo {
-    title: String,
-    version: String,
-}
-
-/// Serve the exact document collected while registering the REST handlers.
-#[utoipa::path(
-    get,
-    path = "/openapi.json",
-    tag = "discovery",
-    responses((status = 200, description = "OpenAPI 3.1 contract", body = OpenApiDocument, content_type = "application/json")),
-    security(())
-)]
-async fn document(Extension(document): Extension<Arc<openapi::OpenApi>>) -> Json<openapi::OpenApi> {
-    Json((*document).clone())
-}
-
-/// Add the discovery route, shared errors, authentication, and response headers
-/// after every handler has contributed its paths and concrete schemas.
-pub(super) fn finish(mut documented: OpenApiRouter) -> Router {
-    documented = documented.routes(routes!(document));
-    finish_document(documented.get_openapi_mut());
-    let document = Arc::new(documented.get_openapi().clone());
-    let router: Router = documented.into();
-    router.layer(Extension(document))
-}
-
-fn finish_document(document: &mut openapi::OpenApi) {
-    document.info.title = "CMA REST API".to_string();
-    document.info.version = SERVICE_VERSION.to_string();
-    document.info.description = Some(
-        "The complete CMA REST control surface. Refusals use RFC 9457 problem details.".to_string(),
-    );
-
-    let components = document
-        .components
-        .get_or_insert_with(openapi::Components::new);
-    components.schemas.insert(
-        ProblemDocument::name().to_string(),
-        ProblemDocument::schema(),
-    );
-    components.schemas.insert(
-        SessionSurfaceFilter::name().to_string(),
-        SessionSurfaceFilter::schema(),
-    );
-    components.add_security_scheme(
-        "bearerAuth",
-        openapi::security::SecurityScheme::Http(
-            openapi::security::HttpBuilder::new()
-                .scheme(openapi::security::HttpAuthScheme::Bearer)
-                .build(),
-        ),
-    );
-    components.add_security_scheme(
-        "sessionCookie",
-        openapi::security::SecurityScheme::ApiKey(openapi::security::ApiKey::Cookie(
-            openapi::security::ApiKeyValue::with_description(
-                "cma_session",
-                "CMA browser session cookie",
-            ),
-        )),
-    );
-
-    let request_id_schema = openapi::ObjectBuilder::new()
-        .schema_type(openapi::Type::String)
-        .min_length(Some(REQUEST_ID_LENGTH))
-        .max_length(Some(REQUEST_ID_LENGTH))
-        .pattern(Some(REQUEST_ID_PATTERN))
-        .build();
-    let request_id = openapi::header::HeaderBuilder::new()
-        .description(Some(
-            "Canonical correlation identifier accepted from the request or minted by CMA",
-        ))
-        .schema(request_id_schema.clone())
-        .build();
-    let link = openapi::header::HeaderBuilder::new()
-        .description(Some(
-            "RFC 8288 links to the REST profile, service description, and any next page",
-        ))
-        .build();
-    let request_id_parameter = openapi::path::ParameterBuilder::new()
-        .name("X-Request-Id")
-        .parameter_in(openapi::path::ParameterIn::Header)
-        .required(openapi::Required::False)
-        .description(Some(
-            "Optional caller correlation identifier. CMA trims surrounding ASCII whitespace, accepts only one canonical lowercase hyphenated RFC UUID, and replaces invalid or repeated values with a generated UUID.",
-        ))
-        .schema(Some(request_id_schema))
-        .build();
-    let problem = openapi::response::ResponseBuilder::new()
-        .description("RFC 9457 problem details")
-        .header("X-Request-Id", request_id.clone())
-        .header("Link", link.clone())
-        .content(
-            "application/problem+json",
-            openapi::Content::new(Some(
-                openapi::Ref::from_schema_name(ProblemDocument::name()),
-            )),
-        )
-        .build();
-    components
-        .responses
-        .insert("Problem".to_string(), problem.into());
-
-    // Utoipa's shorthand couples request-body optionality to `Option<T>`,
-    // which also makes the JSON value nullable. Runtime accepts an omitted or
-    // empty ticket body but deliberately rejects an explicit JSON `null`, so
-    // express those two dimensions independently in the finished document.
-    let ticket_body = document
-        .paths
-        .paths
-        .get_mut("/api/v1/sessions/{id}/terminal-ticket")
-        .and_then(|item| item.post.as_mut())
-        .and_then(|operation| operation.request_body.as_mut())
-        .expect("the terminal ticket route declares a request body");
-    ticket_body.required = Some(openapi::Required::False);
-    ticket_body
-        .content
-        .get_mut("application/json")
-        .expect("the terminal ticket body is JSON")
-        .schema = Some(openapi::Ref::from_schema_name("TicketRequest").into());
-
-    // Replacement also accepts the complete view returned by GET. The custom
-    // extractor validates and removes its server-owned fields before decoding
-    // the writable projection, while create remains ProfileRequest-only.
-    let profile_replacement = document
-        .paths
-        .paths
-        .get_mut("/api/v1/environment-profiles/{id}")
-        .and_then(|item| item.put.as_mut())
-        .and_then(|operation| operation.request_body.as_mut())
-        .and_then(|body| body.content.get_mut("application/json"))
-        .expect("the profile replacement body is JSON");
-    profile_replacement.schema = Some(
-        openapi::schema::OneOfBuilder::new()
-            .item(openapi::Ref::from_schema_name("ProfileRequest"))
-            .item(openapi::Ref::from_schema_name("ProfileView"))
-            .into(),
-    );
-
-    for (path, item) in &mut document.paths.paths {
-        for (method, operation) in [
-            ("get", item.get.as_mut()),
-            ("put", item.put.as_mut()),
-            ("post", item.post.as_mut()),
-            ("delete", item.delete.as_mut()),
-            ("options", item.options.as_mut()),
-            ("head", item.head.as_mut()),
-            ("patch", item.patch.as_mut()),
-            ("trace", item.trace.as_mut()),
-        ]
-        .into_iter()
-        .filter_map(|(method, operation)| operation.map(|operation| (method, operation)))
-        {
-            operation.operation_id = Some(operation_id(method, path));
-            operation
-                .parameters
-                .get_or_insert_default()
-                .push(request_id_parameter.clone());
-            operation
-                .responses
-                .responses
-                .entry("default".to_string())
-                .or_insert_with(|| openapi::Ref::from_response_name("Problem").into());
-            for response in operation.responses.responses.values_mut() {
-                if let openapi::RefOr::T(response) = response {
-                    response
-                        .headers
-                        .entry("X-Request-Id".to_string())
-                        .or_insert_with(|| request_id.clone());
-                    response
-                        .headers
-                        .entry("Link".to_string())
-                        .or_insert_with(|| link.clone());
-                }
-            }
-
-            if anonymous_path(path) {
-                operation.security = Some(Vec::new());
-            } else {
-                operation.security = Some(vec![
-                    openapi::security::SecurityRequirement::new(
-                        "bearerAuth",
-                        std::iter::empty::<String>(),
-                    ),
-                    openapi::security::SecurityRequirement::new(
-                        "sessionCookie",
-                        std::iter::empty::<String>(),
-                    ),
-                ]);
-            }
-        }
-    }
-}
-
-pub(super) fn anonymous_path(path: &str) -> bool {
-    matches!(
-        path,
-        DOCUMENT_PATH | "/api/v1/conformance" | "/api/v1/triggers/public/{public_id}"
+use utoipa::OpenApi;
+pub mod agent_delegations;
+mod agent_manager;
+mod composition;
+mod identity;
+mod projections;
+use self::projections::*;
+use super::admin::profiles::{ProfilePageView, ProfileSummaryView};
+use super::admin::sandboxes::{
+    AgentSummaryView, SandboxDetailView, SandboxPageView, SandboxSummaryView, WorkspaceSummaryView,
+};
+use super::admin::settings::{
+    InactivitySettingsBody, MarketplaceSettingsBody, PatchRequest, PlatformDefaultsBody,
+    PlatformLimitsBody, PlatformSettingsBody, ProfileReferenceBody, ReplaceRequest, ResetRequest,
+    RetentionSettingsBody, SettingsView, TriggerSettingsBody, UsageReportingSettingsBody,
+};
+use super::admin::{ActivityPageView, ActivityView, RuntimeEntryView, RuntimeInventoryView};
+use super::agent_openapi_shapes::*;
+use super::agent_shared_shapes::*;
+use super::instances_openapi_shapes::{
+    CreateInlineWorkspaceRequest, CreateSandboxRequest, CreateWorkspaceRequest, FailureView,
+    OwnerAgentSummaryView, OwnerSandboxDetailView, OwnerSandboxPageView, OwnerSandboxSummaryView,
+    OwnerWorkspaceSummaryView, ProfileReferenceView, SandboxEventView, SandboxLimitsView,
+    SandboxView, WorkspaceDetailView, WorkspaceListView, WorkspaceSourceView, WorkspaceView,
+    WorktreeListView, WorktreeView,
+};
+use super::launch_events::*;
+use super::problems::ProblemDocument;
+use super::profile_authoring::shapes::*;
+use super::profiles_openapi_shapes::*;
+use super::trigger_openapi_shapes::*;
+#[rustfmt::skip] use super::gateway_records::{GatewayRecordHeadView as GatewayRecordHead, GatewayRecordPageView as GatewayRecordPage, GatewayRecordView as GatewayRecord, PutGatewayRecordRequest as PutGatewayRequest, PutGatewayRecordView as PutGateway};
+#[derive(OpenApi)]
+#[openapi(
+    paths(
+        agent_delegations::identity,
+        agent_delegations::operation,
+        super::event_workers::create,
+        super::event_workers::list,
+        super::event_workers::read,
+        super::event_workers::revision,
+        super::event_workers::update,
+        super::event_workers::retire,
+        super::bots::create,
+        super::bot_setups::advance,
+        super::bot_setups::act,
+        super::bots::list,
+        super::bots::read,
+        super::bots::available,
+        super::bots::connections,
+        super::bots::test,
+        super::bots::disable,
+        super::bots::enable,
+        super::bots::rotate,
+        super::bots::delete,
+        super::agent_attachments::upload,
+        super::desktop::describe,
+        super::desktop::websocket,
+        super::agent_filesystem::list,
+        super::agent_filesystem::environment::read,
+        super::agent_filesystem::read,
+        super::agent_filesystem::download,
+        super::agent_filesystem::write,
+        super::agent_filesystem::remove,
+        super::agent_artifacts::publish,
+        super::agent_artifacts::list,
+        super::agent_artifacts::read,
+        super::agent_artifacts::download,
+        super::conformance,
+        super::organizations::list,
+        super::agent_share_links::list,
+        super::agent_share_links::create,
+        super::agent_share_links::revoke,
+        super::agent_share_links::redeem,
+        super::agent_share_links::recipients,
+        super::resource_access::effective,
+        super::resource_access::list,
+        super::resource_access::read,
+        super::resource_access::create,
+        super::resource_access::update,
+        super::resource_access::revoke,
+        super::defaults::read,
+        super::profile_authoring::bounds,
+        super::profile_authoring::services,
+        super::profile_authoring::skills,
+        super::profile_authoring::resolve_repository,
+        crate::pty::terminal,
+        projections::signup_options,
+        super::triggers::create,
+        super::triggers::list,
+        super::triggers::read,
+        super::triggers::update,
+        super::triggers::delete_trigger,
+        super::triggers::publish,
+        super::triggers::retire,
+        super::triggers::revisions,
+        super::triggers::statistics,
+        super::triggers::preview,
+        super::trigger_entry::open,
+        super::trigger_entry::consume,
+        super::trigger_placements::create,
+        super::trigger_placements::list,
+        super::trigger_placements::retire,
+        super::launches::create,
+        super::launches::list,
+        super::launches::read,
+        super::launches::events,
+        super::launches::requirements,
+        super::launches::start,
+        super::launches::cancel,
+        super::service_connections::create,
+        super::service_connections::read,
+        projections::badge,
+        projections::embed,
+        projections::launch_event_companion,
+        super::profiles_agent::create,
+        super::profiles_agent::list,
+        super::profiles_agent::read,
+        super::profiles_agent::update,
+        super::profiles_agent::publish,
+        super::profiles_agent::list_revisions,
+        super::profiles_agent::read_revision,
+        super::profiles_agent::set_visibility,
+        super::profiles_agent::retire,
+        super::profiles_workspace::create,
+        super::profiles_workspace::list,
+        super::profiles_workspace::read,
+        super::profiles_workspace::update,
+        super::profiles_workspace::publish,
+        super::profiles_workspace::list_revisions,
+        super::profiles_workspace::read_revision,
+        super::profiles_workspace::set_visibility,
+        super::profiles_workspace::retire,
+        super::profiles_sandbox::create,
+        super::profiles_sandbox::list,
+        super::profiles_sandbox::read,
+        super::profiles_sandbox::update,
+        super::profiles_sandbox::publish,
+        super::profiles_sandbox::list_revisions,
+        super::profiles_sandbox::read_revision,
+        super::profiles_sandbox::set_visibility,
+        super::profiles_sandbox::retire,
+        super::profiles_marketplace::list,
+        super::profiles_marketplace::read,
+        super::profiles_marketplace::fork,
+        super::agents::create,
+        super::agents::create_lifecycle,
+        super::agents::read_lifecycle_operation,
+        super::agents::list,
+        super::agents::read,
+        super::agent_access_requests::list,
+        super::agent_access_requests::approve,
+        super::agent_access_requests::deny,
+        super::agent_access_requests::scope::replace,
+        super::agent_models::list,
+        super::agent_skills::read,
+        super::agent_skills::install,
+        super::suggestions::read,
+        super::agent_preferences::read,
+        super::agent_preferences::update,
+        super::agent_settings::read,
+        super::agent_settings::update,
+        super::agent_source::read,
+        super::agent_provenance::read,
+        super::agent_channel_usage::read,
+        super::agent_channel_usage::history,
+        super::agent_provenance_inventory::list,
+        super::agents::delete_agent,
+        super::agent_worktree_recovery::recover_worktree,
+        super::agent_operate::input,
+        super::agent_operate::steer,
+        super::agent_operate::interrupt,
+        super::agent_operate::approval,
+        super::agent_operate::stop,
+        super::agent_reads::events,
+        super::agent_reads::transcript,
+        super::agent_reads::usage,
+        super::agent_reads::resources,
+        super::sandboxes::create,
+        super::sandboxes::list,
+        super::sandboxes::read,
+        super::sandboxes::remove,
+        super::sandboxes::pause,
+        super::sandboxes::revive, super::sandbox_always_on::always_on,
+        super::sandbox_runtime_update::update,
+        super::sandbox_service_access::grant,
+        super::sandboxes::events,
+        super::workspaces::create,
+        super::workspaces::create_inline,
+        super::workspaces::recover_prepare,
+        super::workspaces::list,
+        super::workspaces::read,
+        super::workspaces::remove,
+        super::worktrees::list,
+        super::worktrees::read,
+        super::admin::settings::read,
+        super::admin::settings::replace,
+        super::admin::settings::patch,
+        super::admin::settings::reset,
+        super::admin::sandboxes::list,
+        super::admin::sandboxes::read,
+        super::admin::sandboxes::events,
+        super::admin::sandboxes::retire, super::admin::sandboxes::always_on, super::admin::auto_pause::preview, super::admin::auto_pause::pause_idle_now,
+        super::admin::runtime_update::update,
+        super::admin::profiles::list,
+        super::admin::profiles::retire,
+        super::admin::triggers::pause,
+        super::admin::triggers::resume,
+        super::admin::runtime_inventory,
+        super::admin::activity,
+        super::admin::warm_pools::list,
+        super::admin::warm_pools::configure,
+        super::admin::warm_pools::resize,
+        super::bindings::put_binding, super::bindings::get_binding, super::bindings::delete_binding, super::bindings::put_conversation, super::bindings::delete_conversation,
+    ),
+    components(schemas(
+        super::desktop::DesktopDescriptor,
+        super::agent_access_requests::AgentAccessRequestView,
+        super::agent_access_requests::AgentAccessRequestList,
+        super::agent_access_requests::AgentAccessStatusView,
+        super::agent_access_requests::AgentAccessConnection,
+        super::agent_access_requests::AgentAccessConnectionTarget,
+        super::agent_access_requests::ApproveAgentAccessRequest,
+        super::agent_access_requests::DenyAgentAccessRequest,
+        super::agent_access_requests::scope::ReplaceAgentServiceAccess,
+        super::agent_attachments::AgentAttachmentView,
+        super::agent_filesystem::WriteFileRequest,
+        super::agent_filesystem::FileEntryView,
+        super::agent_filesystem::FileListView,
+        super::agent_filesystem::FileReadView,
+        super::agent_filesystem::FileMutationView,
+        super::agent_filesystem::environment::EnvironmentView,
+        super::agent_filesystem::environment::FeatureView,
+        super::agent_artifacts::AgentArtifactView,
+        super::agent_artifacts::AgentArtifactPageView,
+        super::agent_artifacts::PublishAgentArtifactRequest,
+        super::openapi_shapes::ConformanceDocument,
+        super::defaults::DefaultProfilesView,
+        ProblemDocument,
+        ProfileCapacityBoundsView,
+        AuthoringServiceView,
+        AuthoringSkillView,
+        AuthoringSkillPage,
+        ResolveRepositoryRequest,
+        RepositoryResolutionView,
+        SignupOptions,
+        EmbedDescriptor,
+        EmbedContentSecurityPolicy,
+        EmbedSnippets,
+        TriggerButtonLabelValue,
+        TriggerThemeValue,
+        SandboxReusePolicyValue,
+        WorkspaceReusePolicyValue,
+        AgentReusePolicyValue,
+        TriggerPresentationBody,
+        TriggerTargetBody,
+        TriggerReuseBody,
+        TriggerConsentBody,
+        TriggerContentBody,
+        TriggerQuickMessageBody,
+        super::agent_provenance::AgentProvenanceView,
+        super::agent_channel_usage::AgentChannelUsageView,
+        super::agent_channel_usage::AgentChannelUsageHistoryView,
+        super::agent_channel_usage::ChannelUsageSummaryView,
+        super::agent_channel_usage::ChannelBindingView,
+        super::agent_channel_usage::ChannelUsageEventView,
+        super::agent_channel_usage::ChannelBindingChangeReasonView,
+        super::agent_channel_usage::ChannelUsageChangeView,
+        super::agent_provenance_inventory::AgentProvenanceInventoryItemView,
+        super::agent_provenance_inventory::AgentProvenanceInventoryPageView,
+        super::agent_provenance::AgentProvenanceDetailsView,
+        super::agent_provenance::AgentCreationCategoryView,
+        super::agent_provenance::AgentCreationTriggerView,
+        super::agent_provenance::AgentCreationBridgeView,
+        super::agent_source::AgentSourceView,
+        super::agent_source::AgentOriginView,
+        super::agent_source::AgentTriggerSourceView,
+        CreateTriggerRequest,
+        UpdateTriggerRequest,
+        PublishTriggerRequest,
+        CreatePlacementRequest,
+        CreateLaunchRequest,
+        StartLaunchRequest,
+        CreateServiceConnectionRequest,
+        TriggerAvailabilityValue,
+        TriggerStatsView,
+        PlacementView,
+        TriggerRevisionView,
+        PublishedTriggerRevisionView,
+        TriggerView,
+        TriggerPageView,
+        TriggerPlacementStatsView,
+        TriggerStatisticsView,
+        TriggerTrustDisclosureView,
+        TriggerTrustPreviewView,
+        TriggerSizePreviewView,
+        TriggerTechnicalPreviewView,
+        TriggerPreviewView,
+        ResolvedResourceView,
+        LaunchResolutionView,
+        ServiceRequirementView,
+        ServiceConnectionModeValue,
+        RequirementsSnapshotView,
+        ReviewNeedView,
+        ReviewRequirementsView,
+        LaunchTrustResourceValue,
+        LaunchTrustDisclosureView,
+        LaunchTrustManifestView,
+        LaunchConsentSurfaceValue,
+        LaunchConfirmationView,
+        LaunchView,
+        LaunchFirstMessageCommandView,
+        LaunchPageView,
+        LaunchEventPageView,
+        ServiceConnectionStateValue,
+        CreatedServiceConnectionView,
+        ServiceConnectionStatusView,
+        LaunchStateValue,
+        LaunchStepKeyValue,
+        LaunchStepStatusValue,
+        RepeatChoiceValue,
+        ServiceRequirementStateValue,
+        FirstMessageStateValue,
+        LaunchEffectKindValue,
+        LaunchStepView,
+        LaunchBlockedReasonView,
+        LaunchFailureView,
+        LaunchEventKindView,
+        LaunchEventView,
+        ProfileVisibilityValue,
+        ThinkingEffortValue,
+        PermissionLevelValue,
+        AgentProviderValue,
+        ModelAccessValue,
+        MarketplaceKindValue,
+        AgentProfileReference,
+        WorkspaceProfileReference,
+        SandboxProfileReference,
+        SkillReference,
+        SkillSourceValue,
+        AgentProfileContentBody,
+        WorkspaceLocationBody,
+        WorkspaceProfileContentBody,
+        EnvironmentVariableBody,
+        SandboxProfileContentBody,
+        SandboxProfileAvailabilityBody,
+        CreateAgentProfileRequest,
+        UpdateAgentProfileRequest,
+        CreateWorkspaceProfileRequest,
+        UpdateWorkspaceProfileRequest,
+        CreateSandboxProfileRequest,
+        UpdateSandboxProfileRequest,
+        PublishProfileRequest,
+        SetProfileVisibilityRequest,
+        ForkProfileRequest,
+        ProfileRevisionSummary,
+        AgentProfileRevisionView,
+        WorkspaceProfileRevisionView,
+        SandboxProfileRevisionView,
+        AgentProfileView,
+        WorkspaceProfileView,
+        SandboxProfileView,
+        AgentProfilePageView,
+        WorkspaceProfilePageView,
+        SandboxProfilePageView,
+        AgentProfileRevisionPageView,
+        WorkspaceProfileRevisionPageView,
+        SandboxProfileRevisionPageView,
+        MarketplaceSummaryView,
+        MarketplacePageView,
+        ResolvedProfileNameView,
+        ResolvedProfileRevisionView,
+        SandboxProfileTrustView,
+        MarketplaceEntryView,
+        ForkedProfileView,
+        AgentProfileReferenceBody,
+        CreateAgentRequest,
+        AgentTextRequest,
+        ApprovalDecisionBody,
+        ApprovalDecisionRequest,
+        OwnerStopReasonBody,
+        StopAgentRequest,
+        AgentProfileSummaryView,
+        AgentSkillSummaryView,
+        WorktreeSummaryView,
+        WorkspaceContextView,
+        SandboxContextView,
+        InstanceProfileReferenceView,
+        FirstMessageStateView,
+        AgentListItemView,
+        AgentPageView,
+        AgentView,
+        AgentBootstrapView,
+        AccessibleAgentView,
+        AccessibleAgentPageView,
+        AccessibleAgentListItemView,
+        SharedAgentView,
+        AgentFailureView,
+        InputAcceptedView,
+        AgentEventPageView,
+        AgentEventView,
+        AgentTranscriptView,
+        AgentTranscriptTurnView,
+        AgentTranscriptMessageView,
+        AgentTranscriptRoleView,
+        AgentUsageView,
+        super::agent_observation_shapes::AgentRuntimeMetadataView,
+        super::agent_observation_shapes::AgentTurnUsageView,
+        AgentResourcesView,
+        ProfileReferenceView,
+        CreateSandboxRequest,
+        super::instances_openapi_shapes::GrantSandboxServiceAccessRequest,
+        CreateWorkspaceRequest,
+        CreateInlineWorkspaceRequest,
+        FailureView,
+        SandboxLimitsView,
+        super::instances_openapi_shapes::SandboxLifecycleView,
+        super::instances_openapi_shapes::SandboxLifecycleResultView,
+        super::instances_openapi_shapes::SandboxInterruptionView,
+        super::instances_openapi_shapes::SandboxLifecycleEligibilityView,
+        super::instances_openapi_shapes::SandboxCheckpointView,
+        super::instances_openapi_shapes::SandboxBackgroundSaveView,
+        super::instances_openapi_shapes::SandboxLifecycleOperationView,
+        SandboxView,
+        OwnerSandboxSummaryView,
+        OwnerSandboxPageView,
+        OwnerWorkspaceSummaryView,
+        OwnerSandboxDetailView,
+        WorkspaceSourceView,
+        WorkspaceView,
+        WorktreeView,
+        OwnerAgentSummaryView,
+        WorkspaceDetailView,
+        WorkspaceListView,
+        WorktreeListView,
+        SandboxEventView,
+        ProfileReferenceBody,
+        PlatformDefaultsBody,
+        InactivitySettingsBody,
+        UsageReportingSettingsBody,
+        super::sandbox_always_on::AlwaysOnRequest, super::admin::sandboxes::AdminAlwaysOnRequest, super::admin::auto_pause::AutoPausePreviewView, super::admin::auto_pause::PauseIdleNowRequest, super::admin::auto_pause::PauseIdleNowView,
+        RetentionSettingsBody,
+        PlatformLimitsBody,
+        TriggerSettingsBody,
+        MarketplaceSettingsBody,
+        PlatformSettingsBody,
+        ReplaceRequest,
+        PatchRequest,
+        ResetRequest,
+        SettingsView,
+        SandboxSummaryView,
+        SandboxPageView,
+        WorkspaceSummaryView,
+        AgentSummaryView,
+        SandboxDetailView,
+        ProfileSummaryView,
+        ProfilePageView,
+        RuntimeEntryView,
+        RuntimeInventoryView,
+        super::admin::warm_pools::WarmPoolList,
+        super::admin::warm_pools::WarmPoolView,
+        super::admin::warm_pools::ConfigureWarmPoolBody,
+        super::admin::warm_pools::ResizeWarmPoolBody,
+        ActivityView,
+        ActivityPageView,
+        super::bindings::PutBindingRequest, super::bindings::BindingTarget, super::bindings::BindingTools, super::bindings::BindingView, super::bindings::BindingRefusal, super::bindings::BindingConversationView, PutGatewayRequest, PutGateway, GatewayRecord, GatewayRecordHead, GatewayRecordPage,
+    )),
+    tags(
+        (name = "discovery", description = "Anonymous deployment discovery"),
+        (name = "triggers", description = "Publisher-owned Trigger drafts and public previews"),
+        (name = "trigger placements", description = "Owned Trigger placement and embed projections"),
+        (name = "trigger launches", description = "Owned Trigger Launch lifecycle and event replay"),
+        (name = "service connections", description = "Owner-scoped service authorization handoffs"),
+        (name = "profile authoring", description = "Read-only profile choices and repository verification"),
+        (name = "agent profiles", description = "Owned Agent Profile drafts and immutable revisions"),
+        (name = "workspace profiles", description = "Owned Workspace Profile drafts and immutable revisions"),
+        (name = "sandbox profiles", description = "Owned Sandbox Profile drafts and immutable revisions"),
+        (name = "profile marketplace", description = "Published profiles available to authenticated callers"),
+        (name = "agents", description = "Owned CMA Agents and their durable history"),
+        (name = "resource-access", description = "Current effective policy and owner-managed organization shares"),
+        (name = "agent operations", description = "Input and control operations for owned CMA Agents"),
+        (name = "agent usage", description = "Usage and resource readings for owned CMA Agents"),
+        (name = "sandboxes", description = "Owned Sandbox lifecycle and event replay"),
+        (name = "workspaces", description = "Owned Workspace lifecycle and hierarchy"),
+        (name = "worktrees", description = "Owned Worktree hierarchy reads"),
+        (name = "administration", description = "Capability-gated deployment operations"),
     )
-}
-
-fn operation_id(method: &str, path: &str) -> String {
-    let mut id = method.to_string();
-    for segment in path.split('/').filter(|segment| !segment.is_empty()) {
-        id.push('_');
-        if segment.starts_with('{') && segment.ends_with('}') {
-            id.push_str("by_");
-        }
-        let segment = segment.trim_matches(['{', '}']);
-        let mut previous_was_separator = false;
-        for character in segment.chars() {
-            if character.is_ascii_alphanumeric() || character == '_' {
-                id.push(character.to_ascii_lowercase());
-                previous_was_separator = false;
-            } else if !previous_was_separator {
-                id.push('_');
-                previous_was_separator = true;
-            }
-        }
-        if id.ends_with('_') {
-            id.pop();
-        }
-    }
-    id
-}
-
+)]
+struct ApiDoc;
+pub use agent_manager::document as agent_manager_document;
+pub use composition::document;
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use utoipa::OpenApi;
-
-    #[test]
-    fn generated_documents_are_openapi_3_1() {
-        let document = <ApiVersion as OpenApi>::openapi();
-        assert!(document.openapi == openapi::OpenApiVersion::Version31);
-    }
-
-    #[test]
-    fn operation_identifiers_are_stable_sdk_names() {
-        assert_eq!(
-            operation_id("get", "/api/v1/sessions/{id}"),
-            "get_api_v1_sessions_by_id"
-        );
-        assert_eq!(operation_id("get", "/openapi.json"), "get_openapi_json");
-    }
-
-    #[derive(OpenApi)]
-    struct ApiVersion;
-}
+mod tests;

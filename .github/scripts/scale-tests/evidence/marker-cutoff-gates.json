@@ -1,0 +1,21 @@
+{
+  "recorded_at_utc": "2026-11-13T18:42:57.443725+00:00",
+  "reviewed_parent": "6f580ea84e48e1fde58990bb16dbc4834ae48aef",
+  "reason": "Discard unterminated final diagnostic records: termination can truncate the last numeric field before newline.",
+  "sources": {
+    "replica_observations.py": "03fa0f2dcc1ec57c29d7810083ab3ba4b59f84c947827167b523ac2b0ab9a90d",
+    "test/replica_observations_test.py": "fffde034a27f5146dc4f0e8170c58b6c6329e9f6fda81bfcc411a43f58772665"
+  },
+  "gates": {
+    "python_tests": 28,
+    "parser_focused_tests": 3,
+    "parser_executable_lines_hit": 23,
+    "parser_executable_lines_missed": 0,
+    "lint_syntax_source_size": "PASS"
+  },
+  "logs": {
+    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/stage-helper-final.log": "7e4b891961055d605d1f09aeb1bfa87460bd59920f4082030e258cd0402ed26c"
+  },
+  "unchanged": "Rust/emitter, compiled binaries, all process custody,120s deadline and JS unchanged from6f; Rust and JS gates not rerun",
+  "real_execution": "NOT_RUN; review requested before use; no new invocation scope inferred"
+}

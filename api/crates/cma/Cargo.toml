@@ -4,27 +4,43 @@ version.workspace = true
 edition.workspace = true
 publish = false
 
+[features]
+real-model-suggestion-samples = []
+
 [dependencies]
+cma-allocator-qualification = { path = "../cma-allocator-qualification" }
 async-trait = { workspace = true }
 axum = { workspace = true }
 base64 = { workspace = true }
+cma-service-auth = { path = "../cma-service-auth" }
 futures-util = { workspace = true }
+http-body = { workspace = true }
+metrics = { workspace = true }
+mimalloc = { workspace = true }
+moka = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
+flate2 = { workspace = true }
 governor = { workspace = true }
+http-body-util = { workspace = true }
+httpdate = { workspace = true }
 ipnet = { workspace = true }
 sha2 = { workspace = true }
 sha1 = { workspace = true }
 layer1-public = { workspace = true }
 layer2-core = { workspace = true }
 layer3-adapter = { workspace = true }
-mongodb = { workspace = true }
+mongodb = { workspace = true, features = ["opentelemetry"] }
+opentelemetry = { workspace = true }
 reqwest = { workspace = true }
 ring = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 similar = { workspace = true }
 tokio = { workspace = true }
+url = { workspace = true }
 thiserror = { workspace = true }
 tower-http = { workspace = true }
+tower = { version = "0.5", features = ["util"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 # For its CSPRNG-backed v4 generator, which is what session cookies, OAuth
@@ -33,10 +49,14 @@ uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+tracing-subscriber = { workspace = true, features = ["json"] }
+http-body-util = { workspace = true }
+kube = { workspace = true }
+cmaeg-core = { path = "../cmaeg-core" }
+cmaeg = { path = "../cmaeg" }
+layer2-core = { workspace = true, features = ["test-support"] }
 # Holds PTY receipt, output, and disconnect boundaries so socket races are
 # proved without sleeps or scheduler assumptions.
 layer1-public = { workspace = true, features = ["test-support"] }
-# Drives the composed REST router in public error-contract tests.
-tower = { version = "0.5", features = ["util"] }
 tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite = { workspace = true }

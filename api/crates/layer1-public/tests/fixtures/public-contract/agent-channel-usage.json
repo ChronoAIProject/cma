@@ -1,0 +1,1108 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "channel-usage-empty",
+      "operation": "GET /api/v1/agents/{id}/channel-usage",
+      "scenario": "channel_usage_empty",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "channel_usage": {
+            "active": false,
+            "has_history": false,
+            "first_used_at": null,
+            "last_used_at": null
+          },
+          "bindings": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-owner",
+      "operation": "GET /api/v1/agents/{id}/channel-usage",
+      "scenario": "channel_usage_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "channel_usage": {
+            "active": true,
+            "has_history": true,
+            "first_used_at": null,
+            "last_used_at": null
+          },
+          "bindings": [
+            {
+              "binding_id": "binding-one",
+              "bridge_id": "bridge-one",
+              "partition_id": "partition-one",
+              "generation": 1,
+              "previous_binding_id": null,
+              "attached_at": "2026-09-15T00:00:00Z",
+              "first_used_at": null,
+              "last_used_at": null
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-shared",
+      "operation": "GET /api/v1/agents/{id}/channel-usage",
+      "scenario": "channel_usage_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "channel_usage": {
+            "active": true,
+            "has_history": true,
+            "first_used_at": null,
+            "last_used_at": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-shared_detached",
+      "operation": "GET /api/v1/agents/{id}/channel-usage",
+      "scenario": "channel_usage_shared_detached",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "channel_usage": {
+            "active": false,
+            "has_history": true,
+            "first_used_at": "2026-09-15T00:00:00Z",
+            "last_used_at": "2026-09-15T00:00:00Z"
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-legacy",
+      "operation": "GET /api/v1/agents/{id}/channel-usage",
+      "scenario": "channel_usage_legacy",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "channel_usage": {
+            "active": true,
+            "has_history": true,
+            "first_used_at": null,
+            "last_used_at": null
+          },
+          "bindings": [
+            {
+              "binding_id": "binding-one",
+              "bridge_id": "bridge-one",
+              "partition_id": "partition-one",
+              "generation": 1,
+              "previous_binding_id": null,
+              "attached_at": "2026-09-15T00:00:00Z",
+              "first_used_at": null,
+              "last_used_at": null
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-history-first",
+      "operation": "GET /api/v1/agents/{id}/channel-usage/history",
+      "scenario": "channel_usage_history",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage/history?limit=2",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "items": [
+            {
+              "revision": 1,
+              "actor": {
+                "kind": "api",
+                "subject": "owner-a",
+                "delegation_id": null
+              },
+              "at": "2026-09-15T00:00:00Z",
+              "detached_at": null,
+              "reason": "attachment",
+              "change": {
+                "kind": "attach",
+                "binding_id": "binding-one"
+              },
+              "before": [],
+              "after": [
+                {
+                  "binding_id": "binding-one",
+                  "bridge_id": "bridge-one",
+                  "partition_id": "partition-one",
+                  "generation": 1,
+                  "previous_binding_id": null,
+                  "attached_at": "2026-09-15T00:00:00Z",
+                  "first_used_at": null,
+                  "last_used_at": null
+                }
+              ]
+            },
+            {
+              "revision": 2,
+              "actor": {
+                "kind": "api",
+                "subject": "owner-a",
+                "delegation_id": null
+              },
+              "at": "2026-09-15T00:00:00Z",
+              "detached_at": null,
+              "reason": "accepted_command",
+              "change": {
+                "kind": "use",
+                "binding_id": "binding-one"
+              },
+              "before": [
+                {
+                  "binding_id": "binding-one",
+                  "bridge_id": "bridge-one",
+                  "partition_id": "partition-one",
+                  "generation": 1,
+                  "previous_binding_id": null,
+                  "attached_at": "2026-09-15T00:00:00Z",
+                  "first_used_at": null,
+                  "last_used_at": null
+                }
+              ],
+              "after": [
+                {
+                  "binding_id": "binding-one",
+                  "bridge_id": "bridge-one",
+                  "partition_id": "partition-one",
+                  "generation": 1,
+                  "previous_binding_id": null,
+                  "attached_at": "2026-09-15T00:00:00Z",
+                  "first_used_at": "2026-09-15T00:00:00Z",
+                  "last_used_at": "2026-09-15T00:00:00Z"
+                }
+              ]
+            }
+          ],
+          "next": "2"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-history-last",
+      "operation": "GET /api/v1/agents/{id}/channel-usage/history",
+      "scenario": "channel_usage_history",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage/history?limit=2&cursor=2",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "items": [
+            {
+              "revision": 3,
+              "actor": {
+                "kind": "api",
+                "subject": "owner-a",
+                "delegation_id": null
+              },
+              "at": "2026-09-15T00:00:00Z",
+              "detached_at": "2026-09-15T00:00:00Z",
+              "reason": "administrative_intervention",
+              "change": {
+                "kind": "detach",
+                "binding_id": "binding-one"
+              },
+              "before": [
+                {
+                  "binding_id": "binding-one",
+                  "bridge_id": "bridge-one",
+                  "partition_id": "partition-one",
+                  "generation": 1,
+                  "previous_binding_id": null,
+                  "attached_at": "2026-09-15T00:00:00Z",
+                  "first_used_at": "2026-09-15T00:00:00Z",
+                  "last_used_at": "2026-09-15T00:00:00Z"
+                }
+              ],
+              "after": []
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-history-empty",
+      "operation": "GET /api/v1/agents/{id}/channel-usage/history",
+      "scenario": "channel_usage_history",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage/history?cursor=3",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "agent_id": "agt_shared_read",
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-shared-history",
+      "operation": "GET /api/v1/agents/{id}/channel-usage/history",
+      "scenario": "channel_usage_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage/history",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
+          "title": "resource_forbidden",
+          "status": 403,
+          "detail": "Current authority does not permit this operation.",
+          "code": "resource_forbidden"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-revoked",
+      "operation": "GET /api/v1/agents/{id}/channel-usage",
+      "scenario": "channel_usage_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-outage",
+      "operation": "GET /api/v1/agents/{id}/channel-usage",
+      "scenario": "channel_usage_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-no_credential",
+      "operation": "GET /api/v1/agents/{id}/channel-usage",
+      "scenario": "channel_usage_no_credential",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-anonymous",
+      "operation": "GET /api/v1/agents/{id}/channel-usage",
+      "scenario": "channel_usage_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-forbidden",
+      "operation": "GET /api/v1/agents/{id}/channel-usage",
+      "scenario": "channel_usage_forbidden",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-invalid_context",
+      "operation": "GET /api/v1/agents/{id}/channel-usage",
+      "scenario": "channel_usage_invalid_context",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-zero-limit",
+      "operation": "GET /api/v1/agents/{id}/channel-usage/history",
+      "scenario": "channel_usage_history",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage/history?limit=0",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Channel history requires a limit from 1 through 200 and a positive revision cursor.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-large-limit",
+      "operation": "GET /api/v1/agents/{id}/channel-usage/history",
+      "scenario": "channel_usage_history",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage/history?limit=201",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Channel history requires a limit from 1 through 200 and a positive revision cursor.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-invalid-cursor",
+      "operation": "GET /api/v1/agents/{id}/channel-usage/history",
+      "scenario": "channel_usage_history",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage/history?cursor=01",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Channel history requires a limit from 1 through 200 and a positive revision cursor.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-cursor-after-history",
+      "operation": "GET /api/v1/agents/{id}/channel-usage/history",
+      "scenario": "channel_usage_history",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage/history?cursor=9",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_query",
+          "title": "invalid_query",
+          "status": 400,
+          "detail": "Channel history requires a limit from 1 through 200 and a positive revision cursor.",
+          "code": "invalid_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-changed",
+      "operation": "GET /api/v1/agents/{id}/channel-usage",
+      "scenario": "channel_usage_changed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-unavailable",
+      "operation": "GET /api/v1/agents/{id}/channel-usage",
+      "scenario": "channel_usage_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-changed-history",
+      "operation": "GET /api/v1/agents/{id}/channel-usage/history",
+      "scenario": "channel_usage_changed",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage/history",
+        "headers": {}
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
+          "title": "resource_access_changed",
+          "status": 409,
+          "detail": "Resource access changed. Read current access and retry with the current revision.",
+          "code": "resource_access_changed"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-unavailable-history",
+      "operation": "GET /api/v1/agents/{id}/channel-usage/history",
+      "scenario": "channel_usage_unavailable",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage/history",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",
+          "title": "resource_access_unavailable",
+          "status": 503,
+          "detail": "Resource access is temporarily unavailable. Retry the same command key to recover an unacknowledged result.",
+          "code": "resource_access_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-revoked-history",
+      "operation": "GET /api/v1/agents/{id}/channel-usage/history",
+      "scenario": "channel_usage_revoked",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage/history",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_not_found",
+          "title": "resource_not_found",
+          "status": 404,
+          "detail": "Resource not found.",
+          "code": "resource_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-outage-history",
+      "operation": "GET /api/v1/agents/{id}/channel-usage/history",
+      "scenario": "channel_usage_outage",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage/history",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
+          "title": "organization_authority_unavailable",
+          "status": 503,
+          "detail": "Current organization authorization is unavailable. Retry after the identity provider recovers.",
+          "code": "organization_authority_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-usage-anonymous-history",
+      "operation": "GET /api/v1/agents/{id}/channel-usage/history",
+      "scenario": "channel_usage_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_shared_read/channel-usage/history",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-inventory-owner-active",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "channel_usage_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?channel_active=true&creation_origin=manual",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "task_status": "failed",
+              "agent_id": "agt_shared_read",
+              "title": "Agent agt_shared_read",
+              "status": "ready",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "creation_origin": "manual",
+              "channel_usage": {
+                "active": true,
+                "has_history": true,
+                "first_used_at": null,
+                "last_used_at": null
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-inventory-shared-active",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "channel_usage_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true&channel_active=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "task_status": "failed",
+              "agent_id": "agt_shared_read",
+              "title": "Agent agt_shared_read",
+              "status": "ready",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "creation_origin": "manual",
+              "channel_usage": {
+                "active": true,
+                "has_history": true,
+                "first_used_at": null,
+                "last_used_at": null
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-inventory-org-active",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "channel_usage_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?organization=org&channel_active=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "task_status": "failed",
+              "agent_id": "agt_shared_read",
+              "title": "Agent agt_shared_read",
+              "status": "ready",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "creation_origin": "manual",
+              "channel_usage": {
+                "active": true,
+                "has_history": true,
+                "first_used_at": null,
+                "last_used_at": null
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-inventory-shared-unused",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "channel_usage_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true&channel_history=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-inventory-detached",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "channel_usage_shared_detached",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true&channel_active=false&channel_history=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "task_status": "failed",
+              "agent_id": "agt_shared_read",
+              "title": "Agent agt_shared_read",
+              "status": "ready",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "creation_origin": "manual",
+              "channel_usage": {
+                "active": false,
+                "has_history": true,
+                "first_used_at": "2026-09-15T00:00:00Z",
+                "last_used_at": "2026-09-15T00:00:00Z"
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-inventory-category",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "channel_usage_shared_detached",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?shared=true&creation_origin=channel_bridge&channel_history=true",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": []
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-inventory-unused-owner",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "channel_usage_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?channel_history=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "task_status": "not_started",
+              "agent_id": "agt_sibling",
+              "title": "Agent agt_sibling",
+              "status": "ready",
+              "created_at": "2026-09-05T00:00:00Z",
+              "updated_at": "2026-09-05T00:00:00Z",
+              "creation_origin": "manual",
+              "channel_usage": {
+                "active": false,
+                "has_history": false,
+                "first_used_at": null,
+                "last_used_at": null
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-inventory-invalid-active",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "channel_usage_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?channel_active=invalid",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
+          "title": "invalid instance query",
+          "status": 400,
+          "detail": "The instance query parameters are not valid.",
+          "code": "invalid_instance_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "channel-inventory-invalid-history",
+      "operation": "GET /api/v1/agents/provenance",
+      "scenario": "channel_usage_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/provenance?channel_history=1",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
+          "title": "invalid instance query",
+          "status": 400,
+          "detail": "The instance query parameters are not valid.",
+          "code": "invalid_instance_query"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

@@ -1,0 +1,4000 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "retained-discovery-owner-events",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "retained_discovery_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_fixture/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "seq": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              }
+            },
+            {
+              "seq": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_opened",
+                "conversation_id": "conversation-agt_fixture",
+                "runtime_generation": 1
+              }
+            },
+            {
+              "seq": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "operation_delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              }
+            },
+            {
+              "seq": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "seq": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "owner_message",
+                "content": "Private source input"
+              }
+            },
+            {
+              "seq": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              }
+            },
+            {
+              "seq": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              }
+            },
+            {
+              "seq": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "operation_delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              }
+            },
+            {
+              "retained_output": {
+                "available": true
+              },
+              "seq": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_items_2_appended_at": "/items/2/appended_at",
+        "observed_items_3_appended_at": "/items/3/appended_at",
+        "observed_items_4_appended_at": "/items/4/appended_at",
+        "observed_items_5_appended_at": "/items/5/appended_at",
+        "observed_items_6_appended_at": "/items/6/appended_at",
+        "observed_items_7_appended_at": "/items/7/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-owner-transcript",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "retained_discovery_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_fixture/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_fixture",
+          "through_seq": 9,
+          "turns": [
+            {
+              "retained_output": {
+                "available": true
+              },
+              "turn_sequence": 4,
+              "started_at": "2026-11-17T00:00:00Z",
+              "owner_message": "Private source input",
+              "agent_messages": [],
+              "messages": [
+                {
+                  "sequence": 5,
+                  "role": "user",
+                  "content": "Private source input",
+                  "appended_at": "2026-11-17T00:00:00Z"
+                }
+              ],
+              "outcome": {
+                "type": "failed",
+                "at": "2026-09-16T00:00:00Z",
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_turns_0_messages_0_appended_at": "/turns/0/messages/0/appended_at",
+        "observed_turns_0_started_at": "/turns/0/started_at"
+      }
+    },
+    {
+      "id": "retained-discovery-owner-agui",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "retained_discovery_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_fixture&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "2",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_fixture",
+              "runId": "0",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/signIn",
+                  "value": null
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "4",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "messageId": "msg_5",
+              "role": "user",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "messageId": "msg_5",
+              "delta": "Private source input",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "5",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "messageId": "msg_5",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "6",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "7",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/runtimeMetadata",
+                  "value": {
+                    "workingDirectory": null,
+                    "description": "Private source input",
+                    "descriptionSource": "prompt_preview",
+                    "descriptionIsSetupPreview": false
+                  }
+                }
+              ],
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "9",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "code": "agent_log_capacity_exceeded",
+              "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it.",
+              "cma:retainedOutput": {
+                "available": true
+              },
+              "timestamp": "2026-09-16T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "observed_1_data_timestamp": "/1/data/timestamp",
+        "observed_2_data_timestamp": "/2/data/timestamp",
+        "observed_3_data_timestamp": "/3/data/timestamp",
+        "observed_4_data_timestamp": "/4/data/timestamp",
+        "observed_5_data_timestamp": "/5/data/timestamp",
+        "observed_6_data_timestamp": "/6/data/timestamp"
+      }
+    },
+    {
+      "id": "retained-discovery-owner-response",
+      "operation": "GET /api/v2/responses/{response_id}",
+      "scenario": "retained_discovery_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_control_source",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "retained_output": {
+            "available": true
+          },
+          "callback_url": "https://cma.example/agents/agt_fixture",
+          "id": "resp_control_source",
+          "object": "response",
+          "created_at": 1788566400,
+          "completed_at": null,
+          "conversation": {
+            "id": "agt_fixture"
+          },
+          "status": "failed",
+          "background": false,
+          "error": {
+            "code": "agent_log_capacity_exceeded",
+            "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+          },
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "gpt-proof",
+          "output": [],
+          "parallel_tool_calls": false,
+          "previous_response_id": null,
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": true,
+          "temperature": null,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "none",
+          "tools": [],
+          "top_p": null,
+          "truncation": "disabled",
+          "usage": null,
+          "metadata": {}
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-discovery-owner-snapshot",
+      "operation": "GET /api/v2/agents/{agent_id}/events/snapshot",
+      "scenario": "retained_discovery_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/snapshot",
+        "headers": {
+          "Prefer": "cma-retained-output"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.event_page",
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+          "items": [
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_available"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            },
+            {
+              "retained_output": {
+                "available": true
+              },
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              },
+              "response_binding": null
+            }
+          ],
+          "next_page_cursor": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_items_2_appended_at": "/items/2/appended_at",
+        "observed_items_3_appended_at": "/items/3/appended_at",
+        "observed_items_4_appended_at": "/items/4/appended_at",
+        "observed_items_5_appended_at": "/items/5/appended_at",
+        "observed_items_6_appended_at": "/items/6/appended_at",
+        "observed_items_7_appended_at": "/items/7/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-owner-legacy-snapshot",
+      "operation": "GET /api/v2/agents/{agent_id}/events/snapshot",
+      "scenario": "retained_discovery_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/snapshot",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.event_page",
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+          "items": [
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_available"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              },
+              "response_binding": null
+            }
+          ],
+          "next_page_cursor": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_items_2_appended_at": "/items/2/appended_at",
+        "observed_items_3_appended_at": "/items/3/appended_at",
+        "observed_items_4_appended_at": "/items/4/appended_at",
+        "observed_items_5_appended_at": "/items/5/appended_at",
+        "observed_items_6_appended_at": "/items/6/appended_at",
+        "observed_items_7_appended_at": "/items/7/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-shared-events",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "retained_discovery_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_fixture/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "seq": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "access_redacted"
+              }
+            },
+            {
+              "seq": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "access_redacted"
+              }
+            },
+            {
+              "seq": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "operation_delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              }
+            },
+            {
+              "seq": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "seq": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "owner_message",
+                "content": "Private source input"
+              }
+            },
+            {
+              "seq": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              }
+            },
+            {
+              "seq": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "access_redacted"
+              }
+            },
+            {
+              "seq": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "operation_delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              }
+            },
+            {
+              "retained_output": {
+                "available": true
+              },
+              "seq": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_items_2_appended_at": "/items/2/appended_at",
+        "observed_items_3_appended_at": "/items/3/appended_at",
+        "observed_items_4_appended_at": "/items/4/appended_at",
+        "observed_items_5_appended_at": "/items/5/appended_at",
+        "observed_items_6_appended_at": "/items/6/appended_at",
+        "observed_items_7_appended_at": "/items/7/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-shared-transcript",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "retained_discovery_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_fixture/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_fixture",
+          "through_seq": 9,
+          "turns": [
+            {
+              "retained_output": {
+                "available": true
+              },
+              "turn_sequence": 4,
+              "started_at": "2026-11-17T00:00:00Z",
+              "owner_message": "Private source input",
+              "agent_messages": [],
+              "messages": [
+                {
+                  "sequence": 5,
+                  "role": "user",
+                  "content": "Private source input",
+                  "appended_at": "2026-11-17T00:00:00Z"
+                }
+              ],
+              "outcome": {
+                "type": "failed",
+                "at": "2026-09-16T00:00:00Z",
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_turns_0_messages_0_appended_at": "/turns/0/messages/0/appended_at",
+        "observed_turns_0_started_at": "/turns/0/started_at"
+      }
+    },
+    {
+      "id": "retained-discovery-shared-agui",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "retained_discovery_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_fixture&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "1",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_fixture",
+              "runId": "0",
+              "delta": [],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "2",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_fixture",
+              "runId": "0",
+              "delta": [],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "4",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "messageId": "msg_5",
+              "role": "user",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "messageId": "msg_5",
+              "delta": "Private source input",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "5",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "messageId": "msg_5",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "6",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "7",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "delta": [],
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "9",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "code": "agent_log_capacity_exceeded",
+              "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it.",
+              "cma:retainedOutput": {
+                "available": true
+              },
+              "timestamp": "2026-09-16T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "observed_2_data_timestamp": "/2/data/timestamp",
+        "observed_3_data_timestamp": "/3/data/timestamp",
+        "observed_4_data_timestamp": "/4/data/timestamp",
+        "observed_5_data_timestamp": "/5/data/timestamp",
+        "observed_6_data_timestamp": "/6/data/timestamp",
+        "observed_7_data_timestamp": "/7/data/timestamp"
+      }
+    },
+    {
+      "id": "retained-discovery-shared-response",
+      "operation": "GET /api/v2/responses/{response_id}",
+      "scenario": "retained_discovery_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_control_source",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "retained_output": {
+            "available": true
+          },
+          "callback_url": "https://cma.example/agents/agt_fixture",
+          "id": "resp_control_source",
+          "object": "response",
+          "created_at": 1788566400,
+          "completed_at": null,
+          "conversation": {
+            "id": "agt_fixture"
+          },
+          "status": "failed",
+          "background": false,
+          "error": {
+            "code": "agent_log_capacity_exceeded",
+            "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+          },
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "gpt-proof",
+          "output": [],
+          "parallel_tool_calls": false,
+          "previous_response_id": null,
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": true,
+          "temperature": null,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "none",
+          "tools": [],
+          "top_p": null,
+          "truncation": "disabled",
+          "usage": null,
+          "metadata": {}
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-discovery-shared-snapshot",
+      "operation": "GET /api/v2/agents/{agent_id}/events/snapshot",
+      "scenario": "retained_discovery_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/snapshot",
+        "headers": {
+          "Prefer": "cma-retained-output"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.event_page",
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+          "items": [
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": null,
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": null,
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": null,
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            },
+            {
+              "retained_output": {
+                "available": true
+              },
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              },
+              "response_binding": null
+            }
+          ],
+          "next_page_cursor": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_items_2_appended_at": "/items/2/appended_at",
+        "observed_items_3_appended_at": "/items/3/appended_at",
+        "observed_items_4_appended_at": "/items/4/appended_at",
+        "observed_items_5_appended_at": "/items/5/appended_at",
+        "observed_items_6_appended_at": "/items/6/appended_at",
+        "observed_items_7_appended_at": "/items/7/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-shared-legacy-snapshot",
+      "operation": "GET /api/v2/agents/{agent_id}/events/snapshot",
+      "scenario": "retained_discovery_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/snapshot",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.event_page",
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+          "items": [
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": null,
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": null,
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": null,
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              },
+              "response_binding": null
+            }
+          ],
+          "next_page_cursor": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_items_2_appended_at": "/items/2/appended_at",
+        "observed_items_3_appended_at": "/items/3/appended_at",
+        "observed_items_4_appended_at": "/items/4/appended_at",
+        "observed_items_5_appended_at": "/items/5/appended_at",
+        "observed_items_6_appended_at": "/items/6/appended_at",
+        "observed_items_7_appended_at": "/items/7/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-public-events",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "retained_discovery_public",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_fixture/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "seq": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              }
+            },
+            {
+              "seq": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_opened",
+                "conversation_id": "conversation-agt_fixture",
+                "runtime_generation": 1
+              }
+            },
+            {
+              "seq": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "operation_delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              }
+            },
+            {
+              "seq": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "seq": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "owner_message",
+                "content": "Private source input"
+              }
+            },
+            {
+              "seq": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              }
+            },
+            {
+              "seq": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              }
+            },
+            {
+              "seq": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "operation_delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              }
+            },
+            {
+              "seq": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_items_2_appended_at": "/items/2/appended_at",
+        "observed_items_3_appended_at": "/items/3/appended_at",
+        "observed_items_4_appended_at": "/items/4/appended_at",
+        "observed_items_5_appended_at": "/items/5/appended_at",
+        "observed_items_6_appended_at": "/items/6/appended_at",
+        "observed_items_7_appended_at": "/items/7/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-public-transcript",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "retained_discovery_public",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_fixture/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_fixture",
+          "through_seq": 9,
+          "turns": [
+            {
+              "turn_sequence": 4,
+              "started_at": "2026-11-17T00:00:00Z",
+              "owner_message": "Private source input",
+              "agent_messages": [],
+              "messages": [
+                {
+                  "sequence": 5,
+                  "role": "user",
+                  "content": "Private source input",
+                  "appended_at": "2026-11-17T00:00:00Z"
+                }
+              ],
+              "outcome": {
+                "type": "failed",
+                "at": "2026-09-16T00:00:00Z",
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_turns_0_messages_0_appended_at": "/turns/0/messages/0/appended_at",
+        "observed_turns_0_started_at": "/turns/0/started_at"
+      }
+    },
+    {
+      "id": "retained-discovery-public-agui",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "retained_discovery_public",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_fixture&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "2",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_fixture",
+              "runId": "0",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/signIn",
+                  "value": null
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "4",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "messageId": "msg_5",
+              "role": "user",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "messageId": "msg_5",
+              "delta": "Private source input",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "5",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "messageId": "msg_5",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "6",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "7",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/runtimeMetadata",
+                  "value": {
+                    "workingDirectory": null,
+                    "description": "Private source input",
+                    "descriptionSource": "prompt_preview",
+                    "descriptionIsSetupPreview": false
+                  }
+                }
+              ],
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "9",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "code": "agent_log_capacity_exceeded",
+              "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it.",
+              "timestamp": "2026-09-16T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "observed_1_data_timestamp": "/1/data/timestamp",
+        "observed_2_data_timestamp": "/2/data/timestamp",
+        "observed_3_data_timestamp": "/3/data/timestamp",
+        "observed_4_data_timestamp": "/4/data/timestamp",
+        "observed_5_data_timestamp": "/5/data/timestamp",
+        "observed_6_data_timestamp": "/6/data/timestamp"
+      }
+    },
+    {
+      "id": "retained-discovery-public-response",
+      "operation": "GET /api/v2/responses/{response_id}",
+      "scenario": "retained_discovery_public",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_control_source",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "callback_url": "https://cma.example/agents/agt_fixture",
+          "id": "resp_control_source",
+          "object": "response",
+          "created_at": 1788566400,
+          "completed_at": null,
+          "conversation": {
+            "id": "agt_fixture"
+          },
+          "status": "failed",
+          "background": false,
+          "error": {
+            "code": "agent_log_capacity_exceeded",
+            "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+          },
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "gpt-proof",
+          "output": [],
+          "parallel_tool_calls": false,
+          "previous_response_id": null,
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": true,
+          "temperature": null,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "none",
+          "tools": [],
+          "top_p": null,
+          "truncation": "disabled",
+          "usage": null,
+          "metadata": {}
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-discovery-public-snapshot",
+      "operation": "GET /api/v2/agents/{agent_id}/events/snapshot",
+      "scenario": "retained_discovery_public",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/snapshot",
+        "headers": {
+          "Prefer": "cma-retained-output"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.event_page",
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+          "items": [
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_available"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              },
+              "response_binding": null
+            }
+          ],
+          "next_page_cursor": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_items_2_appended_at": "/items/2/appended_at",
+        "observed_items_3_appended_at": "/items/3/appended_at",
+        "observed_items_4_appended_at": "/items/4/appended_at",
+        "observed_items_5_appended_at": "/items/5/appended_at",
+        "observed_items_6_appended_at": "/items/6/appended_at",
+        "observed_items_7_appended_at": "/items/7/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-public-legacy-snapshot",
+      "operation": "GET /api/v2/agents/{agent_id}/events/snapshot",
+      "scenario": "retained_discovery_public",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/snapshot",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.event_page",
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+          "items": [
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_available"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              },
+              "response_binding": null
+            }
+          ],
+          "next_page_cursor": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_items_2_appended_at": "/items/2/appended_at",
+        "observed_items_3_appended_at": "/items/3/appended_at",
+        "observed_items_4_appended_at": "/items/4/appended_at",
+        "observed_items_5_appended_at": "/items/5/appended_at",
+        "observed_items_6_appended_at": "/items/6/appended_at",
+        "observed_items_7_appended_at": "/items/7/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-other-events",
+      "operation": "GET /api/v1/agents/{id}/events",
+      "scenario": "retained_discovery_other",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_fixture/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "items": [
+            {
+              "seq": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              }
+            },
+            {
+              "seq": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_opened",
+                "conversation_id": "conversation-agt_fixture",
+                "runtime_generation": 1
+              }
+            },
+            {
+              "seq": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "operation_delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              }
+            },
+            {
+              "seq": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "seq": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "owner_message",
+                "content": "Private source input"
+              }
+            },
+            {
+              "seq": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              }
+            },
+            {
+              "seq": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              }
+            },
+            {
+              "seq": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "operation_delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              }
+            },
+            {
+              "seq": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_turn_failed",
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
+                }
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_items_2_appended_at": "/items/2/appended_at",
+        "observed_items_3_appended_at": "/items/3/appended_at",
+        "observed_items_4_appended_at": "/items/4/appended_at",
+        "observed_items_5_appended_at": "/items/5/appended_at",
+        "observed_items_6_appended_at": "/items/6/appended_at",
+        "observed_items_7_appended_at": "/items/7/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-other-transcript",
+      "operation": "GET /api/v1/agents/{id}/transcript",
+      "scenario": "retained_discovery_other",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agents/agt_fixture/transcript",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "agent_id": "agt_fixture",
+          "through_seq": 9,
+          "turns": [
+            {
+              "turn_sequence": 4,
+              "started_at": "2026-11-17T00:00:00Z",
+              "owner_message": "Private source input",
+              "agent_messages": [],
+              "messages": [
+                {
+                  "sequence": 5,
+                  "role": "user",
+                  "content": "Private source input",
+                  "appended_at": "2026-11-17T00:00:00Z"
+                }
+              ],
+              "outcome": {
+                "type": "failed",
+                "at": "2026-09-16T00:00:00Z",
+                "failure": {
+                  "class": "agent_turn_failed",
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
+                }
+              }
+            }
+          ]
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_turns_0_messages_0_appended_at": "/turns/0/messages/0/appended_at",
+        "observed_turns_0_started_at": "/turns/0/started_at"
+      }
+    },
+    {
+      "id": "retained-discovery-other-agui",
+      "operation": "GET /api/v1/agui/events",
+      "scenario": "retained_discovery_other",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/agui/events?thread_id=agt_fixture&follow=false",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "id": "2",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_fixture",
+              "runId": "0",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/signIn",
+                  "value": null
+                }
+              ],
+              "timestamp": "2026-09-05T00:00:00Z"
+            }
+          },
+          {
+            "id": "4",
+            "data": {
+              "type": "RUN_STARTED",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_START",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "messageId": "msg_5",
+              "role": "user",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "data": {
+              "type": "TEXT_MESSAGE_CONTENT",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "messageId": "msg_5",
+              "delta": "Private source input",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "5",
+            "data": {
+              "type": "TEXT_MESSAGE_END",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "messageId": "msg_5",
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "6",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/status",
+                  "value": "working"
+                }
+              ],
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "7",
+            "data": {
+              "type": "STATE_DELTA",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "delta": [
+                {
+                  "op": "replace",
+                  "path": "/runtimeMetadata",
+                  "value": {
+                    "workingDirectory": null,
+                    "description": "Private source input",
+                    "descriptionSource": "prompt_preview",
+                    "descriptionIsSetupPreview": false
+                  }
+                }
+              ],
+              "timestamp": "2026-11-17T00:00:00Z"
+            }
+          },
+          {
+            "id": "9",
+            "data": {
+              "type": "RUN_ERROR",
+              "threadId": "agt_fixture",
+              "runId": "4",
+              "code": "agent_turn_failed",
+              "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue.",
+              "timestamp": "2026-09-16T00:00:00Z"
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "observed_1_data_timestamp": "/1/data/timestamp",
+        "observed_2_data_timestamp": "/2/data/timestamp",
+        "observed_3_data_timestamp": "/3/data/timestamp",
+        "observed_4_data_timestamp": "/4/data/timestamp",
+        "observed_5_data_timestamp": "/5/data/timestamp",
+        "observed_6_data_timestamp": "/6/data/timestamp"
+      }
+    },
+    {
+      "id": "retained-discovery-other-response",
+      "operation": "GET /api/v2/responses/{response_id}",
+      "scenario": "retained_discovery_other",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_control_source",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "callback_url": "https://cma.example/agents/agt_fixture",
+          "id": "resp_control_source",
+          "object": "response",
+          "created_at": 1788566400,
+          "completed_at": null,
+          "conversation": {
+            "id": "agt_fixture"
+          },
+          "status": "failed",
+          "background": false,
+          "error": {
+            "code": "agent_turn_failed",
+            "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
+          },
+          "incomplete_details": null,
+          "instructions": null,
+          "max_output_tokens": null,
+          "model": "gpt-proof",
+          "output": [],
+          "parallel_tool_calls": false,
+          "previous_response_id": null,
+          "reasoning": {
+            "effort": null,
+            "summary": null
+          },
+          "store": true,
+          "temperature": null,
+          "text": {
+            "format": {
+              "type": "text"
+            },
+            "verbosity": "medium"
+          },
+          "tool_choice": "none",
+          "tools": [],
+          "top_p": null,
+          "truncation": "disabled",
+          "usage": null,
+          "metadata": {}
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-discovery-other-snapshot",
+      "operation": "GET /api/v2/agents/{agent_id}/events/snapshot",
+      "scenario": "retained_discovery_other",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/snapshot",
+        "headers": {
+          "Prefer": "cma-retained-output"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.event_page",
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+          "items": [
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_available"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_turn_failed",
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
+                }
+              },
+              "response_binding": null
+            }
+          ],
+          "next_page_cursor": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_items_2_appended_at": "/items/2/appended_at",
+        "observed_items_3_appended_at": "/items/3/appended_at",
+        "observed_items_4_appended_at": "/items/4/appended_at",
+        "observed_items_5_appended_at": "/items/5/appended_at",
+        "observed_items_6_appended_at": "/items/6/appended_at",
+        "observed_items_7_appended_at": "/items/7/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-other-legacy-snapshot",
+      "operation": "GET /api/v2/agents/{agent_id}/events/snapshot",
+      "scenario": "retained_discovery_other",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events/snapshot",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.agent.event_page",
+          "schema_version": 1,
+          "agent_id": "agt_fixture",
+          "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+          "through_cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+          "items": [
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_available"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            },
+            {
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_turn_failed",
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
+                }
+              },
+              "response_binding": null
+            }
+          ],
+          "next_page_cursor": null
+        },
+        "bodyKind": "json"
+      },
+      "captures": {
+        "observed_items_2_appended_at": "/items/2/appended_at",
+        "observed_items_3_appended_at": "/items/3/appended_at",
+        "observed_items_4_appended_at": "/items/4/appended_at",
+        "observed_items_5_appended_at": "/items/5/appended_at",
+        "observed_items_6_appended_at": "/items/6/appended_at",
+        "observed_items_7_appended_at": "/items/7/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-owner-response-stream",
+      "operation": "GET /api/v2/responses/{response_id}/events",
+      "scenario": "retained_discovery_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_control_source/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "link": "</api/v2>; rel=\"service-desc\"",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_control_source",
+          "x-cma-response-id": "resp_control_source"
+        },
+        "body": [
+          {
+            "event": "response.created",
+            "id": "0",
+            "data": {
+              "response": {
+                "callback_url": "https://cma.example/agents/agt_fixture",
+                "id": "resp_control_source",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "queued",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.in_progress",
+            "id": "1",
+            "data": {
+              "response": {
+                "callback_url": "https://cma.example/agents/agt_fixture",
+                "id": "resp_control_source",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.in_progress",
+              "sequence_number": 1
+            }
+          },
+          {
+            "event": "response.failed",
+            "id": "2",
+            "data": {
+              "response": {
+                "retained_output": {
+                  "available": true
+                },
+                "callback_url": "https://cma.example/agents/agt_fixture",
+                "id": "resp_control_source",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "failed",
+                "background": false,
+                "error": {
+                  "code": "agent_log_capacity_exceeded",
+                  "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                },
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.failed",
+              "sequence_number": 2
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-discovery-owner-tail",
+      "operation": "GET /api/v2/agents/{agent_id}/events",
+      "scenario": "retained_discovery_owner",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events?follow=false",
+        "headers": {
+          "Prefer": "cma-retained-output"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_available"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "retained_output": {
+                "available": true
+              },
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              },
+              "response_binding": null
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "observed_2_data_appended_at": "/2/data/appended_at",
+        "observed_3_data_appended_at": "/3/data/appended_at",
+        "observed_4_data_appended_at": "/4/data/appended_at",
+        "observed_5_data_appended_at": "/5/data/appended_at",
+        "observed_6_data_appended_at": "/6/data/appended_at",
+        "observed_7_data_appended_at": "/7/data/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-shared-response-stream",
+      "operation": "GET /api/v2/responses/{response_id}/events",
+      "scenario": "retained_discovery_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_control_source/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "link": "</api/v2>; rel=\"service-desc\"",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_control_source",
+          "x-cma-response-id": "resp_control_source"
+        },
+        "body": [
+          {
+            "event": "response.created",
+            "id": "0",
+            "data": {
+              "response": {
+                "callback_url": "https://cma.example/agents/agt_fixture",
+                "id": "resp_control_source",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "queued",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.in_progress",
+            "id": "1",
+            "data": {
+              "response": {
+                "callback_url": "https://cma.example/agents/agt_fixture",
+                "id": "resp_control_source",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.in_progress",
+              "sequence_number": 1
+            }
+          },
+          {
+            "event": "response.failed",
+            "id": "2",
+            "data": {
+              "response": {
+                "retained_output": {
+                  "available": true
+                },
+                "callback_url": "https://cma.example/agents/agt_fixture",
+                "id": "resp_control_source",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "failed",
+                "background": false,
+                "error": {
+                  "code": "agent_log_capacity_exceeded",
+                  "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                },
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.failed",
+              "sequence_number": 2
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-discovery-shared-tail",
+      "operation": "GET /api/v2/agents/{agent_id}/events",
+      "scenario": "retained_discovery_shared",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events?follow=false",
+        "headers": {
+          "Prefer": "cma-retained-output"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": null,
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": null,
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": null,
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "retained_output": {
+                "available": true
+              },
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              },
+              "response_binding": null
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "observed_2_data_appended_at": "/2/data/appended_at",
+        "observed_3_data_appended_at": "/3/data/appended_at",
+        "observed_4_data_appended_at": "/4/data/appended_at",
+        "observed_5_data_appended_at": "/5/data/appended_at",
+        "observed_6_data_appended_at": "/6/data/appended_at",
+        "observed_7_data_appended_at": "/7/data/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-public-response-stream",
+      "operation": "GET /api/v2/responses/{response_id}/events",
+      "scenario": "retained_discovery_public",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_control_source/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "link": "</api/v2>; rel=\"service-desc\"",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_control_source",
+          "x-cma-response-id": "resp_control_source"
+        },
+        "body": [
+          {
+            "event": "response.created",
+            "id": "0",
+            "data": {
+              "response": {
+                "callback_url": "https://cma.example/agents/agt_fixture",
+                "id": "resp_control_source",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "queued",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.in_progress",
+            "id": "1",
+            "data": {
+              "response": {
+                "callback_url": "https://cma.example/agents/agt_fixture",
+                "id": "resp_control_source",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.in_progress",
+              "sequence_number": 1
+            }
+          },
+          {
+            "event": "response.failed",
+            "id": "2",
+            "data": {
+              "response": {
+                "callback_url": "https://cma.example/agents/agt_fixture",
+                "id": "resp_control_source",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "failed",
+                "background": false,
+                "error": {
+                  "code": "agent_log_capacity_exceeded",
+                  "message": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                },
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.failed",
+              "sequence_number": 2
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-discovery-public-tail",
+      "operation": "GET /api/v2/agents/{agent_id}/events",
+      "scenario": "retained_discovery_public",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events?follow=false",
+        "headers": {
+          "Prefer": "cma-retained-output"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_available"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_log_capacity_exceeded",
+                  "detail": "This Agent cannot continue because its conversation history is full. If retained output is available, contact support to recover it."
+                }
+              },
+              "response_binding": null
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "observed_2_data_appended_at": "/2/data/appended_at",
+        "observed_3_data_appended_at": "/3/data/appended_at",
+        "observed_4_data_appended_at": "/4/data/appended_at",
+        "observed_5_data_appended_at": "/5/data/appended_at",
+        "observed_6_data_appended_at": "/6/data/appended_at",
+        "observed_7_data_appended_at": "/7/data/appended_at"
+      }
+    },
+    {
+      "id": "retained-discovery-other-response-stream",
+      "operation": "GET /api/v2/responses/{response_id}/events",
+      "scenario": "retained_discovery_other",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/responses/resp_control_source/events",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "no-cache, no-store",
+          "content-type": "text/event-stream",
+          "link": "</api/v2>; rel=\"service-desc\"",
+          "x-accel-buffering": "no",
+          "x-cma-command-id": "cmd_control_source",
+          "x-cma-response-id": "resp_control_source"
+        },
+        "body": [
+          {
+            "event": "response.created",
+            "id": "0",
+            "data": {
+              "response": {
+                "callback_url": "https://cma.example/agents/agt_fixture",
+                "id": "resp_control_source",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "queued",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.created",
+              "sequence_number": 0
+            }
+          },
+          {
+            "event": "response.in_progress",
+            "id": "1",
+            "data": {
+              "response": {
+                "callback_url": "https://cma.example/agents/agt_fixture",
+                "id": "resp_control_source",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "in_progress",
+                "background": false,
+                "error": null,
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.in_progress",
+              "sequence_number": 1
+            }
+          },
+          {
+            "event": "response.failed",
+            "id": "2",
+            "data": {
+              "response": {
+                "callback_url": "https://cma.example/agents/agt_fixture",
+                "id": "resp_control_source",
+                "object": "response",
+                "created_at": 1788566400,
+                "completed_at": null,
+                "conversation": {
+                  "id": "agt_fixture"
+                },
+                "status": "failed",
+                "background": false,
+                "error": {
+                  "code": "agent_turn_failed",
+                  "message": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
+                },
+                "incomplete_details": null,
+                "instructions": null,
+                "max_output_tokens": null,
+                "model": "gpt-proof",
+                "output": [],
+                "parallel_tool_calls": false,
+                "previous_response_id": null,
+                "reasoning": {
+                  "effort": null,
+                  "summary": null
+                },
+                "store": true,
+                "temperature": null,
+                "text": {
+                  "format": {
+                    "type": "text"
+                  },
+                  "verbosity": "medium"
+                },
+                "tool_choice": "none",
+                "tools": [],
+                "top_p": null,
+                "truncation": "disabled",
+                "usage": null,
+                "metadata": {}
+              },
+              "type": "response.failed",
+              "sequence_number": 2
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {}
+    },
+    {
+      "id": "retained-discovery-other-tail",
+      "operation": "GET /api/v2/agents/{agent_id}/events",
+      "scenario": "retained_discovery_other",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/agents/agt_fixture/events?follow=false",
+        "headers": {
+          "Prefer": "cma-retained-output"
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "text/event-stream",
+          "x-accel-buffering": "no"
+        },
+        "body": [
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.1",
+              "sequence": 1,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "created",
+                "workspace_id": "wks_route",
+                "worktree_id": "wkt_agt_fixture"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.2",
+              "sequence": 2,
+              "appended_at": "2026-09-05T00:00:00Z",
+              "kind": {
+                "type": "conversation_available"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.3",
+              "sequence": 3,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "dispatch_fenced"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.4",
+              "sequence": 4,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "turn_started",
+                "turn_sequence": 4
+              },
+              "response_binding": {
+                "command_id": "cmd_control_source",
+                "response_id": "resp_control_source",
+                "turn_sequence": 4
+              }
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.5",
+              "sequence": 5,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "message",
+                "role": "user",
+                "content": "Private source input"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.6",
+              "sequence": 6,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "status_changed",
+                "from": "ready",
+                "to": "working"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.7",
+              "sequence": 7,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "runtime_metadata_changed",
+                "metadata": {
+                  "description": "Private source input",
+                  "description_source": "prompt_preview"
+                }
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.8",
+              "sequence": 8,
+              "appended_at": "2026-11-17T00:00:00Z",
+              "kind": {
+                "type": "delivery_changed",
+                "operation_sequence": 3,
+                "operation": "send_message",
+                "state": "write_confirmed"
+              },
+              "response_binding": null
+            }
+          },
+          {
+            "event": "cma.agent.event",
+            "id": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+            "data": {
+              "agent_id": "agt_fixture",
+              "incarnation": "0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f",
+              "cursor": "ag1.0678c251766748f714363aa17a6e5c2255512201654e9928e3b056fd2be8610f.9",
+              "sequence": 9,
+              "appended_at": "2026-09-16T00:00:00Z",
+              "kind": {
+                "type": "turn_failed",
+                "turn_sequence": 4,
+                "failure": {
+                  "class": "agent_turn_failed",
+                  "detail": "The Agent run failed. The failed turn will not be replayed automatically. Earlier work may have completed; review the conversation before sending a new message to continue."
+                }
+              },
+              "response_binding": null
+            }
+          }
+        ],
+        "bodyKind": "sse"
+      },
+      "captures": {
+        "observed_2_data_appended_at": "/2/data/appended_at",
+        "observed_3_data_appended_at": "/3/data/appended_at",
+        "observed_4_data_appended_at": "/4/data/appended_at",
+        "observed_5_data_appended_at": "/5/data/appended_at",
+        "observed_6_data_appended_at": "/6/data/appended_at",
+        "observed_7_data_appended_at": "/7/data/appended_at"
+      }
+    }
+  ]
+}

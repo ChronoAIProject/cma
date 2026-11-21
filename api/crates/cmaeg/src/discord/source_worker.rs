@@ -1,0 +1,207 @@
+//! One source's reconnect loop. A fresh lease is acquired for every attempt.
+use super::{
+    status::{FailureCode, NativeDiscordConnectionStatus, StatusAttempt, StatusRegistry},
+    EndReason, GatewayEnd, GatewayError,
+};
+use futures_util::future::BoxFuture;
+use std::{sync::Arc, time::Duration};
+use tokio::sync::watch;
+
+pub(super) trait SourcePort: Send + Sync {
+    fn replica_mode(&self) -> bool {
+        false
+    }
+    /// Return the current eligible source revision; no credential is returned.
+    fn revision<'a>(&'a self, record: &'a str) -> BoxFuture<'a, Result<String, GatewayError>>;
+    fn connect<'a>(
+        &'a self,
+        record: &'a str,
+        stop: watch::Receiver<bool>,
+        status: StatusAttempt,
+    ) -> BoxFuture<'a, Attempt>;
+}
+pub(super) struct Attempt {
+    pub result: Result<GatewayEnd, GatewayError>,
+    pub cooldown: Duration,
+}
+#[derive(Clone, Copy)]
+pub(super) struct Timing {
+    pub poll: Duration,
+    pub retry: Duration,
+    pub stop: Duration,
+}
+impl Default for Timing {
+    fn default() -> Self {
+        Self {
+            poll: Duration::from_secs(10),
+            retry: Duration::from_secs(5),
+            stop: Duration::from_secs(5),
+        }
+    }
+}
+pub(super) async fn run(
+    port: Arc<dyn SourcePort>,
+    record: String,
+    mut shutdown: watch::Receiver<bool>,
+    timing: Timing,
+    statuses: StatusRegistry,
+) {
+    let mut status = statuses.begin(&record, None);
+    let mut terminal_revision: Option<(String, NativeDiscordConnectionStatus)> = None;
+    let mut status_revision = None;
+    // Resolution failure changes the current attempt, not the revision that
+    // owns its history. Keep that tag until a successful read replaces it.
+    let mut last_known_revision = None;
+    let mut failures = 0u32;
+    loop {
+        if *shutdown.borrow() {
+            break;
+        }
+        let revision = tokio::select! {
+            changed = shutdown.changed() => { if changed.is_err() || *shutdown.borrow() { break; } else { continue; } },
+            revision = port.revision(&record) => revision,
+        };
+        let revision = match revision {
+            Ok(revision) => revision,
+            Err(error) => {
+                status = statuses.begin(&record, last_known_revision.as_deref());
+                status_revision = None;
+                status.finish(error.into(), false, timing.poll);
+                if stopped(&mut shutdown, timing.poll).await {
+                    break;
+                }
+                continue;
+            }
+        };
+        last_known_revision = Some(revision.clone());
+        if let Some((_, snapshot)) = terminal_revision
+            .as_ref()
+            .filter(|(saved, _)| saved == &revision)
+        {
+            if status_revision.as_ref() != Some(&revision) {
+                status = statuses.begin(&record, Some(&revision));
+                status.restore_terminal(snapshot);
+                status_revision = Some(revision.clone());
+            }
+            status.poll();
+            if stopped(&mut shutdown, timing.poll).await {
+                break;
+            }
+            continue;
+        }
+        status = statuses.begin(&record, Some(&revision));
+        status_revision = Some(revision.clone());
+        let (stop, receiver) = watch::channel(false);
+        let attempt = port.connect(&record, receiver, status.clone());
+        tokio::pin!(attempt);
+        // Polling authority is independent of the socket future; neither blocks
+        // the other. Routing removal is also an eligibility revocation.
+        let authority = async {
+            loop {
+                tokio::time::sleep(timing.poll).await;
+                match port.revision(&record).await {
+                    Ok(current) if current == revision => {
+                        status.poll();
+                    }
+                    _ => return,
+                }
+            }
+        };
+        tokio::pin!(authority);
+        let outcome = tokio::select! {
+            result = &mut attempt => Some(result),
+            _ = &mut authority => None,
+            _ = shutdown.changed() => None,
+        };
+        let Some(outcome) = outcome else {
+            let shutting_down = *shutdown.borrow() || shutdown.has_changed().is_err();
+            if !shutting_down {
+                status.failure(FailureCode::AuthorityRevoked);
+            }
+            let _ = stop.send(true);
+            let _ = tokio::time::timeout(timing.stop, &mut attempt).await;
+            if *shutdown.borrow() || shutdown.has_changed().is_err() {
+                break;
+            }
+            status.finish(FailureCode::AuthorityRevoked, false, Duration::ZERO);
+            failures = 0;
+            continue;
+        };
+        let terminal = match &outcome.result {
+            Ok(end) => {
+                !end.retryable()
+                    && !matches!(end.reason, EndReason::Stopped | EndReason::AuthorityRevoked)
+            }
+            Err(
+                GatewayError::InvalidConfiguration
+                | GatewayError::Authentication
+                | GatewayError::MissingMessageContentIntent
+                | GatewayError::Protocol,
+            ) => true,
+            _ => false,
+        };
+        failures = failures.saturating_add(1);
+        let delay = if port.replica_mode()
+            && matches!(outcome.result, Err(GatewayError::Authority))
+            && status.failure_code() == Some(FailureCode::LeaseContended)
+        {
+            Duration::from_secs(1).max(outcome.cooldown)
+        } else {
+            retry_delay(&outcome, failures, timing.retry)
+        };
+        let code = match &outcome.result {
+            Ok(end) => end.reason.into(),
+            Err(error) => (*error).into(),
+        };
+        status.finish(code, terminal, delay);
+        if terminal {
+            let snapshot = statuses.view(&record, Some(&revision));
+            terminal_revision = Some((revision.clone(), snapshot));
+        }
+        if stopped(&mut shutdown, delay).await {
+            break;
+        }
+    }
+    status.stopped();
+}
+fn retry_delay(attempt: &Attempt, failures: u32, base: Duration) -> Duration {
+    if matches!(attempt.result, Err(GatewayError::SessionLimitUnavailable)) {
+        let jitter = uuid::Uuid::new_v4().as_u128() as u64;
+        return session_limit_delay(failures, jitter).max(attempt.cooldown);
+    }
+    let minimum = match &attempt.result {
+        Ok(end) => end.retry_after,
+        // Authority refusals remain repairable. Only proved replica lease
+        // contention takes the short retry above; other refusals back off.
+        Err(GatewayError::Authority) => Duration::from_secs(30),
+        Err(GatewayError::RateLimited) => Duration::from_secs(60),
+        _ => Duration::ZERO,
+    };
+    base.saturating_mul(1u32 << failures.saturating_sub(1).min(4))
+        .min(Duration::from_secs(60))
+        .max(minimum)
+        .max(attempt.cooldown)
+}
+// Positive jitter preserves a minimum delay even when discovery refuses before
+// opening a socket. The plateau retains jitter rather than synchronizing bots.
+fn session_limit_delay(failures: u32, jitter: u64) -> Duration {
+    let floor_ms = 5_000u64 << failures.saturating_sub(1).min(3);
+    Duration::from_millis(floor_ms + jitter % (floor_ms / 2 + 1))
+}
+pub(super) async fn stopped(stop: &mut watch::Receiver<bool>, delay: Duration) -> bool {
+    if *stop.borrow() {
+        return true;
+    }
+    tokio::select! {
+        _ = tokio::time::sleep(delay) => false,
+        changed = stop.changed() => changed.is_err() || *stop.borrow(),
+    }
+}
+
+#[cfg(test)]
+#[path = "source_worker_tests.rs"]
+mod tests;
+
+#[cfg(test)]
+#[path = "source_discovery_recovery_tests.rs"]
+mod recovery_tests;

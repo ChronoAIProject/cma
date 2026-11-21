@@ -1,6 +1,20 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import type { ReactNode } from 'react';
-import type { AuthProvider, AuthState } from './types';
+import type { AuthProvider, AuthState, SignInOptions } from './types';
+import { parseRoute, routePath } from '../routing/routes';
+import { retainDocumentShareToken } from '../documents/shareToken';
+import { retainAgentShareForSignIn } from '../resources/agentShareToken';
+import { retainTaskViewer } from '../create/taskIdentity';
+import { retainAgentDraftOwner } from '../agent/draftIdentity';
+import { releaseNavigationGuard } from '../routing/navigationGuard';
 
 /**
  * Wires an AuthProvider into React. Components consume `useAuth()` and never
@@ -10,11 +24,15 @@ import type { AuthProvider, AuthState } from './types';
 
 interface AuthContextValue {
   readonly state: AuthState;
-  readonly signIn: (returnTo?: string) => Promise<void>;
+  readonly outage: Extract<AuthState, { status: 'error' }> | undefined;
+  readonly retry: () => void;
+  readonly signIn: (returnTo?: string, options?: SignInOptions) => Promise<void>;
   readonly signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+const SILENT_SIGN_IN_TIMEOUT_MS = 10000;
 
 interface AuthProviderProps {
   readonly provider: AuthProvider;
@@ -23,42 +41,148 @@ interface AuthProviderProps {
 
 export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   const [state, setState] = useState<AuthState>({ status: 'checking' });
+  const currentRead = useRef(0);
+  const [outage, setOutage] = useState<Extract<AuthState, { status: 'error' }>>();
+  const refreshRef = useRef<() => void>(() => {});
+  const retry = useCallback(() => refreshRef.current(), []);
 
   useEffect(() => {
     // Guards against a resolved promise landing after unmount, which React 19
     // StrictMode makes routine by running effects twice in development.
     let live = true;
+    let inFlight = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let failures = 0;
+    let last: AuthState = { status: 'checking' };
+    let pendingNavigation = false;
+    let leaving: ReturnType<typeof setTimeout> | undefined;
 
-    provider
-      .current()
-      .then((next) => {
-        if (live) {
-          setState(next);
-        }
-      })
-      .catch((error: unknown) => {
-        // The contract says implementations must not throw, but a provider is
-        // injected and may misbehave. Surface it rather than hanging on
-        // 'checking' forever, which would render an empty page with no reason.
-        if (live) {
-          setState({
-            status: 'error',
-            message: error instanceof Error ? error.message : 'Could not verify your session.',
-          });
-        }
-      });
+    const refresh = (mayNavigate = false) => {
+      if (!live || inFlight || leaving !== undefined) return;
+      clearTimeout(timer);
+      inFlight = true;
+      const version = ++currentRead.current;
+      void provider
+        .current()
+        .then((next) => {
+          if (live && version === currentRead.current) {
+            if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
+            else if (next.status === 'anonymous') {
+              releaseNavigationGuard();
+              retainAgentDraftOwner();
+            }
+            if (next.status !== 'error') last = next;
+            let leavingSilently = false;
+            if (mayNavigate && next.status === 'anonymous') {
+              try {
+                leavingSilently = provider.signInSilently?.() === true;
+              } catch {
+                /* Show the signed-out page. */
+              }
+            }
+            if (leavingSilently && next.status === 'anonymous') {
+              setOutage(undefined);
+              setState({ status: 'checking' });
+              leaving = setTimeout(() => {
+                leaving = undefined;
+                if (!live || version !== currentRead.current) return;
+                setState(next);
+              }, SILENT_SIGN_IN_TIMEOUT_MS);
+              return;
+            }
+            if (next.status === 'authenticated') retainTaskViewer(next.user.id);
+            if (next.status === 'error' && next.reason !== undefined) {
+              setOutage(next);
+              // Retain mounted views and drafts. This is presentation only;
+              // every protected operation still requires server authorization.
+              setState((previous) => (previous.status === 'authenticated' ? previous : next));
+              const delay = Math.min(3000 * 2 ** Math.min(failures++, 4), 30000);
+              timer = setTimeout(
+                () => refresh(mayNavigate),
+                delay + Math.floor(Math.random() * 501),
+              );
+            } else {
+              failures = 0;
+              setOutage(undefined);
+              setState(next);
+            }
+          }
+        })
+        .catch((error: unknown) => {
+          // The contract says implementations must not throw, but a provider is
+          // injected and may misbehave. Surface it rather than hanging on
+          // 'checking' forever, which would render an empty page with no reason.
+          if (live && version === currentRead.current) {
+            setState({
+              status: 'error',
+              message: error instanceof Error ? error.message : 'Could not verify your identity.',
+            });
+          }
+        })
+        .finally(() => {
+          inFlight = false;
+          if (live && pendingNavigation) {
+            pendingNavigation = false;
+            refresh(true);
+          }
+        });
+    };
+    const backgroundRefresh = () => refresh();
+    refreshRef.current = backgroundRefresh;
+    const navigation = () => {
+      if (last.status !== 'anonymous') return;
+      if (inFlight) {
+        pendingNavigation = true;
+        return;
+      }
+      refresh(true);
+    };
+    const visible = () => {
+      if (document.visibilityState !== 'hidden') refresh();
+    };
+    refresh(true);
+    window.addEventListener('popstate', navigation);
+    window.addEventListener('cma:navigate', navigation);
+    window.addEventListener('focus', backgroundRefresh);
+    window.addEventListener('online', backgroundRefresh);
+    document.addEventListener('visibilitychange', visible);
 
     return () => {
       live = false;
+      clearTimeout(timer);
+      clearTimeout(leaving);
+      refreshRef.current = () => {};
+      window.removeEventListener('popstate', navigation);
+      window.removeEventListener('cma:navigate', navigation);
+      window.removeEventListener('focus', backgroundRefresh);
+      window.removeEventListener('online', backgroundRefresh);
+      document.removeEventListener('visibilitychange', visible);
     };
   }, [provider]);
 
   const signIn = useCallback(
-    async (returnTo?: string) => {
+    async (returnTo?: string, options?: SignInOptions) => {
+      const version = ++currentRead.current;
       try {
-        await provider.signIn(returnTo);
-        setState(await provider.current());
+        const current = parseRoute(window.location.pathname);
+        if (current.kind === 'agent_share') {
+          retainAgentShareForSignIn(current.shareId);
+          returnTo = routePath(current);
+        }
+        if (current.kind === 'document') {
+          retainDocumentShareToken(current.documentId, true);
+          returnTo = routePath(current);
+        }
+        await provider.signIn(returnTo, options);
+        const next = await provider.current();
+        if (version !== currentRead.current) return;
+        if (next.status === 'authenticated') retainTaskViewer(next.user.id);
+        if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
+        else if (next.status === 'anonymous') retainAgentDraftOwner();
+        setOutage(undefined);
+        setState(next);
       } catch (error: unknown) {
+        if (version !== currentRead.current) return;
         setState({
           status: 'error',
           message: error instanceof Error ? error.message : 'Sign-in could not be started.',
@@ -69,10 +193,18 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   );
 
   const signOut = useCallback(async () => {
+    releaseNavigationGuard();
+    const version = ++currentRead.current;
     try {
+      retainTaskViewer();
+      retainAgentDraftOwner();
+      setState({ status: 'checking' });
       await provider.signOut();
+      if (version !== currentRead.current) return;
+      setOutage(undefined);
       setState({ status: 'anonymous' });
     } catch (error: unknown) {
+      if (version !== currentRead.current) return;
       setState({
         status: 'error',
         message: error instanceof Error ? error.message : 'Sign-out did not complete.',
@@ -81,8 +213,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   }, [provider]);
 
   const value = useMemo<AuthContextValue>(
-    () => ({ state, signIn, signOut }),
-    [state, signIn, signOut],
+    () => ({ state, outage, retry, signIn, signOut }),
+    [state, outage, retry, signIn, signOut],
   );
 
   return <AuthContext value={value}>{children}</AuthContext>;
@@ -94,4 +226,9 @@ export function useAuth(): AuthContextValue {
     throw new Error('useAuth must be used within an AuthContextProvider');
   }
   return value;
+}
+
+export function useIdentityUncertain(): boolean {
+  const value = useContext(AuthContext);
+  return value !== null && (value.outage !== undefined || value.state.status !== 'authenticated');
 }

@@ -2,7 +2,7 @@ import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import './Button.css';
 
 /**
- * The one button — `docs/Web_Style.md` §12.
+ * The one button — the shared style contracts
  *
  * A capsule, not a rectangle. The variants are fill families rather than
  * loudness levels: `primary` is the one action a surface exists for, `ghost`
@@ -29,7 +29,12 @@ interface ButtonProps extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'cla
   readonly size?: ButtonSize;
   /** A leading 16px glyph. Sized by the button so callers cannot drift. */
   readonly icon?: ReactNode;
-  /** Extra classes for placement only. Never for colour, depth or size. */
+  /**
+   * Extra classes for placement only. Never for colour, depth or size.
+   * Sole exception: task-home landing controls (composer toolbar, send,
+   * repository chip, templates, recovery actions) and repository dialog
+   * controls, documented in Web_Style 2026-11-05.
+   */
   readonly placement?: string;
 }
 

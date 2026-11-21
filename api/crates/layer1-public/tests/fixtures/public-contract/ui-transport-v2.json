@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "ui-transport-v2-off",
+      "operation": "GET /api/v2/ui/transport",
+      "scenario": "agent_events_v2_off",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/ui/transport",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.ui.transport",
+          "schema_version": 1,
+          "enabled": false,
+          "selection": "new_tabs",
+          "input": "responses_v2",
+          "snapshot_schema": 1,
+          "event_schema": 1,
+          "control_schema": 1,
+          "live_fragments": true,
+          "snapshot": "/api/v2/agents/{agent_id}/events/snapshot",
+          "events": "/api/v2/agents/{agent_id}/events",
+          "controls": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+          "command_status": "/api/v2/commands/{command_id}"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "ui-transport-v2-enabled",
+      "operation": "GET /api/v2/ui/transport",
+      "scenario": "agent_events_v2_enabled",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/ui/transport",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": {
+          "object": "cma.ui.transport",
+          "schema_version": 1,
+          "enabled": true,
+          "selection": "new_tabs",
+          "input": "responses_v2",
+          "snapshot_schema": 1,
+          "event_schema": 1,
+          "control_schema": 1,
+          "live_fragments": true,
+          "snapshot": "/api/v2/agents/{agent_id}/events/snapshot",
+          "events": "/api/v2/agents/{agent_id}/events",
+          "controls": "/api/v2/agents/{agent_id}/responses/{response_id}/controls",
+          "command_status": "/api/v2/commands/{command_id}"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "ui-transport-v2-anonymous",
+      "operation": "GET /api/v2/ui/transport",
+      "scenario": "agent_events_v2_anonymous",
+      "request": {
+        "method": "GET",
+        "path": "/api/v2/ui/transport",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

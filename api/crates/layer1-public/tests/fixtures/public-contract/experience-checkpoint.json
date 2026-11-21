@@ -1,0 +1,155 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "rest-checkpoint-input-not-admitted",
+      "operation": "POST /api/v1/agents/{id}/input",
+      "scenario": "agents_checkpoint",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agents/agt_contract/input",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "checkpoint-input-one"
+        },
+        "body": {
+          "text": "Continue"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-checkpoint-in-progress",
+          "title": "sandbox checkpoint in progress",
+          "status": 409,
+          "detail": "The Sandbox is saving a checkpoint. Input was not accepted; retry after the checkpoint completes.",
+          "code": "sandbox_checkpoint_in_progress"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-checkpoint-input-not-admitted",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_checkpoint",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Continue"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 504,
+        "headers": {
+          "content-type": "application/problem+json",
+          "x-cma-command-id": "cmd_contract_agui_checkpoint_input_not_admitted",
+          "x-cma-response-id": "resp_contract_agui_checkpoint_input_not_admitted"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-command-observation-timeout",
+          "title": "agent command observation timeout",
+          "status": 504,
+          "detail": "The admitted command has no observed turn binding yet. Its outcome remains unknown; retry the same input with the retained Idempotency-Key or read its command status.",
+          "code": "agent_command_observation_timeout"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {},
+      "headerCaptures": {
+        "agui_checkpoint_input_not_admitted_command": "x-cma-command-id",
+        "agui_checkpoint_input_not_admitted_response": "x-cma-response-id"
+      }
+    },
+    {
+      "id": "agui-checkpoint-approval-not-admitted",
+      "operation": "POST /api/v1/agui/run",
+      "scenario": "experience_checkpoint",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "resume": [
+            {
+              "interruptId": "approval-one",
+              "status": "resolved",
+              "payload": {
+                "decision": "allow"
+              }
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "content-type": "application/problem+json"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-ready",
+          "title": "agent not ready",
+          "status": 409,
+          "detail": "The agent is not ready for this operation.",
+          "code": "agent_not_ready"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-checkpoint-input-not-admitted",
+      "operation": "POST /api/v1/responses",
+      "scenario": "experience_checkpoint",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/responses",
+        "headers": {
+          "content-type": "application/json"
+        },
+        "body": {
+          "conversation": "agt_contract",
+          "input": "Continue",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 504,
+        "headers": {
+          "content-type": "application/problem+json",
+          "x-cma-command-id": "cmd_contract_responses_checkpoint_input_not_admitted",
+          "x-cma-response-id": "resp_contract_responses_checkpoint_input_not_admitted"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-command-observation-timeout",
+          "title": "agent command observation timeout",
+          "status": 504,
+          "detail": "The admitted command has no observed turn binding yet. Its outcome remains unknown; retry the same input with the retained Idempotency-Key or read its command status.",
+          "code": "agent_command_observation_timeout"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {},
+      "headerCaptures": {
+        "responses_checkpoint_input_not_admitted_command": "x-cma-command-id",
+        "responses_checkpoint_input_not_admitted_response": "x-cma-response-id"
+      }
+    }
+  ]
+}

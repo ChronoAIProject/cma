@@ -1,0 +1,205 @@
+use layer2_core::sandbox::agent_io::{
+    command_ready_for_claim, AdmittedAgentCommand, AgentCommand, CommandClaim, CommandClaimRequest,
+    CommandLane, CommandLedgerError,
+};
+use mongodb::bson::doc;
+use mongodb::ClientSession;
+
+use super::super::agents::read_agent;
+use super::super::sandbox_mongo::{signed, MongoSandboxStore};
+use super::worker::Change;
+use super::{lane_records, records, ApplyError};
+
+pub(in crate::store) async fn apply(
+    store: &MongoSandboxStore,
+    change: &Change,
+    session: &mut ClientSession,
+) -> Result<super::worker::TransactionResult, ApplyError> {
+    if let Change::Reconcile(id) = change {
+        let (command, outcome) = super::reconcile::apply_observed(store, id, session).await?;
+        return Ok((Some(command), Some(outcome)));
+    }
+    apply_mutation(store, change, session)
+        .await
+        .map(|command| (command, None))
+}
+
+async fn apply_mutation(
+    store: &MongoSandboxStore,
+    change: &Change,
+    session: &mut ClientSession,
+) -> Result<Option<AdmittedAgentCommand>, ApplyError> {
+    let (claim, now) = match change {
+        Change::Reconcile(_) => unreachable!("reconciliation handled before mutations"),
+        Change::Claim { request, observed } => {
+            return claim_next(store, request, observed.as_ref(), session).await
+        }
+        Change::Renew { claim, now, .. }
+        | Change::Release { claim, now }
+        | Change::Reject { claim, now, .. } => (claim, now),
+    };
+    let (mut command, mut lane) = load_claim(store, claim, now, session).await?;
+    let revision = command.revision;
+    match change {
+        Change::Renew { expires_at, .. } => {
+            let previous = &command.work.lease.as_ref().unwrap().expires_at;
+            if layer2_core::seconds_from_rfc3339(expires_at)
+                < layer2_core::seconds_from_rfc3339(previous)
+            {
+                return Err(CommandLedgerError::Invalid.into());
+            }
+            command.work.lease.as_mut().unwrap().expires_at = expires_at.clone();
+            lane.lease.as_mut().unwrap().expires_at = expires_at.clone();
+        }
+        Change::Release { .. } => {
+            command.work.lease = None;
+            lane.lease = None;
+        }
+        Change::Reject { code, .. } => {
+            command.reject_before_dispatch(claim, *code, now.clone())?;
+            lane.lease = None;
+        }
+        Change::Claim { .. } | Change::Reconcile(_) => unreachable!(),
+    }
+    command.revision = revision.checked_add(1).ok_or(CommandLedgerError::Corrupt)?;
+    write(store, &command, revision, &lane, session).await?;
+    Ok(Some(command))
+}
+
+pub(super) async fn load_claim(
+    store: &MongoSandboxStore,
+    claim: &CommandClaim,
+    now: &str,
+    session: &mut ClientSession,
+) -> Result<(AdmittedAgentCommand, CommandLane), ApplyError> {
+    let lane = store
+        .agent_command_orders
+        .find_one(doc! { "_id": claim.agent_id.as_str() })
+        .session(&mut *session)
+        .await?
+        .ok_or(CommandLedgerError::StaleClaim)?;
+    let lane = lane_records::read(&lane, claim.agent_id.as_str())?;
+    lane.require_claim(claim, now)?;
+    let command = store
+        .agent_commands
+        .find_one(doc! { "_id": claim.command_id.as_str() })
+        .session(&mut *session)
+        .await?
+        .ok_or(CommandLedgerError::StaleClaim)?;
+    let command = records::read(&command)?;
+    command.require_claim(claim, now)?;
+    if lane.lease != command.work.lease {
+        return Err(CommandLedgerError::Corrupt.into());
+    }
+    Ok((command, lane))
+}
+
+async fn claim_next(
+    store: &MongoSandboxStore,
+    request: &CommandClaimRequest,
+    observed: Option<&(layer2_core::ids::AgentCommandId, u64)>,
+    session: &mut ClientSession,
+) -> Result<Option<AdmittedAgentCommand>, ApplyError> {
+    let Some(lane) = store
+        .agent_command_orders
+        .find_one(doc! { "_id": request.agent_id.as_str() })
+        .session(&mut *session)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let mut lane = lane_records::read(&lane, request.agent_id.as_str())?;
+    if lane
+        .lease
+        .as_ref()
+        .is_some_and(|lease| lease.live_at(&request.now))
+    {
+        return Ok(None);
+    }
+    let agent = store
+        .agents
+        .find_one(doc! { "_id": request.agent_id.as_str() })
+        .session(&mut *session)
+        .await?
+        .as_ref()
+        .map(read_agent)
+        .transpose()
+        .map_err(|_| CommandLedgerError::Corrupt)?;
+    let mut candidates = store
+        .agent_commands
+        .find(doc! { "agent_id": request.agent_id.as_str(),
+        "status": { "$in": ["queued", "waiting_action"] } })
+        .sort(doc! { "agent_order": 1 })
+        .session(&mut *session)
+        .await?;
+    let mut ordered = Vec::new();
+    while let Some(document) = candidates.next(&mut *session).await {
+        ordered.push(records::read(&document?)?);
+    }
+    ordered.sort_by_key(AdmittedAgentCommand::queue_priority);
+    let mut message_held = false;
+    for mut command in ordered {
+        message_held |= command.holds_message_order(&request.now);
+        if message_held
+            && matches!(
+                command.receipt.envelope.command,
+                AgentCommand::Message { .. }
+            )
+        {
+            continue;
+        }
+        if !command_ready_for_claim(&command, agent.as_ref(), &request.now) {
+            continue;
+        }
+        if observed.is_some_and(|(id, revision)| {
+            id != &command.receipt.envelope.command_id || *revision != command.revision
+        }) {
+            return Ok(None);
+        }
+        let revision = command.revision;
+        if !lane.claim(&mut command, request)? {
+            return Ok(None);
+        }
+        write(store, &command, revision, &lane, session).await?;
+        return Ok(Some(command));
+    }
+    Ok(None)
+}
+
+pub(super) async fn write(
+    store: &MongoSandboxStore,
+    command: &AdmittedAgentCommand,
+    expected_revision: u64,
+    lane: &CommandLane,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
+    super::super::budget::release_unexecuted(store, command, session)
+        .await
+        .map_err(|error| match error {
+            super::super::agent_conversation_store::ApplyError::Driver(error) => {
+                ApplyError::Driver(error)
+            }
+            _ => ApplyError::Domain(CommandLedgerError::Unavailable),
+        })?;
+    // Terminal Trigger projection is completed by the scoped transaction root.
+    // Dispatch binding and reconciliation already have dispatch evidence;
+    // queued input edits are nonterminal and require no first-message event.
+    let mut fields = records::document(command)?;
+    fields.remove("_id");
+    let result = store.agent_commands.update_one(doc! { "_id": command.receipt.envelope.command_id.as_str(), "channel_history_seal": {"$exists": false}, "revision": signed(expected_revision, "command revision").map_err(|_| CommandLedgerError::Corrupt)? }, doc! { "$set": fields }).session(&mut *session).await?;
+    if result.matched_count != 1 {
+        return Err(CommandLedgerError::Conflict.into());
+    }
+    let result = store
+        .agent_command_orders
+        .update_one(
+            doc! { "_id": command.receipt.envelope.agent_id.as_str() },
+            doc! { "$set": lane_records::fields(lane)? },
+        )
+        .session(&mut *session)
+        .await?;
+    if result.matched_count != 1 {
+        return Err(CommandLedgerError::Conflict.into());
+    }
+    Ok(())
+}

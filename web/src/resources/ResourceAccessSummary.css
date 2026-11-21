@@ -1,0 +1,14 @@
+.resource-access-summary {
+  display: block;
+  min-width: 0;
+  margin-block: 4px;
+  color: var(--dsw-alias-label-secondary);
+  overflow-wrap: anywhere;
+}
+
+.resource-access-summary[data-compact] {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

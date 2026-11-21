@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import type { ReactNode, RefObject } from 'react';
 
 /**
- * What every floating plate shares — docs/Web_Style.md §7.
+ * What every floating plate shares — the shared style contracts
  *
  * The focus trap, Escape, and the return of focus on close are written once,
  * here, because they are the parts nobody notices are missing until a
@@ -16,7 +16,7 @@ export function focusable(root: HTMLElement): HTMLElement[] {
     root.querySelectorAll<HTMLElement>(
       'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
     ),
-  );
+  ).filter((element) => element.closest('[hidden], [inert]') === null);
 }
 
 /**
@@ -50,7 +50,11 @@ export function PlateScrim({
  * Trap focus inside the plate, close on Escape, and put focus back where it
  * came from when the plate leaves.
  */
-export function usePlateFocus(panelRef: RefObject<HTMLElement | null>, onClose: () => void): void {
+export function usePlateFocus(
+  panelRef: RefObject<HTMLElement | null>,
+  onClose: () => void,
+  enabled = true,
+): void {
   const closeRef = useRef(onClose);
 
   useEffect(() => {
@@ -58,11 +62,14 @@ export function usePlateFocus(panelRef: RefObject<HTMLElement | null>, onClose: 
   }, [onClose]);
 
   useEffect(() => {
+    if (!enabled) return;
     // Remembered before focus moves, so closing returns the user to the
     // control they opened this from rather than the top of the document.
     const opener = document.activeElement as HTMLElement | null;
     const panel = panelRef.current;
-    const first = panel === null ? undefined : focusable(panel)[0];
+    const reachable = panel === null ? [] : focusable(panel);
+    const first =
+      reachable.find((element) => element.dataset.initialFocus === 'true') ?? reachable[0];
     first?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {
@@ -90,5 +97,5 @@ export function usePlateFocus(panelRef: RefObject<HTMLElement | null>, onClose: 
       document.removeEventListener('keydown', onKeyDown);
       opener?.focus();
     };
-  }, [panelRef]);
+  }, [panelRef, enabled]);
 }

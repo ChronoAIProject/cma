@@ -1,0 +1,19 @@
+.agent-stop-progress {
+  display: grid;
+  gap: 12px;
+  padding: 0;
+  list-style: none;
+}
+.agent-stop-progress li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--dsw-alias-border-l2);
+  border-radius: 8px;
+}
+.agent-stop-progress strong {
+  color: var(--dsw-alias-label-secondary);
+  font-size: 12px;
+}

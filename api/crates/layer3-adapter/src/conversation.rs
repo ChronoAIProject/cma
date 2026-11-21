@@ -1,60 +1,74 @@
-//! The conversation plane's vocabulary.
+//! ACP conversation vocabulary.
 //!
-//! Split from the trait so that file stays within the project's size limit, on
-//! a real division: the trait says what a kernel can be asked to do, and this
-//! says what a conversation is made of.
-//!
-//! Most of it is the Agent Client Protocol's own, re-exported rather than
-//! re-declared. Re-declaring would mean maintaining a copy of a published
-//! schema, and a copy is wrong from the first release that moves.
-
-use std::future::Future;
-use std::time::Duration;
+//! Published schema types are re-exported directly so the adapter cannot drift
+//! from the protocol spoken by the bridge.
 
 use serde::{Deserialize, Serialize};
-use tokio::sync::{mpsc, oneshot};
 
-use crate::task_retirement::TaskRetirement;
-use crate::AdapterError;
-
-/// How long a local adapter has to deliver one operation to its runtime link.
-///
-/// This is not a network response deadline. It bounds the handoff to the task
-/// already holding the link, which is either immediate or is evidence that
-/// task is no longer able to receive work.
-const DELIVERY_DEADLINE: Duration = Duration::from_secs(2);
-
-/// The protocol's own types, re-exported rather than re-declared.
-///
-/// Re-declaring them would mean maintaining a copy of a published schema, and
-/// a copy is wrong from the first release that moves. `StopReason` is renamed
-/// on the way through: the core has a stop reason of its own about whole
-/// sessions, and these five are about a single turn.
-pub use agent_client_protocol_schema::v1::{
-    AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, PermissionOption,
-    PermissionOptionId, PermissionOptionKind, PromptResponse, RequestPermissionRequest,
-    SessionId as ConversationId, SessionUpdate, StopReason as TurnStopReason, ToolCall, ToolCallId,
-    ToolCallStatus, ToolCallUpdate, ToolCallUpdateFields, ToolKind, UsageUpdate,
+pub use crate::conversation_channel::{
+    ConversationChannel, ConversationInputGuard, ConversationInputSender, ConversationSendOutcome,
+    ConversationSettingsSupport,
 };
-pub use agent_client_protocol_schema::v1::{MessageId, Usage as TurnUsage};
+pub use agent_client_protocol_schema::v1::{
+    AvailableCommand, AvailableCommandsUpdate, ContentBlock, ContentChunk, MessageId,
+    PermissionOption, PermissionOptionId, PermissionOptionKind, PromptResponse,
+    RequestPermissionRequest, SessionId as ConversationId, SessionUpdate,
+    StopReason as TurnStopReason, ToolCall, ToolCallContent, ToolCallId, ToolCallStatus,
+    ToolCallUpdate, ToolCallUpdateFields, ToolKind, Usage as TurnUsage, UsageUpdate,
+};
 
-/// Opaque adapter-owned information needed to deliver a permission answer.
-///
-/// The core records and returns this value without interpreting it. That lets
-/// an adapter reconnect after a control-plane replacement without teaching
-/// the durable layer its wire protocol, while keeping the tool payload and
-/// every credential out of history.
+pub fn reported_tool_text(fields: &ToolCallUpdateFields) -> Vec<std::borrow::Cow<'_, str>> {
+    reported_tool_text_parts(fields.content.as_deref(), fields.raw_output.as_ref())
+}
+
+pub fn reported_tool_call_text(call: &ToolCall) -> Vec<std::borrow::Cow<'_, str>> {
+    reported_tool_text_parts(Some(&call.content), call.raw_output.as_ref())
+}
+
+fn reported_tool_text_parts<'a>(
+    content: Option<&'a [ToolCallContent]>,
+    raw_output: Option<&'a serde_json::Value>,
+) -> Vec<std::borrow::Cow<'a, str>> {
+    if let Some(content) = content {
+        let diffs = crate::tool_diff::reported_diffs(content).map(std::borrow::Cow::Owned);
+        return diffs
+            .into_iter()
+            .chain(content.iter().filter_map(|item| match item {
+                ToolCallContent::Content(block) => match &block.content {
+                    ContentBlock::Text(block) => {
+                        Some(std::borrow::Cow::Borrowed(block.text.as_str()))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            }))
+            .collect();
+    }
+    raw_output
+        .and_then(|output| output.get("formatted_output"))
+        .and_then(serde_json::Value::as_str)
+        .into_iter()
+        .map(std::borrow::Cow::Borrowed)
+        .collect()
+}
+
+/// File edits can arrive in the initial call, before its completion update.
+pub fn has_reported_file_changes(call: &ToolCall) -> bool {
+    call.content
+        .iter()
+        .any(|content| matches!(content, ToolCallContent::Diff(_)))
+}
+
+/// Opaque adapter-owned route used to answer a durable permission request.
 #[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct PermissionLocator(String);
 
 impl PermissionLocator {
-    /// Wrap an adapter's versioned locator representation.
     pub fn new(value: impl Into<String>) -> Self {
         Self(value.into())
     }
 
-    /// Borrow the opaque representation at the adapter boundary that owns it.
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -66,54 +80,68 @@ impl std::fmt::Debug for PermissionLocator {
     }
 }
 
-/// A decision the runtime is blocked on, and the handle to answer it with.
+/// A decision the agent is blocked on.
 #[derive(Debug, Clone)]
 pub struct PermissionRequest {
-    /// Correlates an answer with the request that is waiting for it.
-    ///
-    /// Minted by the adapter. The protocol carries this at the JSON-RPC layer
-    /// rather than in the payload, and the core needs something it can record
-    /// against an approval event, hand to whoever is being asked, and accept
-    /// back from them minutes later — possibly after a restart, and possibly
-    /// through a different interface than the one that showed it.
     pub id: String,
-    /// Adapter-owned delivery information that survives a control-plane
-    /// replacement.
-    ///
-    /// Absent for adapters that can answer from the public id alone, and for
-    /// requests produced by builds predating durable delivery locators.
     pub locator: Option<PermissionLocator>,
-    /// What the runtime is asking to do, and the answers it will accept.
-    ///
-    /// The offered options come from the runtime rather than from here. A
-    /// fixed allow/deny pair invented at this layer would drop the choices a
-    /// kernel actually distinguishes — refusing one command and refusing the
-    /// whole turn are different answers, and only the kernel knows which of
-    /// them it is offering.
     pub request: RequestPermissionRequest,
 }
 
-/// Turn-scoped runtime activity that can prove a dispatched prompt executed.
-///
-/// This is deliberately a closed, small allowlist. Conversation setup and
-/// reconnect traffic shares the same ordered stream as a prompt, so merely
-/// seeing an update after a dispatch fence is not evidence that the runtime
-/// received that prompt. Only activity ACP defines inside a prompt turn is
-/// represented here.
+/// What an owner decided about a permission request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PermissionDecision {
+    Allow,
+    Deny,
+    Abort,
+}
+
+/// Input sent toward one ACP conversation.
+#[derive(Debug, Clone)]
+pub enum ConversationInput {
+    /// Absolute live settings, acknowledged only after each ACP operation succeeds.
+    Configure {
+        model: String,
+        reasoning_effort: crate::ReasoningEffort,
+        permission: crate::PermissionLevel,
+        system_prompt: Option<String>,
+    },
+    RefreshContext {
+        service_origin: Option<String>,
+        operation_sequence: u64,
+        readiness_receipt: String,
+        previous_guidance: Vec<String>,
+        working_directory: Option<String>,
+        guidance: String,
+        model: String,
+        reasoning_effort: crate::ReasoningEffort,
+        permission: crate::PermissionLevel,
+    },
+    Prompt(Vec<ContentBlock>),
+    /// Inject input into the current native turn without starting another prompt.
+    Steer(Vec<ContentBlock>),
+    RecoverablePrompt {
+        content: Vec<ContentBlock>,
+        prompt_id: crate::PromptIdentity,
+    },
+    PermissionAnswer {
+        id: String,
+        locator: Option<PermissionLocator>,
+        decision: PermissionDecision,
+    },
+    Cancel,
+}
+
+/// Prompt-scoped evidence carried by an update.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum TurnScopedEvidence {
-    /// The agent emitted part of its answer.
     AgentMessage,
-    /// The agent began a tool call.
     ToolCallStarted,
-    /// A tool call changed state or produced output.
     ToolCallUpdated,
-    /// The agent stopped for an owner decision.
     ApprovalRequested,
 }
 
 impl TurnScopedEvidence {
-    /// Every activity class that may be treated as positive execution evidence.
     pub const ALL: [Self; 4] = [
         Self::AgentMessage,
         Self::ToolCallStarted,
@@ -123,340 +151,80 @@ impl TurnScopedEvidence {
 }
 
 /// What one adapter update proves about a prompt turn.
-///
-/// Terminal outcomes are separate from activity because Layer 2 records them
-/// as completion/failure rather than the intermediate `execution_observed`
-/// state. An update returning `None` is initialization, reconnect, telemetry,
-/// liveness, or another event that must never acknowledge a prompt dispatch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnEvidence {
-    /// Positive non-terminal execution evidence.
     Activity(TurnScopedEvidence),
-    /// The runtime reported a terminal prompt result.
     TerminalResult,
-    /// The runtime reported that the prompt turn failed.
     TerminalFailure,
 }
 
-/// Something sent toward a runtime's conversation.
-#[derive(Debug, Clone)]
-pub enum ConversationInput {
-    /// Content that opens a prompt turn.
-    Prompt(Vec<ContentBlock>),
-    /// The answer to a permission request the runtime is blocked on.
-    PermissionAnswer {
-        /// The request being answered, as [`PermissionRequest::id`] named it.
-        id: String,
-        /// The durable adapter-owned route recorded with the request.
-        locator: Option<PermissionLocator>,
-        /// What the owner decided.
-        ///
-        /// An intent rather than one of the runtime's own options, on the same
-        /// terms as [`crate::RuntimeOptions`]: the caller says what was decided and
-        /// the adapter renders it into whatever this runtime offered. Only the
-        /// adapter knows what those options meant, and a caller choosing one by
-        /// name would have to learn a vocabulary that differs per kernel and
-        /// changes between their versions.
-        decision: PermissionDecision,
-    },
-    /// Abandon the turn in flight.
-    ///
-    /// The turn ends; the conversation does not. A runtime that treats this as
-    /// a reason to stop has lost the session, which is the distinction between
-    /// interrupting and terminating.
-    Cancel,
-}
-
-/// Input queued together with the receipt its caller awaits.
-struct PendingInput {
-    input: ConversationInput,
-    delivered: oneshot::Sender<Result<(), AdapterError>>,
-}
-
-/// What CMA can honestly establish about one conversation-input attempt.
-///
-/// A queue refusal is the only outcome that proves the adapter never received
-/// the operation. Once the operation has crossed that boundary, a timeout,
-/// task loss, or handler error cannot exclude a partial runtime-link write.
-#[derive(Debug)]
-pub enum ConversationSendOutcome {
-    /// The adapter queue rejected the operation before any runtime write.
-    PreWriteFailure(AdapterError),
-    /// The adapter handler returned after writing the operation locally.
-    WriteConfirmed,
-    /// CMA cannot prove whether any bytes reached the runtime link.
-    Ambiguous(AdapterError),
-}
-
-struct AbortWriterOnDrop {
-    abort: tokio::task::AbortHandle,
-    armed: bool,
-}
-
-impl AbortWriterOnDrop {
-    fn new(abort: tokio::task::AbortHandle) -> Self {
-        Self { abort, armed: true }
-    }
-
-    fn disarm(&mut self) {
-        self.armed = false;
-    }
-}
-
-impl Drop for AbortWriterOnDrop {
-    fn drop(&mut self) {
-        if self.armed {
-            self.abort.abort();
-        }
-    }
-}
-
-/// The sending half of a runtime conversation.
-///
-/// A Tokio sender confirms only that a queue slot accepted a value. It says
-/// nothing about whether the task behind that queue is still reading, or
-/// whether its runtime link can take the frame. This sender waits for the
-/// adapter task to report that result.
-#[derive(Clone)]
-pub struct ConversationInputSender {
-    inner: mpsc::Sender<PendingInput>,
-    abort: tokio::task::AbortHandle,
-    retirement: TaskRetirement,
-}
-
-impl std::fmt::Debug for ConversationInputSender {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("ConversationInputSender")
-            .field("closed", &self.inner.is_closed())
-            .field("capacity", &self.inner.capacity())
-            .finish()
-    }
-}
-
-impl ConversationInputSender {
-    /// Run the consumer for a conversation input channel.
-    ///
-    /// The handler returns after writing the operation to the runtime link,
-    /// not after a long-lived turn has finished.
-    pub fn spawn<F, Fut>(capacity: usize, handler: F) -> Self
-    where
-        F: FnMut(ConversationInput) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<(), AdapterError>> + Send + 'static,
-    {
-        Self::spawn_with_abort(capacity, handler).0
-    }
-
-    /// Send one operation and wait until the adapter has delivered it.
-    pub async fn send(&self, input: ConversationInput) -> Result<(), AdapterError> {
-        self.send_with_deadline(input, DELIVERY_DEADLINE).await
-    }
-
-    /// Send one operation without collapsing the only safe retry boundary.
-    pub async fn send_classified(&self, input: ConversationInput) -> ConversationSendOutcome {
-        self.send_classified_with_deadline(input, DELIVERY_DEADLINE)
-            .await
-    }
-
-    async fn send_with_deadline(
-        &self,
-        input: ConversationInput,
-        deadline: Duration,
-    ) -> Result<(), AdapterError> {
-        match self.send_classified_with_deadline(input, deadline).await {
-            ConversationSendOutcome::WriteConfirmed => Ok(()),
-            ConversationSendOutcome::PreWriteFailure(error)
-            | ConversationSendOutcome::Ambiguous(error) => Err(error),
-        }
-    }
-
-    async fn send_classified_with_deadline(
-        &self,
-        input: ConversationInput,
-        deadline: Duration,
-    ) -> ConversationSendOutcome {
-        let (delivered, receipt) = oneshot::channel();
-        if let Err(error) = self.inner.try_send(PendingInput { input, delivered }) {
-            let error = match error {
-                mpsc::error::TrySendError::Full(_) => AdapterError::Unavailable(
-                    "the conversation input queue is not being consumed".to_string(),
-                ),
-                mpsc::error::TrySendError::Closed(_) => {
-                    AdapterError::Unavailable("the conversation input task has ended".to_string())
-                }
-            };
-            return ConversationSendOutcome::PreWriteFailure(error);
-        }
-
-        let mut abort_on_drop = AbortWriterOnDrop::new(self.abort.clone());
-        let result = match tokio::time::timeout(deadline, receipt).await {
-            Err(_) => {
-                self.retire().await;
-                ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(
-                    "the conversation input task did not deliver the operation".to_string(),
-                ))
-            }
-            Ok(Err(_)) => {
-                self.retire().await;
-                ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(
-                    "the conversation input task ended before delivery".to_string(),
-                ))
-            }
-            Ok(Ok(Ok(()))) => ConversationSendOutcome::WriteConfirmed,
-            Ok(Ok(Err(error))) => {
-                self.retire().await;
-                ConversationSendOutcome::Ambiguous(error)
-            }
-        };
-        abort_on_drop.disarm();
-        result
-    }
-
-    /// Hosted adapters stop this consumer when the socket's read half ends.
-    pub(crate) fn spawn_with_abort<F, Fut>(
-        capacity: usize,
-        mut handler: F,
-    ) -> (Self, tokio::task::AbortHandle)
-    where
-        F: FnMut(ConversationInput) -> Fut + Send + 'static,
-        Fut: Future<Output = Result<(), AdapterError>> + Send + 'static,
-    {
-        let (inner, mut pending) = mpsc::channel::<PendingInput>(capacity);
-        let retirement = TaskRetirement::default();
-        let retired = retirement.guard();
-        let task = tokio::spawn(async move {
-            let _retired = retired;
-            while let Some(PendingInput { input, delivered }) = pending.recv().await {
-                let result = handler(input).await;
-                let failed = result.is_err();
-                if failed {
-                    pending.close();
-                }
-                let _ = delivered.send(result);
-                if failed {
-                    break;
-                }
-            }
-        });
-        let abort = task.abort_handle();
-        (
-            Self {
-                inner,
-                abort: abort.clone(),
-                retirement,
-            },
-            abort,
-        )
-    }
-
-    pub(crate) async fn retire(&self) {
-        self.abort.abort();
-        self.retirement.wait().await;
-    }
-
-    pub(crate) fn abort_handle(&self) -> tokio::task::AbortHandle {
-        self.abort.clone()
-    }
-
-    pub(crate) fn retirement(&self) -> TaskRetirement {
-        self.retirement.clone()
-    }
-
-    #[cfg(test)]
-    pub(crate) async fn wait_retired(&self) {
-        self.retirement.wait().await;
-    }
-}
-
-/// What an owner decided about something a runtime asked to do.
-///
-/// Three answers rather than two, because refusing one action and abandoning
-/// what the agent was doing are different intentions. A person who meant the
-/// second and got the first watches the agent try something else instead of
-/// stopping, which is the opposite of what they asked for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PermissionDecision {
-    /// Let it proceed.
-    Allow,
-    /// Refuse it. The turn carries on without doing this.
-    Deny,
-    /// Refuse it and stop the turn.
-    Abort,
-}
-
-/// One thing that happened on a runtime's conversation.
-///
-/// Everything travels in one stream, in the order it happened, because that is
-/// what a conversation is and what the durable log has to be. Split across
-/// several streams, a turn ending could overtake the last words of the message
-/// it was ending, and a permission request could be recorded before the tool
-/// call that provoked it. Both would be recorded wrong, permanently, and
-/// neither would be visible until somebody read the history back.
+/// One ordered update from the ACP conversation.
 #[derive(Debug, Clone)]
 pub enum ConversationUpdate {
-    /// An update that remains part of the visible conversation but cannot
-    /// acknowledge a prompt dispatched on this link.
-    ///
-    /// Hosted adapters use this for activity received while they own no prompt
-    /// waiter, including conversation-opening and reconnect replay. Keeping the
-    /// original update inside the wrapper lets Layer 2 record it normally while
-    /// preserving the adapter's correlation fact across a delayed update queue.
+    /// Immutable domain storage whose reservation follows every shared owner.
+    RetainedEffect(crate::RuntimeOutputUpdate),
+    /// One ordered runtime frame. A protocol-only frame still needs a durable cursor.
+    RuntimeOutput {
+        receipt: crate::RuntimeOutputReceipt,
+        update: Option<crate::RuntimeOutputUpdate>,
+    },
     WithoutPromptEvidence(Box<ConversationUpdate>),
-    /// Something the runtime said, in the protocol's own words.
     Said(SessionUpdate),
-    /// A decision the runtime is now blocked on.
+    Metadata(crate::ConversationMetadata),
+    Usage(crate::ConversationUsage),
     Asked(PermissionRequest),
-    /// The prompt turn in flight ended, and why.
     TurnEnded(PromptResponse),
-    /// Part of what the runtime said was dropped rather than delivered.
-    ///
-    /// Happens when it held more than it could while nothing was listening —
-    /// a long control-plane restart — and had to drop the oldest of it.
+    /// A terminal response correlated to one already admitted prompt.
+    TurnEndedForPrompt {
+        prompt_id: crate::PromptIdentity,
+        response: PromptResponse,
+    },
     Lost {
-        /// How many frames went, as the runtime counted them.
         frames: u64,
     },
-    /// The turn stopped because something went wrong, and what.
-    ///
-    /// Distinct from `TurnEnded` deliberately. A turn that ends is a turn the
-    /// agent finished; this one did not, and the difference is the whole of
-    /// what a client needs to tell "the agent had nothing more to say" from
-    /// "the agent could not answer". Reported so it becomes `RUN_ERROR`
-    /// rather than a turn that quietly produced nothing — the failure
-    /// `docs/API_AGUI.md` requires a client be able to see, and the one
-    /// `CLAUDE.md` §9 forbids being discovered by whoever tried to use it.
     Failed {
-        /// What went wrong, in the words of whatever knew: the agent's own
-        /// message, the bridge's, or the runtime's.
         message: String,
-        /// The ability that was missing, where the failure was a refusal.
         capability: Option<String>,
     },
-    /// The agent cannot proceed until its owner signs in to their own account.
-    ///
-    /// Only ever reached by a session created with the owner's own credential.
-    /// The kernel is asking a person to complete a sign-in somewhere else, and
-    /// the two things it needs them to know — where to go and what to type —
-    /// travel here so an interface can put them on screen.
-    ///
-    /// **No credential passes this way, in either direction.** What the sign-in
-    /// produces is written inside the sandbox by the kernel itself; this
-    /// carries only the address of a page and a code that is useless without
-    /// the person's own account. That is what makes the promise in
-    /// `CredentialMode::Own` true rather than aspirational.
+    /// A terminal failure correlated to one already admitted prompt.
+    FailedForPrompt {
+        prompt_id: crate::PromptIdentity,
+        message: String,
+        capability: Option<String>,
+    },
     SignInRequired {
-        /// The page the owner opens, in their own browser, on their own device.
         url: String,
-        /// The one-time code they enter there. Short-lived by construction.
         code: Option<String>,
-        /// The kernel's own sentence about what it wants, where it gave one.
         message: Option<String>,
     },
 }
 
 impl ConversationUpdate {
-    /// Preserve this update while declaring that it cannot acknowledge a
-    /// prompt dispatched on the current adapter link.
+    /// Borrow the complete delivery even through an immutable outer envelope.
+    pub fn delivery(&self) -> crate::runtime_output::RuntimeOutputDelivery<'_> {
+        match self {
+            Self::RetainedEffect(update) => update.delivery(),
+            Self::RuntimeOutput { receipt, update } => {
+                crate::runtime_output::RuntimeOutputDelivery {
+                    receipt: Some(receipt),
+                    effect: update.as_deref().map(Self::effect),
+                }
+            }
+            update => crate::runtime_output::RuntimeOutputDelivery {
+                receipt: None,
+                effect: Some(update),
+            },
+        }
+    }
+
+    /// Borrow a domain effect without separating it from its storage owner.
+    pub fn effect(&self) -> &Self {
+        match self {
+            Self::RetainedEffect(update) => update.effect(),
+            update => update,
+        }
+    }
+
     pub fn without_prompt_evidence(self) -> Self {
         match self {
             already @ Self::WithoutPromptEvidence(_) => already,
@@ -464,14 +232,10 @@ impl ConversationUpdate {
         }
     }
 
-    /// Classify only evidence that the runtime contract makes prompt-scoped.
-    ///
-    /// In particular, available commands, mode/configuration changes, usage,
-    /// sign-in requests, and lost-frame notices remain unclassified. All can
-    /// arrive while a conversation opens or reconnects without any prompt
-    /// having reached the model.
     pub fn turn_evidence(&self) -> Option<TurnEvidence> {
         match self {
+            Self::RetainedEffect(update) => update.turn_evidence(),
+            Self::RuntimeOutput { update, .. } => update.as_deref().and_then(Self::turn_evidence),
             Self::WithoutPromptEvidence(_) => None,
             Self::Said(SessionUpdate::AgentMessageChunk(_)) => {
                 Some(TurnEvidence::Activity(TurnScopedEvidence::AgentMessage))
@@ -486,210 +250,18 @@ impl ConversationUpdate {
                 TurnScopedEvidence::ApprovalRequested,
             )),
             Self::TurnEnded(_) => Some(TurnEvidence::TerminalResult),
+            Self::TurnEndedForPrompt { .. } => Some(TurnEvidence::TerminalResult),
             Self::Failed { .. } => Some(TurnEvidence::TerminalFailure),
-            Self::Said(_) | Self::Lost { .. } | Self::SignInRequired { .. } => None,
+            Self::FailedForPrompt { .. } => Some(TurnEvidence::TerminalFailure),
+            Self::Said(_)
+            | Self::Metadata(_)
+            | Self::Usage(_)
+            | Self::Lost { .. }
+            | Self::SignInRequired { .. } => None,
         }
     }
-}
-
-/// A bidirectional attachment to a runtime's conversation.
-///
-/// One stream each way. Outward it is ordered, because the durable log built
-/// from it is ordered and nothing downstream can put back a sequence that was
-/// scrambled here. Inward it is separate because it is driven by a person
-/// rather than by the runtime, and the two have nothing to say about each
-/// other's pace.
-#[derive(Debug)]
-pub struct ConversationChannel {
-    /// Input destined for the runtime.
-    pub input: ConversationInputSender,
-    /// What the runtime calls this conversation, when it has a name for one.
-    ///
-    /// Reported so it can be recorded, because a control plane that restarts
-    /// remembers nothing and the alternative is opening a second conversation
-    /// beside the one already running — the agent loses its context while the
-    /// owner, reading a durable log that has everything, cannot tell.
-    ///
-    /// `None` from a runtime whose conversations have no name. Such a runtime
-    /// cannot be rejoined either, and says so by refusing to be asked.
-    pub conversation_id: Option<String>,
 }
 
 #[cfg(test)]
-mod tests {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::Arc;
-
-    use tokio::sync::{oneshot, Notify};
-
-    use super::*;
-
-    fn sender_with_unrelated_retirement(
-        inner: mpsc::Sender<PendingInput>,
-    ) -> ConversationInputSender {
-        let retirement = TaskRetirement::default();
-        let retired = retirement.guard();
-        let task = tokio::spawn(async move {
-            let _retired = retired;
-            std::future::pending::<()>().await;
-        });
-        ConversationInputSender {
-            inner,
-            abort: task.abort_handle(),
-            retirement,
-        }
-    }
-
-    #[tokio::test]
-    async fn a_closed_queue_is_a_proven_pre_write_failure() {
-        let (inner, pending) = mpsc::channel(1);
-        drop(pending);
-        let input = sender_with_unrelated_retirement(inner);
-
-        assert!(matches!(
-            input.send_classified(ConversationInput::Cancel).await,
-            ConversationSendOutcome::PreWriteFailure(AdapterError::Unavailable(message))
-                if message.contains("task has ended")
-        ));
-        input.retire().await;
-    }
-
-    #[tokio::test]
-    async fn a_full_queue_is_a_proven_pre_write_failure() {
-        let (inner, _held_open) = mpsc::channel(1);
-        let (delivered, _receipt) = oneshot::channel();
-        assert!(inner
-            .try_send(PendingInput {
-                input: ConversationInput::Cancel,
-                delivered,
-            })
-            .is_ok());
-        let input = sender_with_unrelated_retirement(inner);
-
-        assert!(matches!(
-            input.send_classified(ConversationInput::Cancel).await,
-            ConversationSendOutcome::PreWriteFailure(AdapterError::Unavailable(message))
-                if message.contains("not being consumed")
-        ));
-        input.retire().await;
-    }
-
-    #[tokio::test]
-    async fn handler_success_is_a_confirmed_local_write() {
-        let input = ConversationInputSender::spawn(1, |_input| async { Ok(()) });
-
-        assert!(matches!(
-            input.send_classified(ConversationInput::Cancel).await,
-            ConversationSendOutcome::WriteConfirmed
-        ));
-        input
-            .send(ConversationInput::Cancel)
-            .await
-            .expect("the compatibility API still reports handler success");
-    }
-
-    #[tokio::test]
-    async fn writer_failure_is_ambiguous_and_closes_the_generation() {
-        let input = ConversationInputSender::spawn(1, |_input| async {
-            Err(AdapterError::Rejected(
-                "runtime link refused the frame".into(),
-            ))
-        });
-
-        assert!(matches!(
-            input.send_classified(ConversationInput::Cancel).await,
-            ConversationSendOutcome::Ambiguous(AdapterError::Rejected(message))
-                if message.contains("refused the frame")
-        ));
-        input.wait_retired().await;
-        assert!(matches!(
-            input.send(ConversationInput::Cancel).await,
-            Err(AdapterError::Unavailable(message)) if message.contains("task has ended")
-        ));
-    }
-
-    #[tokio::test]
-    async fn losing_the_consumer_after_queue_acceptance_is_ambiguous() {
-        let (entered, waiting) = oneshot::channel();
-        let mut entered = Some(entered);
-        let (input, abort) = ConversationInputSender::spawn_with_abort(1, move |_input| {
-            let entered = entered.take();
-            async move {
-                if let Some(entered) = entered {
-                    let _ = entered.send(());
-                }
-                std::future::pending::<Result<(), AdapterError>>().await
-            }
-        });
-        let attempt =
-            tokio::spawn(async move { input.send_classified(ConversationInput::Cancel).await });
-        waiting.await.expect("the consumer accepted the operation");
-        abort.abort();
-
-        assert!(matches!(
-            attempt.await.expect("the sender task survives consumer loss"),
-            ConversationSendOutcome::Ambiguous(AdapterError::Unavailable(message))
-                if message.contains("ended before delivery")
-        ));
-    }
-
-    #[tokio::test]
-    async fn a_queue_slot_without_a_draining_consumer_is_not_delivery() {
-        // This is the shape that used to produce a false success: the receiver
-        // is alive, so Tokio accepts the value, but no task ever reads it.
-        let input = ConversationInputSender::spawn(1, |_input| std::future::pending());
-
-        let error = input
-            .send_with_deadline(ConversationInput::Cancel, Duration::from_millis(10))
-            .await
-            .expect_err("an undrained queue did not deliver an interrupt");
-
-        assert!(matches!(error, AdapterError::Unavailable(message)
-            if message.contains("did not deliver")));
-    }
-
-    #[tokio::test]
-    async fn canceling_a_receipt_wait_poisons_its_writer_generation() {
-        let (started, started_rx) = oneshot::channel();
-        let mut started = Some(started);
-        let resume = Arc::new(Notify::new());
-        let wrote = Arc::new(AtomicBool::new(false));
-        let input = ConversationInputSender::spawn(1, {
-            let resume = Arc::clone(&resume);
-            let wrote = Arc::clone(&wrote);
-            move |_input| {
-                let started = started.take();
-                let resume = Arc::clone(&resume);
-                let wrote = Arc::clone(&wrote);
-                async move {
-                    if let Some(started) = started {
-                        let _ = started.send(());
-                    }
-                    resume.notified().await;
-                    wrote.store(true, Ordering::SeqCst);
-                    Ok(())
-                }
-            }
-        });
-
-        let delivery = tokio::spawn({
-            let input = input.clone();
-            async move { input.send(ConversationInput::Cancel).await }
-        });
-        started_rx.await.expect("the writer started the operation");
-        delivery.abort();
-        assert!(delivery
-            .await
-            .expect_err("delivery was canceled")
-            .is_cancelled());
-        input.wait_retired().await;
-
-        resume.notify_waiters();
-        tokio::task::yield_now().await;
-        assert!(!wrote.load(Ordering::SeqCst));
-        assert!(matches!(
-            input.send(ConversationInput::Cancel).await,
-            Err(AdapterError::Unavailable(detail)) if detail == "the conversation input task has ended"
-        ));
-    }
-}
+#[path = "conversation_tests.rs"]
+mod tests;

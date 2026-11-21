@@ -4,7 +4,7 @@ import type { UserEvent } from '@testing-library/user-event';
 /**
  * Driving the shared dropdown from a test.
  *
- * docs/Web_Style.md §7 gives the product one dropdown pattern, and a native
+ * the shared style contractsgives the product one dropdown pattern, and a native
  * `<select>` cannot draw it. So the control is a button opening a menu, and
  * `user.selectOptions` (which only speaks to a real `<select>`) does not
  * reach it.
@@ -42,4 +42,25 @@ export async function openedOptions(
   return within(list)
     .getAllByRole('menuitemradio')
     .map((option) => option.textContent ?? '');
+}
+
+/** Select the exact value through the shared menu's stable option identity. */
+export async function chooseOptionValue(
+  user: UserEvent,
+  trigger: HTMLElement,
+  value: string,
+): Promise<void> {
+  await user.click(trigger);
+  const menu = await screen.findByRole('menu', { name: trigger.getAttribute('aria-label') ?? '' });
+  const option = within(menu)
+    .getAllByRole('menuitemradio')
+    .find((item) => item.dataset.id === value);
+  if (option === undefined) throw new Error(`Picker option unavailable: ${value}`);
+  await user.click(option);
+}
+
+/** Expand the persistent sidebar filter disclosure without toggling an already open panel. */
+export async function expandNavigationFilters(user: UserEvent): Promise<void> {
+  const trigger = await screen.findByRole('button', { name: 'Filter' });
+  if (trigger.getAttribute('aria-expanded') !== 'true') await user.click(trigger);
 }

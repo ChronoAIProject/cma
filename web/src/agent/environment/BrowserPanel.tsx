@@ -1,0 +1,321 @@
+import { rateLimitDelay } from '../transport/readRetry';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  ApiError,
+  type AgentBrowserClient,
+  type AgentBrowserControlClient,
+  type BrowserObservation,
+} from '@cma/client';
+import { Button } from '../../ui/Button';
+import { BrowserControl } from './BrowserControl';
+
+type BrowserStatus = BrowserObservation['state'] | 'forbidden' | 'background_paused';
+type Frame = NonNullable<BrowserObservation['frame']>;
+const hidden = () => document.visibilityState === 'hidden';
+
+export function BrowserPanel({
+  client,
+  controlClient,
+  controlAccountId,
+  agentId,
+  incarnation,
+  active,
+  running = false,
+  controlAdmission = false,
+  onReload,
+}: {
+  readonly client: AgentBrowserClient;
+  readonly controlClient?: AgentBrowserControlClient;
+  readonly controlAccountId?: string;
+  readonly agentId: string;
+  readonly incarnation: string;
+  readonly active: boolean;
+  readonly running?: boolean;
+  readonly controlAdmission?: boolean;
+  readonly onReload: () => void;
+}) {
+  const scope = useMemo(() => ({ client, agentId, incarnation }), [client, agentId, incarnation]);
+  const [stored, setStored] = useState<{
+    scope: typeof scope;
+    state: BrowserStatus;
+    frame?: Frame;
+    location?: string;
+    address?: string;
+    contextId?: string;
+  }>();
+  const [decoded, setDecoded] = useState<Frame>();
+  const [clock, setClock] = useState(Date.now);
+  const requests = useRef(Promise.resolve());
+  const current = stored?.scope === scope && active ? stored : undefined;
+  useEffect(() => {
+    if (!active) return;
+    let alive = true;
+    let generation = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let freshness: ReturnType<typeof setInterval> | undefined;
+    let contextId: string | undefined;
+    let frame: Frame | undefined;
+    let location: string | undefined;
+    let address: string | undefined;
+    let failures = 0;
+    let retryAt = 0;
+    let terminal = false;
+    const observer = crypto.randomUUID();
+    const publish = (state: BrowserStatus, retained: Frame | null | undefined = frame) => {
+      if (alive)
+        setStored({ scope, state, frame: retained ?? undefined, location, address, contextId });
+    };
+    const startClock = () => {
+      setClock(Date.now());
+      freshness = setInterval(() => setClock(Date.now()), 250);
+    };
+    const schedule = (operation: () => Promise<void>) => {
+      requests.current = requests.current.then(operation).catch(() => {});
+    };
+    const release = () => {
+      schedule(async () => {
+        await client.release(agentId, { runtime_incarnation: incarnation, observer });
+      });
+    };
+    const stop = () => {
+      generation += 1;
+      clearTimeout(timer);
+      clearInterval(freshness);
+      release();
+    };
+    const observe = async () => {
+      if (!alive || terminal || hidden()) return;
+      if (Date.now() < retryAt) {
+        timer = setTimeout(read, retryAt - Date.now());
+        return;
+      }
+      const version = generation;
+      const request = new AbortController();
+      const deadline = setTimeout(() => request.abort(), 4000);
+      try {
+        const value = await client.read(
+          agentId,
+          { runtime_incarnation: incarnation, observer, context_id: contextId },
+          { signal: request.signal },
+        );
+        if (!alive || version !== generation || request.signal.aborted) return;
+        if (
+          contextId !== undefined &&
+          value.context_id !== contextId &&
+          !['paused', 'not_enabled', 'unsupported'].includes(value.state)
+        ) {
+          frame = undefined;
+          terminal = true;
+          publish('disconnected');
+          return;
+        }
+        contextId = value.context_id ?? contextId;
+        const incoming = value.frame;
+        if (
+          incoming &&
+          Date.parse(incoming.captured_at) <= Date.now() + 1000 &&
+          (!frame ||
+            (incoming.sequence > frame.sequence &&
+              Date.parse(incoming.captured_at) >= Date.parse(frame.captured_at)))
+        ) {
+          frame = incoming;
+          location = value.location;
+          address = value.address;
+        } else if (!incoming && !frame) {
+          location = value.location;
+          address = value.address;
+        }
+        if (['unsupported', 'not_enabled', 'paused'].includes(value.state)) frame = undefined;
+        terminal = ['unsupported', 'not_enabled'].includes(value.state);
+        failures = 0;
+        retryAt = 0;
+        publish(value.state);
+      } catch (error) {
+        if (!alive || version !== generation) return;
+        retryAt =
+          Date.now() + rateLimitDelay(error, Math.min(8000, 1000 * 2 ** ++failures), failures);
+        if (error instanceof ApiError && [401, 403, 404, 409].includes(error.status)) {
+          frame = undefined;
+          location = undefined;
+          address = undefined;
+          terminal = true;
+          publish(error.status === 409 ? 'disconnected' : 'forbidden');
+        } else publish('disconnected');
+      } finally {
+        clearTimeout(deadline);
+        if (alive && version === generation && !terminal && !hidden())
+          timer = setTimeout(
+            () => {
+              void read();
+            },
+            Math.max(1000, retryAt - Date.now()),
+          );
+      }
+    };
+    const read = () => {
+      const version = generation;
+      schedule(async () => {
+        if (version === generation) await observe();
+      });
+    };
+    const visibility = () => {
+      stop();
+      if (document.visibilityState === 'hidden') publish('background_paused', null);
+      else if (!terminal) {
+        startClock();
+        publish('loading');
+        void read();
+      }
+    };
+    document.addEventListener('visibilitychange', visibility);
+    publish(hidden() ? 'background_paused' : 'loading');
+    void read();
+    if (!hidden()) startClock();
+    return () => {
+      alive = false;
+      stop();
+      clearInterval(freshness);
+      document.removeEventListener('visibilitychange', visibility);
+    };
+  }, [scope, client, agentId, incarnation, active]);
+  const frame = current?.frame;
+  const fresh =
+    frame &&
+    decoded === frame &&
+    Date.parse(frame.captured_at) <= clock + 1000 &&
+    clock - Date.parse(frame.captured_at) < 3000;
+  const live = current?.state === 'live' && fresh;
+  const message = live
+    ? 'Live'
+    : frame
+      ? 'Last frame · Reconnecting…'
+      : {
+          loading: 'Loading Agent browser…',
+          ready: 'Waiting for a browser frame…',
+          live: 'Loading Agent browser…',
+          paused:
+            'No live screen is available right now. You can continue reading this conversation.',
+          background_paused: 'Live view pauses while this tab is in the background.',
+          disconnected: 'Browser disconnected. Reconnecting…',
+          forbidden: 'Browser access is not permitted.',
+          unsupported: 'Live screen is not supported by this environment.',
+          not_enabled: 'Live screen is not enabled for this environment.',
+        }[current?.state ?? 'loading'];
+  const hasControl = !!(controlClient && controlAccountId && current?.contextId);
+  const picture = frame ? (
+    <figure aria-label={live ? 'Live browser page' : 'Last browser frame'}>
+      <img
+        key={frame.sequence}
+        src={`data:image/jpeg;base64,${frame.data}`}
+        alt="Agent browser page"
+        width={1280}
+        height={720}
+        onLoad={() => setDecoded(frame)}
+        onError={() => setDecoded(undefined)}
+      />
+    </figure>
+  ) : null;
+  return (
+    <section className="agent-browser" aria-label="Browser observation">
+      {!live && !hasControl ? <p role="status">{message}</p> : null}
+      {controlClient && controlAccountId && current?.contextId ? (
+        <BrowserControl
+          key={current.contextId}
+          client={controlClient}
+          accountId={controlAccountId}
+          agentId={agentId}
+          incarnation={incarnation}
+          contextId={current.contextId}
+          active={!!live && active}
+          running={running}
+          admissionAllowed={controlAdmission}
+          observationMessage={live ? undefined : message}
+        >
+          <div className="agent-browser__address" aria-label="Browser location">
+            ◎ {current?.address?.replace(/^https?:\/\//, '') ?? current?.location}
+          </div>
+          {picture}
+        </BrowserControl>
+      ) : (
+        <>
+          {live ? (
+            <div className="agent-browser__control">
+              <p className="workspace-control-status" role="status">
+                <span
+                  className={`workspace-control-dot${running ? ' workspace-control-dot--running' : ''}`}
+                  aria-hidden="true"
+                />
+                {running ? 'Agent is in control · Working in Browser' : 'Live screen · View only'}
+              </p>
+              <Button
+                size="sm"
+                variant="primary"
+                placement="workspace-take-control"
+                disabled
+                title="Control is unavailable with this access."
+              >
+                Take control
+              </Button>
+            </div>
+          ) : null}
+          <div className="agent-browser__address" aria-label="Browser location">
+            ◎ {current?.address?.replace(/^https?:\/\//, '') ?? current?.location}
+          </div>
+          {picture}
+        </>
+      )}
+      {['disconnected', 'forbidden', 'paused'].includes(current?.state ?? '') ? (
+        <Button size="sm" onClick={onReload}>
+          {current?.state === 'paused' ? 'Check again' : 'Check browser access again'}
+        </Button>
+      ) : null}
+    </section>
+  );
+}
+
+export function EnableBrowser({
+  client,
+  agentId,
+  incarnation,
+  onEnabled,
+}: {
+  readonly client: AgentBrowserClient;
+  readonly agentId: string;
+  readonly incarnation: string;
+  readonly onEnabled: () => void;
+}) {
+  const scope = useMemo(() => ({ client, agentId, incarnation }), [client, agentId, incarnation]);
+  const [attempt, setAttempt] = useState<{ scope: typeof scope; state: 'pending' | 'failed' }>();
+  const request = useRef<AbortController | undefined>(undefined);
+  useEffect(() => () => request.current?.abort(), [scope]);
+  const pending = attempt?.scope === scope && attempt.state === 'pending';
+  const error = attempt?.scope === scope && attempt.state === 'failed';
+  const enable = async () => {
+    const controller = new AbortController();
+    request.current = controller;
+    setAttempt({ scope, state: 'pending' });
+    try {
+      await client.configure(agentId, incarnation, true, { signal: controller.signal });
+      if (!controller.signal.aborted) {
+        setAttempt(undefined);
+        onEnabled();
+      }
+    } catch {
+      if (!controller.signal.aborted) setAttempt({ scope, state: 'failed' });
+    }
+  };
+  return (
+    <>
+      <Button
+        size="sm"
+        disabled={pending}
+        onClick={() => {
+          void enable();
+        }}
+      >
+        {pending ? 'Starting browser…' : 'Enable browser'}
+      </Button>
+      {error ? <p role="alert">Browser could not be enabled. Try again.</p> : null}
+    </>
+  );
+}

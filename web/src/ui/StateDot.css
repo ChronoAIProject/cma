@@ -1,5 +1,5 @@
 /*
- * The state dot — `docs/Web_Style.md` §12.1.
+ * The state dot — the shared style contracts
  *
  * The halo and the core are the same colour at different opacities, which is
  * what makes one token per state enough: both layers ride `currentColor`, and
@@ -31,6 +31,19 @@
 
 .statedot[data-state='done'] {
   color: var(--dsw-alias-state-success-primary);
+}
+
+/*
+ * Live and Ready: present and usable, nothing more. Not the success colour,
+ * which in dark is the same lime as the accent and made a settled Sandbox
+ * read exactly like one that is working.
+ */
+.statedot[data-state='neutral'] {
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.statedot[data-state='neutral']::before {
+  display: none;
 }
 
 .statedot[data-state='warning'] {
