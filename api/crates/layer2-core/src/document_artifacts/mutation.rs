@@ -70,9 +70,6 @@ impl DocumentService {
         subject: &str,
         body: GrantDocument,
     ) -> Result<DocumentView, DocumentError> {
-        if !types::valid_subject(subject) || subject == caller.subject.as_str() {
-            return Err(DocumentError::Invalid);
-        }
         Ok(self
             .mutate(caller, id, None, key, Command::Grant(subject.into(), body))
             .await?
@@ -214,14 +211,8 @@ impl DocumentService {
                 return Ok(outcome);
             }
             if let Command::Grant(subject, _) = &command {
-                if self
-                    .standing
-                    .authoritative(&crate::SubjectId::new(subject))
-                    .await
-                    .map_err(|_| DocumentError::Unavailable)?
-                {
-                    return Err(DocumentError::ShareRecipientUnavailable);
-                }
+                // A replay never depends on the recipient's current registration.
+                self.require_share_recipient(caller, subject).await?;
             }
             let reserve = self.revocation_reserve_enabled && command.revokes_access();
             if !reserve && record.receipts.len() >= MAX_RECEIPTS {

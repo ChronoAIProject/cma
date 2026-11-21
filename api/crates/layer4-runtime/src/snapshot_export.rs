@@ -64,6 +64,7 @@ fn source_config(request: &HomeSnapshotExportRequest) -> Result<RuntimeConfig> {
         install_env: BTreeMap::new(),
         process_env: BTreeMap::new(),
         model_proxy: None,
+        model_credit_required: false,
         platform_proxy: None,
         tool_proxy: None,
         github_proxy: None,

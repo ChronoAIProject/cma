@@ -26,6 +26,7 @@ pub(crate) struct RuntimeConfig {
     pub install_env: BTreeMap<String, String>,
     pub process_env: BTreeMap<String, String>,
     pub model_proxy: Option<ProxyConfig>,
+    pub model_credit_required: bool,
     pub platform_proxy: Option<ProxyConfig>,
     pub tool_proxy: Option<crate::tool_proxy::ToolProxyConfig>,
     pub github_proxy: Option<crate::github_proxy::GithubProxyConfig>,
@@ -146,6 +147,16 @@ impl RuntimeConfig {
             "CHRONO_UPSTREAM_BASE_URL",
             "model",
         )?;
+        let model_credit_required = match process_env
+            .get("CHRONO_AGENT_MODEL_CREDIT_REQUIRED")
+            .map(String::as_str)
+        {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(_) => {
+                return Err("CHRONO_AGENT_MODEL_CREDIT_REQUIRED must be true or false".into())
+            }
+        };
         let platform_proxy = proxy_from_env(
             &process_env,
             "CHRONO_PLATFORM_PROXY_BIND",
@@ -176,6 +187,7 @@ impl RuntimeConfig {
             install_env,
             process_env,
             model_proxy,
+            model_credit_required,
             platform_proxy,
             tool_proxy,
             github_proxy,
@@ -217,6 +229,7 @@ impl RuntimeConfig {
             install_env: env.clone(),
             process_env: env,
             model_proxy: None,
+            model_credit_required: false,
             platform_proxy: None,
             tool_proxy: None,
             github_proxy: None,

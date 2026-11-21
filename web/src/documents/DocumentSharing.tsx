@@ -1,4 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { DocumentShareRecipient } from '@cma/client';
 import {
   DocumentError,
   newDocumentShareToken,
@@ -15,6 +16,7 @@ import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { Alert } from '../ui/Alert';
 import { Picker } from '../ui/Picker';
+import { ShareRecipientSearch } from '../ui/ShareRecipientSearch';
 
 type Intent = { key: string; action: (options: CommandOptions) => Promise<DocumentView> };
 export function DocumentSharing({
@@ -33,7 +35,12 @@ export function DocumentSharing({
   const [shares, setShares] = useState<readonly DocumentShare[]>([]);
   const [links, setLinks] = useState<readonly DocumentLink[]>([]);
   const [urls, setUrls] = useState<ReadonlyMap<string, string>>(new Map());
-  const [subject, setSubject] = useState('');
+  const [recipients, setRecipients] = useState<readonly DocumentShareRecipient[]>([]);
+  const [recipient] = recipients;
+  const search = useCallback(
+    (query: string, signal: AbortSignal) => client.shareRecipients(document.id, query, { signal }),
+    [client, document.id],
+  );
   const [permission, setPermission] = useState<DocumentPermission>('read');
   const [error, setError] = useState<string>();
   const [notice, setNotice] = useState<string>();
@@ -88,11 +95,15 @@ export function DocumentSharing({
       if (!mutation.signal.aborted) {
         if (cause instanceof DocumentError && cause.status >= 400 && cause.status < 500)
           setIntent(undefined);
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : 'Sharing could not be confirmed. Retry the same change.',
-        );
+        if (cause instanceof DocumentError && cause.code === 'share_recipient_unavailable') {
+          setError('This recipient is unavailable. Search for an eligible CMA user.');
+        } else {
+          setError(
+            cause instanceof Error
+              ? cause.message
+              : 'Sharing could not be confirmed. Retry the same change.',
+          );
+        }
       }
     } finally {
       request.current = undefined;
@@ -159,28 +170,27 @@ export function DocumentSharing({
           className="document-sharing__add"
           onSubmit={(event) => {
             event.preventDefault();
-            if (subject.trim())
-              void run((options) =>
-                client.grant(
+            if (recipient)
+              void run(async (options) => {
+                const next = await client.grant(
                   document.id,
-                  subject.trim(),
+                  recipient.subject,
                   { expected_revision: document.revision, permission },
                   options,
-                ),
-              );
+                );
+                if (!options.signal?.aborted) setRecipients([]);
+                return next;
+              });
           }}
         >
-          <label className="document-field">
-            NyxID user ID
-            <Input
-              aria-label="Recipient user ID"
-              value={subject}
-              maxLength={255}
-              disabled={locked}
-              onChange={(event) => setSubject(event.target.value)}
-            />
-          </label>
-          <Button type="submit" disabled={locked || !subject.trim()}>
+          <ShareRecipientSearch
+            search={search}
+            value={recipients}
+            onChange={setRecipients}
+            disabled={locked}
+            single
+          />
+          <Button type="submit" disabled={locked || !recipient}>
             Add person
           </Button>
         </form>

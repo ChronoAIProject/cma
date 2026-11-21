@@ -305,19 +305,24 @@ def main():
         require(env.get("CD_COMPONENT") in DEPLOYABLES, "Unexpected superseded component")
         step_output(env, "disposition", skip["disposition"])
 
-    result = run_publication(operation, on_superseded=superseded, component=env.get("CD_COMPONENT"))
+    outcome = {}
+    result = run_publication(operation, on_superseded=superseded, component=env.get("CD_COMPONENT"), outcome=outcome)
     # run_private has restored the public descriptors; only fixed stage records
     # cross that boundary, including the failing phase on an unsuccessful run.
     component = env.get("CD_COMPONENT")
     if component in TARGETS:
         timings.emit(sys.stdout, scan_only=component in RUNTIME_TARGETS)
     # Every image reports its build summary, so a failed runtime build also
-    # names the Dockerfile step where it stopped.
+    # names the Dockerfile step where it stopped. BuildKit can mark a vertex
+    # failed in a build that still completes (an optional cache import, for
+    # example), so the error annotation is reserved for a publication that
+    # actually stopped in its build stage.
     label = component if component in DEPLOYABLES else "image"
+    stopped_in_build = bool(result) and outcome.get("stage") == "build"
     for metrics in build_metrics:
         value = metrics or {"complete": False, "reason": "progress-unavailable"}
         print(json.dumps({"event": "publication-build", **value}, sort_keys=True), flush=True)
-        for step in value.get("failed_steps", ())[:1]:
+        for step in value.get("failed_steps", ())[:1] if stopped_in_build else ():
             print(f"::error title=Image build step failed::{label} stopped at Dockerfile step {step}; "
                   "its output is withheld. Reproduce that step locally from the same source.", flush=True)
     if component in APP_TARGETS:

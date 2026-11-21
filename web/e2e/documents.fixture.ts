@@ -111,6 +111,13 @@ export class LocalDocuments {
         }
         return reply({ items: this.comments, next: null });
       }
+      if (url.pathname.endsWith('/share-recipients')) {
+        const recipient = { subject: 'Reviewer-A', display_name: 'Local Reviewer' };
+        const search = url.searchParams.get('q')?.trim().toLowerCase();
+        return reply(
+          search && recipient.display_name.toLowerCase().includes(search) ? [recipient] : [],
+        );
+      }
       if (url.pathname.endsWith('/shares')) return reply(this.shares);
       if (url.pathname.includes('/shares/')) {
         this.shares.push({

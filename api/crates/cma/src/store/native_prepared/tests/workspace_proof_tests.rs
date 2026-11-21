@@ -358,6 +358,7 @@ async fn workspace_completion_survives_health_and_claim_with_old_record_fallback
     next.transition(WorkspaceStatus::Ready, NOW.into(), None)
         .unwrap();
     let transaction = SandboxTransaction::SaveWorkspaceAndAppend {
+        repository_runtime: None,
         expected_revision: expected,
         workspace: Box::new(next),
         event_at: NOW.into(),

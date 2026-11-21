@@ -59,7 +59,7 @@ pub(super) fn facade_with_limit(
     profiles: Arc<crate::store::MongoProfileStore>,
     operations: Arc<MongoAgentLifecycleStore>,
     limit: u16,
-    credentials: FixedSandboxCredentialPrerequisite,
+    credentials: impl layer2_core::sandbox::SandboxCredentialPrerequisite + 'static,
 ) -> Arc<InlineAgentLifecycle> {
     InlineAgentLifecycle::new(
         SandboxService::new(

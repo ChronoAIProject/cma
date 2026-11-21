@@ -55,21 +55,22 @@ impl AgentCommandWorker {
                 }
             }
         };
+        let page = Page {
+            items: page
+                .items
+                .into_iter()
+                .map(|command| ScheduledAgentCommand {
+                    reconcile_current: heads
+                        .iter()
+                        .any(|head| command.reconciliation_current(head)),
+                    dispatched: command.work.dispatch.is_some(),
+                    id: command.receipt.envelope.command_id,
+                })
+                .collect(),
+            next: page.next,
+        };
         Ok(CommandDiscovery {
-            page: Page {
-                items: page
-                    .items
-                    .into_iter()
-                    .map(|command| ScheduledAgentCommand {
-                        reconcile_current: heads
-                            .iter()
-                            .any(|head| command.reconciliation_current(head)),
-                        dispatched: command.work.dispatch.is_some(),
-                        id: command.receipt.envelope.command_id,
-                    })
-                    .collect(),
-                next: page.next,
-            },
+            page: self.include_funding_work(request, page).await,
             heads_failed,
         })
     }

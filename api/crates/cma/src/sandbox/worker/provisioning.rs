@@ -349,6 +349,26 @@ impl SandboxWorker {
             .create_profile_workspace(&sandbox, &runtime, profile, index, &operation_id(&sandbox))
             .await
         {
+            if matches!(
+                sandbox.origin,
+                layer2_core::sandbox::SandboxOrigin::Lifecycle { .. }
+            ) && self
+                .dependencies
+                .store
+                .get_sandbox(&sandbox.id)
+                .await?
+                .is_some_and(|current| {
+                    current.owner == sandbox.owner
+                        && current.origin == sandbox.origin
+                        && matches!(
+                            current.status,
+                            SandboxStatus::Retiring | SandboxStatus::Retired
+                        )
+                })
+            {
+                // Workspace failure can atomically advance this same parent to retirement.
+                return Ok(());
+            }
             return self
                 .handle_failure(sandbox, dependency_failure(error), now)
                 .await;

@@ -14,6 +14,7 @@ function client(
     update: vi.fn(),
     revisions: vi.fn(),
     shares: vi.fn(),
+    shareRecipients: vi.fn(),
     grant: vi.fn(),
     revoke: vi.fn(),
     links: vi.fn(),

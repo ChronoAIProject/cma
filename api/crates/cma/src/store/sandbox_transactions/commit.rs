@@ -9,7 +9,14 @@ impl SandboxTransactionStore for MongoSandboxStore {
                 && sandbox.work.is_due(event_at)
                 && matches!(sandbox.work.step,
                     layer2_core::sandbox::SandboxWorkStep::RunLifecycleOperation
-                    | layer2_core::sandbox::SandboxWorkStep::StopAgents));
+                    | layer2_core::sandbox::SandboxWorkStep::StopAgents))
+            || matches!(
+                &transaction,
+                SandboxTransaction::SaveWorkspaceAndAppend {
+                    repository_runtime: Some(_),
+                    ..
+                }
+            );
         let parent_ready = match &transaction {
             SandboxTransaction::SaveSandboxAndAppend { sandbox, event, .. } => {
                 sandbox.status == layer2_core::sandbox::SandboxStatus::Active
