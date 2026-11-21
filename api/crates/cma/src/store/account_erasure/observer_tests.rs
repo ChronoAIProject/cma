@@ -103,6 +103,8 @@ async fn observer_cleanup_waits_until_its_source_agent_is_removed() {
         .find(|entry| entry.collection == COLLECTION)
         .unwrap();
     let options = Options {
+        transaction_drain_minimum_secs: 120,
+        drain_qualification: Some(TransactionDrainQualification::fixture()),
         billing_enabled: false,
         allocation_rollups_enabled: Some(false),
         agent_shared_observation: Some(true),

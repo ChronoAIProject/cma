@@ -214,39 +214,6 @@ const DocumentSection = memo(function DocumentSection({
     </section>
   );
 });
-export function DocsIndex({ onNavigate }: { readonly onNavigate?: (route: AppRoute) => void }) {
-  useDocumentTitle('Docs');
-  return (
-    <section className="gateway-docs-index">
-      <PageHeader
-        breadcrumb={[{ label: 'Docs' }]}
-        title="Docs"
-        description="Guides and references for building with CMA."
-      />
-      <a
-        className="gateway-docs-index__link"
-        href="/docs/event-gateway"
-        onClick={(event) => {
-          if (
-            onNavigate &&
-            event.button === 0 &&
-            !event.metaKey &&
-            !event.ctrlKey &&
-            !event.shiftKey &&
-            !event.altKey
-          ) {
-            event.preventDefault();
-            onNavigate({ kind: 'docs', view: 'event_gateway_protocol' });
-          }
-        }}
-      >
-        <h2>Event Gateway Protocol</h2>
-        <p>Integrate event sources, manage channels, implement providers, and deliver replies.</p>
-        <span>Read documentation →</span>
-      </a>
-    </section>
-  );
-}
 export function EventGatewayDocs({
   onNavigate,
 }: { readonly onNavigate?: (route: AppRoute) => void } = {}) {

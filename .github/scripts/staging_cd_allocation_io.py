@@ -106,6 +106,7 @@ class AllocationGitHub(GitHub):
             raise Refusal("Allocation provenance could not be read") from None
 
     def history(self):
-        if self._history is None:
-            self._history = DevelopHistory.load(self.request, runner=self.io.read)
-        return self._history
+        with self._history_lock:
+            if self._history is None:
+                self._history = DevelopHistory.load(self.request, runner=self.io.read)
+            return self._history

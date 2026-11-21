@@ -116,7 +116,7 @@ class ShardTests(unittest.TestCase):
         self.assertEqual(PARTITIONS["TESTS_PER_FIXTURE"], 40)
         self.assertEqual(PARTITIONS["CONCURRENT_FIXTURES"], 2)
         self.assertEqual(PARTITIONS["CI_SHARDS"], 8)
-        self.assertEqual(len(PARTITIONS["ISOLATED_TESTS"]), 6)
+        self.assertEqual(len(PARTITIONS["ISOLATED_TESTS"]), 7)
         script = (ROOT / "mongo-contract-tests.sh").read_text()
         self.assertIn("--test-threads 1 --no-fail-fast", script)
         self.assertEqual(script.count("readiness_deadline=$((SECONDS + 60))"), 2)
@@ -238,7 +238,7 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual([row[-1] for row in commands], [option for option, _ in PARTITIONS["ISOLATED_TESTS"]])
         code, commands, _, _ = self.exercise(None, {})
         self.assertEqual(code, 0)
-        self.assertEqual(len(commands), 49)
+        self.assertEqual(len(commands), 43 + len(PARTITIONS["ISOLATED_TESTS"]))
 
     def test_cleanup_failure_stops_new_fixtures_and_cancellation_reaps_children(self):
         code, commands, _, _ = self.exercise("isolated", {"--scale": 125})

@@ -53,6 +53,27 @@ for (const admin of [false, true]) {
           const chart = surface.getByRole('region', { name: 'Allocation comparison chart' });
           const inventory = surface.getByRole('table', { name: 'Sandboxes and allocated usage' });
           await expect(summary.locator('.badge')).toHaveText(label);
+          await expect(summary).toContainText(
+            'Resource-hours describe allocation; billing is separate',
+          );
+          for (const [metric, total] of [
+            ['CPU (core-hours)', '24'],
+            ['Memory (GiB-hours)', '48'],
+            ['Disk (GiB-hours)', '480'],
+          ] as const) {
+            await expect(
+              summary
+                .getByRole('term')
+                .filter({ hasText: metric })
+                .locator('..')
+                .locator(':scope > dd'),
+            ).toHaveText(total);
+          }
+          await expect(inventory.locator('.usage-inventory-quantity')).toHaveText([
+            '24',
+            '48',
+            '480',
+          ]);
           await expect(chart.getByLabel('Plotted Sandboxes coverage')).toContainText(label);
           await expect(inventory.getByText(label, { exact: true })).toBeVisible();
           for (const view of [summary, chart, inventory]) {

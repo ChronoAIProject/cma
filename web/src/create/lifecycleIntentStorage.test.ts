@@ -64,6 +64,43 @@ it('keeps an unbound uncertain request in its original admission slot', () => {
   expect(sessionStorage.getItem(recovery)).toBeNull();
 });
 
+it.each([undefined, 'named', 'automatic'] as const)(
+  'preserves %s title intent and draft ownership through recovery journal migration',
+  (title_mode) => {
+    const intent = {
+      ...original,
+      draftRevision: 'draft-a',
+      body: { ...original.body, ...(title_mode ? { title_mode } : {}) },
+    };
+    sessionStorage.setItem(pending, encode(intent));
+    expect(loadLifecycleIntent(scope)).toEqual({ intent: undefined });
+    expect(sessionStorage.getItem(recovery)).toBe(encode(intent));
+    retainLifecycleIntent(scope, undefined, next);
+    expect(loadLifecycleIntent(scope, binding)).toEqual({ intent });
+    retainLifecycleIntent(scope, intent);
+    expect(loadLifecycleIntent(scope)).toEqual({ intent: next });
+  },
+);
+
+it.each(['unsupported', null, false, 1])(
+  'refuses an invalid title mode %j without migrating or discarding the request',
+  (title_mode) => {
+    const raw = JSON.stringify({
+      version: 1,
+      intent: { ...original, body: { ...original.body, title_mode } },
+    });
+    sessionStorage.setItem(pending, raw);
+    expect(loadLifecycleIntent(scope).error).toBeDefined();
+    expect(sessionStorage.getItem(pending)).toBe(raw);
+    expect(sessionStorage.getItem(recovery)).toBeNull();
+    expect(lifecycleScopeForAgent(scope.owner, binding.agentId)).toBeUndefined();
+    sessionStorage.removeItem(pending);
+    sessionStorage.setItem(recovery, raw);
+    expect(loadLifecycleIntent(scope, binding).error).toBeDefined();
+    expect(lifecycleScopeForAgent(scope.owner, binding.agentId)).toBeUndefined();
+  },
+);
+
 it.each(['getItem', 'setItem', 'removeItem'] as const)(
   'fails closed and retains the legacy identity when storage %s throws',
   (method) => {

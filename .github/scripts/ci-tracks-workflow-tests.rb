@@ -137,8 +137,11 @@ def validate(documents, actions)
   require_check(ci['permissions'] == {'contents' => 'read'}, 'CI permissions must remain read-only')
   # Queue entries run on refs/heads/gh-readonly-queue/develop/pr-N-SHA: their
   # own ref, so a PR (refs/pull/N/merge) or develop push run never cancels one.
+  # Develop pushes write the caches PRs restore, so they finish instead of
+  # being cancelled; every other ref still cancels its superseded run.
   require_check(ci['concurrency'] == {'group' => 'ci-${{ github.workflow }}-${{ github.ref }}',
-    'cancel-in-progress' => true}, 'CI concurrency must remain per ref')
+    'cancel-in-progress' => "${{ !(github.event_name == 'push' && github.ref == 'refs/heads/develop') }}"},
+    'CI concurrency must remain per ref and keep develop cache writers running')
   pr = events.fetch('pull_request')
   require_check(pr.fetch('branches') == %w[develop main], 'CI target differs')
   require_check(pr.fetch('types').sort == %w[opened reopened synchronize edited labeled unlabeled].sort, 'label event coverage differs')
@@ -220,6 +223,12 @@ def validate(documents, actions)
   ['Image normalization budgets', 'Gateway socket latency budget', 'Enforce the production budgets (one retry)'].each do |name|
     require_check(timing.find { |s| s['name'] == name }&.fetch('if') == "inputs.track == 'eg'", 'Gateway timing ownership differs')
   end
+  allocator_selector = 'package(=cma) and binary(=allocator_cli) and test(=actual_api_allocator_completes_without_configuration)'
+  allocator = timing.select { |s| s.fetch('run', '').include?(allocator_selector) }
+  require_check(allocator.length == 1 && allocator[0]['if'] == "inputs.track == 'am'" &&
+    allocator[0]['run'] == "bash ../.github/scripts/backend-nextest.sh run -E '#{allocator_selector}' --test-threads 1 --success-output final" &&
+    !allocator[0].key?('continue-on-error'), 'API allocator must run exactly once in required sequential AM timing steps')
+  require_check(rust.fetch('timing').fetch('env')['CMA_NEXTEST_REUSE'] == '1', 'Allocator must use the shared Rust archive')
   steps = documents.values.flat_map { |doc| doc.fetch('jobs').values.flat_map { |job| job.fetch('steps', []) } }
   archives = steps.select { |s| s.fetch('run', '').include?('cargo nextest archive') }
   require_check(archives.length == 1 && archives[0]['run'].include?('--workspace --locked'), 'one locked workspace archive required')
@@ -304,6 +313,10 @@ check_merge_group_triggers(workflows)
 end
 before_queue = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
 mutations = [
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].reject! { |s| s['name'] == 'API allocator qualification' } },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'] << d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }.dup },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['continue-on-error'] = true },
+  ->(d) { d['ci-rust']['jobs']['timing']['steps'].find { |s| s['name'] == 'API allocator qualification' }['run'].sub!('--test-threads 1', '--test-threads 2') },
   ->(d) { d['ci'][true].delete('merge_group') },
   ->(d) { d['ci'][true]['merge_group']['types'] = ['destroyed'] },
   ->(d) { d['ci'][true]['merge_group']['branches'] = ['main'] },
@@ -331,6 +344,7 @@ mutations = [
   ->(d) { d['ci']['jobs']['eg']['with']['packages'] = '["cmaeg"]' },
   ->(d) { d['ci']['permissions']['contents'] = 'write' },
   ->(d) { d['ci']['concurrency']['cancel-in-progress'] = false },
+  ->(d) { d['ci']['concurrency']['cancel-in-progress'] = true },
   ->(d) { d['ci']['jobs']['gate-eg']['needs'].delete('runtime-images') },
   ->(d) { d['ci']['jobs']['gate-am']['if'] = 'success()' },
   ->(d) { d['ci']['jobs']['version-label']['name'] = 'Optional label' },

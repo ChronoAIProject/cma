@@ -416,6 +416,30 @@ impl AgentAdmissionResult {
 
 #[async_trait]
 pub trait AgentAdmissionStore: Send + Sync {
+    async fn admit_catalogue_agent_with_trigger_initiator(
+        &self,
+        admission: AgentAdmission,
+        initiation: crate::trigger_domain::LaunchInitiation,
+        reuse_existing: bool,
+    ) -> Result<AgentAdmissionResult, SandboxStoreError> {
+        self.admit_agent_with_trigger_initiator(admission, initiation, reuse_existing)
+            .await
+    }
+
+    async fn admit_catalogue_agent_reusing_profile(
+        &self,
+        admission: AgentAdmission,
+    ) -> Result<AgentAdmissionResult, SandboxStoreError> {
+        self.admit_agent_reusing_profile(admission).await
+    }
+
+    async fn admit_catalogue_agent(
+        &self,
+        admission: AgentAdmission,
+    ) -> Result<AgentAdmissionResult, SandboxStoreError> {
+        self.admit_agent(admission).await
+    }
+
     /// New Trigger creation must persist its proven initiator in the same write.
     async fn admit_agent_with_trigger_initiator(
         &self,

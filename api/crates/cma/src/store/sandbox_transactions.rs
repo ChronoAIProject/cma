@@ -20,6 +20,7 @@ use mongodb::options::ReadConcern;
 mod channel_reuse;
 mod command_revival;
 mod commit;
+mod workspace_ready;
 pub(super) enum ApplyError {
     Domain(SandboxStoreError),
     Driver(mongodb::error::Error),
@@ -286,6 +287,7 @@ async fn apply_transaction(
                 .map_err(ApplyError::Driver)?
                 .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
             let current = read_workspace(&aggregate).map_err(ApplyError::Domain)?;
+            workspace_ready::check_parent(store, session, &current, workspace).await?;
             layer2_core::sandbox::ProvisioningExecution::validate_successor(
                 current.work.execution,
                 workspace.work.execution,

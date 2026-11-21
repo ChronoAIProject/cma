@@ -6,6 +6,8 @@ use tokio::sync::{broadcast, watch};
 pub(super) struct ReportNotifications {
     work: watch::Sender<()>,
     finished: broadcast::Sender<String>,
+    #[cfg(test)]
+    subscribed: tokio::sync::Notify,
 }
 
 impl Default for ReportNotifications {
@@ -13,6 +15,8 @@ impl Default for ReportNotifications {
         Self {
             work: watch::channel(()).0,
             finished: broadcast::channel(16).0,
+            #[cfg(test)]
+            subscribed: tokio::sync::Notify::new(),
         }
     }
 }
@@ -36,7 +40,22 @@ impl ReportNotifications {
 
 impl ReportingStore {
     pub(crate) fn report_work(&self) -> watch::Receiver<()> {
-        self.notifications.work.subscribe()
+        let work = self.notifications.work.subscribe();
+        #[cfg(test)]
+        self.notifications.subscribed.notify_one();
+        work
+    }
+
+    #[cfg(test)]
+    pub(super) async fn wait_for_report_worker(&self) {
+        while !self.report_worker_subscribed() {
+            self.notifications.subscribed.notified().await;
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn report_worker_subscribed(&self) -> bool {
+        self.notifications.work.receiver_count() > 0
     }
 
     pub(super) async fn submit_with_completion(
