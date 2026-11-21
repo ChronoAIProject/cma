@@ -188,6 +188,46 @@ impl BackendFreeConfig {
     }
 }
 
+pub(super) fn authentication(
+    mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+    public_url: &str,
+) -> Result<AuthenticationSettings, String> {
+    let (auth_mode, nyxid_public_url) =
+        match value_or(&mut lookup, "CHRONO_AUTH_MODE", "provider")?.as_str() {
+            "trusted" => (
+                AuthMode::Trusted {
+                    subject: value_or(&mut lookup, "CHRONO_TRUSTED_SUBJECT", "local-developer")?,
+                },
+                None,
+            ),
+            "provider" => (
+                AuthMode::Provider {
+                    base_url: required(&mut lookup, "CHRONO_NYXID_BASE_URL")?,
+                    client_id: required(&mut lookup, "CHRONO_NYXID_CLIENT_ID")?,
+                    client_secret: required(&mut lookup, "CHRONO_NYXID_CLIENT_SECRET")?,
+                    public_url: public_url.to_owned(),
+                },
+                Some(parse_canonical_https_origin(
+                    "CHRONO_NYXID_PUBLIC_URL",
+                    &required(&mut lookup, "CHRONO_NYXID_PUBLIC_URL")?,
+                )?),
+            ),
+            value => {
+                return Err(format!(
+                    "CHRONO_AUTH_MODE must be \"provider\" or \"trusted\", got {value:?}"
+                ))
+            }
+        };
+    if let AuthMode::Provider { base_url, .. } = &auth_mode {
+        validate_origin("CHRONO_NYXID_BASE_URL", base_url)?;
+    }
+
+    Ok(AuthenticationSettings {
+        auth_mode,
+        nyxid_public_url,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use base64::{engine::general_purpose::STANDARD, Engine as _};
@@ -290,44 +330,4 @@ mod tests {
             })
         })
     }
-}
-
-pub(super) fn authentication(
-    mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
-    public_url: &str,
-) -> Result<AuthenticationSettings, String> {
-    let (auth_mode, nyxid_public_url) =
-        match value_or(&mut lookup, "CHRONO_AUTH_MODE", "provider")?.as_str() {
-            "trusted" => (
-                AuthMode::Trusted {
-                    subject: value_or(&mut lookup, "CHRONO_TRUSTED_SUBJECT", "local-developer")?,
-                },
-                None,
-            ),
-            "provider" => (
-                AuthMode::Provider {
-                    base_url: required(&mut lookup, "CHRONO_NYXID_BASE_URL")?,
-                    client_id: required(&mut lookup, "CHRONO_NYXID_CLIENT_ID")?,
-                    client_secret: required(&mut lookup, "CHRONO_NYXID_CLIENT_SECRET")?,
-                    public_url: public_url.to_owned(),
-                },
-                Some(parse_canonical_https_origin(
-                    "CHRONO_NYXID_PUBLIC_URL",
-                    &required(&mut lookup, "CHRONO_NYXID_PUBLIC_URL")?,
-                )?),
-            ),
-            value => {
-                return Err(format!(
-                    "CHRONO_AUTH_MODE must be \"provider\" or \"trusted\", got {value:?}"
-                ))
-            }
-        };
-    if let AuthMode::Provider { base_url, .. } = &auth_mode {
-        validate_origin("CHRONO_NYXID_BASE_URL", base_url)?;
-    }
-
-    Ok(AuthenticationSettings {
-        auth_mode,
-        nyxid_public_url,
-    })
 }
