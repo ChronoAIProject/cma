@@ -31,6 +31,7 @@ pub(crate) struct RuntimeConfig {
     pub platform_proxy: Option<ProxyConfig>,
     pub tool_proxy: Option<crate::tool_proxy::ToolProxyConfig>,
     pub github_proxy: Option<crate::github_proxy::GithubProxyConfig>,
+    pub desktop_supervision_enabled: bool,
     pub nyxid_url: Option<String>,
     pub allow_local_git: bool,
     /// Set only on a Sandbox whose immutable profile requested a desktop.
@@ -154,6 +155,8 @@ impl RuntimeConfig {
             platform_proxy.as_ref(),
         )?;
         let checkpoint_root = checkpoint_root(&process_env, &home, home_identity.is_some())?;
+        let desktop_supervision_enabled =
+            crate::desktop_process::supervision_enabled(&process_env)?;
 
         Ok(Self {
             bind,
@@ -170,6 +173,7 @@ impl RuntimeConfig {
             platform_proxy,
             tool_proxy,
             github_proxy,
+            desktop_supervision_enabled,
             nyxid_url,
             allow_local_git: false,
             machine_included,
@@ -213,6 +217,7 @@ impl RuntimeConfig {
             platform_proxy: None,
             tool_proxy: None,
             github_proxy: None,
+            desktop_supervision_enabled: false,
             nyxid_url: None,
             allow_local_git: true,
             machine_included: false,

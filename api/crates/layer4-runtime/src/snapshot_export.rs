@@ -68,6 +68,7 @@ fn source_config(request: &HomeSnapshotExportRequest) -> Result<RuntimeConfig> {
         platform_proxy: None,
         tool_proxy: None,
         github_proxy: None,
+        desktop_supervision_enabled: false,
         nyxid_url: None,
         allow_local_git: false,
         machine_included: false,

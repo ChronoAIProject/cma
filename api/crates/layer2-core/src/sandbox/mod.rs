@@ -166,11 +166,16 @@ mod retained_reopen;
 mod retained_reopen_service;
 #[cfg(test)]
 mod retained_reopen_tests;
+mod retained_suspended_reopen;
 pub use retained_reopen::{
     apply_retained_reopen, RetainedReopenAccepted, RetainedReopenProof, RetainedReopenReceipt,
-    RetainedReopenRequest, RetainedReopenSnapshot, RetainedReopenVerifier,
+    RetainedReopenReplay, RetainedReopenRequest, RetainedReopenSnapshot, RetainedReopenVerifier,
 };
-pub use retained_reopen_service::{RetainedReopenError, RetainedReopenService};
+pub use retained_reopen_service::{RetainedReopenError, RetainedReopenPath, RetainedReopenService};
+pub use retained_suspended_reopen::{
+    apply_suspended_reopen, RetainedSuspendedReopenProof, RetainedSuspendedReopenReceipt,
+    RetainedSuspendedReopenRequest,
+};
 mod revive;
 mod rotate;
 mod runtime_generation;

@@ -1,5 +1,7 @@
 #!/bin/bash
 set -euo pipefail
+desktop_ready_file=$1
+rfb_socket=$2
 export OMARCHY_PATH=/usr/share/omarchy
 export PATH=/home/cma/.local/bin:/usr/local/bin:/usr/share/omarchy/bin:/usr/bin
 export XDG_CURRENT_DESKTOP=Hyprland XDG_SESSION_TYPE=wayland LANG=en_US.UTF-8
@@ -78,17 +80,29 @@ export WAYLAND_DISPLAY=wayland-0
 wlr-randr --output HEADLESS-1 --custom-mode 1280x800@30Hz
 # Capture the Wayland output directly. CMA's authenticated relay is its only
 # remote entry point; the X11 viewer is an in-Sandbox adapter for native tools.
-wayvnc --config /dev/null --output HEADLESS-1 --max-fps 30 127.0.0.1 5900 >/tmp/cma-wayvnc.log 2>&1 &
+rfb_listener=(127.0.0.1 5900)
+rfb_viewer=127.0.0.1:5900
+if [[ -n "$rfb_socket" ]]; then
+  rfb_listener=(--unix-socket "$rfb_socket")
+  rfb_viewer="$rfb_socket"
+fi
+wayvnc --config /dev/null --output HEADLESS-1 --max-fps 30 "${rfb_listener[@]}" >/tmp/cma-wayvnc.log 2>&1 &
 children+=("$!")
 for ((i=0;i<100;i++)); do
-  if python3 -c 'import socket; s=socket.create_connection(("127.0.0.1",5900),.1); s.close()' 2>/dev/null; then break; fi
   kill -0 "${children[1]}"
+  if python3 -c 'import socket,sys
+if sys.argv[1]:
+    with socket.socket(socket.AF_UNIX) as stream:
+        stream.settimeout(.1)
+        stream.connect(sys.argv[1])
+else:
+    socket.create_connection(("127.0.0.1",5900),.1).close()' "$rfb_socket" 2>/dev/null; then break; fi
   sleep 0.1
 done
 # FLTK must use X11 even though the compositor's client environment is Wayland.
 env -u WAYLAND_DISPLAY FLTK_BACKEND=x11 vncviewer -display :99 -Shared -SecurityTypes None -FullScreen=0 \
   -RemoteResize=0 -ShortcutModifiers= -AcceptClipboard=0 -SendClipboard=0 \
-  -geometry 1280x800+0+0 127.0.0.1:5900 >/tmp/cma-vncviewer.log 2>&1 &
+  -geometry 1280x800+0+0 "$rfb_viewer" >/tmp/cma-vncviewer.log 2>&1 &
 children+=("$!")
 for ((i=0;i<100;i++)); do
   # FLTK fullscreen windows can omit WM_CLASS/title without a window manager.
@@ -129,6 +143,6 @@ for ((i=0;i<300;i++)); do
 done
 hyprctl -j clients | jq -e 'any(.[]; .class | ascii_downcase | contains("chromium"))' >/dev/null
 xdotool windowfocus --sync "$window"
-touch /tmp/cma-omarchy-ready
+touch -- "$desktop_ready_file"
 wait -n "${children[@]}" "$browser_manager"
 exit 1
