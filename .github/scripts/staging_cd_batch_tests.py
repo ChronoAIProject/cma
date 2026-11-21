@@ -58,6 +58,19 @@ class BatchBoundaryTests(unittest.TestCase):
         with self.assertRaises(Refusal):
             self.invoke(self.rows, code=1)
 
+    def test_an_uncached_batch_never_reaches_the_shared_cache(self):
+        # A batch of one plan anchor must not prune the cached window's records.
+        response = SimpleNamespace(returncode=0, stdout=json.dumps(self.rows), stderr='')
+        for cached in (True, False):
+            with self.subTest(cached=cached), patch.dict(queue.os.environ, CD_SELECTOR_CACHE='{}'), \
+                    patch.object(comparisons.subprocess, 'run', return_value=response) as runner, \
+                    patch.object(comparisons, 'comparison_parent', side_effect=[self.before, self.first]):
+                comparisons.batch_selection(self.root, self.revisions, cached=cached)
+            self.assertEqual('CD_SELECTOR_CACHE' in runner.call_args.kwargs['env'], cached)
+            self.assertEqual(runner.call_args.kwargs['env'].keys() - {'CD_SELECTOR_CACHE'},
+                             {key for key in ('PATH', 'HOME', 'LANG', 'LC_ALL', 'RUSTUP_HOME', 'CARGO_HOME')
+                              if key in queue.os.environ})
+
     def test_reconcile_uses_batch_without_coalescing_selected_sources(self):
         def command(_root, *args):
             if args[0] == 'rev-list':
