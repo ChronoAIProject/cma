@@ -30,6 +30,7 @@ import { messageFeedbackClient } from './rest/messageFeedback';
 import { agentFilesClient } from './rest/agentFiles';
 import { documentsClient } from './rest/documents';
 import { computerClient } from './rest/computer';
+import { exportRawHistory } from './rest/history';
 
 /** The write succeeded; a failed detail read must not release its command key. */
 export class CreatedResourceReadError extends Error {
@@ -118,6 +119,8 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
       (await sdk.readOpenApi(options))['x-cma-task-templates-v1'] === true,
     readTaskRepositorySupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-repository'] === true,
+    readTaskTitleModeSupport: async (options) =>
+      (await sdk.readOpenApi(options))['x-cma-agent-title-mode'] === true,
     readTaskCreationSupport: async (options) => {
       const document = await sdk.readOpenApi(options);
       const components = document.components as
@@ -300,20 +303,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         })),
       };
     },
-    exportAgentHistory: async (id, options) => {
-      const response = await sdk.config.fetch(
-        `${sdk.config.baseUrl}/api/v1/agents/${encodeURIComponent(id)}/history`,
-        {
-          credentials: sdk.config.cookies ? 'include' : 'omit',
-          cache: 'no-store',
-          signal: options?.signal,
-        },
-      );
-      if (!response.ok) {
-        throw new ProtocolError(`Agent history export failed (${String(response.status)}).`);
-      }
-      return response.blob();
-    },
+    exportAgentHistory: (id, options) => exportRawHistory(sdk, id, options),
     readAgentUsage: async (id, options) => {
       const value = await sdk.agents.usage(id, options);
       return {

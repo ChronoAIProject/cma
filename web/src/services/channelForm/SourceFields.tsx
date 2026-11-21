@@ -1,3 +1,4 @@
+import { AdvancedFields } from './AdvancedFields';
 import { LarkMessageEffectsFields } from './LarkMessageEffectsFields';
 import { LarkResourceFields } from './LarkResourceFields';
 import { DiscordSourceFields } from './DiscordSourceFields';
@@ -6,7 +7,7 @@ import { WhatsappSourceFields } from './WhatsappSourceFields';
 import { Button } from '../../ui/Button';
 import { modeUnavailable, RelayDiscoveryNotice, useRelayCapabilities } from '../RelayCapabilities';
 import { RelaySetupGuidance } from './RelaySetupGuidance';
-import { AdmissionFields } from './AdmissionFields';
+import { SourceAdmissionFields } from './SourceAdmissionFields';
 import { Choice, Section, StringList, TextField, Toggle } from './Fields';
 import { object, optional, strings, without, type Fields } from './model';
 import { ValueBuilder } from './ValueBuilder';
@@ -14,12 +15,16 @@ const platforms = ['telegram', 'lark', 'feishu', 'discord', 'whatsapp', 'slack']
 export function SourceFields({
   value,
   onChange,
+  hideAdmission = false,
   managedIdentity = false,
+  guided = false,
   attachmentDescription,
 }: {
+  hideAdmission?: boolean;
   value: Fields;
   onChange: (v: Fields) => void;
   managedIdentity?: boolean;
+  guided?: boolean;
   attachmentDescription?: string;
 }) {
   const discovery = useRelayCapabilities();
@@ -31,9 +36,13 @@ export function SourceFields({
   );
   const set = (key: string, next: unknown) => onChange({ ...value, [key]: next });
   if (value.type === 'native_lark')
-    return <NativeLarkSourceFields value={value} onChange={onChange} />;
-  if (value.type === 'discord') return <DiscordSourceFields value={value} onChange={onChange} />;
-  if (value.type === 'whatsapp') return <WhatsappSourceFields value={value} onChange={onChange} />;
+    return (
+      <NativeLarkSourceFields value={value} onChange={onChange} hideAdmission={hideAdmission} />
+    );
+  if (value.type === 'discord')
+    return <DiscordSourceFields value={value} onChange={onChange} hideAdmission={hideAdmission} />;
+  if (value.type === 'whatsapp')
+    return <WhatsappSourceFields value={value} onChange={onChange} hideAdmission={hideAdmission} />;
   if (value.type === 'custom')
     return (
       <CustomSource
@@ -90,23 +99,42 @@ export function SourceFields({
                 );
               }}
             />
-            <TextField
-              label="NyxID issuer"
-              value={value.issuer}
-              onChange={(v) => set('issuer', v)}
-              required
-            />
-            <TextField
-              label="Signing key ID"
-              value={value.key_id}
-              onChange={(v) => set('key_id', v)}
-              required
-            />
-            <StringList
-              label="Route IDs"
-              value={strings(value.route_ids)}
-              onChange={(v) => set('route_ids', v)}
-            />
+            {guided ? (
+              <p className="channel-field-hint channel-connection-summary">
+                Issuer: {String(value.issuer || 'Required')} · Signing key:{' '}
+                {String(value.key_id || 'Required')} · Routes:{' '}
+                {strings(value.route_ids).filter(Boolean).join(', ') || 'None entered'}
+              </p>
+            ) : null}
+            <AdvancedFields title="Advanced connection settings" enabled={guided}>
+              <TextField
+                path="issuer"
+                label="NyxID issuer"
+                value={value.issuer}
+                onChange={(v) => set('issuer', v)}
+                hint="Copy this value from your existing NyxID relay route."
+                required
+              />
+              <TextField
+                path="key_id"
+                label="Signing key ID"
+                value={value.key_id}
+                onChange={(v) => set('key_id', v)}
+                hint="Copy this value from your existing NyxID relay route."
+                required
+              />
+              <StringList
+                requiredItems
+                path="route_ids"
+                label="Route IDs"
+                value={strings(value.route_ids)}
+                onChange={(v) => set('route_ids', v)}
+              />
+              <p className="channel-field-hint">
+                Use exact route IDs to receive callbacks. Removing every route saves an unbound
+                source that admits no callbacks.
+              </p>
+            </AdvancedFields>
             {['discord', 'whatsapp'].includes(String(value.platform)) ? (
               <Choice
                 label="Incoming message verification"
@@ -287,7 +315,7 @@ export function SourceFields({
           <LarkMessageEffectsFields value={value} onChange={onChange} />
         </>
       ) : null}
-      <AdmissionFields value={value.admission} onChange={(v) => set('admission', v)} />
+      {!hideAdmission ? <SourceAdmissionFields value={value} onChange={onChange} /> : null}
     </>
   );
 }

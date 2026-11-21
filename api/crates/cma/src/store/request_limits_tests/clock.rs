@@ -53,7 +53,7 @@ async fn update_and_before_projection_share_now_even_across_delayed_evaluation()
     f.close().await;
 }
 
-fn freeze(value: &mut Bson, now: DateTime) {
+pub(super) fn freeze(value: &mut Bson, now: DateTime) {
     match value {
         Bson::String(s) if s == "$$NOW" => *value = Bson::DateTime(now),
         Bson::Document(d) => {

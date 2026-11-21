@@ -286,11 +286,17 @@ async fn ambiguous_abort_and_failed_activation_have_distinct_unsuccessful_respon
             "code",
             "capacity_recovery_conflict",
         ),
+        (
+            Err(RecoveryError::WorkspaceCapacityFull { limit: 1, live: 1 }),
+            StatusCode::CONFLICT,
+            "code",
+            "capacity_recovery_workspace_full",
+        ),
     ] {
         *commands.result.lock().unwrap() = result;
         let (status, body) = response(&router, request("resume", json!(original()))).await;
         assert_eq!(status, expected);
         assert_eq!(body[field], value);
     }
-    assert_eq!(*commands.calls.lock().unwrap(), ["resume"; 4]);
+    assert_eq!(*commands.calls.lock().unwrap(), ["resume"; 5]);
 }

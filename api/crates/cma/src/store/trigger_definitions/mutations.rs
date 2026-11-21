@@ -48,7 +48,7 @@ pub(super) async fn owned<T>(
         if attempt > 0 {
             tokio::task::yield_now().await;
         }
-        let mut stored = queries::owned(store, id, owner)
+        let mut stored = queries::mutable_owned(store, id, owner)
             .await?
             .ok_or(TriggerStoreError::NotFound)?;
         let result = change(&mut stored.trigger)?;
@@ -66,6 +66,7 @@ pub(super) async fn owned<T>(
                     "_id": id.as_str(),
                     "owner": owner.as_str(),
                     "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                    "account_erasure_fenced": { "$ne": true },
                     "mutation_version": expected,
                 },
                 replacement,

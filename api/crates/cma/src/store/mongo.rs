@@ -62,7 +62,14 @@ impl MongoStores {
         mut self,
         deployment_limit: u16,
         writes_enabled: bool,
+        pending_home_reconciliation: bool,
     ) -> Result<Self, StoreError> {
+        if writes_enabled {
+            self.registration_capacity = Arc::new(
+                super::MongoRegistrationCapacityStore::open(&self.client, &self.database, true)
+                    .await?,
+            );
+        }
         self.admission_ceilings = Arc::new(
             super::MongoAdmissionCeilingsStore::open_with_defaults(
                 &self.client,
@@ -70,14 +77,10 @@ impl MongoStores {
                 deployment_limit,
                 self.initial_settings,
             )
-            .await?,
+            .await?
+            .with_activation(self.registration_capacity.activation_observation())
+            .with_pending_home_reconciliation(pending_home_reconciliation),
         );
-        if writes_enabled {
-            self.registration_capacity = Arc::new(
-                super::MongoRegistrationCapacityStore::open(&self.client, &self.database, true)
-                    .await?,
-            );
-        }
         Ok(self)
     }
 
@@ -275,6 +278,8 @@ impl MongoStores {
             )
             .await?,
         );
+        let registration_capacity =
+            Arc::new(super::MongoRegistrationCapacityStore::open(&client, database, false).await?);
         let admission_ceilings = Arc::new(
             super::MongoAdmissionCeilingsStore::open_with_defaults(
                 &client,
@@ -282,10 +287,9 @@ impl MongoStores {
                 0,
                 startup.initial_settings,
             )
-            .await?,
+            .await?
+            .with_activation(registration_capacity.activation_observation()),
         );
-        let registration_capacity =
-            Arc::new(super::MongoRegistrationCapacityStore::open(&client, database, false).await?);
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let agent_lifecycle =
             Arc::new(super::MongoAgentLifecycleStore::open(&client.database(database)).await?);

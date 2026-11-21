@@ -4,11 +4,33 @@ import re
 
 from git_comparison import check_sha
 
+# GitHub names each merge-queue entry's branch after its base branch and PR.
+# Only the develop queue is supported; main still merges reviewed release PRs.
+QUEUE_REF = re.compile(r'refs/heads/gh-readonly-queue/develop/pr-([1-9][0-9]*)-[0-9a-f]{40}')
+
 
 def repository_name(value):
     if not isinstance(value, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', value):
         raise ValueError('invalid repository identity')
     return value
+
+
+def queued_pull_number(event):
+    """Return the PR a develop merge-queue entry tests, from its exact group ref."""
+    if event.get('action') != 'checks_requested':
+        raise ValueError('merge group must request checks')
+    group = event['merge_group']
+    for key in ('base_sha', 'head_sha'):
+        if check_sha(group[key]) == '0' * 40:
+            raise ValueError('merge group requires live commits')
+    if group['base_sha'] == group['head_sha']:
+        raise ValueError('merge group adds no commit')
+    if group['base_ref'] != 'refs/heads/develop':
+        raise ValueError('CI merge group must target develop')
+    match = QUEUE_REF.fullmatch(group['head_ref']) if isinstance(group['head_ref'], str) else None
+    if match is None:
+        raise ValueError('merge group ref is not a develop queue entry')
+    return int(match.group(1))
 
 
 def full_ci_required(event, event_name, repository):
@@ -22,6 +44,11 @@ def full_ci_required(event, event_name, repository):
         if check_sha(event['after']) == '0' * 40:
             raise ValueError('CI push requires a live commit')
         return True
+    if event_name == 'merge_group':
+        # A queue entry is the develop PR it names, tested on top of the queue
+        # ahead of it: the same path selection and version label apply.
+        queued_pull_number(event)
+        return False
     if event_name != 'pull_request':
         raise ValueError('unsupported CI event')
     if type(event['number']) is not int or event['number'] <= 0:

@@ -22,6 +22,11 @@ export interface TranscriptPageOptions extends OperationOptions {
   readonly cursor?: TranscriptCursor;
   readonly limit?: number;
 }
+export interface TranscriptReadOptions extends OperationOptions {
+  readonly cache?: 'no-store';
+  readonly maxPages?: number;
+  readonly maxBytes?: number;
+}
 const pageShape = object({
   agent_id: text,
   through_seq: integer,
@@ -75,8 +80,21 @@ export async function readTranscriptPage(
 export async function readTranscript(
   config: ResolvedConfig,
   id: string,
-  options: OperationOptions,
+  options: TranscriptReadOptions,
 ): Promise<AgentTranscript> {
+  for (const limit of [options.maxPages, options.maxBytes])
+    if (limit !== undefined && (!Number.isSafeInteger(limit) || limit < 1))
+      throw new ValidationError('transcript read limits must be positive safe integers');
+  let bytes = 0;
+  const withinBudget = (value: unknown) => {
+    if (options.maxBytes !== undefined) {
+      bytes += new TextEncoder().encode(JSON.stringify(value)).byteLength;
+      if (bytes > options.maxBytes)
+        throw new ProtocolError(
+          'Retained conversation exceeds the export size limit. No file was downloaded.',
+        );
+    }
+  };
   try {
     return await read(
       config,
@@ -85,6 +103,7 @@ export async function readTranscript(
         const value = agentTranscript(raw);
         if (value.agent_id !== id)
           throw new ProtocolError('projection Agent identity did not match the request');
+        withinBudget(value);
         return value;
       },
       options,
@@ -95,12 +114,19 @@ export async function readTranscript(
   }
   let next: TranscriptCursor | undefined;
   let through: number | undefined;
+  let pages = 0;
   const turns: (Omit<TranscriptTurn, 'messages' | 'agent_messages'> & {
     messages: TranscriptMessage[];
     agent_messages: string[];
   })[] = [];
   do {
+    if (options.maxPages !== undefined && pages >= options.maxPages)
+      throw new ProtocolError(
+        'Retained conversation exceeds the export page limit. No file was downloaded.',
+      );
     const page = await readTranscriptPage(config, id, { ...options, cursor: next });
+    pages += 1;
+    withinBudget(page);
     if (through !== undefined && through !== page.through_seq)
       throw new ProtocolError('transcript snapshot changed');
     through = page.through_seq;

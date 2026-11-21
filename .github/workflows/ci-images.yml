@@ -69,7 +69,7 @@ jobs:
           cache-binary: "${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' }}"
       -
         name: "Prepare API Cargo cache identity"
-        if: "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))"
+        if: "matrix.component == 'api' && ((github.event_name == 'push' && github.ref == 'refs/heads/develop') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) || github.event_name == 'merge_group')"
         id: "api-cargo-cache"
         run: "python3 .github/scripts/api-cargo-cache.py prepare"
       -
@@ -278,14 +278,14 @@ jobs:
           compression-level: 0
       -
         name: "Export tested native image"
-        if: "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
         env:
           IMAGE_COMPONENT: "${{ matrix.component }}"
         run: "python3 .github/scripts/export-ci-native-image.py \"$IMAGE_COMPONENT\" \"$GITHUB_SHA\" \"$RUNNER_TEMP/ci-native-image\""
       -
         name: "Retain tested native image"
-        if: "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
         uses: "actions/upload-artifact@v4"
         with:

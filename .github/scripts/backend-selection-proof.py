@@ -11,6 +11,7 @@ import json
 import os
 from pathlib import Path
 import re
+import runpy
 import shlex
 import subprocess
 import sys
@@ -82,17 +83,21 @@ def old_libtest(args, suites):
     return selected
 
 
-def mongo_filters(source):
+def mongo_filters(source, registry_directory=None):
     """Read corpus modes and the optional CPU profile without running fixtures."""
     template = shlex.split(next(line.strip() for line in source.splitlines()
                                 if line.strip().startswith("-E ")))[1]
+    if "$suite_filter" in template:
+        registry = runpy.run_path(str(ROOT / ".github/scripts/mongo-contract-registry.py"))
+        directory = registry_directory or ROOT / ".github/scripts/mongo-contract-suites"
+        template = template.replace("$suite_filter", registry["suite_filter"](directory))
     names = dict(shlex.split(line)[1].split("=", 1) for line in source.splitlines()
                  if line.startswith(("readonly scale_test=", "readonly owner_allocation_test=",
                                      "readonly audit_bounds_test=", "readonly diagnostics_test=",
-                                     "readonly scan_cooperation_test=", "readonly bson_ceiling_test=")))
+                                     "readonly scan_cooperation_test=", "readonly bson_ceiling_test=", "readonly first_response_test=")))
     default = re.search(r"local selection_filter=([\"'])(.*?)\1", source)
     predicates = {"all": default.group(2) if default else "all()"}
-    optional = ("owner-allocation", "audit-bounds", "diagnostics", "scan-cooperation", "bson-ceiling", "cpu-profile")
+    optional = ("owner-allocation", "audit-bounds", "diagnostics", "scan-cooperation", "bson-ceiling", "first-response", "cpu-profile")
     for mode in ("scale", *optional, "ordinary"):
         line = next((line.strip() for line in source.splitlines()
                      if line.strip().startswith(f"{mode})")), None)
@@ -156,8 +161,9 @@ def main():
         compare(f"image-manager-{index:02}", expected, old_nextest(new))
     old_source = (baseline / "mongo-contract-tests.sh").read_text()
     new_source = (ROOT / ".github/scripts/mongo-contract-tests.sh").read_text()
-    before_filters, after_filters = mongo_filters(old_source), mongo_filters(new_source)
-    isolated = ("owner-allocation", "audit-bounds", "diagnostics", "scan-cooperation", "bson-ceiling")
+    before_filters = mongo_filters(old_source, baseline / "mongo-contract-suites")
+    after_filters = mongo_filters(new_source)
+    isolated = ("owner-allocation", "audit-bounds", "diagnostics", "scan-cooperation", "bson-ceiling", "first-response")
     mongo_sets = {}
     for mode in isolated:
         mongo_sets[mode] = list_tests(["-E", after_filters[mode], "--run-ignored", "only"])[0]

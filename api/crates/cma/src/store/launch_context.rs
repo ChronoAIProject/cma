@@ -11,6 +11,7 @@ use layer2_core::trigger_domain::{LaunchContextReader, LaunchResolutionError, Tr
 use layer2_core::{seconds_from_rfc3339, SandboxId, SubjectId};
 
 use super::sandbox_mongo::MongoSandboxStore;
+mod admitted_agent;
 
 struct Ranked<T> {
     created_at: u64,
@@ -20,6 +21,13 @@ struct Ranked<T> {
 
 #[async_trait::async_trait]
 impl LaunchContextReader for MongoSandboxStore {
+    async fn admitted_trigger_agent(
+        &self,
+        launch: &layer2_core::trigger_domain::Launch,
+    ) -> Result<Option<Agent>, LaunchResolutionError> {
+        admitted_agent::read(self, launch).await
+    }
+
     async fn owned_sandbox(
         &self,
         owner: &SubjectId,

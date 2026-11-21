@@ -1,12 +1,17 @@
 //! Real-store compatibility and interleaving contracts for account redaction.
+mod log_gate_tests;
+
 use super::references::{redact, Redaction};
 use crate::document_artifacts::MongoDocumentStore;
-use layer2_core::{document_artifacts::*, SubjectId};
+use layer2_core::{document_artifacts::*, trigger_domain::*, SubjectId};
 use mongodb::{
     bson::{doc, Document},
     Client, Database,
 };
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 pub(super) mod fixtures;
 use fixtures::*;
@@ -131,7 +136,7 @@ async fn redaction_uses_revision_cas() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn redacted_document_still_parses_with_current_reader() {
+async fn redacted_document_and_revision_still_parse_with_current_readers() {
     let db = fixture().await;
     let documents = MongoDocumentStore::new(db.clone());
     let original = document();
@@ -152,6 +157,80 @@ async fn redacted_document_still_parses_with_current_reader() {
             .unwrap()
             .len(),
         1
+    );
+    let (revision_row, revision, trigger_id) = revision();
+    db.collection::<Document>("trigger_definition_revisions")
+        .insert_one(revision_row.clone())
+        .await
+        .unwrap();
+    let profiles = Arc::new(
+        crate::store::sandbox_mongo::MongoProfileStore::open(db.client(), db.name())
+            .await
+            .unwrap(),
+    );
+    let triggers =
+        crate::store::MongoTriggerDefinitionStore::open(db.client(), db.name(), profiles)
+            .await
+            .unwrap();
+    let launch = launch(&trigger_id, &revision.digest);
+    let launch_row = encode_launch(&launch);
+    db.collection::<Document>("trigger_launches")
+        .insert_one(launch_row.clone())
+        .await
+        .unwrap();
+    assert!(triggers
+        .launch(&launch.id, &launch.owner)
+        .await
+        .unwrap()
+        .is_some());
+    assert_eq!(
+        redact(
+            &db,
+            "trigger_definition_revisions",
+            &revision_row,
+            &subjects()
+        )
+        .await
+        .unwrap(),
+        Redaction::Updated
+    );
+    let tombstone = triggers
+        .trigger_revision(&trigger_id, &revision.digest)
+        .await
+        .unwrap()
+        .unwrap();
+    tombstone.validate().unwrap();
+    assert_eq!(tombstone.digest, revision.digest);
+    assert_eq!(tombstone.published_at, revision.published_at);
+    assert_eq!(tombstone.revision, revision.revision);
+    assert!(tombstone.content.presentation.title.is_empty());
+    assert!(tombstone.content.presentation.description.is_empty());
+    assert!(tombstone.content.first_message.is_empty());
+    let mut corrupt = tombstone.clone();
+    corrupt.content.first_message = "Restored publisher message".into();
+    assert!(corrupt.validate().is_err());
+    let mut corrupt = tombstone.clone();
+    corrupt.content = revision.content.clone();
+    assert!(corrupt.validate().is_err());
+    let stored = row(
+        &db,
+        "trigger_definition_revisions",
+        revision_row.get_str("_id").unwrap(),
+    )
+    .await;
+    assert_eq!(stored.get_str("owner").unwrap(), "deleted-account");
+    assert_eq!(stored.get_i64("mutation_version").unwrap(), 1);
+    assert_eq!(
+        triggers
+            .launch(&launch.id, &launch.owner)
+            .await
+            .unwrap()
+            .unwrap(),
+        launch
+    );
+    assert_eq!(
+        row(&db, "trigger_launches", launch.id.as_str()).await,
+        launch_row
     );
     db.drop().await.unwrap();
 }
@@ -229,149 +308,30 @@ async fn corrupted_reference_projection_is_refused_without_overwriting_the_row()
         row(&db, "cma_document_artifacts", &original.metadata.id).await,
         corrupted
     );
-    db.drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn log_gate_redaction_waits_for_live_slots_and_preserves_other_cohorts() {
-    use crate::store::agent_log_segments::writer_gate::{GateName, GateRecord};
-    use mongodb::bson::{spec::BinarySubtype, Binary, DateTime};
-    let db = fixture().await;
-    let agents = BTreeSet::from(["agt-erased".into()]);
-    let holder = "10:agt-erased:incarnation:3:key";
-    let original = doc! {"_id":"agent_log_segments_v1","format_version":1_i64,"revision":1_i64,"admission_fence":2_i64,"policy":{"enabled":true,"owners":["erased","other"],"agents":["agt-erased","agt-other"],"cohort_seed":"","basis_points":0_i32},"slots":[{"holder":holder,"fingerprint":Binary {subtype:BinarySubtype::Generic,bytes:vec![1;32]},"fence":1_i64,"expires_at":DateTime::from_millis(DateTime::now().timestamp_millis()+300000)}]};
-    GateRecord::read(GateName::Segments, original.clone()).unwrap();
-    db.collection::<Document>("agent_log_gates")
-        .insert_one(original.clone())
-        .await
-        .unwrap();
-    assert_eq!(
-        super::references::redact_with_agents(
-            &db,
-            "agent_log_gates",
-            &original,
-            &subjects(),
-            &agents,
-            &layer2_core::now_rfc3339()
-        )
-        .await
-        .unwrap(),
-        Redaction::Waiting
-    );
-    assert_eq!(
-        row(&db, "agent_log_gates", "agent_log_segments_v1").await,
-        original
-    );
-    db.collection::<Document>("agent_log_gates")
-        .update_one(
-            doc! {"_id":"agent_log_segments_v1"},
-            doc! {"$set":{"slots.0.expires_at":DateTime::from_millis(1)}},
-        )
-        .await
-        .unwrap();
-    let expired = row(&db, "agent_log_gates", "agent_log_segments_v1").await;
-    assert_eq!(
-        super::references::redact_with_agents(
-            &db,
-            "agent_log_gates",
-            &expired,
-            &subjects(),
-            &agents,
-            &layer2_core::now_rfc3339()
-        )
-        .await
-        .unwrap(),
-        Redaction::Updated
-    );
-    let parsed = GateRecord::read(
-        GateName::Segments,
-        row(&db, "agent_log_gates", "agent_log_segments_v1").await,
-    )
-    .unwrap();
-    assert_eq!(parsed.revision, 2);
-    assert_eq!(parsed.policy.owners, ["other"]);
-    assert_eq!(parsed.policy.agents, ["agt-other"]);
-    assert!(parsed.slots.is_empty());
-    db.drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn log_gate_redaction_disables_an_empty_rollout_without_expanding_it() {
-    use crate::store::agent_log_segments::writer_gate::{GateName, GateRecord};
-    let db = fixture().await;
-    let original = doc! {"_id":"agent_log_segments_v1","format_version":1_i64,"revision":1_i64,"admission_fence":0_i64,"policy":{"enabled":true,"owners":["erased"],"agents":[],"cohort_seed":"","basis_points":0_i32},"slots":[]};
-    db.collection::<Document>("agent_log_gates")
-        .insert_one(original.clone())
-        .await
-        .unwrap();
-    assert_eq!(
-        super::references::redact_with_agents(
-            &db,
-            "agent_log_gates",
-            &original,
-            &subjects(),
-            &BTreeSet::new(),
-            &layer2_core::now_rfc3339()
-        )
-        .await
-        .unwrap(),
-        Redaction::Updated
-    );
-    let parsed = GateRecord::read(
-        GateName::Segments,
-        row(&db, "agent_log_gates", "agent_log_segments_v1").await,
-    )
-    .unwrap();
-    assert!(!parsed.policy.enabled);
-    assert!(parsed.policy.owners.is_empty());
-    assert_eq!(parsed.revision, 2);
-    db.drop().await.unwrap();
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn log_gate_redaction_compares_slots_that_change_without_revision() {
-    use crate::store::agent_log_segments::writer_gate::{GateName, GateRecord};
-    use mongodb::bson::{spec::BinarySubtype, Binary, DateTime};
-    let db = fixture().await;
-    let original = doc! {"_id":"agent_log_segments_v1","format_version":1_i64,"revision":1_i64,"admission_fence":1_i64,"policy":{"enabled":true,"owners":["erased","other"],"agents":[],"cohort_seed":"","basis_points":0_i32},"slots":[{"holder":"10:agt-erased:incarnation:3:key","fingerprint":Binary {subtype:BinarySubtype::Generic,bytes:vec![1;32]},"fence":1_i64,"expires_at":DateTime::from_millis(1)}]};
-    db.collection::<Document>("agent_log_gates")
-        .insert_one(original.clone())
-        .await
-        .unwrap();
-    let mut concurrent = original.clone();
-    concurrent.get_array_mut("slots").unwrap()[0]
-        .as_document_mut()
+    let (mut invalid, _, _) = revision();
+    invalid
+        .get_document_mut("record")
         .unwrap()
-        .insert(
-            "expires_at",
-            DateTime::from_millis(DateTime::now().timestamp_millis() + 300000),
-        );
-    db.collection::<Document>("agent_log_gates")
-        .replace_one(doc! {"_id":"agent_log_segments_v1"}, concurrent.clone())
+        .get_document_mut("content")
+        .unwrap()
+        .insert("first_message", "Changed without digest");
+    db.collection::<Document>("trigger_definition_revisions")
+        .insert_one(invalid.clone())
         .await
         .unwrap();
-    let agents = BTreeSet::from(["agt-erased".into()]);
+    assert!(matches!(
+        redact(&db, "trigger_definition_revisions", &invalid, &subjects()).await,
+        Err(super::Error::InvalidRecord("trigger_definition_revisions"))
+    ));
     assert_eq!(
-        super::references::redact_with_agents(
+        row(
             &db,
-            "agent_log_gates",
-            &original,
-            &subjects(),
-            &agents,
-            &layer2_core::now_rfc3339()
+            "trigger_definition_revisions",
+            invalid.get_str("_id").unwrap()
         )
-        .await
-        .unwrap(),
-        Redaction::Conflict
+        .await,
+        invalid
     );
-    assert_eq!(
-        row(&db, "agent_log_gates", "agent_log_segments_v1").await,
-        concurrent
-    );
-    GateRecord::read(GateName::Segments, concurrent).unwrap();
     db.drop().await.unwrap();
 }
 

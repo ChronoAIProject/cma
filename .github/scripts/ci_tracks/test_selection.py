@@ -56,6 +56,31 @@ class GitSelectionTests(unittest.TestCase):
         merge = self.git('rev-parse', 'HEAD')
         self.assertEqual(comparison(self.root, {'after': merge, 'before': self.base}, 'push'), (advanced, merge))
 
+    def test_merge_group_compares_its_entry_against_the_queue_parent(self):
+        # Entry A is queued ahead of B; B's group commit is built on A's.
+        for name in ('first', 'second'):
+            self.git('checkout', '-qb', name, 'develop')
+            (self.root / name).write_text(name)
+            self.commit()
+        self.git('checkout', '-qb', 'queue-a', 'develop')
+        self.git('merge', '--no-ff', '-qm', 'Merge pull request #1', 'first')
+        parent = self.git('rev-parse', 'HEAD')
+        self.git('merge', '--no-ff', '-qm', 'Merge pull request #2', 'second')
+        group = self.git('rev-parse', 'HEAD')
+        event = {'merge_group': {'base_sha': parent, 'head_sha': group}}
+        self.assertEqual(comparison(self.root, event, 'merge_group'), (parent, group))
+        self.assertEqual(changed_paths(self.root, parent, group), ['second'])
+        # A parent that is not an ancestor still compares from the merge base.
+        self.git('checkout', '-q', 'develop')
+        (self.root / 'unrelated').write_text('develop progressed')
+        advanced = self.commit()
+        event = {'merge_group': {'base_sha': advanced, 'head_sha': group}}
+        self.assertEqual(comparison(self.root, event, 'merge_group'), (self.base, group))
+        for broken in ({'merge_group': {'base_sha': parent}}, {'merge_group': {'base_sha': 'bad', 'head_sha': group}},
+                       {'pull_request': {'base': {'sha': parent}, 'head': {'sha': group}}}):
+            with self.subTest(event=broken), self.assertRaises((ValueError, KeyError)):
+                comparison(self.root, broken, 'merge_group')
+
     def test_bad_or_unavailable_refs_fail(self):
         for event, name in [({}, 'pull_request'), ({'after': '--help'}, 'push'), ({}, 'unknown')]:
             with self.assertRaises((ValueError, KeyError)):
@@ -143,6 +168,16 @@ class CIEventSelectionTests(unittest.TestCase):
                 for track in ('am', 'eg'):
                     self.assertEqual(result[track + '_packages'], sorted(Workspace(metadata(self.root), self.root).owned[track] | SHARED))
         self.assertEqual(selection.determine(self.root, push, 'push'), cd)
+        # A develop queue entry selects exactly like its PR: no full-CI coverage.
+        queue = {'action': 'checks_requested', 'repository': {'full_name': repository}, 'merge_group': {
+            'base_sha': release_base, 'head_sha': head, 'base_ref': 'refs/heads/develop',
+            'head_ref': 'refs/heads/gh-readonly-queue/develop/pr-7-' + release_base}}
+        pull['pull_request']['base']['ref'] = 'develop'
+        pull['pull_request']['head']['ref'] = 'feature'
+        queued = selection.determine_ci(self.root, queue, 'merge_group', repository)
+        self.assertEqual(queued, selection.determine_ci(self.root, pull, 'pull_request', repository))
+        self.assertFalse(queued['am'])
+        self.assertEqual((queued['base'], queued['head']), (release_base, head))
 
 
 if __name__ == '__main__':

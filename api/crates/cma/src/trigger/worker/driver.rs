@@ -1,8 +1,6 @@
 use std::sync::Arc;
 
-use layer2_core::profiles::{
-    content_digest, AgentProfileStore, SandboxProfileStore, WorkspaceProfileStore,
-};
+use layer2_core::profiles::{AgentProfileStore, SandboxProfileStore, WorkspaceProfileStore};
 use layer2_core::sandbox::store::{AgentStore, SandboxStore, WorkspaceStore};
 use layer2_core::sandbox::{
     Agent, AgentService, AgentServiceError, CreateAgent, CreateSandbox, CreateWorkspace, Sandbox,
@@ -40,6 +38,8 @@ impl<T> LaunchProfileStore for T where
 
 mod effect;
 pub(crate) use effect::LaunchResourceEffect;
+mod validation;
+use validation::validate_profile_digests;
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("{code}: {safe_detail}")]
@@ -75,6 +75,13 @@ pub(crate) trait LaunchResourceDriver: Send + Sync {
         digest: &str,
     ) -> Result<Option<TriggerRevision>, LaunchResourceError>;
 
+    async fn trigger_publisher_erased(
+        &self,
+        _launch: &layer2_core::trigger_domain::Launch,
+    ) -> Result<bool, LaunchResourceError> {
+        Ok(false)
+    }
+
     async fn frozen_profiles(
         &self,
         target: &TriggerTarget,
@@ -91,6 +98,15 @@ pub(crate) trait LaunchResourceDriver: Send + Sync {
     async fn sandbox(&self, id: &SandboxId) -> Result<Option<Sandbox>, LaunchResourceError>;
     async fn workspace(&self, id: &WorkspaceId) -> Result<Option<Workspace>, LaunchResourceError>;
     async fn agent(&self, id: &AgentId) -> Result<Option<Agent>, LaunchResourceError>;
+    async fn admitted_trigger_agent(
+        &self,
+        _launch: &layer2_core::trigger_domain::Launch,
+    ) -> Result<Option<Agent>, LaunchResourceError> {
+        Err(LaunchResourceError::retryable(
+            "launch_recovery_unavailable",
+            "The committed Launch Agent could not be read",
+        ))
+    }
 
     async fn matching_workspace(
         &self,
@@ -148,6 +164,20 @@ impl LaunchResourceDriver for ServiceLaunchResourceDriver {
     ) -> Result<Option<TriggerRevision>, LaunchResourceError> {
         self.definitions
             .trigger_revision(trigger_id, digest)
+            .await
+            .map_err(trigger_error)
+    }
+
+    async fn trigger_publisher_erased(
+        &self,
+        launch: &layer2_core::trigger_domain::Launch,
+    ) -> Result<bool, LaunchResourceError> {
+        self.definitions
+            .trigger_publisher_erased(
+                &launch.trigger_id,
+                &launch.revision_digest,
+                &launch.public_id,
+            )
             .await
             .map_err(trigger_error)
     }
@@ -227,6 +257,23 @@ impl LaunchResourceDriver for ServiceLaunchResourceDriver {
 
     async fn agent(&self, id: &AgentId) -> Result<Option<Agent>, LaunchResourceError> {
         self.resources.get_agent(id).await.map_err(resource_error)
+    }
+
+    async fn admitted_trigger_agent(
+        &self,
+        launch: &layer2_core::trigger_domain::Launch,
+    ) -> Result<Option<Agent>, LaunchResourceError> {
+        self.resources
+            .admitted_trigger_agent(launch)
+            .await
+            .map_err(|error| match error {
+                layer2_core::trigger_domain::LaunchResolutionError::Unavailable(_) => {
+                    dependency_unavailable()
+                }
+                layer2_core::trigger_domain::LaunchResolutionError::Corrupt(_) => {
+                    resource_corrupt()
+                }
+            })
     }
 
     async fn matching_workspace(
@@ -314,26 +361,6 @@ impl LaunchResourceDriver for ServiceLaunchResourceDriver {
                 .map(|agent| agent.id.to_string())
                 .map_err(agent_service_error),
         }
-    }
-}
-
-fn validate_profile_digests(
-    sandbox: &layer2_core::profiles::SandboxProfileRevision,
-    nested: &[layer2_core::profiles::WorkspaceProfileRevision],
-    workspace: &layer2_core::profiles::WorkspaceProfileRevision,
-    agent: &layer2_core::profiles::AgentProfileRevision,
-) -> Result<(), LaunchResourceError> {
-    let sandbox_valid = content_digest(&sandbox.content).ok().as_ref() == Some(&sandbox.digest);
-    let nested_valid = nested
-        .iter()
-        .all(|revision| content_digest(&revision.content).ok().as_ref() == Some(&revision.digest));
-    let workspace_valid =
-        content_digest(&workspace.content).ok().as_ref() == Some(&workspace.digest);
-    let agent_valid = content_digest(&agent.content).ok().as_ref() == Some(&agent.digest);
-    if sandbox_valid && nested_valid && workspace_valid && agent_valid {
-        Ok(())
-    } else {
-        Err(resource_corrupt())
     }
 }
 

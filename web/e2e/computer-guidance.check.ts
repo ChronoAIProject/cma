@@ -94,6 +94,7 @@ for (const width of [390, 1600]) {
       await expect(dialog).toContainText('Screen and file access are separate capabilities');
       await page.keyboard.press('Escape');
       await expect(dialog).toBeHidden();
+      await expect(computer).toBeVisible();
       await expect(help).toBeFocused();
       await page.screenshot({ path: info.outputPath(`screen-guidance-${width}.png`) });
       await screen.getByRole('button', { name: 'Back to conversation' }).click();
@@ -109,12 +110,30 @@ for (const width of [390, 1600]) {
       );
       await expect(files).not.toContainText('Live screen is not enabled');
       await expect(files).not.toContainText('This service does not currently allow');
-      await expect(files.getByRole('button', { name: 'About Computer tools' })).toBeVisible();
+      const filesHelp = files.getByRole('button', { name: 'About Computer tools' });
+      await filesHelp.focus();
+      await page.keyboard.press('Enter');
+      await expect(dialog).toBeVisible();
+      await page.keyboard.press('Escape');
+      await expect(dialog).toBeHidden();
+      await expect(computer).toBeVisible();
+      await expect(filesHelp).toBeFocused();
       await page.screenshot({ path: info.outputPath(`files-guidance-${width}.png`) });
       await files.getByRole('button', { name: 'Back to conversation' }).click();
       await expect(computer).toBeHidden();
       await expect(composer).toBeFocused();
       await expect(composer).toHaveValue('Keep this unsent conversation draft');
+      await entry.click();
+      await computer.getByRole('tab', { name: 'Screen', exact: true }).click();
+      await help.click();
+      await dialog.getByRole('link', { name: 'Guide to environments and Computer tools' }).click();
+      await expect(
+        page.getByRole('heading', { name: 'Environments and capacity', exact: true }),
+      ).toBeFocused();
+      await expect(page.getByRole('article')).toContainText('Reconnect cannot enable a capability');
+      await page.goBack();
+      await expect(composer).toHaveValue('Keep this unsent conversation draft');
+      await expect(composer).toBeEnabled();
       expect(fixture.writes).toEqual([]);
       expect(fixture.boundary.writes).toEqual([]);
       expect(fixture.boundary.unexpected).toEqual([]);

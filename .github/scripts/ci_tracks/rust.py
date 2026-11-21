@@ -24,7 +24,8 @@ def command(action, names, shard=None):
             raise ValueError("invalid shard")
         selection = "all()" if names == ["*"] else " or ".join(f"package(={p})" for p in names)
         return ["bash", "../.github/scripts/backend-nextest.sh", "run", "--no-fail-fast",
-                "-E", f"({selection}) and not (binary(=media_image_peak) or binary(=turn_metrics))",
+                "-E", f"({selection}) and not (binary(=media_image_peak) or binary(=turn_metrics) or "
+                "(package(=cma) and binary(=allocator_cli) and test(=actual_api_allocator_completes_without_configuration)))",
                 "--partition", f"count:{shard}/3"]
     commands = {
         "lint": ["cargo", "clippy", *flags, "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"],

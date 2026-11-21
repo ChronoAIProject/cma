@@ -81,11 +81,13 @@ pub enum ErasureBlock {
     CorruptRecord {
         collection: String,
     },
-    /// The publisher protection slice must settle these retained references.
+    /// Historical C1 record/event format; keep the exact wire name and fields.
+    /// The C2 publisher executor no longer emits this refusal.
     RetainedReferencePending {
         collection: String,
     },
-    /// The identity redaction slice must preserve and anonymize this record.
+    /// Keep the C1/C2 record/event format when replacing identity handling.
+    /// C2 still emits this refusal; later identity executors retain only its reader.
     IdentityRedactionPending {
         collection: String,
     },

@@ -8,6 +8,7 @@ pub(super) async fn verify() {
 }
 
 async fn once(fixture: &Fixture, mode: Option<bool>, cursor: &mut Cursor) -> Result<Batch, Error> {
+    cursor.test_drain_seconds.get_or_insert(0);
     super::super::erase_records_with_options(
         &fixture.runtime,
         &[Target {
@@ -20,6 +21,8 @@ async fn once(fixture: &Fixture, mode: Option<bool>, cursor: &mut Cursor) -> Res
         cursor,
         NOW,
         Options {
+            transaction_drain_minimum_secs: 120,
+            drain_qualification: Some(TransactionDrainQualification::fixture()),
             billing_enabled: false,
             allocation_rollups_enabled: Some(false),
             agent_shared_observation: mode,

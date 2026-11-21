@@ -21,7 +21,7 @@ import './Agent.css';
 import { OwnerAgentHeader } from './OwnerAgentHeader';
 import { Alert } from '../ui/Alert';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
-import { agentBreadcrumb, agentHeaderMenu, selectAgentAction } from './headerActions';
+import { agentBreadcrumb, agentHeaderMenu, agentHeaderActionHandler } from './headerActions';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
 import { sandboxChildrenAvailable } from '../sandbox/lifecycle';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
@@ -274,9 +274,7 @@ export function AgentSurface({
           }}
           moreActions={headerMenu}
           onReviewEnvironment={reviewEnvironment}
-          onMoreAction={(id) =>
-            selectAgentAction(id, agentId, readOnly ? undefined : onAgentAction)
-          }
+          onMoreAction={agentHeaderActionHandler(agentId, readOnly, onAgentAction)}
         />
 
         <div className="agent-surface__alerts">
