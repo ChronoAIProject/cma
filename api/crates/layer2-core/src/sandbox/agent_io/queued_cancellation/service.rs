@@ -67,7 +67,7 @@ impl AgentCommandService {
             .with_authority_bound(
                 &authorized,
                 capability,
-                self.store.cancel_queued_response(request.clone()),
+                self.cancel_with_projection_owner(agent, request.clone()),
             )
             .await;
         self.fence(&authorized, &resource, capability).await?;

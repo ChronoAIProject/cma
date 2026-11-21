@@ -65,6 +65,13 @@ pub(super) async fn apply_observed(
         None => legacy_evidence(store, &agent, &agent_row, &command, session).await?,
     };
     let retry_current = if evidence.has_source_deferred() {
+        store
+            .fence_agent_effect(&agent.id, session)
+            .await
+            .map_err(|error| match error {
+                SandboxStoreError::Unavailable(_) => CommandLedgerError::Unavailable,
+                _ => CommandLedgerError::Conflict,
+            })?;
         let current = store
             .bindings
             .continuation_retry_authority(&command.receipt.envelope, session)

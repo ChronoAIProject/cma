@@ -281,3 +281,5 @@ async fn trigger_common_expiry_closes_first_reservation_without_a_synthetic_turn
     );
     accepted.f.close().await;
 }
+#[path = "common_execution/ownership.rs"]
+mod ownership;

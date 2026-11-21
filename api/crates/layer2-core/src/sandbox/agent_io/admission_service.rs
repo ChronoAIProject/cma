@@ -16,6 +16,8 @@ use super::*;
 pub(super) const IO_BOUND: Duration = Duration::from_secs(15);
 const QUEUE_LIFETIME: Duration = Duration::from_secs(300);
 const CREATION_ADMISSION_ATTEMPTS: usize = 3;
+#[path = "admission_ownership.rs"]
+mod ownership;
 
 /// Selected by a trusted interface adapter, separately from client intent.
 #[derive(Debug, Clone, Copy)]
@@ -47,11 +49,13 @@ pub enum CommandAdmissionError {
     ModelMismatch,
 }
 
+#[derive(Clone)]
 pub struct AgentCommandService {
     pub(super) store: Arc<dyn AgentCommandStore>,
     pub(super) access: Arc<ResourceAccessService>,
     authority: Arc<dyn AgentCommandAdmissionAuthority>,
     task_experience: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
+    ownership: Option<Arc<crate::agent_ownership::OwnershipCoordinator>>,
 }
 
 impl AgentCommandService {
@@ -65,18 +69,7 @@ impl AgentCommandService {
             access,
             authority,
             task_experience: Default::default(),
-        })
-    }
-
-    pub fn with_task_experience(
-        self: Arc<Self>,
-        policy: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            store: self.store.clone(),
-            access: self.access.clone(),
-            authority: self.authority.clone(),
-            task_experience: policy,
+            ownership: None,
         })
     }
 

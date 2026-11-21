@@ -947,6 +947,80 @@ async fn media_continuation_unknown_requeue_commit_recovers_same_slot_after_sour
     assert_eq!(sends.load(Ordering::SeqCst), 1);
     f.close().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn media_continuation_reconciliation_fences_the_same_transaction_after_handoff() {
+    use crate::store::agent_ownership::command_test_support::handoff;
+
+    let (f, claimed) = deferred_fixture("media_owner_reconcile").await;
+    let owners = handoff(&f.store, &f.agent.id).await;
+    let id = &claimed.receipt.envelope.command_id;
+    let before = owners.store.get_command(id).await.unwrap().unwrap();
+    let agent_query = doc! {"_id": f.agent.id.as_str()};
+    let row_before = owners
+        .store
+        .agents
+        .find_one(agent_query.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        owners
+            .past
+            .run(owners.store.reconcile_command(id))
+            .await
+            .unwrap(),
+        Err(CommandLedgerError::Conflict)
+    ));
+    assert_eq!(owners.store.get_command(id).await.unwrap().unwrap(), before);
+    assert_eq!(
+        owners
+            .store
+            .agents
+            .find_one(agent_query.clone())
+            .await
+            .unwrap()
+            .unwrap(),
+        row_before
+    );
+    let queued = owners
+        .current
+        .run(owners.store.reconcile_command(id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(queued.status, AgentResponseStatus::Queued);
+    assert_eq!(queued.receipt, claimed.receipt);
+    assert_eq!(queued.work.deferred_attempts.len(), 1);
+    assert!(queued.work.dispatch.is_none());
+    let row_after = owners
+        .store
+        .agents
+        .find_one(agent_query.clone())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        row_after.get_i64("agent_command_admission_fence").unwrap(),
+        row_before
+            .get_i64("agent_command_admission_fence")
+            .unwrap_or(0)
+            + 1,
+    );
+    assert_eq!(owners.store.reconcile_command(id).await.unwrap(), queued);
+    assert_eq!(
+        owners
+            .store
+            .agents
+            .find_one(agent_query)
+            .await
+            .unwrap()
+            .unwrap(),
+        row_after
+    );
+    f.close().await;
+}
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn media_continuation_cancellation_racing_retry_claim_is_not_resurrected() {

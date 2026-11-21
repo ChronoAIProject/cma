@@ -26,7 +26,7 @@ async fn append(f: &Fixture, agent: &Agent, key: &str) {
         .unwrap();
 }
 
-async fn adopt(f: &Fixture, agent: &Agent) {
+pub(super) async fn adopt(f: &Fixture, agent: &Agent) {
     let db = f.seed.client.database(&f.seed.database);
     schema::migrate(&db).await.unwrap();
     crate::store::migrations::agent_log_source_keys::prepare_for_test(&db).await;

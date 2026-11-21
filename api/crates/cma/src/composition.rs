@@ -308,7 +308,7 @@ impl ControlPlaneComposition {
                 context: context.clone(),
             },
             worker_holder.clone(),
-            ownership,
+            ownership.clone(),
             config.features.command_reconcile_pacing,
         )?;
         let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
@@ -340,6 +340,7 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             worker_holder,
             access::ToolServices {
+                ownership,
                 source: access_tools,
                 documents: config.document_storage.as_ref().map(|_| documents.clone()),
                 deliverables: deliverables.clone(),

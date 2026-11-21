@@ -29,6 +29,7 @@ pub(super) struct AccessComposition {
     pub tool_routes: Router,
 }
 pub(super) struct ToolServices {
+    pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub source: Arc<MongoAgentAccessToolSource>,
     pub documents: Option<Arc<layer2_core::document_artifacts::DocumentService>>,
     pub deliverables: Arc<layer2_core::sandbox::answer_deliverables::AnswerDeliverableService>,
@@ -62,7 +63,8 @@ pub(super) fn compose(
 ) -> AccessComposition {
     let commands =
         AgentCommandService::new(stores.sandbox_model.clone(), resource_access, auth.clone())
-            .with_task_experience(tools.task_experience);
+            .with_task_experience(tools.task_experience)
+            .with_ownership(tools.ownership);
     let service = AgentAccessService::new(stores.sandbox_model.clone(), auth.clone(), policy);
     let worker = AgentAccessWorker::new(
         stores.sandbox_model.clone(),
