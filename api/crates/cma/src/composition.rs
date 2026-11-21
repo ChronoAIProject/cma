@@ -121,7 +121,7 @@ impl ControlPlaneComposition {
             Arc::new(AdapterSandboxResources::new(Arc::clone(&adapter))),
             runtime_capabilities(adapter.capabilities()),
         )
-        .with_features(config.features)
+        .with_features(config.features, adapters.model_funding.clone())
         .with_connections(connection_prerequisite.clone())
         .with_message_feedback(stores.message_feedback.clone())
         .with_suggestions(stores.sandbox_model.clone())
@@ -310,6 +310,7 @@ impl ControlPlaneComposition {
             worker_holder.clone(),
             ownership,
             config.features.command_reconcile_pacing,
+            adapters.model_funding.clone(),
         )?;
         let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
             layer2_core::sandbox::control::SandboxControlWorker::new(
@@ -340,6 +341,8 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             worker_holder,
             access::ToolServices {
+                model_credit_required: config.features.model_credit_required,
+                model_funding: adapters.model_funding,
                 source: access_tools,
                 documents: config.document_storage.as_ref().map(|_| documents.clone()),
                 deliverables: deliverables.clone(),

@@ -2,6 +2,39 @@ use layer3_adapter::{CredentialFrame, RuntimeCredential};
 
 use super::*;
 
+#[tokio::test]
+async fn model_credit_required_refuses_before_the_upstream_write() {
+    use tower::ServiceExt;
+
+    let destination = TargetBase::parse("http://127.0.0.1:9").unwrap();
+    let credential = CredentialHolder::new();
+    credential
+        .install(&CredentialFrame {
+            operation_id: "funding-fixture".into(),
+            value: RuntimeCredential::new("fixture-model-credential"),
+            custody_generation: Some(1),
+        })
+        .await
+        .unwrap();
+    let response = proxy_router(destination, credential, None, true, true)
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/responses")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(
+        axum::body::to_bytes(response.into_body(), 128)
+            .await
+            .unwrap(),
+        "model_funding_unsupported"
+    );
+}
+
 #[test]
 fn restricted_proxy_refuses_ambiguous_hosts_and_absolute_destinations() {
     for (uri, host, method, allowed) in [
@@ -109,6 +142,7 @@ async fn model_proxy_strips_provider_routing_authority_before_upstream() {
         client: reqwest::Client::new(),
         allowed_host: None,
         model_proxy: true,
+        model_credit_required: false,
     };
     let request = Request::builder()
         .method("POST")
@@ -187,8 +221,8 @@ async fn only_model_proxy_repairs_tool_free_compaction_and_keeps_credential_boun
             .unwrap();
         let target = TargetBase::parse(&origin).unwrap();
         let proxy = match role {
-            "model" => proxy_router(target, credential, None, true),
-            "platform" => proxy_router(target, credential, None, false),
+            "model" => proxy_router(target, credential, None, true, false),
+            "platform" => proxy_router(target, credential, None, false, false),
             _ => router(target, credential, Some("api.github.com")),
         };
         let body = serde_json::to_vec(&original).unwrap();
