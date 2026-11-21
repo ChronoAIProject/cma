@@ -36,7 +36,7 @@ impl ExecutionAttribution {
         }
     }
 
-    pub(super) fn matches(&self, provider: &str, response_id: &str) -> bool {
+    pub(crate) fn matches(&self, provider: &str, response_id: &str) -> bool {
         self.provider == provider && self.response_id == response_id
     }
 

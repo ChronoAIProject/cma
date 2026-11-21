@@ -124,6 +124,7 @@ async fn accepted_parent_delivery_uncertainty_with_empty_guard_does_not_block_ca
             });
             let mut next = parent.state.clone();
             next.delivery = Some(DeliveryCheckpoint {
+                execution_attribution: None,
                 trace_contract: false, response_id: response_id.clone(), cursor: 1,
                 frame_hash: "a".repeat(64), effect_hash: "b".repeat(64), terminal: true,
                 status: if partial { DeliveryStatus::Partial { receipt: saved.into() } } else { DeliveryStatus::Unknown },

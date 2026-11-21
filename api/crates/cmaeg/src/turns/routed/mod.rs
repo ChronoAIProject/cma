@@ -116,7 +116,7 @@ mod custom_http_webhook_tests;
 #[cfg(test)]
 mod delivery_crash_tests;
 #[cfg(test)]
-mod delivery_tests;
+pub(crate) mod delivery_tests;
 #[cfg(test)]
 mod destination_tests;
 #[cfg(test)]
@@ -140,7 +140,7 @@ mod builder_tests;
 #[cfg(test)]
 mod executor_activity_tests;
 #[cfg(test)]
-mod executor_tests;
+pub(crate) mod executor_tests;
 #[cfg(test)]
 mod expiry_tests;
 #[cfg(test)]

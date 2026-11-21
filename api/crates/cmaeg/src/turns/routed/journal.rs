@@ -327,6 +327,14 @@ pub(super) fn validate(
             _ => return Err(ExecutionError::Corrupt),
         };
         if &checkpoint.response_id != response
+            || checkpoint
+                .execution_attribution
+                .as_ref()
+                .is_some_and(|attribution| {
+                    !checkpoint.terminal
+                        || !checkpoint.status.settled()
+                        || !attribution.matches(target.launch.provider.slug.as_str(), response)
+                })
             || [&checkpoint.frame_hash, &checkpoint.effect_hash]
                 .iter()
                 .any(|hash| hash.len() != 64 || !hash.bytes().all(|byte| byte.is_ascii_hexdigit()))

@@ -14,6 +14,9 @@ use crate::{
 };
 use serde_json::{json, Value};
 
+#[path = "routed_execution_restart_tests.rs"]
+mod restart;
+
 struct SyntheticProvider(ExecutionScope);
 
 impl ExecutionReceiptVerifier for SyntheticProvider {
@@ -157,7 +160,14 @@ async fn routed_execution_receipt(initially_enabled: bool) {
     assert!(sends.try_recv().is_err());
 
     state.activity = cold_store();
-    let raw = request.channel.id.to_string();
+    let page = read_visible_activity(state, creator, request.channel.id.to_string()).await;
+    let consumer = &page["items"][0]["consumers"][0];
+    assert_eq!(consumer["execution_reference"], "executor-after-handoff");
+    assert_eq!(consumer["agent_id"], "native-provider-agent");
+    assert_eq!(consumer["response_id"], "resp_1");
+}
+
+async fn read_visible_activity(state: ManagementState, creator: Creator, raw: String) -> Value {
     let response =
         crate::http::activity::latest(State(state.clone()), creator.clone(), Path(raw.clone()))
             .await;
@@ -166,10 +176,6 @@ async fn routed_execution_receipt(initially_enabled: bool) {
         .await
         .unwrap();
     let page: Value = serde_json::from_slice(&body).unwrap();
-    let consumer = &page["items"][0]["consumers"][0];
-    assert_eq!(consumer["execution_reference"], "executor-after-handoff");
-    assert_eq!(consumer["agent_id"], "native-provider-agent");
-    assert_eq!(consumer["response_id"], "resp_1");
     let response = crate::http::activity::stream(
         State(state),
         creator,
@@ -192,4 +198,5 @@ async fn routed_execution_receipt(initially_enabled: bool) {
         .find_map(|line| line.strip_prefix("data: "))
         .unwrap();
     assert_eq!(serde_json::from_str::<Value>(data).unwrap(), page);
+    page
 }
