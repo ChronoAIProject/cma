@@ -1438,31 +1438,43 @@
           "title": "Selection budget exhausted",
           "meaning": "The selection cache did not cover the plan window, usually after a selector policy change, and analysing the rest exceeded the plan's budget. Analysed revisions were saved; INCOMPLETE gives the count.",
           "cause": "transient",
-          "next": "Re-run this workflow or wait for the next develop push; planning continues from the saved revisions. The PLAN window line names the lane whose newest final release bounds the window."
+          "next": "Catch-up re-runs this once from its hourly check, continuing from the saved revisions. To shorten a wide window, set CMA_CD_ADOPTION_SHA to a later develop merge; it raises the start."
         },
         "finals-unreadable": {
           "title": "Lane releases unreadable",
-          "meaning": "A current lane's newest final release tag could not be read, so the oldest revision a lane can still need is unknown. Nothing was planned.",
+          "meaning": "A lane's newest final release tag could not be read after repeated attempts, and no proven bound was remembered in the develop cache. Nothing was planned.",
           "cause": "transient",
-          "next": "Re-run this workflow or wait for the next develop push; the next plan reads the tags again."
+          "next": "Catch-up re-runs this once from its hourly check after the outage settles; the next develop push plans again too."
         },
         "finals-untrusted": {
           "title": "Lane release tag untrusted",
-          "meaning": "A current lane's newest final release tag, or the tag inventory, failed verification. Allocation would refuse it too, so nothing was planned.",
+          "meaning": "A lane's newest final release tag, or the tag inventory, failed the checks allocation also applies: its name, commit and receipt must agree. Nothing was planned.",
           "cause": "unknown",
-          "next": "Check the lanes the PLAN refused line names: each newest final must be the canonical bot tag its receipt describes."
+          "next": "Inspect the tags of the lanes the PLAN refused line names; allocation would refuse the same tag."
         },
         "floor-required": {
           "title": "Adoption floor required",
-          "meaning": "A current lane's newest final is not on the last 2,000 develop first-parent merges, so its window needs CMA_CD_ADOPTION_SHA on that history.",
+          "meaning": "A lane's newest final is not on the last 2,000 develop first-parent merges, so its window needs CMA_CD_ADOPTION_SHA on that history.",
           "cause": "operator",
           "next": "Set CMA_CD_ADOPTION_SHA to a recent develop merge after which the lanes the PLAN refused line names need nothing older."
         },
         "anchor-unselected": {
-          "title": "Window anchor unselected",
-          "meaning": "The selector did not select its lanes at a merge the window relies on: an older contract transition, or the merge that added a new lane.",
+          "title": "Contract transition unselected",
+          "meaning": "The selector did not select the AM/runtime group at the older contract transition the window keeps, so the group's coupling cannot be planned.",
           "cause": "change",
-          "next": "Review the selector change; a contract transition must select its group and a new lane's addition must select that lane."
+          "next": "Review the selector change: a contract transition must select its group. The PLAN refused line names the merge."
+        },
+        "finals-denied": {
+          "title": "Lane release read refused",
+          "meaning": "GitHub refused to serve a lane's newest final release tag or the tag inventory, for example for a credential or permission. Nothing was planned.",
+          "cause": "operator",
+          "next": "Check that the plan step's GH_TOKEN can read this repository's contents; the PLAN refused line names the lanes."
+        },
+        "manifest-boundary": {
+          "title": "Window crosses a lane addition",
+          "meaning": "The window reaches the merge that added a lane to the deployable manifest. The selector cannot compare across it, because the parent's manifest lacks that lane.",
+          "cause": "operator",
+          "next": "Set CMA_CD_ADOPTION_SHA to a develop merge after the one the PLAN refused line names (at=); nothing before it can be compared."
         }
       }
     },

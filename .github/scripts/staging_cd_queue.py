@@ -13,7 +13,8 @@ from staging_cd_comparisons import SelectionIncomplete, batch_selection
 from staging_cd_admission import event_identity
 from staging_cd_common import matches, require
 from staging_cd_compatibility import GROUP
-from staging_cd_plan_window import PlanRefused, earlier_transition, introduction, plan_window, read_finals, window_line
+from staging_cd_plan_window import (PlanRefused, earlier_transition, introductions, plan_window, read_finals,
+                                    recall, remember, window_line, window_warning)
 from staging_cd_resolve import output
 from staging_cd_runtime import run_private
 from staging_cd_history import DevelopHistory
@@ -22,8 +23,8 @@ from staging_cd_versions import DEPLOYABLES
 
 GROUP_IMAGES = frozenset(DEPLOYABLES[key] for key in GROUP)
 # Why a plan was refused, as the release-plan outcome code its gate reports.
-PLAN_REFUSALS = {"unreadable": "finals-unreadable", "untrusted": "finals-untrusted",
-                 "floor": "floor-required", "anchor": "anchor-unselected"}
+PLAN_REFUSALS = {"unreadable": "finals-unreadable", "denied": "finals-denied", "untrusted": "finals-untrusted",
+                 "floor": "floor-required", "anchor": "anchor-unselected", "introduced": "manifest-boundary"}
 
 
 def git(root, *args):
@@ -98,14 +99,15 @@ def reconcile(root, adoption, head, selector=selection, command=git, metrics=Non
     return results
 
 
-def release_queue(root, adoption, head, event_source, metrics, budget=None, finals=None, window=None):
+def release_queue(root, adoption, head, event_source, metrics, budget=None, finals=None, window=None, memory=None):
     """Plan develop's release queue from the adoption commit or, when
     `finals(history)` reads each lane's newest final, from the oldest revision
     a current lane can still need (staging_cd_plan_window).
 
     A bounded plan does everything the adoption window does, plus resumes of a
     lane's newest final that the adoption window would strand. `window` records
-    the chosen start and why. Raises PlanRefused when no start can be proved.
+    the chosen start and why; `memory` is the trusted cache directory holding
+    the last proven bound. Raises PlanRefused when no start can be proved.
     """
     deadline = None if budget is None else time.monotonic() + budget
     history = DevelopHistory(head, git(root, "rev-list", "--first-parent", "--max-count=2000", head).splitlines())
@@ -126,10 +128,18 @@ def release_queue(root, adoption, head, event_source, metrics, budget=None, fina
         # Allocation only plans the develop head; the newer push's run plans this one too.
         window.update(stale=develop, head=head)
         return queue_of(head, event_source, [], None)
-    start, bound, relied = plan_window(history, adoption, lanes, lambda name: introduction(root, history, name))
-    window.update(start=start, revisions=1 - history.position(start), adoption=adoption or "none", bound_by=bound)
-    # Contract transitions older than the adoption commit stay out, as before.
+    plan = plan_window(history, adoption, lanes, introductions(root, history),
+                       None if memory is None else recall(memory, history))
+    if plan.proven and memory is not None:
+        remember(memory, plan.proven)
+    start = plan.start
+    window.update(start=start, revisions=1 - history.position(start), adoption=adoption or "none",
+                  bound_by=plan.bound_by)
+    # Contract transitions older than the adoption commit stay out, as before,
+    # and none before a lane's manifest addition can be compared at all.
     floor = adoption if adoption in history.positions else min(history.positions, key=history.position)
+    if plan.after is not None and history.position(plan.after) > history.position(floor):
+        floor = plan.after
     rows = []
     anchor = earlier_transition(root, history, floor, start)
     if anchor is not None:
@@ -138,16 +148,10 @@ def release_queue(root, adoption, head, event_source, metrics, budget=None, fina
         # the window's cached records are never pruned to it.
         decision = batch_selection(root, [anchor], None, remaining(), cached=False)[anchor]
         if not set(decision["deployables"]) & GROUP_IMAGES:
-            raise PlanRefused("anchor", GROUP)
+            raise PlanRefused("anchor", GROUP, anchor)
         rows.append(change_row(root, anchor, decision))
         window["transition"] = anchor
     rows += reconcile(root, start, head, metrics=metrics, budget=remaining(), keep_first=True)
-    for component, source in relied.items():
-        # A new lane is bounded by its introduction only if the window selects it there or later.
-        if history.position(source) >= history.position(start) and not any(
-                history.position(row["source"]) >= history.position(source)
-                and DEPLOYABLES[component] in row["deployables"] for row in rows):
-            raise PlanRefused("anchor", [component])
     return queue_of(head, event_source, rows,
                     transition_in_window(root, history, [row for row in rows if row["deployables"]]))
 
@@ -170,25 +174,32 @@ def main(argv=None):
         report("step", "refused", subject="release-queue")
         return 1
     env, root, metrics, progress, window = os.environ, Path.cwd(), {}, {}, {}
+    try:
+        memory = Path(json.loads(env.get("CD_SELECTOR_CACHE") or "{}")["directory"])
+    except (ValueError, KeyError, TypeError):
+        memory = None  # Without the trusted cache there is no remembered bound.
     def operation(_masker):
         event_identity(env)
         require(env["GITHUB_EVENT_NAME"] == "push", "Allocation planning only accepts develop pushes")
         head = git(root, "rev-parse", "origin/develop")
         try:
             queue = release_queue(root, env.get("CD_ADOPTION_SHA"), head, env["GITHUB_SHA"], metrics,
-                                  budget=BUDGET_SECONDS, window=window,
+                                  budget=BUDGET_SECONDS, window=window, memory=memory,
                                   finals=lambda history: read_finals(root, env.get("GH_TOKEN"), history))
         except SelectionIncomplete as stopped:
             # Nothing is planned, so nothing downstream runs. A later step fails
-            # the job after the analysed records are saved for the next run.
+            # the job after the analysed records are saved for the next run; a
+            # transient stop is the one catch-up re-runs.
             output(env, "complete", "false")
+            output(env, "transient", "true")
             progress.update(decided=stopped.decided, total=stopped.total)
             return True
         except PlanRefused as refused:
             # Likewise, and its gate names the refusal. The next push plans again.
             output(env, "complete", "false")
             output(env, "refused", refused.kind)
-            window.update(refused=refused.kind, lanes=refused.lanes)
+            output(env, "transient", "true" if refused.kind == "unreadable" else "false")
+            window.update(refused=refused.kind, lanes=refused.lanes, at=refused.at)
             return True
         payload = json.dumps(queue, separators=(",", ":"))
         require(len(payload) < 750000, "Release queue exceeds the workflow output limit")
@@ -199,6 +210,9 @@ def main(argv=None):
     status = run_private(operation, None, subject="release-queue")
     if window:
         print(window_line(window), flush=True)
+        warning = window_warning(window) if "refused" not in window else None
+        if warning:
+            print(warning, flush=True)
     if status == 0 and progress:
         print(f"INCOMPLETE release-queue decided={progress['decided']} total={progress['total']} "
               f"budget_seconds={BUDGET_SECONDS}", flush=True)

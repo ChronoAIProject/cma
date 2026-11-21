@@ -8,21 +8,25 @@ from pathlib import Path
 import random
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
+import ci_retry
 from ci_tracks.git_comparison import comparison_details, shallow
 from staging_cd_behind_fixture import Develop
 from staging_cd_common import Refusal
 from staging_cd_compatibility import GROUP, RECIPE, VERSION_FILE
 from staging_cd_contract_tests import fixture_source
 from staging_cd_history import DevelopHistory
-from staging_cd_plan_window import MANIFEST, PlanRefused, newest_finals, plan_window, read_finals, window_line
+from staging_cd_plan_window import (MANIFEST, PlanRefused, Window, newest_finals, plan_window, read_finals, recall,
+                                    remember, window_line, window_warning)
 import staging_cd_queue as queue
 from staging_cd_queue import release_queue
-from staging_cd_receipts import annotation, final_tag_oid, parse_annotation
+from staging_cd_receipts import annotation, final_tag_oid, final_tag_text, git_tag_oid, parse_annotation
 from staging_cd_receipts_tests import fixture_receipt, fixture_runtime_receipt
+from staging_cd_release_tags import decode_tag
 from staging_cd_versions import DEPLOYABLES
 
 COMMITS = [f"{index:040x}" for index in range(1, 21)]
@@ -31,6 +35,22 @@ GROUP_IMAGES = sorted(DEPLOYABLES[key] for key in GROUP)
 ALL_IMAGES = sorted(DEPLOYABLES.values())
 # Seeds of the randomized lockstep; CD_PLAN_LOCKSTEP_SEEDS runs more locally.
 SEEDS = int(os.environ.get("CD_PLAN_LOCKSTEP_SEEDS", "3"))
+# A real final tag object as published (cma-web/v0.17.6), and its ID.
+REAL_TAG_OID = "b7b302a23c9978964d8091a532aef6ba4c597eee"
+REAL_TAG = (
+    b"object 45423f579b0115bd3bb0d075526597d86bcc32ca\ntype commit\ntag cma-web/v0.17.6\n"
+    b"tagger github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com> 0 +0000\n\n"
+    b'{"archive":"7bd5652e7da7678e652381c6d512950fabb7e94dbba7e0e9dc8cee6a4696bc61",'
+    b'"digest":"sha256:60607c565fea91dc80c2856580f76386a7fa4e76661f1eced7397d5f1c6b7c6c",'
+    b'"identity":{"build":"47fdf94bd9ef8076d1dbecd5187e5607403c9470894eda2e0b92129af54a8ea3","bump":"patch",'
+    b'"component":"web","pr":2909,"previous":"0.17.5","run_attempt":1,"run_id":44914556335,'
+    b'"schema":"cma-image-release-v1","source":"45423f579b0115bd3bb0d075526597d86bcc32ca",'
+    b'"tree":"041eb78fb3eaf7f5dd68a6d0e5adc76e0a4527d0","version":"0.17.6"},'
+    b'"repository":"ghcr.io/chronoaiproject/cma-web","scan":{"bundle":'
+    b'"a3eb9041f1b920bda1f8b2bd63241ea5ed0c890f60841a7303670b35dbb384c3","complete":true,"counts":'
+    b'{"advisory":2765,"allowlisted":0,"blocking":0,"detected":2779,"reviewed":14},"mode":"credential",'
+    b'"version":"1.0.4"},"schema":"cma-published-image-v1","source":"45423f579b0115bd3bb0d075526597d86bcc32ca",'
+    b'"tag":"cma-web/v0.17.6"}\n')
 
 
 def history(count=10):
@@ -57,11 +77,22 @@ def final(component, source, version):
     return ("refs/tags/" + receipt["tag"], *canonical(receipt))
 
 
+def failure(status=None, headers=None, transport=False):
+    """A failed read as staging_cd_github raises it."""
+    error = Refusal("GitHub API request failed")
+    cause = ci_retry.TransientError() if transport else None
+    if status is not None:
+        error.status = status
+        cause = ci_retry.status_cause(status, headers)
+    error.__cause__ = cause
+    return error
+
+
 class Tags:
-    """A live advertisement and the tag objects GitHub serves for it."""
+    """A live advertisement and the tag objects GitHub serves for it, with scripted failures."""
 
     def __init__(self, sources=(), develop=COMMITS[9]):
-        self.refs, self.objects = {"refs/heads/develop": develop}, {}
+        self.refs, self.objects, self.failures, self.reads = {"refs/heads/develop": develop}, {}, {}, []
         for component, versions in dict(sources).items():
             for version, source in versions.items():
                 self.add(*final(component, source, version))
@@ -70,14 +101,29 @@ class Tags:
         self.refs[ref] = oid
         self.objects[oid] = tag
 
-    def request(self, path):
+    def request(self, path, **_kwargs):
         oid = path.removeprefix("git/tags/")
+        self.reads.append(oid)
+        if self.failures.get(oid):
+            raise self.failures[oid].pop(0)
         if oid not in self.objects:
-            raise Refusal("GitHub API request failed")
+            raise failure(transport=True)
         return copy.deepcopy(self.objects[oid])
 
     def advertisement(self):
         return "".join(oid + "\t" + ref + "\n" for ref, oid in self.refs.items())
+
+
+class Clock:
+    def __init__(self):
+        self.now, self.waits = 0.0, []
+
+    def __call__(self):
+        return self.now
+
+    def sleep(self, seconds):
+        self.waits.append(seconds)
+        self.now += seconds
 
 
 class NewestFinalTests(unittest.TestCase):
@@ -85,155 +131,233 @@ class NewestFinalTests(unittest.TestCase):
         # Each lane has an older and a newer final; only the newer one bounds it.
         return Tags({key: {"0.10.1": COMMITS[1], "0.10.2": COMMITS[3 + index]} for index, key in enumerate(LANES)})
 
+    def read(self, tags, clock=None):
+        clock = clock or Clock()
+        return newest_finals(tags, tags.refs, deadline=clock() + 240, clock=clock, sleep=clock.sleep)
+
     def test_each_lane_is_bounded_by_its_newest_verified_final(self):
         tags = self.tags()
-        self.assertEqual(newest_finals(tags, tags.refs),
-                         {key: (COMMITS[3 + index], "final") for index, key in enumerate(LANES)})
+        self.assertEqual(self.read(tags), {key: (COMMITS[3 + index], "final") for index, key in enumerate(LANES)})
 
     def test_versions_order_finals_not_their_creation_or_name_order(self):
         tags = Tags({"web": {"0.10.9": COMMITS[2], "0.10.10": COMMITS[5]}})
-        self.assertEqual(newest_finals(tags, tags.refs)["web"], (COMMITS[5], "final"))
+        self.assertEqual(self.read(tags)["web"], (COMMITS[5], "final"))
 
     def test_lane_without_a_final_or_with_only_reservations_is_new(self):
         tags = Tags({"web": {"0.10.1": COMMITS[2]}})
         tags.refs["refs/tags/cma-event-gateway/pending/v0.10.1"] = "a" * 40
-        result = newest_finals(tags, tags.refs)
-        self.assertEqual(result, dict(dict.fromkeys(LANES, (None, "new")), web=(COMMITS[2], "final")))
+        self.assertEqual(self.read(tags), dict(dict.fromkeys(LANES, (None, "new")), web=(COMMITS[2], "final")))
 
     def test_malformed_version_ref_makes_every_lane_untrusted(self):
         for ref in ("refs/tags/cma-web/v1.2", "refs/tags/cma-web/v01.2.3", "refs/tags/cma-runtime/vnext"):
             with self.subTest(ref=ref):
                 tags = self.tags()
                 tags.refs[ref] = "b" * 40
-                self.assertEqual(newest_finals(tags, tags.refs), dict.fromkeys(LANES, (None, "untrusted")))
+                self.assertEqual(self.read(tags), dict.fromkeys(LANES, (None, "untrusted")))
 
-    def test_an_unreadable_or_untrusted_newest_final_never_falls_back_to_an_older_one(self):
+    def test_the_plan_accepts_exactly_the_finals_allocation_accepts(self):
         ref, oid, tag = final("web", COMMITS[6], "0.10.3")
         receipt = json.loads(tag["message"])
         other = fixture_receipt(component="web", source=COMMITS[7], version="0.10.3", previous="0.10.2")
         cases = {
-            "unreadable object": (None, "unreadable"),
-            "object for another ref": (dict(tag, tag="cma-web/v0.10.2"), "untrusted"),
-            "lightweight target": (dict(tag, object={"type": "tree", "sha": COMMITS[6]}), "untrusted"),
-            "receipt for another commit": (dict(tag, object={"type": "commit", "sha": COMMITS[7]}), "untrusted"),
-            # Self-consistent, but not the object this ID names.
-            "substituted object": (dict(tag, message=annotation(other), object={"type": "commit", "sha": COMMITS[7]}),
-                                   "untrusted"),
-            "not a receipt": (dict(tag, message="release"), "untrusted"),
-            "altered receipt": (dict(tag, message=annotation(dict(receipt, digest="sha256:" + "0" * 64))), "untrusted"),
+            "object for another ref": (dict(tag, tag="cma-web/v0.10.2"), (None, "untrusted")),
+            "lightweight target": (dict(tag, object={"type": "tree", "sha": COMMITS[6]}), (None, "untrusted")),
+            "receipt for another commit": (dict(tag, object={"type": "commit", "sha": COMMITS[7]}), (None, "untrusted")),
+            "not a receipt": (dict(tag, message="release"), (None, "untrusted")),
+            # Not byte for byte the canonical tag of its receipt (a tagger or format
+            # change), yet consistent: allocation accepts it, so the plan does too.
+            "another writer's format": (dict(tag, message=annotation(other), object={"type": "commit", "sha": COMMITS[7]}),
+                                        (COMMITS[7], "final")),
+            "altered receipt": (dict(tag, message=annotation(dict(receipt, digest="sha256:" + "0" * 64))),
+                                (COMMITS[6], "final")),
         }
-        for name, (served, kind) in cases.items():
+        for name, (served, expected) in cases.items():
             with self.subTest(name):
                 tags = self.tags()
-                tags.refs[ref] = oid
-                if served is not None:
-                    tags.objects[oid] = served
-                result = newest_finals(tags, tags.refs)
-                self.assertEqual(result["web"], (None, kind))
+                tags.add(ref, oid, served)
+                result = self.read(tags)
+                self.assertEqual(result["web"], expected)
                 self.assertEqual(result["eg"], (COMMITS[4], "final"))
 
-    def test_reader_sees_unreadable_inventory_credentials_and_stale_runs(self):
-        chain, tags = history(), self.tags()
-        failed = Mock(return_value=subprocess.CompletedProcess([], 128, "", "fatal"))
-        self.assertEqual(read_finals(Path.cwd(), "fixture", chain, runner=failed),
-                         (None, dict.fromkeys(LANES, (None, "unreadable"))))
-        listed = Mock(return_value=subprocess.CompletedProcess([], 0, tags.advertisement(), ""))
+    def test_the_release_tag_format_is_pinned_to_a_real_published_final(self):
+        # Finalization writes final_tag_text and recovers by its ID; a change of
+        # tagger or encoding would show here first.
+        self.assertEqual(git_tag_oid(REAL_TAG), REAL_TAG_OID)
+        tag = decode_tag(REAL_TAG_OID, REAL_TAG)
+        receipt = parse_annotation(tag["message"])
+        self.assertEqual(final_tag_text(receipt).encode(), REAL_TAG)
+        self.assertEqual(final_tag_oid(receipt), REAL_TAG_OID)
+        tags = Tags()
+        tags.add("refs/tags/cma-web/v0.17.6", REAL_TAG_OID, tag)
+        self.assertEqual(self.read(tags)["web"], ("45423f579b0115bd3bb0d075526597d86bcc32ca", "final"))
+
+    def test_transient_reads_repeat_and_a_just_advertised_404_is_propagation(self):
+        oid = self.tags().refs["refs/tags/cma-web/v0.10.2"]
+        for name, errors in (("server errors", [failure(502), failure(503)]),
+                             ("transport", [failure(transport=True)] * 3),
+                             ("not yet propagated", [failure(404), failure(404)])):
+            with self.subTest(name):
+                tags, clock = self.tags(), Clock()
+                tags.failures[oid] = list(errors)
+                self.assertEqual(self.read(tags, clock)["web"], (COMMITS[7], "final"))
+                self.assertEqual(len(clock.waits), len(errors))
+                self.assertEqual(tags.reads.count(oid), len(errors) + 2)  # Then served from the reader's copy.
+
+    def test_a_throttled_read_waits_as_long_as_github_asks(self):
+        oid = self.tags().refs["refs/tags/cma-web/v0.10.2"]
+        tags, clock = self.tags(), Clock()
+        tags.failures[oid] = [failure(429, {"retry-after": "45"})]
+        self.assertEqual(self.read(tags, clock)["web"], (COMMITS[7], "final"))
+        self.assertEqual(len(clock.waits), 1)
+        self.assertGreaterEqual(clock.waits[0], 45)
+
+    def test_reads_that_keep_failing_are_unreadable_and_refusals_are_denied(self):
+        oid = self.tags().refs["refs/tags/cma-web/v0.10.2"]
+        for errors, kind in (([failure(503)] * 6, "unreadable"), ([failure(404)] * 6, "unreadable"),
+                             ([failure(401)], "denied"), ([failure(403)], "denied"),
+                             ([failure(403, {"x-ratelimit-remaining": "0"})] * 6, "unreadable")):
+            with self.subTest(errors=errors[0].status, kind=kind):
+                tags, clock = self.tags(), Clock()
+                tags.failures[oid] = list(errors)
+                self.assertEqual(self.read(tags, clock)["web"], (None, kind))
+                self.assertLessEqual(clock.now, 240)
+        # The budget, not the attempt count, ends a long outage.
+        tags, clock = self.tags(), Clock()
+        tags.failures[oid] = [failure(503, {"retry-after": "200"})] * 6
+        self.assertEqual(newest_finals(tags, tags.refs, deadline=100, clock=clock, sleep=clock.sleep)["web"],
+                         (None, "unreadable"))
+        self.assertEqual(clock.waits, [])
+
+    def test_the_inventory_read_repeats_transport_failures_and_names_the_rest(self):
+        chain, tags = history(), Tags()  # No finals: only the inventory is read.
+        listed = subprocess.CompletedProcess([], 0, tags.advertisement(), "")
+        offline = subprocess.CompletedProcess([], 128, "", "fatal: unable to access: Could not resolve host: github.com")
+        for responses, expected in (([offline, offline, listed], "read"),
+                                    ([offline] * 6, "unreadable"),
+                                    ([subprocess.TimeoutExpired(["git"], 60)] * 6, "unreadable"),
+                                    ([subprocess.CompletedProcess([], 128, "", "fatal: repository not found")], "denied"),
+                                    ([subprocess.CompletedProcess([], 0, "not an advertisement", "")], "untrusted")):
+            with self.subTest(expected=expected, first=str(responses[0])[:60]):
+                clock = Clock()
+                runner = Mock(side_effect=list(responses) + [listed] * 3)
+                develop, lanes = read_finals(Path.cwd(), "fixture", chain, runner=runner, clock=clock, sleep=clock.sleep)
+                if expected == "read":
+                    self.assertEqual((develop, len(clock.waits)), (COMMITS[9], 2))
+                    self.assertEqual(lanes, dict.fromkeys(LANES, (None, "new")))
+                else:
+                    self.assertEqual((develop, lanes), (None, dict.fromkeys(LANES, (None, expected))))
+
+    def test_reader_sees_credentials_and_stale_runs(self):
+        chain = history()
+        listed = Mock(return_value=subprocess.CompletedProcess([], 0, Tags().advertisement(), ""))
         for token in (None, "", "two words"):
             with self.subTest(token=token):
                 self.assertEqual(read_finals(Path.cwd(), token, chain, runner=listed),
-                                 (None, dict.fromkeys(LANES, (None, "unreadable"))))
+                                 (COMMITS[9], dict.fromkeys(LANES, (None, "denied"))))
         # A newer develop head than this plan's makes the run stale: no tag object is read.
-        newer = Tags(develop=COMMITS[15])
-        listed = Mock(return_value=subprocess.CompletedProcess([], 0, newer.advertisement(), ""))
+        listed = Mock(return_value=subprocess.CompletedProcess([], 0, Tags(develop=COMMITS[15]).advertisement(), ""))
         with patch("staging_cd_plan_window.GitHub", side_effect=AssertionError):
             self.assertEqual(read_finals(Path.cwd(), "fixture", chain, runner=listed), (COMMITS[15], None))
         # A develop head this plan already contains is not newer: its finals are read.
         for develop in (COMMITS[9], COMMITS[7]):
             with self.subTest(develop=develop):
-                tags = Tags(develop=develop)
-                listed = Mock(return_value=subprocess.CompletedProcess([], 0, tags.advertisement(), ""))
+                listed = Mock(return_value=subprocess.CompletedProcess([], 0, Tags(develop=develop).advertisement(), ""))
                 self.assertEqual(read_finals(Path.cwd(), "fixture", chain, runner=listed),
                                  (develop, dict.fromkeys(LANES, (None, "new"))))
 
 
-def unknown(_name):
-    raise AssertionError("no lane is new")
+# Every lane is in the manifest from the start of these histories.
+ADDED = dict.fromkeys(LANES, COMMITS[0])
 
 
 class PlanWindowTests(unittest.TestCase):
-    def plan(self, adoption, sources, introduced=unknown, count=10):
-        return plan_window(history(count), adoption, sources, introduced)
+    def plan(self, adoption, sources, introduced=None, recalled=None, count=10):
+        return plan_window(history(count), adoption, sources, dict(ADDED, **(introduced or {})), recalled)
+
+    def refused(self, *args, **kwargs):
+        with self.assertRaises(PlanRefused) as refused:
+            self.plan(*args, **kwargs)
+        return refused.exception.kind, refused.exception.lanes, refused.exception.at
 
     def test_window_starts_at_the_oldest_lane_newest_final(self):
         sources = finals(**{"am": COMMITS[4], "eg": COMMITS[6], "runtime": COMMITS[4],
                             "runtime-omarchy": COMMITS[5], "web": COMMITS[8]})
-        self.assertEqual(self.plan(COMMITS[1], sources), (COMMITS[4], ["am", "runtime"], {}))
+        self.assertEqual(self.plan(COMMITS[1], sources), Window(COMMITS[4], ["am", "runtime"], COMMITS[4], COMMITS[1]))
 
     def test_the_adoption_commit_is_not_needed_once_every_lane_has_a_final(self):
         sources = finals(**dict({key: COMMITS[6] for key in LANES}, web=COMMITS[3]))
         for adoption in (None, "", "f" * 40):  # Unset, or older than this history.
             with self.subTest(adoption=adoption):
-                self.assertEqual(self.plan(adoption, sources), (COMMITS[3], ["web"], {}))
+                self.assertEqual(self.plan(adoption, sources).start, COMMITS[3])
 
     def test_an_adoption_newer_than_the_oldest_final_is_still_the_start(self):
         sources = finals(**{key: COMMITS[2] for key in LANES})
-        self.assertEqual(self.plan(COMMITS[6], sources), (COMMITS[6], ["adoption"], {}))
-        self.assertEqual(self.plan(COMMITS[2], sources), (COMMITS[2], LANES, {}))
+        self.assertEqual(self.plan(COMMITS[6], sources), Window(COMMITS[6], ["adoption"], COMMITS[2], COMMITS[1]))
+        self.assertEqual(self.plan(COMMITS[2], sources).bound_by, LANES)
 
-    def test_a_lane_that_never_had_a_final_is_bounded_by_its_introduction(self):
+    def test_a_lane_that_never_had_a_final_starts_after_the_merge_that_added_it(self):
+        # The selector cannot compare the addition itself: its parent lacks the lane.
         sources = finals(**{key: COMMITS[6] for key in LANES if key != "web"})
-        introduced = Mock(return_value=COMMITS[3])
-        self.assertEqual(self.plan(None, sources, introduced), (COMMITS[3], ["web:new"], {"web": COMMITS[3]}))
-        introduced.assert_called_once_with("cma-web")
-        # An introduction before the adoption commit leaves the adoption commit as the start.
-        self.assertEqual(self.plan(COMMITS[4], sources, introduced), (COMMITS[4], ["adoption"], {"web": COMMITS[3]}))
+        self.assertEqual(self.plan(None, sources, {"web": COMMITS[3]}),
+                         Window(COMMITS[4], ["web:new"], COMMITS[4], COMMITS[4]))
+        # A window that would reach any lane's addition refuses at once, naming it.
+        older = dict(sources, eg=(COMMITS[2], "final"))
+        self.assertEqual(self.refused(None, older, {"web": COMMITS[3]}), ("introduced", ["web"], COMMITS[3]))
+        # Setting the adoption commit after the addition lets the plan go on.
+        self.assertEqual(self.plan(COMMITS[4], older, {"web": COMMITS[3]}).start, COMMITS[4])
+        # The push that adds a lane cannot be planned until a merge follows it.
+        self.assertEqual(self.refused(None, sources, {"web": COMMITS[9]}), ("introduced", ["web"], COMMITS[9]))
 
     def test_only_a_lane_without_a_bound_on_this_history_needs_the_adoption_floor(self):
         sources = finals(**{key: COMMITS[6] for key in LANES})
-        for name, lane in (("final off history", ("f" * 40, "final")), ("introduced off history", (None, "new"))):
+        for name, lane, introduced in (("final off history", ("f" * 40, "final"), {}),
+                                       ("added before this history", (None, "new"), {"web": None})):
             with self.subTest(name):
                 bounded = dict(sources, web=lane)
-                introduced = Mock(return_value=None)
-                self.assertEqual(self.plan(COMMITS[2], bounded, introduced), (COMMITS[2], ["web:floor"], {}))
+                window = self.plan(COMMITS[2], bounded, introduced)
+                self.assertEqual((window.start, window.bound_by, window.proven), (COMMITS[2], ["web:floor"], None))
                 for adoption in (None, "f" * 40):
-                    with self.assertRaises(PlanRefused) as refused:
-                        self.plan(adoption, bounded, introduced)
-                    self.assertEqual((refused.exception.kind, refused.exception.lanes), ("floor", ["web"]))
+                    self.assertEqual(self.refused(adoption, bounded, introduced), ("floor", ["web"], None))
 
-    def test_an_unreadable_or_untrusted_final_refuses_the_plan_at_once(self):
+    def test_a_lane_that_cannot_be_read_uses_the_last_proven_bound_or_refuses(self):
         sources = finals(**{key: COMMITS[6] for key in LANES})
-        for kinds, expected in (({"eg": "unreadable"}, ("unreadable", ["eg"])),
-                                ({"eg": "untrusted", "web": "untrusted"}, ("untrusted", ["eg", "web"])),
-                                ({"eg": "unreadable", "web": "untrusted"}, ("untrusted", ["web"]))):
-            with self.subTest(kinds=kinds):
-                with self.assertRaises(PlanRefused) as refused:
-                    self.plan(COMMITS[1], dict(sources, **{key: (None, kind) for key, kind in kinds.items()}))
-                self.assertEqual((refused.exception.kind, refused.exception.lanes), expected)
-        with self.assertRaises(PlanRefused) as refused:
-            self.plan(COMMITS[1], {})
-        self.assertEqual((refused.exception.kind, refused.exception.lanes), ("unreadable", LANES))
+        unreadable = dict(sources, eg=(None, "unreadable"))
+        window = self.plan(COMMITS[1], unreadable, recalled=COMMITS[3])
+        self.assertEqual((window.start, window.bound_by, window.proven), (COMMITS[3], ["eg:recalled"], None))
+        for recalled in (None, "f" * 40):
+            self.assertEqual(self.refused(COMMITS[1], unreadable, recalled=recalled), ("unreadable", ["eg"], None))
+        # A refused credential or an untrusted tag is never an outage to wait out.
+        for kind in ("denied", "untrusted"):
+            self.assertEqual(self.refused(COMMITS[1], dict(sources, eg=(None, kind)), recalled=COMMITS[3]),
+                             (kind, ["eg"], None))
+        # Most actionable first.
+        mixed = dict(sources, eg=(None, "unreadable"), web=(None, "untrusted"), am=(None, "denied"))
+        self.assertEqual(self.refused(COMMITS[1], mixed), ("untrusted", ["web"], None))
+        self.assertEqual(self.refused(COMMITS[1], {}), ("unreadable", LANES, None))
 
     def test_the_window_never_starts_before_adoption_or_after_any_lane_bound(self):
         chain, rng = history(12), random.Random(7)
         candidates = [None, "f" * 40, *COMMITS[:12]]
+        added = chain.position(COMMITS[0])
         for _ in range(500):
             adoption = rng.choice([None, "f" * 40, *COMMITS[:12]])
-            sources = {key: (rng.choice(candidates), rng.choice(["final", "new"])) for key in LANES}
-            introductions = {DEPLOYABLES[key]: source for key, (source, kind) in sources.items() if kind == "new"}
-            sources = {key: (None, "new") if kind == "new" else (source, kind) for key, (source, kind) in sources.items()}
+            sources = {key: (rng.choice(candidates), "final") for key in LANES}
             floor = chain.positions.get(adoption)
-            bounds = [chain.positions.get(introductions.get(DEPLOYABLES[key], source), floor)
-                      for key, (source, _kind) in sources.items()]
+            bounds = [chain.positions.get(source, floor) for source, _kind in sources.values()]
+            expected = None if None in bounds else max(min(bounds), floor if floor is not None else min(bounds))
             try:
-                start, lanes, _relied = plan_window(chain, adoption, sources, introductions.get)
+                window = plan_window(chain, adoption, sources, dict.fromkeys(LANES, COMMITS[0]))
             except PlanRefused as refused:
-                self.assertEqual(refused.kind, "floor")
-                self.assertIsNone(floor)
-                self.assertIn(None, bounds)
+                if refused.kind == "floor":
+                    self.assertIsNone(floor)
+                    self.assertIsNone(expected)
+                else:  # Every lane was added at the first commit; no window may reach it.
+                    self.assertEqual(refused.kind, "introduced")
+                    self.assertLessEqual(expected, added)
                 continue
-            self.assertNotIn(None, bounds)
-            self.assertEqual(chain.position(start), max(min(bounds), floor if floor is not None else min(bounds)))
-            self.assertTrue(lanes)
+            self.assertEqual(chain.position(window.start), expected)
+            self.assertGreater(expected, added)
+            self.assertTrue(window.bound_by)
 
     def test_window_line_names_why_the_plan_covers_what_it_does(self):
         line = window_line({"start": COMMITS[4], "revisions": 6, "adoption": COMMITS[1], "bound_by": ["am", "eg"]})
@@ -242,10 +366,24 @@ class PlanWindowTests(unittest.TestCase):
                             "transition": COMMITS[2]})
         self.assertEqual(line, f"PLAN window start={COMMITS[4]} revisions=6 adoption=none bound-by=am "
                                f"transition={COMMITS[2]}")
-        self.assertEqual(window_line({"start": COMMITS[4], "refused": "floor", "lanes": ["eg", "web"]}),
+        self.assertEqual(window_line({"start": COMMITS[4], "refused": "floor", "lanes": ["eg", "web"], "at": None}),
                          "PLAN refused reason=floor lanes=eg,web")
+        self.assertEqual(window_line({"refused": "introduced", "lanes": ["web"], "at": COMMITS[3]}),
+                         f"PLAN refused reason=introduced lanes=web at={COMMITS[3]}")
         self.assertEqual(window_line({"stale": COMMITS[9], "head": COMMITS[4]}),
                          f"PLAN stale develop={COMMITS[9]} head={COMMITS[4]}")
+
+    def test_a_wide_or_deep_window_warns_and_names_the_lever(self):
+        def warning(revisions):
+            return window_warning({"start": COMMITS[4], "revisions": revisions, "adoption": "none",
+                                   "bound_by": ["eg"]})
+        self.assertIsNone(warning(150))
+        wide = warning(151)
+        self.assertTrue(wide.startswith("::warning title=Wide release plan::The plan reconciles 151 "))
+        self.assertIn("CMA_CD_ADOPTION_SHA", wide)
+        deep = warning(1801)
+        self.assertTrue(deep.startswith("::warning title=Release plan near its history limit::"))
+        self.assertIn("CMA_CD_ADOPTION_SHA", deep)
 
 
 class Repository:
@@ -309,12 +447,13 @@ class Repository:
     def row(self, commit):
         return {"source": commit, "tree": self.tree(commit), "deployables": self.decisions.get(commit, [])}
 
-    def plan(self, adoption, *, lanes=None, develop=None, head=None, budget=None):
+    def plan(self, adoption, *, lanes=None, develop=None, head=None, budget=None, memory=None):
         """Plan from the adoption commit, or bounded by `lanes` (each lane's newest final)."""
         found, head = {}, head or self.commits[-1]
         reader = None if lanes is None else (lambda _history: (develop or head, lanes))
         with patch.object(queue, "batch_selection", side_effect=self.batch):
-            result = release_queue(self.root, adoption, head, head, {}, budget, finals=reader, window=found)
+            result = release_queue(self.root, adoption, head, head, {}, budget, finals=reader, window=found,
+                                   memory=memory)
         return result, found
 
 
@@ -426,25 +565,90 @@ class ReleaseQueueWindowTests(unittest.TestCase):
             repo.plan(old, lanes=lanes)
         self.assertEqual(repo.calls, [])
 
-    def test_a_new_lane_is_bounded_by_the_merge_that_added_it(self):
+    def test_a_new_lane_starts_after_the_merge_that_added_it(self):
         repo = Repository(self, 6, added={2: ["cma-web"]})
-        repo.decisions = {repo.commits[2]: ["cma-web"], repo.commits[4]: ["cma-agent-manager"]}
-        lanes = dict(finals(**{key: repo.commits[4] for key in LANES if key != "web"}))
-        result, found = repo.plan(None, lanes=lanes)
-        self.assertEqual(windows(repo.calls), [repo.commits[2:]])
-        self.assertEqual((found["start"], found["bound_by"]), (repo.commits[2], ["web:new"]))
-        self.assertEqual(result["changes"], [repo.row(repo.commits[2]), repo.row(repo.commits[4])])
-        # A lane the window never selects from its introduction on refuses the plan.
         repo.decisions = {repo.commits[4]: ["cma-agent-manager"]}
+        lanes = finals(**{key: repo.commits[4] for key in LANES if key != "web"})
+        result, found = repo.plan(None, lanes=lanes)
+        self.assertEqual(windows(repo.calls), [repo.commits[3:]])
+        self.assertEqual((found["start"], found["bound_by"]), (repo.commits[3], ["web:new"]))
+        self.assertEqual(result["changes"], [repo.row(repo.commits[3]), repo.row(repo.commits[4])])
+        # A window reaching the addition refuses before any selection, naming the merge.
+        repo.calls.clear()
+        older = finals(**{key: repo.commits[1] for key in LANES if key != "web"})
         with self.assertRaises(PlanRefused) as refused:
-            repo.plan(None, lanes=lanes)
-        self.assertEqual((refused.exception.kind, refused.exception.lanes), ("anchor", ["web"]))
-        # Without any manifest introduction on this history the lane needs the floor.
-        repo = Repository(self, 3)
-        with patch.object(queue, "introduction", return_value=None), \
+            repo.plan(None, lanes=older)
+        self.assertEqual((refused.exception.kind, refused.exception.lanes, refused.exception.at, repo.calls),
+                         ("introduced", ["web"], repo.commits[2], []))
+        # An adoption commit after the addition is the operator's way through.
+        _result, found = repo.plan(repo.commits[3], lanes=older)
+        self.assertEqual((found["start"], found["bound_by"]), (repo.commits[3], ["adoption"]))
+        # A lane added before this history needs the floor.
+        with patch.object(queue, "introductions", return_value=dict.fromkeys(LANES)), \
                 self.assertRaises(PlanRefused) as refused:
-            repo.plan(None, lanes=dict(finals(**{key: repo.commits[1] for key in LANES if key != "web"})))
+            repo.plan(None, lanes=lanes)
         self.assertEqual((refused.exception.kind, refused.exception.lanes), ("floor", ["web"]))
+
+    def test_the_real_selector_cannot_compare_across_a_lane_addition(self):
+        # Why the window may never reach a lane's addition: the selector's own
+        # manifest reader refuses the parent snapshot, which lacks the lane.
+        manifest = json.loads((Path(queue.__file__).parent / "deployables.json").read_text())
+        script = ("import json, sys\nfrom pathlib import Path\nsys.path.insert(0, sys.argv[1])\n"
+                  "from image_inputs import recipes\nfrom uncertainty import SelectionIntegrityError\n"
+                  "try:\n    print(json.dumps(sorted(recipes(Path(sys.argv[2])))))\n"
+                  "except SelectionIntegrityError:\n    print('refused')\n")
+        for names, expected in ((sorted(manifest), json.dumps(sorted(manifest))),
+                                (sorted(set(manifest) - {"cma-web"}), "refused")):
+            with self.subTest(names=len(names)), tempfile.TemporaryDirectory() as directory:
+                tree = Path(directory)
+                (tree / MANIFEST).parent.mkdir(parents=True)
+                (tree / MANIFEST).write_text(json.dumps({name: manifest[name] for name in names}))
+                result = subprocess.run([sys.executable, "-B", "-c", script, str(Path(queue.__file__).parent / "ci_tracks"),
+                                         str(tree)], capture_output=True, text=True, timeout=60, check=True)
+                self.assertEqual(result.stdout.strip(), expected)
+
+    def test_a_transition_before_a_lane_addition_is_never_an_anchor(self):
+        # It can no longer be compared, and the adoption window could not reach it either.
+        repo = Repository(self, 7, contract_at=1, added={3: ["cma-web"]})
+        repo.decisions = {repo.commits[1]: GROUP_IMAGES, repo.commits[5]: ALL_IMAGES}
+        result, found = repo.plan(repo.commits[0], lanes=finals(**{key: repo.commits[5] for key in LANES}))
+        self.assertEqual(windows(repo.calls, cached=False), [])
+        self.assertNotIn("contract_transition", result)
+        self.assertNotIn("transition", found)
+
+    def test_a_proven_bound_is_remembered_and_recalled_only_when_tags_cannot_be_read(self):
+        repo = Repository(self, 6)
+        repo.decisions = {repo.commits[3]: ["cma-web"]}
+        with tempfile.TemporaryDirectory() as directory:
+            memory = Path(directory)
+            proven = finals(**dict({key: repo.commits[4] for key in LANES}, eg=repo.commits[2]))
+            repo.plan(repo.commits[0], lanes=proven, memory=memory)
+            self.assertEqual(recall(memory, DevelopHistory(repo.commits[-1], list(reversed(repo.commits)))),
+                             repo.commits[2])
+            # Later every tag read fails: the remembered bound plans instead of a refusal.
+            unreadable = dict.fromkeys(LANES, (None, "unreadable"))
+            repo.calls.clear()
+            _result, found = repo.plan(repo.commits[0], lanes=unreadable, memory=memory)
+            self.assertEqual((found["start"], windows(repo.calls)), (repo.commits[2], [repo.commits[2:]]))
+            self.assertEqual(found["bound_by"], [key + ":recalled" for key in LANES])
+            # A plan that used the remembered bound never rewrites it.
+            self.assertEqual(json.loads((memory / "plan-window.json").read_text())["bound"], repo.commits[2])
+            # A newer proven bound replaces it; finals only grow, so it only moves forward.
+            repo.plan(repo.commits[0], lanes=finals(**{key: repo.commits[4] for key in LANES}), memory=memory)
+            self.assertEqual(json.loads((memory / "plan-window.json").read_text())["bound"], repo.commits[4])
+            # Without a usable record the plan still refuses, as transient.
+            for record in ("not json", json.dumps({"schema": "cma-plan-window-v1", "bound": "f" * 40,
+                                                   "lanes": LANES}),
+                           json.dumps({"schema": "cma-plan-window-v1", "bound": repo.commits[2], "lanes": ["web"]})):
+                with self.subTest(record=record[:40]):
+                    (memory / "plan-window.json").write_text(record)
+                    with self.assertRaises(PlanRefused) as refused:
+                        repo.plan(repo.commits[0], lanes=unreadable, memory=memory)
+                    self.assertEqual(refused.exception.kind, "unreadable")
+            (memory / "plan-window.json").unlink()
+            (memory / "plan-window.json").symlink_to(memory / "elsewhere.json")
+            remember(memory, repo.commits[4])
+            self.assertFalse((memory / "elsewhere.json").exists())
 
     def test_every_selection_shares_one_budget_with_the_tag_reads(self):
         repo = Repository(self, 6, contract_at=1)
@@ -696,7 +900,7 @@ class AllocationLockstepTests(unittest.TestCase):
 
 
 class MainWindowTests(unittest.TestCase):
-    def run_main(self, plan, argv=(), extra=None):
+    def run_main(self, plan, argv=(), extra=None, unset=()):
         with tempfile.TemporaryDirectory() as directory:
             outputs = Path(directory) / "outputs"
             outputs.write_text("")
@@ -707,27 +911,46 @@ class MainWindowTests(unittest.TestCase):
                     patch.object(queue, "git", return_value=COMMITS[3]), \
                     patch.object(queue, "read_finals", return_value="read") as reader, \
                     patch.object(queue, "release_queue", side_effect=plan), contextlib.redirect_stdout(stdout):
+                for key in (*unset, *({"CD_SELECTOR_CACHE"} - env.keys())):
+                    os.environ.pop(key, None)
                 status = queue.main(list(argv))
             return status, outputs.read_text(), stdout.getvalue(), reader
 
     def test_main_reads_finals_lazily_and_prints_the_chosen_window(self):
-        def plan(root, adoption, head, event_source, metrics, *, budget, finals, window):
-            self.assertEqual((adoption, head, event_source, budget), (COMMITS[0], COMMITS[3], COMMITS[3],
-                                                                     queue.BUDGET_SECONDS))
+        cache = json.dumps({"directory": "/trusted/cache", "policy": "c" * 64})
+
+        def plan(root, adoption, head, event_source, metrics, *, budget, finals, window, memory):
+            self.assertEqual((adoption, head, event_source, budget, memory),
+                             (COMMITS[0], COMMITS[3], COMMITS[3], queue.BUDGET_SECONDS, Path("/trusted/cache")))
             self.assertEqual(finals("history"), "read")
             window.update(start=COMMITS[2], revisions=2, adoption=adoption, bound_by=["eg"])
             return {"head": head, "event_source": event_source, "changes": []}
-        status, outputs, stdout, reader = self.run_main(plan)
+        status, outputs, stdout, reader = self.run_main(plan, extra={"CD_SELECTOR_CACHE": cache})
         self.assertEqual(status, 0)
         reader.assert_called_once_with(Path.cwd(), "synthetic-not-a-credential", "history")
         self.assertIn(f"PLAN window start={COMMITS[2]} revisions=2 adoption={COMMITS[0]} bound-by=eg\n", stdout)
+        self.assertNotIn("::warning", stdout)
+
+    def test_an_unset_adoption_and_a_wide_window_plan_and_warn(self):
+        def plan(root, adoption, head, event_source, metrics, *, budget, finals, window, memory):
+            self.assertEqual((adoption, memory), (None, None))
+            window.update(start=COMMITS[2], revisions=400, adoption="none", bound_by=["eg"])
+            return {"head": head, "event_source": event_source, "changes": []}
+        status, _outputs, stdout, _reader = self.run_main(plan, unset=("CD_ADOPTION_SHA",))
+        self.assertEqual(status, 0)
+        self.assertIn("::warning title=Wide release plan::The plan reconciles 400 first-parent merges", stdout)
 
     def test_a_refused_plan_saves_nothing_planned_and_its_gate_names_the_reason(self):
         def plan(*_args, **_kwargs):
             raise PlanRefused("floor", ["eg"])
         status, outputs, stdout, _reader = self.run_main(plan)
-        self.assertEqual((status, outputs), (0, "complete=false\nrefused=floor\n"))
+        self.assertEqual((status, outputs), (0, "complete=false\nrefused=floor\ntransient=false\n"))
         self.assertIn("PLAN refused reason=floor lanes=eg\n", stdout)
+
+        def outage(*_args, **_kwargs):
+            raise PlanRefused("unreadable", LANES)
+        status, outputs, _stdout, _reader = self.run_main(outage)
+        self.assertEqual((status, outputs), (0, "complete=false\nrefused=unreadable\ntransient=true\n"))
         for kind, code in queue.PLAN_REFUSALS.items():
             with self.subTest(kind=kind):
                 status, _outputs, stdout, _reader = self.run_main(plan, ["--require-complete"],
@@ -738,7 +961,7 @@ class MainWindowTests(unittest.TestCase):
         self.assertTrue(stdout.startswith("FAIL release-queue reason=incomplete"))
 
     def test_a_stale_run_completes_with_nothing_changed(self):
-        def plan(root, adoption, head, event_source, metrics, *, budget, finals, window):
+        def plan(root, adoption, head, event_source, metrics, *, budget, finals, window, memory):
             window.update(stale=COMMITS[9], head=head)
             return {"head": head, "event_source": event_source, "changes": []}
         status, outputs, stdout, _reader = self.run_main(plan)

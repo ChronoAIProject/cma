@@ -158,7 +158,8 @@ class BatchBoundaryTests(unittest.TestCase):
                 # The plan step passes, so the following cache save keeps its records.
                 self.assertEqual(queue.main([]), 0)
             self.assertEqual(plan.call_args.kwargs['budget'], queue.BUDGET_SECONDS)
-            self.assertEqual(outputs.read_text(), 'complete=false\n')
+            # A budget stop is transient: catch-up may re-run it, from the first gate.
+            self.assertEqual(outputs.read_text(), 'complete=false\ntransient=true\n')
             self.assertIn('INCOMPLETE release-queue decided=1 total=2 budget_seconds=2100\n', stdout.getvalue())
             stdout = io.StringIO()
             with patch.dict(queue.os.environ, {'GITHUB_STEP_SUMMARY': ''}), redirect_stdout(stdout):

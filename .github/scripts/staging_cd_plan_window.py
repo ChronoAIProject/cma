@@ -5,61 +5,88 @@ that build used the whole tree at that source. staging_cd_allocate acts for a
 lane only at the lane's newest listed source, and skips even that one when any
 reservation or final of the lane has a later source. So no first-parent
 revision before a lane's newest final can change what allocation does for that
-lane. A lane that never had a final is selected by the merge that added it to
-the deployable manifest, so nothing before that merge can be its newest
-selected source; the plan refuses if the window does not select it.
+lane. The window starts at the oldest such bound over all current lanes, so
+every lane still sees every revision from its own bound, and its first
+revision is listed even when it selects nothing. That listing lets a final
+whose source no longer selects its lane resume (staging_cd_baselines); the
+adoption window lists only selected revisions and strands such a final. So a
+bounded plan does everything the adoption window does, plus resumes the
+adoption window would strand.
 
-The window starts at the oldest of these lane bounds, so every lane still sees
-every revision from its own bound, and its first revision is listed even when
-it selects nothing. That listing lets a final whose source no longer selects
-its lane resume (staging_cd_baselines); the adoption window lists only selected
-revisions and strands such a final. So a bounded plan does everything the
-adoption window does, plus resumes the adoption window would strand.
+The shared selector cannot compare across a merge that added a lane to the
+deployable manifest: the parent's manifest lacks the lane, so it refuses. A
+lane that never had a final is therefore bounded by the first merge after its
+addition, and a window that would reach any current lane's addition refuses
+at once (manifest-boundary): an operator sets CMA_CD_ADOPTION_SHA to a merge
+after it, exactly as the adoption window always needed.
 
-CMA_CD_ADOPTION_SHA is no longer required. When it is on this plan's history it
-is still a lower bound, and contract transitions older than it stay out of the
-plan. It is required only for a lane whose bound (its newest final, or for a
-new lane the merge that added it) is not on the last 2,000 first-parent
-merges: that plan refuses at once, naming the lane, until the floor is set.
-A tag that cannot be read or verified also refuses the plan at once, so the
-next push plans again; nothing is skipped, because nothing was planned. A run
-whose push is no longer the develop head plans nothing: allocation would find
-it stale, and the newer push's run plans its merges.
+CMA_CD_ADOPTION_SHA is otherwise not required. On this plan's history it is a
+lower bound, and contract transitions older than it stay out of the plan. It is
+needed only for a lane whose newest final is not on the last 2,000 first-parent
+merges, and that plan refuses at once, naming the lane, until it is set.
+
+Tag reads repeat transient failures, honour Retry-After and treat a 404 on a
+just-advertised object as propagation. A read that still fails falls back to
+the last proven bound in the trusted develop selection cache: finals only grow,
+so an earlier proven bound is still a lower bound. Only without one does the
+plan refuse, as transient. A run whose push is no longer the develop head plans
+nothing: allocation would find it stale, and the newer push's run plans it.
 """
+from dataclasses import dataclass
 import json
+import os
+from pathlib import Path
 import subprocess
 import time
 
+import ci_retry
+from ci_tracks.selection_cache import PLAN_RECORD
 from staging_cd_catch_up import advertised, final_source, lane_versions
 from staging_cd_common import Refusal
 from staging_cd_compatibility import ContractPolicy, RECIPE, VERSION_FILE
 from staging_cd_github import GitHub
-from staging_cd_receipts import final_tag_oid, parse_annotation
 from staging_cd_release_tags import local_tag_reader
 from staging_cd_versions import DEPLOYABLES, version_tuple
 
-# Five tag objects normally take seconds to read; the plan refuses after this.
-FINAL_SECONDS = 60
+# Reading the tag inventory and five tag objects normally takes seconds. Slow
+# reads repeat inside this budget, which the plan's selection budget includes.
+FINAL_SECONDS = 240
+READ_POLICY = {"attempts": 6, "base": 2.0, "cap": 30.0}
 MANIFEST = ".github/scripts/deployables.json"
+RECORD_SCHEMA = "cma-plan-window-v1"
 UNREADABLE = (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError)
-# Refusals, most actionable first.
-KINDS = ("untrusted", "floor", "unreadable")
+# A window this long is analysed for minutes on a cold cache; say why it is.
+WIDE_REVISIONS = 150
+HISTORY_LIMIT = 2000
 
 
 class PlanRefused(Exception):
-    """No window can be proved now. `kind` names why, `lanes` which lanes."""
+    """No window can be proved now. `kind` names why, `lanes` which lanes, `at` where."""
 
-    def __init__(self, kind, lanes):
+    def __init__(self, kind, lanes, at=None):
         super().__init__(kind)
-        self.kind, self.lanes = kind, sorted(lanes)
+        self.kind, self.lanes, self.at = kind, sorted(lanes), at
 
 
-def newest_finals(api, refs):
-    """Each current lane's newest final source and kind: final, new, unreadable or untrusted.
+@dataclass(frozen=True)
+class Window:
+    start: str  # The first revision to reconcile.
+    bound_by: list  # The lanes, or "adoption", that put it there.
+    proven: str | None  # The oldest lane bound when every bound came from tags now.
+    after: str | None  # The newest current lane's manifest addition on this history.
 
-    Refs come from one live advertisement. Each tag object is read through the
-    same reader and checks as catch-up, and must also be byte for byte the
-    canonical tag its own receipt produces, so its ID authenticates it.
+
+def transient_read(error):
+    """A just-advertised tag object can 404 while GitHub still propagates it."""
+    return ci_retry.TRANSIENT if getattr(error, "status", None) == 404 else ci_retry.classify(error)
+
+
+def newest_finals(api, refs, *, deadline=None, clock=time.monotonic, sleep=time.sleep):
+    """Each current lane's newest final source and kind: final, new, unreadable, denied or untrusted.
+
+    Refs come from one live advertisement. Each tag object is read, with
+    retries, through the reader allocation uses, then checked as catch-up and
+    allocation check it: its name, its commit and its receipt must agree.
     """
     try:
         lanes = lane_versions(refs)
@@ -73,92 +100,145 @@ def newest_finals(api, refs):
         version = max(finals, key=version_tuple)
         oid = finals[version]
         try:
-            api.request("git/tags/" + oid)  # A failed read is no verdict on the tag.
-        except UNREADABLE:
-            result[component] = (None, "unreadable")
+            ci_retry.call(lambda: api.request("git/tags/" + oid, attempts=1), name="release-tag-read",
+                          classify=transient_read, deadline=deadline, clock=clock, sleep=sleep,
+                          honour_retry_after=True, **READ_POLICY)
+        except UNREADABLE as error:
+            # An outage is no verdict on the tag; a refused credential is not an outage.
+            result[component] = (None, "unreadable" if transient_read(error) == ci_retry.TRANSIENT else "denied")
             continue
         try:
             # The reader keeps the object it read, so these checks see the same bytes.
-            source = final_source(api, component, version, oid)
-            receipt = parse_annotation(api.request("git/tags/" + oid).get("message"))
+            result[component] = (final_source(api, component, version, oid), "final")
         except UNREADABLE:
             result[component] = (None, "untrusted")
-            continue
-        result[component] = (source, "final") if final_tag_oid(receipt) == oid else (None, "untrusted")
     return result
 
 
-def read_finals(root, token, history, *, runner=subprocess.run, seconds=FINAL_SECONDS):
+def read_finals(root, token, history, *, runner=subprocess.run, seconds=FINAL_SECONDS,
+                clock=time.monotonic, sleep=time.sleep):
     """Return the advertised develop head and each lane's newest final.
 
     A head that is neither this plan's head nor one of its ancestors is newer:
     allocation will find this run stale and do nothing, so finals are not read.
     """
-    deadline = time.monotonic() + seconds
+    deadline = clock() + seconds
     try:
-        refs = advertised(runner)
-        if refs["refs/heads/develop"] not in history.positions:
-            return refs["refs/heads/develop"], None
-        api = GitHub(token, runner, local_tags=local_tag_reader(root, deadline=deadline), deadline=deadline)
+        refs = ci_retry.call(lambda: advertised(runner), name="release-tag-inventory", classify=ci_retry.classify,
+                             deadline=deadline, clock=clock, sleep=sleep, **READ_POLICY)
+    except UNREADABLE as error:
+        kind = ("unreadable" if ci_retry.classify(error) == ci_retry.TRANSIENT
+                else "denied" if str(error) == "Release tag inventory is incomplete" else "untrusted")
+        return None, dict.fromkeys(DEPLOYABLES, (None, kind))
+    develop = refs["refs/heads/develop"]
+    if develop not in history.positions:
+        return develop, None
+    try:
+        api = GitHub(token, runner, local_tags=local_tag_reader(root, deadline=deadline),
+                     retry={"clock": clock, "sleep": sleep}, deadline=deadline)
     except UNREADABLE:
-        return None, dict.fromkeys(DEPLOYABLES, (None, "unreadable"))
-    return refs["refs/heads/develop"], newest_finals(api, refs)
+        return develop, dict.fromkeys(DEPLOYABLES, (None, "denied"))
+    return develop, newest_finals(api, refs, deadline=deadline, clock=clock, sleep=sleep)
 
 
-def introduction(root, history, name):
-    """The newest first-parent merge that added `name` to the deployable manifest, or None."""
+def introductions(root, history):
+    """Each current lane's newest first-parent addition to the deployable manifest on this history."""
     policy = ContractPolicy(history, root=root)
+    names = {}
 
-    def names(commit):
-        if not policy.git("ls-tree", "--name-only", commit, "--", MANIFEST).strip():
-            return set()
-        return set(json.loads(policy.git("show", commit + ":" + MANIFEST)))
+    def listed(commit):
+        if commit not in names:
+            present = policy.git("ls-tree", "--name-only", commit, "--", MANIFEST).strip()
+            names[commit] = set(json.loads(policy.git("show", commit + ":" + MANIFEST))) if present else set()
+        return names[commit]
 
+    wanted, found = set(DEPLOYABLES.values()), {}
     for commit in policy.git("log", "--first-parent", "--max-count=2000", "--format=%H", history.head,
                              "--", MANIFEST).splitlines():
-        if commit not in history.positions:
+        if commit not in history.positions or not wanted - found.keys():
             break
         header = policy.git("cat-file", "commit", commit).split("\n\n", 1)[0]
         parents = [line[7:] for line in header.splitlines() if line.startswith("parent ")]
-        if name in names(commit) and not (parents and name in names(parents[0])):
-            return commit
-    return None
+        before = listed(parents[0]) if parents else set()
+        for name in (wanted - found.keys()) & (listed(commit) - before):
+            found[name] = commit
+    return {component: found.get(name) for component, name in DEPLOYABLES.items()}
 
 
-def plan_window(history, adoption, finals, introduced):
-    """Return the window's first revision, the lanes that put it there, and the
-    manifest introductions of new lanes that the window relies on.
+def recall(directory, history):
+    """The last proven lane bound in the trusted develop cache, when it covers every lane here."""
+    try:
+        path = Path(directory) / PLAN_RECORD
+        if path.is_symlink() or not path.is_file() or path.stat().st_size > 4096:
+            return None
+        record = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError, TypeError):
+        return None
+    if not (isinstance(record, dict) and set(record) == {"schema", "bound", "lanes"}
+            and record["schema"] == RECORD_SCHEMA and isinstance(record["lanes"], list)
+            and set(DEPLOYABLES) <= set(record["lanes"]) and record["bound"] in history.positions):
+        return None
+    return record["bound"]
 
-    `introduced(name)` finds a new lane's introduction. Raises PlanRefused when a
-    lane's bound cannot be proved.
+
+def remember(directory, bound):
+    """Keep this plan's proven bound for a later plan whose tag reads fail; never fail for it."""
+    path = Path(directory) / PLAN_RECORD
+    staged = path.with_name(PLAN_RECORD + ".partial")
+    try:
+        if path.is_symlink() or staged.is_symlink():
+            return
+        staged.write_text(json.dumps({"schema": RECORD_SCHEMA, "bound": bound, "lanes": sorted(DEPLOYABLES)}),
+                          encoding="utf-8")
+        os.replace(staged, path)
+    except OSError:
+        pass
+
+
+def plan_window(history, adoption, finals, introduced, recalled=None):
+    """Choose the window's first revision. Raises PlanRefused when no start can be proved.
+
+    `introduced` maps each lane to its newest manifest addition on this history,
+    and `recalled` is the last proven bound, used only for lanes whose tags
+    could not be read now.
     """
     floor = adoption if adoption in history.positions else None
-    bounds, relied, refused = {}, {}, {}
+    commits = {position: sha for sha, position in history.positions.items()}
+    bounds, refused = {}, {}
     for component in sorted(DEPLOYABLES):
         source, kind = finals.get(component, (None, "unreadable"))
-        if kind in ("unreadable", "untrusted"):
+        if kind == "unreadable" and recalled in history.positions:
+            source, kind = recalled, "recalled"
+        if kind in ("unreadable", "denied", "untrusted"):
             refused.setdefault(kind, []).append(component)
             continue
-        if kind == "new":
-            source = introduced(DEPLOYABLES[component])
+        if kind == "new" and introduced.get(component) in history.positions:
+            following = history.positions[introduced[component]] + 1
+            if following > 0:
+                continue  # Added by this very push: nothing after its addition yet.
+            source = commits[following]
         if source in history.positions:
             bounds[component] = history.positions[source], kind
-            if kind == "new":
-                relied[component] = source
         elif floor is not None:
             bounds[component] = history.positions[floor], "floor"
         else:
             refused.setdefault("floor", []).append(component)
-    for kind in KINDS:
+    for kind in ("untrusted", "denied", "floor", "unreadable"):
         if kind in refused:
             raise PlanRefused(kind, refused[kind])
-    start = min(position for position, _kind in bounds.values())
+    start = min((position for position, _kind in bounds.values()), default=0)
     lanes = [component if kind == "final" else component + ":" + kind
              for component, (position, kind) in bounds.items() if position == start]
+    proven = commits[start] if all(kind in ("final", "new") for _position, kind in bounds.values()) else None
     if floor is not None and history.positions[floor] > start:
         start, lanes = history.positions[floor], ["adoption"]
-    commit = next(sha for sha, position in history.positions.items() if position == start)
-    return commit, lanes, relied
+    added = {component: history.positions[source] for component, source in introduced.items()
+             if source in history.positions}
+    crossed = sorted(component for component, position in added.items() if position >= start)
+    if crossed:
+        raise PlanRefused("introduced", crossed, commits[max(added[component] for component in crossed)])
+    after = max(added.values(), default=None)
+    return Window(commits[start], lanes or ["adoption"], proven, None if after is None else commits.get(after + 1))
 
 
 def earlier_transition(root, history, floor, start):
@@ -183,7 +263,23 @@ def window_line(window):
     if "stale" in window:
         return f"PLAN stale develop={window['stale']} head={window['head']}"
     if "refused" in window:
-        return f"PLAN refused reason={window['refused']} lanes={','.join(window['lanes'])}"
+        line = f"PLAN refused reason={window['refused']} lanes={','.join(window['lanes'])}"
+        return line + (f" at={window['at']}" if window.get("at") else "")
     line = (f"PLAN window start={window['start']} revisions={window['revisions']} "
             f"adoption={window['adoption']} bound-by={','.join(window['bound_by'])}")
     return line + (f" transition={window['transition']}" if window.get("transition") else "")
+
+
+def window_warning(window):
+    """An annotation when a window is wide enough to matter, or nearing the history limit."""
+    revisions = window.get("revisions")
+    if not isinstance(revisions, int) or revisions <= WIDE_REVISIONS:
+        return None
+    lanes = ",".join(window["bound_by"])
+    if revisions > HISTORY_LIMIT - 200:
+        return (f"::warning title=Release plan near its history limit::The plan reconciles {revisions} of at most "
+                f"{HISTORY_LIMIT} first-parent merges, bound by {lanes}. Beyond the limit that lane needs "
+                "CMA_CD_ADOPTION_SHA; setting it to a later merge now also shortens the plan.")
+    return (f"::warning title=Wide release plan::The plan reconciles {revisions} first-parent merges, bound by "
+            f"{lanes}, whose newest release is that old. A cold selection cache analyses each one; setting "
+            "CMA_CD_ADOPTION_SHA to a later merge raises the start.")
