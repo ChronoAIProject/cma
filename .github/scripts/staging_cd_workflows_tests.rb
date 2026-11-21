@@ -463,8 +463,7 @@ class StagingWorkflowTest < Minitest::Test
   }.freeze
   # Optional steps whose failure only costs time; publication decides the outcome later.
   OPTIONAL = ['Expose cache runtime to the Buildx client', 'Check release ownership',
-              'Restore compatible Cargo mounts', 'Retain accepted Cargo mounts',
-              'Verify trusted develop comparisons were saved'].freeze
+              'Restore compatible Cargo mounts', 'Retain accepted Cargo mounts'].freeze
 
   def test_safe_actions_repeat_once_and_only_the_repeat_can_fail_the_job
     optional = []
@@ -602,18 +601,9 @@ class StagingWorkflowTest < Minitest::Test
     # and a later step's failure cannot discard them.
     assert_operator save, :<, gate
     assert_operator gate, :<, promotions
-    # actions/cache/save only warns when the Actions cache refuses a write, so
-    # the plan proves its exact key exists. A missing proof never fails the plan.
-    verify = steps.index { |step| step['run'] == 'python3 -B .github/scripts/staging_cd_cache_save.py selection' }
-    assert verify, 'the selection cache save must be verified'
-    assert_operator save, :<, verify
-    assert_operator verify, :<, gate
-    refute steps[verify].key?('if'), 'verification runs exactly when the save ran'
-    assert_equal true, steps[verify]['continue-on-error']
-    assert_operator steps[verify]['timeout-minutes'], :<=, 3
-    assert_equal({ 'GH_TOKEN' => '${{ github.token }}', 'CD_CACHE_KEY' => '${{ steps.selection-cache.outputs.key }}' },
-                 steps[verify]['env'])
-    assert_equal 'read', plan.dig('permissions', 'actions'), 'listing caches needs actions: read'
+    # actions/cache/save already annotates a refused write with its cause, so the
+    # plan waits on no cache verification of its own.
+    refute plan.to_s.include?('staging_cd_cache_save.py'), 'the plan must not poll the Actions cache'
     assert_equal "steps.plan.outputs.complete != 'true'", steps[gate]['if']
     assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete',
                  steps[gate]['run']

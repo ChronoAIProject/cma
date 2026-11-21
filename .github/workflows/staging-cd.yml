@@ -71,16 +71,6 @@ jobs:
         with:
           path: ${{ steps.selection-cache.outputs.directory }}
           key: ${{ steps.selection-cache.outputs.key }}
-      # The save above only warns when the Actions cache refuses a write, such as
-      # when the budget makes it read-only; then the next plan silently runs cold.
-      # Diagnostic only: an unproven save never fails the plan.
-      - name: Verify trusted develop comparisons were saved
-        continue-on-error: true
-        timeout-minutes: 3
-        env:
-          GH_TOKEN: ${{ github.token }}
-          CD_CACHE_KEY: ${{ steps.selection-cache.outputs.key }}
-        run: python3 -B .github/scripts/staging_cd_cache_save.py selection
       - name: Require a complete release plan
         if: steps.plan.outputs.complete != 'true'
         run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete'

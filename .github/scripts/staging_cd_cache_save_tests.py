@@ -15,7 +15,6 @@ from staging_cd_common import Refusal
 STARTED = datetime.datetime(2026, 11, 21, 15, 40, tzinfo=datetime.timezone.utc).timestamp()
 DEVELOP = {"GITHUB_REPOSITORY": "ChronoAIProject/cma", "GITHUB_EVENT_NAME": "push",
            "GITHUB_REF": "refs/heads/develop", "GH_TOKEN": "synthetic-token"}
-KEY = "cma-develop-selection-v2-" + "a" * 64 + "-" + "b" * 40 + "-100-1"
 PRIVATE = "private-marker"
 LAYER_WARNING = ("::warning title=Build cache not saved::runtime build layers were not saved; the repository's "
                  "Actions cache may be read-only (budget reached) or the export failed. "
@@ -155,58 +154,6 @@ class LayerTests(unittest.TestCase):
             cache = BuildCache(root, dict(base, **runtime), root, "runtime")
             cache.env = dict(cache.env, GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/12/merge")
             self.assertIs(cache.exports_layers(), False)
-
-
-class SelectionTests(unittest.TestCase):
-    def check(self, api, env=None):
-        stream = io.StringIO()
-        with patch.object(cache_save, "GitHub", return_value=api):
-            status = cache_save.report_selection(dict(DEVELOP, CD_CACHE_KEY=KEY) if env is None else env,
-                                                 stream=stream, sleep=lambda _seconds: None)
-        self.assertEqual(status, 0)
-        return stream.getvalue().splitlines()
-
-    def test_the_exact_attempt_key_proves_the_save(self):
-        api = Lists([entry(KEY + "0"), entry(KEY)])
-        self.assertEqual(self.check(api), ["CACHE-SAVE cache=selection result=saved"])
-        self.assertEqual(api.paths, ["actions/caches?key=" + KEY + "&ref=refs/heads/develop"
-                                     "&sort=created_at&direction=desc&per_page=100"])
-
-    def test_a_missing_key_names_the_slower_next_plan_and_the_likely_cause(self):
-        rows = [entry(KEY + "0"), entry(KEY, ref="refs/pull/12/merge")]
-        lines = self.check(Lists(rows, rows, rows, rows))
-        self.assertEqual(lines, [
-            "CACHE-SAVE cache=selection result=not-saved reason=absent",
-            "::warning title=Selection cache not saved::This plan's analysed revisions were not saved; the "
-            "repository's Actions cache may be read-only (budget reached) or the save failed. The next plan "
-            "will re-analyse these revisions and run slower."])
-
-    def test_errors_and_invalid_inputs_are_unknown_and_never_fail_the_step(self):
-        failure = Refusal("GitHub API request failed")
-        self.assertEqual(self.check(Lists(failure, failure, failure, failure)),
-                         ["CACHE-SAVE cache=selection result=unknown reason=unreadable"])
-        for key in (None, "", "bad key", "a" * 513, PRIVATE + "&ref=refs/heads/main"):
-            with self.subTest(key=key):
-                api = Mock()
-                env = dict(DEVELOP, CD_CACHE_KEY=key) if key is not None else dict(DEVELOP)
-                self.assertEqual(self.check(api, env), ["CACHE-SAVE cache=selection result=unknown reason=unreadable"])
-                api.request.assert_not_called()
-
-    def test_only_a_develop_push_expects_a_selection_save(self):
-        api = Mock()
-        self.assertEqual(self.check(api, dict(DEVELOP, CD_CACHE_KEY=KEY, GITHUB_EVENT_NAME="pull_request",
-                                              GITHUB_REF="refs/pull/12/merge")), [])
-        api.request.assert_not_called()
-
-    def test_entrypoint_verifies_the_selection_and_exits_zero(self):
-        stream = io.StringIO()
-        seen = []
-        with patch.dict(os.environ, dict(DEVELOP, CD_CACHE_KEY=KEY), clear=True), \
-                patch.object(cache_save, "report_selection", side_effect=lambda env: seen.append(dict(env)) or 0), \
-                contextlib.redirect_stdout(stream):
-            self.assertEqual(cache_save.main(["selection"]), 0)
-        self.assertEqual([env["CD_CACHE_KEY"] for env in seen], [KEY])
-        self.assertEqual(cache_save.main(["unknown"]), 2)
 
 
 class PublicationTests(unittest.TestCase):
