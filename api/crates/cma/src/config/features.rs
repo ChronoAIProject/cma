@@ -1,6 +1,9 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[cfg(test)]
 mod agent_event_page_tests;
+pub(super) mod home_backup;
+#[cfg(test)]
+mod home_backup_tests;
 #[cfg(test)]
 #[path = "ingress_coordinator_tests.rs"]
 mod ingress_coordinator_tests;
@@ -16,6 +19,7 @@ pub(crate) struct FeatureFlags {
     pub visitor_two_sandbox_defaults: bool,
     pub admin_runtime_inventory: bool,
     pub ownership_retry_hints_enabled: bool,
+    pub home_backup_enabled: bool,
     pub agent_model_discovery_cache: bool,
     pub agent_environment_async: bool,
     pub agent_event_stream_wake: bool,
@@ -44,6 +48,7 @@ pub(crate) struct FeatureFlags {
     pub platform_counter_shards: bool,
     pub admission_control_writes_enabled: bool,
     pub admission_ceilings_writes_enabled: bool,
+    pub pending_home_reconciliation: bool,
     pub agent_control_write_coordination: bool,
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
@@ -98,6 +103,10 @@ impl FeatureFlags {
             }
         }
         let flags = Self {
+            pending_home_reconciliation: flag(
+                lookup,
+                "CHRONO_PENDING_HOME_RECONCILIATION_ENABLED",
+            )?,
             visitor_launch_admission: flag(lookup, "CHRONO_VISITOR_LAUNCH_ADMISSION_ENABLED")?,
             usage_signed_cursors_enabled: flag(lookup, "CHRONO_USAGE_SIGNED_CURSORS_ENABLED")?,
             usage_strict_cursors_enabled: flag(lookup, "CHRONO_USAGE_STRICT_CURSORS_ENABLED")?,
@@ -110,6 +119,7 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_AGENT_OWNERSHIP_RETRY_HINT_ENABLED",
             )?,
+            home_backup_enabled: flag(lookup, "CHRONO_HOME_BACKUP_ENABLED")?,
             agent_model_discovery_cache: flag(
                 lookup,
                 "CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED",
@@ -356,6 +366,9 @@ mod observation_tests;
 mod ownership_retry_hint_tests;
 
 mod launch_admission;
+
+#[cfg(test)]
+mod pending_homes_tests;
 
 #[cfg(test)]
 #[path = "features/visitor_defaults_tests.rs"]

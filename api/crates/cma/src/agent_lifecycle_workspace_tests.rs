@@ -12,6 +12,9 @@ mod quota;
 #[path = "agent_lifecycle_bootstrap_tests.rs"]
 mod bootstrap;
 
+#[path = "agent_lifecycle_title_tests.rs"]
+mod title_tests;
+
 fn request(value: serde_json::Value) -> AgentLifecycleCreateRequest {
     serde_json::from_value(value).unwrap()
 }

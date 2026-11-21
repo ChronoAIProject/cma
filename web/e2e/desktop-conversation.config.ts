@@ -15,6 +15,7 @@ export default defineConfig({
     'agent-stop-deletion.check.ts',
     'agent-setup-exit.check.ts',
     'computer-guidance.check.ts',
+    'task-help.check.ts',
   ],
   workers: 1,
   retries: 0,

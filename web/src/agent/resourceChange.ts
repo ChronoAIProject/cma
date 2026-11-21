@@ -3,7 +3,7 @@ import type { AgentResourceState } from './controllerTypes';
 
 export type ResourceChange = Exclude<
   TreeAction,
-  { kind: 'new_agent' | 'new_workspace' | 'export_history' }
+  { kind: 'new_agent' | 'new_workspace' | 'export_history' | 'export_retained_conversation' }
 >;
 
 /** A resource mutation affects only its own Agent or descendants of its exact parent. */

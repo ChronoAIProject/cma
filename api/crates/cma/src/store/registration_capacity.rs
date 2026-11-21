@@ -53,10 +53,14 @@ pub struct MongoRegistrationCapacityStore {
     database: Database,
     admissions: Collection<Document>,
     settings: Collection<Document>,
-    activated: AtomicBool,
+    activated: std::sync::Arc<AtomicBool>,
 }
 
 impl MongoRegistrationCapacityStore {
+    pub(crate) fn activation_observation(&self) -> std::sync::Arc<AtomicBool> {
+        self.activated.clone()
+    }
+
     /// The first open gate establishes the cohort boundary once. Later gate
     /// closure retains tracking, so new sign-ins cannot become existing consumers.
     pub(crate) async fn open(
@@ -100,7 +104,7 @@ impl MongoRegistrationCapacityStore {
             settings: majority_collection(&database, SETTINGS),
             database,
             admissions,
-            activated: AtomicBool::new(marker.is_some()),
+            activated: std::sync::Arc::new(AtomicBool::new(marker.is_some())),
         })
     }
 

@@ -20,6 +20,9 @@ use utoipa::ToSchema;
 #[serde(deny_unknown_fields)]
 pub struct AgentLifecycleCreateRequest {
     pub name: String,
+    /// Omission retains the named-title behavior of existing clients and requests.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title_mode: Option<AgentLifecycleTitleMode>,
     /// Exact initial task, at most 262144 UTF-8 bytes and not whitespace-only.
     /// Replaces the readiness prompt after preparation; omission retains setup.
     /// Repository tasks prepare an immutable source checkout in a new Sandbox.
@@ -50,6 +53,13 @@ pub struct AgentLifecycleCreateRequest {
     pub repository: Option<AgentLifecycleRepository>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub profile: Option<AgentLifecycleProfile>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentLifecycleTitleMode {
+    Automatic,
+    Named,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]

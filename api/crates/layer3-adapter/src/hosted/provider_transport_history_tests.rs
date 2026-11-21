@@ -2,6 +2,60 @@ use super::*;
 
 const HISTORY_LIMIT: usize = 64 * 1024 * 1024;
 
+#[derive(Clone)]
+struct DiagnosticBuffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+impl std::io::Write for DiagnosticBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn history_failures_report_status_class_without_identifiers_or_upstream_content() {
+    use tracing::instrument::WithSubscriber;
+    let captured = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let sink = captured.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_writer(move || DiagnosticBuffer(sink.clone()))
+        .finish();
+    let subscriber = tracing::Dispatch::new(subscriber);
+    for (status, category) in [
+        ("403 Forbidden", "UpstreamClient"),
+        ("503 Service Unavailable", "UpstreamServer"),
+    ] {
+        let runtime = listener().await;
+        let (transport, provider) = transport_for_runtime(runtime.local_addr().unwrap()).await;
+        let body = b"private-upstream-content";
+        let served = spawn_http(
+            runtime,
+            http_response(status, &[("Content-Length", body.len().to_string())], body),
+        );
+        let error = transport
+            .export_agent_history(
+                &RuntimeHandle::new("private-runtime-sentinel"),
+                &AgentSlot::new("private-agent-sentinel"),
+            )
+            .with_subscriber(subscriber.clone())
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AdapterError::Unavailable(_)));
+        assert!(!error.to_string().contains("private-"));
+        provider.await.unwrap();
+        served.await.unwrap();
+        let log = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
+        assert!(log.contains(category), "{log}");
+        for forbidden in ["private-", "fixture-history-key", "http://", "/proxy/"] {
+            assert!(!log.contains(forbidden), "{log}");
+        }
+    }
+}
+
 async fn transport_for_runtime(
     runtime: std::net::SocketAddr,
 ) -> (

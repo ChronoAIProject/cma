@@ -1,5 +1,7 @@
 use layer2_core::ids::SubjectId;
-use layer2_core::trigger_domain::{PublicTrigger, TriggerId, TriggerStoreError};
+use layer2_core::trigger_domain::{
+    PublicTrigger, TriggerId, TriggerReferenceError, TriggerStoreError,
+};
 use mongodb::bson::doc;
 use mongodb::ClientSession;
 
@@ -96,6 +98,14 @@ async fn publish_once(
         .await
         .map_err(AttemptError::Driver)?
         .ok_or(AttemptError::Domain(TriggerStoreError::NotFound))?;
+    if document.get_bool("account_erasure_fenced").ok() == Some(true) {
+        return Err(AttemptError::Domain(
+            TriggerReferenceError::Unavailable {
+                field: "trigger publisher",
+            }
+            .into(),
+        ));
+    }
     let stored = read_trigger(&document).map_err(AttemptError::Domain)?;
     match queries::verify_in_session(store, &stored.trigger, session).await {
         Ok(()) => {}
@@ -146,6 +156,7 @@ async fn publish_once(
                 "_id": id.as_str(),
                 "owner": owner.as_str(),
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
+                "account_erasure_fenced": { "$ne": true },
                 "draft_version": signed(expected, "expected Trigger draft version")
                     .map_err(TriggerStoreError::Corrupt)
                     .map_err(AttemptError::Domain)?,

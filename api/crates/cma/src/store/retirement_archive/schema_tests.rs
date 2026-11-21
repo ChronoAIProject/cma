@@ -109,3 +109,8 @@ async fn exact_current_and_legacy_censuses_refuse_unknown_duplicate_and_missing_
     assert!(matches_current(&old, old.clone()).is_err());
     assert!(matches_current(&current, current.clone()).unwrap());
 }
+
+#[path = "pre_backup_account_census_tests.rs"]
+mod pre_backup_account_tests;
+#[path = "pre_backup_census_tests.rs"]
+mod pre_backup_tests;

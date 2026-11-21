@@ -149,6 +149,59 @@ class EntrypointTests(unittest.TestCase):
                     self.assertEqual(version_label.main(), 1)
                     current.assert_not_called()
 
+    def queue_event(self, **group):
+        return {'action': 'checks_requested', 'repository': {'full_name': 'example/repository'},
+                'merge_group': dict({'base_sha': 'a' * 40, 'head_sha': 'b' * 40, 'base_ref': 'refs/heads/develop',
+                                     'head_ref': 'refs/heads/gh-readonly-queue/develop/pr-7-' + 'a' * 40}, **group)}
+
+    def test_merge_group_selection_and_gates_stay_path_selective(self):
+        self.event.write_text(json.dumps(self.queue_event()))
+        environment = dict(self.environment, GITHUB_EVENT_NAME='merge_group')
+        result = {'repo': True, 'am': False, 'eg': False, 'web': True, 'am_packages': [], 'eg_packages': [],
+                  'test_tracks': {'repo': True, 'am': False, 'eg': False, 'web': True}, 'deployables': ['cma-web'],
+                  'base': 'a' * 40, 'head': 'b' * 40, 'reasons': ['web-source']}
+        with patch.dict(os.environ, environment), patch('sys.argv', ['selection', '--ci']), \
+                redirect_stdout(io.StringIO()), patch.object(selection, 'determine', return_value=result) as determine, \
+                patch.object(selection, 'workspace') as workspace:
+            self.assertEqual(selection.main(), 0)
+            workspace.assert_not_called()
+        self.assertEqual(determine.call_args.args[1:], (self.queue_event(), 'merge_group'))
+        outputs = dict(line.split('=', 1) for line in self.output.read_text().splitlines())
+        self.assertEqual((outputs['am'], outputs['web'], outputs['head']), ('false', 'true', 'b' * 40))
+        self.assertNotIn('full-ci-event', outputs['reasons'])
+        for track in ('am', 'eg', 'web'):
+            skipped = needs(track, False)
+            for job in {'rust-test-build', 'runtime-images', 'omarchy'} & set(skipped):
+                skipped[job]['result'] = 'success'
+            for value, expected in [(needs(track), 0), (skipped, 0), (dict(skipped, **{track: {'result': 'failure'}}), 1)]:
+                with self.subTest(track=track, needs=value), \
+                        patch.dict(os.environ, dict(environment, NEEDS=json.dumps(value))), \
+                        patch('sys.argv', ['gate', track]), redirect_stdout(io.StringIO()):
+                    self.assertEqual(gate.main(), expected)
+
+    def test_ci_entrypoints_reject_malformed_or_non_develop_merge_groups(self):
+        cases = [dict(self.queue_event(), action='destroyed'),
+                 dict(self.queue_event(), repository={'full_name': 'other/repository'}),
+                 self.queue_event(base_ref='refs/heads/main'), self.queue_event(head_sha='a' * 40),
+                 self.queue_event(head_sha='0' * 40), self.queue_event(base_sha='bad'),
+                 self.queue_event(head_ref='refs/heads/gh-readonly-queue/main/pr-7-' + 'a' * 40),
+                 self.queue_event(head_ref='refs/heads/feature'), {'repository': {'full_name': 'example/repository'}}]
+        for payload in cases:
+            self.event.write_text(json.dumps(payload))
+            with self.subTest(payload=payload), \
+                    patch.dict(os.environ, dict(self.environment, GITHUB_EVENT_NAME='merge_group', NEEDS=json.dumps(needs('repo')),
+                                                SELECTOR_RESULT='success', DEPLOYABLES='[]')), \
+                    redirect_stdout(io.StringIO()):
+                with patch('sys.argv', ['selection', '--ci']), patch.object(selection, 'determine') as determine:
+                    self.assertEqual(selection.main(), 1)
+                    determine.assert_not_called()
+                    self.assertFalse(self.output.exists())
+                with patch('sys.argv', ['gate', 'repo']):
+                    self.assertEqual(gate.main(), 1)
+                with patch.object(version_label, 'queued_pull') as queued:
+                    self.assertEqual(version_label.main(), 1)
+                    queued.assert_not_called()
+
     def test_analyze_combines_old_ownership_with_current_suite(self):
         current = Workspace(metadata(self.root), self.root)
         older = Workspace(metadata(self.root), self.root)

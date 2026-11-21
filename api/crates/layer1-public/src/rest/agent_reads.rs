@@ -217,13 +217,11 @@ pub(crate) async fn history(
         .reads
         .finish_history_read(reading)
         .await
-        .map_err(InstanceProblem::from)?;
-    let bytes = bytes.map_err(|error| match error {
-        super::AgentHistoryExportError::Capacity => {
-            InstanceProblem::RuntimeCapacity(layer2_core::sandbox::RuntimeCapacityError::Request)
-        }
-        _ => InstanceProblem::Unavailable,
-    })?;
+        .map_err(|error| {
+            tracing::warn!(parent: None, stage = "authority_revalidation", reason = error.code(), "Agent raw history export withheld");
+            InstanceProblem::from(error)
+        })?;
+    let bytes = bytes.map_err(InstanceProblem::HistoryExport)?;
     let mut response = Response::new(Body::from(bytes));
     response.headers_mut().insert(
         header::CONTENT_TYPE,

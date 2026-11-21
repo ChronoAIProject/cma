@@ -190,12 +190,12 @@ jobs:
           retention-days: 90
       -
         name: "Export tested Omarchy image"
-        if: "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
         run: "python3 .github/scripts/export-ci-native-image.py runtime-omarchy \"$GITHUB_SHA\" \"$RUNNER_TEMP/ci-native-image\""
       -
         name: "Retain tested Omarchy image"
-        if: "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
         uses: "actions/upload-artifact@v4"
         with:

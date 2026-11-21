@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 
 from staging_cd_admission import event_identity
+from staging_cd_baselines import durable_baselines
 from staging_cd_compatibility import GROUP
 from staging_cd_transition import complete_group
 from staging_cd_allocate_progress import allocation_progress
@@ -118,7 +119,8 @@ def allocate_queue(queue, api, reservations, run_id, attempt, *, proofs=None, ma
                 "Release change identity is invalid")
         seen.add(source)
         history.position(source)
-    changes = sorted(queue["changes"], key=lambda change: history.position(change["source"]))
+    changes = durable_baselines(sorted(queue["changes"], key=lambda change: history.position(change["source"])),
+                                pending, finals, history)
     newest = {name: change["source"] for change in changes for name in change["deployables"]}
     owners, busy = {}, set()
     group_sources = [newest[DEPLOYABLES[key]] for key in GROUP if DEPLOYABLES[key] in newest]
