@@ -28,9 +28,10 @@ impl AgentCommandService {
         &self,
         agent: &Agent,
         request: QueuedCancellationReservation,
-    ) -> Result<QueuedCancellationOutcome, CommandLedgerError> {
+    ) -> Result<QueuedCancellationOutcome, QueuedCancellationError> {
+        let cancel = || self.store.cancel_queued_response(request.clone());
         let Some(ownership) = &self.ownership else {
-            return self.store.cancel_queued_response(request).await;
+            return Ok(cancel().await?);
         };
         let requires_owner = agent
             .conversation
@@ -39,20 +40,27 @@ impl AgentCommandService {
             .is_some_and(|first| {
                 first.state == FirstMessageDelivery::Queued
                     && first.common_binding.as_ref().is_some_and(|binding| {
-                        binding.receipt().envelope.command_id == request.target.source_command_id
+                        let receipt = binding.receipt();
+                        receipt.envelope.command_id == request.target.source_command_id
+                            && receipt.response_id.as_ref() == Some(&request.target.response_id)
                     })
             });
-        if !requires_owner {
-            return self.store.cancel_queued_response(request).await;
+        if !requires_owner
+            || crate::agent_ownership::execution_owner()
+                .is_some_and(|token| token.agent_id == agent.id)
+        {
+            // A relayed request carries the one epoch verified by the receiving
+            // owner. The store fences that same epoch in the write transaction.
+            return Ok(cancel().await?);
         }
         let authority = ownership
             .acquire(&agent.id)
             .await
             .map_err(|_| CommandLedgerError::Unavailable)?
-            .ok_or(CommandLedgerError::Unavailable)?;
-        authority
-            .run(self.store.cancel_queued_response(request))
+            .ok_or(QueuedCancellationError::OwnerRequired)?;
+        Ok(authority
+            .run(cancel())
             .await
-            .map_err(|_| CommandLedgerError::Unavailable)?
+            .map_err(|_| CommandLedgerError::Unavailable)??)
     }
 }

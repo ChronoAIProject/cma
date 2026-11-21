@@ -15,6 +15,8 @@ pub enum QueuedCancellationError {
     Admission(#[from] CommandAdmissionError),
     #[error("the original queued cancellation was not admitted and its source revision is permanently stale")]
     NotAdmitted,
+    #[error("the queued Trigger cancellation requires the current Agent owner")]
+    OwnerRequired,
 }
 
 impl From<CommandLedgerError> for QueuedCancellationError {

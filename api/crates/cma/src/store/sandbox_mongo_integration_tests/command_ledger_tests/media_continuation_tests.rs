@@ -1,5 +1,8 @@
 //! Real Mongo, public binary route and file publication with an attestation peer.
 use super::*;
+
+#[path = "media_continuation_ownership_tests.rs"]
+mod ownership;
 use crate::media_continuations::{MediaContinuations, MediaUploadRecord, MediaUploadStore};
 use axum::{
     body::{to_bytes, Body},
@@ -784,7 +787,7 @@ async fn media_continuation_append_preserves_active_original_turn() {
     f.close().await;
 }
 
-async fn deferred_fixture(label: &str) -> (Fixture, AdmittedAgentCommand) {
+async fn claimed_continuation_fixture(label: &str) -> (Fixture, AdmittedAgentCommand) {
     let f = Fixture::new(label, false).await;
     let receipt = f.upload().await.unwrap();
     f.service
@@ -814,6 +817,11 @@ async fn deferred_fixture(label: &str) -> (Fixture, AdmittedAgentCommand) {
         .await
         .unwrap()
         .unwrap();
+    (f, claimed)
+}
+
+async fn deferred_fixture(label: &str) -> (Fixture, AdmittedAgentCommand) {
+    let (f, claimed) = claimed_continuation_fixture(label).await;
     let authority = f
         .auth
         .authorize_resource_command(&f.access, &claimed.receipt.envelope)
@@ -948,79 +956,6 @@ async fn media_continuation_unknown_requeue_commit_recovers_same_slot_after_sour
     f.close().await;
 }
 
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
-async fn media_continuation_reconciliation_fences_the_same_transaction_after_handoff() {
-    use crate::store::agent_ownership::command_test_support::handoff;
-
-    let (f, claimed) = deferred_fixture("media_owner_reconcile").await;
-    let owners = handoff(&f.store, &f.agent.id).await;
-    let id = &claimed.receipt.envelope.command_id;
-    let before = owners.store.get_command(id).await.unwrap().unwrap();
-    let agent_query = doc! {"_id": f.agent.id.as_str()};
-    let row_before = owners
-        .store
-        .agents
-        .find_one(agent_query.clone())
-        .await
-        .unwrap()
-        .unwrap();
-    assert!(matches!(
-        owners
-            .past
-            .run(owners.store.reconcile_command(id))
-            .await
-            .unwrap(),
-        Err(CommandLedgerError::Conflict)
-    ));
-    assert_eq!(owners.store.get_command(id).await.unwrap().unwrap(), before);
-    assert_eq!(
-        owners
-            .store
-            .agents
-            .find_one(agent_query.clone())
-            .await
-            .unwrap()
-            .unwrap(),
-        row_before
-    );
-    let queued = owners
-        .current
-        .run(owners.store.reconcile_command(id))
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(queued.status, AgentResponseStatus::Queued);
-    assert_eq!(queued.receipt, claimed.receipt);
-    assert_eq!(queued.work.deferred_attempts.len(), 1);
-    assert!(queued.work.dispatch.is_none());
-    let row_after = owners
-        .store
-        .agents
-        .find_one(agent_query.clone())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        row_after.get_i64("agent_command_admission_fence").unwrap(),
-        row_before
-            .get_i64("agent_command_admission_fence")
-            .unwrap_or(0)
-            + 1,
-    );
-    assert_eq!(owners.store.reconcile_command(id).await.unwrap(), queued);
-    assert_eq!(
-        owners
-            .store
-            .agents
-            .find_one(agent_query)
-            .await
-            .unwrap()
-            .unwrap(),
-        row_after
-    );
-    f.close().await;
-}
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn media_continuation_cancellation_racing_retry_claim_is_not_resurrected() {

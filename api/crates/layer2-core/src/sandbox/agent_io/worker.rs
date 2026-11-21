@@ -147,27 +147,7 @@ impl AgentCommandWorker {
             return Ok(Duration::ZERO);
         }
         if candidate.work.dispatch.is_some() {
-            let Some(scope) = self
-                .scope(
-                    &candidate,
-                    candidate.receipt.envelope.continuation.is_some(),
-                )
-                .await
-            else {
-                return Ok(UNCLAIMED_RECHECK_DELAY);
-            };
-            return scope
-                .run(async {
-                    bounded(self.store.reconcile_command(id))
-                        .await
-                        .map(|command| {
-                            super::reconcile_pacing::recheck_delay(
-                                command.status,
-                                self.dispatched_recheck_delay,
-                            )
-                        })
-                })
-                .await;
+            return self.reconcile_dispatched(id, &candidate).await;
         }
         let delay = candidate.continuation_retry_delay(&now_rfc3339());
         if !delay.is_zero() && !candidate.queue_expired(&now_rfc3339()) {

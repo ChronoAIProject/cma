@@ -18,15 +18,20 @@ pub(super) async fn route(
     }
     let private = request.uri().path().starts_with(PREFIX);
     let proof = request.headers().get(PROOF).cloned();
-    let Some(id) = agent_path(request.uri().path(), private) else {
+    let cancellation = queued_cancellation::agent_id(&request);
+    let is_cancellation = cancellation.is_some();
+    if let Some(id) = cancellation.as_ref().filter(|_| proof.is_none()) {
+        return queued_cancellation::try_local(&relay, id, request, next).await;
+    }
+    let Some(id) = cancellation.or_else(|| agent_path(request.uri().path(), private)) else {
         return if private || proof.is_some() {
             StatusCode::FORBIDDEN.into_response()
         } else {
             next.run(request).await
         };
     };
-    // Durable admissions and reads need no local transport. Only paths that can
-    // invoke a synchronous Agent runtime effect take this one-hop route.
+    // Runtime routes resolve their owner up front. A queued Trigger
+    // cancellation reaches this path with the source manager's proof.
     if !private && proof.is_none() && !needs_owner(request.uri().path(), request.method()) {
         return next.run(request).await;
     }
@@ -65,7 +70,7 @@ pub(super) async fn route(
         _ => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
     };
     let mut request = Request::from_parts(parts, Body::from(bytes.clone()));
-    if !private {
+    if !private && !is_cancellation {
         let Some(access) = relay.public_access.get() else {
             return unavailable();
         };
@@ -156,6 +161,11 @@ pub(super) async fn route(
         }
         request.headers_mut().remove(PROOF);
         request.extensions_mut().insert(VerifiedPeer);
+        if is_cancellation {
+            request
+                .extensions_mut()
+                .insert(queued_cancellation::Charged);
+        }
         destination
     } else {
         if private {
@@ -239,7 +249,7 @@ fn body_limit(path: &str) -> usize {
     }
 }
 
-async fn forward(
+pub(super) async fn forward(
     relay: &Relay,
     destination: Destination,
     request: Request,

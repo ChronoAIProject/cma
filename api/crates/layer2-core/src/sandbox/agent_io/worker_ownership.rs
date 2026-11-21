@@ -23,6 +23,28 @@ impl WriteScope {
 }
 
 impl AgentCommandWorker {
+    pub(super) async fn reconcile_dispatched(
+        &self,
+        id: &AgentCommandId,
+        command: &AdmittedAgentCommand,
+    ) -> Result<Duration, CommandLedgerError> {
+        let reconciled = match bounded(self.store.reconcile_command(id)).await {
+            Err(CommandLedgerError::StaleClaim)
+                if self.ownership.is_some() && command.receipt.envelope.continuation.is_some() =>
+            {
+                let Some(scope) = self.scope(command, true).await else {
+                    return Ok(UNCLAIMED_RECHECK_DELAY);
+                };
+                scope.run(bounded(self.store.reconcile_command(id))).await?
+            }
+            result => result?,
+        };
+        Ok(super::reconcile_pacing::recheck_delay(
+            reconciled.status,
+            self.dispatched_recheck_delay,
+        ))
+    }
+
     pub(super) async fn reject_without_dispatch(
         &self,
         id: &AgentCommandId,
