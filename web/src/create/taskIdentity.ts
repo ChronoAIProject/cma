@@ -19,7 +19,8 @@ export function retainTaskViewer(owner?: string) {
         if (
           key?.startsWith('cma:task-draft:') ||
           key?.startsWith('cma:agent-creation:') ||
-          key?.startsWith('cma:agent-recovery:')
+          key?.startsWith('cma:agent-recovery:') ||
+          key?.startsWith('cma:resource-revocation:')
         )
           sessionStorage.removeItem(key);
       }

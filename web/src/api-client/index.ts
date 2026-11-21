@@ -164,3 +164,5 @@ export type { SandboxCapacity } from './instances/capacity.js';
 export { agentLifecycleFailure } from './agents/lifecycle.js';
 
 export * from './account-deletion.js';
+export { ResourceRevocations, pendingRevocation } from './resource-revocations.js';
+export type { ResourceRevocationStatus, RevocationRequest } from './resource-revocations.js';

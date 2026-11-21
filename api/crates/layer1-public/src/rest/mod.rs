@@ -126,6 +126,10 @@ mod remediation;
 mod resource_access;
 pub(crate) mod resource_access_problem;
 mod resource_access_shapes;
+mod resource_revocations;
+#[cfg(test)]
+mod resource_revocations_tests;
+pub use resource_revocations::resource_access_router_with_revocations;
 #[cfg(test)]
 mod resource_access_tests;
 #[cfg(test)]
