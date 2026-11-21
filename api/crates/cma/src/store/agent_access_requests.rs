@@ -1,6 +1,8 @@
 //! Durable owner consent, original-conversation identity and leased execution.
+#[cfg(test)]
+use super::sandbox_mongo::is_transient;
 use super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
+    commit_transaction, is_confirmed_body_retry, start_transaction, CommitOutcome,
     MongoSandboxStore, DOCUMENT_SCHEMA_VERSION, TRANSACTION_ATTEMPTS,
 };
 use layer2_core::sandbox::agent_access::{validate_access_services, AgentAccessError};
@@ -45,11 +47,6 @@ impl From<mongodb::error::Error> for Error {
 }
 type TxResult<T> = Result<T, Error>;
 
-fn retryable_body(error: &mongodb::error::Error) -> bool {
-    !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
-        && (is_transient(error) || is_duplicate_key(error))
-}
-
 fn provenance_error(error: super::resource_access::ReadError) -> Error {
     match error {
         super::resource_access::ReadError::Driver(error) => Error::Driver(error),
@@ -77,7 +74,7 @@ macro_rules! transaction {
                 Err(error) => {
                     let _ = owned_session.abort_transaction().await;
                     match error {
-                        Error::Driver(error) if retryable_body(&error) => continue,
+                        Error::Driver(error) if is_confirmed_body_retry(&error) => continue,
                         Error::Driver(_) => {
                             outcome = Err(AgentAccessError::Unavailable);
                             break;
