@@ -233,13 +233,16 @@ class EntryTests(unittest.TestCase):
         env = {"CD_PRIVATE_CONTROLLER": "/private/prod/chrono-cd", "GH_TOKEN": "token", "CD_TARGET": "production"}
         value = {"schema": "cma-deployment-set-v1", "receipts": {}}
         with patch.dict(select.os.environ, env, clear=True), \
-                patch("staging_cd_runtime.run_private", side_effect=lambda operation, _: 0 if operation(None) else 1), \
+                patch("staging_cd_runtime.run_private", autospec=True,
+                      side_effect=lambda operation, _, **_kw: 0 if operation(None) else 1) as boundary, \
                 patch("staging_cd_resolve.output", side_effect=lambda _env, name, v: outputs.__setitem__(name, v)), \
                 patch("staging_cd_github.GitHub"), patch("staging_cd_registry.Registry"), \
                 patch("staging_cd_policy.switches", return_value={"web": True}) as switches, \
                 patch("staging_cd_clock.timestamp", return_value="2026-11-20T00:00:00Z"):
             with patch.object(select, "plan", return_value=(value, RELEASED)) as planner:
                 self.assertEqual(select.main(), 0)
+                # autospec holds the call to the real boundary signature.
+                self.assertEqual(boundary.call_args.kwargs["subject"], "production-release")
                 self.assertEqual(switches.call_args.args[0], Path("/private/prod/chrono-cd/scripts/deploy_set.py"))
                 self.assertEqual(planner.call_args.args[3], {"web": True})
                 self.assertEqual((outputs["released"], outputs["mode"]), (RELEASED, "release"))

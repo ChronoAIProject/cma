@@ -254,7 +254,7 @@ def main():
         output(env, "mode", "release")
         return True
 
-    return run_private(operation, None)
+    return run_private(operation, None, subject="production-release")
 
 
 if __name__ == "__main__":
