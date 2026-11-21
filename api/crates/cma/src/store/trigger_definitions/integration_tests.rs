@@ -30,13 +30,13 @@ const T2: &str = "2026-09-05T02:00:00Z";
 const T3: &str = "2026-09-05T03:00:00Z";
 static DATABASE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
-pub(super) struct Seeded {
-    pub(super) client: Client,
-    pub(super) database: String,
-    pub(super) profiles: Arc<MongoProfileStore>,
-    pub(super) store: MongoTriggerDefinitionStore,
-    pub(super) owner: SubjectId,
-    pub(super) target: TriggerTarget,
+pub(in crate::store) struct Seeded {
+    pub(in crate::store) client: Client,
+    pub(in crate::store) database: String,
+    pub(in crate::store) profiles: Arc<MongoProfileStore>,
+    pub(in crate::store) store: MongoTriggerDefinitionStore,
+    pub(in crate::store) owner: SubjectId,
+    pub(in crate::store) target: TriggerTarget,
 }
 
 async fn database(prefix: &str) -> (Client, String) {
@@ -50,7 +50,7 @@ async fn database(prefix: &str) -> (Client, String) {
     (client, database)
 }
 
-pub(super) async fn seeded(prefix: &str) -> Seeded {
+pub(in crate::store) async fn seeded(prefix: &str) -> Seeded {
     let (client, database) = database(prefix).await;
     let profiles = Arc::new(MongoProfileStore::open(&client, &database).await.unwrap());
     let owner = SubjectId("publisher".into());
@@ -196,7 +196,7 @@ fn content(target: TriggerTarget, title: &str) -> TriggerContent {
     }
 }
 
-pub(super) fn trigger(id: &str, owner: &SubjectId, target: &TriggerTarget) -> Trigger {
+pub(in crate::store) fn trigger(id: &str, owner: &SubjectId, target: &TriggerTarget) -> Trigger {
     Trigger::new(
         TriggerId(id.into()),
         owner.clone(),

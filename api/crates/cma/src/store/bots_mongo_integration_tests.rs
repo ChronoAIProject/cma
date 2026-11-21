@@ -3,7 +3,7 @@ use layer2_core::{bots::*, profiles::content_digest, SubjectId};
 use mongodb::{bson::doc, Client};
 use serde_json::json;
 
-fn bot(owner: &str, key: &str) -> Bot {
+pub(super) fn bot(owner: &str, key: &str) -> Bot {
     let now = layer2_core::now_rfc3339();
     let agent = json!({"model":"test","thinking_effort":"medium","permission_level":"guarded","skills":[],"system_prompt":""});
     let sandbox = json!({"cpu_millis":1000,"memory_mib":2048,"nyxid_services":[],"agent_provider":"codex","model_access":"chronoai_managed","max_workspaces":1,"max_agents_per_workspace":1,"workspace_profiles":[],"software_install_commands":[],"environment_variables":[]});
@@ -82,18 +82,32 @@ async fn bot_creation_and_worker_cas_survive_store_reopen() {
 async fn worker_revisions_are_atomic_owner_fenced_and_survive_reopen() {
     use super::event_workers::MongoEventWorkerProfileStore;
     use layer2_core::event_workers::*;
-    let client = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
-        .await
-        .unwrap();
-    let database = format!("cma_workers_test_{}", uuid::Uuid::new_v4().simple());
+    use layer2_core::trigger_domain::TriggerProfileReader;
+    let seed = super::trigger_definitions::integration_tests::seeded("worker_revision_pins").await;
+    let client = seed.client.clone();
+    let database = seed.database.clone();
     let a = MongoEventWorkerProfileStore::open(&client, &database)
         .await
         .unwrap();
     let b = MongoEventWorkerProfileStore::open(&client, &database)
         .await
         .unwrap();
-    let bot = bot("owner", "a");
-    let source: EventWorkerProfileInput = serde_json::from_value(json!({"name":"Worker","description":"","agent_profile":{"id":"agp_test","revision":1},"workspace_profile":{"id":"wkp_test","revision":1},"sandbox_profile":{"id":"sbp_test","revision":1}})).unwrap();
+    let mut bot = bot("owner", "a");
+    let resolved = seed
+        .profiles
+        .read_trigger_profiles(&seed.target)
+        .await
+        .unwrap();
+    bot.profiles.agent = resolved.agent;
+    bot.profiles.workspace = resolved.workspace;
+    bot.profiles.sandbox = resolved.sandbox;
+    let source = EventWorkerProfileInput {
+        name: "Worker".into(),
+        description: String::new(),
+        agent_profile: seed.target.agent_profile,
+        workspace_profile: seed.target.workspace_profile,
+        sandbox_profile: seed.target.sandbox_profile,
+    };
     let snapshot = projection::snapshot(&projection::WorkerProjection {
         name: &source.name,
         owner: &bot.owner,

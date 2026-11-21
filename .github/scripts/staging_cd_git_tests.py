@@ -39,7 +39,12 @@ class GitPublicationTests(unittest.TestCase):
         self.git("push", str(self.remote), self.source + ":refs/heads/develop")
         self.api = GitHub("fixture", self.runner)
         self.api.request = self.request
-        self.api.history = lambda: DevelopHistory.load(self.request, root=self.work, runner=self.runner)
+        # Each call re-reads develop, but under the client's lock: annotation reads
+        # run on several threads, and concurrent fetches into one work tree race.
+        def history():
+            with self.api._history_lock:
+                return DevelopHistory.load(self.request, root=self.work, runner=self.runner)
+        self.api.history = history
         self.publisher = Reservations(self.api, "fixture", self.work, self.runner)
 
     def git(self, *args, data=None, remote=False):

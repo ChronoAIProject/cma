@@ -129,11 +129,13 @@ mod operator_profiles;
 mod operator_sandboxes;
 mod platform_write_coordination;
 mod profile_documents;
+mod profile_draft_admission;
 #[cfg(test)]
 mod profile_index_tests;
 mod profile_mongo;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;
+mod profile_pin_admission;
 mod profile_references;
 mod profiles;
 pub(crate) mod request_limits;

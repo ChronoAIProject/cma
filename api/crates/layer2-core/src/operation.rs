@@ -18,6 +18,9 @@ pub enum StoreError {
     /// Durable bytes did not satisfy their contract.
     #[error("stored data not usable: {0}")]
     Malformed(String),
+    /// A requested reference cannot be used by this mutation.
+    #[error("requested reference unavailable: {0}")]
+    ReferenceUnavailable(String),
     /// Another writer changed the record after it was read.
     #[error("stored revision changed: expected {expected}, found {actual}")]
     RevisionConflict { expected: u64, actual: u64 },
