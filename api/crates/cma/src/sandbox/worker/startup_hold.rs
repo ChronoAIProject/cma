@@ -49,11 +49,9 @@ mod tests {
             RuntimeStartupFailureClass::OutOfMemory,
             RuntimeStartupFailureClass::Terminated,
         ] {
-            let failure =
-                adapter_failure(AdapterError::RuntimeStartupHold(RuntimeStartupFailure {
-                    class,
-                    consecutive: u32::MAX,
-                }));
+            let failure = adapter_failure(AdapterError::RuntimeStartupHold(
+                RuntimeStartupFailure::new(class, u32::MAX),
+            ));
             assert!(failure.is_retryable());
             assert_eq!(failure.retry_kind(), WorkRetryFailure::Transient);
             assert!(failure.is_startup_hold());

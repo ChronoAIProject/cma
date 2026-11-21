@@ -97,13 +97,14 @@ impl AgentWorker {
                 });
             return Err(failure);
         }
-        let inspection_started = std::time::Instant::now();
+        let inspection_started = tokio::time::Instant::now();
         let attached = crate::sandbox::runtime_attachment::inspect_bound_runtime(
             self.dependencies.adapter.as_ref(),
             &sandbox,
             &self.config.deployment_id,
         )
         .await;
+        self.observe_runtime_startup(&sandbox, inspection_started, &attached);
         tracing::info!(
             agent_id = %agent.id,
             sandbox_id = %sandbox.id,

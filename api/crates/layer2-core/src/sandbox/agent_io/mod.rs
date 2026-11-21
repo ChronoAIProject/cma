@@ -47,6 +47,7 @@ pub(in crate::sandbox) mod trigger;
 mod work;
 mod worker;
 mod worker_discovery;
+mod worker_funding;
 mod worker_store;
 pub use reconcile_pacing::{CommandReconcileHead, MAX_COMMAND_RECONCILE_HEADS};
 pub use worker_discovery::{CommandDiscovery, ScheduledAgentCommand};

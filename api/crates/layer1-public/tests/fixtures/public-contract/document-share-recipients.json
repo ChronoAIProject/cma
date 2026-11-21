@@ -1,0 +1,382 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "document-share-recipients-success",
+      "operation": "GET /api/v1/documents/{id}/share-recipients",
+      "scenario": "document_owner__share-recipients",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-recipients?q=reader",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": [
+          {
+            "subject": "document-reader",
+            "display_name": "Name document-reader"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-share-recipients-exact-short-success",
+      "operation": "GET /api/v1/documents/{id}/share-recipients",
+      "scenario": "document_owner__share-recipients",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-recipients?q=Q",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": [
+          {
+            "subject": "Q",
+            "display_name": "Name Q"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-share-recipients-empty",
+      "operation": "GET /api/v1/documents/{id}/share-recipients",
+      "scenario": "document_owner__share-recipients",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-recipients?q=r",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": [],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-share-recipients-anonymous",
+      "operation": "GET /api/v1/documents/{id}/share-recipients",
+      "scenario": "document_anonymous__share-recipients",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-recipients?q=reader",
+        "headers": {}
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-share-recipients-foreign",
+      "operation": "GET /api/v1/documents/{id}/share-recipients",
+      "scenario": "document_foreign__share-recipients",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-recipients?q=reader",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-share-recipients-unavailable",
+      "operation": "GET /api/v1/documents/{id}/share-recipients",
+      "scenario": "document_unavailable__share-recipients",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-recipients?q=reader",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_unavailable",
+          "title": "document_unavailable",
+          "status": 503,
+          "detail": "Document storage is unavailable",
+          "code": "document_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-share-recipients-reader",
+      "operation": "GET /api/v1/documents/{id}/share-recipients",
+      "scenario": "document_reader__share-recipients",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-recipients?q=reader",
+        "headers": {}
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/document_not_found",
+          "title": "document_not_found",
+          "status": 404,
+          "detail": "Document is unavailable to this caller",
+          "code": "document_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-share-recipients-missing-query",
+      "operation": "GET /api/v1/documents/{id}/share-recipients",
+      "scenario": "document_owner__share-recipients",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-recipients",
+        "headers": {}
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_document_request",
+          "title": "invalid_document_request",
+          "status": 400,
+          "detail": "Document request is invalid",
+          "code": "invalid_document_request"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-share-recipients-owner-erasing",
+      "operation": "GET /api/v1/documents/{id}/share-recipients",
+      "scenario": "document_owner-erasing__share-recipients",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-recipients?q=reader",
+        "headers": {}
+      },
+      "response": {
+        "status": 403,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/account_deletion_in_progress",
+          "title": "account_deletion_in_progress",
+          "status": 403,
+          "detail": "account deletion is in progress",
+          "code": "account_deletion_in_progress"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-share-recipients-directory-outage",
+      "operation": "GET /api/v1/documents/{id}/share-recipients",
+      "scenario": "document_directory-outage__share-recipients",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-recipients?q=reader",
+        "headers": {}
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/recipient_directory_unavailable",
+          "title": "recipient_directory_unavailable",
+          "status": 503,
+          "detail": "Recipient lookup is temporarily unavailable. Try again.",
+          "code": "recipient_directory_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-share-recipients-grant-invalid",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_owner__share-recipients",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-owner",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 400,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid_share_recipient",
+          "title": "invalid_share_recipient",
+          "status": 400,
+          "detail": "Choose a CMA user with a valid recipient identifier",
+          "code": "invalid_share_recipient"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-share-recipients-grant-unresolved",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_owner__share-recipients",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/Document-Reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 409,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/share_recipient_unavailable",
+          "title": "share_recipient_unavailable",
+          "status": 409,
+          "detail": "share recipient is unavailable",
+          "code": "share_recipient_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "document-share-recipients-grant-directory-outage",
+      "operation": "PUT /api/v1/documents/{id}/shares/{subject}",
+      "scenario": "document_directory-outage__share-recipients",
+      "request": {
+        "method": "PUT",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/shares/document-reader",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "contract-grant"
+        },
+        "body": {
+          "expected_revision": 4,
+          "permission": "read"
+        }
+      },
+      "response": {
+        "status": 503,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/problem+json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/recipient_directory_unavailable",
+          "title": "recipient_directory_unavailable",
+          "status": 503,
+          "detail": "Recipient lookup is temporarily unavailable. Try again.",
+          "code": "recipient_directory_unavailable"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

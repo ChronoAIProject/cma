@@ -4,7 +4,7 @@ use crate::sandbox::store::{
     validate_agent_cleanup_capacity_log_with_retry, validate_agent_work_mutation_with_sandbox,
     AgentConnectionRecoveryApplication, AgentConnectionRecoveryCandidate,
     AgentConnectionRecoveryOutcome, AgentConnectionRecoveryRequest, AgentWorkMutation,
-    AgentWorkerStore,
+    AgentWorkerStore, StartupWorkFilter,
 };
 
 #[async_trait]
@@ -41,11 +41,12 @@ impl AgentWorkerStore for InMemorySandboxStore {
         }
     }
 
-    async fn due_agent_work_with_cleanup_holds(
+    async fn due_agent_work_filtered(
         &self,
         now: &str,
         limit: u16,
         holds: &std::collections::BTreeSet<AgentId>,
+        startup: StartupWorkFilter<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
@@ -55,6 +56,7 @@ impl AgentWorkerStore for InMemorySandboxStore {
             .agents
             .values()
             .filter(|agent| agent.work.is_due(now))
+            .filter(|agent| startup.includes(agent))
             .filter(|agent| {
                 !(holds.contains(&agent.id)
                     && crate::sandbox::AgentWorkStep::RECEIVER_PACED.contains(&agent.work.step))
