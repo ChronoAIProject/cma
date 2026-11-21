@@ -39,7 +39,7 @@ pub(super) fn error(
 pub(super) fn field(field: &str, code: &str, message: &str) -> Response {
     error(StatusCode::UNPROCESSABLE_ENTITY, code, message, Some(field))
 }
-pub(super) fn missing() -> Response {
+pub fn missing() -> Response {
     error(
         StatusCode::NOT_FOUND,
         "response_not_found",
@@ -47,7 +47,7 @@ pub(super) fn missing() -> Response {
         None,
     )
 }
-pub(super) fn unauthenticated() -> Response {
+pub fn unauthenticated() -> Response {
     error(
         StatusCode::UNAUTHORIZED,
         "authentication_required",

@@ -1,5 +1,5 @@
 //! Keep the normal route and method boundary when execution is disabled.
-use std::{collections::BTreeMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
 use axum::{
     extract::{rejection::PathRejection, MatchedPath, Path, Query, State},
@@ -9,16 +9,21 @@ use axum::{
     Extension, Router,
 };
 use layer1_public::{
+    auth::NotAuthenticated,
+    responses::v2::{authentication_required, resource_not_found},
     rest::{
         worker_credentials::{VerifiedGatewayService, WORKER_CLASSIFIER_PATH},
         HttpProblem, Problem,
     },
-    AuthenticatedCaller,
+    AuthenticatedCaller, AuthenticatedResourceCaller,
 };
 use layer2_core::{
-    resource_access::{ResourceAccessStoreError, ResourceLineage, ResourceTarget},
+    resource_access::{
+        CredentialSource, ResourceAccessStoreError, ResourceLineage, ResourceTarget,
+    },
     AgentId, Capability, CoreError, LaunchId, SandboxId, WorkspaceId, WorktreeId,
 };
+use mongodb::bson::doc;
 
 use crate::store::mongo::MongoAccountStores;
 
@@ -60,6 +65,10 @@ pub(super) fn router(stores: Arc<MongoAccountStores>, desktop_origins: Vec<Strin
                     .is_some_and(|security| security.is_empty())
                 {
                     methods = methods.on(method, public_unavailable);
+                } else if path == "/api/v2/commands/{command_id}"
+                    || path.starts_with("/api/v2/") && path.contains("/{response_id}")
+                {
+                    methods = methods.on(method, command_unavailable);
                 } else {
                     methods = methods.on(method, unavailable);
                 }
@@ -88,6 +97,49 @@ async fn public_unavailable() -> HttpProblem {
 
 async fn worker_unavailable(Extension(_service): Extension<VerifiedGatewayService>) -> HttpProblem {
     HttpProblem::SandboxBackendUnavailable
+}
+
+async fn command_unavailable(
+    State(state): State<Arc<RefusalState>>,
+    auth: Result<AuthenticatedResourceCaller, NotAuthenticated>,
+    Path(parameters): Path<BTreeMap<String, String>>,
+) -> Response {
+    let Ok(auth) = auth else {
+        return authentication_required();
+    };
+    let context = &auth.context;
+    if let Err(error) = context.caller.require(Capability::UseOwnSandboxes) {
+        return Problem(error).into_response();
+    }
+    if context.credential_source == CredentialSource::Binding {
+        return resource_not_found();
+    }
+    let selector = if let Some(response) = parameters.get("response_id") {
+        doc! { "response_id": response }
+    } else if let Some(command) = parameters.get("command_id") {
+        doc! { "_id": command }
+    } else {
+        return resource_not_found();
+    };
+    let authorization = state.stores.authorize_personal_command(
+        &context.caller,
+        selector,
+        parameters.get("agent_id").map(String::as_str),
+    );
+    match tokio::time::timeout(Duration::from_secs(15), authorization).await {
+        Ok(Ok(())) if context.validate_principal() => {
+            HttpProblem::SandboxBackendUnavailable.into_response()
+        }
+        Ok(Ok(()) | Err(ResourceAccessStoreError::NotFound)) => resource_not_found(),
+        Ok(Err(error)) => {
+            tracing::debug!(%error, "backend-free command authorization failed");
+            resource_not_found()
+        }
+        Err(_) => {
+            tracing::debug!("backend-free command authorization timed out");
+            resource_not_found()
+        }
+    }
 }
 
 #[derive(serde::Deserialize)]
@@ -226,10 +278,13 @@ fn targets(
         else {
             continue;
         };
-        if !matches!(
+        if !(matches!(
             parts[0],
             "sandboxes" | "workspaces" | "worktrees" | "agents"
-        ) {
+        ) || parts[0] == "conversations"
+            && (path.starts_with("/api/v1/conversations/")
+                || path.starts_with("/api/v2/conversations/")))
+        {
             continue;
         }
         let value = parameter(&parameters, name)?.to_owned();
@@ -243,7 +298,7 @@ fn targets(
             "worktrees" => ResourceTarget::Worktree {
                 worktree_id: WorktreeId(value),
             },
-            "agents" => ResourceTarget::Agent {
+            "agents" | "conversations" => ResourceTarget::Agent {
                 agent_id: AgentId(value),
             },
             _ => unreachable!("known resource collection"),

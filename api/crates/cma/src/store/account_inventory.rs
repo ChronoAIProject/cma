@@ -6,16 +6,19 @@ use layer2_core::sandbox::store::{Page, PageRequest, SandboxStoreError};
 use layer2_core::sandbox::{Agent, AgentListQuery, AgentReadError};
 use layer2_core::{Caller, Capability, CoreError, LaunchId, SubjectId};
 use mongodb::bson::{doc, Document};
+use mongodb::ClientSession;
 
 use super::MongoAccountStores;
 use crate::store::{
+    agent_commands::read_command,
     agent_reads::query_owned_agents,
     durability::majority_collection,
     resource_access::{
         snapshot_lineage::{read_from, LineageCollections},
         ReadError,
     },
-    sandbox_mongo::{AGENTS, RESOURCE_POLICIES, SANDBOXES, WORKSPACES, WORKTREES},
+    sandbox_mongo::{AGENTS, AGENT_COMMANDS, RESOURCE_POLICIES, SANDBOXES, WORKSPACES, WORKTREES},
+    snapshot_collection,
     trigger_definitions::{decode_launch_aggregate, LAUNCHES},
 };
 
@@ -43,23 +46,68 @@ impl MongoAccountStores {
         caller: &Caller,
         target: &ResourceTarget,
     ) -> Result<ResourceAccessSnapshot, ResourceAccessStoreError> {
-        let agents = majority_collection(&self.database, AGENTS);
-        let mut session = agents
+        self.personal_resource_in_session(caller, target, &mut self.snapshot_session().await?)
+            .await
+    }
+
+    pub(crate) async fn authorize_personal_command(
+        &self,
+        caller: &Caller,
+        selector: Document,
+        agent: Option<&str>,
+    ) -> Result<(), ResourceAccessStoreError> {
+        // Resolve the ledger receipt and current owner at one snapshot time.
+        // This path needs neither a command service nor an observation lease.
+        let mut session = self.snapshot_session().await?;
+        let commands = majority_collection(&self.database, AGENT_COMMANDS);
+        let row = snapshot_collection::collection(&commands, true)
+            .find_one(selector)
+            .session(&mut session)
+            .await
+            .map_err(|_| ResourceAccessStoreError::Unavailable)?
+            .ok_or(ResourceAccessStoreError::NotFound)?;
+        let command = read_command(&row).map_err(|_| ResourceAccessStoreError::Corrupt)?;
+        let envelope = command.receipt.envelope;
+        if agent.is_some_and(|id| id != envelope.agent_id.as_str()) {
+            return Err(ResourceAccessStoreError::NotFound);
+        }
+        let target = ResourceTarget::Agent {
+            agent_id: envelope.agent_id,
+        };
+        let snapshot = self
+            .personal_resource_in_session(caller, &target, &mut session)
+            .await?;
+        if snapshot.scope(&target)?.owner != envelope.owner {
+            return Err(ResourceAccessStoreError::NotFound);
+        }
+        Ok(())
+    }
+
+    async fn snapshot_session(&self) -> Result<ClientSession, ResourceAccessStoreError> {
+        self.database
             .client()
             .start_session()
             .snapshot(true)
             .await
-            .map_err(|_| ResourceAccessStoreError::Unavailable)?;
+            .map_err(|_| ResourceAccessStoreError::Unavailable)
+    }
+
+    async fn personal_resource_in_session(
+        &self,
+        caller: &Caller,
+        target: &ResourceTarget,
+        session: &mut ClientSession,
+    ) -> Result<ResourceAccessSnapshot, ResourceAccessStoreError> {
         let (lineage, policy) = read_from(
             LineageCollections {
-                agents: &agents,
+                agents: &majority_collection(&self.database, AGENTS),
                 worktrees: &majority_collection(&self.database, WORKTREES),
                 workspaces: &majority_collection(&self.database, WORKSPACES),
                 sandboxes: &majority_collection(&self.database, SANDBOXES),
                 resource_policies: &majority_collection(&self.database, RESOURCE_POLICIES),
             },
             target,
-            &mut session,
+            session,
             true,
         )
         .await

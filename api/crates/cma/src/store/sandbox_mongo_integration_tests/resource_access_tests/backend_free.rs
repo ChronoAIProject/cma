@@ -11,6 +11,11 @@ use tower::ServiceExt as _;
 
 use super::*;
 use crate::config::{BackendFreeConfig, StartupConfig};
+use crate::store::{
+    sandbox_mongo::{AGENT_COMMANDS, AGENT_COMMAND_ORDERS},
+    sandbox_mongo_integration_tests::command_ledger_tests,
+};
+use layer2_core::{ids::AgentResponseId, sandbox::agent_io::AgentCommandStore};
 
 #[path = "backend_free/authentication.rs"]
 mod authentication;
@@ -24,6 +29,26 @@ async fn backend_free_http_uses_durable_owner_reads_without_resuming_pending_wor
     let ResourceTarget::Agent { agent_id } = target else {
         panic!("retained Agent fixture required");
     };
+    let agent = store.get_agent(&agent_id).await.unwrap().unwrap();
+    let parent = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
+    let command = command_ledger_tests::record(
+        store
+            .reserve_command(command_ledger_tests::request(
+                &agent,
+                &parent,
+                "retained-response",
+            ))
+            .await
+            .unwrap(),
+    );
+    let receipt = &command.receipt;
+    let response_id = receipt.response_id.as_ref().unwrap();
+    let command_key = doc! {"_id": receipt.envelope.command_id.as_str()};
+    let command_before = store
+        .agent_commands
+        .find_one(command_key.clone())
+        .await
+        .unwrap();
     let mut pending = provisioning_sandbox("sbx_pending_backend_free");
     pending.name = "pending backend-free fixture".into();
     store.create_sandbox(pending.clone()).await.unwrap();
@@ -40,6 +65,10 @@ async fn backend_free_http_uses_durable_owner_reads_without_resuming_pending_wor
         crate::store::sandbox_mongo::SANDBOX_ADMISSIONS,
         crate::store::trigger_definitions::LAUNCHES,
         crate::store::agent_lifecycle_operations::COLLECTION,
+        crate::store::agent_observation::COLLECTION,
+        AGENT_COMMANDS,
+        AGENT_COMMAND_ORDERS,
+        AGENT_LOG,
     ];
     let mut work_counts = Vec::new();
     for name in execution_collections {
@@ -73,6 +102,48 @@ async fn backend_free_http_uses_durable_owner_reads_without_resuming_pending_wor
             .await
             .unwrap();
     assert_actor_callback_is_refused(&unauthenticated, &provider, &client, &name).await;
+    let absent_response = AgentResponseId::generate();
+    for suffix in ["", "/events", "/output", "/retained-output"] {
+        assert_command_refusals(
+            &owner,
+            &foreign,
+            &unauthenticated,
+            &format!("/api/v2/responses/{response_id}{suffix}"),
+            &format!("/api/v2/responses/{absent_response}{suffix}"),
+        )
+        .await;
+    }
+    assert_command_refusals(
+        &owner,
+        &foreign,
+        &unauthenticated,
+        &format!("/api/v2/commands/{}", receipt.envelope.command_id),
+        &format!(
+            "/api/v2/commands/{}",
+            layer2_core::ids::AgentCommandId::generate()
+        ),
+    )
+    .await;
+    assert_command_refusals(
+        &owner,
+        &foreign,
+        &unauthenticated,
+        &format!("/api/v2/agents/{agent_id}/responses/{response_id}/controls"),
+        &format!("/api/v2/agents/agt_absent/responses/{response_id}/controls"),
+    )
+    .await;
+    for version in ["v1", "v2"] {
+        for suffix in ["", "/items"] {
+            let path = format!("/api/{version}/conversations/{agent_id}{suffix}");
+            let (status, problem) = request(&owner, Method::GET, &path, None).await;
+            assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}: {problem}");
+            assert_eq!(problem["code"], "sandbox_backend_unavailable");
+            assert_eq!(
+                request(&foreign, Method::GET, &path, None).await.0,
+                StatusCode::NOT_FOUND
+            );
+        }
+    }
 
     assert_eq!(
         request(&owner, Method::GET, "/livez", None).await.0,
@@ -235,6 +306,13 @@ async fn backend_free_http_uses_durable_owner_reads_without_resuming_pending_wor
         before
     );
     assert_eq!(sandbox_records.count_documents(doc! {}).await.unwrap(), 2);
+    assert_eq!(
+        db.collection::<Document>(AGENT_COMMANDS)
+            .find_one(command_key)
+            .await
+            .unwrap(),
+        command_before,
+    );
     for (collection, before) in work_counts {
         assert_eq!(collection.count_documents(doc! {}).await.unwrap(), before);
     }
@@ -245,6 +323,26 @@ async fn backend_free_http_uses_durable_owner_reads_without_resuming_pending_wor
         .await
         .unwrap();
     db.drop().await.unwrap();
+}
+
+async fn assert_command_refusals(
+    owner: &Router,
+    foreign: &Router,
+    unauthenticated: &Router,
+    path: &str,
+    absent: &str,
+) {
+    let (status, problem) = request(owner, Method::GET, path, None).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{path}: {problem}");
+    assert_eq!(problem["code"], "sandbox_backend_unavailable");
+    let hidden = request(foreign, Method::GET, path, None).await;
+    assert_eq!(hidden.0, StatusCode::NOT_FOUND, "{path}: {}", hidden.1);
+    assert_eq!(hidden.1["error"]["code"], "response_not_found");
+    assert_eq!(request(owner, Method::GET, absent, None).await, hidden);
+    assert_eq!(request(foreign, Method::GET, absent, None).await, hidden);
+    let (status, problem) = request(unauthenticated, Method::GET, path, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{path}: {problem}");
+    assert_eq!(problem["error"]["code"], "authentication_required");
 }
 
 async fn isolated_uri(db: &mongodb::Database) -> url::Url {
@@ -319,13 +417,25 @@ async fn request(
         }
         None => Body::empty(),
     };
-    let response = app
-        .clone()
-        .oneshot(request.body(body).unwrap())
-        .await
-        .unwrap();
+    let response = tokio::time::timeout(
+        Duration::from_secs(20),
+        app.clone().oneshot(request.body(body).unwrap()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let status = response.status();
-    let bytes = to_bytes(response.into_body(), 64 * 1024).await.unwrap();
+    assert!(!response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .is_some_and(|value| { value.as_bytes().starts_with(b"text/event-stream") }));
+    let bytes = tokio::time::timeout(
+        Duration::from_secs(2),
+        to_bytes(response.into_body(), 64 * 1024),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     (
         status,
         serde_json::from_slice(&bytes).unwrap_or(Value::Null),
