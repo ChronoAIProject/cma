@@ -11,7 +11,8 @@ CATEGORIES = ("rust-compile", "dependency-compile", "go-compile", "media-compile
               "cache-import", "cache-export", "archive-export", "other-build")
 # A Dockerfile step is named "[<stage> <n>/<total>] <instruction>". The bracket
 # holds only the public stage name and position; the instruction is withheld.
-STEP = re.compile(r"\[([A-Za-z0-9][A-Za-z0-9_.-]{0,63}) ([1-9][0-9]{0,3})/([1-9][0-9]{0,3})\] ")
+# BuildKit pads <n> to the width of <total>: "[media-self-test  7/11] ".
+STEP = re.compile(r"\[([A-Za-z0-9][A-Za-z0-9_.-]{0,63}) {1,4}([1-9][0-9]{0,3})/([1-9][0-9]{0,3})\] ")
 # BuildKit's own vertices for base images and the build context carry no command.
 INTERNAL = (("[internal] load metadata for ", "base-image-metadata"),
             ("[internal] load build context", "build-context"),

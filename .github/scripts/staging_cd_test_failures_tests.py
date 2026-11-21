@@ -273,6 +273,11 @@ class ExtractionTests(unittest.TestCase):
                                                    "test": "audio timeout"}])
         self.assertNotIn("failed_tests", failed_qualification(stdout=MEDIA))
         self.assertNotIn("private", json.dumps(result))
+        # The real stage has more than nine steps, so BuildKit pads its position.
+        padded = summarize(progress((7, "[media-self-test  7/11] RUN --network=none private", "private", {1: MEDIA})),
+                           dockerfile=GATEWAY)
+        self.assertEqual(padded["failed_tests"], [{"step": "media-self-test 7/11", "file": "voice.ogg",
+                                                   "test": "audio timeout"}])
 
     def test_a_passing_build_or_another_stage_publishes_no_names(self):
         cases = {
