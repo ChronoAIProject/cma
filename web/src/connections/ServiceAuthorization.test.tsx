@@ -26,6 +26,7 @@ function Draft({ submit }: { readonly submit: () => void }) {
 
 function setup(granted: () => Promise<Response>) {
   const submit = vi.fn();
+  let ready = false;
   const popup = { opener: {}, close: vi.fn(), closed: false };
   vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
   const fetcher = vi.fn(async (path: string, options: RequestInit) => {
@@ -37,14 +38,14 @@ function setup(granted: () => Promise<Response>) {
     expect(path).toBe('/auth/connections/check');
     return Response.json({
       owner: 'owner-a',
-      ready: false,
+      ready,
       service_authorization_recovery: true,
       services: [
         {
           service: 'api-github',
           display_name: 'GitHub',
           kind: 'nyxid',
-          state: 'missing',
+          state: ready ? 'satisfied' : 'missing',
           connection_mode: 'hosted',
         },
       ],
@@ -54,7 +55,14 @@ function setup(granted: () => Promise<Response>) {
   sessionStorage.setItem(draftKey, 'Review the repository');
   const view = render(<Draft submit={submit} />);
   fireEvent.click(screen.getByRole('button', { name: 'Send draft' }));
-  return { view, submit, popup };
+  return {
+    view,
+    submit,
+    popup,
+    connect: () => {
+      ready = true;
+    },
+  };
 }
 
 afterEach(() => {
@@ -125,3 +133,23 @@ it('rejects a response for another account without leaving the draft', async () 
   expect(submit).not.toHaveBeenCalled();
   expect(sessionStorage.getItem(draftKey)).toBe('Review the repository');
 });
+
+it.each(['provider outage', 'blocked window'] as const)(
+  'requires a fresh submission after a %s even when the next check is ready',
+  async (failure) => {
+    const { submit, connect } = setup(async () => new Response(null, { status: 503 }));
+    if (failure === 'blocked window') vi.mocked(window.open).mockReturnValue(null);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Authorize required services' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Your draft is still here.');
+    connect();
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument(), {
+      timeout: 3500,
+    });
+    expect(submit).not.toHaveBeenCalled();
+    expect(screen.getByRole('textbox', { name: 'Draft' })).toHaveValue('Review the repository');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Send draft' }));
+    await waitFor(() => expect(submit).toHaveBeenCalledOnce());
+  },
+);

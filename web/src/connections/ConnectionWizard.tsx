@@ -31,23 +31,26 @@ interface WizardProps {
   readonly client?: ConnectionClient;
 }
 
-/**
- * A connection's name as the person reads it.
- *
- * The subscription row's recorded name carries the agent provider's product
- * name, which CMA copy never shows; the person signs in to ChatGPT, so that is
- * what the row says.
- */
+// The subscription row follows the ChatGPT sign-in the user sees.
 function connectionName(row: { readonly service: string; readonly display_name: string }) {
   return row.service === subscriptionService ? 'Your ChatGPT subscription' : row.display_name;
 }
 
 export function ConnectionWizard(props: WizardProps) {
   const [retry, setRetry] = useState(0);
+  // Rechecking this wizard cannot rearm the action that opened it.
+  const recoverySelected = useRef(false);
   return (
     <ConnectionSequence
       key={`${JSON.stringify(props.target)}:${props.forceSubscription === true}:${retry}`}
       {...props}
+      onRecoverySelected={() => {
+        recoverySelected.current = true;
+      }}
+      onReady={(report) => {
+        if (recoverySelected.current) props.onCancel?.();
+        else props.onReady(report);
+      }}
       onRetry={() => setRetry((value) => value + 1)}
     />
   );
@@ -58,13 +61,14 @@ function ConnectionSequence({
   onReady,
   onCancel,
   onRetry,
+  onRecoverySelected,
   forceSubscription = false,
   expectedOwner,
   presentation = 'inline',
   dialogTitle = 'Connect required services',
   description = 'Connect the accounts this sandbox needs. CMA verifies each connection automatically, then continues opening your Sandbox.',
   client = connectionClient,
-}: WizardProps & { readonly onRetry: () => void }) {
+}: WizardProps & { readonly onRetry: () => void; readonly onRecoverySelected: () => void }) {
   const key = JSON.stringify(target);
   const [report, setReport] = useState<ConnectionReport>();
   const [handoff, setHandoff] = useState<StartedConnection>();
@@ -335,6 +339,7 @@ function ConnectionSequence({
   };
   const authorize = async () => {
     if (busy || report === undefined || recovery.current !== null) return;
+    onRecoverySelected();
     const authorizationWindow = window.open('about:blank', '_blank', 'popup,width=580,height=760');
     if (authorizationWindow === null) {
       setError('Allow pop-ups to authorize required services. Your draft is still here.');
@@ -355,7 +360,7 @@ function ConnectionSequence({
         controller.signal,
       );
       if (controller.signal.aborted) return;
-      // Keep the draft tab alive and discard its queued action before consent starts.
+      // Leave the draft tab open while the separate window requests consent.
       recoveryPopup.current = null;
       cancel();
       if (!authorizationWindow.closed)
