@@ -6,6 +6,7 @@ use crate::{
 use layer2_core::{
     account_deletion::AccountStanding,
     document_artifacts::{DocumentBlobMaintenance, DocumentBlobStore, DocumentService},
+    UserDirectory,
 };
 use std::sync::Arc;
 
@@ -41,7 +42,8 @@ pub(super) fn compose(
                 .quota(config.features.document_quotas),
         )),
     )
-    .with_account_standing(standing);
+    .with_account_standing(standing)
+    .with_directory(UserDirectory::new(stores.users.clone()));
     Ok(DocumentComposition {
         service,
         maintenance,
