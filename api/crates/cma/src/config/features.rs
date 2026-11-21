@@ -44,6 +44,7 @@ pub(crate) struct FeatureFlags {
     pub agent_skill_upgrade_enabled: bool,
     pub shared_runtime_output: bool,
     pub model_budget_writes_enabled: bool,
+    pub model_credit_required: bool,
     pub model_request_budget_writes_enabled: bool,
     pub platform_spend_writes_enabled: bool,
     pub platform_counter_shards: bool,
@@ -223,6 +224,7 @@ impl FeatureFlags {
             )?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
+            model_credit_required: flag(lookup, "CHRONO_AGENT_MODEL_CREDIT_REQUIRED")?,
             model_request_budget_writes_enabled: flag(
                 lookup,
                 "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED",
