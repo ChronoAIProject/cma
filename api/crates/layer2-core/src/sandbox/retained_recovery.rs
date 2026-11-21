@@ -63,6 +63,14 @@ pub struct RetainedRecoverySource<'a> {
 
 impl RetainedRecoverySnapshot {
     pub fn source(&self) -> Result<RetainedRecoverySource<'_>, RetainedRecoveryDisposition> {
+        let source = self.native_source()?;
+        self.validate_children(source.generation)?;
+        Ok(source)
+    }
+
+    pub(super) fn native_source(
+        &self,
+    ) -> Result<RetainedRecoverySource<'_>, RetainedRecoveryDisposition> {
         use RetainedRecoveryDisposition as D;
         let sandbox = &self.sandbox;
         sandbox.validate().map_err(|_| D::AuthorityChanged)?;
@@ -132,7 +140,6 @@ impl RetainedRecoverySnapshot {
         {
             return Err(D::AuthorityChanged);
         }
-        self.validate_children(generation)?;
         Ok(RetainedRecoverySource {
             binding,
             generation,
@@ -217,6 +224,13 @@ pub trait RetainedRecoveryInspector: Send + Sync {
     /// Read-only fresh native/home/history inspection. The result is a fact,
     /// not a reusable proof token, lifecycle receipt, or permission to suspend.
     async fn inspect(&self, snapshot: &RetainedRecoverySnapshot) -> RetainedRecoveryDisposition;
+
+    async fn inspect_suspended(
+        &self,
+        _snapshot: &super::RetainedReopenSnapshot,
+    ) -> RetainedRecoveryDisposition {
+        RetainedRecoveryDisposition::ProviderEvidenceRefused
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -238,6 +252,7 @@ pub enum RetainedRecoveryError {
 pub struct RetainedRecoveryService {
     store: Arc<dyn SandboxStore>,
     inspector: Arc<dyn RetainedRecoveryInspector>,
+    suspended_assessment_enabled: bool,
     permits: tokio::sync::Semaphore,
 }
 
@@ -264,8 +279,14 @@ impl RetainedRecoveryService {
         Self {
             store,
             inspector,
+            suspended_assessment_enabled: false,
             permits: tokio::sync::Semaphore::new(1),
         }
+    }
+
+    pub fn with_suspended_assessment(mut self, enabled: bool) -> Self {
+        self.suspended_assessment_enabled = enabled;
+        self
     }
 
     pub async fn assess(
@@ -304,6 +325,11 @@ impl RetainedRecoveryService {
             }
             let disposition = match snapshot.source() {
                 Ok(_) => self.inspector.inspect(&snapshot).await,
+                Err(RetainedRecoveryDisposition::ChildActivity)
+                    if self.suspended_assessment_enabled =>
+                {
+                    return self.assess_suspended(caller, id, &snapshot).await;
+                }
                 Err(reason) => reason,
             };
             let current = self
@@ -332,6 +358,43 @@ impl RetainedRecoveryService {
         Ok(RetainedRecoveryAssessment {
             disposition: disposition?,
             admission_enabled: false,
+        })
+    }
+
+    async fn assess_suspended(
+        &self,
+        caller: &Caller,
+        id: &SandboxId,
+        initial: &RetainedRecoverySnapshot,
+    ) -> Result<RetainedRecoveryDisposition, RetainedRecoveryError> {
+        use RetainedRecoveryDisposition as D;
+        let snapshot = self
+            .store
+            .retained_suspended_reopen_snapshot(id)
+            .await
+            .map_err(store_error)?;
+        if snapshot.retained.sandbox.owner != caller.subject {
+            return Err(RetainedRecoveryError::NotFound);
+        }
+        if &snapshot.retained != initial {
+            return Ok(D::AuthorityChanged);
+        }
+        if snapshot.suspended_source().is_err() {
+            return Ok(D::ChildActivity);
+        }
+        let disposition = self.inspector.inspect_suspended(&snapshot).await;
+        let current = self
+            .store
+            .retained_suspended_reopen_snapshot(id)
+            .await
+            .map_err(store_error)?;
+        if current.retained.sandbox.owner != caller.subject {
+            return Err(RetainedRecoveryError::NotFound);
+        }
+        Ok(if current == snapshot {
+            disposition
+        } else {
+            D::AuthorityChanged
         })
     }
 }

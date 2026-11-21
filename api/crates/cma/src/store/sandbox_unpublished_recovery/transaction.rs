@@ -91,6 +91,15 @@ pub(in crate::store) async fn load_reopen_with_sources(
     load_for_inspection(store, id, session, true, true, sources).await
 }
 
+pub(in crate::store) async fn load_suspended_reopen_with_sources(
+    store: &MongoSandboxStore,
+    id: &SandboxId,
+    session: &mut ClientSession,
+    sources: &NativeFacts,
+) -> Result<(SandboxUnpublishedRecoverySnapshot, u64, String), ApplyError> {
+    load_for_inspection(store, id, session, false, true, Some(sources)).await
+}
+
 pub(super) async fn load_retained(
     store: &MongoSandboxStore,
     id: &SandboxId,
@@ -209,7 +218,7 @@ async fn load_for_inspection(
         }
         let mut published = false;
         let mut entries = Vec::new();
-        let result = if require_unpublished {
+        let result = if require_unpublished || require_reopen {
             scan_complete_log_with_session(
                 ScanCaller::RecoveryProof,
                 store,
@@ -217,7 +226,8 @@ async fn load_for_inspection(
                 agent.conversation.last_seq,
                 session,
                 |entry| {
-                    if matches!(entry.kind,
+                    if require_unpublished
+                        && matches!(entry.kind,
                 AgentLogKind::ConversationOpened { runtime_generation, .. }
                 | AgentLogKind::RuntimeGenerationRetired { runtime_generation, .. }
                     if generation.is_some_and(|generation| runtime_generation >= generation))
