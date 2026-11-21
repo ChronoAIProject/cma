@@ -18,6 +18,7 @@ fn view() -> WarmPoolView {
         status: "pending".into(),
         resource_name: None,
         error: None,
+        machine: false,
     }
 }
 #[async_trait]
@@ -31,6 +32,7 @@ impl WarmPoolAdministration for Pools {
             default_memory_mib: 1024,
             default_config_sha256: Some("d".repeat(64)),
             available: false,
+            machine_image: None,
         })
     }
     async fn configure(
@@ -137,6 +139,9 @@ async fn unavailable_inventory_is_explicit_and_pool_configuration_refuses_client
     let list = response_json(list).await;
     assert_eq!(list["available"], false);
     assert_eq!(list["items"][0]["ready_replicas"], Value::Null);
+    // Without a configured desktop image the list says so explicitly.
+    assert_eq!(list["items"][0]["machine"], false);
+    assert_eq!(list["machine_image"], Value::Null);
     for extra in ["image", "home", "profile"] {
         let mut body = json!({"cpu_millis":1000,"memory_mib":1024,"target_replicas":1});
         body[extra] = json!("untrusted");
