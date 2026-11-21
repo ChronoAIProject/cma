@@ -14,6 +14,43 @@ const SIBLING: &str = "wks_retained_synthetic_sibling";
 pub(super) struct RepositoryRefusal {
     pub code: &'static str,
     pub sibling: bool,
+    pub before_marker: bool,
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
+async fn repository_task_public_preparation_pins_checkout_before_exact_task_and_replays_identity() {
+    for _ in 0..3 {
+        super::environment::initial_task_environment(
+            Some(json!({"url":"https://github.com/example/project", "ref":"proof/fixed"})),
+            None,
+            false,
+        )
+        .await;
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
+async fn repository_task_public_source_failure_preserves_identity_without_dispatching_task() {
+    for failure in [
+        "repository_connection_required",
+        "repository_ref_not_found",
+        "repository_unavailable",
+        "repository_archive_unavailable",
+        "repository_source_invalid",
+    ] {
+        super::environment::initial_task_environment(
+            Some(json!({"url":"https://github.com/example/project", "ref":"proof/fixed"})),
+            Some(RepositoryRefusal {
+                code: failure,
+                sibling: false,
+                before_marker: false,
+            }),
+            false,
+        )
+        .await;
+    }
 }
 
 #[tokio::test]
@@ -24,6 +61,7 @@ async fn repository_task_public_failure_preserves_a_sandbox_with_another_workspa
         Some(RepositoryRefusal {
             code: "repository_archive_unavailable",
             sibling: true,
+            before_marker: false,
         }),
         false,
     )
@@ -195,13 +233,14 @@ impl ServiceConnectionBroker for RepositoryConnection {
 
 pub(super) async fn complete_failed_environment_retirement(
     harness: &Harness<MongoSandboxStore>,
-    agent: &Agent,
+    sandbox_id: &SandboxId,
+    agent: Option<&Agent>,
     worker: &crate::sandbox::worker::SandboxWorker,
     retry: &super::store_retry::StoreRetry,
 ) {
     let retiring = harness
         .store
-        .get_sandbox(&agent.sandbox_id)
+        .get_sandbox(sandbox_id)
         .await
         .unwrap()
         .unwrap();
@@ -215,17 +254,19 @@ pub(super) async fn complete_failed_environment_retirement(
         .map(|runtime| RuntimeHandle(runtime.runtime_id.clone()));
     let admitted_at = harness
         .store
-        .retirement_admitted_at(&agent.sandbox_id)
+        .retirement_admitted_at(sandbox_id)
         .await
         .unwrap()
         .unwrap();
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
-            retry.should_retry(harness.worker.run_one(&agent.id, SystemTime::now()).await);
-            retry.should_retry(worker.run_one(&agent.sandbox_id, SystemTime::now()).await);
+            if let Some(agent) = agent {
+                retry.should_retry(harness.worker.run_one(&agent.id, SystemTime::now()).await);
+            }
+            retry.should_retry(worker.run_one(sandbox_id, SystemTime::now()).await);
             let sandbox = harness
                 .store
-                .get_sandbox(&agent.sandbox_id)
+                .get_sandbox(sandbox_id)
                 .await
                 .unwrap()
                 .unwrap();
@@ -241,12 +282,7 @@ pub(super) async fn complete_failed_environment_retirement(
     if let Some(runtime) = runtime {
         assert!(harness.backend.snapshot(&runtime).await.is_err());
     }
-    let usage = harness
-        .store
-        .usage(&agent.sandbox_id)
-        .await
-        .unwrap()
-        .unwrap();
+    let usage = harness.store.usage(sandbox_id).await.unwrap().unwrap();
     assert_eq!(usage.current_allocation(), Allocation::default());
     assert_eq!(
         usage.totals_at(usage.last_observed_at + 60).unwrap(),
@@ -255,18 +291,20 @@ pub(super) async fn complete_failed_environment_retirement(
     assert_eq!(
         harness
             .store
-            .retirement_admitted_at(&agent.sandbox_id)
+            .retirement_admitted_at(sandbox_id)
             .await
             .unwrap()
             .as_deref(),
         Some(admitted_at.as_str())
     );
-    let retained = harness.stored(&agent.id).await;
-    let first = retained.conversation.first_message.as_ref().unwrap();
-    assert_eq!(
-        first.text,
-        agent.conversation.first_message.as_ref().unwrap().text
-    );
-    assert!(first.dispatch_fenced_at.is_none() && first.turn_sequence.is_none());
-    assert!(first.write_confirmed_at.is_none() && first.execution_observed_at.is_none());
+    if let Some(agent) = agent {
+        let retained = harness.stored(&agent.id).await;
+        let first = retained.conversation.first_message.as_ref().unwrap();
+        assert_eq!(
+            first.text,
+            agent.conversation.first_message.as_ref().unwrap().text
+        );
+        assert!(first.dispatch_fenced_at.is_none() && first.turn_sequence.is_none());
+        assert!(first.write_confirmed_at.is_none() && first.execution_observed_at.is_none());
+    }
 }

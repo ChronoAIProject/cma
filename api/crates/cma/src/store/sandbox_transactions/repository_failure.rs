@@ -63,7 +63,7 @@ pub(super) async fn settle(
             "_id": operation_id,
             "document_schema_version": DOCUMENT_SCHEMA_VERSION,
             "owner": sandbox.owner.as_str(),
-            "sandbox_id": sandbox.id.as_str(),
+            "$or": [{"sandbox_id": sandbox.id.as_str()}, {"sandbox_id": Bson::Null}],
             "status": {"$in": ["queued", "running", "waiting_for_connection"]},
         })
         .session(&mut *session)
@@ -73,6 +73,7 @@ pub(super) async fn settle(
         return Ok(());
     };
     if !original_repository_task(&operation, before)
+        || !original_allocation(store, &sandbox, &operation, session).await?
         || has_other_authority(store, before, session).await?
     {
         tracing::debug!(
@@ -111,18 +112,39 @@ pub(super) async fn settle(
     let changed = operations.update_one(doc! {
         "_id": operation_id,
         "owner": sandbox.owner.as_str(),
-        "sandbox_id": sandbox.id.as_str(),
+        "sandbox_id": operation.sandbox_id.as_deref(),
         "document_schema_version": DOCUMENT_SCHEMA_VERSION,
         "status": &operation.status,
     }, doc! { "$set": {
         "status": "failed", "phase": "failed", "error": format!("{}: {}", failure.class, failure.detail),
-        "agent_id": agent_id, "connection": Bson::Null, "lease_token": Bson::Null, "lease_expires_at": Bson::Null,
+        "sandbox_id": sandbox.id.as_str(), "agent_id": agent_id,
+        "connection": Bson::Null, "lease_token": Bson::Null, "lease_expires_at": Bson::Null,
         "updated_at": DateTime::now(),
     }}).session(session).await.map_err(ApplyError::Driver)?;
     if changed.matched_count != 1 {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }
     Ok(())
+}
+
+async fn original_allocation(
+    store: &MongoSandboxStore,
+    sandbox: &Sandbox,
+    operation: &LifecycleRecord,
+    session: &mut ClientSession,
+) -> Result<bool, ApplyError> {
+    if let Some(id) = operation.sandbox_id.as_deref() {
+        return Ok(id == sandbox.id.as_str());
+    }
+    // Sandbox admission already recorded this owned lifecycle origin with its
+    // replay metadata. The operation marker can lag the actual allocation.
+    let Some(mut origin) =
+        super::super::sandbox_admission::origin_filter(sandbox.owner.as_str(), &sandbox.origin)
+    else {
+        return Ok(false);
+    };
+    origin.insert("_id", doc! {"$ne": sandbox.id.as_str()});
+    Ok(find(&store.sandboxes, origin, session).await?.is_none())
 }
 
 fn same_allocation(

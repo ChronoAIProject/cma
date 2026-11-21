@@ -81,48 +81,19 @@ async fn initial_task_public_default_environment_delivers_exact_task_after_prepa
     initial_task_environment(None, None, true).await;
 }
 
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
-async fn repository_task_public_preparation_pins_checkout_before_exact_task_and_replays_identity() {
-    for _ in 0..3 {
-        initial_task_environment(
-            Some(json!({"url":"https://github.com/example/project", "ref":"proof/fixed"})),
-            None,
-            false,
-        )
-        .await;
-    }
-}
-
-#[tokio::test]
-#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at an isolated local replica set"]
-async fn repository_task_public_source_failure_preserves_identity_without_dispatching_task() {
-    for failure in [
-        "repository_connection_required",
-        "repository_ref_not_found",
-        "repository_unavailable",
-        "repository_archive_unavailable",
-        "repository_source_invalid",
-    ] {
-        initial_task_environment(
-            Some(json!({"url":"https://github.com/example/project", "ref":"proof/fixed"})),
-            Some(RepositoryRefusal {
-                code: failure,
-                sibling: false,
-            }),
-            false,
-        )
-        .await;
-    }
-}
-
 pub(super) async fn initial_task_environment(
     repository: Option<Value>,
     source_failure: Option<RepositoryRefusal>,
     desktop: bool,
 ) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
-    let database_client = mongodb::Client::with_uri_str(&uri).await.unwrap();
+    let marker = source_failure
+        .filter(|failure| failure.before_marker)
+        .map(|_| Arc::new(super::repository_marker::MarkerPause::default()));
+    let database_client = match &marker {
+        Some(marker) => marker.client(&uri).await,
+        None => mongodb::Client::with_uri_str(&uri).await.unwrap(),
+    };
     let database = database_client.database(&format!(
         "cma_task_default_{}",
         uuid::Uuid::new_v4().simple()
@@ -289,6 +260,32 @@ pub(super) async fn initial_task_environment(
             .allow_after_blocked_states(&service, &harness, &input, &receipt, &operation_path)
             .await;
     }
+    if let Some(marker) = marker {
+        let operation_id = receipt["id"].as_str().unwrap();
+        let refusal = source_failure.unwrap();
+        let sandbox = marker
+            .fail_before_marker(
+                &database,
+                operation_id,
+                &harness,
+                &sandbox_worker,
+                refusal.code,
+            )
+            .await;
+        sandbox_config.holder = "task-cleanup-before-marker-restarted".into();
+        let resumed = worker(sandbox_config);
+        super::repository_connection_tests::complete_failed_environment_retirement(
+            &harness,
+            &sandbox,
+            None,
+            &resumed,
+            &store_retry::StoreRetry::default(),
+        )
+        .await;
+        provider_task.abort();
+        database.drop().await.unwrap();
+        return;
+    }
     let agent_id = tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             let operation: Value =
@@ -389,7 +386,8 @@ pub(super) async fn initial_task_environment(
             let resumed = worker(sandbox_config);
             super::repository_connection_tests::complete_failed_environment_retirement(
                 &harness,
-                &failed_agent,
+                &failed_agent.sandbox_id,
+                Some(&failed_agent),
                 &resumed,
                 &retry_unavailable,
             )
