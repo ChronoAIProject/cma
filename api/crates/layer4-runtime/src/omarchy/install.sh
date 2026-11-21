@@ -6,9 +6,13 @@ ulimit -c 0
 export SOURCE_DATE_EPOCH=0
 snapshot=$1
 [[ $snapshot =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]]
+# Every Arch and Omarchy package comes from the digest-pinned package bundle,
+# mounted read-only. No package server is contacted.
+bundle=/run/cma-omarchy-packages
+test "$(cat "$bundle/SNAPSHOT")" = "$snapshot"
 pacman-key --init
 pacman-key --populate archlinux
-curl -fsSL https://pkgs.omarchy.org/stable/x86_64/omarchy-keyring-20251027-1-any.pkg.tar.zst -o /tmp/omarchy-keyring.pkg.tar.zst
+cp "$bundle/omarchy/x86_64/omarchy-keyring-20251027-1-any.pkg.tar.zst" /tmp/omarchy-keyring.pkg.tar.zst
 echo 'f4bc258879f493462736f9a072c4f4c7f753eb559f6b346f5bdf8ed816f75f66  /tmp/omarchy-keyring.pkg.tar.zst' | sha256sum -c -
 # libalpm omits INSTALLDATE at epoch zero. Use a fixed nonzero package date;
 # normalization below still writes zero after validating every installed record.
@@ -21,21 +25,17 @@ mkdir -p /usr/share/omarchy /usr/share/cma-omarchy
 # out of the installed tree and remove its menu and refresh hooks below.
 tar -xzf /tmp/omarchy.tar.gz -C /usr/share/omarchy --strip-components=1 \
     --exclude='*/bin/omarchy-install-chromium-google-account'
-# Install from Omarchy's repository configuration with dated, pinned sources.
-# core, extra and multilib come from the archive. Its single server can stall
-# transfers, so curl resumes and retries each download, as root for the reason
-# given in build-omarchy-base.sh. Omarchy's own repository has no dated
-# archive, so a local copy holds exactly the packages this desktop takes from
-# it, each checked by sha256 beside its detached signature. pacman still
-# verifies every signature against the keyrings.
-transfer='/usr/bin/curl -fsSL --connect-timeout 30 --speed-limit 1024 --speed-time 30 --retry 8 -C - -o %o %u'
+# Install from Omarchy's repository configuration with every package taken
+# from the bundle. core, extra and multilib are the bundle's copies of the
+# dated Arch Linux Archive, including the indexed aml that the archive itself
+# serves with older bytes. Omarchy's own repository has no dated archive, so a
+# local copy holds exactly the bundle's packages this desktop takes from it,
+# each checked by sha256 beside its detached signature. pacman still verifies
+# every signature against the keyrings.
 omarchy_packages=/tmp/cma-omarchy-packages
 mkdir -m 0755 "$omarchy_packages"
 while read -r file package_sha256 signature_sha256; do
-    for suffix in '' .sig; do
-        curl -fsSL --connect-timeout 15 --max-time 300 --retry 3 \
-            "https://pkgs.omarchy.org/stable/x86_64/$file$suffix" -o "$omarchy_packages/$file$suffix"
-    done
+    cp "$bundle/omarchy/x86_64/$file" "$bundle/omarchy/x86_64/$file.sig" "$omarchy_packages/"
     printf '%s  %s\n' "$package_sha256" "$omarchy_packages/$file" \
         "$signature_sha256" "$omarchy_packages/$file.sig" | sha256sum -c -
 done <<'PACKAGES'
@@ -44,43 +44,14 @@ ttf-jetbrains-mono-nerd-basic-3.5.1-2-any.pkg.tar.zst c574e6266139fd24f668301d39
 yaru-icon-theme-26.10.3-3-any.pkg.tar.zst 3efc53db41713dd7a660a6ecb0ff5fc130ff9b88feb1251b7bcc35aa54288b0a 934fc4fe04993bdf458f70b40a765b0bd246c93783e455ec585d41a24eced5a5
 PACKAGES
 repo-add -q "$omarchy_packages/omarchy.db.tar.gz" "$omarchy_packages"/*.pkg.tar.zst
-{
-    sed -e "s|^Server = https://pkgs.omarchy.org/stable/\$arch\$|Server = file://$omarchy_packages|" \
-        -e '/^DownloadUser = alpm$/d' /usr/share/omarchy/default/pacman/pacman-stable.conf
-    printf '\n[options]\nXferCommand = %s\n' "$transfer"
-} > /etc/pacman.conf
-printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$snapshot" > /etc/pacman.d/mirrorlist
-test "$(pacman-conf XferCommand)" = "$transfer"
-test -z "$(pacman-conf DownloadUser)"
+sed "s|^Server = https://pkgs.omarchy.org/stable/\$arch\$|Server = file://$omarchy_packages|" \
+    /usr/share/omarchy/default/pacman/pacman-stable.conf > /etc/pacman.conf
+printf 'Server = file://%s/$repo/os/$arch\n' "$bundle" > /etc/pacman.d/mirrorlist
 test "$(pacman-conf --repo-list | paste -sd ' ')" = 'omarchy core extra multilib'
 test "$(pacman-conf --repo=omarchy Server)" = "file://$omarchy_packages"
 for repository in core extra multilib; do
-    test "$(pacman-conf --repo="$repository" Server)" = \
-        "https://archive.archlinux.org/repos/$snapshot/$repository/os/x86_64"
+    test "$(pacman-conf --repo="$repository" Server)" = "file://$bundle/$repository/os/x86_64"
 done
-# The archive's package pool keeps the first file uploaded under each name, so
-# a package re-released under an unchanged name is served with older bytes
-# that fail the snapshot's own signature. Seed the cache with the indexed file
-# and its signature, pinned by sha256, from a mirror that still serves them;
-# pacman downloads a cached package again unless its signature is cached too.
-# pacman verifies the file against the snapshot's signature like any other.
-while read -r repository file package_sha256 signature_sha256; do
-    cache=/var/cache/pacman/pkg/$file
-    for mirror in https://geo.mirror.pkgbuild.com https://stable-mirror.omarchy.org; do
-        if curl -fsSL --connect-timeout 15 --max-time 300 --retry 3 \
-                "$mirror/$repository/os/x86_64/$file" -o "$cache" &&
-            curl -fsSL --connect-timeout 15 --max-time 300 --retry 3 \
-                "$mirror/$repository/os/x86_64/$file.sig" -o "$cache.sig" &&
-            printf '%s  %s\n' "$package_sha256" "$cache" "$signature_sha256" "$cache.sig" | sha256sum -c -; then
-            continue 2
-        fi
-    done
-    rm -f "$cache" "$cache.sig"
-    printf 'No mirror serves the indexed %s\n' "$file" >&2
-    exit 1
-done <<'REISSUED'
-extra aml-1.0.0-1-x86_64.pkg.tar.zst d3a87fac8acf0b557f408a6911cabc2385b54275f7b81049fc0227e4af8a13cb 7281dc807a84ee2fb73f7f420464118486c5c9172e5667c6ee7f9528f0e839c5
-REISSUED
 # Docker build already isolates this step; its seccomp profile denies Landlock.
 # This flag affects only the build-time downloader, not package signatures.
 SOURCE_DATE_EPOCH=1 pacman -Syu --disable-sandbox --noconfirm --needed \

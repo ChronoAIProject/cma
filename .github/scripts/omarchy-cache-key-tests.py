@@ -172,6 +172,8 @@ class CacheIdentityTests(unittest.TestCase):
         self.assertIn("api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch", value["inputs"])
         self.assertNotIn("api/crates/layer4-runtime/src/omarchy/session.sh", value["inputs"])
         self.assertRegex(value["arguments"]["ARCH_SNAPSHOT"], r"^[0-9]{4}/[0-9]{2}/[0-9]{2}$")
+        self.assertRegex(value["images"]["omarchy-packages"],
+                         r"^ghcr\.io/chronoaiproject/cma-omarchy-packages@sha256:[0-9a-f]{64}$")
 
 
 if __name__ == "__main__":
