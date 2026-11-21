@@ -3,8 +3,11 @@
 
 import base64
 import hashlib
+import http.client
+import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from queue import Queue
 import re
 import socket
 import subprocess
@@ -25,6 +28,7 @@ KEY = base64.b64encode(b"websocketfixture").decode()
 RFB = b"RFB 003.008\n"
 FRAME = bytes((0x82, len(RFB))) + RFB
 CLIENT_ADDRESS = "192.0.2.7"
+OBSERVATION = "/fixture/upstream-observation"
 
 
 def accept_key(key):
@@ -34,14 +38,26 @@ def accept_key(key):
 
 class Upstream(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
+    observations = Queue()
 
     def log_message(self, *_args):
         pass
 
     def do_GET(self):
+        if self.path == OBSERVATION:
+            body = json.dumps(self.observations.get(timeout=3)).encode("ascii")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Connection", "close")
+            self.close_connection = True
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         upgrade = self.headers.get("Upgrade", "")
         connection = self.headers.get("Connection", "")
-        refusal = ""
+        version = self.headers.get("Sec-WebSocket-Version", "")
+        refusal = None
         status = 200
         if self.path.split("?", 1)[0] == SOCKET:
             if (upgrade, connection) != ("websocket", "upgrade"):
@@ -50,22 +66,25 @@ class Upstream(BaseHTTPRequestHandler):
                 status, refusal = 403, "origin"
             elif (self.headers.get("Cookie"), self.headers.get("Authorization")) != (COOKIE, AUTHORIZATION):
                 status, refusal = 401, "authorization"
+            elif version != "13" or self.headers.get("Sec-WebSocket-Key") != KEY:
+                status, refusal = 400, "handshake"
             else:
                 status = 101
+        self.observations.put({
+            "uri": self.path,
+            "upgrade": upgrade,
+            "connection": connection,
+            "host": self.headers.get("Host", ""),
+            "forwarded_for": self.headers.get("X-Forwarded-For", ""),
+            "forwarded_proto": self.headers.get("X-Forwarded-Proto", ""),
+            "websocket_version": version,
+            "refusal": refusal,
+        })
         self.send_response(status)
-        self.send_header("X-Fixture-Uri", self.path)
-        self.send_header("X-Fixture-Upgrade", upgrade)
-        self.send_header("X-Fixture-Connection", connection)
-        self.send_header("X-Fixture-Host", self.headers.get("Host", ""))
-        self.send_header("X-Fixture-Forwarded-For", self.headers.get("X-Forwarded-For", ""))
-        self.send_header("X-Fixture-Forwarded-Proto", self.headers.get("X-Forwarded-Proto", ""))
-        if refusal:
-            self.send_header("X-Fixture-Refusal", refusal)
         if status == 101:
             self.send_header("Upgrade", "websocket")
             self.send_header("Connection", "Upgrade")
-            self.send_header("Sec-WebSocket-Accept", accept_key(self.headers["Sec-WebSocket-Key"]))
-            self.send_header("X-Fixture-WebSocket-Version", self.headers["Sec-WebSocket-Version"])
+            self.send_header("Sec-WebSocket-Accept", accept_key(KEY))
         else:
             self.send_header("Content-Length", "0")
         self.end_headers()
@@ -73,6 +92,17 @@ class Upstream(BaseHTTPRequestHandler):
             self.wfile.write(FRAME)
             self.wfile.flush()
         self.close_connection = True
+
+
+def upstream_observation():
+    connection = http.client.HTTPConnection("cma-agent-manager", 80, timeout=3)
+    try:
+        connection.request("GET", OBSERVATION)
+        response = connection.getresponse()
+        assert response.status == 200, response.status
+        return json.load(response)
+    finally:
+        connection.close()
 
 
 def request(path, headers):
@@ -97,6 +127,7 @@ def test_proxy():
     while True:
         try:
             if request("/ready", {})[0] == 200:
+                assert upstream_observation()["uri"] == "/ready"
                 break
         except OSError:
             pass
@@ -115,19 +146,21 @@ def test_proxy():
     }
 
     def check(path, headers, expected, upstream, upgraded=False, refusal=None):
-        status, observed, frame = request(path, headers)
+        status, response, frame = request(path, headers)
+        assert not any(name.startswith("x-fixture-") for name in response)
+        observed = upstream_observation()
         assert status == expected, (path, expected, status, observed)
-        assert observed["x-fixture-uri"] == upstream, (path, observed)
-        assert observed["x-fixture-upgrade"] == ("websocket" if upgraded else ""), observed
-        assert observed["x-fixture-connection"] in (("upgrade",) if upgraded else ("", "close")), observed
-        assert observed["x-fixture-host"] == HOST, observed
-        forwarded = observed["x-fixture-forwarded-for"].split(", ")
+        assert observed["uri"] == upstream, (path, observed)
+        assert observed["upgrade"] == ("websocket" if upgraded else ""), observed
+        assert observed["connection"] in (("upgrade",) if upgraded else ("", "close")), observed
+        assert observed["host"] == HOST, observed
+        forwarded = observed["forwarded_for"].split(", ")
         assert len(forwarded) == 2 and forwarded[0] == CLIENT_ADDRESS, forwarded
-        assert observed["x-fixture-forwarded-proto"] == "http", observed
-        assert observed.get("x-fixture-refusal") == refusal, observed
+        assert observed["forwarded_proto"] == "http", observed
+        assert observed["refusal"] == refusal, observed
         if expected == 101:
-            assert observed["sec-websocket-accept"] == accept_key(KEY), observed
-            assert observed["x-fixture-websocket-version"] == "13", observed
+            assert response["sec-websocket-accept"] == accept_key(KEY), response
+            assert observed["websocket_version"] == "13", observed
             assert frame == FRAME, frame
 
     for desktop in (DESKTOP, ALIAS):
