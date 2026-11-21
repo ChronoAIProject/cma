@@ -148,7 +148,7 @@ async fn apply_publication_observed(
         if current.revision != mutation.expected_agent_revision {
             return Err(ApplyError::StaleProposal);
         }
-        rebuild_parents::fence(store, &current, parents, &mut scope).await?;
+        rebuild_parents::fence(store, &current, mutation, parents, &mut scope).await?;
     }
     let segmented = if super::agent_log_segments::read_format(&current_row)
         .map_err(ApplyError::Domain)?

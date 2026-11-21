@@ -23,6 +23,7 @@ struct Intervention {
 
 #[derive(Default)]
 struct Trace {
+    repair_after_abort: Mutex<Option<AgentId>>,
     intervention: Mutex<Option<Intervention>>,
     replace_before_failure: Mutex<Option<(AgentId, layer3_adapter::hosted::InMemoryHostedBackend)>>,
     pending_fault: Mutex<Option<(AgentId, Fault)>>,
@@ -118,6 +119,13 @@ impl Fixture {
                         .failure
                         .contains_label(mongodb::error::TRANSIENT_TRANSACTION_ERROR) =>
             {
+                let repair = callback.repair_after_abort.lock().unwrap().take();
+                if let Some(id) = repair {
+                    tokio::task::block_in_place(|| {
+                        tokio::runtime::Handle::current()
+                            .block_on(lineage::repair_workspace_commit(&observer, &id));
+                    });
+                }
                 let intervention = callback.intervention.lock().unwrap().take();
                 if let Some(intervention) = intervention {
                     tokio::task::block_in_place(|| {
@@ -420,3 +428,6 @@ async fn failure_publication_uses_one_native_result_after_abort_or_unknown_ack()
 
 #[path = "lifecycle_publication/native_failure_tests.rs"]
 mod native_failure;
+
+#[path = "lifecycle_publication/lineage_tests.rs"]
+mod lineage;

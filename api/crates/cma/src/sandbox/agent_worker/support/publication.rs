@@ -4,7 +4,8 @@ use std::time::{Duration, SystemTime};
 
 use layer2_core::agent_ownership::execution_authority;
 use layer2_core::sandbox::store::{
-    AgentWorkMutation, AgentWorkPublication, AgentWorkPublicationParents, SandboxStoreError,
+    AgentWorkMutation, AgentWorkPublication, AgentWorkPublicationLineage,
+    AgentWorkPublicationParents, SandboxStoreError,
 };
 use layer2_core::sandbox::{
     Agent, Sandbox, SandboxStatus, Workspace, WorkspaceStatus, Worktree, WorktreeStatus,
@@ -28,6 +29,7 @@ impl PublicationParents {
             sandbox_revision: self.sandbox.revision,
             workspace_revision: self.workspace.revision,
             worktree_revision: self.worktree.revision,
+            lineage: AgentWorkPublicationLineage::Authorized,
         }
     }
 
@@ -103,7 +105,7 @@ impl AgentWorker {
         Fut: Future<Output = Result<AgentWorkPublication, SandboxStoreError>>,
     {
         let started = tokio::time::Instant::now();
-        let (parents, mut current_parents) = match observed_parents {
+        let (parents, current_parents) = match observed_parents {
             Some(parents) => {
                 // A native reply retains the parents that authorized its request.
                 // Fresh reads supply only revisions for those same authorities.
@@ -133,6 +135,53 @@ impl AgentWorker {
                 (parents.clone(), parents)
             }
         };
+        self.publish_with_parent_proof(
+            original,
+            current_parents.revisions(),
+            Some(parents),
+            now,
+            started,
+            publish,
+        )
+        .await
+    }
+
+    pub(super) async fn publish_rejected_lineage<F, Fut>(
+        &self,
+        original: Agent,
+        rejection: AgentWorkPublicationParents,
+        now: SystemTime,
+        publish: F,
+    ) -> Result<(), SandboxStoreError>
+    where
+        F: FnMut(Agent, SystemTime, Option<AgentWorkPublicationParents>) -> Fut,
+        Fut: Future<Output = Result<AgentWorkPublication, SandboxStoreError>>,
+    {
+        // A retry must retain the exact revisions that established the rejection.
+        self.publish_with_parent_proof(
+            original,
+            rejection,
+            None,
+            now,
+            tokio::time::Instant::now(),
+            publish,
+        )
+        .await
+    }
+
+    async fn publish_with_parent_proof<F, Fut>(
+        &self,
+        original: Agent,
+        mut proof: AgentWorkPublicationParents,
+        authorized_parents: Option<PublicationParents>,
+        now: SystemTime,
+        started: tokio::time::Instant,
+        mut publish: F,
+    ) -> Result<(), SandboxStoreError>
+    where
+        F: FnMut(Agent, SystemTime, Option<AgentWorkPublicationParents>) -> Fut,
+        Fut: Future<Output = Result<AgentWorkPublication, SandboxStoreError>>,
+    {
         let authority = execution_authority();
         if self.config.ownership.is_some() && authority.is_none() {
             return Err(SandboxStoreError::Conflict);
@@ -157,7 +206,7 @@ impl AgentWorker {
                         .map_err(|_| SandboxStoreError::Conflict)?;
                 }
             }
-            match publish(current.clone(), at, Some(current_parents.revisions())).await? {
+            match publish(current.clone(), at, Some(proof)).await? {
                 AgentWorkPublication::Published => return Ok(()),
                 AgentWorkPublication::KnownAborted if attempt + 1 == ATTEMPTS => break,
                 AgentWorkPublication::KnownAborted => {}
@@ -168,12 +217,15 @@ impl AgentWorker {
                 .get_agent(&original.id)
                 .await?
                 .ok_or(SandboxStoreError::NotFound)?;
-            current_parents = self
-                .publication_parents(&original)
-                .await?
-                .ok_or(SandboxStoreError::NotFound)?;
-            if !parents.compatible(&current_parents, &current) {
-                return Err(SandboxStoreError::Conflict);
+            if let Some(parents) = &authorized_parents {
+                let current_parents = self
+                    .publication_parents(&original)
+                    .await?
+                    .ok_or(SandboxStoreError::NotFound)?;
+                if !parents.compatible(&current_parents, &current) {
+                    return Err(SandboxStoreError::Conflict);
+                }
+                proof = current_parents.revisions();
             }
             tokio::task::yield_now().await;
         }

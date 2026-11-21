@@ -102,7 +102,8 @@ pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
     AgentConnectionRecoveryRequest, AgentCreateAdmission, AgentRetryObservation, AgentWorkMutation,
-    AgentWorkPublication, AgentWorkPublicationParents, AgentWorkerStore, VersionedWorktree,
+    AgentWorkPublication, AgentWorkPublicationLineage, AgentWorkPublicationParents,
+    AgentWorkerStore, VersionedWorktree,
 };
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;

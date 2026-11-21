@@ -2,8 +2,8 @@ use std::time::SystemTime;
 
 use layer2_core::rfc3339_at;
 use layer2_core::sandbox::store::{
-    AgentRetryObservation, AgentWorkMutation, SandboxStoreError, VersionedWorktree,
-    MAX_AGENT_WORK_RECEIPTS,
+    AgentRetryObservation, AgentWorkMutation, AgentWorkPublicationLineage,
+    AgentWorkPublicationParents, SandboxStoreError, VersionedWorktree, MAX_AGENT_WORK_RECEIPTS,
 };
 use layer2_core::sandbox::work_retry::WorkRetryFailure;
 use layer2_core::sandbox::{
@@ -56,6 +56,7 @@ pub(in crate::sandbox) struct WorkerFailure {
     detail: String,
     retryable: bool,
     observation: Option<AgentRetryObservation>,
+    rejected_lineage: Option<Box<AgentWorkPublicationParents>>,
     retry_kind: WorkRetryFailure,
 }
 
@@ -66,6 +67,7 @@ impl WorkerFailure {
             detail: detail.into(),
             retryable: true,
             observation: None,
+            rejected_lineage: None,
             retry_kind: if class == "agent_parent_not_ready" {
                 WorkRetryFailure::Waiting
             } else {
@@ -80,6 +82,7 @@ impl WorkerFailure {
             detail: detail.into(),
             retryable: false,
             observation: None,
+            rejected_lineage: None,
             retry_kind: WorkRetryFailure::ExternalAction,
         }
     }
@@ -262,10 +265,29 @@ pub(super) fn validate_lineage(
     if valid {
         Ok(())
     } else {
-        Err(WorkerFailure::terminal(
+        let mut failure = WorkerFailure::terminal(
             "agent_lineage_invalid",
             "agent parent records do not describe the same runtime resources",
-        ))
+        );
+        if sandbox.id == agent.sandbox_id
+            && sandbox.owner == agent.owner
+            && workspace.id == agent.workspace_id
+            && worktree.id == agent.worktree_id
+            && worktree.workspace_id == agent.workspace_id
+            && worktree.sandbox_id == agent.sandbox_id
+            && worktree.owner == agent.owner
+            && worktree.agent_id.as_ref() == Some(&agent.id)
+        {
+            failure.rejected_lineage = Some(Box::new(AgentWorkPublicationParents {
+                sandbox_revision: sandbox.revision,
+                workspace_revision: workspace.revision,
+                worktree_revision: worktree.revision,
+                lineage: AgentWorkPublicationLineage::Rejected {
+                    workspace_foreign: workspace.owner != agent.owner,
+                },
+            }));
+        }
+        Err(failure)
     }
 }
 

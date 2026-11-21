@@ -193,26 +193,26 @@ impl AgentWorker {
         now: SystemTime,
         parents: Option<PublicationParents>,
     ) -> Result<(), SandboxStoreError> {
-        let rejected_lineage = parents.is_none() && failure.class == "agent_lineage_invalid";
-        if rejected_lineage {
-            if agent
-                .work
-                .cleanup_debt
-                .iter()
-                .any(|debt| debt.step == agent.work.step)
+        let rejected_lineage = if failure.class == "agent_lineage_invalid" {
+            if parents.is_some()
+                || agent
+                    .work
+                    .cleanup_debt
+                    .iter()
+                    .any(|debt| debt.step == agent.work.step)
             {
                 return Err(SandboxStoreError::Conflict);
             }
-            let sandbox = self
-                .dependencies
-                .store
-                .get_sandbox(&agent.sandbox_id)
-                .await?
-                .ok_or(SandboxStoreError::NotFound)?;
-            if sandbox.owner != agent.owner {
-                return Err(SandboxStoreError::Conflict);
-            }
-        }
+            Some(
+                failure
+                    .rejected_lineage
+                    .as_deref()
+                    .copied()
+                    .ok_or(SandboxStoreError::Conflict)?,
+            )
+        } else {
+            None
+        };
         let typed = failure.typed();
         let mut worktree = match &parents {
             Some(parents) => parents.worktree.clone(),
@@ -223,6 +223,9 @@ impl AgentWorker {
                 .await?
                 .ok_or(SandboxStoreError::NotFound)?,
         };
+        if rejected_lineage.is_some_and(|proof| proof.worktree_revision != worktree.revision) {
+            return Err(SandboxStoreError::Conflict);
+        }
         let versioned = if worktree.status == WorktreeStatus::Creating {
             let expected_revision = worktree.revision;
             worktree
@@ -238,24 +241,28 @@ impl AgentWorker {
         let id = agent.id.clone();
         let runtime_generation = agent.conversation.runtime_generation;
         let fence = claimed_fence(&agent, &self.config.holder)?;
-        // A preflight rejection can be recorded under the Agent claim even
-        // though the rejected parent cannot authorize a native publication.
-        if rejected_lineage || !can_rebuild(agent.work.step) {
+        if rejected_lineage.is_none() && !can_rebuild(agent.work.step) {
             let mutation = self.startup_failure_proposal(agent, typed, versioned, now)?;
             self.dependencies
                 .registry
                 .fence(&id, runtime_generation, fence);
             return self.dependencies.store.commit_agent_work(mutation).await;
         }
-        self.publish_lifecycle_work(agent, parents, now, |agent, at, parents| {
+        let publish = |agent, at, parents| {
             let typed = typed.clone();
             let worktree = versioned.clone();
             async move {
                 let mutation = self.startup_failure_proposal(agent, typed, worktree, at)?;
                 self.commit_lifecycle_publication(mutation, parents).await
             }
-        })
-        .await?;
+        };
+        if let Some(rejection) = rejected_lineage {
+            self.publish_rejected_lineage(agent, rejection, now, publish)
+                .await?;
+        } else {
+            self.publish_lifecycle_work(agent, parents, now, publish)
+                .await?;
+        }
         self.dependencies
             .registry
             .fence(&id, runtime_generation, fence);
