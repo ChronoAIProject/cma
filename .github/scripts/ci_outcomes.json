@@ -601,9 +601,21 @@
         },
         "GITHUB_READ_FAILED": {
           "title": "GitHub read failed",
-          "meaning": "A GitHub API read failed.",
+          "meaning": "A GitHub API read failed without a transient or permission cause: another HTTP status, an oversized response, or a gh failure whose diagnostic names no network fault.",
           "cause": "unknown",
-          "next": "Re-run the failed jobs; if it repeats, check GitHub's status and the workflow token's permissions."
+          "next": "Open the reported line; if it repeats, compare the read with the GitHub API and the workflow token's permissions."
+        },
+        "GITHUB_READ_TRANSIENT": {
+          "title": "GitHub read unavailable",
+          "meaning": "GitHub API reads kept failing transiently: a 5xx, 408 or 429 response, a rate-limited 403, or no response at all.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; if it repeats, check GitHub's status."
+        },
+        "GITHUB_READ_DENIED": {
+          "title": "GitHub read denied",
+          "meaning": "GitHub answered an API read with 401, or with 403 and no rate limit: the workflow token is invalid or lacks a permission the read needs.",
+          "cause": "operator",
+          "next": "An operator must check the allocate job's token permissions (contents, pull-requests and actions) and the repository's Actions settings, then re-run the failed jobs."
         },
         "GITHUB_RESPONSE_INVALID": {
           "title": "GitHub response invalid",
@@ -649,7 +661,7 @@
         },
         "DEADLINE_EXCEEDED": {
           "title": "Allocation deadline exceeded",
-          "meaning": "Allocation exceeded its 120 second budget.",
+          "meaning": "An allocation attempt, or a GitHub read within it, ran out of its 120 second budget.",
           "cause": "transient",
           "next": "Re-run the failed jobs."
         },

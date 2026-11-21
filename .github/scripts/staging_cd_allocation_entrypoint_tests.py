@@ -118,12 +118,13 @@ class AllocationEntrypointTests(unittest.TestCase):
         catalogued = json.loads(Path(__file__).with_name("ci_outcomes.json").read_text())
         codes = catalogued["families"]["allocation"]["codes"]
         self.assertEqual(allocation.TRANSIENT_CODES, {code for code, entry in codes.items() if entry["cause"] == "transient"})
-        self.assertLessEqual(allocation.TRANSIENT_CODES, set(allocation.REFUSAL_CODES.values()))
+        self.assertLessEqual(allocation.TRANSIENT_CODES,
+                             set(allocation.REFUSAL_CODES.values()) | allocation.GITHUB_READ_CAUSES)
         # The incident codes of an uncertain push and a spent budget are among them.
         self.assertLessEqual({"WRITE_UNCERTAIN", "READ_FAILED", "DEADLINE_EXCEEDED"}, allocation.TRANSIENT_CODES)
         # Durable causes are no longer catalogued as transient.
-        for code in ("RESERVATION_PUSH_REJECTED", "INVENTORY_CLAIM_CONFLICT", "INVENTORY_CLAIM_ORPHANED",
-                     "INVENTORY_TOO_LARGE"):
+        for code in ("GITHUB_READ_DENIED", "RESERVATION_PUSH_REJECTED", "INVENTORY_CLAIM_CONFLICT",
+                     "INVENTORY_CLAIM_ORPHANED", "INVENTORY_TOO_LARGE"):
             self.assertEqual(codes[code]["cause"], "operator", code)
         self.assertEqual(codes["RESERVATION_PLAN_INVALID"]["cause"], "unknown")
 

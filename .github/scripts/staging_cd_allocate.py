@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import sys
 
+import ci_retry
 from ci_outcome import error_site, report
 from staging_cd_admission import event_identity
 from staging_cd_baselines import durable_baselines
@@ -34,8 +35,10 @@ REFUSAL_CODES = {
     "Merged PR must carry exactly one supported version-upgrade label": "VERSION_LABEL_REQUIRED",
     "Version labels are malformed": "VERSION_LABELS_INVALID",
     "Release source is not on verified develop first-parent history": "SOURCE_HISTORY_INVALID",
+    # Split by its cause in github_read_code; this is the code of no known cause.
     "GitHub API request failed": "GITHUB_READ_FAILED",
     "GitHub API response is invalid": "GITHUB_RESPONSE_INVALID",
+    "GitHub read budget expired": "DEADLINE_EXCEEDED",
     "Version reservation collision limit exceeded": "RESERVATION_COLLISION_LIMIT",
     "Reservation push failed without a collision": "RESERVATION_PUSH_FAILED",
     "Reservation push was not verified": "RESERVATION_VERIFY_FAILED",
@@ -56,22 +59,34 @@ REFUSAL_CODES = {
     "Allocation reservation readback is unavailable": "RESERVATION_NOT_VISIBLE",
 }
 FALLBACK_CODES = frozenset({"UNEXPECTED_ERROR", "UNCLASSIFIED_REFUSAL"})
+# Codes a failed GitHub read takes from its cause rather than its message.
+GITHUB_READ_CAUSES = frozenset({"GITHUB_READ_TRANSIENT", "GITHUB_READ_DENIED"})
 # The codes ci_outcomes.json catalogues as transient; a test keeps them equal.
 # Such a refusal stops allocation at its settlement gate, the step catch-up
 # re-runs a head run for, once. Every other refusal fails the allocation step.
 TRANSIENT_CODES = frozenset({
     "RESERVATION_OWNER_UNREADABLE", "RESERVATION_OWNER_UNCERTAIN", "MERGED_PR_IDENTITY_CHANGED",
-    "VERSION_LABELS_INVALID", "GITHUB_RESPONSE_INVALID", "RESERVATION_COLLISION_LIMIT", "RESERVATION_PUSH_FAILED",
-    "RESERVATION_VERIFY_FAILED", "FINAL_SETTLEMENT_UNCERTAIN", "DEADLINE_EXCEEDED", "READ_FAILED",
-    "WRITE_UNCERTAIN", "INVENTORY_INCOMPLETE", "RESERVATION_COLLISION", "RESERVATION_NOT_VISIBLE",
+    "VERSION_LABELS_INVALID", "GITHUB_READ_TRANSIENT", "GITHUB_RESPONSE_INVALID", "RESERVATION_COLLISION_LIMIT",
+    "RESERVATION_PUSH_FAILED", "RESERVATION_VERIFY_FAILED", "FINAL_SETTLEMENT_UNCERTAIN", "DEADLINE_EXCEEDED",
+    "READ_FAILED", "WRITE_UNCERTAIN", "INVENTORY_INCOMPLETE", "RESERVATION_COLLISION", "RESERVATION_NOT_VISIBLE",
 })
+
+
+def github_read_code(error):
+    """Name a failed GitHub read by the cause its refusal carries."""
+    if ci_retry.classify(error) == ci_retry.TRANSIENT:
+        # A 5xx, 408 or 429 response, a rate-limited 403, or a transport failure.
+        return "GITHUB_READ_TRANSIENT"
+    # Without rate-limit headers, a 401 or 403 is the token's standing answer.
+    return "GITHUB_READ_DENIED" if getattr(error, "status", None) in (401, 403) else "GITHUB_READ_FAILED"
 
 
 def refusal_code(error):
     """The fixed public code of an allocation failure."""
     if not isinstance(error, Refusal):
         return "UNEXPECTED_ERROR"
-    return REFUSAL_CODES.get(str(error), "UNCLASSIFIED_REFUSAL")
+    code = REFUSAL_CODES.get(str(error), "UNCLASSIFIED_REFUSAL")
+    return github_read_code(error) if code == "GITHUB_READ_FAILED" else code
 
 
 def run_allocation(operation, env=None):
