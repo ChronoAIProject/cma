@@ -22,13 +22,20 @@ export type AuthorizedRead<Value> =
       readonly refreshError?: string;
     };
 
+interface RetryPolicy {
+  readonly scope: object;
+  readonly applies: (error: ApiError) => boolean;
+}
+
 /** Values belong to one read context and expire independently of a pending refresh. */
 export function useAuthorizedRead<Value>(
   read: ((signal: AbortSignal) => Promise<AuthorizedValue<Value>>) | undefined,
   retainStale = false,
-  retryWithDeadline?: (error: ApiError) => boolean,
+  retryPolicy?: RetryPolicy,
 ) {
-  const retry = useRef({ read, failures: 0, at: 0 });
+  const retryScope = retryPolicy?.scope ?? read;
+  const retryWithDeadline = retryPolicy?.applies;
+  const retry = useRef({ scope: retryScope, failures: 0, at: 0 });
   const retryRead = useRef<{ read: typeof read; load: () => void } | undefined>(undefined);
   const [revision, setRevision] = useState(0);
   const [stored, setStored] = useState<{
@@ -47,7 +54,8 @@ export function useAuthorizedRead<Value>(
   }, [read]);
   useEffect(() => {
     if (read === undefined) return;
-    if (retry.current.read !== read) retry.current = { read, failures: 0, at: 0 };
+    if (retry.current.scope !== retryScope)
+      retry.current = { scope: retryScope, failures: 0, at: 0 };
     let active = true;
     let retryTimer: ReturnType<typeof setTimeout> | undefined;
     let pending: AbortController | undefined;
@@ -130,7 +138,7 @@ export function useAuthorizedRead<Value>(
           clear();
           void load();
         }, deadline - Date.now());
-        retry.current = { read, failures: 0, at: 0 };
+        retry.current = { scope: retryScope, failures: 0, at: 0 };
         publish({ status: 'ready', value: result.value });
       } catch (error) {
         if (active && pending === request) {
@@ -190,7 +198,7 @@ export function useAuthorizedRead<Value>(
       document.removeEventListener('visibilitychange', foreground);
       window.removeEventListener('focus', foreground);
     };
-  }, [read, revision, retainStale, retryWithDeadline]);
+  }, [read, revision, retainStale, retryScope, retryWithDeadline]);
   const state: AuthorizedRead<Value> =
     stored !== undefined &&
     stored.read === read &&

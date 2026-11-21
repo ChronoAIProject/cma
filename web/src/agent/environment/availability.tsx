@@ -35,7 +35,7 @@ export function useAgentEnvironment(
           },
     [scope, active],
   );
-  return useAuthorizedRead(read, false, ownerRetryDeadline);
+  return useAuthorizedRead(read, false, { scope, applies: ownerRetryDeadline });
 }
 
 function ownerRetryDeadline(error: ApiError): boolean {

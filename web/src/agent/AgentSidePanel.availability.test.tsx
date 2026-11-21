@@ -46,7 +46,7 @@ function panel(
   client: ReturnType<typeof agentClient>,
   tab: AgentPanel = 'files',
   shared = false,
-  { viewerId = 'owner-a', agentId = 'agt_1' } = {},
+  { viewerId = 'owner-a', agentId = 'agt_1', runtimeVersion = 'runtime-a' } = {},
 ) {
   const observation = new AgentComputerObservation({
     client,
@@ -72,6 +72,7 @@ function panel(
         observation={observation}
         panel={tab}
         detail={{ ...AGENT_DETAIL, id: agentId, desktop: false }}
+        resourceAvailability={{ state: 'live', runtimeVersion }}
         onClose={vi.fn()}
         onAccessChanged={vi.fn()}
         publicationScope={new ArtifactPublicationScope()}
@@ -342,7 +343,7 @@ it('honors the environment 429 deadline through retry buttons, focus and the per
   expect(currentTab().queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
 });
 
-it('honors the owner retry header on first open and coalesces retry clicks while pending', async () => {
+it('honors the owner retry header across first open and same-scope reopen', async () => {
   vi.useFakeTimers();
   vi.spyOn(Math, 'random').mockReturnValue(0);
   let recover!: (response: Response) => void;
@@ -365,7 +366,8 @@ it('honors the owner retry header on first open and coalesces retry clicks while
     .mockImplementationOnce(() => new Promise<Response>((resolve) => (recover = resolve)));
   const rest = computerClient(createClient({ baseUrl: 'https://fixture.invalid', fetch }));
   const fileClient = files(() => rest.environment('agt_1'));
-  render(panel(agentClient({ files: { ...fileClient, environment: rest.environment } })));
+  const client = agentClient({ files: { ...fileClient, environment: rest.environment } });
+  const view = render(panel(client));
   await act(async () => {});
   const retry = () => {
     fireEvent.click(currentTab().getByRole('button', { name: 'Try again' }));
@@ -373,13 +375,17 @@ it('honors the owner retry header on first open and coalesces retry clicks while
   };
   retry();
   retry();
-  await act(() => vi.advanceTimersByTimeAsync(999));
+  view.rerender(panel(client, 'details'));
+  await act(() => vi.advanceTimersByTimeAsync(200));
+  expect(fetch).toHaveBeenCalledTimes(1);
+  view.rerender(panel(client));
+  await act(() => vi.advanceTimersByTimeAsync(799));
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(fileClient.list).not.toHaveBeenCalled();
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(fetch).toHaveBeenCalledTimes(2);
-  retry();
-  retry();
+  fireEvent.focus(window);
+  fireEvent.focus(window);
   await act(async () => recover(Response.json({ ...environment, files: available })));
 
   expect(fetch).toHaveBeenCalledTimes(2);
@@ -390,7 +396,7 @@ it('honors the owner retry header on first open and coalesces retry clicks while
   expect(fileClient.list).toHaveBeenCalledTimes(1);
 });
 
-it.each([{ viewerId: 'owner-b' }, { agentId: 'agt_2' }])(
+it.each([{ viewerId: 'owner-b' }, { agentId: 'agt_2' }, { runtimeVersion: 'runtime-b' }])(
   'quarantines an old Environment retry after the scope changes to %o',
   async (scope) => {
     vi.useFakeTimers();
