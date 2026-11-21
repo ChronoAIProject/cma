@@ -35,7 +35,7 @@ mod worker_tracking_tests;
 pub use client::ProviderClient;
 pub use client_types::{
     Accepted, BindingRequest, BindingResponse, FieldRefusal, ProviderError, ToolsAdvertisement,
-    TurnRequest, TurnStream,
+    TurnEvents, TurnRequest, TurnStream,
 };
 pub use context::EventContextSnapshot;
 pub(crate) use frozen::FrozenSubmission;

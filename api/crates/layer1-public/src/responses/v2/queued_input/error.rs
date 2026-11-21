@@ -11,6 +11,7 @@ pub(super) fn edit(value: QueuedCancellationError) -> Response {
             "queued_input_not_admitted",
             "The original edit was not admitted and its source command revision is permanently stale. Observe again before creating a new intent.", None),
         QueuedCancellationError::Admission(value) => admission(value),
+        QueuedCancellationError::OwnerRequired => admission(CommandLedgerError::Unavailable.into()),
     }
 }
 

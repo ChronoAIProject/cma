@@ -15,6 +15,7 @@ use tokio::time::Instant;
 pub(super) async fn outcome_event(
     state: &mut EventState,
     outcome: TurnOutcome,
+    answer_response_id: Option<&str>,
     sender: &Sender,
     config: &DeliveryConfig,
 ) {
@@ -39,7 +40,14 @@ pub(super) async fn outcome_event(
             state.last_output_at = Instant::now();
             if state.channel.definition.reply.auto_final && !state.tool_replied {
                 state.answer_attempted = true;
-                send_text(sender, state, text, DeliveryStep::Answer).await;
+                send_text(
+                    sender,
+                    state,
+                    text,
+                    DeliveryStep::Answer,
+                    answer_response_id,
+                )
+                .await;
             }
         }
         TurnOutcome::Completed { final_text } => {
@@ -49,7 +57,14 @@ pub(super) async fn outcome_event(
             {
                 if let Some(text) = final_text {
                     state.answer_attempted = true;
-                    send_text(sender, state, text, DeliveryStep::Answer).await;
+                    send_text(
+                        sender,
+                        state,
+                        text,
+                        DeliveryStep::Answer,
+                        answer_response_id,
+                    )
+                    .await;
                 }
             }
             if !state.terminal
@@ -72,6 +87,7 @@ pub(super) async fn outcome_event(
                     state,
                     config.failure_text.clone(),
                     DeliveryStep::Failure,
+                    None,
                 )
                 .await;
             }
@@ -98,8 +114,14 @@ pub(super) async fn timer_step(
     if state.ack_due.is_some_and(|at| at <= Instant::now()) {
         state.ack_due = None;
         if !state.first_send_done {
-            state.ack_sent =
-                send_text(sender, state, config.ack_text.clone(), DeliveryStep::Ack).await;
+            state.ack_sent = send_text(
+                sender,
+                state,
+                config.ack_text.clone(),
+                DeliveryStep::Ack,
+                None,
+            )
+            .await;
             state.last_progress_at = Instant::now();
             return true;
         }
@@ -116,6 +138,7 @@ pub(super) async fn timer_step(
             state,
             "Still working…".into(),
             DeliveryStep::Heartbeat,
+            None,
         )
         .await;
         state.last_progress_at = Instant::now();
@@ -128,7 +151,9 @@ async fn send_text(
     state: &mut EventState,
     text: String,
     step: DeliveryStep,
+    answer_response_id: Option<&str>,
 ) -> bool {
+    let answer_response_id = answer_response_id.filter(|_| !text.trim().is_empty());
     let message = OutboundMessage {
         whatsapp_template: None,
         structured_content: None,
@@ -141,7 +166,7 @@ async fn send_text(
         blocks: vec![],
         reply_to: None,
     };
-    let result = reply(sender, state, &message, step).await;
+    let result = reply(sender, state, &message, step, answer_response_id).await;
     matches!(result.delivery, DeliveryOutcome::Confirmed { .. })
 }
 /// Send `message` for `state`'s event through the legacy lane's `Ungated`
@@ -154,6 +179,7 @@ pub(super) async fn reply(
     state: &mut EventState,
     message: &OutboundMessage,
     step: DeliveryStep,
+    answer_response_id: Option<&str>,
 ) -> IntentReceipt {
     let context = SendContext {
         trace: &state.trace,
@@ -163,6 +189,8 @@ pub(super) async fn reply(
     };
     let (result, effects) = sender.reply(&context, &state.event, message).await;
     state.first_send_done |= effects.first_send_done;
-    sender.observe(&state.event, step, &result.delivery).await;
+    sender
+        .observe(&state.event, step, &result.delivery, answer_response_id)
+        .await;
     result
 }
