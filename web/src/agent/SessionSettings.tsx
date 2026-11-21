@@ -6,6 +6,8 @@ import type { AgentModelOption, AgentSettingsView } from '../api/client';
 import { Button } from '../ui/Button';
 import { useSettingsEditor, type SettingsEditorAdapter } from './useSettingsEditor';
 import { unconfirmedSettingsWarning, useUnconfirmedSettings } from './useUnconfirmedSettings';
+import { parseSettingsIntentBody } from './settingsIntent';
+import { agentTransportJournal } from './transport/journal';
 import { Presence } from '../ui/Presence';
 import { ModelEffortPicker } from './ModelEffortPicker';
 import { PermissionChip } from './PermissionChip';
@@ -16,6 +18,7 @@ import './ComposerSettings.css';
 interface SessionSettingsProps {
   readonly usage?: AgentUsage;
   readonly agentId: string;
+  readonly viewerId?: string;
   readonly active: boolean;
   readonly runtimeReady: boolean;
   readonly busy: boolean;
@@ -33,11 +36,12 @@ const sameSettings = (left: AgentSettingsView, right: AgentSettingsView) =>
   left.permission_mode === right.permission_mode;
 
 export function SessionSettings(props: SessionSettingsProps) {
-  return <SessionSettingsForm key={props.agentId} {...props} />;
+  return <SessionSettingsForm key={JSON.stringify([props.viewerId, props.agentId])} {...props} />;
 }
 
 function SessionSettingsForm({
   agentId,
+  viewerId,
   active,
   runtimeReady,
   busy,
@@ -67,15 +71,25 @@ function SessionSettingsForm({
       body: (_view, proposal) => ({ ...settingsProposal(proposal), model: proposal.model.trim() }),
       equal: sameSettings,
       pending: (view) => view.pending === true,
+      retention: viewerId
+        ? {
+            journal: () =>
+              agentTransportJournal(sessionStorage, viewerId, agentId).settingsIntent(
+                'settings',
+                parseSettingsIntentBody,
+              ),
+            proposal: settingsProposal,
+          }
+        : undefined,
     }),
-    [client, agentId],
+    [client, agentId, viewerId],
   );
   const editor = useSettingsEditor(adapter, active && !!client.readAgentSettings);
   const { proposal: value, snapshot: saved, intent } = editor;
   const error = editor.failure?.message;
   const pending = editor.saving;
   const confirmed = editor.confirmed;
-  useUnconfirmedSettings(intent !== undefined);
+  useUnconfirmedSettings(intent !== undefined && !viewerId);
   const [modelsReload, setModelsReload] = useState(0);
   const [models, setModels] = useState<readonly AgentModelOption[]>([]);
   const [modelsLoading, setModelsLoading] = useState(true);
@@ -214,7 +228,7 @@ function SessionSettingsForm({
         {busy && changed ? (
           <p role="status">Settings can be changed after the current turn finishes.</p>
         ) : null}
-        {intent ? <p role="status">{unconfirmedSettingsWarning}</p> : null}
+        {intent ? <p role="status">{unconfirmedSettingsWarning(viewerId)}</p> : null}
         {editor.waiting ? <p role="status">Waiting before another request is allowed.</p> : null}
         {error ? <p role="alert">{error}</p> : null}
         {error && draft ? (

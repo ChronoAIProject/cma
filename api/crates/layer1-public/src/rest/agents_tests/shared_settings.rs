@@ -46,8 +46,9 @@ impl AgentRuntimeRegistry for Registry {
     }
 }
 
-async fn setup(
+async fn setup_with_operations(
     mode: ShareMode,
+    operations: Option<Arc<dyn OperationStore>>,
 ) -> (
     Fixture,
     Arc<ResourceAccessService>,
@@ -66,7 +67,7 @@ async fn setup(
         resolves: AtomicUsize::new(0),
     });
     let org = Arc::new(Authority(Mutex::new(Reply::Member)));
-    let fixture = fixture_with_ports(registry.clone(), None, Some(org.clone())).await;
+    let fixture = fixture_with_ports(registry.clone(), operations, Some(org.clone())).await;
     let agent = seeded_agent(ID, AgentStatus::Ready, 0, None);
     fixture
         .store
@@ -113,6 +114,18 @@ async fn setup(
     (fixture, access, share, registry, writes)
 }
 
+async fn setup(
+    mode: ShareMode,
+) -> (
+    Fixture,
+    Arc<ResourceAccessService>,
+    ResourceShare,
+    Arc<Registry>,
+    Arc<AtomicUsize>,
+) {
+    setup_with_operations(mode, None).await
+}
+
 async fn revoke_share(access: &ResourceAccessService, share: &ResourceShare) {
     access
         .change_share(
@@ -152,6 +165,88 @@ fn shared_request(
 
 fn selection() -> Value {
     json!({"model":"gpt-6","reasoning_effort":"high","permission_mode":"autonomous"})
+}
+
+#[derive(Default)]
+struct RevokeAfterReceipt {
+    store: MemoryOperationStore,
+    revocation: Mutex<Option<(Arc<ResourceAccessService>, ResourceShare)>>,
+}
+
+#[async_trait]
+impl OperationStore for RevokeAfterReceipt {
+    async fn reserve(&self, claim: &OperationClaim) -> Result<OperationReservation, StoreError> {
+        self.store.reserve(claim).await
+    }
+
+    async fn complete(&self, claim: &OperationClaim, outcome: Vec<u8>) -> Result<(), StoreError> {
+        let receipt: Value = serde_json::from_slice(&outcome).unwrap();
+        assert_eq!(receipt["status"], 200, "write before access revocation");
+        self.store.complete(claim, outcome).await?;
+        let revocation = self.revocation.lock().unwrap().take();
+        if let Some((access, share)) = revocation {
+            revoke_share(&access, &share).await;
+        }
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn configuration_revalidation_hides_receipts_after_access_loss() {
+    for (suffix, body) in [
+        ("settings", selection()),
+        (
+            "preferences",
+            json!({"expected_revision":0, "title":"Scoped title"}),
+        ),
+    ] {
+        let records = Arc::new(RevokeAfterReceipt::default());
+        let (fixture, access, share, _, _) =
+            setup_with_operations(ShareMode::ViewWrite, Some(records.clone())).await;
+        *records.revocation.lock().unwrap() = Some((access, share));
+        for attempt in 0..2 {
+            let mut request =
+                shared_request(Method::PATCH, suffix, Some("selection"), Some(body.clone()));
+            request
+                .headers_mut()
+                .insert("prefer", "cma-settings-reasons".parse().unwrap());
+            let response = fixture.router.clone().oneshot(request).await.unwrap();
+            let status = response.status();
+            assert_eq!(
+                response.headers()[header::CACHE_CONTROL],
+                "private, no-store"
+            );
+            let value: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 8192).await.unwrap())
+                    .unwrap();
+            if attempt == 0 {
+                assert_eq!(status, StatusCode::CONFLICT, "{suffix}: {value}");
+                assert_eq!(value["code"], "resource_access_changed");
+            } else {
+                assert!(
+                    matches!(status, StatusCode::FORBIDDEN | StatusCode::NOT_FOUND),
+                    "{suffix} replay returned {status}: {value}"
+                );
+            }
+            for field in [
+                "settings_update_reason",
+                "model",
+                "system_prompt",
+                "prompt_pending",
+                "revision",
+            ] {
+                assert!(
+                    value.get(field).is_none(),
+                    "{suffix} returned denied field {field}"
+                );
+            }
+            assert!(!value.to_string().contains("Scoped title"));
+        }
+        assert!(
+            records.revocation.lock().unwrap().is_none(),
+            "revocation must follow recording"
+        );
+    }
 }
 
 #[tokio::test]
