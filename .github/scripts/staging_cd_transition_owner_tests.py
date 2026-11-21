@@ -119,7 +119,7 @@ class TransitionOwnerTests(unittest.TestCase):
         env = {"CD_COMPONENT": task["component"], "CD_TASKS": json.dumps([task]), "GH_TOKEN": "fixture",
                "GITHUB_RUN_ID": str(task["reservation"]["run_id"]), "GITHUB_RUN_ATTEMPT": "1"}
         with patch.object(ownership, "event_identity"):
-            return ownership.owned(env, Path.cwd(), github=lambda _token: self.server)
+            return ownership.owned(env, Path.cwd(), github=lambda _token, **_kwargs: self.server)
 
     def test_same_source_claim_skips_once_its_started_peer_finalizes_and_the_next_push_resumes_it(self):
         for pushed in sorted(GROUP):
@@ -178,4 +178,6 @@ class TransitionOwnerTests(unittest.TestCase):
                 rows, verified = summarize(env)
                 self.assertIs(verified, False)
                 for key in skipped:
-                    self.assertIn(f"| {key} | source_already_final | skipped | skipped | unreported |", rows)
+                    # The outcome columns are unchanged; the row then explains the skip.
+                    self.assertIn(f"| {key} | source_already_final | skipped | skipped | unreported | "
+                                  "source_already_final | operator | ", "\n".join(rows))

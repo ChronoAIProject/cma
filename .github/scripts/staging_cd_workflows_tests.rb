@@ -36,9 +36,18 @@ class StagingWorkflowTest < Minitest::Test
     %w[plan allocate].each { |id| refute jobs.fetch(id).key?('concurrency'), "#{id} must accept every merge" }
     refute jobs.fetch('plan').key?('needs')
     assert_equal 'plan', jobs.fetch('allocate').fetch('needs')
+    # Releases also wait for the scanner-review preflight. It needs only
+    # allocation and holds no lock, so a new push still never waits on a build.
+    assert_equal 'allocate', jobs.fetch('infrastructure').fetch('needs')
+    refute jobs.fetch('infrastructure').key?('concurrency')
     %w[web am eg runtime runtime_omarchy].each do |component|
-      assert_equal 'allocate', jobs.fetch("release_#{component}").fetch('needs')
+      assert_equal %w[allocate infrastructure], jobs.fetch("release_#{component}").fetch('needs')
     end
+    review = jobs.fetch('infrastructure').fetch('steps').index { |step| step['run'].to_s.include?('staging_cd_scan_review.py') }
+    resolve = jobs.fetch('infrastructure').fetch('steps').index { |step| step['id'] == 'private' }
+    refute_nil review
+    assert_operator resolve, :<, review
+    assert_equal '${{ steps.private.outputs.revision }}', jobs['infrastructure']['steps'][review].dig('env', 'CD_INFRA_REVISION')
     workflow('staging-release').fetch('jobs').each_value { |job| refute job.key?('concurrency') }
     refute jobs['allocate']['steps'].any? { |step| step['run'].to_s.match?(/buildx|skopeo|deploy\.py/) }
   end
@@ -199,7 +208,7 @@ class StagingWorkflowTest < Minitest::Test
       id = component.tr('-', '_')
       publisher = jobs.fetch("release_#{id}")
       promote = jobs.fetch("promote_#{id}")
-      assert_equal 'allocate', publisher['needs']
+      assert_equal %w[allocate infrastructure], publisher['needs']
       assert_equal './.github/workflows/staging-release.yml', publisher['uses']
       assert_equal component, publisher.dig('with', 'component')
       assert_equal "Release #{component}", publisher['name'] # detector-cache producer identity
@@ -246,6 +255,58 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 'always()', evidence['if']
     assert_equal 'staging-admission-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.lane }}', evidence['with']['name']
     assert_equal '${{ runner.temp }}/public-admission/admission.json', evidence['with']['path']
+  end
+
+  def test_an_overtaken_set_skips_every_deployment_step_and_reaches_the_component_report
+    deploy = workflow('staging-deploy')
+    job = deploy['jobs']['deploy']
+    # Verification or, after it, the coordinator under the set lock may find the set overtaken.
+    assert_equal '${{ steps.release.outputs.disposition || steps.coordinate.outputs.disposition }}',
+                 job.dig('outputs', 'disposition')
+    trigger = deploy['on'] || deploy.fetch(true)
+    assert_equal '${{ jobs.deploy.outputs.disposition }}', trigger.dig('workflow_call', 'outputs', 'disposition', 'value')
+    steps = job['steps']
+    verify = steps.index { |step| step['id'] == 'release' }
+    assert_equal 'verify', steps[verify].dig('env', 'CD_RESOLVE_MODE')
+    gate = "steps.release.outputs.disposition == ''"
+    steps.drop(verify + 1).each do |step|
+      condition = step['if'].to_s
+      # Cleanup always runs; the proof echo needs a coordinator result; every other step is gated.
+      next if condition.start_with?('always()')
+
+      assert_includes condition, gate, step['name']
+    end
+    assert_equal ["Verified staging receipts ${{ steps.coordinate.outputs.controller_proof }}",
+                  'Remove private checkout', 'Remove isolated deployment tools'],
+                 steps.drop(verify + 1).select { |step| step['if'].to_s.start_with?('always()') }.map { |s| s['name'] }
+    promote = workflow('staging-promote')
+    trigger = promote['on'] || promote.fetch(true)
+    assert_equal '${{ jobs.deploy.outputs.disposition }}',
+                 trigger.dig('workflow_call', 'outputs', 'deploy_disposition', 'value')
+    assert_equal '${{ jobs.admit.outputs.disposition }}',
+                 trigger.dig('workflow_call', 'outputs', 'admit_disposition', 'value')
+    admit = promote['jobs']['admit']
+    assert_equal '${{ steps.set.outputs.disposition }}', admit.dig('outputs', 'disposition')
+    assert_equal 'automatic', admit['steps'].find { |step| step['id'] == 'set' }.dig('env', 'CD_RESOLVE_MODE')
+  end
+
+  def test_a_production_set_a_newer_release_owns_deploys_and_reports_nothing
+    deploy = workflow('prod-deploy')
+    job = deploy['jobs']['deploy']
+    assert_equal 'production', job.dig('env', 'CD_TARGET')
+    # Reproducing the approved set never hands over; only the coordinator can.
+    assert_equal '${{ steps.coordinate.outputs.disposition }}', job.dig('outputs', 'disposition')
+    trigger = deploy['on'] || deploy.fetch(true)
+    assert_equal '${{ jobs.deploy.outputs.disposition }}', trigger.dig('workflow_call', 'outputs', 'disposition', 'value')
+    steps = job['steps']
+    # release_commit reads this merge's parents; contract checks read release sources locally.
+    assert_equal 0, steps.first.dig('with', 'fetch-depth')
+    assert_equal 'python3 -B .github/scripts/prod_cd_select.py', steps.find { |step| step['id'] == 'release' }['run']
+    coordinate = steps.index { |step| step['id'] == 'coordinate' }
+    # A handover writes no controller proof or component result, so nothing after it reports a release.
+    assert_equal ["always() && !cancelled() && steps.coordinate.outputs.controller_proof != ''", 'always()', 'always()'],
+                 steps.drop(coordinate + 1).map { |step| step['if'] }
+    assert_equal "always() && needs.deploy.outputs.component_result != ''", deploy.dig('jobs', 'report', 'if')
   end
 
   def test_proven_takeover_in_any_lane_skips_finalize_and_reaches_the_component_report
@@ -444,6 +505,56 @@ class StagingWorkflowTest < Minitest::Test
                  workflow('staging-release').dig('jobs', 'publish', 'outputs', 'artifact')
   end
 
+  def test_catch_up_only_re_runs_the_develop_push_run_and_staging_stays_push_only
+    staging = workflow('staging-cd')
+    assert_equal 'Staging CD', staging['name'], 'the catch-up trigger names this workflow'
+    assert_equal({ 'push' => { 'branches' => ['develop'] } }, staging['on'] || staging[true])
+    staging['jobs'].each do |id, job|
+      refute_equal 'write', job.dig('permissions', 'actions'), "#{id} must not re-run or dispatch staging"
+    end
+    check = workflow('staging-cd-catch-up')
+    events = check['on'] || check[true]
+    assert_equal %w[schedule workflow_run], events.keys.sort
+    assert_equal({ 'workflows' => ['Staging CD'], 'types' => ['completed'], 'branches' => ['develop'] },
+                 events['workflow_run'])
+    assert_equal [{ 'cron' => '23 * * * *' }], events['schedule']
+    assert_equal({}, check['permissions'])
+    refute check.key?('concurrency')
+    assert_equal ['catch_up'], check['jobs'].keys
+    job = check['jobs']['catch_up']
+    assert_equal({ 'contents' => 'read', 'actions' => 'write' }, job['permissions'])
+    # At most one check runs and one waits; each decides from fresh state.
+    assert_equal({ 'group' => 'cma-staging-cd-catch-up', 'cancel-in-progress' => false }, job['concurrency'])
+    %w[github.repository\ ==\ 'ChronoAIProject/cma' github.ref\ ==\ 'refs/heads/develop'
+       github.event.workflow_run.event\ ==\ 'push' github.event.workflow_run.head_branch\ ==\ 'develop'
+       github.event.workflow_run.head_repository.full_name\ ==\ github.repository].each do |guard|
+      assert_includes job['if'], guard
+    end
+    refute job.key?('environment')
+    refute job.to_s.include?('secrets.')
+    job['steps'].each do |step|
+      refute step.key?('continue-on-error')
+      assert_match(/\A[^@]+@[a-f0-9]{40}\z/, step['uses']) if step['uses']
+    end
+    assert_equal false, job['steps'].first.dig('with', 'persist-credentials')
+    assert_equal ['python3 -B .github/scripts/staging_cd_catch_up.py'], job['steps'].map { |step| step['run'] }.compact
+    assert_equal({ 'GH_TOKEN' => '${{ github.token }}' }, job['steps'].last['env'])
+  end
+
+  def test_catch_up_reads_the_allocation_job_by_its_exact_display_name
+    source = File.read(File.join(__dir__, 'staging_cd_catch_up.py'))
+    names = source.scan(/^ALLOCATION_JOB = "([^"]+)"$/).flatten
+    assert_equal 1, names.size
+    assert_includes source, 'job.get("name") == ALLOCATION_JOB'
+    # A job without a name displays its id. Renaming either side would make
+    # every head look unallocated, so catch-up would silently never re-run.
+    jobs = workflow('staging-cd')['jobs']
+    matching = jobs.select { |id, job| job.fetch('name', id) == names.first }
+    assert_equal ['allocate'], matching.keys
+    assert_includes matching['allocate']['steps'].map { |step| step['run'] },
+                    'python3 -B .github/scripts/staging_cd_allocate.py'
+  end
+
   def test_package_and_download_tools_repeat_transient_network_failures
     env = workflow('staging-cd').fetch('env')
     %w[CARGO_NET_RETRY PIP_RETRIES RUSTUP_MAX_RETRIES].each { |key| assert_operator env.fetch(key).to_i, :>=, 3 }
@@ -476,10 +587,19 @@ class StagingWorkflowTest < Minitest::Test
     restore = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/restore@') }
     save = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
     select = steps.index { |step| step['id'] == 'plan' }
+    gate = steps.index { |step| step['name'] == 'Require a complete release plan' }
+    promotions = steps.index { |step| step['id'] == 'promotions' }
     assert_operator prepare, :<, restore
     assert_operator restore, :<, select
     assert_operator select, :<, save
     refute steps[save].key?('if'), 'the default success condition must guard cache writes'
+    # A budget-stopped plan saves its analysed revisions before the job fails,
+    # and a later step's failure cannot discard them.
+    assert_operator save, :<, gate
+    assert_operator gate, :<, promotions
+    assert_equal "steps.plan.outputs.complete != 'true'", steps[gate]['if']
+    assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete',
+                 steps[gate]['run']
     [steps[restore], steps[save]].each do |step|
       assert_equal '${{ steps.selection-cache.outputs.directory }}', step['with']['path']
       assert_equal '${{ steps.selection-cache.outputs.key }}', step['with']['key']

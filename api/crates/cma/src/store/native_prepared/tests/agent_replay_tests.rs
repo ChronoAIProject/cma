@@ -90,6 +90,12 @@ pub(super) async fn hierarchy_with_claims(
             .unwrap()
             .unwrap();
     }
+    if parent.status != SandboxStatus::Installing {
+        let previous = parent.revision;
+        parent.status = SandboxStatus::Installing;
+        parent.revision += 1;
+        store.save_sandbox(previous, parent.clone()).await.unwrap();
+    }
     workspace.status = WorkspaceStatus::Ready;
     workspace.resolved_commit = record.payload.workspaces[0].resolved_commit.clone();
     workspace.ready_at = Some(NOW.into());

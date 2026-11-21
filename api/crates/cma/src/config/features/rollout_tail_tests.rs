@@ -1,6 +1,21 @@
 //! Independent transport and quota rollout flag contracts.
 use super::*;
 
+#[test]
+fn model_credit_requires_a_separate_strict_opt_in() {
+    const KEY: &str = "CHRONO_AGENT_MODEL_CREDIT_REQUIRED";
+    for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |name| {
+            Ok((name == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.model_credit_required, enabled);
+        assert!(!flags.model_budget_writes_enabled);
+        assert!(!flags.model_request_budget_writes_enabled);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |name| Ok((name == KEY).then(|| "1".into()))).is_err());
+}
+
 #[cfg(test)]
 mod output_json_tests {
     use super::*;

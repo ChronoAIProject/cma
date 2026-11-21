@@ -25,12 +25,23 @@ export function ServicePage({
   }>({});
   const [revision, setRevision] = useState(0);
   const name = service === 'image-manager' ? 'Image Manager' : 'Event Gateway';
+  const signedOutOfGateway = service === 'event-gateway' && state.anonymous === true;
   // Signed out and not permitted are different answers: offering sign-in for a
   // 403 only returns the same account to the same refusal.
-  const denied = useCallback<Denied>((status) => {
-    setState(status === 403 ? { forbidden: true } : { anonymous: true });
-  }, []);
+  const denied = useCallback<Denied>(
+    (status) => {
+      setState((current) =>
+        service === 'event-gateway' && current.anonymous
+          ? current
+          : status === 403
+            ? { forbidden: true }
+            : { anonymous: true },
+      );
+    },
+    [service],
+  );
   useEffect(() => {
+    if (signedOutOfGateway) return;
     const controller = new AbortController();
     let requestSequence = 0;
     const check = () => {
@@ -71,7 +82,7 @@ export function ServicePage({
       window.clearInterval(interval);
       window.removeEventListener('focus', focused);
     };
-  }, [service, revision]);
+  }, [service, revision, signedOutOfGateway]);
   const notice = state.error ? (
     <Alert
       tone="error"

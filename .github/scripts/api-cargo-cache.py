@@ -44,6 +44,13 @@ def authority(env, event):
     require(re.fullmatch(r"[0-9a-f]{40}", env.get("GITHUB_SHA", "")), "full source SHA required")
     if env.get("GITHUB_EVENT_NAME") == "push":
         require(env.get("GITHUB_REF") == "refs/heads/develop", "only develop push can seed the branch cache")
+    elif env.get("GITHUB_EVENT_NAME") == "merge_group":
+        # Queue entries read develop's archive; saving remains develop-push only.
+        group = event.get("merge_group", {})
+        require(group.get("base_ref") == "refs/heads/develop", "merge group base branch differs")
+        require(re.fullmatch(r"refs/heads/gh-readonly-queue/develop/pr-[1-9][0-9]*-[0-9a-f]{40}", env.get("GITHUB_REF", ""))
+                and group.get("head_ref") == env["GITHUB_REF"], "develop merge group ref required")
+        require(group.get("head_sha") == env["GITHUB_SHA"], "merge group commit differs")
     else:
         require(env.get("GITHUB_EVENT_NAME") == "pull_request", "unsupported cache event")
         request = event.get("pull_request", {})

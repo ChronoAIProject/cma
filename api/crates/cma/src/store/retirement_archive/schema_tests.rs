@@ -61,6 +61,10 @@ async fn frozen_pre_capture_census_requires_new_evidence_namespaces_to_be_empty(
     for (collections, schema) in [
         (pre_capture::COLLECTIONS, pre_capture::SHA256),
         (
+            pre_capture_backups::COLLECTIONS,
+            pre_capture_backups::SHA256,
+        ),
+        (
             pre_capture_accounts::COLLECTIONS,
             pre_capture_accounts::SHA256,
         ),
@@ -152,3 +156,8 @@ async fn exact_current_and_legacy_censuses_refuse_unknown_duplicate_and_missing_
     assert!(matches_current(&old, old.clone()).is_err());
     assert!(matches_current(&current, current.clone()).unwrap());
 }
+
+#[path = "pre_backup_account_census_tests.rs"]
+mod pre_backup_account_tests;
+#[path = "pre_backup_census_tests.rs"]
+mod pre_backup_tests;

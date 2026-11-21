@@ -164,6 +164,7 @@ pub(super) fn unsupported() -> Document {
     let allowed: Vec<_> = Step::ALL.into_iter().flat_map(|step| [
         doc! {"kind":"manifest","_id":step.manifest(),"migration":step.id(),"checksum":step.checksum()},
         doc! {"kind":"attempt","migration":step.id(),"checksum":step.checksum()},
+        doc! {"kind":"index_abort","_id":"destructive_ddl","migration":step.id(),"checksum":step.checksum()},
     ]).chain([doc! {"kind":"lease","_id":"runner"}]).collect();
     doc! {"$or":[
         {"schema":{"$ne":1_i64}}, {"schema":{"$not":{"$type":["int","long"]}}},

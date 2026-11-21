@@ -1,5 +1,7 @@
 use super::*;
 
+static BLOCK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[test]
 fn procfs_rss_requires_a_measurement_in_kib() {
     assert_eq!(
@@ -49,6 +51,7 @@ fn completion_at_or_after_the_deadline_is_a_failure() {
 
 #[test]
 fn payload_ownership_covers_alignment_realloc_foreign_free_and_failed_handoff() {
+    let _guard = BLOCK_TEST_LOCK.lock().unwrap();
     assert_eq!(LIVE.load(Ordering::Acquire), 0);
     assert!(Block::new(31, 3, false).is_err());
     let blocks = [false, true]
@@ -70,5 +73,41 @@ fn payload_ownership_covers_alignment_realloc_foreign_free_and_failed_handoff() 
     let refused = sender.send(vec![Block::new(127, 8, true).unwrap()]);
     assert!(refused.is_err());
     drop(refused);
+    assert_eq!(LIVE.load(Ordering::Acquire), 0);
+}
+
+#[test]
+fn immediate_foreign_frees_cannot_reduce_the_warmup_working_set() {
+    let _guard = BLOCK_TEST_LOCK.lock().unwrap();
+    for round in [0, WARMUP - 1, WARMUP, ROUNDS - 1] {
+        let mut batches = 0;
+        handoff_round(round, |worker, blocks| {
+            assert_eq!(worker, batches);
+            assert_eq!(blocks.len(), BLOCKS);
+            assert_eq!(LIVE.load(Ordering::Acquire), (WORKERS - worker) * BLOCKS);
+            thread::spawn(move || drop(blocks)).join().unwrap();
+            batches += 1;
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(batches, WORKERS);
+        assert_eq!(LIVE.load(Ordering::Acquire), 0);
+    }
+}
+
+#[test]
+fn failed_round_handoff_releases_sent_and_unsent_batches() {
+    let _guard = BLOCK_TEST_LOCK.lock().unwrap();
+    let mut batches = 0;
+    let result = handoff_round(WARMUP, |worker, blocks| {
+        if worker == 1 {
+            return Err(io::Error::other("synthetic handoff refusal"));
+        }
+        thread::spawn(move || drop(blocks)).join().unwrap();
+        batches += 1;
+        Ok(())
+    });
+    assert_eq!(batches, 1);
+    assert_eq!(result.unwrap_err().to_string(), "synthetic handoff refusal");
     assert_eq!(LIVE.load(Ordering::Acquire), 0);
 }

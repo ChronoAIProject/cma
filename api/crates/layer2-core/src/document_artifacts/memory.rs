@@ -1,7 +1,100 @@
 //! Deterministic stores for domain and public-interface conformance tests only.
 use super::*;
-use std::collections::BTreeMap;
+use crate::{
+    DirectoryQuery, Page, PublicIdentity, RegisteredUser, StoreError, SubjectId, UserDirectory,
+    UserDirectoryStore,
+};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+};
 use tokio::sync::Mutex;
+
+/// Explicit registered subjects for document sharing tests.
+pub struct MemoryRecipientDirectory {
+    subjects: Vec<SubjectId>,
+    pub unavailable: AtomicBool,
+}
+
+impl MemoryRecipientDirectory {
+    pub fn new(subjects: &[&str]) -> Arc<Self> {
+        Arc::new(Self {
+            subjects: subjects
+                .iter()
+                .map(|subject| SubjectId::new(*subject))
+                .collect(),
+            unavailable: AtomicBool::new(false),
+        })
+    }
+
+    fn check_available(&self) -> Result<(), StoreError> {
+        if self.unavailable.load(Ordering::SeqCst) {
+            Err(StoreError::Unavailable("test directory unavailable".into()))
+        } else {
+            Ok(())
+        }
+    }
+
+    fn record(subject: &SubjectId) -> RegisteredUser {
+        RegisteredUser {
+            identity: PublicIdentity {
+                subject: subject.clone(),
+                display_name: Some(format!("Name {subject}")),
+                avatar_url: Some("https://example.invalid/avatar".into()),
+            },
+            first_seen_at: "2026-10-22T00:00:00Z".into(),
+            last_seen_at: "2026-10-22T00:00:00Z".into(),
+        }
+    }
+}
+
+pub fn recipient_directory(subjects: &[&str]) -> Arc<UserDirectory> {
+    UserDirectory::new(MemoryRecipientDirectory::new(subjects))
+}
+
+#[async_trait::async_trait]
+impl UserDirectoryStore for MemoryRecipientDirectory {
+    async fn observe(&self, _: &PublicIdentity) -> Result<(), StoreError> {
+        Err(StoreError::Unavailable(
+            "test directory is read-only".into(),
+        ))
+    }
+
+    async fn user(&self, subject: &SubjectId) -> Result<Option<RegisteredUser>, StoreError> {
+        self.check_available()?;
+        Ok(self
+            .subjects
+            .contains(subject)
+            .then(|| Self::record(subject)))
+    }
+
+    async fn list(&self, query: &DirectoryQuery) -> Result<Page<RegisteredUser>, StoreError> {
+        self.check_available()?;
+        let items = self
+            .subjects
+            .iter()
+            .map(Self::record)
+            .filter(|record| {
+                query.text.as_ref().is_none_or(|text| {
+                    record.identity.subject.as_str().contains(text)
+                        || record
+                            .identity
+                            .display_name
+                            .as_ref()
+                            .is_some_and(|name| name.contains(text))
+                })
+            })
+            .take(query.page.limit as usize)
+            .collect();
+        Ok(Page {
+            items,
+            next_cursor: None,
+        })
+    }
+}
 
 #[derive(Default)]
 pub struct MemoryDocuments(pub Mutex<BTreeMap<String, StoredDocument>>);

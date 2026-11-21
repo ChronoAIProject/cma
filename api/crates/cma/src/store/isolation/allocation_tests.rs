@@ -11,6 +11,7 @@ fn allocation_namespace_grants_are_optional_but_exact_and_confined() {
         .get_array("privileges")
         .unwrap()
         .clone();
+    // Separately activated collections do not change existing runtime authority.
     assert_eq!(full.len(), legacy.len() + OPTIONAL_COLLECTIONS.len());
     validate(&status(full.clone()), "cma").unwrap();
     validate(&status(legacy.clone()), "cma").unwrap();

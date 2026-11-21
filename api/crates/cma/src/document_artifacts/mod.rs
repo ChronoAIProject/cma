@@ -5,6 +5,7 @@ mod mongo;
 mod quota;
 mod quota_baseline;
 pub(crate) mod quota_cli;
+pub(crate) use mongo::decode as decode_record;
 pub use mongo::MongoDocumentStore;
 pub(crate) use mongo::COLLECTION;
 pub(crate) use quota::{MongoDocumentQuotaStore, QUOTA_COLLECTION};

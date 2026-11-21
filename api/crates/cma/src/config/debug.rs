@@ -38,6 +38,7 @@ impl std::fmt::Debug for Config {
             )
             .field("auth_mode", &self.auth_mode)
             .field("features", &self.features)
+            .field("home_backup", &self.home_backup)
             .finish()
     }
 }

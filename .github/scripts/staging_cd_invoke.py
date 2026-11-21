@@ -7,6 +7,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+from cd_target import PRODUCTION, controller
+from prod_cd_select import release_bounds
+from ci_outcome import error_site, report
 from staging_cd_admission import event_identity
 from staging_cd_applied import configured_group
 from staging_cd_checkout import checkout_path
@@ -17,25 +20,28 @@ from staging_cd_process import ProcessTimeout, run as run_process
 from staging_cd_receipts import canonical
 from staging_cd_runtime import run_private
 from staging_cd_refusal import (
-    REASONS as PRIVATE_REASONS, VERIFICATION_REASONS, read as read_refusal, read_verification,
+    REASONS as PRIVATE_REASONS, UNRECOGNIZED, VERIFICATION_REASONS, read as read_refusal, read_verification,
 )
-from staging_cd_set import document, private_document, release_set, validate_set
+from staging_cd_set import OVERTAKEN, document, private_document, release_set, validate_set
 from staging_cd_tools import environment as tool_environment
 from staging_cd_compatibility import ContractPolicy, GROUP
 from staging_cd_history import DevelopHistory
-from staging_cd_watermark import eligible_receipts, record_withheld, require_current_versions
+from staging_cd_watermark import (SUPERSEDED, eligible_receipts, later_final_sources, record_withheld,
+                                  require_current_versions, require_released_versions)
 from staging_cd_deploy_result import read as read_component_result, retain as retain_component_result
 
 IDENTITY_KEYS = ("GITHUB_REPOSITORY", "GITHUB_REF", "GITHUB_EVENT_NAME",
                  "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT")
 PROCESS_KEYS = ("PATH", "LANG", "LC_ALL", "RUNNER_TEMP")
 DISABLED = 100
+SUPERSEDED_BY_NEWER_FINAL = 60
 UNVERIFIED_COHORT = 51
 CONTRACT_READ_FAILED = 52
 PENDING_RUNTIME_CHECK = "PASS_PENDING_LEAD_RUNTIME_IMAGE_CHECK"
 RUNTIME_NOTICE = "NOT-YET: runtime_image_id requires independent lead verification before final acceptance"
 RESULTS = {0: PENDING_RUNTIME_CHECK,
            DISABLED: "SKIP: deploy disabled in cma-infra",
+           SUPERSEDED_BY_NEWER_FINAL: f"SKIP: {OVERTAKEN}; a newer final's run owns this deployment",
            UNVERIFIED_COHORT: "NOT-YET: contract digests are configured; the serving cohort is unverified",
            CONTRACT_READ_FAILED: "FAIL: AM and runtimes withheld because configured digests could not be verified",
            10: "FAIL: release failed; eligible owned changes recovered and verified",
@@ -46,13 +52,16 @@ RESULTS = {0: PENDING_RUNTIME_CHECK,
 
 
 PRECONDITIONS = {"mode", "checkout", "policy", "credentials-format", "budget", "authority"}
+# Outcome tokens the public log may carry; anything else stays "unreported".
+REPORTED_PRIVATE = PRIVATE_REASONS | {UNRECOGNIZED}
+REPORTED_VERIFICATION = VERIFICATION_REASONS | {UNRECOGNIZED}
 
 
 class NotAdmitted(Refusal):
     """A public precondition stopped the invocation before the controller ran."""
 
     def __init__(self, reason, code):
-        super().__init__(reason)
+        super().__init__("Deployment precondition was not admitted")
         self.reason = reason
         self.code = code
 
@@ -74,14 +83,15 @@ def private_script(env, run_command=subprocess.run):
     root = checkout_path(env)
     require(root.is_dir(), "Private checkout is absent")
     current = root
-    for part in ("staging", "scripts", "deploy_set.py"):
+    directory = controller(env)
+    for part in (*directory, "scripts", "deploy_set.py"):
         current = current / part
         require(not current.is_symlink(), "Private entry point links are forbidden")
     require(current.is_file(), "Private deployment entry point is absent")
     child_env = {k: env[k] for k in PROCESS_KEYS if k in env}
     child_env.update(GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=os.devnull, GIT_TERMINAL_PROMPT="0")
     for args, expected in ((["rev-parse", "HEAD"], revision),
-                           (["status", "--porcelain", "--untracked-files=all", "--", "staging"], "")):
+                           (["status", "--porcelain", "--untracked-files=all", "--", "/".join(directory)], "")):
         result = run_command(["git", "-C", str(root), *args], env=child_env,
                              capture_output=True, text=True, timeout=30, check=False)
         require(result.returncode == 0 and result.stdout.strip() == expected,
@@ -112,13 +122,69 @@ def execute(script, release_file, mode, started, env, *, timeout=None):
     return code if code in (0, 10, 20, 30, 40, 50) else 20
 
 
-def controller_receipts(receipts, transition, script, directory, started, env, child_env):
-    def current_subset(candidates):
-        return eligible_receipts(candidates, require_current_versions,
-                                 lambda: ContractPolicy(DevelopHistory.from_head(env["GITHUB_SHA"])),
-                                 transition=transition)
+def overtaken(receipts):
+    """Every independent member has a final at a later develop source, read without credentials."""
+    if not receipts or GROUP & receipts.keys():
+        return False
+    try:
+        later = later_final_sources(receipts)
+        # A final's peeled commit is its source; its first parents must reach this source.
+        return all(any(commit != receipts[key]["source"]
+                       and receipts[key]["source"] in DevelopHistory.from_head(commit).positions
+                       for commit in later[key]) for key in receipts)
+    except (Refusal, OSError, ValueError, subprocess.SubprocessError):
+        return False
 
-    current = current_subset(receipts)
+
+def released_overtaken(receipts, released, history):
+    """Production: main's newer release owns every member, so this older release hands over.
+
+    Each member needs a higher final at a later source on the newer release's
+    develop history. That release's run selects at least that final for every
+    component production enables, contract members included, so it deploys
+    it, is overtaken the same way, or fails visibly.
+    """
+    if not receipts or history.head == released:
+        return False
+    try:
+        later = later_final_sources(receipts)
+        return all(any(commit in history.positions
+                       and history.positions[commit] > history.position(receipts[key]["source"])
+                       for commit in later[key]) for key in receipts)
+    except (Refusal, OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
+def controller_receipts(receipts, transition, script, directory, started, env, child_env):
+    if env.get("CD_TARGET") == PRODUCTION:
+        # Bounded by main's newest release, never develop's head (prod_cd_select.release_bounds).
+        released, history = release_bounds(env, Path.cwd())
+
+        def check(selected):
+            require_released_versions(selected, history)
+
+        def policy():
+            return ContractPolicy(history)
+
+        def handed_over(selected):
+            return released_overtaken(selected, released, history)
+    else:
+        check, handed_over = require_current_versions, overtaken
+
+        def policy():
+            return ContractPolicy(DevelopHistory.from_head(env["GITHUB_SHA"]))
+
+    def current_subset(candidates):
+        return eligible_receipts(candidates, check, policy, transition=transition)
+
+    try:
+        current = current_subset(receipts)
+    except Refusal as error:
+        # Overtaken after verification: hand the set to the newer runs before
+        # any controller read or mutation. Anything else fails.
+        if str(error) == SUPERSEDED and not transition and handed_over(receipts):
+            return {}, SUPERSEDED_BY_NEWER_FINAL
+        raise
     record_withheld(env, receipts, current)
     if not transition or not GROUP & current.keys():
         return current, 0
@@ -150,7 +216,7 @@ def controller_receipts(receipts, transition, script, directory, started, env, c
 
 def deploy(env, masker, script_reader=private_script, runner=execute,
            tool_reader=tool_environment, policy_reader=deploy_selection, on_disabled=lambda: None,
-           on_private_refusal=None, on_unverified=None, on_rolled_back=None):
+           on_private_refusal=None, on_unverified=None, on_rolled_back=None, on_overtaken=lambda _keys: None):
     event_identity(env)
     value = validate_set(document(env.get("CD_RELEASE_SET")))
     mode, started = env.get("CD_DEPLOY_MODE"), env.get("CD_STARTED_AT")
@@ -194,9 +260,13 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     with tempfile.TemporaryDirectory(prefix="cma-release-set-", dir=env["RUNNER_TEMP"]) as directory:
         path = Path(directory) / "release-set.json"
         with precondition("authority"):
-            if automatic:
+            # A production dispatch also deploys main's release, so it must never undo a newer one.
+            if automatic or env.get("CD_TARGET") == PRODUCTION:
+                selected_keys = sorted(receipts)
                 receipts, group_outcome = controller_receipts(
                     receipts, value.get("contract_transition"), script, directory, started, env, child_env)
+                if group_outcome == SUPERSEDED_BY_NEWER_FINAL:
+                    on_overtaken(selected_keys)
                 if not receipts:
                     return group_outcome
             request = private_document(release_set(receipts))
@@ -253,12 +323,41 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
     return code if code in (10, 20, 30, 40, 50) else 20
 
 
+def explain(outcome, reason, private, verification, recovery, release, site, raised):
+    """Report an exit 10, 20, 30, 40 or 52 outcome with its cause and next step.
+
+    No component is named: the controller's packets do not say which member of
+    the release set failed, and naming the whole set would blame the others.
+    """
+    if outcome == 20:
+        return report("deploy-verification", verification, subject="deploy", recovery=recovery)
+    if outcome == 10:
+        # Exit 10 alone certifies the rollback; only the release token is reported.
+        return report("deploy-release", release, subject="deploy")
+    if private is not None:
+        return report("deploy-private", private, subject="deploy")
+    if reason is not None:
+        return report("deploy-precondition", reason, subject="deploy", site=site)
+    if outcome == 30:
+        return report("deploy-private", "unreported", subject="deploy")
+    if outcome == 40:
+        # A failure raised here is an input refused before launch; a plain 40
+        # is the controller's own input or configuration refusal.
+        if raised:
+            return report("deploy-precondition", "input", subject="deploy", site=site)
+        return report("deploy-controller", "input-error", subject="deploy")
+    if outcome == CONTRACT_READ_FAILED:
+        return report("deploy-contract", "contract-read-failed", subject="deploy")
+    return None
+
+
 def main():
     outcome, skipped = 40, False
-    reason = None
+    reason, private, site, raised = None, None, None, False
     verification = "unreported"
     recovery = "unreported"
     release = "unreported"
+    overtaken_keys = []
     try:
         entry_elapsed = elapsed(os.environ.get("CD_STARTED_AT"))
     except (ValueError, TypeError, OverflowError):
@@ -267,46 +366,48 @@ def main():
         nonlocal skipped
         skipped = True
     def private_refusal(token):
-        nonlocal reason
-        if token in PRIVATE_REASONS:
-            reason = "private-" + token
+        nonlocal private
+        if token in REPORTED_PRIVATE:
+            private = token
 
     def unverified(first, second):
         nonlocal verification, recovery
-        if first in VERIFICATION_REASONS and second in VERIFICATION_REASONS:
+        if first in REPORTED_VERIFICATION and second in REPORTED_VERIFICATION:
             verification, recovery = first, second
 
     def rolled_back(token):
         nonlocal release
-        if token in VERIFICATION_REASONS:
+        if token in REPORTED_VERIFICATION:
             release = token
 
     def operation(masker):
-        nonlocal outcome, reason
+        nonlocal outcome, reason, site, raised
         try:
             outcome = deploy(os.environ, masker, on_disabled=disabled, on_private_refusal=private_refusal,
-                             on_unverified=unverified, on_rolled_back=rolled_back)
+                             on_unverified=unverified, on_rolled_back=rolled_back,
+                             on_overtaken=overtaken_keys.extend)
         except NotAdmitted as refusal:
             outcome = refusal.code
+            # The precondition's own check, never the wrapper, names the line.
+            site = error_site(refusal.__cause__) if refusal.__cause__ is not None else None
             if refusal.reason in PRECONDITIONS:
                 reason = refusal.reason
-        return outcome in (0, DISABLED)
-    result = run_private(operation, None)
-    diagnostic = None
-    if outcome == 20:
-        diagnostic = f"FAIL verification={verification} recovery={recovery}"
-    elif outcome == 10:
-        # Exit 10 alone certifies the rollback; only the release token is reported.
-        diagnostic = f"FAIL release={release} recovery=verified"
-    elif reason is not None:
-        diagnostic = "FAIL precondition=" + reason
-    elif outcome == 30:
-        diagnostic = "FAIL precondition=private-unreported"
-    if diagnostic:
-        print(diagnostic)
+        except Exception as error:
+            site, raised = error_site(error), True
+            raise
+        return outcome in (0, DISABLED, SUPERSEDED_BY_NEWER_FINAL)
+    result = run_private(operation, None, subject="deploy", explain=False)
+    if result == 0 and outcome == SUPERSEDED_BY_NEWER_FINAL:
+        # Nothing was deployed; fixed component tokens only cross this boundary.
+        print(f"SKIP deployment reason={OVERTAKEN} components={','.join(overtaken_keys)}: "
+              "a newer final's run owns this deployment")
+        if os.environ.get("GITHUB_OUTPUT"):
+            with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as stream:
+                stream.write(f"disposition={OVERTAKEN}\n")
+    diagnostic = explain(outcome, reason, private, verification, recovery, release, site, raised)
     if skipped:
         print(RESULTS[DISABLED])
-    if outcome in (UNVERIFIED_COHORT, CONTRACT_READ_FAILED):
+    if outcome == UNVERIFIED_COHORT:
         print(RESULTS[outcome])
     if outcome == 20:
         print("::error::Staging deployment is unverified. Immediate operator intervention required.")
@@ -315,6 +416,8 @@ def main():
         with open(summary, "a", encoding="utf-8") as stream:
             if skipped and outcome != DISABLED:
                 stream.write(RESULTS[DISABLED] + "\n")
+            if outcome == SUPERSEDED_BY_NEWER_FINAL:
+                stream.write(f"Deployment skipped: {OVERTAKEN} for {', '.join(overtaken_keys)}.\n")
             if outcome == 0:
                 stream.write("NOT-YET: authenticated acceptance runs out-of-band\n")
                 stream.write(RUNTIME_NOTICE + "\n")
@@ -340,7 +443,7 @@ def main():
         from staging_cd_contract import GROUP
         for component in sorted(GROUP):
             if value.get("components", {}).get(component, {}).get("state") == "withheld":
-                print("FAIL component=" + component + " reason=deployed-compatibility-unqualified")
+                report("deploy-component", "deployed-compatibility-unqualified", subject="deploy", component=component)
     if result == 0:
         return 0
     return outcome if outcome in (10, 20, 30, 40, 50, UNVERIFIED_COHORT, CONTRACT_READ_FAILED) else 40

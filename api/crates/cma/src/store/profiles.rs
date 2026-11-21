@@ -319,6 +319,7 @@ pub(super) async fn advance_publication(
                     .map_err(ProfileStoreError::Corrupt)
                     .map_err(PublishError::Domain)?,
                 "retired_at": Bson::Null,
+                "account_erasure_fenced": { "$ne": true },
             },
             doc! {
                 "$inc": { "last_revision": 1_i64 },

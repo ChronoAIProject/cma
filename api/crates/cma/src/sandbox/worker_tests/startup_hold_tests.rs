@@ -45,10 +45,10 @@ async fn startup_hold_backoff_applies_with_retry_policy_on_or_off_and_preserves_
                 } else {
                     expected
                 };
-                let error = AdapterError::RuntimeStartupHold(RuntimeStartupFailure {
-                    class: RuntimeStartupFailureClass::ExitedBeforeServing,
-                    consecutive: 3,
-                });
+                let error = AdapterError::RuntimeStartupHold(RuntimeStartupFailure::new(
+                    RuntimeStartupFailureClass::ExitedBeforeServing,
+                    3,
+                ));
                 assert_eq!(
                     worker.native_retry_delay_for_test(&sandbox, error),
                     expected

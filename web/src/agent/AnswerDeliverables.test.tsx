@@ -220,6 +220,11 @@ it('keeps verified deliveries under their own final answers after a fresh mount,
   ).toBeNull();
   expect(await screen.findByRole('button', { name: 'Download second.txt' })).toBeEnabled();
   expect(screen.getAllByRole('list', { name: 'Answer deliverables' })).toHaveLength(2);
+  for (const help of screen.getAllByRole('link', {
+    name: 'Help finding and downloading outputs',
+  })) {
+    expect(help).toHaveAttribute('href', '/docs/find-your-outputs');
+  }
   expect(requests).toHaveLength(2);
   expect(requests.every((path) => !path.includes('event:13'))).toBe(true);
   view.unmount();

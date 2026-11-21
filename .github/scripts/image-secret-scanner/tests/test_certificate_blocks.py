@@ -43,10 +43,11 @@ class CertificateBlockTests(unittest.TestCase):
         self.scratch.cleanup()
 
     def certificate(self):
-        # Pad inside the key identifier, one byte at a time, until one 64-character
-        # body line decodes to the packet header (issuer and subject repeat a name).
+        # Fix the serial width so each padding byte advances the packet offset.
+        # A 64-character PEM line decodes to 48 DER bytes.
         for pad in range(48):
             der = openssl("req", "-x509", "-new", "-key", str(self.key), "-subj", "/CN=fixture", "-days", "1",
+                          "-set_serial", "1",
                           "-addext", f"subjectKeyIdentifier={'ab' * pad}{PACKET}aabbccddeeff00112233445566778899",
                           "-outform", "DER")
             if der.find(bytes.fromhex(PACKET)) % 48 == 0:
@@ -73,6 +74,23 @@ class CertificateBlockTests(unittest.TestCase):
         self.assertFalse(reviewed_literals.encoded_material_absent(path.read_bytes()))
         self.assertEqual(reviewed_literals.verify(path, b"metadata", proof), {})
         self.assertEqual(set(reviewed_literals.verify(path, b"metadata", proof, certificates=blocks)), {RULE})
+
+    def test_alignment_does_not_depend_on_automatic_serial_width(self):
+        generate = openssl
+
+        def varying_serial(*args, **kwargs):
+            if args[0] != "req" or "-set_serial" in args:
+                return generate(*args, **kwargs)
+            # Both widths are valid automatic serials. Select the width that
+            # moves this padding attempt off a PEM line boundary.
+            for serial in (2 ** 144, 2 ** 152):
+                der = generate(*args, "-set_serial", str(serial), **kwargs)
+                if der.find(bytes.fromhex(PACKET)) % 48 != 0:
+                    return der
+            self.fail("fixture serial widths did not move the packet")
+
+        with patch(f"{__name__}.openssl", side_effect=varying_serial):
+            self.test_pinned_certificate_lines_skip_only_the_encoded_guard()
 
     def test_changed_block_bytes_or_coordinates_refuse(self):
         path, proof, blocks = self.fixture()

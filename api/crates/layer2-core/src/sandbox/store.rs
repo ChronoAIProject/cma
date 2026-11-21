@@ -102,7 +102,7 @@ pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
     AgentConnectionRecoveryRequest, AgentCreateAdmission, AgentRetryObservation, AgentWorkMutation,
-    AgentWorkerStore, VersionedWorktree,
+    AgentWorkerStore, StartupWorkFilter, VersionedWorktree,
 };
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
@@ -288,7 +288,6 @@ pub enum WorkspaceAdmissionResult {
     Created(Workspace),
     Existing(Workspace),
 }
-
 /// Atomic sandbox readiness, lineage/name/limit admission and Created event.
 #[async_trait]
 pub trait WorkspaceAdmissionStore: Send + Sync {
@@ -296,7 +295,13 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
         &self,
         admission: WorkspaceAdmission,
     ) -> Result<WorkspaceAdmissionResult, SandboxStoreError>;
-
+    /// Snapshot-only callers keep the ordinary admission contract.
+    async fn admit_catalogue_workspace(
+        &self,
+        admission: WorkspaceAdmission,
+    ) -> Result<WorkspaceAdmissionResult, SandboxStoreError> {
+        self.admit_workspace(admission).await
+    }
     /// Explicitly recover only an original never-ready Workspace; all guards are atomic.
     async fn begin_workspace_prepare_recovery(
         &self,
@@ -305,7 +310,6 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
         operation_id: &str,
         now: String,
     ) -> Result<Workspace, SandboxStoreError>;
-
     /// Fence new child admission and durably schedule removal, including child cleanup.
     async fn begin_workspace_removal(
         &self,
@@ -348,6 +352,13 @@ pub trait SandboxEventStore: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
+pub struct RepositoryPreparationRuntime {
+    pub binding: super::RuntimeBinding,
+    pub generation: u64,
+    pub key_generation: u64,
+}
+
+#[derive(Debug, Clone)]
 pub enum SandboxTransaction {
     CreateWorktreeAndAgent {
         worktree: Box<Worktree>,
@@ -365,6 +376,8 @@ pub enum SandboxTransaction {
         event: SandboxEventKind,
     },
     SaveWorkspaceAndAppend {
+        /// Runtime that returned a terminal initial repository preparation failure.
+        repository_runtime: Option<Box<RepositoryPreparationRuntime>>,
         expected_revision: u64,
         workspace: Box<Workspace>,
         event_at: String,

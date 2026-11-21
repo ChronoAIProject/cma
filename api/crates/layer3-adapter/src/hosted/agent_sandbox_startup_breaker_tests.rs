@@ -14,6 +14,7 @@ fn delivered(breaker: &StartupBreaker, handle: &RuntimeHandle, n: u32) {
         handle,
         identity(n),
         "sbx_one".into(),
+        7,
         SystemTime::UNIX_EPOCH + Duration::from_secs(100),
     );
 }
@@ -42,8 +43,23 @@ async fn three_failed_incarnations_open_and_concurrent_admission_claims_one_prob
     }
     assert_eq!(breaker.failure(&handle).unwrap().consecutive, 3);
     for minutes in [15, 30, 60, 60] {
+        let expected = RuntimeStartupProbe {
+            runtime: handle.clone(),
+            sandbox_id: "sbx_one".into(),
+            generation: 7,
+            next_probe_at: Instant::now() + Duration::from_secs(minutes * 60),
+        };
         tokio::time::advance(Duration::from_secs(minutes * 60 - 1)).await;
-        assert!(breaker.admit(&handle).is_err());
+        for error in [
+            breaker.hold_before_wait(&handle).unwrap(),
+            breaker.admit(&handle).unwrap_err(),
+        ] {
+            let AdapterError::RuntimeStartupHold(failure) = error else {
+                panic!("the closed breaker must report a startup hold");
+            };
+            assert_eq!(failure.probe(), Some(&expected));
+        }
+        assert_eq!(breaker.failure(&handle).unwrap().probe(), Some(&expected));
         tokio::time::advance(Duration::from_secs(1)).await;
         let mut tasks = Vec::new();
         for _ in 0..20 {
@@ -157,6 +173,7 @@ fn concurrent_observations_and_late_duplicate_acknowledgements_count_one_failed_
         &handle,
         identity(0),
         "sbx_one".into(),
+        7,
         SystemTime::UNIX_EPOCH + Duration::from_secs(103),
     );
     assert!(breaker.evidence_needed(&handle, &identity(1)).is_none());

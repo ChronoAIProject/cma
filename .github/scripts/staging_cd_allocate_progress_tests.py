@@ -65,7 +65,7 @@ with allocation_progress(lambda: 0) as mark:
                     child.communicate()
             self.assertEqual(child.returncode, 0)
         self.assertEqual(first, "PROGRESS allocation component=am phase=owner-read count=1 elapsed_seconds=0\n")
-        self.assertEqual(stdout, "PROGRESS allocation component=all phase=complete count=1 elapsed_seconds=0\nPASS\n")
+        self.assertEqual(stdout, "PROGRESS allocation component=all phase=complete count=1 elapsed_seconds=0\nPASS allocation\n")
         self.assertEqual(stderr, "")
 
     def test_allocator_reports_each_io_phase_and_keeps_newest_only(self):
@@ -102,7 +102,7 @@ with allocation_progress(lambda: 0) as mark:
             self.assertEqual(allocation.main(), 0)
         self.assertRegex(output.getvalue(),
                          r"^PROGRESS allocation component=web phase=reserve count=1 elapsed_seconds=\d+\n"
-                         r"PROGRESS allocation component=all phase=complete count=1 elapsed_seconds=\d+\nPASS\n$")
+                         r"PROGRESS allocation component=all phase=complete count=1 elapsed_seconds=\d+\nPASS allocation\n$")
 
 
 if __name__ == "__main__":

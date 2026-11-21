@@ -11,6 +11,7 @@ export default defineConfig({
     'documents.check.ts',
     'documents-unsaved.check.ts',
     'documents-legacy-history.check.ts',
+    'documents-creation.check.ts',
   ],
   workers: 1,
   retries: 0,

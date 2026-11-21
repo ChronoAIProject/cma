@@ -1,4 +1,4 @@
-//! Exact-target abort after the build client is stopped and its lease expires.
+//! Exact-target abort with a durable barrier until its destructive effect settles.
 use super::super::{index_inventory, ledger, Result};
 use super::{catalog::Query, open_database};
 use mongodb::{bson::doc, Client, Database};
@@ -26,6 +26,28 @@ pub(super) async fn execute(
     image: &str,
     previous_fence: i64,
 ) -> Result<Value> {
+    execute_inner(
+        query,
+        client,
+        database,
+        identity,
+        image,
+        previous_fence,
+        #[cfg(test)]
+        Hooks::default(),
+    )
+    .await
+}
+
+pub(super) async fn execute_inner(
+    query: &Query,
+    client: Client,
+    database: Database,
+    identity: &ledger::Identity,
+    image: &str,
+    previous_fence: i64,
+    #[cfg(test)] mut hooks: Hooks,
+) -> Result<Value> {
     let step = query.migration()?;
     crate::store::sandbox_mongo::require_transaction_topology(&database)
         .await
@@ -34,61 +56,79 @@ pub(super) async fn execute(
     ledger.preflight().await?;
     let status = ledger.status().await?;
     previous_attempt(&status, image, previous_fence)?;
-    // This transactional claim refuses a live executor or concurrent completion.
-    // Requiring the immediate next global fence prevents aborting a later build.
-    let lease = ledger.claim(identity).await?;
-    let outcome = async {
-        if lease.fence
-            != previous_fence
-                .checked_add(1)
-                .ok_or("abort fence overflow")?
-        {
-            return Err("abort predecessor changed; reconcile before retry");
-        }
-        if !index_inventory::strict_pending(&database, query.collection, &query.index)
-            .await?
-            .is_empty()
-        {
-            return Err("abort target is not visible; reconcile server build state");
-        }
-        ledger.renew(&lease).await?;
-        tracing::warn!(
-            query = query.name,
-            migration = step.id(),
-            fence = lease.fence,
-            phase = "abort_started",
-            "Dropping the exact approved incomplete index"
-        );
-        let response = database
-            .run_command(drop_command(query)?)
-            .await
-            .map_err(|_| "index drop outcome uncertain; reconcile server and receipt")?;
-        if response.contains_key("writeConcernError") {
-            return Err("index drop acknowledgement uncertain");
-        }
-        let pending =
-            index_inventory::strict_pending(&database, query.collection, &query.index).await?;
-        if pending.len() != 1 {
-            return Err("index remains after drop; reconcile server state");
-        }
-        Ok(())
+    let lease = ledger.claim_abort(identity, previous_fence).await?;
+    #[cfg(test)]
+    pause(hooks.pending.take()).await;
+    let inventory =
+        index_inventory::strict_pending(&database, query.collection, &query.index).await;
+    let refusal = match inventory {
+        Ok(pending) if pending.is_empty() => None,
+        Ok(_) => Some("abort target is not visible; reconcile server build state"),
+        Err(reason) => Some(reason),
+    };
+    if let Some(reason) = refusal {
+        ledger.settle_abort(&lease, false, reason).await?;
+        return Err(reason);
     }
-    .await;
-    // An abort is always a failed build receipt. It cannot mark the manifest
-    // complete, erase history or let the predecessor publish after the drop.
+    // Persist dispatch authority before constructing the command future. No
+    // successor may claim while this continuation can still issue a deletion.
+    ledger.begin_abort(&lease).await?;
+    #[cfg(test)]
+    pause(hooks.draining.take()).await;
+    tracing::warn!(
+        query = query.name,
+        migration = step.id(),
+        fence = lease.fence,
+        phase = "abort_started",
+        "Dropping the exact approved incomplete index"
+    );
+    let response = database
+        .run_command(drop_command(query)?)
+        .await
+        .map_err(|_| "index drop outcome uncertain; destructive barrier retained for reviewed forward recovery")?;
+    if response.contains_key("writeConcernError") {
+        return Err("index drop acknowledgement uncertain; destructive barrier retained for reviewed forward recovery");
+    }
+    #[cfg(test)]
+    pause(hooks.acknowledged.take()).await;
+    let pending =
+        index_inventory::strict_pending(&database, query.collection, &query.index).await?;
+    if pending.len() != 1 {
+        return Err(
+            "index remains after drop; destructive barrier retained for server reconciliation",
+        );
+    }
+    // This future has no remaining send/retry path. Settlement and its failed
+    // build receipt commit together; an expired lease alone cannot release it.
     ledger
-        .finish(
-            &lease,
-            Err(outcome
-                .err()
-                .unwrap_or("index build aborted by approved operator")),
-        )
+        .settle_abort(&lease, true, "index build aborted by approved operator")
         .await?;
-    outcome?;
     Ok(
         json!({"migration":step.id(),"query":query.name,"outcome":"drop_acknowledged",
-        "fence":lease.fence,"manifest_completed":false,"server_reconciliation_required":true}),
+        "fence":lease.fence,"manifest_completed":false,"server_reconciliation_required":true,"destructive_state":"settled"}),
     )
+}
+
+#[cfg(test)]
+pub(super) type Checkpoint = (
+    tokio::sync::oneshot::Sender<()>,
+    tokio::sync::oneshot::Receiver<()>,
+);
+
+#[cfg(test)]
+#[derive(Default)]
+pub(super) struct Hooks {
+    pub pending: Option<Checkpoint>,
+    pub draining: Option<Checkpoint>,
+    pub acknowledged: Option<Checkpoint>,
+}
+
+#[cfg(test)]
+async fn pause(checkpoint: Option<Checkpoint>) {
+    if let Some((reached, resume)) = checkpoint {
+        reached.send(()).unwrap();
+        resume.await.unwrap();
+    }
 }
 
 fn previous_attempt(status: &Value, image: &str, fence: i64) -> Result<()> {

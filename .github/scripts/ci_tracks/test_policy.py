@@ -87,6 +87,14 @@ class PolicyTests(unittest.TestCase):
             argv = command('tests', ['cmaeg'], shard)
             self.assertIn(f'count:{shard}/3', argv)
             self.assertIn('package(=cmaeg)', argv[argv.index('-E') + 1])
+        allocator = "package(=cma) and binary(=allocator_cli) and test(=actual_api_allocator_completes_without_configuration)"
+        for names in (["cma"], ["*"]):
+            for shard in (1, 2, 3):
+                argv = command('tests', names, shard)
+                selection = argv[argv.index('-E') + 1]
+                self.assertEqual(selection.count(allocator), 1)
+                self.assertIn("and not (binary(=media_image_peak) or binary(=turn_metrics) or (" + allocator + "))", selection)
+                self.assertNotIn("not binary(=allocator_cli)", selection)
         for invalid in ['[]', 'null', '["--workspace"]', '[1]']:
             with self.assertRaises(ValueError):
                 packages(invalid)

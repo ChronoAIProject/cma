@@ -48,6 +48,7 @@ pub(crate) use relay_capacity::RelayCapacityConfig;
 mod features;
 mod quiet_output;
 mod task_experience;
+pub(crate) use features::home_backup::HomeBackupConfig;
 pub(crate) use features::FeatureFlags;
 pub(crate) use gateway::GatewayConfig;
 mod bot_father;
@@ -141,6 +142,7 @@ impl TrustedProxyConfig {
 #[derive(Clone)]
 pub struct Config {
     pub(crate) account_deletion_enabled: bool,
+    pub(crate) account_erasure_transaction_drain_seconds: u64,
     pub(crate) global_sandbox_limit: u16,
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
@@ -184,6 +186,7 @@ pub struct Config {
     pub auth_mode: AuthMode,
     pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
+    pub(crate) home_backup: HomeBackupConfig,
     pub(crate) agent_manager_replicas: Option<AgentManagerReplicas>,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
@@ -256,7 +259,10 @@ impl Config {
         }
 
         let features = FeatureFlags::from_lookup(&mut lookup)?;
+        let home_backup = HomeBackupConfig::from_lookup(&mut lookup, features.home_backup_enabled)?;
         let account_deletion_enabled = account_deletion::enabled(&mut lookup)?;
+        let account_erasure_transaction_drain_seconds =
+            account_deletion::transaction_drain(&mut lookup)?;
         let global_sandbox_limit = global_admission::from_lookup(&mut lookup)?;
         let bounded_admission_agents = admission_log::from_lookup(&mut lookup)?;
         let agent_log_fleet_percent =
@@ -360,6 +366,7 @@ impl Config {
         Ok(Self {
             global_sandbox_limit,
             account_deletion_enabled,
+            account_erasure_transaction_drain_seconds,
             bind,
             metrics_bind,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
@@ -403,6 +410,7 @@ impl Config {
             auth_mode,
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
+            home_backup,
             agent_manager_replicas,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,
@@ -429,3 +437,6 @@ use validation::{
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod graduation_tests;

@@ -28,6 +28,7 @@ pub struct MongoAdmissionCeilingsStore {
     activity: Collection<ActivityDoc>,
     database: mongodb::Database,
     deployment_limit: u16,
+    pub(crate) pending_homes: super::pending_launch_homes::PendingLaunchHomes,
 }
 
 impl MongoAdmissionCeilingsStore {
@@ -50,6 +51,10 @@ impl MongoAdmissionCeilingsStore {
         require_transaction_topology(&database).await?;
         schema::initialize_collections(&database, &[SETTINGS, ACTIVITY]).await?;
         Ok(Self {
+            pending_homes: super::pending_launch_homes::PendingLaunchHomes::new(
+                client,
+                database.name(),
+            ),
             initial_settings,
             client: client.clone(),
             database: database.clone(),
@@ -57,6 +62,19 @@ impl MongoAdmissionCeilingsStore {
             settings: majority_collection(&database, SETTINGS),
             activity: majority_collection(&database, ACTIVITY),
         })
+    }
+
+    pub(super) fn with_activation(
+        mut self,
+        activation: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        self.pending_homes = self.pending_homes.with_activation(activation);
+        self
+    }
+
+    pub(crate) fn with_pending_home_reconciliation(mut self, enabled: bool) -> Self {
+        self.pending_homes = self.pending_homes.with_enabled(enabled);
+        self
     }
 
     async fn apply(
@@ -170,6 +188,19 @@ enum ApplyError {
 
 #[async_trait::async_trait]
 impl AdmissionCeilingsStore for MongoAdmissionCeilingsStore {
+    async fn reconcile_pending_homes(
+        &self,
+        observed: u64,
+        actor: &SubjectId,
+        reason: &str,
+        dry_run: bool,
+        now: u64,
+    ) -> Result<layer2_core::admission::PendingHomesReconciliation, StoreError> {
+        self.pending_homes
+            .correct(observed, actor, reason, dry_run, now)
+            .await
+    }
+
     async fn read(&self) -> Result<AdmissionCeilingsState, StoreError> {
         self.settings
             .find_one(doc! {"_id": "platform"})
