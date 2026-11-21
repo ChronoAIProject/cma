@@ -341,6 +341,26 @@ class StagingWorkflowTest < Minitest::Test
     end
   end
 
+  def test_package_bundle_writes_only_on_a_develop_dispatch_with_pinned_actions
+    require_relative 'ci-contract'
+    inputs = CIContract.load_inputs
+    CIContract.staging_package_authority(inputs)
+    [->(w) { w[true]['push'] = { 'branches' => ['develop'] } },
+     ->(w) { w['permissions'] = { 'packages' => 'write' } },
+     ->(w) { w['jobs']['bundle']['permissions']['contents'] = 'write' },
+     ->(w) { w['jobs']['bundle']['if'] = "github.repository == 'ChronoAIProject/cma'" },
+     ->(w) { w['jobs']['bundle']['runs-on'] = 'ubuntu-latest-16-cores' },
+     ->(w) { w['jobs']['bundle']['env']['REPOSITORY'] = 'chronoaiproject/cma-runtime' },
+     ->(w) { w['jobs']['bundle']['steps'].find { |s| s['uses'].to_s.start_with?('docker/login-action') }['uses'] = 'docker/login-action@v3' },
+     ->(w) { w['jobs']['bundle']['steps'].reject! { |s| s['name'] == 'Refuse an existing tag before building' } },
+     ->(w) { w['jobs']['bundle']['steps'].find { |s| s['name'] == 'Publish the exact verified layout' }['run'].sub!('--preserve-digests ', '') },
+     ->(w) { w['jobs']['extra'] = { 'permissions' => { 'contents' => 'read' }, 'runs-on' => 'ubuntu-24.04', 'steps' => [] } }].each do |mutate|
+      copy = Marshal.load(Marshal.dump(inputs))
+      mutate.call(copy['omarchy-package-bundle'])
+      assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(copy) }
+    end
+  end
+
   def test_all_external_actions_are_pinned_and_only_sanitized_deployment_outcomes_upload
     %w[staging-cd staging-release staging-promote staging-deploy redeploy-staging].each do |name|
       workflow(name)['jobs'].each_value do |job|

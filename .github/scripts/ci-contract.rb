@@ -189,9 +189,10 @@ module CIContract
       end
     end
     publications = %w[web am eg runtime runtime_omarchy].map { |component| "release_#{component}" }
-    allowed = %w[publish:images staging-release:publish] + publications.map { |id| "staging-cd:#{id}" }
+    allowed = %w[publish:images staging-release:publish omarchy-package-bundle:bundle] + publications.map { |id| "staging-cd:#{id}" }
     require!(grants.sort == allowed.sort,
       "only the reviewed release entry points may grant package write")
+    omarchy_package_bundle_authority(inputs.fetch("omarchy-package-bundle"))
     staging = inputs.fetch("staging-cd")
     staging_events = staging["on"] || staging[true]
     require!(staging_events == { "push" => { "branches" => ["develop"] } },
@@ -204,6 +205,27 @@ module CIContract
     require!(writer["permissions"] == { "contents" => "read", "pull-requests" => "read", "actions" => "read", "packages" => "write" } &&
       writer["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/develop' && github.repository == 'ChronoAIProject/cma'",
       "staging publisher authority changed")
+  end
+
+  # The package bundle writes one new tag of one package, on an explicit
+  # dispatch from develop only, with exactly the reviewed pinned actions.
+  def self.omarchy_package_bundle_authority(workflow)
+    events = workflow["on"] || workflow[true]
+    require!(events.is_a?(Hash) && events.keys == ["workflow_dispatch"] &&
+      events.dig("workflow_dispatch", "inputs").keys == ["snapshot"], "package bundle runs only on dispatch")
+    require!(workflow["permissions"] == {} && workflow.fetch("jobs").keys == ["bundle"], "package bundle authority changed")
+    bundle = workflow.dig("jobs", "bundle")
+    require!(bundle["permissions"] == { "contents" => "read", "packages" => "write" } &&
+      bundle["if"] == "github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop'" &&
+      bundle["runs-on"] == "ubuntu-24.04" && bundle.dig("env", "REPOSITORY") == "chronoaiproject/cma-omarchy-packages",
+      "package bundle publisher authority changed")
+    require!(bundle.fetch("steps").map { |row| row["uses"] }.compact == [
+      "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
+      "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
+    ], "every action with package write authority must remain pinned")
+    script = bundle.fetch("steps").map { |row| row["run"].to_s }.join("\n")
+    require!(script.scan(/omarchy-package-bundle\.py absent /).size == 2 && script.include?("copy --preserve-digests"),
+      "package bundle must prove its tag absent before building and before pushing")
   end
 
   def self.provider(inputs)
