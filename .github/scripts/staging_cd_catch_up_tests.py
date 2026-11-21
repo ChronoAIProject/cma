@@ -15,6 +15,7 @@ from staging_cd_catch_up import Lane
 from staging_cd_common import Refusal
 from staging_cd_compatibility import GROUP
 from staging_cd_history import DevelopHistory
+from staging_cd_reservations import pending_name
 from staging_cd_targets import TARGETS
 from staging_cd_versions import DEPLOYABLES, REPOSITORY
 
@@ -234,6 +235,109 @@ class CatchUpTests(unittest.TestCase):
                          ("exhausted", 802, ["runtime-omarchy"]))
         self.assertNotIn(reason, catch_up.RERUNS)
         self.assertEqual(develop.posts, [])
+
+    def test_an_allocation_stopped_at_its_gate_is_re_run_once_from_the_hourly_check_after_staging_settles(self):
+        develop = Develop()
+        develop.push({"web"})
+        develop.complete(801)
+        attempt = develop.runs[801]["attempts"][-1]
+        attempt["allocate"] = "stopped"
+
+        def check(event, minutes):
+            return catch_up.decide(develop.server, develop.refs, develop.controller, event=event,
+                                   now=develop.later(minutes))
+        # As for a stopped plan: from a completed staging run, or before every run settled, the outage may persist.
+        self.assertEqual(check("workflow_run", 10), ("allocation-waiting", None, []))
+        self.assertEqual(check("schedule", 9), ("allocation-waiting", None, []))
+        reason, run, lanes = check("schedule", 10)
+        self.assertEqual((reason, run["id"], lanes), ("allocation-rerun", 801, []))
+        self.assertIn(reason, catch_up.RERUNS)
+        # A refusal that needs a person failed the allocation step itself: it waits for the next push.
+        attempt["allocate"] = "failure"
+        self.assertEqual(check("schedule", 10), ("head-unallocated", None, []))
+        # A cancelled head is never re-run automatically.
+        attempt.update(allocate="stopped", conclusion="cancelled")
+        self.assertEqual(check("schedule", 10), ("cancelled", None, []))
+        del attempt["conclusion"]
+        # Once re-run by the check itself, the head is spent: never a second time.
+        attempt["actor"] = BOT
+        self.assertEqual(check("schedule", 10), ("head-caught-up", None, []))
+        # A maintainer's re-run earns one more, never at the attempt cap.
+        attempt["actor"] = HUMAN
+        self.assertEqual(check("schedule", 10)[0], "allocation-rerun")
+        develop.runs[801]["attempts"].extend(dict(attempt) for _ in range(catch_up.ATTEMPTS - 1))
+        self.assertEqual(check("schedule", 10), ("head-caught-up", None, []))
+        self.assertEqual(develop.posts, [])
+
+    def test_a_re_run_attempt_takes_over_reservations_its_stopped_allocation_committed(self):
+        # Run 44948149418: the atomic reservation push outlived its client bound
+        # and settlement found nothing, so allocation stopped at its gate. The
+        # server committed the whole push moments later.
+        develop = Develop()
+        first = develop.push({"am", "web"})
+        develop.runs[801]["attempts"][-1]["allocate"] = "stopped"
+        develop.complete(801)
+        burned = {key: task["reservation"] for key, task in first.items()}
+        self.assertTrue(all(pending_name(value) in develop.server.refs for value in burned.values()))
+        reason, run, lanes = decide_raw(develop)
+        self.assertEqual((reason, run["id"], lanes), ("allocation-rerun", 801, []))
+        self.assertEqual(catch_up.rerun(develop.server, run, sleep=instant), 2)
+        self.assertEqual(decide(develop), ("run-active", None, []))
+        # The stopped attempt has settled, so the re-run attempt reserves each
+        # source again after the burned version, which stays on the remote.
+        retried = develop.allocate(801)
+        self.assertEqual({key: task["mode"] for key, task in retried.items()}, {"am": "publish", "web": "publish"})
+        for key, task in retried.items():
+            reservation = task["reservation"]
+            self.assertEqual((reservation["source"], reservation["previous"], reservation["run_id"],
+                              reservation["run_attempt"]), (develop.source(0), burned[key]["version"], 801, 2))
+            self.assertIn(pending_name(burned[key]), develop.server.refs)
+        for key, task in retried.items():
+            develop.finalize(task)
+            develop.deploy(801, key)
+        develop.complete(801)
+        self.assertEqual(decide(develop), ("head-caught-up", None, []))
+        self.assertEqual(develop.posts, [801])
+
+    def test_one_automatic_re_run_per_head_is_shared_by_every_trigger(self):
+        def stop(attempt, stage):
+            attempt.update(allocate=None, plan="stopped") if stage == "plan" else attempt.update(allocate="stopped")
+
+        # A stopped plan or allocation spends the head's re-run; the bot's attempt
+        # is never re-run for the other stop, or for a final it leaves undeployed.
+        for first, then in (("plan", "allocation"), ("allocation", "plan"), ("allocation", "final")):
+            with self.subTest(first=first, then=then):
+                develop = Develop()
+                develop.push({"web"})
+                stop(develop.runs[801]["attempts"][-1], first)
+                develop.complete(801)
+                reason, run, _lanes = decide_raw(develop)
+                self.assertEqual(reason, first + "-rerun")
+                catch_up.rerun(develop.server, run, sleep=instant)
+                if then == "final":
+                    develop.finalize(develop.allocate(801)["web"])
+                    develop.deploy(801, "web", "failed")
+                else:
+                    stop(develop.runs[801]["attempts"][-1], then)
+                develop.complete(801)
+                reason, run, lanes = decide(develop)
+                self.assertNotIn(reason, catch_up.RERUNS)
+                self.assertEqual((reason, lanes), ("exhausted", [("web", "unproven-final")]) if then == "final"
+                                 else ("head-caught-up", []))
+                self.assertEqual(develop.posts, [801])
+        # A re-run for a final spends it too: the bot's stopped allocation is not re-run.
+        develop = Develop()
+        develop.finalize(develop.push({"web"})["web"])
+        develop.deploy(801, "web", "failed")
+        develop.complete(801)
+        reason, run, _lanes = decide_raw(develop)
+        self.assertEqual(reason, "rerun")
+        catch_up.rerun(develop.server, run, sleep=instant)
+        stop(develop.runs[801]["attempts"][-1], "allocation")
+        develop.complete(801)
+        reason, run, lanes = decide(develop)
+        self.assertEqual((reason, run["run_attempt"], lanes), ("exhausted", 2, [("web", "unproven-final")]))
+        self.assertEqual(develop.posts, [801])
 
     def test_owner_without_a_run_is_settled_and_an_unknown_head_waits(self):
         develop = Develop()
@@ -620,6 +724,14 @@ class EntryTests(unittest.TestCase):
         run = {"id": 802, "run_attempt": 1}
         self.assertEqual(self.run_main(lambda *_, **__: ("plan-rerun", run, []), lambda *_: 2),
                          (0, "CATCH-UP plan-rerun run=802 attempt=2"))
+        self.assertEqual(self.run_main(lambda *_, **__: ("allocation-rerun", run, []), lambda *_: 2),
+                         (0, "CATCH-UP allocation-rerun run=802 attempt=2"))
+        self.assertEqual(catch_up.RERUNS, {"rerun", "plan-rerun", "allocation-rerun"})
+        for waiting in ("plan-waiting", "allocation-waiting", "head-unallocated"):
+            never = Mock(side_effect=AssertionError("re-run"))
+            self.assertEqual(self.run_main(lambda *_, waiting=waiting, **__: (waiting, None, []), never),
+                             (0, "CATCH-UP " + waiting))
+            never.assert_not_called()
         never = Mock(side_effect=AssertionError("re-run"))
         status, _lines = self.run_main(lambda *_, **__: ("exhausted", run, [Lane("web", "undeployed-final", "0.10.4")]),
                                        never, every=True)
