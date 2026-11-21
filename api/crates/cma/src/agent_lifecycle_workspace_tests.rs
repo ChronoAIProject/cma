@@ -11,6 +11,8 @@ mod quota;
 
 #[path = "agent_lifecycle_bootstrap_tests.rs"]
 mod bootstrap;
+#[path = "agent_lifecycle_repository_preflight_tests.rs"]
+mod repository_preflight_tests;
 
 #[path = "agent_lifecycle_title_tests.rs"]
 mod title_tests;

@@ -20,6 +20,7 @@ use mongodb::options::ReadConcern;
 mod channel_reuse;
 mod command_revival;
 mod commit;
+mod repository_failure;
 mod sandbox_save;
 mod workspace_ready;
 pub(super) enum ApplyError {
@@ -151,6 +152,7 @@ async fn apply_transaction(
             .await
         }
         SandboxTransaction::SaveWorkspaceAndAppend {
+            repository_runtime,
             expected_revision,
             workspace,
             event_at,
@@ -205,6 +207,10 @@ async fn apply_transaction(
                 event.clone(),
             )
             .await?;
+            if let Some(runtime) = repository_runtime {
+                repository_failure::settle(store, session, &current, workspace, runtime, event_at)
+                    .await?;
+            }
             Ok(Receipt::SaveWorkspace(event))
         }
     }

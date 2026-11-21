@@ -60,6 +60,7 @@ mod admission;
 mod desktop;
 #[path = "agent_lifecycle_image.rs"]
 mod image;
+mod repository_preflight;
 #[path = "agent_lifecycle_policy.rs"]
 mod task_policy;
 pub(crate) use image::{ImageManagerResolver, ImageResolver};
@@ -89,6 +90,7 @@ pub(crate) struct InlineAgentLifecycle {
     self_ref: OnceLock<Weak<Self>>,
     task_experience: OnceLock<Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>>,
     failure_metadata_enabled: OnceLock<bool>,
+    repository_preflight: OnceLock<Arc<dyn repository_preflight::RepositoryReadiness>>,
     worker_slots: Arc<tokio::sync::Semaphore>,
     tasks: LifecycleDrain,
 }
@@ -143,30 +145,12 @@ impl InlineAgentLifecycle {
             self_ref: OnceLock::new(),
             task_experience: OnceLock::new(),
             failure_metadata_enabled: OnceLock::new(),
+            repository_preflight: OnceLock::new(),
             worker_slots: Arc::new(tokio::sync::Semaphore::new(crate::store::DISCOVERY_BATCH)),
             tasks: LifecycleDrain::new(crate::store::DISCOVERY_BATCH + 1),
         });
         let _ = instance.self_ref.set(Arc::downgrade(&instance));
         instance
-    }
-
-    fn authority(
-        &self,
-        caller: &Caller,
-        context: Option<&CallerContext>,
-    ) -> Result<BotOwnerAuthority, AgentLifecycleProvisioningError> {
-        let context = context.ok_or(AgentLifecycleProvisioningError::Forbidden)?;
-        if context.caller.subject != caller.subject || !context.validate_principal() {
-            return Err(AgentLifecycleProvisioningError::Forbidden);
-        }
-        BotOwnerAuthority::new(
-            context.clone(),
-            ResourceOwner::Person {
-                subject: caller.subject.clone(),
-            },
-            None,
-        )
-        .map_err(|_| AgentLifecycleProvisioningError::Forbidden)
     }
 
     async fn provision(

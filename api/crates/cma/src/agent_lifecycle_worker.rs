@@ -105,9 +105,8 @@ impl InlineAgentLifecycle {
             SubjectId::new(record.owner),
             Authorization::new(record.input.capabilities),
         );
-        let work = self.provision(
-            &caller,
-            ProvisionInput {
+        let work = async {
+            let mut input = ProvisionInput {
                 behavior: record.input.behavior,
                 first_message,
                 request,
@@ -120,8 +119,15 @@ impl InlineAgentLifecycle {
                 existing_sandbox_id: record.sandbox_id,
                 existing_agent_id: record.agent_id,
                 actor: record.input.actor,
-            },
-        );
+            };
+            self.preflight_repository(
+                &caller.subject,
+                &mut input,
+                record.repository_commit.as_deref(),
+            )
+            .await?;
+            self.provision(&caller, input).await
+        };
         tokio::pin!(work);
         // Claim delivery can itself be delayed. Reconfirm the captured token
         // before polling provider work, then bound every renewal wait.

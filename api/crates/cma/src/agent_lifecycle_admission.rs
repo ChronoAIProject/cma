@@ -1,6 +1,25 @@
 use super::*;
 
 impl InlineAgentLifecycle {
+    pub(super) fn authority(
+        &self,
+        caller: &Caller,
+        context: Option<&CallerContext>,
+    ) -> Result<BotOwnerAuthority, AgentLifecycleProvisioningError> {
+        let context = context.ok_or(AgentLifecycleProvisioningError::Forbidden)?;
+        if context.caller.subject != caller.subject || !context.validate_principal() {
+            return Err(AgentLifecycleProvisioningError::Forbidden);
+        }
+        BotOwnerAuthority::new(
+            context.clone(),
+            ResourceOwner::Person {
+                subject: caller.subject.clone(),
+            },
+            None,
+        )
+        .map_err(|_| AgentLifecycleProvisioningError::Forbidden)
+    }
+
     pub(crate) fn with_failure_metadata(self: Arc<Self>, enabled: bool) -> Arc<Self> {
         self.failure_metadata_enabled
             .set(enabled)
