@@ -33,6 +33,7 @@ pub(crate) struct RuntimeConfig {
     pub allow_local_git: bool,
     /// Set only on a Sandbox whose immutable profile requested a desktop.
     pub machine_included: bool,
+    pub desktop_supervision_enabled: bool,
     pub capacity_recovery_enabled: bool,
     pub legacy_journal_recovery_enabled: bool,
 }
@@ -86,6 +87,18 @@ impl RuntimeConfig {
             None | Some("0") | Some("false") => false,
             Some("1") | Some("true") => true,
             Some(_) => return Err("CMA_MACHINE_INCLUDED must be 0, 1, false or true".into()),
+        };
+        let desktop_supervision_enabled = match process_env
+            .get("CHRONO_RUNTIME_DESKTOP_SUPERVISION_ENABLED")
+            .map(String::as_str)
+        {
+            None | Some("false") => false,
+            Some("true") => true,
+            Some(_) => {
+                return Err(
+                    "CHRONO_RUNTIME_DESKTOP_SUPERVISION_ENABLED must be true or false".into(),
+                );
+            }
         };
 
         let capacity_recovery_enabled = match process_env
@@ -179,6 +192,7 @@ impl RuntimeConfig {
             nyxid_url,
             allow_local_git: false,
             machine_included,
+            desktop_supervision_enabled,
             capacity_recovery_enabled,
             legacy_journal_recovery_enabled,
         })
@@ -221,6 +235,7 @@ impl RuntimeConfig {
             machine_included: false,
             capacity_recovery_enabled: false,
             legacy_journal_recovery_enabled: false,
+            desktop_supervision_enabled: false,
         }
     }
 }
