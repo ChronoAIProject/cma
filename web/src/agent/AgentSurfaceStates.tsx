@@ -6,7 +6,58 @@ import { PageHeader } from '../ui/PageHeader';
 import { Alert } from '../ui/Alert';
 import { Presence } from '../ui/Presence';
 import { IconCloseOutline16 } from '../ui/icons';
+import { ConnectionWizard } from '../connections/ConnectionWizard';
+import { isConnectionReport, type ConnectionReport } from '../connections/client';
+import type { useConnectionGate } from '../connections/useConnectionGate';
 import type { AgentController } from './controller';
+
+export function AgentConnectionSetup({
+  agentId,
+  owner,
+  explicit,
+  gate,
+  onReady,
+  onCancel,
+}: {
+  readonly agentId: string;
+  readonly owner?: string;
+  readonly explicit: boolean;
+  readonly gate: ReturnType<typeof useConnectionGate>;
+  readonly onReady: (report: ConnectionReport) => void;
+  readonly onCancel: () => void;
+}) {
+  const target = { type: 'agent', id: agentId } as const;
+  if (!explicit)
+    return (
+      <ConnectionWizard
+        target={target}
+        presentation="dialog"
+        expectedOwner={owner}
+        onReady={onReady}
+        onCancel={onCancel}
+      />
+    );
+  if (gate.pending) return null;
+  return (
+    <Button
+      size="sm"
+      variant="outline"
+      onClick={() =>
+        gate.run(
+          target,
+          (report) => {
+            if (isConnectionReport(report) && report.ready && report.owner === owner)
+              onReady(report);
+          },
+          false,
+          owner,
+        )
+      }
+    >
+      Connect accounts
+    </Button>
+  );
+}
 
 export function AgentSurfaceIssue({
   issue,

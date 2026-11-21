@@ -3,7 +3,6 @@ import { SuggestedReplies } from './SuggestedReplies';
 import type { SuggestedReplySet } from './suggestions';
 import { useAgentSuggestions } from './useAgentSuggestions';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { ConnectionWizard } from '../connections/ConnectionWizard';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import { subscriptionService } from '../connections/client';
 import type { AppRoute } from '../routing/routes';
@@ -28,6 +27,7 @@ import {
   AgentUnavailable,
   AgentCommandNotices,
   AgentSurfaceIssue,
+  AgentConnectionSetup,
 } from './AgentSurfaceStates';
 import { AgentSandboxStatus } from './AgentSandboxStatus';
 import { setupEnvironmentRoute } from './setupEnvironment';
@@ -476,11 +476,12 @@ export function AgentSurface({
             onStop={controller.interrupt}
           />
         </div>
-        {verified === undefined && connection.needed && !readOnly && !firstTextSend.available ? (
-          <ConnectionWizard
-            target={{ type: 'agent', id: agentId }}
-            presentation="dialog"
-            expectedOwner={viewerId}
+        {verified === undefined && connection.needed && !readOnly && !firstTextSend.pending ? (
+          <AgentConnectionSetup
+            agentId={agentId}
+            owner={viewerId}
+            explicit={firstTextSend.available}
+            gate={connections}
             onReady={connection.accept}
             onCancel={() => onNavigate({ kind: 'home' })}
           />

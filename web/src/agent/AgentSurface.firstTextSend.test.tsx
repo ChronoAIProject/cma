@@ -199,6 +199,22 @@ it('lets the owner cancel required account setup without sending or losing the d
   expect(send).not.toHaveBeenCalled();
 });
 
+it('lets a slash-command draft open and cancel account setup after passive refusal', async () => {
+  const completePassive = holdCheck();
+  vi.mocked(connectionClient.check).mockResolvedValue(missing);
+  const { field, send } = compose();
+  fireEvent.change(field, { target: { value: '/status' } });
+  await act(async () => completePassive(missing));
+  expect(sendButton()).toBeDisabled();
+  fireEvent.click(screen.getByRole('button', { name: 'Connect accounts' }));
+  const wizard = await screen.findByRole('dialog', { name: 'Connect your accounts' });
+  fireEvent.click(within(wizard).getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Connect accounts' })).toBeEnabled();
+  expect(field).toHaveValue('/status');
+  expect(send).not.toHaveBeenCalled();
+});
+
 it('uses the same cooldown after Retry-After and needs a second explicit Send after refusal', async () => {
   const completePassive = holdCheck();
   vi.mocked(connectionClient.check).mockRejectedValueOnce(

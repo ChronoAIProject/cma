@@ -36,9 +36,14 @@ export function useConnectionGate(enabled = true, scope?: object, description?: 
     },
     [enabled, scope],
   );
-  const run = (target: ConnectionTarget, action: () => void, forceSubscription = false) => {
+  const run = (
+    target: ConnectionTarget,
+    action: (report: ConnectionReport) => void,
+    forceSubscription = false,
+    owner?: string,
+  ) => {
     if (!enabled || active.current !== undefined) return;
-    const value = { id: ++serial.current, target, action, forceSubscription };
+    const value = { id: ++serial.current, target, action, forceSubscription, owner };
     active.current = value;
     setError(undefined);
     setInteractive(true);
