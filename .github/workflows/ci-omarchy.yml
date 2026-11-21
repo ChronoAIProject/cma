@@ -63,6 +63,7 @@ jobs:
           python3 .github/scripts/omarchy-close-browser-tests.py
           python3 .github/scripts/omarchy-browser-input-tests.py
           node --test .github/scripts/omarchy-browser-page.test.cjs
+          node --test .github/scripts/desktop-seccomp.test.mjs
       -
         name: "Ledger image qualification regressions"
         run: "node --test .github/scripts/runtime-ledger-evidence.test.mjs .github/scripts/runtime-ledger-downgrade.test.mjs"

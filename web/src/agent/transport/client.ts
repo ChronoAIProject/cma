@@ -183,6 +183,34 @@ export class AgentV2Session {
     });
   }
 
+  async recoverLegacySuggestion(signal?: AbortSignal) {
+    return this.withRecovery(signal, async (recovery) => {
+      await recovery.retry(() => this.checkIdentity(this.inputUser, recovery.signal));
+      const input = this.journal.legacySuggestion.read();
+      if (!input || input.state !== 'pending') return input?.receipt?.runId;
+      const receipt = await recovery.retry(() =>
+        this.sdk.agui.findInputReceipt(
+          {
+            threadId: this.journal.agentId,
+            runId: input.key,
+            forwardedProps: { answerContext: input.answerContext },
+            messages: [{ role: 'user', content: input.input }],
+          },
+          {
+            idempotencyKey: input.key,
+            signal: recovery.signal,
+            timeoutMs: recovery.timeoutMs ?? 5000,
+          },
+        ),
+      );
+      if (!receipt?.runId) return undefined;
+      await recovery.retry(() => this.checkIdentity(this.inputUser, recovery.signal));
+      recovery.signal.throwIfAborted();
+      this.journal.legacySuggestion.accepted(input.key, receipt.runId);
+      return receipt.runId;
+    });
+  }
+
   withRecovery<T>(
     signal: AbortSignal | undefined,
     operation: (context: RequestRecovery) => Promise<T>,

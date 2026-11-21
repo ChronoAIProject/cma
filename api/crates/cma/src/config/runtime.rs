@@ -43,6 +43,7 @@ pub(crate) struct RuntimeConfig {
     pub agent_sandbox: Option<layer3_adapter::agent_sandbox::AgentSandboxConfig>,
     pub agent_sandbox_connection: Option<layer3_adapter::agent_sandbox::RemoteKubernetesConfig>,
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
+    pub legacy_receiver_image: Option<layer3_adapter::hosted::LegacyReceiverImage>,
     pub allocate_agent_sandbox: bool,
     pub native_prepared_target: u8,
     pub native_machine_prepared_target: u8,
@@ -257,11 +258,23 @@ impl RuntimeConfig {
             .into());
         }
 
+        let legacy_receiver_image = super::agent_sandbox::legacy_receiver_image(lookup)?;
+        if legacy_receiver_image.is_some()
+            && (agent_sandbox.is_none()
+                || agent_sandbox_runtime_transport
+                    == layer3_adapter::hosted::NativeRuntimeTransport::Direct)
+        {
+            return Err(
+                "CHRONO_LEGACY_RECEIVER_IMAGE_PROOF requires a Kubernetes-bound native transport"
+                    .into(),
+            );
+        }
         Ok(Self {
             capacity: super::runtime_capacity::from_lookup(lookup)?,
             agent_sandbox,
             agent_sandbox_connection,
             agent_sandbox_runtime_transport,
+            legacy_receiver_image,
             allocate_agent_sandbox,
             native_prepared_target,
             native_machine_prepared_target,

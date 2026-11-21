@@ -7,6 +7,7 @@ const agent = 'agt_contract';
 const incarnation = 'a'.repeat(64);
 const eventsPath = `/api/v2/agents/${agent}/events`;
 const inputPath = `/api/v2/agents/${agent}/responses`;
+const receiptPath = `${inputPath}/receipt`;
 const cancelPath = `${inputPath}/resp_1/controls`;
 interface Write {
   ingress: number;
@@ -26,6 +27,7 @@ interface Read {
 export class ReplicaFixture {
   readonly base = new LocalAgentV2();
   readonly writes: Write[] = [];
+  readonly receiptReads: Write[] = [];
   readonly reads: Read[] = [];
   readonly errors: string[] = [];
   readonly streams = new Set<ServerResponse>();
@@ -33,6 +35,7 @@ export class ReplicaFixture {
   active = 0;
   faultAt = 0;
   lose: 'send' | 'cancel' | undefined;
+  revealInputReceipt = true;
   tailRefusals: number[] = [];
   private origins: string[] = [];
   private baseURL = '';
@@ -61,7 +64,8 @@ export class ReplicaFixture {
       const url = new URL(request.url());
       const owns =
         url.pathname === eventsPath ||
-        (request.method() === 'POST' && [inputPath, cancelPath].includes(url.pathname));
+        (request.method() === 'POST' &&
+          [inputPath, receiptPath, cancelPath].includes(url.pathname));
       return owns
         ? route.continue({ url: `${this.origins[this.active]}${url.pathname}${url.search}` })
         : route.fallback();
@@ -154,12 +158,22 @@ export class ReplicaFixture {
       response.on('close', () => this.streams.delete(response));
       return;
     }
-    if (request.method === 'POST' && [inputPath, cancelPath].includes(url.pathname)) {
+    if (request.method === 'POST' && [inputPath, receiptPath, cancelPath].includes(url.pathname)) {
       let body = '';
       for await (const chunk of request) body += String(chunk);
       const header = request.headers['idempotency-key'];
       if (typeof header !== 'string' || !header) throw new Error('Missing retained intent key');
-      this.writes.push({ ingress, path: url.pathname, body, key: header, at: performance.now() });
+      const captured = { ingress, path: url.pathname, body, key: header, at: performance.now() };
+      if (url.pathname === receiptPath) {
+        this.receiptReads.push(captured);
+        const exact = this.effects.get(`${inputPath}:${header}`) === body;
+        return this.json(
+          response,
+          this.revealInputReceipt && exact ? commandStatus(this.base.started) : null,
+          200,
+        );
+      }
+      this.writes.push(captured);
       const identity = `${url.pathname}:${header}`;
       const previous = this.effects.get(identity);
       if (previous !== undefined && previous !== body) throw new Error('Retained body changed');

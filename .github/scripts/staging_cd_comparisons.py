@@ -37,15 +37,16 @@ def selector_stats(stderr, keys):
     return None
 
 
-def batch_selection(root, revisions, metrics=None, budget=None):
+def batch_selection(root, revisions, metrics=None, budget=None, *, cached=True):
+    """Select contiguous first-parent revisions. Uncached, a batch never prunes the shared cache."""
     selector = root / ".github/scripts/ci_tracks/batch_selection.py"
     require(selector.is_file(), "Shared batch selector is unavailable")
     require(budget is None or (type(budget) is int and 0 < budget < 2400), "Selection budget is invalid")
     with tempfile.TemporaryDirectory(prefix="cma-cd-selection-") as directory:
         batch = Path(directory) / "revisions.json"
         batch.write_text(json.dumps(revisions), encoding="utf-8")
-        child_env = {k: v for k, v in os.environ.items() if k in (
-            "PATH", "HOME", "LANG", "LC_ALL", "RUSTUP_HOME", "CARGO_HOME", "CD_SELECTOR_CACHE")}
+        allowed = ("PATH", "HOME", "LANG", "LC_ALL", "RUSTUP_HOME", "CARGO_HOME") + (("CD_SELECTOR_CACHE",) if cached else ())
+        child_env = {k: v for k, v in os.environ.items() if k in allowed}
         command = [sys.executable, "-B", str(selector), str(root), str(batch)]
         # The budget stops new snapshots; this timeout only backs it up.
         result = subprocess.run(command + ([str(budget)] if budget is not None else []),

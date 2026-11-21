@@ -37,6 +37,7 @@ async fn independent_warm_workers_keep_shared_target_and_original_claim_on_takeo
                 expected_revision: 1,
                 target_replicas: 2,
             },
+            false,
         )
         .await
         .unwrap();
@@ -99,7 +100,8 @@ async fn durable_target_replay_unique_plan_leases_revision_and_uid_binding() {
                 &ResizeWarmPoolBody {
                     expected_revision: 1,
                     target_replicas: 0
-                }
+                },
+                false
             )
             .await,
         Err(WarmPoolError::Conflict)
@@ -135,6 +137,7 @@ async fn durable_target_replay_unique_plan_leases_revision_and_uid_binding() {
                 expected_revision: 1,
                 target_replicas: 0,
             },
+            false,
         )
         .await
         .unwrap();
@@ -149,7 +152,8 @@ async fn durable_target_replay_unique_plan_leases_revision_and_uid_binding() {
                 &ResizeWarmPoolBody {
                     expected_revision: 1,
                     target_replicas: 9
-                }
+                },
+                false
             )
             .await,
         Err(WarmPoolError::Conflict)
@@ -189,5 +193,91 @@ async fn durable_target_replay_unique_plan_leases_revision_and_uid_binding() {
         .await
         .unwrap();
     assert!(MongoNativeWarmPools::open(&db, "test").await.is_err());
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn operator_machine_count_survives_retirement_and_concurrent_release_seeding() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").expect("disposable Mongo URI is required");
+    let a = mongodb::Client::with_uri_str(&uri).await.unwrap();
+    let b = mongodb::Client::with_uri_str(&uri).await.unwrap();
+    let name = format!("cma_machine_carry_{}", uuid::Uuid::new_v4().simple());
+    let db = a.database(&name);
+    let left = Arc::new(MongoNativeWarmPools::open(&db, "test").await.unwrap());
+    let right = Arc::new(
+        MongoNativeWarmPools::open(&b.database(&name), "test")
+            .await
+            .unwrap(),
+    );
+    let agent = resize::pinned("agent", 'a');
+    let release = |store: &Arc<MongoNativeWarmPools>, machine: char| {
+        resize::deployment(
+            store.clone(),
+            resize::Planner::default(),
+            &agent,
+            Some((&resize::pinned("omarchy", machine), 0)),
+        )
+    };
+    let machine_pool = |rows: Vec<PoolTarget>, machine: char| {
+        let image = resize::pinned("omarchy", machine);
+        resize::only(
+            rows.into_iter()
+                .filter(|row| row.machine && row.plan.spec.image.uri == image)
+                .collect(),
+        )
+    };
+    let first = release(&left, '1');
+    first.ensure_default().await.unwrap();
+    let rows = left.list().await.unwrap();
+    let default = rows.iter().find(|row| !row.machine).unwrap().clone();
+    let machine = machine_pool(rows, '1');
+    assert_eq!(machine.target_replicas, 0);
+    assert_eq!(left.latest_machine_operator_replicas().await.unwrap(), None);
+    // An agent pool never records a machine decision, even when asked to.
+    let refused = ResizeWarmPoolBody {
+        expected_revision: 1,
+        target_replicas: 6,
+    };
+    assert!(matches!(
+        left.resize(&default.id, &refused, true).await,
+        Err(WarmPoolError::Conflict)
+    ));
+    resize::resize_to(&first, &default, 6).await;
+    resize::resize_to(&first, &machine, 2).await;
+    let choice = left.latest_machine_operator_replicas().await.unwrap();
+    assert_eq!(choice.map(|choice| choice.replicas), Some(2));
+
+    // Retirement zeroes the count; the tombstone keeps the decision.
+    let leased = left.claim_retirement(&machine.id).await.unwrap().unwrap();
+    let retiring = left.begin_retirement(&leased).await.unwrap();
+    assert_eq!(retiring.target_replicas, 0);
+    left.remove_retired(&retiring).await.unwrap();
+    assert!(left.find(&machine.id).await.unwrap().unwrap().retired);
+    assert_eq!(
+        left.latest_machine_operator_replicas().await.unwrap(),
+        choice
+    );
+
+    // Two pods seed the next machine release at once over separate clients.
+    let (one, two) = (release(&left, '2'), release(&right, '2'));
+    let (one, two) = tokio::join!(one.ensure_default(), two.ensure_default());
+    one.unwrap();
+    two.unwrap();
+    let promoted = machine_pool(right.list().await.unwrap(), '2');
+    assert_eq!(promoted.target_replicas, 2);
+    assert_eq!(promoted.revision, 1);
+    assert_eq!(promoted.operator_replicas, choice);
+
+    // Zero is an operator choice too, and is carried.
+    resize::resize_to(&release(&right, '2'), &promoted, 0).await;
+    release(&left, '3').ensure_default().await.unwrap();
+    assert_eq!(
+        machine_pool(left.list().await.unwrap(), '3').target_replicas,
+        0
+    );
+    let agent_pool = left.find(&default.id).await.unwrap().unwrap();
+    assert_eq!(agent_pool.target_replicas, 6);
+    assert_eq!(agent_pool.operator_replicas, None);
     db.drop().await.unwrap();
 }

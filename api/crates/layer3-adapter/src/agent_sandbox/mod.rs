@@ -23,6 +23,8 @@ pub use capacity::{
 pub use claim_guard::NativeClaimGuardReason;
 mod readiness_observation;
 pub use readiness_observation::NativeReadinessObservation;
+mod receiver_incarnation;
+pub(crate) use receiver_incarnation::ReceiverIncarnation;
 mod native_runtime_proof;
 pub(crate) use native_runtime_proof::NativeRuntimeProof;
 mod network_policy;
@@ -215,6 +217,11 @@ impl AgentSandboxClient {
     }
 
     pub async fn pod_binding(&self, runtime: &RuntimeHandle) -> Result<PodBinding> {
+        let (object, pod) = self.ready_runtime_pod(runtime).await?;
+        model::pod_binding(&object, &pod)
+    }
+
+    async fn ready_runtime_pod(&self, runtime: &RuntimeHandle) -> Result<(DynamicObject, Pod)> {
         let (name, _) = parse_handle(runtime)?;
         let parameters = ListParams::default().labels(&pods::selector(name)).limit(3);
         // The handle already supplies the selector. Both reads remain fresh;
@@ -238,7 +245,8 @@ impl AgentSandboxClient {
                 .await
         }
         .map_err(api_error)?;
-        self.pod_binding_from_page(&object, page)
+        let pod = self.owned_pod_from_page(&object, page)?;
+        Ok((object, pod))
     }
 
     fn pod_binding_from_page(

@@ -48,6 +48,7 @@ pub(crate) async fn serve() -> Result<(), String> {
 
     // Do not admit allocations against a newly promoted runtime until its
     // exact default pool has ready capacity (unless an operator disabled it).
+    // The shared desktop pool is seeded here but fills in the background.
     observe(
         "default_warm_pool_configuration",
         composition.native_warm_pools.ensure_default(),

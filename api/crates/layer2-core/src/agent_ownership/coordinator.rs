@@ -314,10 +314,10 @@ impl OwnershipCoordinator {
         }
         authority.retiring.store(true, Ordering::Release);
         authority.revoke();
-        // Do not shorten the lease if the receiving runtime has not acknowledged
-        // revocation: delayed input/ACK packets could otherwise still be in flight.
+        // Do not shorten the lease until every receiving runtime's cleanup
+        // obligation is settled. Delayed input/ACK packets may be in flight.
         bounded(revoke_transport).await?;
-        // A direct control/drain ACK also ends its retry episode. An old ACK
+        // Cooperative cleanup also ends its retry episode. Old completion
         // must not clear observations belonging to a replacement authority.
         if self
             .owned
@@ -327,7 +327,7 @@ impl OwnershipCoordinator {
             .is_some_and(|current| Arc::ptr_eq(current, authority))
         {
             self.cleanup_pacing
-                .receiver_acknowledged(&authority.token.agent_id);
+                .receiver_cleanup_completed(&authority.token.agent_id);
         }
         bounded(self.store.release(&authority.token)).await?;
         let mut owned = self.owned.lock().await;

@@ -547,6 +547,47 @@ class TimingTests(unittest.TestCase):
         self.assertEqual(result['failed_steps'], ['media-self-test 7/11', 'build 9/120'])
         self.assertNotIn('private', json.dumps(result))
 
+    def test_an_ignored_cache_export_failure_is_cache_evidence_not_a_failed_step(self):
+        # BuildKit keeps an ignore-error export failure on its exporter vertex,
+        # with the cache service's refusal as go-actions-cache relays it.
+        budget = ('error writing layer blob: failed to reserve cache: You have reached your configured budget, '
+                  'your cache is now read only to prevent additional charges. private-value')
+        step = {'id': '1', 'name': '[build 3/9] RUN cargo build private-value',
+                'started': '2026-01-01T00:00:00Z', 'completed': '2026-01-01T00:00:09Z'}
+        image = {'id': '2', 'name': 'exporting to oci image format',
+                 'started': '2026-01-01T00:00:09Z', 'completed': '2026-01-01T00:00:12Z'}
+        export = {'id': '3', 'name': 'exporting to GitHub Actions Cache',
+                  'started': '2026-01-01T00:00:12Z', 'completed': '2026-01-01T00:00:22Z'}
+
+        def summary(*rows):
+            return summarize(b'\n'.join(json.dumps({'vertexes': [row]}).encode() for row in rows))
+        result = summary(step, image, dict(export, error=budget))
+        self.assertEqual(result['cache_export_error'], 'read-only')
+        self.assertNotIn('failed_steps', result)
+        self.assertEqual(result['category_seconds']['cache-export'], 10)
+        self.assertEqual(result['category_seconds']['archive-export'], 3)
+        for withheld in ('private', 'budget', 'reserve'):
+            self.assertNotIn(withheld, json.dumps(result))
+        # Another export failure is not explained, and a real step failure still reports.
+        result = summary(dict(step, error='exit code: 101'), dict(export, error='maximum timeout reached private'))
+        self.assertEqual((result['cache_export_error'], result['failed_steps']), ('failed', ['build 3/9']))
+        self.assertNotIn('private', json.dumps(result))
+        self.assertNotIn('cache_export_error', summary(step, image, export))
+
+    def test_a_failed_test_stage_keeps_its_names_beside_a_failed_cache_export(self):
+        # The export vertex is cache evidence, never a second failed step or a
+        # source of test names; the failed test stage still names its tests.
+        import staging_cd_test_failures_tests as failures
+        raw = failures.progress(
+            (1, failures.QUALIFICATION, 'process did not complete successfully: private', {1: failures.SPEC}),
+            (2, 'exporting to GitHub Actions Cache',
+             'failed to reserve cache: You have reached your configured budget, private', {}))
+        result = summarize(raw, dockerfile=failures.RUNTIME)
+        self.assertEqual(result['failed_steps'], [failures.STEP])
+        self.assertEqual(result['failed_tests'], failures.SPEC_NAMES)
+        self.assertEqual(result['cache_export_error'], 'read-only')
+        self.assertNotIn('private', json.dumps(result))
+
 
 if __name__ == '__main__':
     unittest.main()
