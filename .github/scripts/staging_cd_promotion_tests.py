@@ -9,7 +9,7 @@ from unittest.mock import Mock, patch
 
 from staging_cd_allocate import allocate_queue
 from staging_cd_common import Refusal
-from staging_cd_promotion import PREFIX, inventory, main, proof
+from staging_cd_promotion import LIMIT, PREFIX, inventory, main, proof, snapshot
 from staging_cd_queue_tests import FIRST, SECOND, THIRD
 from staging_cd_history import DevelopHistory
 from staging_cd_receipts_tests import fixture_receipt, fixture_tag
@@ -28,7 +28,8 @@ class PromotionTests(unittest.TestCase):
 
     def writer(self, number, *, name="Promote web / Deploy admitted components / Deploy set",
                stamp=None, status="completed", conclusion="success", manual=False):
-        self.rows.insert(0, {"id": number, "sha": THIRD, "ref": "develop", "environment": ENVIRONMENT})
+        self.rows.insert(0, {"id": number, "sha": THIRD, "ref": "develop", "environment": ENVIRONMENT,
+                             "created_at": f"2026-11-21T13:{number:02d}:00Z"})
         run_id, job_id = number + 10, number + 20
         self.api_rows[f"deployments/{number}/statuses?per_page=6"] = [
             {"state": "inactive"}, {"state": conclusion, "log_url": f"https://github.com/{REPOSITORY}/actions/runs/{run_id}/job/{job_id}"}]
@@ -115,6 +116,25 @@ class PromotionTests(unittest.TestCase):
         job["head_sha"] = run["head_sha"] = self.rows[0]["sha"] = "e" * 40
         self.assertEqual(self.plan()[0]["mode"], "resume")
 
+    def read(self, path):
+        return self.rows if path.startswith("deployments?") else self.api_rows[path]
+
+    def test_snapshot_names_unfinished_and_covered_writers_and_the_listing_age(self):
+        self.writer(1, stamp=self.stamp)
+        self.writer(2, name="Promote eg / Deploy admitted components / Deploy set", status="in_progress")
+        self.writer(3, name="Promote contract / Deploy admitted components / Deploy set", conclusion="failure")
+        value = snapshot(self.read, ENVIRONMENT)
+        self.assertEqual(value.proofs, {"web": {"writer": THIRD, "stamp": self.stamp}})
+        self.assertEqual((value.observed, value.running), ({"am", "eg", "runtime", "runtime-omarchy", "web"}, {"eg"}))
+        # Fewer rows than the listing holds are every deployment there is.
+        self.assertIsNone(value.since)
+        self.assertEqual(inventory(self.read, ENVIRONMENT), value.proofs)
+        for number in range(4, LIMIT + 1):
+            self.writer(number, name="infrastructure")
+        value = snapshot(self.read, ENVIRONMENT)
+        self.assertEqual((value.observed, value.since), ({"am", "eg", "runtime", "runtime-omarchy", "web"},
+                                                         "2026-11-21T13:01:00Z"))
+
     def test_new_deployment_during_evidence_read_invalidates_snapshot(self):
         self.writer(1, stamp=self.stamp)
         def read(path):
@@ -122,6 +142,7 @@ class PromotionTests(unittest.TestCase):
                 return [{"id": 2}] if path.endswith("=1") else self.rows
             return self.api_rows[path]
         self.assertEqual(inventory(read, ENVIRONMENT), {})
+        self.assertIsNone(snapshot(read, ENVIRONMENT))
 
     def test_untrusted_run_or_newer_unidentified_writer_cannot_suppress_promotion(self):
         job, run = self.writer(1, stamp=self.stamp)
@@ -130,6 +151,14 @@ class PromotionTests(unittest.TestCase):
         run["event"] = "push"
         self.writer(2, name="Unidentified writer")
         self.assertEqual(self.plan()[0]["receipt"], self.receipt)
+
+    def test_a_cancelled_writer_cannot_confirm_a_final_even_after_coordinating(self):
+        job, _ = self.writer(1, stamp=self.stamp, conclusion="cancelled")
+        job["steps"][0]["conclusion"] = "success"
+        self.assertEqual(self.plan()[0]["mode"], "resume")
+        self.assertEqual(snapshot(self.read, ENVIRONMENT).proofs, {})
+        job["conclusion"] = "success"
+        self.assertEqual(self.plan(), [])
 
     def test_unknown_or_running_outcome_cannot_confirm_a_final(self):
         self.writer(1, stamp=self.stamp)
