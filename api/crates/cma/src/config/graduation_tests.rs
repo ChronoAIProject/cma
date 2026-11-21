@@ -6,9 +6,10 @@ use super::{
 };
 use std::{collections::HashMap, fs, path::PathBuf};
 
-/// Staging's literal environment. The cluster address is synthetic, and the
-/// Pod IP that Kubernetes substitutes into the relay address is fixed here.
-/// The platform's runtime bootstrap receipt is omitted: no reader consumes it.
+/// Staging's live literal environment, key for key. The infra-internal
+/// cluster address is a documentation IP, the Pod IP that Kubernetes
+/// substitutes into the relay address is fixed, and the deploy controller's
+/// bootstrap receipts, which no reader consumes, hold placeholders.
 const STAGING: &[(&str, &str)] = &[
     ("CHRONO_AGENT_MANAGER_RELAY_ADDRESS", "http://10.0.0.10:8080"),
     ("CHRONO_AGENT_MANAGER_REPLICAS_ENABLED", "true"),
@@ -44,6 +45,10 @@ const STAGING: &[(&str, &str)] = &[
     (
         "CHRONO_IMAGE_MANAGER_BASE_URL",
         "https://cma-staging.nyxid.ai/api/image-manager",
+    ),
+    (
+        "CHRONO_MACHINE_SANDBOX_IMAGE",
+        "ghcr.io/chronoaiproject/cma-runtime-omarchy@sha256:86c0193dbb96cba20b1194ec31677e0e7c9e840a62722a6978cbd8370cdbc53c",
     ),
     ("CHRONO_METRICS_BIND", "0.0.0.0:9091"),
     ("CHRONO_MONGODB_AUTHORITY_MODE", "shared-schema"),
@@ -87,48 +92,41 @@ const STAGING: &[(&str, &str)] = &[
     ),
     ("CHRONO_UPSTREAM_WIRE_API", "responses"),
     ("CHRONO_USAGE_METRICS_ENABLED", "false"),
+    ("CMA_CD_OMARCHY_BOOTSTRAP_RECEIPT", "placeholder"),
+    ("CMA_CD_RUNTIME_BOOTSTRAP_RECEIPT", "placeholder"),
     ("RUST_MIN_STACK", "16777216"),
 ];
 
-/// The secret names staging's Agent Manager loader needs. Each one is
-/// required (see `staging_needs_each_of_its_secrets`), so the probe never
-/// holds a secret that could hide a gate's missing prerequisite.
+const CA_FILE: &str = "CHRONO_AGENT_SANDBOX_CA_FILE";
+const CONTROL_KEY_FILE: &str = "CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE";
+
+/// Staging's live secret names, exactly.
 const STAGING_SECRETS: &[&str] = &[
     "CHRONO_AUTH_ENCRYPTION_KEY",
     "CHRONO_MONGODB_URI",
     "CHRONO_NYXID_CLIENT_ID",
     "CHRONO_NYXID_CLIENT_SECRET",
+    "CHRONO_NYXID_SERVICE_ID",
 ];
 
-/// Mounted files that staging's literal paths name, as temporary files.
-struct Mounted(Vec<(&'static str, PathBuf)>);
+/// A temporary file standing in for a mounted one.
+struct Mounted(PathBuf);
 
 impl Mounted {
-    fn new() -> Self {
-        Self(
-            [
-                "CHRONO_AGENT_SANDBOX_CA_FILE",
-                "CHRONO_AGENT_SANDBOX_CONTROL_KEY_FILE",
-            ]
-            .into_iter()
-            .map(|key| {
-                let path =
-                    std::env::temp_dir().join(format!("cma-graduation-{}", uuid::Uuid::new_v4()));
-                // The control key must hold at least 32 bytes.
-                fs::write(&path, format!("{}\n", "x".repeat(32)))
-                    .expect("write mounted placeholder");
-                (key, path)
-            })
-            .collect(),
-        )
+    fn new(contents: &str) -> Self {
+        let path = std::env::temp_dir().join(format!("cma-graduation-{}", uuid::Uuid::new_v4()));
+        fs::write(&path, contents).expect("write mounted placeholder");
+        Self(path)
+    }
+
+    fn path(&self) -> String {
+        self.0.to_string_lossy().into_owned()
     }
 }
 
 impl Drop for Mounted {
     fn drop(&mut self) {
-        for (_, path) in &self.0 {
-            let _ = fs::remove_file(path);
-        }
+        let _ = fs::remove_file(&self.0);
     }
 }
 
@@ -136,29 +134,28 @@ fn placeholder(name: &str) -> String {
     match name {
         "CHRONO_AUTH_ENCRYPTION_KEY" => "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".into(),
         "CHRONO_MONGODB_URI" => "mongodb://127.0.0.1:27017".into(),
+        "CHRONO_NYXID_SERVICE_ID" => "11111111-1111-4111-8111-111111111111".into(),
         _ => "placeholder".into(),
     }
 }
 
 /// Load staging's configuration without its graduated entries, plus
 /// `overrides`.
+///
+/// Loading reads the control key file, so it is a temporary file holding a
+/// key of valid length. The CA path is only checked to be absolute and is
+/// read later by the Kubernetes client, so it keeps staging's live path.
 fn staging(overrides: &[(&str, &str)]) -> Result<Config, String> {
-    staging_with(STAGING_SECRETS, overrides)
-}
-
-fn staging_with(secrets: &[&str], overrides: &[(&str, &str)]) -> Result<Config, String> {
-    let mounted = Mounted::new();
+    let control_key = Mounted::new(&format!("{}\n", "x".repeat(32)));
     let mut values: HashMap<String, String> = STAGING
         .iter()
         .filter(|(key, _)| !GRADUATED.contains(key))
         .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
         .collect();
-    for name in secrets {
+    for name in STAGING_SECRETS {
         values.insert((*name).to_owned(), placeholder(name));
     }
-    for (key, path) in &mounted.0 {
-        values.insert((*key).to_owned(), path.to_string_lossy().into_owned());
-    }
+    values.insert(CONTROL_KEY_FILE.to_owned(), control_key.path());
     for (key, value) in overrides {
         values.insert((*key).to_owned(), (*value).to_owned());
     }
@@ -260,16 +257,30 @@ fn staging_loads_with_each_graduated_gate_alone_explicitly_false() {
 }
 
 #[test]
-fn staging_needs_each_of_its_secrets() {
-    for missing in STAGING_SECRETS {
-        let secrets: Vec<_> = STAGING_SECRETS
+fn the_staging_fixture_matches_live_keys_and_file_handling() {
+    assert_eq!(STAGING.len(), 51);
+    let live = |key: &str| {
+        STAGING
             .iter()
-            .copied()
-            .filter(|name| name != missing)
-            .collect();
-        assert!(
-            staging_with(&secrets, &[]).is_err(),
-            "{missing} is required"
-        );
-    }
+            .find(|(candidate, _)| *candidate == key)
+            .map(|(_, value)| *value)
+            .unwrap()
+    };
+    assert_eq!(live(CA_FILE), "/etc/cma-staging/sandbox-kubernetes-ca.crt");
+    assert_eq!(
+        live(CONTROL_KEY_FILE),
+        "/etc/cma-staging/agent-sandbox-control-key"
+    );
+    let config = staging(&[]).expect("staging loads");
+    let connection = config
+        .runtime
+        .agent_sandbox_connection
+        .as_ref()
+        .expect("staging connects to its sandbox cluster");
+    assert_eq!(connection.ca_file, live(CA_FILE));
+    // The control key is read at load time: a short or absent key is refused.
+    let short = Mounted::new("short\n");
+    assert!(staging(&[(CONTROL_KEY_FILE, &short.path())]).is_err());
+    let absent = std::env::temp_dir().join(format!("cma-graduation-{}", uuid::Uuid::new_v4()));
+    assert!(staging(&[(CONTROL_KEY_FILE, &absent.to_string_lossy())]).is_err());
 }
