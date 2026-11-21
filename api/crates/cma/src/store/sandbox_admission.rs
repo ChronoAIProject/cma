@@ -15,6 +15,7 @@ use super::sandbox_events::{event_document, read_event};
 use super::sandbox_mongo::{is_duplicate_key, MongoSandboxStore, DOCUMENT_SCHEMA_VERSION};
 use super::sandboxes::{admitted_sandbox_document, read_sandbox, read_sandbox_admission_replay};
 
+mod catalogue;
 mod global;
 mod retry;
 
@@ -141,24 +142,7 @@ where
         ));
     }
     if catalogue {
-        let profile = &admission.sandbox.profile;
-        if matches!(&admission.sandbox.origin, SandboxOrigin::Trigger { .. })
-            || !super::profile_pin_admission::sandbox(
-                &database,
-                profile.id.as_str(),
-                profile.revision,
-                Some(&profile.digest),
-                session,
-            )
-            .await
-            .map_err(AdmissionError::Driver)?
-        {
-            super::profile_pin_admission::frozen::sandbox(&database, &admission.sandbox, session)
-                .await
-                .map_err(AdmissionError::Driver)?
-                .require()
-                .map_err(AdmissionError::Domain)?;
-        }
+        catalogue::admit(&database, &admission.sandbox, session).await?;
     }
     if retrying
         && admission.admission_cause() == layer2_core::admission::AdmissionCause::Fresh
