@@ -7,7 +7,17 @@ import { expandNavigationFilters } from '../test/select';
 
 function Filters() {
   const [status, setStatus] = useState('all');
-  return <NavigationFilters view="sandbox" status={status} onStatus={setStatus} />;
+  const [open, setOpen] = useState(false);
+  return (
+    <NavigationFilters
+      view="sandbox"
+      onView={() => {}}
+      status={status}
+      onStatus={setStatus}
+      open={open}
+      onOpenChange={setOpen}
+    />
+  );
 }
 
 it('offers distinct startup states and names the selected state in the summary', async () => {

@@ -51,8 +51,7 @@ const props = {
   navigation: { status: 'ready' as const, items, refresh: vi.fn() },
 };
 async function environments(user: ReturnType<typeof userEvent.setup>) {
-  await expandNavigationFilters(user);
-  await user.click(screen.getByRole('button', { name: 'Manage environments' }));
+  await user.click(screen.getByRole('button', { name: 'Environments' }));
   await expandNavigationFilters(user);
 }
 afterEach(() => vi.restoreAllMocks());
@@ -103,7 +102,7 @@ it('restores each view after returning, remounting and clearing without opening 
   await chooseOption(user, 'Agent status filter', 'Working');
   await environments(user);
   await chooseOption(user, 'Sandbox status filter', 'Installing');
-  await user.click(screen.getByRole('button', { name: 'Back to tasks' }));
+  await user.click(screen.getByRole('button', { name: 'Tasks' }));
   expect(screen.getByRole('button', { name: 'Agent status filter' })).toHaveTextContent('Working');
   await environments(user);
   expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
@@ -111,7 +110,7 @@ it('restores each view after returning, remounting and clearing without opening 
   );
   view.unmount();
   view = render(<ManagerNavigation {...props} />);
-  expect(screen.queryByRole('button', { name: 'Back to tasks' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Tasks' })).toHaveAttribute('aria-pressed', 'true');
   await expandNavigationFilters(user);
   expect(screen.getByRole('button', { name: 'Agent status filter' })).toHaveTextContent('Working');
   await environments(user);
@@ -154,7 +153,7 @@ it('keeps scope and viewer filters separate and resets the environment view on a
     'Installing',
   );
   view.rerender(<ManagerNavigation {...props} viewerId="another-viewer" />);
-  expect(screen.queryByRole('button', { name: 'Back to tasks' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Tasks' })).toHaveAttribute('aria-pressed', 'true');
   await environments(user);
   expect(screen.getByRole('button', { name: 'Sandbox status filter' })).toHaveTextContent(
     'All statuses',

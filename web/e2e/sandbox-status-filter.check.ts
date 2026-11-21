@@ -1,5 +1,7 @@
 import { expect, test, type Page } from '@playwright/test';
 import { LocalSandboxFilters } from './sandbox-status-filter.fixture';
+import { localTime } from './agent-startup-fixtures';
+import { navigation } from './resource-lifecycle.fixture';
 
 async function filters(page: Page) {
   const toggle = page.getByRole('button', { name: 'Filter', exact: true });
@@ -10,11 +12,7 @@ async function choose(page: Page, picker: string, option: string) {
   await page.getByRole('menuitemradio', { name: option, exact: true }).click();
 }
 async function environments(page: Page) {
-  await filters(page);
-  await page
-    .getByRole('group', { name: 'Navigation filters' })
-    .getByRole('button', { name: 'Manage environments', exact: true })
-    .click();
+  await page.getByRole('button', { name: 'Environments', exact: true }).click();
   await filters(page);
 }
 function noEffects(fixture: LocalSandboxFilters) {
@@ -22,6 +20,111 @@ function noEffects(fixture: LocalSandboxFilters) {
   expect(fixture.boundary.writes).toEqual([]);
   expect(fixture.boundary.unexpected).toEqual([]);
   expect(fixture.boundary.errors).toEqual([]);
+}
+
+for (const [width, height, entry] of [
+  [1440, 900, 'pointer'],
+  [1280, 800, 'settings'],
+  [800, 600, 'keyboard'],
+  [390, 844, 'pointer'],
+] as const) {
+  test(`LOCAL stable Tasks and Environments controls at ${width}px through ${entry}`, async ({
+    page,
+    baseURL,
+  }, info) => {
+    await page.setViewportSize({ width, height });
+    const fixture = new LocalSandboxFilters();
+    const { boundary } = fixture;
+    boundary.agent = { ...boundary.agent, status: 'stopped' };
+    const original = { ...boundary.workspace.agents[0]!, status: 'stopped' as const };
+    boundary.workspace = {
+      ...boundary.workspace,
+      agents: [
+        original,
+        ...Array.from({ length: 30 }, (_, index) => ({
+          ...original,
+          id: `agt_mode_${index}`,
+          worktree_id: `wkt_mode_${index}`,
+          title: `Synthetic task ${index}`,
+          task_activity_at: '2026-11-06T00:00:00Z',
+        })),
+      ],
+    };
+    await fixture.route(page, baseURL!);
+    await page.route('**/auth/connections/check', (route) =>
+      route.fulfill({
+        json: { owner: fixture.viewer, ready: true, checked_at: localTime, services: [] },
+      }),
+    );
+    await page.route(/\/api\/v1\/agents\/agt_mode_\d+(\/(channel-usage|provenance))?$/, (route) =>
+      route.fulfill({ status: 404, json: { code: 'not_found' } }),
+    );
+    await page.route(/\/api\/v1\/sandboxes\/sbx_filter_0\/events(\?|$)/, (route) =>
+      route.fulfill({ json: [] }),
+    );
+    const agentPath = `/agents/${boundary.agent.id}`;
+    await page.goto(agentPath);
+    await navigation(page, true);
+    const mode = page.getByRole('group', { name: 'Navigation view' });
+    const tasks = mode.getByRole('button', { name: 'Tasks', exact: true });
+    const environments = mode.getByRole('button', { name: 'Environments', exact: true });
+    const layout = async () => {
+      await expect(mode.getByRole('button')).toHaveCount(2);
+      await expect(tasks).toHaveText('Tasks');
+      await expect(environments).toHaveText('Environments');
+      const first = (await tasks.boundingBox())!;
+      const second = (await environments.boundingBox())!;
+      expect(first.x + first.width).toBeLessThanOrEqual(second.x);
+      expect(second.x + second.width).toBeLessThanOrEqual(width);
+      expect(
+        await environments.evaluate((button) => button.scrollWidth <= button.clientWidth),
+      ).toBe(true);
+    };
+    await expect(tasks).toHaveAttribute('aria-pressed', 'true');
+    await layout();
+    await filters(page);
+    await choose(page, 'Agent status filter', 'Stopped');
+    const row = page
+      .locator(`[data-node-id="agent:${boundary.agent.id}"]`)
+      .filter({ visible: true });
+    await expect(row).toHaveAttribute('aria-selected', 'true');
+    await row.focus();
+    const list = page.locator('.manager-navigation__list');
+    const scroll = await list.evaluate((element) => {
+      element.scrollTop = 180;
+      return element.scrollTop;
+    });
+    expect(scroll).toBeGreaterThan(0);
+    await mode.screenshot({ path: info.outputPath('tasks.png') });
+    if (entry === 'settings') {
+      await navigation(page, false);
+      await expect(mode).toBeHidden();
+      await page.getByRole('button', { name: 'Settings', exact: true }).press('Enter');
+      await page.getByRole('menuitem', { name: 'Manage environments', exact: true }).press('Enter');
+    } else if (entry === 'keyboard') await environments.press('Enter');
+    else await environments.click();
+    await expect(environments).toBeFocused();
+    await expect(environments).toHaveAttribute('aria-pressed', 'true');
+    await expect(tasks).toHaveAttribute('aria-pressed', 'false');
+    await layout();
+    await mode.screenshot({ path: info.outputPath('environments.png') });
+    await filters(page);
+    await choose(page, 'Sandbox status filter', 'Provisioning');
+    await choose(page, 'Navigation scope', 'Shared');
+    await page.getByRole('link', { name: /provisioning fixture/ }).click();
+    await expect(page).toHaveURL(`${baseURL}/sandboxes/sbx_filter_0`);
+    await navigation(page, true);
+    if (entry === 'pointer') await tasks.click();
+    else await tasks.press('Enter');
+    await expect(tasks).toHaveAttribute('aria-pressed', 'true');
+    await expect(page).toHaveURL(`${baseURL}${agentPath}`);
+    await expect(page.getByRole('button', { name: 'Navigation scope' })).toHaveText('Personal');
+    await expect(page.getByRole('button', { name: 'Agent status filter' })).toHaveText('Stopped');
+    await expect(row).toBeFocused();
+    expect(await list.evaluate((element) => element.scrollTop)).toBe(scroll);
+    await mode.screenshot({ path: info.outputPath('restored-tasks.png') });
+    noEffects(fixture);
+  });
 }
 
 test('LOCAL distinct startup states preserve filters through Tasks, reload and clear', async ({
@@ -55,14 +158,17 @@ test('LOCAL distinct startup states preserve filters through Tasks, reload and c
     expect(fixture.lists.every((url) => !url.searchParams.has('status'))).toBe(true);
   }
   await page.screenshot({ path: testInfo.outputPath('installing.png') });
-  await page.getByRole('button', { name: 'Back to tasks' }).click();
+  await page.getByRole('button', { name: 'Tasks', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Agent status filter' })).toHaveText('Working');
   await environments(page);
   await expect(page.getByRole('button', { name: 'Sandbox status filter' })).toHaveText(
     'Installing',
   );
   await page.reload();
-  await expect(page.getByRole('button', { name: 'Back to tasks' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Tasks', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
   await filters(page);
   await expect(page.getByRole('button', { name: 'Agent status filter' })).toHaveText('Working');
   await environments(page);
