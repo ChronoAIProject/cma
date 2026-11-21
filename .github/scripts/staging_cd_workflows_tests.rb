@@ -522,7 +522,8 @@ class StagingWorkflowTest < Minitest::Test
     refute check.key?('concurrency')
     assert_equal ['catch_up'], check['jobs'].keys
     job = check['jobs']['catch_up']
-    assert_equal({ 'contents' => 'read', 'actions' => 'write' }, job['permissions'])
+    # Re-running staging needs actions: write; controller outcomes only deployment reads.
+    assert_equal({ 'contents' => 'read', 'actions' => 'write', 'deployments' => 'read' }, job['permissions'])
     # At most one check runs and one waits; each decides from fresh state.
     assert_equal({ 'group' => 'cma-staging-cd-catch-up', 'cancel-in-progress' => false }, job['concurrency'])
     %w[github.repository\ ==\ 'ChronoAIProject/cma' github.ref\ ==\ 'refs/heads/develop'
@@ -538,7 +539,10 @@ class StagingWorkflowTest < Minitest::Test
     end
     assert_equal false, job['steps'].first.dig('with', 'persist-credentials')
     assert_equal ['python3 -B .github/scripts/staging_cd_catch_up.py'], job['steps'].map { |step| step['run'] }.compact
-    assert_equal({ 'GH_TOKEN' => '${{ github.token }}' }, job['steps'].last['env'])
+    # The check judges finals by the same controller outcomes the planner reads.
+    planner = staging.dig('jobs', 'plan', 'steps').find { |step| step['id'] == 'promotions' }
+    assert_equal({ 'GH_TOKEN' => '${{ github.token }}',
+                   'CD_STAGING_ENVIRONMENT' => planner.dig('env', 'CD_STAGING_ENVIRONMENT') }, job['steps'].last['env'])
   end
 
   def test_catch_up_reads_the_allocation_job_by_its_exact_display_name
