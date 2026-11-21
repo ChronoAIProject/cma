@@ -9,6 +9,7 @@ impl ProviderHostedControlTransport {
         let _ownership = self.receiver_lease(endpoint).await?;
         let url = endpoint.control()?;
         let auth = self.auth_header(endpoint);
+        let reads_status = matches!(request, RequestFrame::RuntimeStatus(_));
         let exchange = async {
             if endpoint.native_binding().is_some() {
                 let body = serde_json::to_vec(request).map_err(|_| {
@@ -27,6 +28,9 @@ impl ProviderHostedControlTransport {
                         ),
                     )
                     .await?;
+                if reads_status {
+                    crate::receiver_failure::record_status(reply.status);
+                }
                 return self.complete_native_control(endpoint, request, reply).await;
             }
             let mut request_builder = self
@@ -50,6 +54,9 @@ impl ProviderHostedControlTransport {
             let response = request_builder.send().await.map_err(|error| {
                 AdapterError::Unavailable(format!("runtime control request failed: {error}"))
             })?;
+            if reads_status {
+                crate::receiver_failure::record_status(response.status());
+            }
             super::super::provider_http::decode_control(response).await
         };
         let response = crate::file_read_diagnostics::transport(
@@ -63,7 +70,8 @@ impl ProviderHostedControlTransport {
                     })?
             },
         )
-        .await?;
+        .await;
+        let response = response?;
         control_correlation::validate(request, &response)?;
         if let Some(authority) = crate::owner_protocol::current_authority() {
             authority.check().await?;
@@ -90,6 +98,7 @@ impl ProviderHostedControlTransport {
                 lease,
             )
             .await?;
+        crate::receiver_failure::record_status(reply.status);
         self.complete_native_control(endpoint, &request, reply)
             .await
     }

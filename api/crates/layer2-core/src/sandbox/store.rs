@@ -52,7 +52,7 @@ pub use agent_reads::AgentReadQueryStore;
 mod reconciliation;
 pub use reconciliation::{
     apply_sandbox_runtime_loss, precheck_runtime_loss_agents, precheck_sandbox_runtime_loss,
-    validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
+    retirement_debt_is_local, validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
     SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication, SandboxRuntimeLossMutation,
     SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };

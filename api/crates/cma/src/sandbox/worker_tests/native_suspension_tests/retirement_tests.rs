@@ -132,7 +132,16 @@ async fn failed_native_credential_delivery_retires_without_recredentialing_or_cl
         .unwrap()
         .unwrap();
     assert_eq!(stopped.status, AgentStatus::Stopped);
-    assert_eq!(stopped.work.receipts, agent.work.receipts);
+    // The lost deletion reply is settled through verified runtime loss. Obsolete
+    // process receipts are retired, without inventing a successful close receipt.
+    assert!(stopped.work.receipts.is_empty());
+    assert_eq!(
+        stopped.conversation.runtime_generation,
+        agent
+            .conversation
+            .runtime_generation
+            .map(|generation| generation + 1)
+    );
     assert_eq!(
         stopped.conversation.conversation_id,
         agent.conversation.conversation_id

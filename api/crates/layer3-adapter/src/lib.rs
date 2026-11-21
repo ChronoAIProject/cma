@@ -209,6 +209,9 @@ pub use agent_filesystem::{
 };
 pub mod owner_control;
 pub mod owner_protocol;
+pub mod receiver_failure;
+mod runtime_retirement;
+pub use runtime_retirement::RuntimeRetirement;
 pub mod sandbox_metrics;
 
 // Shared immutable archive locator; core persistence and runtime use one shape.

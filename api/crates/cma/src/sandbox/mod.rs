@@ -24,8 +24,10 @@ mod policy;
 mod provenance_backfill;
 pub(crate) use provenance_backfill::AgentProvenanceBackfill;
 mod model_request_budget;
+mod native_retirement_finalizer;
 mod reconciliation;
 pub(crate) mod retained_recovery;
+mod retirement_control;
 pub(crate) mod runtime_attachment;
 mod runtime_mapping;
 mod scheduler;
@@ -69,6 +71,8 @@ pub(crate) use reconciliation::SandboxReconciler;
 mod agent_worker_tests;
 #[cfg(test)]
 mod worker_tests;
+#[cfg(test)]
+pub(crate) use worker_tests::exercise_native_retirement_finality;
 
 pub(crate) mod legacy_credentials;
 

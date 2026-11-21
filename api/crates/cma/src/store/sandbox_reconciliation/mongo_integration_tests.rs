@@ -29,6 +29,8 @@ mod channel_home_retention;
 mod commit;
 mod recovery;
 mod refusal;
+mod retirement;
+mod retirement_commit;
 mod scoped;
 
 fn loss(sandbox: &Sandbox) -> SandboxRuntimeLossRequest {
@@ -36,6 +38,7 @@ fn loss(sandbox: &Sandbox) -> SandboxRuntimeLossRequest {
         sandbox_id: sandbox.id.clone(),
         expected_revision: sandbox.revision,
         expected_runtime: sandbox.runtime.clone(),
+        native_retirement_finality: false,
         retain_runtime: false,
         interruption_cause: Default::default(),
         observed_at: OBSERVED.into(),
