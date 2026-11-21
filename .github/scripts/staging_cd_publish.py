@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 
 import ci_retry
+from ci_outcome import report
 from image_secret_gate import ScanRefusal, checksum, verified_staging_scan
 from staging_cd_admission import event_identity
 from staging_cd_artifacts import try_reuse
@@ -194,12 +195,15 @@ def publish(archive, identity, directory, registry, credential, actor, *, scanne
 def emit_cache_metrics(component, cache_metrics, stream):
     for metrics in cache_metrics:
         print(json.dumps({"event": "publication-cache", **metrics}, sort_keys=True), file=stream, flush=True)
-        oversize = metrics.get("result") == "withheld" and metrics.get("reason", "").startswith("oversize")
-        if metrics.get("operation") == "export" and (oversize or metrics.get("headroom") == "low"):
+        if metrics.get("operation") != "export":
+            continue
+        if metrics.get("result") == "withheld" and isinstance(metrics.get("reason"), str):
+            # A withheld bundle slows the next build; the catalogue says why and what to do.
+            report("cache-withheld", metrics["reason"], subject="build-cache", component=component, stream=stream)
+        elif metrics.get("headroom") == "low":
             # Fixed text only: surface the bound before builds quietly slow down.
             print(f"::warning title=Cargo cache bound::{component} Cargo bundle is "
-                  + ("over" if oversize else "above 75% of") + " its bound in staging_cd_cargo_artifact.py",
-                  file=stream, flush=True)
+                  "above 75% of its bound in staging_cd_cargo_artifact.py", file=stream, flush=True)
 
 
 def main():
@@ -301,7 +305,7 @@ def main():
         require(env.get("CD_COMPONENT") in DEPLOYABLES, "Unexpected superseded component")
         step_output(env, "disposition", skip["disposition"])
 
-    result = run_publication(operation, on_superseded=superseded)
+    result = run_publication(operation, on_superseded=superseded, component=env.get("CD_COMPONENT"))
     # run_private has restored the public descriptors; only fixed stage records
     # cross that boundary, including the failing phase on an unsuccessful run.
     component = env.get("CD_COMPONENT")
