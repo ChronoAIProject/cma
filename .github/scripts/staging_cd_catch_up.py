@@ -1,5 +1,9 @@
 """Re-plan lanes a busy owner left behind, once every staging run is idle.
 
+A head run whose plan stopped at its completion gate (a budget-stopped plan,
+or tags that could not be read) is re-run once too, from the hourly check and
+only after it has been settled for a while, so a short outage has passed.
+
 Allocation skips a lane while another run owns its newest reservation. When
 that owner's build then fails, nothing plans the lane again until the next
 develop push. After each Staging CD run completes, and hourly as a backstop,
@@ -11,12 +15,14 @@ applies unchanged and staging-cd.yml gains no trigger. Like any allocation
 it also retries the head's own failed lanes, though those alone never
 trigger a re-run.
 """
+from datetime import datetime
 import json
 import os
 from pathlib import Path
 import subprocess
 import time
 
+import ci_retry
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHub, GitHubNotFound
 from staging_cd_receipts import parse_annotation
@@ -29,8 +35,13 @@ CHECK = ".github/workflows/staging-cd-catch-up.yml"
 DEVELOP = "refs/heads/develop"
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
 BOT = "github-actions[bot]"
-# The display name of staging-cd.yml's allocation job; a workflow test pins it.
+# The display names of staging-cd.yml's allocation job, its plan job and the
+# plan's gate for a transient stop; a workflow test pins them.
 ALLOCATION_JOB = "allocate"
+PLAN_JOB = "plan"
+PLAN_GATE = "Require a complete release plan"
+# A transiently stopped plan is re-run only after it has been settled this long.
+PLAN_SETTLE_SECONDS = 600
 # One automatic re-run per develop head; never re-run a head this many times.
 ATTEMPTS = 5
 SECONDS = 150
@@ -51,7 +62,9 @@ def advertised(runner=subprocess.run):
     result = runner(["git", "-c", "credential.helper=", "-c", "http.extraHeader=", "ls-remote", "--refs",
                      REMOTE, DEVELOP, "refs/tags/*"], env=env, text=True, capture_output=True,
                     timeout=60, check=False)
-    require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024, "Release tag inventory is incomplete")
+    if result.returncode != 0:
+        raise Refusal("Release tag inventory is incomplete") from ci_retry.cli_cause(result.stderr)
+    require(len(result.stdout) <= 16 * 1024 * 1024, "Release tag inventory is incomplete")
     refs = {}
     for line in result.stdout.splitlines():
         oid, _, ref = line.partition("\t")
@@ -151,14 +164,36 @@ def left_behind(api, refs, head_run):
     return lanes
 
 
-def allocated(api, run):
+def run_jobs(api, run):
     jobs = api.request(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100")
     require(isinstance(jobs, dict) and isinstance(jobs.get("jobs"), list), "Head run jobs could not be read")
-    rows = [job for job in jobs["jobs"] if isinstance(job, dict) and job.get("name") == ALLOCATION_JOB]
+    return [job for job in jobs["jobs"] if isinstance(job, dict)]
+
+
+def allocated(jobs):
+    rows = [job for job in jobs if job.get("name") == ALLOCATION_JOB]
     return len(rows) == 1 and rows[0].get("status") == "completed" and rows[0].get("conclusion") == "success"
 
 
-def decide(api, read_refs):
+def plan_stopped(jobs):
+    """The plan job failed at its gate for a transient stop, not at a refusal or an error."""
+    rows = [job for job in jobs if job.get("name") == PLAN_JOB]
+    if len(rows) != 1 or rows[0].get("conclusion") != "failure" or not isinstance(rows[0].get("steps"), list):
+        return False
+    failed = [step.get("name") for step in rows[0]["steps"] if isinstance(step, dict)
+              and step.get("conclusion") == "failure"]
+    return failed == [PLAN_GATE]
+
+
+def settled(run, now):
+    try:
+        finished = datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")).timestamp()
+    except (AttributeError, KeyError, TypeError, ValueError):
+        return False
+    return now - finished >= PLAN_SETTLE_SECONDS
+
+
+def decide(api, read_refs, *, event=None, now=None):
     listing = api.request("actions/workflows/staging-cd.yml/runs?branch=develop&per_page=100")
     require(isinstance(listing, dict) and isinstance(listing.get("workflow_runs"), list)
             and all(isinstance(run, dict) for run in listing["workflow_runs"]), "Staging runs could not be read")
@@ -175,9 +210,15 @@ def decide(api, read_refs):
     actor = run.get("triggering_actor")
     if (isinstance(actor, dict) and actor.get("login") == BOT) or run["run_attempt"] >= ATTEMPTS:
         return "head-caught-up", None, []
-    # A failed plan or allocation is a failure to retry on the next push, not a skip.
-    if not allocated(api, run):
-        return "head-unallocated", None, []
+    jobs = run_jobs(api, run)
+    if not allocated(jobs):
+        # A transiently stopped plan is re-run once, from the hourly check, after
+        # it has settled. Any other failed plan or allocation waits for the next push.
+        if not plan_stopped(jobs):
+            return "head-unallocated", None, []
+        if event != "schedule" or not settled(run, time.time() if now is None else now):
+            return "plan-waiting", None, []
+        return "plan-rerun", run, []
     lanes = left_behind(api, refs, run)
     if lanes is None:
         return "owner-active", None, []
@@ -228,7 +269,7 @@ def main():
         try:
             authorized(env)
             api = GitHub(env.get("GH_TOKEN"), deadline=time.monotonic() + SECONDS)
-            reason, run, lanes = decide(api, advertised)
+            reason, run, lanes = decide(api, advertised, event=env["GITHUB_EVENT_NAME"])
             outcome.update(reason=reason, lanes=lanes)
             if run is not None:
                 outcome.update(run=run["id"], attempt=rerun(api, run))
@@ -243,8 +284,10 @@ def main():
         print("FAIL catch-up " + outcome.get("failure", "unexpected error"))
         return status
     line = "CATCH-UP " + outcome["reason"]
+    if "run" in outcome:
+        line += f" run={outcome['run']} attempt={outcome['attempt']}"
     if outcome["lanes"]:
-        line += f" run={outcome['run']} attempt={outcome['attempt']} lanes={','.join(outcome['lanes'])}"
+        line += f" lanes={','.join(outcome['lanes'])}"
     print(line)
     return 0
 

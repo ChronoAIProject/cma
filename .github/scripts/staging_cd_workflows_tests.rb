@@ -541,6 +541,20 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal({ 'GH_TOKEN' => '${{ github.token }}' }, job['steps'].last['env'])
   end
 
+  def test_catch_up_reads_the_plan_job_and_its_transient_gate_by_their_exact_names
+    source = File.read(File.join(__dir__, 'staging_cd_catch_up.py'))
+    job = source.scan(/^PLAN_JOB = "([^"]+)"$/).flatten
+    gate = source.scan(/^PLAN_GATE = "([^"]+)"$/).flatten
+    assert_equal [1, 1], [job.size, gate.size]
+    jobs = workflow('staging-cd')['jobs']
+    matching = jobs.select { |id, value| value.fetch('name', id) == job.first }
+    assert_equal ['plan'], matching.keys
+    gates = matching['plan']['steps'].select { |step| step['name'] == gate.first }
+    assert_equal 1, gates.size
+    # Renaming the gate, or letting a refusal fail at it, would change what catch-up re-runs.
+    assert_includes gates.first['if'], "steps.plan.outputs.transient == 'true'"
+  end
+
   def test_catch_up_reads_the_allocation_job_by_its_exact_display_name
     source = File.read(File.join(__dir__, 'staging_cd_catch_up.py'))
     names = source.scan(/^ALLOCATION_JOB = "([^"]+)"$/).flatten
@@ -588,6 +602,7 @@ class StagingWorkflowTest < Minitest::Test
     save = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
     select = steps.index { |step| step['id'] == 'plan' }
     gate = steps.index { |step| step['name'] == 'Require a complete release plan' }
+    proof = steps.index { |step| step['name'] == 'Require a provable release plan' }
     promotions = steps.index { |step| step['id'] == 'promotions' }
     assert_operator prepare, :<, restore
     assert_operator restore, :<, select
@@ -596,12 +611,17 @@ class StagingWorkflowTest < Minitest::Test
     # A budget-stopped plan saves its analysed revisions before the job fails,
     # and a later step's failure cannot discard them.
     assert_operator save, :<, gate
-    assert_operator gate, :<, promotions
-    assert_equal "steps.plan.outputs.complete != 'true'", steps[gate]['if']
-    # A refused plan names its reason through the same gate.
-    assert_equal({ 'CD_PLAN_REFUSED' => '${{ steps.plan.outputs.refused }}' }, steps[gate]['env'])
-    assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete',
-                 steps[gate]['run']
+    assert_operator gate, :<, proof
+    assert_operator proof, :<, promotions
+    # Exactly one gate fails a stopped plan: the first only for a transient
+    # stop, which catch-up may re-run; each names its reason.
+    assert_equal "steps.plan.outputs.complete != 'true' && steps.plan.outputs.transient == 'true'", steps[gate]['if']
+    assert_equal "steps.plan.outputs.complete != 'true' && steps.plan.outputs.transient != 'true'", steps[proof]['if']
+    [gate, proof].each do |index|
+      assert_equal({ 'CD_PLAN_REFUSED' => '${{ steps.plan.outputs.refused }}' }, steps[index]['env'])
+      assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete',
+                   steps[index]['run']
+    end
     [steps[restore], steps[save]].each do |step|
       assert_equal '${{ steps.selection-cache.outputs.directory }}', step['with']['path']
       assert_equal '${{ steps.selection-cache.outputs.key }}', step['with']['key']

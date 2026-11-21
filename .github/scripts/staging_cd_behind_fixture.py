@@ -45,7 +45,8 @@ class Develop:
         state = run["attempts"][number - 1]
         return {"id": run_id, "run_attempt": number, "event": "push", "head_branch": "develop",
                 "head_sha": run["head"], "path": WORKFLOW, "status": state["status"],
-                "triggering_actor": state["actor"], "repository": {"full_name": REPOSITORY}}
+                "triggering_actor": state["actor"], "repository": {"full_name": REPOSITORY},
+                "updated_at": state.get("updated_at", "2026-11-21T00:00:00Z")}
 
     def serve(self, path, payload=None, **kwargs):
         if path == "actions/workflows/staging-cd.yml/runs?branch=develop&per_page=100":
@@ -70,14 +71,27 @@ class Develop:
                 raise GitHubNotFound("GitHub resource was not found")
             if parts[5:] == ["jobs"]:
                 state = self.runs[run_id]["attempts"][attempt - 1]
-                return {"jobs": [{"name": "plan", "status": "completed", "conclusion": "success"},
+                return {"jobs": [self.plan_job(state.get("plan", "success")),
                                  {"name": "allocate", "status": "completed" if state["allocate"] else "queued",
                                   "conclusion": state["allocate"]}]}
             return self.view(run_id, attempt)
         return self.view(run_id)
 
     def start(self, run_id, actor=HUMAN):
-        self.runs[run_id]["attempts"].append({"status": "in_progress", "actor": actor, "allocate": None})
+        self.runs[run_id]["attempts"].append({"status": "in_progress", "actor": actor, "allocate": None,
+                                              "plan": "success", "updated_at": "2026-11-21T00:00:00Z"})
+
+    @staticmethod
+    def plan_job(outcome):
+        """The plan job: successful, stopped at its transient gate, or failed in its plan step."""
+        steps = {"success": [("Reconcile first-parent merges with the shared selector", "success"),
+                             ("Require a complete release plan", "skipped")],
+                 "stopped": [("Reconcile first-parent merges with the shared selector", "success"),
+                             ("Save trusted develop comparisons", "success"),
+                             ("Require a complete release plan", "failure")],
+                 "failed": [("Reconcile first-parent merges with the shared selector", "failure")]}[outcome]
+        return {"name": "plan", "status": "completed", "conclusion": "success" if outcome == "success" else "failure",
+                "steps": [{"name": name, "conclusion": conclusion} for name, conclusion in steps]}
 
     def complete(self, *run_ids):
         for run_id in run_ids:

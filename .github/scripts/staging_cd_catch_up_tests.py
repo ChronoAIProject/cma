@@ -122,6 +122,32 @@ class CatchUpTests(unittest.TestCase):
         self.assertEqual(decide(develop), ("head-caught-up", None, []))
         self.assertEqual(develop.posts, [])
 
+    def test_a_plan_stopped_at_its_gate_is_re_run_once_from_the_hourly_check_after_it_settles(self):
+        develop = Develop()
+        develop.push({"web"})
+        develop.complete(801)
+        attempt = develop.runs[801]["attempts"][-1]
+        attempt.update(allocate=None, plan="stopped", updated_at="2026-11-21T00:00:00Z")
+        settled = catch_up.datetime.fromisoformat("2026-11-21T00:10:00+00:00").timestamp()
+
+        def check(event, now):
+            return catch_up.decide(develop.server, develop.refs, event=event, now=now)
+        # Right after the failure, or from a completed staging run, the outage may persist.
+        self.assertEqual(check("workflow_run", settled), ("plan-waiting", None, []))
+        self.assertEqual(check("schedule", settled - 1), ("plan-waiting", None, []))
+        reason, run, lanes = check("schedule", settled)
+        self.assertEqual((reason, run["id"], lanes), ("plan-rerun", 801, []))
+        # A plan that failed in its own step (a refusal or an error) waits for the next push.
+        attempt["plan"] = "failed"
+        self.assertEqual(check("schedule", settled), ("head-unallocated", None, []))
+        # Once re-run by the check itself, the head is caught up: never a second time.
+        attempt.update(plan="stopped", actor=BOT)
+        self.assertEqual(check("schedule", settled), ("head-caught-up", None, []))
+        attempt["actor"] = HUMAN
+        attempt["updated_at"] = "not a time"
+        self.assertEqual(check("schedule", settled), ("plan-waiting", None, []))
+        self.assertEqual(develop.posts, [])
+
     def test_owner_without_a_run_is_settled_and_an_unknown_head_waits(self):
         develop = Develop()
         develop.push({"runtime-omarchy"})
@@ -214,7 +240,7 @@ class EntryTests(unittest.TestCase):
     def run_main(self, decide=None, rerun=None, env=None):
         output = io.StringIO()
         with patch.dict("os.environ", env or self.environment(), clear=True), \
-                patch.object(catch_up, "decide", side_effect=decide), \
+                patch.object(catch_up, "decide", side_effect=lambda *args, **_kwargs: decide(*args)), \
                 patch.object(catch_up, "rerun", side_effect=rerun), contextlib.redirect_stdout(output):
             status = catch_up.main()
         return status, output.getvalue().splitlines()[-1]
@@ -224,6 +250,8 @@ class EntryTests(unittest.TestCase):
         run = {"id": 802, "run_attempt": 1}
         self.assertEqual(self.run_main(lambda *_: ("rerun", run, ["am", "runtime-omarchy"]), lambda *_: 2),
                          (0, "CATCH-UP rerun run=802 attempt=2 lanes=am,runtime-omarchy"))
+        self.assertEqual(self.run_main(lambda *_: ("plan-rerun", run, []), lambda *_: 2),
+                         (0, "CATCH-UP plan-rerun run=802 attempt=2"))
 
     def test_refusals_fail_with_their_fixed_message_and_unexpected_errors_stay_private(self):
         def unverified(*_args):

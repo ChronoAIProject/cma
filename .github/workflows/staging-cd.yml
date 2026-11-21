@@ -75,8 +75,16 @@ jobs:
         with:
           path: ${{ steps.selection-cache.outputs.directory }}
           key: ${{ steps.selection-cache.outputs.key }}
+      # A transient stop (a spent budget, or tags that could not be read) fails
+      # here; catch-up re-runs a head run stopped at this step, once. A plan
+      # that needs a person fails at the next step instead and is not re-run.
       - name: Require a complete release plan
-        if: steps.plan.outputs.complete != 'true'
+        if: steps.plan.outputs.complete != 'true' && steps.plan.outputs.transient == 'true'
+        env:
+          CD_PLAN_REFUSED: ${{ steps.plan.outputs.refused }}
+        run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete'
+      - name: Require a provable release plan
+        if: steps.plan.outputs.complete != 'true' && steps.plan.outputs.transient != 'true'
         env:
           CD_PLAN_REFUSED: ${{ steps.plan.outputs.refused }}
         run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete'
