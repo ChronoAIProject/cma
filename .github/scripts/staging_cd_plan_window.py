@@ -38,7 +38,7 @@ import subprocess
 import time
 
 import ci_retry
-from staging_cd_catch_up import advertised, final_source, lane_versions
+from staging_cd_catch_up import advertised, final_receipt, lane_versions
 from staging_cd_common import Refusal
 from staging_cd_compatibility import ContractPolicy, RECIPE, VERSION_FILE
 from staging_cd_github import GitHub
@@ -132,7 +132,7 @@ def newest_finals(api, refs, *, deadline=None, clock=time.monotonic, sleep=time.
             continue
         try:
             # The reader keeps the object it read, so these checks see the same bytes.
-            result[component] = (final_source(api, component, version, oid), "final")
+            result[component] = (final_receipt(api, component, version, oid)["source"], "final")
         except UNREADABLE:
             result[component] = (None, "untrusted")
     return result

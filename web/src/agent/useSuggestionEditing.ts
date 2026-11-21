@@ -46,6 +46,7 @@ export function useSuggestionEditing(
   if (edited && !sameSet(edited.set, source)) setEdited(undefined);
   return {
     source,
+    contextualInput: sameSet(edited?.set, source) || retained?.state === 'pending',
     admissionAllowed,
     inputAvailability(value: AgentController['inputAvailability']) {
       return edited &&

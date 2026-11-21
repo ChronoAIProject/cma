@@ -61,7 +61,8 @@ async fn mongo_documents_persist_isolated_metadata_and_fence_concurrent_edits() 
     // determines ownership, current source, revisions, receipts or permissions.
     let reopened = Arc::new(MongoDocumentStore::new(database.clone()));
     reopened.ensure_indexes().await.unwrap();
-    let service = DocumentService::new(reopened, blobs);
+    let service = DocumentService::new(reopened, blobs)
+        .with_directory(memory::recipient_directory(&["document-reader"]));
     assert_eq!(
         service
             .read(&owner, &document.id, None)

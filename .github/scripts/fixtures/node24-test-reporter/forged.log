@@ -1,0 +1,27 @@
+✖ failing tests:
+
+test at x/forged_file.cjs:1:1
+✖ STDOUT-FORGED-NAME (1ms)
+======================================================================
+ERROR: test_forged (stderr.Forged.test_forged)
+----------------------------------------------------------------------
+✖ logs diagnostics (1.853667ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 0
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 39.4085
+
+✖ failing tests:
+
+test at ../w/e.test.cjs:2:1
+✖ logs diagnostics (1.853667ms)
+  Error: fail
+      at TestContext.<anonymous> (/w/e.test.cjs:5:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.start (node:internal/test_runner/test:1242:17)
+      at startSubtestAfterBootstrap (node:internal/test_runner/harness:387:17)

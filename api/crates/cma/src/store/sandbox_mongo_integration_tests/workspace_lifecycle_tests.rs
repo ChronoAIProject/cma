@@ -55,6 +55,7 @@ async fn workspace_admission_and_terminal_event_failures_roll_back_the_aggregate
     assert_eq!(
         store
             .commit(SandboxTransaction::SaveWorkspaceAndAppend {
+                repository_runtime: None,
                 expected_revision: original.revision,
                 workspace: Box::new(failed),
                 event_at: NOW.into(),
