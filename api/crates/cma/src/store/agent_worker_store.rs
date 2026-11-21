@@ -382,6 +382,14 @@ impl AgentWorkerStore for MongoSandboxStore {
         Err(SandboxStoreError::Conflict)
     }
 
+    async fn commit_agent_skill_result(
+        &self,
+        mutation: AgentWorkMutation,
+        guard: layer2_core::sandbox::store::AgentSkillResultGuard,
+    ) -> Result<(), SandboxStoreError> {
+        super::agent_worker_transaction::commit_agent_skill_result(self, mutation, &guard).await
+    }
+
     async fn commit_agent_work(
         &self,
         mutation: AgentWorkMutation,

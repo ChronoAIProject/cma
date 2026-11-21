@@ -329,6 +329,18 @@ pub trait AgentWorkerStore: Send + Sync {
         lease_expires_at: String,
     ) -> Result<Option<Agent>, SandboxStoreError>;
 
+    /// Publish a skill result under the captured parent environment. Unsupported
+    /// stores must refuse rather than discard the parent authority.
+    async fn commit_agent_skill_result(
+        &self,
+        _mutation: AgentWorkMutation,
+        _guard: super::AgentSkillResultGuard,
+    ) -> Result<(), SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "skill-result parent fencing is unsupported",
+        ))
+    }
+
     async fn commit_agent_work(&self, mutation: AgentWorkMutation)
         -> Result<(), SandboxStoreError>;
 }

@@ -13,6 +13,7 @@ mod models;
 mod pagination;
 mod settings;
 mod shared_settings;
+pub(super) mod skill_result_fixture;
 mod skills;
 mod task_titles;
 pub(super) mod worktree_recovery;

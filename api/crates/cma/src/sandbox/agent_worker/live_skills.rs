@@ -4,7 +4,7 @@ use super::{
 };
 use layer2_core::{
     rfc3339_at,
-    sandbox::store::{AgentWorkMutation, SandboxStoreError},
+    sandbox::store::{AgentSkillResultGuard, AgentWorkMutation, SandboxStoreError},
     sandbox::{
         Agent, AgentLogKind, AgentSkillInstallStatus as Status, AgentWorkStep, SandboxStatus,
         WorkspaceStatus, WorktreeStatus,
@@ -44,6 +44,12 @@ impl AgentWorker {
             }
             _ => return self.retry_skill(agent, now + started.elapsed()).await,
         };
+        let guard = AgentSkillResultGuard::capture(
+            &agent,
+            &context.sandbox,
+            &context.workspace,
+            &context.worktree,
+        )?;
         let installation = agent.work.live_skills.last().cloned().ok_or_else(|| {
             SandboxStoreError::Corrupt("skill work has no durable request".into())
         })?;
@@ -65,6 +71,7 @@ impl AgentWorker {
                         .finish_skill(
                             agent,
                             Some("skill_not_accessible_or_version_invalid"),
+                            &guard,
                             now + started.elapsed(),
                         )
                         .await
@@ -80,6 +87,7 @@ impl AgentWorker {
                 .finish_skill(
                     agent,
                     Some("skill_material_invalid"),
+                    &guard,
                     now + started.elapsed(),
                 )
                 .await;
@@ -91,6 +99,7 @@ impl AgentWorker {
                     .finish_skill(
                         agent,
                         Some("skill_material_invalid"),
+                        &guard,
                         now + started.elapsed(),
                     )
                     .await
@@ -129,6 +138,7 @@ impl AgentWorker {
                         .finish_skill(
                             agent,
                             Some("skill_material_invalid"),
+                            &guard,
                             now + started.elapsed(),
                         )
                         .await
@@ -138,7 +148,7 @@ impl AgentWorker {
         };
         let request = skill_request::request(&agent, runtime_skills[0].clone(), previous);
         let fence = claimed_fence(&agent, &self.config.holder)?;
-        let observed = SkillPublication::capture(&agent, &context);
+        let observed = SkillPublication::capture(&agent, &context)?;
         let error = match self
             .dependencies
             .adapter
@@ -199,9 +209,24 @@ impl AgentWorker {
             item.preparation_retries
                 >= layer3_adapter::MAX_AGENT_SKILL_UPGRADE_PREPARATION_ATTEMPTS - 1
         }) {
+            let context = self
+                .context(&agent)
+                .await
+                .map_err(|_| SandboxStoreError::Conflict)?;
+            let guard = AgentSkillResultGuard::capture(
+                &agent,
+                &context.sandbox,
+                &context.workspace,
+                &context.worktree,
+            )?;
             let reason = layer3_adapter::AgentSkillUpgradeRefusal::PreparationExhausted;
             return self
-                .finish_skill(agent, Some(&format!("{}: {reason}", reason.code())), now)
+                .finish_skill(
+                    agent,
+                    Some(&format!("{}: {reason}", reason.code())),
+                    &guard,
+                    now,
+                )
                 .await;
         }
         let failure = super::support::WorkerFailure::retryable(
@@ -239,6 +264,7 @@ impl AgentWorker {
         &self,
         agent: Agent,
         error: Option<&str>,
+        guard: &AgentSkillResultGuard,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
         let mut next = agent.clone();
@@ -258,17 +284,32 @@ impl AgentWorker {
             status: installation.status,
         };
         next.work.schedule(AgentWorkStep::None, rfc3339_at(now));
-        self.commit_skill(agent, next, vec![log], now)
+        let mutation = self.skill_mutation(agent, next, vec![log], now)?;
+        self.dependencies
+            .store
+            .commit_agent_skill_result(mutation, guard.clone())
             .await
-            .map(|_| ())
     }
     async fn commit_skill(
+        &self,
+        current: Agent,
+        next: Agent,
+        logs: Vec<AgentLogKind>,
+        now: SystemTime,
+    ) -> Result<Agent, SandboxStoreError> {
+        let mutation = self.skill_mutation(current, next, logs, now)?;
+        let next = mutation.agent.clone();
+        self.dependencies.store.commit_agent_work(mutation).await?;
+        Ok(next)
+    }
+
+    fn skill_mutation(
         &self,
         current: Agent,
         mut next: Agent,
         logs: Vec<AgentLogKind>,
         now: SystemTime,
-    ) -> Result<Agent, SandboxStoreError> {
+    ) -> Result<AgentWorkMutation, SandboxStoreError> {
         let stamp = rfc3339_at(now);
         next.updated_at = stamp.clone();
         next.revision = current
@@ -280,19 +321,15 @@ impl AgentWorker {
             .last_seq
             .checked_add(logs.len() as u64)
             .ok_or(SandboxStoreError::Conflict)?;
-        self.dependencies
-            .store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: current.revision,
-                holder: self.config.holder.clone(),
-                fence: claimed_fence(&current, &self.config.holder)?,
-                agent: next.clone(),
-                worktree: None,
-                appended_at: stamp,
-                sandbox_event: None,
-                agent_logs: logs,
-            })
-            .await?;
-        Ok(next)
+        Ok(AgentWorkMutation {
+            expected_agent_revision: current.revision,
+            holder: self.config.holder.clone(),
+            fence: claimed_fence(&current, &self.config.holder)?,
+            agent: next,
+            worktree: None,
+            appended_at: stamp,
+            sandbox_event: None,
+            agent_logs: logs,
+        })
     }
 }
