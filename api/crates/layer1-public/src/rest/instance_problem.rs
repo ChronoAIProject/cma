@@ -11,6 +11,7 @@ use super::{problem_document, problem_response};
 
 pub(crate) enum InstanceProblem {
     AdmissionPaused,
+    ModelFundingUnsupported,
     RuntimeCapacity(layer2_core::sandbox::RuntimeCapacityError),
     SessionCapacityUnavailable,
     Budget(layer2_core::budget::BudgetError),
@@ -64,6 +65,7 @@ impl InstanceProblem {
             AgentServiceError::Connection(error) => Self::Connection(error),
             AgentServiceError::Budget(reason) => Self::Budget(reason),
             AgentServiceError::AdmissionPaused => Self::AdmissionPaused,
+            AgentServiceError::ModelFundingUnsupported => Self::ModelFundingUnsupported,
             AgentServiceError::Forbidden => Self::Forbidden,
             AgentServiceError::ProfileNotFound => Self::AgentProfileNotFound,
             AgentServiceError::WorkspaceNotFound => Self::WorkspaceNotFound,
@@ -140,6 +142,7 @@ impl From<AgentOperationError> for InstanceProblem {
             AgentOperationError::Connection(error) => Self::Connection(error),
             AgentOperationError::Budget(reason) => Self::Budget(reason),
             AgentOperationError::AdmissionPaused => Self::AdmissionPaused,
+            AgentOperationError::ModelFundingUnsupported => Self::ModelFundingUnsupported,
             AgentOperationError::SessionCapacityUnavailable => Self::SessionCapacityUnavailable,
             AgentOperationError::Forbidden => Self::Forbidden,
             AgentOperationError::NotFound => Self::AgentNotFound,
@@ -190,6 +193,12 @@ impl IntoResponse for InstanceProblem {
             Self::RuntimeCapacity(capacity) => return super::problems::runtime_capacity(*capacity),
             Self::HistoryExport(error) => return super::agent_history::problem(*error),
             Self::AdmissionPaused => return super::admission_problem::paused(),
+            Self::ModelFundingUnsupported => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "model-funding-unsupported",
+                "Guaranteed model funding is unavailable for this turn.",
+                "model_funding_unsupported",
+            ),
             Self::SessionCapacityUnavailable => return super::admission_problem::session_capacity(),
             // Every budget refusal, the platform's included, is a final 402
             // without Retry-After: clients treat >= 500 as retryable.

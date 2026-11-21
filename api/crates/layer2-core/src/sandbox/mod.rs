@@ -463,3 +463,4 @@ mod always_on_tests;
 
 mod runtime_capacity;
 pub use runtime_capacity::RuntimeCapacityError;
+pub mod model_credit;

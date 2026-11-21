@@ -7,6 +7,8 @@ pub enum AgentOperationError {
     Budget(crate::budget::BudgetError),
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
+    #[error("guaranteed model funding is unsupported")]
+    ModelFundingUnsupported,
     #[error("active session capacity is unavailable")]
     SessionCapacityUnavailable,
     #[error(transparent)]
@@ -77,6 +79,7 @@ impl AgentOperationError {
         match self {
             Self::Budget(reason) => reason.code(),
             Self::AdmissionPaused => "admission_paused",
+            Self::ModelFundingUnsupported => "model_funding_unsupported",
             Self::SessionCapacityUnavailable => "session_capacity_unavailable",
             Self::Connection(error) => error.code(),
             Self::Forbidden => "forbidden",

@@ -17,6 +17,9 @@ pub(super) const IO_BOUND: Duration = Duration::from_secs(15);
 const QUEUE_LIFETIME: Duration = Duration::from_secs(300);
 const CREATION_ADMISSION_ATTEMPTS: usize = 3;
 
+#[path = "admission_model_credit.rs"]
+mod model_credit;
+
 /// Selected by a trusted interface adapter, separately from client intent.
 #[derive(Debug, Clone, Copy)]
 pub enum CommandSubmissionSource {
@@ -47,11 +50,13 @@ pub enum CommandAdmissionError {
     ModelMismatch,
 }
 
+#[derive(Clone)]
 pub struct AgentCommandService {
     pub(super) store: Arc<dyn AgentCommandStore>,
     pub(super) access: Arc<ResourceAccessService>,
     authority: Arc<dyn AgentCommandAdmissionAuthority>,
     task_experience: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
+    model_credit_required: bool,
 }
 
 impl AgentCommandService {
@@ -65,18 +70,7 @@ impl AgentCommandService {
             access,
             authority,
             task_experience: Default::default(),
-        })
-    }
-
-    pub fn with_task_experience(
-        self: Arc<Self>,
-        policy: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            store: self.store.clone(),
-            access: self.access.clone(),
-            authority: self.authority.clone(),
-            task_experience: policy,
+            model_credit_required: false,
         })
     }
 
@@ -178,9 +172,10 @@ impl AgentCommandService {
             agent_id: request.envelope.agent_id.clone(),
         };
         let capability = command_capability(&request.envelope.command);
-        if AnswerContext::from_command(&request.envelope.command)?.is_some()
+        let funding = self.require_model_credit(&request.envelope.command);
+        if funding.is_err() || (AnswerContext::from_command(&request.envelope.command)?.is_some()
             && !self.task_experience.allows(&context.caller.subject,
-                crate::sandbox::task_experience::TaskExperienceCapability::SuggestedFollowupAdmission)
+                crate::sandbox::task_experience::TaskExperienceCapability::SuggestedFollowupAdmission))
         {
             let existing = self
                 .with_authority_bound(
@@ -196,6 +191,7 @@ impl AgentCommandService {
                 };
                 return Ok(CommandStatusView::from_record(&record));
             }
+            funding?;
             return Err(ResourceAccessError::Access(AccessError::Forbidden).into());
         }
         let expected = request.clone();

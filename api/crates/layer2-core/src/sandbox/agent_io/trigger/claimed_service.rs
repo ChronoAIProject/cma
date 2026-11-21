@@ -76,6 +76,7 @@ impl AgentOperationService {
             execution_authority: None,
             trigger_authority: Some(authority),
             skill_upgrades_enabled: self.skill_upgrades_enabled,
+            model_credit_required: self.model_credit_required,
             instruction_policy: self.instruction_policy.clone(),
             connections: self.connections.clone(),
             store: self.store.clone(),

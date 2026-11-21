@@ -340,6 +340,7 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             worker_holder,
             access::ToolServices {
+                model_credit_required: config.features.model_credit_required,
                 source: access_tools,
                 documents: config.document_storage.as_ref().map(|_| documents.clone()),
                 deliverables: deliverables.clone(),

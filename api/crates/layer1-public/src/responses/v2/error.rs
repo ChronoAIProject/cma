@@ -169,6 +169,14 @@ pub(super) fn admission(value: CommandAdmissionError) -> Response {
         | CommandAdmissionError::Input(
             layer2_core::sandbox::AgentOperationError::AdmissionPaused,
         ) => admission_paused(),
+        CommandAdmissionError::Input(
+            layer2_core::sandbox::AgentOperationError::ModelFundingUnsupported,
+        ) => error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "model_funding_unsupported",
+            "Guaranteed model funding is unavailable for this turn.",
+            None,
+        ),
         CommandAdmissionError::ModelMismatch => field(
             "model",
             "model_mismatch",

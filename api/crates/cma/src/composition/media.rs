@@ -37,7 +37,8 @@ pub(super) fn compose(
                     stores.sandbox_model.clone(),
                     access.clone(),
                     auth.clone(),
-                ),
+                )
+                .with_model_credit_required(config.features.model_credit_required),
                 stores.sandbox_model.clone(),
                 stores.sandbox_model.clone(),
                 access.clone(),

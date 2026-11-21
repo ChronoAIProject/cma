@@ -87,6 +87,8 @@ pub enum AgentServiceError {
     Budget(crate::budget::BudgetError),
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
+    #[error("guaranteed model funding is unsupported")]
+    ModelFundingUnsupported,
     #[error("invalid agent request: {0}")]
     InvalidRequest(String),
     #[error("agent data is not usable: {0}")]
@@ -101,6 +103,7 @@ impl AgentServiceError {
             Self::Connection(error) => error.code(),
             Self::Budget(reason) => reason.code(),
             Self::AdmissionPaused => "admission_paused",
+            Self::ModelFundingUnsupported => "model_funding_unsupported",
             Self::Forbidden => "forbidden",
             Self::ProfileNotFound => "agent_profile_not_found",
             Self::WorkspaceNotFound => "workspace_not_found",
@@ -123,7 +126,9 @@ impl AgentServiceError {
     }
 }
 
+#[derive(Clone)]
 pub struct AgentService {
+    model_credit_required: bool,
     connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     store: Arc<dyn AgentServiceStore>,
     profiles: Arc<dyn AgentProfileStore>,
@@ -167,6 +172,7 @@ impl AgentService {
         R: AgentRuntimeRegistry + 'static,
     {
         Arc::new(Self {
+            model_credit_required: false,
             connections: Arc::new(super::FixedSandboxCredentialPrerequisite::Ready),
             store,
             profiles,
@@ -181,12 +187,20 @@ impl AgentService {
         connections: Arc<dyn super::SandboxCredentialPrerequisite>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            model_credit_required: self.model_credit_required,
             connections,
             store: self.store.clone(),
             profiles: self.profiles.clone(),
             profile_uses: self.profile_uses.clone(),
             runtimes: self.runtimes.clone(),
             runtime_capabilities: self.runtime_capabilities.clone(),
+        })
+    }
+
+    pub fn with_model_credit_required(&self, required: bool) -> Arc<Self> {
+        Arc::new(Self {
+            model_credit_required: required,
+            ..self.clone()
         })
     }
 
@@ -205,6 +219,10 @@ impl AgentService {
         validate_title(request.title.as_deref())?;
         let workspace = self.owned_workspace(caller, workspace_id).await?;
         let sandbox = self.parent_sandbox(caller, &workspace).await?;
+        super::model_credit::require_available(
+            self.model_credit_required && request.first_message.is_some(),
+        )
+        .map_err(|_| AgentServiceError::ModelFundingUnsupported)?;
         let bootstrap = matches!(&request.origin, AgentOrigin::Lifecycle { operation_id }
             if sandbox.accepts_lifecycle_bootstrap(operation_id))
             && super::lifecycle_bootstrap::bootstrap_workspace(&sandbox, &workspace);
