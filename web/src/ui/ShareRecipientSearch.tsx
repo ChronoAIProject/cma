@@ -24,7 +24,7 @@ export function ShareRecipientSearch<Person extends Identity>({
   const [reply, setReply] = useState<SearchReply<Person>>();
   const text = query.trim();
   const length = new TextEncoder().encode(text).length;
-  const searchable = length >= 2 && length <= 128;
+  const searchable = single ? length >= 1 && length <= 255 : length >= 2 && length <= 128;
   const current = reply?.text === text ? reply : undefined;
   const results = current?.people ?? [];
   const loading = searchable && !current;
@@ -61,7 +61,7 @@ export function ShareRecipientSearch<Person extends Identity>({
           aria-label="Find share recipients"
           value={query}
           disabled={disabled}
-          maxLength={128}
+          maxLength={single ? 255 : 128}
           onChange={(event) => {
             const next = event.target.value;
             if (single && value.length) onChange([]);

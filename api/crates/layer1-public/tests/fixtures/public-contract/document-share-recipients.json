@@ -29,6 +29,33 @@
       "captures": {}
     },
     {
+      "id": "document-share-recipients-exact-short-success",
+      "operation": "GET /api/v1/documents/{id}/share-recipients",
+      "scenario": "document_owner__share-recipients",
+      "request": {
+        "method": "GET",
+        "path": "/api/v1/documents/doc_fefd3b02dfed5d519c9a7759ebb8148f/share-recipients?q=Q",
+        "headers": {}
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json",
+          "referrer-policy": "no-referrer",
+          "x-content-type-options": "nosniff"
+        },
+        "body": [
+          {
+            "subject": "Q",
+            "display_name": "Name Q"
+          }
+        ],
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
       "id": "document-share-recipients-empty",
       "operation": "GET /api/v1/documents/{id}/share-recipients",
       "scenario": "document_owner__share-recipients",

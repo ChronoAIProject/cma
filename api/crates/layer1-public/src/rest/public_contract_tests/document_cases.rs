@@ -15,7 +15,7 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     );
     let rows = Arc::new(memory::MemoryDocuments::default());
     let blobs = Arc::new(memory::MemoryDocumentBlobs::default());
-    let recipients = memory::MemoryRecipientDirectory::new(&["document-reader"]);
+    let recipients = memory::MemoryRecipientDirectory::new(&["document-reader", "Q"]);
     let directory = UserDirectory::new(recipients.clone());
     let service =
         DocumentService::new(rows.clone(), blobs.clone()).with_directory(directory.clone());

@@ -20,15 +20,18 @@ fn caller(subject: &str) -> Caller {
     )
 }
 
-async fn fixture() -> (
+const RECIPIENTS: &[&str] = &["owner", "Recipient-A", "Recipient-Deleted"];
+
+async fn fixture(
+    subjects: &[&str],
+) -> (
     Arc<DocumentService>,
     Arc<memory::MemoryDocuments>,
     Arc<memory::MemoryRecipientDirectory>,
     DocumentView,
 ) {
     let rows = Arc::new(memory::MemoryDocuments::default());
-    let directory =
-        memory::MemoryRecipientDirectory::new(&["owner", "Recipient-A", "Recipient-Deleted"]);
+    let directory = memory::MemoryRecipientDirectory::new(subjects);
     let service = DocumentService::new(
         rows.clone(),
         Arc::new(memory::MemoryDocumentBlobs::default()),
@@ -59,7 +62,7 @@ fn command() -> GrantDocument {
 
 #[tokio::test]
 async fn owner_selects_an_exact_registered_recipient_and_replays_the_grant_during_outage() {
-    let (service, rows, directory, document) = fixture().await;
+    let (service, rows, directory, document) = fixture(RECIPIENTS).await;
     let owner = caller("owner");
     assert_eq!(
         service
@@ -116,8 +119,70 @@ async fn owner_selects_an_exact_registered_recipient_and_replays_the_grant_durin
 }
 
 #[tokio::test]
+async fn exact_resolution_handles_short_long_and_lower_ranked_subjects() {
+    let long = "L".repeat(255);
+    let mut crowded: Vec<_> = (0..20).map(|index| format!("Target-{index}")).collect();
+    crowded.extend([
+        "Target".into(),
+        "Q".into(),
+        long.clone(),
+        "Recipient-Deleted".into(),
+    ]);
+    let subjects: Vec<_> = crowded.iter().map(String::as_str).collect();
+    let (service, rows, directory, document) = fixture(&subjects).await;
+    let owner = caller("owner");
+    let fuzzy = UserDirectory::new(directory)
+        .share_recipients("Target")
+        .await
+        .unwrap();
+    assert_eq!(fuzzy.len(), 20);
+    assert!(!fuzzy
+        .iter()
+        .any(|person| person.subject.as_str() == "Target"));
+    for subject in ["Target", "Q", long.as_str()] {
+        assert_eq!(
+            service
+                .share_recipients(&owner, &document.id, subject)
+                .await
+                .unwrap(),
+            vec![DocumentShareRecipient {
+                subject: SubjectId::new(subject),
+                display_name: Some(format!("Name {subject}")),
+            }],
+        );
+    }
+    for subject in ["q", "Unregistered", "Recipient-Deleted"] {
+        assert!(service
+            .share_recipients(&owner, &document.id, subject)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+    assert_eq!(
+        service
+            .share_recipients(&caller("unrelated"), &document.id, "Q")
+            .await,
+        Err(DocumentError::NotFound),
+    );
+    assert_eq!(
+        rows.get(&document.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .metadata
+            .revision,
+        1
+    );
+    assert!(service
+        .shares(&owner, &document.id)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
 async fn refused_recipients_leave_the_aggregate_and_inventory_unchanged() {
-    let (service, rows, directory, document) = fixture().await;
+    let (service, rows, directory, document) = fixture(RECIPIENTS).await;
     let owner = caller("owner");
     let before = serde_json::to_value(rows.get(&document.id).await.unwrap()).unwrap();
     for (subject, expected) in [

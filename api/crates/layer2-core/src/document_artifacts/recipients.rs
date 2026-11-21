@@ -1,6 +1,15 @@
 use super::{types::valid_subject, DocumentError, DocumentService, DocumentShareRecipient};
-use crate::{Caller, StoreError, SubjectId, UserDirectory};
+use crate::{Caller, PublicIdentity, StoreError, SubjectId, UserDirectory};
 use std::sync::Arc;
+
+impl From<PublicIdentity> for DocumentShareRecipient {
+    fn from(identity: PublicIdentity) -> Self {
+        Self {
+            subject: identity.subject,
+            display_name: identity.display_name,
+        }
+    }
+}
 
 impl DocumentService {
     pub fn with_directory(mut self: Arc<Self>, directory: Arc<UserDirectory>) -> Arc<Self> {
@@ -17,8 +26,29 @@ impl DocumentService {
         query: &str,
     ) -> Result<Vec<DocumentShareRecipient>, DocumentError> {
         self.owner(caller, id).await?;
-        let matches = self
-            .recipient_directory()?
+        let directory = self.recipient_directory()?;
+        // A known subject must be selectable even if it is outside the fuzzy
+        // search's length bounds or would fall below its ranked result limit.
+        if valid_recipient(caller, query) {
+            let subject = SubjectId::new(query);
+            if let Some(user) = directory
+                .exact_user(&subject)
+                .await
+                .map_err(directory_error)?
+            {
+                let erasing = self
+                    .standing
+                    .authoritative(&subject)
+                    .await
+                    .map_err(|_| DocumentError::Unavailable)?;
+                return Ok(if erasing {
+                    Vec::new()
+                } else {
+                    vec![user.identity.into()]
+                });
+            }
+        }
+        let matches = directory
             .share_recipients(query)
             .await
             .map_err(directory_error)?;
@@ -33,10 +63,7 @@ impl DocumentService {
                 .await
                 .map_err(|_| DocumentError::Unavailable)?
             {
-                recipients.push(DocumentShareRecipient {
-                    subject: person.subject,
-                    display_name: person.display_name,
-                });
+                recipients.push(person.into());
             }
         }
         Ok(recipients)
@@ -56,11 +83,12 @@ impl DocumentService {
             .authoritative(&subject)
             .await
             .map_err(|_| DocumentError::Unavailable)?
-            || !self
+            || self
                 .recipient_directory()?
-                .contains_exact_subject(&subject)
+                .exact_user(&subject)
                 .await
                 .map_err(directory_error)?
+                .is_none()
         {
             return Err(DocumentError::ShareRecipientUnavailable);
         }

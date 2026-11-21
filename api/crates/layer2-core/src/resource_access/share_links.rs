@@ -197,10 +197,11 @@ impl ResourceAccessService {
                 .as_ref()
                 .ok_or(ResourceAccessStoreError::Unavailable)?;
             for subject in subjects {
-                if !directory
-                    .contains_exact_subject(subject)
+                if directory
+                    .exact_user(subject)
                     .await
                     .map_err(|_| ResourceAccessStoreError::Unavailable)?
+                    .is_none()
                 {
                     return Err(ResourceAccessStoreError::Invalid.into());
                 }

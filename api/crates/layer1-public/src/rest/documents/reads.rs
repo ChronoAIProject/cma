@@ -93,6 +93,7 @@ pub(crate) async fn shares(
 ) -> Result<Json<Vec<core::DocumentShare>>, DocumentProblem> {
     Ok(Json(service.shares(&caller, &id).await?))
 }
+/// Resolve an exact subject first. Other searches return a bounded list of matches.
 #[utoipa::path(
     get,
     path = "/api/v1/documents/{id}/share-recipients",

@@ -48,6 +48,24 @@ async function choose(input: HTMLElement) {
 }
 
 describe('Document share recipient selection', () => {
+  it.each([1, 255])('can select an exact %i-character subject without a name', async (length) => {
+    const { input, submit, grant, search } = setup();
+    const subject = 'Q'.repeat(length);
+    search.mockResolvedValue([{ subject, display_name: null }]);
+    fireEvent.change(input, { target: { value: subject } });
+    expect(submit).toBeDisabled();
+    const candidate = await screen.findByRole('button', {
+      name: `Select Name unavailable (${subject})`,
+    });
+    expect(search).toHaveBeenCalledWith(document.id, subject, { signal: expect.any(AbortSignal) });
+    fireEvent.click(candidate);
+    const selected = screen.getByRole('list', { name: 'Selected recipients' });
+    expect(within(selected).getByText(subject)).toBeVisible();
+    fireEvent.click(submit);
+    expect(await screen.findByText('Sharing updated.')).toBeVisible();
+    expect(grant).toHaveBeenCalledWith(document.id, subject, expect.anything(), expect.anything());
+  });
+
   it('requires a resolved choice and invalidates it when the owner edits the search', async () => {
     const { input, submit, grant, search } = setup();
     expect(submit).toBeDisabled();

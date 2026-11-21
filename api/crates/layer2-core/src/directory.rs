@@ -76,14 +76,14 @@ impl UserDirectory {
         self.store.user(subject).await
     }
 
-    pub(crate) async fn contains_exact_subject(
+    pub(crate) async fn exact_user(
         &self,
         subject: &SubjectId,
-    ) -> Result<bool, StoreError> {
+    ) -> Result<Option<RegisteredUser>, StoreError> {
         Ok(self
             .user(subject)
             .await?
-            .is_some_and(|user| user.identity.subject == *subject))
+            .filter(|user| user.identity.subject == *subject))
     }
 
     /// Call only after authorizing access to the records bearing these subjects.
