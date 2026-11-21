@@ -70,7 +70,7 @@ def identity(reservation, source):
     try:
         os_refresh = refresh_key(reservation["component"], (source / value["dockerfile"]).read_text(), reservation["source"])
     except SnapshotPinError as error:
-        raise Refusal(str(error)) from error
+        raise Refusal("Runtime Dockerfile must declare exactly one ARG DEBIAN_SNAPSHOT=YYYYMMDDTHHMMSSZ pin") from error
     arguments = dict(value["build_args"], CHRONO_BUILD=reservation["version"], CHRONO_BUILD_SHA=reservation["source"],
                      OS_SECURITY_REFRESH=os_refresh)
     if reservation["component"] in {"runtime", "runtime-omarchy"}:
