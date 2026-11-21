@@ -207,8 +207,14 @@ module CIContract
       "staging publisher authority changed")
   end
 
+  BUNDLE_ABSENT = 'python3 -B .github/scripts/omarchy-package-bundle.py absent --repository "$REPOSITORY" --tag "$TAG"'
+  BUNDLE_PUSH = 'skopeo copy --preserve-digests --dest-authfile /auth/config.json "oci:/output/layout:$TAG" "docker://ghcr.io/$REPOSITORY:$TAG"'
+
   # The package bundle writes one new tag of one package, on an explicit
   # dispatch from develop only, with exactly the reviewed pinned actions.
+  # Every step runs and fails the run on failure. The tag is proved absent
+  # before the build and again on the line before the only push, which goes
+  # to the job-level repository.
   def self.omarchy_package_bundle_authority(workflow)
     events = workflow["on"] || workflow[true]
     require!(events.is_a?(Hash) && events.keys == ["workflow_dispatch"] &&
@@ -223,9 +229,26 @@ module CIContract
       "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09",
       "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
     ], "every action with package write authority must remain pinned")
-    script = bundle.fetch("steps").map { |row| row["run"].to_s }.join("\n")
-    require!(script.scan(/omarchy-package-bundle\.py absent /).size == 2 && script.include?("copy --preserve-digests"),
-      "package bundle must prove its tag absent before building and before pushing")
+    steps = bundle.fetch("steps")
+    require!(!bundle.key?("continue-on-error") && steps.none? { |row| row.key?("continue-on-error") || row.key?("if") },
+      "every package bundle step must run, and any failure must fail the run")
+    redirected = steps.any? do |row|
+      env = row.fetch("env", {})
+      !env.is_a?(Hash) || env.key?("REPOSITORY") || row["run"].to_s.match?(/\bREPOSITORY\s*=/)
+    end
+    require!(!redirected, "package bundle publishes only to its job-level repository")
+    refuse, publish = "Refuse an existing tag before building", "Publish the exact verified layout"
+    order(bundle, ["Resolve the bundle tag from the committed lock", refuse, "Download, verify and lay out the bundle", publish])
+    require!(step(bundle, refuse)["run"].to_s.strip == BUNDLE_ABSENT, "package bundle must prove its tag absent before building")
+    commands = step(bundle, publish)["run"].to_s.gsub(/[ \t]*\\\n[ \t]*/, " ").lines.map(&:strip)
+    script = steps.map { |row| row["run"].to_s }.join("\n")
+    require!(commands.count(BUNDLE_PUSH) == 1 && script.scan(/\bskopeo copy\b/).size == 1 &&
+      script.scan(%r{docker://[^\s"']*}).uniq == ["docker://ghcr.io/$REPOSITORY:$TAG"],
+      "package bundle must push once, and only to ghcr.io/$REPOSITORY:$TAG")
+    push = commands.index(BUNDLE_PUSH)
+    require!(commands.first == "set -euo pipefail" && commands.count(BUNDLE_ABSENT) == 1 && push.positive? &&
+      commands[push - 1] == BUNDLE_ABSENT && script.scan(/omarchy-package-bundle\.py absent /).size == 2,
+      "package bundle must prove its tag absent immediately before pushing")
   end
 
   def self.provider(inputs)
