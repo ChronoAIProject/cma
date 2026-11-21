@@ -279,14 +279,17 @@ for (const edit of [false, true]) {
       await fixture.route(page, baseURL!);
       const settled = settledReads(page);
       let uncertain = true;
+      fixture.revealInputReceipt = false;
       await page.route('**/api/v2/agents/agt_contract/responses', (route) => {
         if (!uncertain || route.request().method() !== 'POST') return route.fallback();
         uncertain = false;
-        fixture.writes.push({
+        const write = {
           path: '/api/v2/agents/agt_contract/responses',
           key: route.request().headers()['idempotency-key'],
           body: route.request().postDataJSON() as Record<string, unknown>,
-        });
+        };
+        fixture.writes.push(write);
+        fixture.admitInput(write);
         return route.fulfill({ status: 502, json: { message: 'Response unavailable' } });
       });
       await page.goto('/agents/agt_contract');
@@ -305,16 +308,19 @@ for (const edit of [false, true]) {
       await expect(page.locator('.agent-surface__history-notice')).toHaveCount(0);
       expect(fixture.writes).toHaveLength(1);
       if (edit) await field(page).fill('A newer unsent draft');
+      fixture.revealInputReceipt = true;
       await recover.click();
       await expect(recover).not.toBeVisible();
       await expect(field(page)).toHaveValue(edit ? 'A newer unsent draft' : '');
-      expect(fixture.writes).toHaveLength(2);
-      expect(fixture.writes[1]!.key).toBe(key);
-      expect(fixture.writes[1]!.body).toEqual(fixture.writes[0]!.body);
+      expect(fixture.writes).toHaveLength(1);
+      expect(fixture.receiptReads.at(-1)).toEqual({
+        ...fixture.writes[0],
+        path: `${fixture.writes[0]!.path}/receipt`,
+      });
       await settled();
       await page.reload();
       await expect(field(page)).toHaveValue(edit ? 'A newer unsent draft' : '');
-      expect(fixture.writes).toHaveLength(2);
+      expect(fixture.writes).toHaveLength(1);
       await settled();
       clean(fixture);
     } finally {
