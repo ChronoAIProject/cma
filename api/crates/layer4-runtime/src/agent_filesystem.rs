@@ -24,6 +24,18 @@ mod existing_file;
 pub(crate) mod io;
 use io::{cstring, descend, mkdir, names, open_at, parent, read_regular, rename, stat, unlink};
 
+/// Read the opt-in before the runtime admits filesystem writes.
+pub(crate) fn preserve_mode_enabled(
+    env: &std::collections::BTreeMap<String, String>,
+) -> std::result::Result<bool, String> {
+    const FLAG: &str = "CHRONO_RUNTIME_PRESERVE_FILE_MODE_ENABLED";
+    match env.get(FLAG).map(String::as_str) {
+        None | Some("0" | "false") => Ok(false),
+        Some("1" | "true") => Ok(true),
+        Some(_) => Err(format!("{FLAG} must be 0, 1, false or true")),
+    }
+}
+
 pub(crate) fn list(
     config: &RuntimeConfig,
     request: AgentFileListRequest,

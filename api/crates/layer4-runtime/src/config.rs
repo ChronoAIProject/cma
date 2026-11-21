@@ -6,7 +6,6 @@ const DEFAULT_BIND: &str = "0.0.0.0:9090";
 const DEFAULT_HOME: &str = "/home/cma";
 const DEFAULT_STATE_ROOT: &str = "/var/lib/cma-runtime";
 const DEFAULT_PATH: &str = "/home/cma/.local/bin:/usr/local/bin:/usr/bin:/bin";
-const FILE_MODE_FLAG: &str = "CHRONO_RUNTIME_PRESERVE_FILE_MODE_ENABLED";
 
 #[derive(Clone, Debug)]
 pub(crate) struct ProxyConfig {
@@ -34,9 +33,9 @@ pub(crate) struct RuntimeConfig {
     pub allow_local_git: bool,
     /// Set only on a Sandbox whose immutable profile requested a desktop.
     pub machine_included: bool,
-    pub preserve_file_mode: bool,
     pub capacity_recovery_enabled: bool,
     pub legacy_journal_recovery_enabled: bool,
+    pub preserve_file_mode: bool,
 }
 
 impl RuntimeConfig {
@@ -89,11 +88,6 @@ impl RuntimeConfig {
             Some("1") | Some("true") => true,
             Some(_) => return Err("CMA_MACHINE_INCLUDED must be 0, 1, false or true".into()),
         };
-        let preserve_file_mode = match process_env.get(FILE_MODE_FLAG).map(String::as_str) {
-            None | Some("0" | "false") => false,
-            Some("1" | "true") => true,
-            Some(_) => return Err(format!("{FILE_MODE_FLAG} must be 0, 1, false or true")),
-        };
 
         let capacity_recovery_enabled = match process_env
             .get("CHRONO_RUNTIME_CAPACITY_RECOVERY_ENABLED")
@@ -120,6 +114,8 @@ impl RuntimeConfig {
                         .into(),
                 ),
             };
+
+        let preserve_file_mode = crate::agent_filesystem::preserve_mode_enabled(&process_env)?;
 
         let bind = env_socket(&process_env, "CHRONO_RUNTIME_BIND", DEFAULT_BIND)?;
         process_env.insert("HOME".into(), home.to_string_lossy().into_owned());
@@ -186,9 +182,9 @@ impl RuntimeConfig {
             nyxid_url,
             allow_local_git: false,
             machine_included,
-            preserve_file_mode,
             capacity_recovery_enabled,
             legacy_journal_recovery_enabled,
+            preserve_file_mode,
         })
     }
 
@@ -227,9 +223,9 @@ impl RuntimeConfig {
             nyxid_url: None,
             allow_local_git: true,
             machine_included: false,
-            preserve_file_mode: false,
             capacity_recovery_enabled: false,
             legacy_journal_recovery_enabled: false,
+            preserve_file_mode: false,
         }
     }
 }

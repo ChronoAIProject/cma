@@ -70,9 +70,9 @@ fn source_config(request: &HomeSnapshotExportRequest) -> Result<RuntimeConfig> {
         nyxid_url: None,
         allow_local_git: false,
         machine_included: false,
-        preserve_file_mode: false,
         capacity_recovery_enabled: false,
         legacy_journal_recovery_enabled: false,
+        preserve_file_mode: false,
     })
 }
 
