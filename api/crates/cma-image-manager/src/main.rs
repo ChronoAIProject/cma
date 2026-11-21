@@ -78,11 +78,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let worker_store = store.clone();
     let worker_executor = executor.clone();
     let worker = tokio::spawn(async move {
+        let mut worker = worker::Worker::default();
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
-            if worker::tick(&worker_store, &worker_executor).await.is_err() {
+            if worker.tick(&worker_store, &worker_executor).await.is_err() {
                 tracing::warn!("image build worker dependency unavailable");
             }
         }
