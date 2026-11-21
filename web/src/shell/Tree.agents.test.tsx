@@ -6,6 +6,38 @@ import { activityLabel } from './Tree';
 import { agentSignal } from './treePresentation';
 import { renderTree } from './Tree.test-support';
 
+it.each([
+  ['agent', 'stopped'],
+  ['agent', 'failed'],
+  ['sandbox', 'stopped'],
+  ['sandbox', 'failed'],
+] as const)(
+  'offers navigation only for a %s row with a %s Agent in a paused Sandbox',
+  async (view, status) => {
+    const onAction = vi.fn();
+    const onNavigate = vi.fn();
+    const [item] = navigationFixture('paused', status);
+    renderTree({
+      view,
+      items: [{ ...item!, sandbox: { ...item!.sandbox, owner: 'viewer-one' } }],
+      onAction,
+      onNavigate,
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Options for Agent one' }));
+    const remove = screen.getByRole('menuitem', { name: /^Delete\b/ });
+    expect(remove).toHaveAttribute('aria-disabled', 'true');
+    expect(remove).toHaveTextContent(
+      'Resume the Sandbox before deleting this Agent and its Worktree.',
+    );
+    const resume = screen.getByRole('menuitem', { name: 'Open Sandbox to resume' });
+    expect(resume).toHaveAttribute('href', '/sandboxes/sbx_1');
+    await user.click(resume);
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'sandbox', sandboxId: 'sbx_1' });
+    expect(onAction).not.toHaveBeenCalled();
+  },
+);
+
 describe('Sandbox navigation tree', () => {
   it('uses saved setup provenance for unselected rows without loading their conversations', () => {
     const items = navigationFixture().map((item) => ({

@@ -15,7 +15,7 @@ import { keyboardNavigation, agentSignal } from './treePresentation';
 import { observedTaskStatus } from './taskStatus';
 import { taskPresentation } from './taskPresentation';
 import { IconDataOutline16 } from '../ui/icons';
-import { sandboxChildrenAvailable, sandboxChildStatus } from '../sandbox/lifecycle';
+import { sandboxChildStatus } from '../sandbox/lifecycle';
 import { taskTitle } from './taskTitle';
 import type { AgentSummary, SandboxDetail } from '../api/types';
 import { setupEnvironmentRoute, SETUP_ENVIRONMENT_NOTICE } from '../agent/setupEnvironment';
@@ -191,14 +191,12 @@ export function PersonalAgentTree({
                     </>
                   }
                   actions={[
-                    ...agentActions(
-                      agent.status,
-                      permissions,
-                      !lifecycleBusy &&
-                        !busySandboxIds?.has(sandbox.id) &&
-                        !refreshError &&
-                        sandboxChildrenAvailable(sandbox),
-                    ),
+                    ...agentActions(agent.status, permissions, {
+                      sandbox,
+                      viewerId,
+                      busy: lifecycleBusy || busySandboxIds?.has(sandbox.id),
+                      stale: refreshError !== undefined,
+                    }),
                     ...(setupRoute || environmentNotice
                       ? [
                           {
