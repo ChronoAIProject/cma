@@ -18,11 +18,14 @@ use super::AgentWorker;
 mod context;
 mod effects;
 mod failures;
+mod lifecycle_failure;
 pub(super) use failures::{adapter_failure, cleanup_failure, skill_failure};
 use failures::{missing_parent, parent_store_failure};
 #[cfg(test)]
 mod ledger_hold_tests;
 mod mapping;
+mod publication;
+pub(super) use publication::{same_publication_claim, PublicationParents};
 mod repeated_failure;
 mod retry_delay;
 #[cfg(test)]
@@ -108,6 +111,29 @@ impl AgentWorker {
     )]
     pub(super) async fn progress(
         &self,
+        agent: Agent,
+        next_step: AgentWorkStep,
+        now: SystemTime,
+        evidence: Option<RequestEvidence>,
+        logs: Vec<AgentLogKind>,
+        worktree: Option<VersionedWorktree>,
+        sandbox_event: Option<SandboxEventKind>,
+    ) -> Result<(), SandboxStoreError> {
+        let mutation = self.progress_mutation(
+            agent,
+            next_step,
+            now,
+            evidence,
+            logs,
+            worktree,
+            sandbox_event,
+        )?;
+        self.dependencies.store.commit_agent_work(mutation).await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn progress_mutation(
+        &self,
         mut agent: Agent,
         next_step: AgentWorkStep,
         now: SystemTime,
@@ -115,7 +141,7 @@ impl AgentWorker {
         mut logs: Vec<AgentLogKind>,
         worktree: Option<VersionedWorktree>,
         sandbox_event: Option<SandboxEventKind>,
-    ) -> Result<(), SandboxStoreError> {
+    ) -> Result<AgentWorkMutation, SandboxStoreError> {
         let expected = agent.revision;
         let fence = claimed_fence(&agent, &self.config.holder)?;
         let stamp = rfc3339_at(now);
@@ -134,201 +160,16 @@ impl AgentWorker {
         agent.updated_at = stamp.clone();
         agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
         bump_log_sequence(&mut agent, logs.len())?;
-        self.dependencies
-            .store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: expected,
-                holder: self.config.holder.clone(),
-                fence,
-                agent,
-                worktree,
-                appended_at: stamp,
-                sandbox_event,
-                agent_logs: logs,
-            })
-            .await
-    }
-
-    pub(in crate::sandbox) async fn handle_failure(
-        &self,
-        agent: Agent,
-        failure: WorkerFailure,
-        now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        super::ledger_telemetry::observe(&failure);
-        if agent.work.step == AgentWorkStep::PublishConnection {
-            self.retry_connection_failure(&agent, failure, now).await
-        } else if failure.retryable || agent.status != AgentStatus::Starting {
-            self.retry(agent, failure, now).await
-        } else {
-            self.fail_startup(agent, failure, now).await
-        }
-    }
-
-    async fn retry(
-        &self,
-        agent: Agent,
-        failure: WorkerFailure,
-        now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        let delay = self.failure_retry_delay(&agent, &failure);
-        self.retry_at(agent, failure, now, now + delay).await
-    }
-
-    pub(super) async fn retry_at(
-        &self,
-        agent: Agent,
-        failure: WorkerFailure,
-        now: SystemTime,
-        ready_at: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        let telemetry = self.config.work_retry_policy_enabled.then(|| {
-            crate::sandbox::work_retry::RetryTelemetry::agent(
-                &agent,
-                failure.retry_kind(),
-                self.retry_decision(&agent, &failure, self.config.retry_delay),
-                ready_at,
-            )
-        });
-        self.commit_retry_at(agent, failure, now, ready_at).await?;
-        if let Some(telemetry) = telemetry {
-            telemetry.published();
-        }
-        Ok(())
-    }
-
-    async fn commit_retry_at(
-        &self,
-        mut agent: Agent,
-        failure: WorkerFailure,
-        now: SystemTime,
-        ready_at: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        if failure.is_runtime_hold() {
-            return self
-                .retry_runtime_hold_at(agent, now, ready_at, failure.is_startup_hold())
-                .await;
-        }
-        if self.retry_marked_capacity_at(&agent, now, ready_at).await? {
-            return Ok(());
-        }
-        if self
-            .retry_repeated_failure_at(&agent, &failure, now, ready_at)
-            .await?
-        {
-            return Ok(());
-        }
-        let expected = agent.revision;
-        let fence = claimed_fence(&agent, &self.config.holder)?;
-        let step = agent.work.step;
-        let stamp = rfc3339_at(now);
-        agent
-            .work
-            .retry(&self.config.holder, fence, rfc3339_at(ready_at))
-            .map_err(|_| SandboxStoreError::Conflict)?;
-        agent.updated_at = stamp.clone();
-        agent.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
-        bump_log_sequence(&mut agent, 1)?;
-        let mutation = AgentWorkMutation {
+        Ok(AgentWorkMutation {
             expected_agent_revision: expected,
             holder: self.config.holder.clone(),
             fence,
             agent,
-            worktree: None,
+            worktree,
             appended_at: stamp,
-            sandbox_event: None,
-            agent_logs: vec![AgentLogKind::WorkStepFailed {
-                step,
-                failure: failure.typed(),
-            }],
-        };
-        match failure.observation {
-            Some(observed) => {
-                self.dependencies
-                    .store
-                    .commit_agent_work_retry(mutation, observed)
-                    .await
-            }
-            None => self.dependencies.store.commit_agent_work(mutation).await,
-        }
-    }
-
-    async fn fail_startup(
-        &self,
-        mut agent: Agent,
-        failure: WorkerFailure,
-        now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        let expected = agent.revision;
-        let fence = claimed_fence(&agent, &self.config.holder)?;
-        let step = agent.work.step;
-        let stamp = rfc3339_at(now);
-        let typed = failure.typed();
-        if matches!(
-            step,
-            AgentWorkStep::OpenConversation | AgentWorkStep::PublishReady
-        ) {
-            if let Some(first) = agent.conversation.first_message.as_mut() {
-                first
-                    .fail_startup(stamp.clone())
-                    .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-            }
-        }
-        let mut worktree = self
-            .dependencies
-            .store
-            .get_worktree(&agent.worktree_id)
-            .await?
-            .ok_or(SandboxStoreError::NotFound)?;
-        let versioned = if worktree.status == WorktreeStatus::Creating {
-            let expected_revision = worktree.revision;
-            worktree
-                .transition(WorktreeStatus::Failed)
-                .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-            Some(VersionedWorktree {
-                expected_revision,
-                worktree,
-            })
-        } else {
-            None
-        };
-        agent
-            .work
-            .advance(
-                &self.config.holder,
-                fence,
-                AgentWorkStep::None,
-                stamp.clone(),
-            )
-            .map_err(|_| SandboxStoreError::Conflict)?;
-        agent
-            .fail(typed.clone(), stamp.clone())
-            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-        bump_log_sequence(&mut agent, 1)?;
-        self.dependencies
-            .registry
-            .fence(&agent.id, agent.conversation.runtime_generation, fence);
-        let id = agent.id.clone();
-        self.dependencies
-            .store
-            .commit_agent_work(AgentWorkMutation {
-                expected_agent_revision: expected,
-                holder: self.config.holder.clone(),
-                fence,
-                agent,
-                worktree: versioned,
-                appended_at: stamp,
-                sandbox_event: Some(SandboxEventKind::AgentStatusChanged {
-                    agent_id: id,
-                    from: AgentStatus::Starting,
-                    to: AgentStatus::Failed,
-                }),
-                agent_logs: vec![AgentLogKind::WorkStepFailed {
-                    step,
-                    failure: typed,
-                }],
-            })
-            .await
+            sandbox_event,
+            agent_logs: logs,
+        })
     }
 }
 
