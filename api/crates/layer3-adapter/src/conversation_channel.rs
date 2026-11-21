@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::sync::{
     atomic::{AtomicU8, Ordering},
-    Arc,
+    Arc, OnceLock,
 };
 use std::time::Duration;
 
@@ -17,8 +17,21 @@ const DELIVERY_DEADLINE: Duration = Duration::from_secs(2);
 pub(crate) const RETAINED_HISTORY_IDLE_DEADLINE: Duration = Duration::from_secs(5 * 60);
 const CONTEXT_DELIVERY_LIMIT: Duration = Duration::from_secs(120);
 
+#[path = "conversation_resource_channel.rs"]
+pub(crate) mod resource;
+use resource::{ResourceConversationTransport, ResourcePending};
+
+#[path = "conversation_delivery.rs"]
+mod delivery;
+use delivery::receive_delivery;
+
+enum PendingPayload {
+    Legacy(ConversationInput),
+    Resource(ResourcePending),
+}
+
 struct PendingInput {
-    input: ConversationInput,
+    input: PendingPayload,
     guard: Option<Arc<dyn ConversationInputGuard>>,
     state: Arc<AtomicU8>,
     delivered: oneshot::Sender<ConversationSendOutcome>,
@@ -112,6 +125,7 @@ pub struct ConversationInputSender {
     inner: mpsc::Sender<PendingInput>,
     abort: tokio::task::AbortHandle,
     settings_support: Option<Arc<dyn ConversationSettingsSupport>>,
+    resource_transport: Arc<OnceLock<Arc<dyn ResourceConversationTransport>>>,
 }
 
 impl std::fmt::Debug for ConversationInputSender {
@@ -132,6 +146,9 @@ impl ConversationInputSender {
         Fut: Future<Output = crate::Result<()>> + Send + 'static,
     {
         let (inner, mut pending) = mpsc::channel::<PendingInput>(capacity);
+        let resource_transport =
+            Arc::new(OnceLock::<Arc<dyn ResourceConversationTransport>>::new());
+        let resource_handler = resource_transport.clone();
         let task = tokio::spawn(async move {
             while let Some(PendingInput {
                 input,
@@ -162,6 +179,19 @@ impl ConversationInputSender {
                 {
                     continue;
                 }
+                let input = match input {
+                    PendingPayload::Legacy(input) => input,
+                    PendingPayload::Resource(input) => {
+                        let outcome = input.deliver(resource_handler.get()).await;
+                        let uncertain = matches!(outcome, ConversationSendOutcome::Ambiguous(_));
+                        let _ = delivered.send(outcome);
+                        if uncertain {
+                            pending.close();
+                            break;
+                        }
+                        continue;
+                    }
+                };
                 let configuring = matches!(
                     input,
                     ConversationInput::Configure { .. }
@@ -199,6 +229,7 @@ impl ConversationInputSender {
             inner,
             abort: task.abort_handle(),
             settings_support: None,
+            resource_transport,
         }
     }
 
@@ -311,7 +342,7 @@ impl ConversationInputSender {
         let (delivered, receipt) = oneshot::channel();
         let state = Arc::new(AtomicU8::new(PENDING));
         if let Err(error) = self.inner.try_send(PendingInput {
-            input,
+            input: PendingPayload::Legacy(input),
             guard,
             state: state.clone(),
             delivered,
@@ -344,93 +375,6 @@ impl ConversationInputSender {
         }
         abort.armed = false;
         outcome
-    }
-}
-
-async fn receive_delivery<T, R>(
-    mut receipt: R,
-    mut progress: Option<DeliveryWatchReceiver<u64>>,
-    mut history: Option<DeliveryWatchReceiver<Option<tokio::time::Instant>>>,
-    state: &AtomicU8,
-    deadline: Duration,
-    refreshing: bool,
-    started: tokio::time::Instant,
-) -> Result<T, &'static str>
-where
-    R: Future<Output = Result<T, oneshot::error::RecvError>> + Unpin,
-{
-    let mut cursor = progress.as_ref().map_or(0, DeliveryWatchReceiver::latest);
-    let limit = if refreshing && progress.is_some() {
-        CONTEXT_DELIVERY_LIMIT
-    } else {
-        deadline
-    };
-    let mut loading = false;
-    let idle = tokio::time::sleep_until(started + deadline);
-    let absolute = tokio::time::sleep_until(started + limit);
-    tokio::pin!(idle, absolute);
-    loop {
-        tokio::select! {
-            biased;
-            result = &mut receipt => {
-                return result.map_err(|_| "the conversation input task ended before delivery");
-            }
-            changed = async {
-                match history.as_mut() {
-                    Some(value) => value.changed().await,
-                    None => std::future::pending().await,
-                }
-            } => {
-                if changed.is_err() {
-                    history = None;
-                    continue;
-                }
-                if state.load(Ordering::Acquire) == WRITING {
-                    let until = history.as_mut()
-                        .expect("watched history load").take_latest();
-                    loading = until.is_some();
-                    let now = tokio::time::Instant::now();
-                    idle.as_mut().reset(now + idle_window(loading, deadline));
-                    absolute.as_mut().reset(until.unwrap_or(now + limit));
-                }
-            }
-            _ = &mut absolute => {
-                return Err("the conversation input task exceeded its delivery limit");
-            }
-            _ = &mut idle => {
-                return Err("the conversation input task did not deliver the operation");
-            }
-            changed = async {
-                match progress.as_mut() {
-                    Some(value) => value.changed().await,
-                    None => std::future::pending().await,
-                }
-            } => {
-                if changed.is_err() {
-                    progress = None;
-                    continue;
-                }
-                let next = progress.as_ref().expect("watched progress").latest();
-                if next > cursor {
-                    cursor = next;
-                    // Output from another queued operation must not extend a
-                    // request that has not passed its authority guard yet.
-                    if state.load(Ordering::Acquire) == WRITING && (loading || refreshing) {
-                        idle.as_mut().reset(
-                            tokio::time::Instant::now() + idle_window(loading, deadline),
-                        );
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn idle_window(loading: bool, deadline: Duration) -> Duration {
-    if loading {
-        RETAINED_HISTORY_IDLE_DEADLINE
-    } else {
-        deadline
     }
 }
 

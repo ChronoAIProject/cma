@@ -37,7 +37,7 @@ mod managed_context;
 mod memory;
 mod nonexecuting;
 mod observation_retention;
-mod output_json_budget;
+pub(crate) mod output_json_budget;
 mod permission_state;
 mod provider_backend;
 mod provider_endpoint;

@@ -3,6 +3,7 @@ use super::*;
 
 struct Prepared {
     boot_id: String,
+    resource_execution: Arc<crate::resource_execution::Receiver>,
     home: Option<crate::persistent_home::Binding>,
     _writer: Option<std::fs::File>,
     selection: Option<crate::ledger_format::Selection>,
@@ -21,6 +22,13 @@ fn prepare(config: &RuntimeConfig, indexed: bool) -> Result<Prepared> {
         ));
     }
     let boot_id = uuid::Uuid::new_v4().simple().to_string();
+    let resource_execution =
+        crate::resource_execution::Receiver::open(config, &boot_id).map_err(|_| {
+            RuntimeError::unavailable(
+                "resource_execution_state",
+                "resource execution custody is unavailable",
+            )
+        })?;
     let _removal_writer = crate::workspace_removal_writer::claim(config, &boot_id)?;
     let selection = if indexed {
         Some(crate::ledger_format::select(config)?)
@@ -31,6 +39,7 @@ fn prepare(config: &RuntimeConfig, indexed: bool) -> Result<Prepared> {
     crate::workspace_removal_writer::publish_claim(config, &boot_id)?;
     Ok(Prepared {
         boot_id,
+        resource_execution,
         home,
         _writer: _removal_writer,
         selection,
@@ -60,6 +69,9 @@ impl Supervisor {
     }
 
     pub(super) async fn finish_startup(supervisor: Arc<Self>) -> Result<Arc<Self>> {
+        if supervisor.resource_execution.recover().await.is_err() {
+            tracing::warn!("resource execution recovery remains unconfirmed; admissions closed");
+        }
         if supervisor.config.machine_included {
             let ready = async {
                 loop {
@@ -105,6 +117,7 @@ impl Supervisor {
     ) -> Result<Arc<Self>> {
         let Prepared {
             boot_id,
+            resource_execution,
             home,
             _writer,
             ..
@@ -138,6 +151,7 @@ impl Supervisor {
             None
         };
         Ok(Arc::new(Self {
+            resource_execution,
             desktop_ownership: crate::desktop_ownership::DesktopReceiver::new(
                 config.state_root.join("desktop-owner"),
                 crate::desktop_ownership::Identity {

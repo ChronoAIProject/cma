@@ -34,6 +34,7 @@ pub(crate) struct RuntimeConfig {
     /// Set only on a Sandbox whose immutable profile requested a desktop.
     pub machine_included: bool,
     pub capacity_recovery_enabled: bool,
+    pub resource_execution_fencing_enabled: bool,
     pub legacy_journal_recovery_enabled: bool,
 }
 
@@ -43,6 +44,11 @@ impl RuntimeConfig {
     }
 
     pub(crate) fn from_values(mut process_env: BTreeMap<String, String>) -> Result<Self, String> {
+        let resource_execution_fencing_enabled = crate::resource_execution::enabled(
+            process_env
+                .get("CHRONO_RESOURCE_EXECUTION_FENCING_ENABLED")
+                .map(String::as_str),
+        )?;
         let home = process_env
             .get("CHRONO_RUNTIME_HOME")
             .or_else(|| process_env.get("HOME"))
@@ -180,6 +186,7 @@ impl RuntimeConfig {
             allow_local_git: false,
             machine_included,
             capacity_recovery_enabled,
+            resource_execution_fencing_enabled,
             legacy_journal_recovery_enabled,
         })
     }
@@ -220,6 +227,7 @@ impl RuntimeConfig {
             allow_local_git: true,
             machine_included: false,
             capacity_recovery_enabled: false,
+            resource_execution_fencing_enabled: false,
             legacy_journal_recovery_enabled: false,
         }
     }

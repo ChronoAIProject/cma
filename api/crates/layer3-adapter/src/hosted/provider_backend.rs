@@ -31,6 +31,14 @@ const DEFAULT_READY_POLL: Duration = Duration::from_millis(500);
 /// Runtime control-link implementation paired with the provider lifecycle.
 #[async_trait::async_trait]
 pub trait HostedControlTransport: Send + Sync {
+    async fn resource_execution(
+        &self,
+        _handle: &RuntimeHandle,
+        _agent: &crate::AgentSlot,
+    ) -> crate::Result<Option<Arc<dyn crate::ResourceConversationTransport>>> {
+        Ok(None)
+    }
+
     fn desktop_ownership(&self) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
         None
     }

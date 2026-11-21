@@ -11,6 +11,9 @@ use subtle::ConstantTimeEq;
 
 pub(crate) struct ControlAuth(String);
 
+#[derive(Clone)]
+pub(crate) struct AuthenticatedControl;
+
 impl ControlAuth {
     pub(crate) fn from_environment() -> Result<Option<Arc<Self>>, String> {
         let Ok(value) = std::env::var("CHRONO_RUNTIME_CONTROL_TOKEN") else {
@@ -37,7 +40,7 @@ impl ControlAuth {
 
 pub(crate) async fn authenticate(
     State(auth): State<Arc<ControlAuth>>,
-    request: Request,
+    mut request: Request,
     next: Next,
 ) -> Result<Response, StatusCode> {
     if matches!(request.uri().path(), "/livez" | "/ready" | "/readyz") {
@@ -48,6 +51,7 @@ pub(crate) async fn authenticate(
     if values.next().is_some() || !bool::from(auth.0.as_bytes().ct_eq(value.as_bytes())) {
         return Err(StatusCode::UNAUTHORIZED);
     }
+    request.extensions_mut().insert(AuthenticatedControl);
     Ok(next.run(request).await)
 }
 

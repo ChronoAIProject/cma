@@ -28,6 +28,14 @@ pub(super) async fn conversation(
     State(supervisor): State<Arc<Supervisor>>,
     headers: HeaderMap,
 ) -> Response {
+    if !supervisor.resource_execution.legacy_allowed() {
+        return protocol_failure(
+            StatusCode::CONFLICT,
+            "resource_execution_required",
+            "this runtime requires resource execution admission",
+            false,
+        );
+    }
     let owner = match ownership_header(&headers) {
         Ok(owner) => owner,
         Err(error) => return super::runtime_failure(error),
@@ -69,7 +77,14 @@ pub(super) async fn conversation(
     ws.max_message_size(MAX_FRAME_BYTES + 1 + lanes::OUTPUT_IDENTITY_BYTES)
         .max_frame_size(MAX_FRAME_BYTES + 1 + lanes::OUTPUT_IDENTITY_BYTES)
         .on_upgrade(move |socket| {
-            relay_conversation(socket, bridge, agent_id, acknowledge_output, authority)
+            relay_conversation(
+                socket,
+                bridge,
+                agent_id,
+                acknowledge_output,
+                authority,
+                supervisor.resource_execution.clone(),
+            )
         })
         .into_response()
 }
@@ -80,6 +95,7 @@ async fn relay_conversation(
     agent_id: String,
     acknowledge_output: bool,
     authority: OwnerSession,
+    resource_execution: Arc<crate::resource_execution::Receiver>,
 ) {
     // Subscribe before the first snapshot; cursor filtering makes notifications
     // observed on both sides of a snapshot harmless.
@@ -146,7 +162,7 @@ async fn relay_conversation(
                         }
                     }
                     Some((lanes::CONVERSATION, payload)) => {
-                        if authority.permit().await.is_err() || !bridge.send_owned(payload.to_vec(), authority.clone()).await {
+                        if !resource_execution.legacy_allowed() || authority.permit().await.is_err() || !bridge.send_owned(payload.to_vec(), authority.clone()).await {
                             output.abort();
                             return;
                         }

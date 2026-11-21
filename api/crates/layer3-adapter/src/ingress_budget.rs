@@ -9,6 +9,7 @@ const PROCESS_BYTES: usize = 128 * 1024 * 1024;
 mod attachment;
 mod classes;
 pub(crate) mod custody;
+pub(crate) use custody::SharedCustody;
 pub(crate) mod diagnostic;
 pub mod failure;
 pub mod observation;

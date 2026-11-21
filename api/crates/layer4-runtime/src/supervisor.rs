@@ -69,6 +69,7 @@ pub(crate) struct HeldCheckpoint {
 }
 
 pub(crate) struct Supervisor {
+    pub(crate) resource_execution: Arc<crate::resource_execution::Receiver>,
     pub(crate) desktop_ownership: Arc<crate::desktop_ownership::DesktopReceiver>,
     pub(crate) manager_ownership: crate::manager_ownership::ManagerOwnership,
     config: RuntimeConfig,
@@ -101,6 +102,15 @@ impl Supervisor {
 
     pub(crate) async fn dispatch(&self, request: RequestFrame) -> ResponseFrame {
         let operation = request.operation();
+        if matches!(request, RequestFrame::OpenAgent(_))
+            && !self.resource_execution.legacy_allowed()
+        {
+            return RuntimeError::rejected(
+                "resource_execution_required",
+                "native opening requires resource execution admission",
+            )
+            .response(operation);
+        }
         if let Err(error) = self.mutations.verify() {
             return error.response(operation);
         }

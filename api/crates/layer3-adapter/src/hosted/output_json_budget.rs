@@ -7,7 +7,7 @@ const MAX_DEPTH: usize = 64;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Refusal {
+pub(crate) enum Refusal {
     Bytes,
     Nodes,
     Depth,
@@ -33,11 +33,11 @@ pub(super) fn validate(payload: &[u8]) -> Result<(), Refusal> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) struct Shape {
+pub(crate) struct Shape {
     pub nodes: usize,
 }
 
-pub(super) fn inspect(payload: &[u8]) -> Result<Shape, Refusal> {
+pub(crate) fn inspect(payload: &[u8]) -> Result<Shape, Refusal> {
     inspect_with_limits(payload, MAX_BYTES, MAX_NODES, MAX_DEPTH)
 }
 
