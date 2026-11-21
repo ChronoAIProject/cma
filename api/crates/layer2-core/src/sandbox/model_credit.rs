@@ -3,6 +3,9 @@
 
 use std::num::NonZeroU64;
 
+use super::store::{Page, PageRequest};
+use crate::ids::AgentCommandId;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -51,6 +54,8 @@ pub struct PhaseId {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Reservation {
     pub id: PhaseId,
+    /// An exact durable command receipt is required to use an admission hold.
+    pub command_id: Option<AgentCommandId>,
     pub binding: PayerBinding,
     pub limit: NonZeroU64,
     pub request_digest: [u8; 32],
@@ -90,6 +95,8 @@ pub enum FundingError {
     Expired,
     #[error("model funding no longer matches the selected credential")]
     BindingChanged,
+    #[error("no model funding reservation exists")]
+    NoReservation,
     #[error("model funding checkpoint changed")]
     CheckpointChanged,
     #[error("model work requires reconciliation")]
@@ -105,9 +112,25 @@ pub enum FundingError {
 pub trait ReservationAuthority: Send + Sync {
     async fn reserve_first(&self, request: &Reservation) -> Result<Checkpoint, FundingError>;
     async fn read(&self, id: &PhaseId) -> Result<Checkpoint, FundingError>;
+
+    /// Release an exclusively held admission after its ledger write definitively
+    /// failed. Compare the exact Reserved checkpoint including its command ID.
+    /// Never remove or credit a concurrent or already dispatched reservation.
+    /// A later hold for the same phase must have a fresh checkpoint version.
+    async fn release_refused(&self, expected: &Checkpoint) -> Result<(), FundingError>;
+
+    /// Unsettled command holds in ascending command-ID order, with the same
+    /// continuation semantics as the command scheduler. Include terminal ledger
+    /// commands and any admission whose reply was lost.
+    async fn pending_commands(
+        &self,
+        page: &PageRequest,
+    ) -> Result<Page<AgentCommandId>, FundingError>;
     /// Fence a reserved request only while eligible. Expiration must never
     /// settle a dispatched effect.
     async fn begin(&self, expected: &Checkpoint) -> Result<Checkpoint, FundingError>;
+    /// Accept certified effects from InFlight. A never-started Reserved hold
+    /// can be settled only with NotStarted, and must compete atomically with begin.
     async fn settle(
         &self,
         expected: &Checkpoint,
@@ -168,8 +191,21 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
         limit: NonZeroU64,
         request: &G::Request,
     ) -> Result<Checkpoint, FundingError> {
+        self.reserve_first(PhaseId { turn, phase: 0 }, None, selected, limit, request)
+            .await
+    }
+
+    async fn reserve_first(
+        &self,
+        id: PhaseId,
+        command_id: Option<AgentCommandId>,
+        selected: &CredentialBinding,
+        limit: NonZeroU64,
+        request: &G::Request,
+    ) -> Result<Checkpoint, FundingError> {
         let request = Reservation {
-            id: PhaseId { turn, phase: 0 },
+            id,
+            command_id,
             binding: self.binding(selected).await?,
             limit,
             request_digest: self.gateway.digest(request),
@@ -185,7 +221,15 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
         selected: &CredentialBinding,
         request: G::Request,
     ) -> Result<Checkpoint, FundingError> {
-        let held = self.check_dispatch(id, selected, &request).await?;
+        let held = self.check_dispatch(id, None, selected, &request).await?;
+        self.dispatch_held(held, request).await
+    }
+
+    async fn dispatch_held(
+        &self,
+        held: Checkpoint,
+        request: G::Request,
+    ) -> Result<Checkpoint, FundingError> {
         if matches!(held.state, PhaseState::Settled(_)) {
             return Ok(held);
         }
@@ -204,11 +248,12 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
     async fn check_dispatch(
         &self,
         id: &PhaseId,
+        command_id: Option<&AgentCommandId>,
         selected: &CredentialBinding,
         request: &G::Request,
     ) -> Result<Checkpoint, FundingError> {
         let held = self.authority.read(id).await?;
-        if held.reservation.id != *id {
+        if held.reservation.id != *id || held.reservation.command_id.as_ref() != command_id {
             return Err(FundingError::CheckpointChanged);
         }
         if held.reservation.binding != self.binding(selected).await? {
@@ -225,15 +270,19 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
 
     pub async fn reconcile(&self, id: &PhaseId) -> Result<Checkpoint, FundingError> {
         let prior = self.authority.read(id).await?;
-        if prior.reservation.id != *id {
+        if prior.reservation.id != *id || prior.reservation.command_id.is_some() {
             return Err(FundingError::CheckpointChanged);
         }
+        self.reconcile_held(&prior).await
+    }
+
+    async fn reconcile_held(&self, prior: &Checkpoint) -> Result<Checkpoint, FundingError> {
         match prior.state {
             PhaseState::InFlight => {
-                let effect = self.gateway.reconcile(&prior).await?;
-                self.settle(&prior, effect).await
+                let effect = self.gateway.reconcile(prior).await?;
+                self.settle(prior, effect).await
             }
-            PhaseState::Settled(_) => Ok(prior),
+            PhaseState::Settled(_) => Ok(prior.clone()),
             PhaseState::Reserved => Err(FundingError::CheckpointChanged),
         }
     }
@@ -268,6 +317,7 @@ impl<'a, A: ReservationAuthority + ?Sized, G: FundedModelGateway + ?Sized> Model
                 turn: checkpoint.reservation.id.turn.clone(),
                 phase,
             },
+            command_id: checkpoint.reservation.command_id.clone(),
             binding,
             limit,
             request_digest: self.gateway.digest(request),

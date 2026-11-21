@@ -39,6 +39,7 @@ pub struct AgentTurnFunding {
 #[derive(Clone)]
 pub(in crate::sandbox) struct FundedAgentMessage {
     phase: PhaseId,
+    command_id: AgentCommandId,
     command: AgentCommand,
 }
 
@@ -49,10 +50,20 @@ impl FundedAgentMessage {
         let effective = command
             .effective_command()
             .map_err(|_| FundingError::CheckpointChanged)?;
-        Self::message(command.scope(), &command.key_sha256, effective)
+        Self::message(
+            command.scope(),
+            &command.key_sha256,
+            command.receipt.envelope.command_id.clone(),
+            effective,
+        )
     }
 
-    fn message(scope: String, key: &str, command: AgentCommand) -> Result<Self, FundingError> {
+    fn message(
+        scope: String,
+        key: &str,
+        command_id: AgentCommandId,
+        command: AgentCommand,
+    ) -> Result<Self, FundingError> {
         if !matches!(command, AgentCommand::Message { .. }) {
             return Err(FundingError::Unsupported);
         }
@@ -62,6 +73,7 @@ impl FundedAgentMessage {
         );
         Ok(Self {
             phase: PhaseId { turn, phase: 0 },
+            command_id,
             command,
         })
     }
@@ -91,10 +103,11 @@ impl AgentTurnFunding {
         admission: &CommandReservation,
         agent: &Agent,
         sandbox: &Sandbox,
-    ) -> Result<(), FundingError> {
+    ) -> Result<Checkpoint, FundingError> {
         let message = FundedAgentMessage::message(
             admission.scope(),
             &admission.key_sha256,
+            admission.envelope.command_id.clone(),
             admission.envelope.command.clone(),
         )?;
         let selected = self.selected(agent, sandbox).await?;
@@ -102,15 +115,34 @@ impl AgentTurnFunding {
             .gateway
             .first_phase_limit(&selected, &message.command)
             .await?;
-        self.credit()
-            .reserve(
-                message.phase.turn.clone(),
+        let held = self
+            .credit()
+            .reserve_first(
+                message.phase.clone(),
+                Some(message.command_id.clone()),
                 &selected,
                 limit,
                 &message.request(None),
             )
             .await?;
-        Ok(())
+        if held.state != PhaseState::Reserved {
+            return Err(FundingError::CheckpointChanged);
+        }
+        Ok(held)
+    }
+
+    pub(in crate::sandbox) async fn release_refused(
+        &self,
+        held: &Checkpoint,
+    ) -> Result<(), FundingError> {
+        self.authority.release_refused(held).await
+    }
+
+    pub(in crate::sandbox) async fn pending_commands(
+        &self,
+        page: &PageRequest,
+    ) -> Result<Page<AgentCommandId>, FundingError> {
+        self.authority.pending_commands(page).await
     }
 
     pub(in crate::sandbox) async fn check_message(
@@ -121,7 +153,12 @@ impl AgentTurnFunding {
     ) -> Result<(), FundingError> {
         let selected = self.selected(agent, sandbox).await?;
         self.credit()
-            .check_dispatch(&message.phase, &selected, &message.request(None))
+            .check_dispatch(
+                &message.phase,
+                Some(&message.command_id),
+                &selected,
+                &message.request(None),
+            )
             .await?;
         Ok(())
     }
@@ -134,23 +171,60 @@ impl AgentTurnFunding {
         target: AgentRuntimeTarget,
     ) -> Result<Effect, FundingError> {
         let selected = self.selected(agent, sandbox).await?;
-        let checkpoint = self
-            .credit()
-            .dispatch(&message.phase, &selected, message.request(Some(target)))
+        let credit = self.credit();
+        let request = message.request(Some(target));
+        let held = credit
+            .check_dispatch(
+                &message.phase,
+                Some(&message.command_id),
+                &selected,
+                &request,
+            )
             .await?;
+        let checkpoint = credit.dispatch_held(held, request).await?;
         match checkpoint.state {
             PhaseState::Settled(effect) => Ok(effect),
             _ => Err(FundingError::ReconciliationRequired),
         }
     }
 
-    /// Recover the same payer reservation and effect after an uncertain reply.
-    pub async fn reconcile_message(
+    /// Reconcile against the exact durable command and original payer. A
+    /// terminal row lets us fence and settle a hold that never began. A gateway
+    /// observation is required once a dispatch has begun, even after cancellation.
+    pub(in crate::sandbox) async fn reconcile_message(
         &self,
         command: &AdmittedAgentCommand,
-    ) -> Result<Checkpoint, FundingError> {
-        let message = FundedAgentMessage::admitted(command)?;
-        self.credit().reconcile(&message.phase).await
+    ) -> Result<(), FundingError> {
+        if !matches!(
+            command.receipt.envelope.command,
+            AgentCommand::Message { .. }
+        ) {
+            return Ok(());
+        }
+        let message = FundedAgentMessage::message(
+            command.scope(),
+            &command.key_sha256,
+            command.receipt.envelope.command_id.clone(),
+            command.receipt.envelope.command.clone(),
+        )?;
+        let held = match self.authority.read(&message.phase).await {
+            Err(FundingError::NoReservation) => return Ok(()),
+            result => result?,
+        };
+        if held.reservation.id != message.phase
+            || held.reservation.command_id.as_ref() != Some(&message.command_id)
+            || held.reservation.request_digest != self.gateway.digest(&message.request(None))
+        {
+            return Err(FundingError::CheckpointChanged);
+        }
+        let credit = self.credit();
+        match held.state {
+            PhaseState::InFlight => credit.reconcile_held(&held).await.map(|_| ()),
+            PhaseState::Reserved if command.status.is_terminal() => {
+                credit.settle(&held, Effect::NotStarted).await.map(|_| ())
+            }
+            _ => Ok(()),
+        }
     }
 
     async fn selected(

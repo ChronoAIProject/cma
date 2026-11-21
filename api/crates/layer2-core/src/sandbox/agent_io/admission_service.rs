@@ -199,8 +199,6 @@ impl AgentCommandService {
             if policy_refused {
                 return Err(ResourceAccessError::Access(AccessError::Forbidden).into());
             }
-            self.reserve_model_credit(&authorized, &request).await?;
-            self.fence(&authorized, &target, capability).await?;
         }
         let expected = request.clone();
         let lineage = &authorized.snapshot.lineage;
@@ -222,12 +220,8 @@ impl AgentCommandService {
             });
         for attempt in 0..CREATION_ADMISSION_ATTEMPTS {
             let result = self
-                .with_authority_bound(&authorized, capability, self.store.reserve_command(request))
-                .await;
-            // Admission can be durable even if this final fence refuses the reply.
-            // Never refresh past a failed policy fence or an ambiguous result.
-            self.fence(&authorized, &target, capability).await?;
-            let result = result?;
+                .reserve_with_model_credit(&authorized, &target, request, requires_funding)
+                .await?;
             if matches!(result, Err(CommandLedgerError::Conflict))
                 && retry_creation
                 && attempt + 1 < CREATION_ADMISSION_ATTEMPTS

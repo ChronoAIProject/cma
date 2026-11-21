@@ -1,149 +1,17 @@
 use super::*;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
         Mutex,
     },
 };
 
-type Balances = HashMap<(String, String), u64>;
+#[path = "model_credit_test_authority.rs"]
+mod authority;
 
-#[derive(Default)]
-pub(in crate::sandbox) struct LedgerState {
-    balances: Balances,
-    active: HashMap<String, u32>,
-    checkpoints: HashMap<PhaseId, Checkpoint>,
-    expired: HashSet<PhaseId>,
-}
-
-pub(in crate::sandbox) type Ledger = Mutex<LedgerState>;
-
-impl LedgerState {
-    pub(in crate::sandbox) fn add(&mut self, binding: &PayerBinding, amount: u64) {
-        *self.available(binding) += amount;
-    }
-
-    pub(in crate::sandbox) fn available(&mut self, binding: &PayerBinding) -> &mut u64 {
-        self.balances
-            .entry((binding.payer.clone(), binding.pool.clone()))
-            .or_default()
-    }
-
-    fn hold(
-        &mut self,
-        reservation: &Reservation,
-        version: NonZeroU64,
-    ) -> Result<Checkpoint, FundingError> {
-        let available = self.available(&reservation.binding);
-        *available = available
-            .checked_sub(reservation.limit.get())
-            .ok_or(FundingError::Insufficient)?;
-        let checkpoint = Checkpoint {
-            reservation: reservation.clone(),
-            version,
-            state: PhaseState::Reserved,
-        };
-        self.active
-            .insert(reservation.id.turn.clone(), reservation.id.phase);
-        self.checkpoints
-            .insert(reservation.id.clone(), checkpoint.clone());
-        Ok(checkpoint)
-    }
-
-    fn next(&self, checkpoint: &Checkpoint, state: PhaseState) -> Result<Checkpoint, FundingError> {
-        let id = &checkpoint.reservation.id;
-        if self.active.get(&id.turn) != Some(&id.phase)
-            || self.checkpoints.get(id) != Some(checkpoint)
-        {
-            return Err(FundingError::CheckpointChanged);
-        }
-        Ok(Checkpoint {
-            version: units(checkpoint.version.get() + 1),
-            state,
-            ..checkpoint.clone()
-        })
-    }
-}
-
-#[async_trait]
-impl ReservationAuthority for Ledger {
-    async fn reserve_first(&self, request: &Reservation) -> Result<Checkpoint, FundingError> {
-        tokio::task::yield_now().await;
-        let mut state = self.lock().unwrap();
-        if let Some(existing) = state.checkpoints.get(&request.id) {
-            require_reservation(existing, request)?;
-            return Ok(existing.clone());
-        }
-        state.hold(request, units(1))
-    }
-
-    async fn read(&self, id: &PhaseId) -> Result<Checkpoint, FundingError> {
-        self.lock()
-            .unwrap()
-            .checkpoints
-            .get(id)
-            .cloned()
-            .ok_or(FundingError::CheckpointChanged)
-    }
-
-    async fn begin(&self, expected: &Checkpoint) -> Result<Checkpoint, FundingError> {
-        tokio::task::yield_now().await;
-        let mut state = self.lock().unwrap();
-        if state.expired.contains(&expected.reservation.id) {
-            return Err(FundingError::Expired);
-        }
-        let permit = state.next(expected, PhaseState::InFlight)?;
-        state
-            .checkpoints
-            .insert(expected.reservation.id.clone(), permit.clone());
-        Ok(permit)
-    }
-
-    async fn settle(
-        &self,
-        expected: &Checkpoint,
-        effect: Effect,
-    ) -> Result<Checkpoint, FundingError> {
-        tokio::task::yield_now().await;
-        let mut state = self.lock().unwrap();
-        let reservation = &expected.reservation;
-        if let Some(old) = state.checkpoints.get(&reservation.id) {
-            if old.version.get() == expected.version.get() + 1
-                && old.state == PhaseState::Settled(effect)
-            {
-                return Ok(old.clone());
-            }
-        }
-        let settled = state.next(expected, PhaseState::Settled(effect))?;
-        let spent = match effect {
-            Effect::Finished { spent } => spent,
-            Effect::NotStarted => 0,
-        };
-        let release = reservation
-            .limit
-            .get()
-            .checked_sub(spent)
-            .ok_or(FundingError::ReconciliationRequired)?;
-        state.add(&reservation.binding, release);
-        state
-            .checkpoints
-            .insert(reservation.id.clone(), settled.clone());
-        Ok(settled)
-    }
-
-    async fn advance(
-        &self,
-        expected: &Checkpoint,
-        next: &Reservation,
-    ) -> Result<Checkpoint, FundingError> {
-        tokio::task::yield_now().await;
-        let mut state = self.lock().unwrap();
-        let revision = state.next(expected, PhaseState::Reserved)?.version;
-        state.hold(next, revision)
-    }
-}
+pub(in crate::sandbox) use authority::Ledger;
 
 pub(in crate::sandbox) fn units(value: u64) -> NonZeroU64 {
     NonZeroU64::new(value).unwrap()
@@ -346,7 +214,7 @@ async fn expired_reservation_cannot_dispatch_or_imply_settlement() {
         .await
         .unwrap();
     let id = &held.reservation.id;
-    ledger.lock().unwrap().expired.insert(id.clone());
+    ledger.lock().unwrap().expire(id.clone());
     assert_eq!(
         credit.dispatch(id, &managed, 7).await,
         Err(FundingError::Expired)

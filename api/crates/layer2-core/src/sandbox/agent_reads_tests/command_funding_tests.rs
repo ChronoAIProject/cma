@@ -1,9 +1,14 @@
 use super::*;
+use crate::sandbox::agent_io::{
+    AgentCommandExecution, AgentCommandWorker, CommandAttempt, CommandFailureCode,
+    CommandPreparationError, CommandReadiness,
+};
 use crate::sandbox::model_credit::{
     tests::{credential, payer, units, Ledger},
     AgentModelGateway, AgentTurnFunding, Checkpoint, CredentialBinding, CredentialSource, Effect,
     FundedModelGateway, FundingError, ModelPhaseRequest, PayerBinding, PhaseState,
 };
+use crate::sandbox::{AgentMessageAssembly, DurableAgentUpdateRecorder};
 use sha2::{Digest, Sha256};
 use std::num::NonZeroU64;
 use std::sync::atomic::AtomicBool;
@@ -11,6 +16,7 @@ use std::sync::atomic::AtomicBool;
 struct Gateway {
     lose_reply: bool,
     verified_effect: AtomicBool,
+    lookup_unavailable: AtomicBool,
     calls: AtomicUsize,
 }
 
@@ -63,6 +69,9 @@ impl FundedModelGateway for Gateway {
     }
 
     async fn reconcile(&self, _: &Checkpoint) -> Result<Effect, FundingError> {
+        if self.lookup_unavailable.load(Ordering::SeqCst) {
+            return Err(FundingError::Unavailable);
+        }
         self.verified_effect
             .load(Ordering::SeqCst)
             .then_some(Effect::Finished { spent: 3 })
@@ -70,17 +79,42 @@ impl FundedModelGateway for Gateway {
     }
 }
 
+fn gateway(lose_reply: bool) -> Arc<Gateway> {
+    Arc::new(Gateway {
+        lose_reply,
+        verified_effect: AtomicBool::new(false),
+        lookup_unavailable: AtomicBool::new(false),
+        calls: AtomicUsize::new(0),
+    })
+}
+
+struct NoRedispatch;
+
+#[async_trait]
+impl AgentCommandExecution for NoRedispatch {
+    async fn check_queued(&self, _: &AdmittedAgentCommand) -> CommandReadiness {
+        panic!("command was already dispatched or terminated")
+    }
+
+    async fn prepare_queued(
+        &self,
+        _: &AdmittedAgentCommand,
+    ) -> Result<(), CommandPreparationError> {
+        panic!("command was already dispatched or terminated")
+    }
+
+    async fn execute(&self, _: &AdmittedAgentCommand) -> CommandAttempt {
+        panic!("recovery must not dispatch again")
+    }
+}
+
 #[tokio::test]
 async fn model_credit_application_dispatch_and_recovery_share_the_admitted_phase() {
-    for lose_reply in [false, true] {
+    for (lose_reply, terminal_first) in [(false, false), (true, false), (true, true)] {
         let (store, access, authority, agent) = execution_fixture(MAX_MEMBERSHIP_AGE).await;
         let payer = payer(credential(CredentialSource::Managed));
         let ledger = Arc::new(Ledger::default());
-        let gateway = Arc::new(Gateway {
-            lose_reply,
-            verified_effect: AtomicBool::new(false),
-            calls: AtomicUsize::new(0),
-        });
+        let gateway = gateway(lose_reply);
         let funding = AgentTurnFunding::new(ledger.clone(), gateway.clone());
         let access = Arc::new(access);
         let commands = AgentCommandService::new(store.clone(), access.clone(), authority)
@@ -147,18 +181,240 @@ async fn model_credit_application_dispatch_and_recovery_share_the_admitted_phase
                 Ok(crate::sandbox::AgentMessageOutcome::Dispatched(_))
             ));
         }
-        let successor = AgentTurnFunding::new(ledger.clone(), gateway.clone());
-        let reconciled = successor.reconcile_message(&command).await.unwrap();
-        assert_eq!(
-            reconciled.state,
-            PhaseState::Settled(Effect::Finished { spent: 3 })
-        );
-        assert_eq!(
-            successor.reconcile_message(&command).await.unwrap(),
-            reconciled
-        );
+        let successor = AgentCommandWorker::new(
+            store.clone(),
+            Arc::new(NoRedispatch),
+            "second-worker".into(),
+        )
+        .unwrap()
+        .with_model_funding(Some(AgentTurnFunding::new(ledger.clone(), gateway.clone())));
+        let id = &command.receipt.envelope.command_id;
+        let page = PageRequest::new(1, None).unwrap();
+        if lose_reply {
+            gateway.lookup_unavailable.store(true, Ordering::SeqCst);
+            assert!(!successor.run_scheduled(id).await.unwrap().is_zero());
+            assert_eq!(*ledger.lock().unwrap().available(&payer), 0);
+            if terminal_first {
+                DurableAgentUpdateRecorder::new(store.clone())
+                    .record_update(
+                        &agent.id,
+                        3,
+                        &mut AgentMessageAssembly::default(),
+                        layer3_adapter::ConversationUpdate::TurnEnded(
+                            layer3_adapter::PromptResponse::new(
+                                layer3_adapter::TurnStopReason::EndTurn,
+                            ),
+                        ),
+                        crate::now_rfc3339(),
+                    )
+                    .await
+                    .unwrap();
+                assert!(store
+                    .reconcile_command(id)
+                    .await
+                    .unwrap()
+                    .status
+                    .is_terminal());
+                assert!(store
+                    .command_work_page(&page)
+                    .await
+                    .unwrap()
+                    .items
+                    .is_empty());
+            }
+            let discovered = successor.discover_scheduled(&page).await.unwrap();
+            assert_eq!(discovered.page.items.len(), 1);
+            assert_eq!(&discovered.page.items[0].id, id);
+            gateway.lookup_unavailable.store(false, Ordering::SeqCst);
+        }
+        successor.run_scheduled(id).await.unwrap();
+        successor.run_scheduled(id).await.unwrap();
+        if terminal_first {
+            assert!(successor
+                .discover_scheduled(&page)
+                .await
+                .unwrap()
+                .page
+                .items
+                .is_empty());
+        }
         assert_eq!(*ledger.lock().unwrap().available(&payer), 2);
         assert_eq!(gateway.calls.load(Ordering::SeqCst), 1);
         assert_eq!(legacy_sends.load(Ordering::SeqCst), 0);
     }
+}
+
+#[tokio::test]
+async fn model_credit_releases_definitive_refusal_and_keeps_the_same_key_winner_funded() {
+    let (store, access, authority, agent) = execution_fixture(MAX_MEMBERSHIP_AGE).await;
+    let payer = payer(credential(CredentialSource::Managed));
+    let ledger = Arc::new(Ledger::default());
+    let gateway = gateway(false);
+    let funding = AgentTurnFunding::new(ledger.clone(), gateway.clone());
+    let commands = AgentCommandService::new(store.clone(), Arc::new(access), authority)
+        .with_model_credit_required(true)
+        .with_model_funding(Some(funding.clone()));
+    let caller = context("owner");
+    ledger.lock().unwrap().add(&payer, 5);
+    let mut stale = submission("reusable-funding-key");
+    stale.expected_agent_revision = Some(agent.revision + 1);
+    assert!(matches!(
+        commands
+            .admit(
+                &caller,
+                "selected-credential",
+                CommandSubmissionSource::Api,
+                stale
+            )
+            .await,
+        Err(CommandAdmissionError::Ledger(CommandLedgerError::Conflict))
+    ));
+    let page = PageRequest::new(50, None).unwrap();
+    assert!(store
+        .command_work_page(&page)
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(funding
+        .pending_commands(&page)
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert_eq!(*ledger.lock().unwrap().available(&payer), 5);
+
+    let admit = || {
+        commands.admit(
+            &caller,
+            "selected-credential",
+            CommandSubmissionSource::Api,
+            submission("reusable-funding-key"),
+        )
+    };
+    let (left, right) = tokio::join!(admit(), admit());
+    let replay = admit().await.unwrap();
+    assert!(left.is_ok() || right.is_ok());
+    for result in [left, right] {
+        match result {
+            Ok(view) => assert_eq!(view.receipt, replay.receipt),
+            Err(CommandAdmissionError::Input(AgentOperationError::ModelFunding(
+                FundingError::CheckpointChanged,
+            ))) => {}
+            Err(error) => panic!("{error:?}"),
+        }
+    }
+    let id = &replay.receipt.command_id;
+    assert_eq!(
+        funding.pending_commands(&page).await.unwrap().items,
+        vec![id.clone()]
+    );
+    assert_eq!(*ledger.lock().unwrap().available(&payer), 0);
+
+    let command = store.get_command(id).await.unwrap().unwrap();
+    store
+        .reject_unclaimed_command(
+            id,
+            command.revision,
+            CommandFailureCode::QueueTimeout,
+            command.queue_deadline,
+        )
+        .await
+        .unwrap();
+    assert!(store
+        .command_work_page(&page)
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    let worker = AgentCommandWorker::new(store, Arc::new(NoRedispatch), "successor".into())
+        .unwrap()
+        .with_model_funding(Some(funding));
+    assert_eq!(
+        &worker.discover_scheduled(&page).await.unwrap().page.items[0].id,
+        id
+    );
+    worker.run_scheduled(id).await.unwrap();
+    assert!(worker
+        .discover_scheduled(&page)
+        .await
+        .unwrap()
+        .page
+        .items
+        .is_empty());
+    assert_eq!(*ledger.lock().unwrap().available(&payer), 5);
+    assert_eq!(gateway.calls.load(Ordering::SeqCst), 0);
+}
+
+struct LostAdmissionReply(Arc<InMemorySandboxStore>);
+
+#[async_trait]
+impl AgentCommandStore for LostAdmissionReply {
+    async fn reserve_command(
+        &self,
+        request: CommandReservation,
+    ) -> Result<CommandReservationResult, CommandLedgerError> {
+        self.0.reserve_command(request).await?;
+        Err(CommandLedgerError::Unavailable)
+    }
+
+    async fn get_admitted_command(
+        &self,
+        scope: &str,
+        key_sha256: &str,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.0.get_admitted_command(scope, key_sha256).await
+    }
+
+    async fn get_command(
+        &self,
+        id: &AgentCommandId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.0.get_command(id).await
+    }
+
+    async fn get_response_command(
+        &self,
+        id: &AgentResponseId,
+    ) -> Result<Option<AdmittedAgentCommand>, CommandLedgerError> {
+        self.0.get_response_command(id).await
+    }
+}
+
+#[tokio::test]
+async fn model_credit_lost_admission_reply_retains_exact_committed_hold() {
+    let (store, access, authority, _) = execution_fixture(MAX_MEMBERSHIP_AGE).await;
+    let ledger = Arc::new(Ledger::default());
+    let payer = payer(credential(CredentialSource::Managed));
+    ledger.lock().unwrap().add(&payer, 5);
+    let funding = AgentTurnFunding::new(ledger.clone(), gateway(false));
+    let commands = AgentCommandService::new(
+        Arc::new(LostAdmissionReply(store.clone())),
+        Arc::new(access),
+        authority,
+    )
+    .with_model_credit_required(true)
+    .with_model_funding(Some(funding.clone()));
+    let caller = context("owner");
+    let admit = || {
+        commands.admit(
+            &caller,
+            "selected-credential",
+            CommandSubmissionSource::Api,
+            submission("unknown-admission"),
+        )
+    };
+    assert!(matches!(
+        admit().await,
+        Err(CommandAdmissionError::Ledger(
+            CommandLedgerError::Unavailable
+        ))
+    ));
+    let replay = admit().await.unwrap();
+    let page = PageRequest::new(1, None).unwrap();
+    assert_eq!(
+        funding.pending_commands(&page).await.unwrap().items,
+        vec![replay.receipt.command_id]
+    );
+    assert_eq!(*ledger.lock().unwrap().available(&payer), 0);
 }
