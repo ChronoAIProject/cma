@@ -74,12 +74,12 @@ impl Drop for DesktopProcess {
 }
 
 #[cfg(all(test, unix))]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use tokio::io::{AsyncBufReadExt as _, AsyncReadExt as _, BufReader};
 
-    #[tokio::test]
-    async fn dropping_desktop_closes_output_held_by_its_background_child() {
+    pub(crate) async fn child_with_open_output(
+    ) -> (DesktopProcess, BufReader<tokio::process::ChildStdout>) {
         let mut command = Command::new("/bin/bash");
         command
             .args(["-c", "sleep 120 & echo started; wait"])
@@ -89,7 +89,12 @@ mod tests {
         let mut line = String::new();
         output.read_line(&mut line).await.unwrap();
         assert_eq!(line, "started\n");
-        drop(desktop);
+        (desktop, output)
+    }
+
+    pub(crate) async fn assert_child_output_closed(
+        mut output: BufReader<tokio::process::ChildStdout>,
+    ) {
         let mut rest = Vec::new();
         tokio::time::timeout(
             std::time::Duration::from_secs(5),
@@ -98,5 +103,12 @@ mod tests {
         .await
         .expect("desktop background child retained its output pipe")
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn dropping_desktop_closes_output_held_by_its_background_child() {
+        let (desktop, output) = child_with_open_output().await;
+        drop(desktop);
+        assert_child_output_closed(output).await;
     }
 }
