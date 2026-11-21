@@ -15,6 +15,7 @@ import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import zipfile
 from pathlib import Path
@@ -102,7 +103,9 @@ def select_versions(released, components, tags, history):
     for component, prefix in components.items():
         eligible = [tag for tag in tags(component)
                     if tag["name"].startswith(prefix + "/v") and history.position(tag["target"]) <= limit]
-        require(bool(eligible), f"No published {component} version is in the release commit's history")
+        if not eligible:
+            print(f"::error::No published {component} version is in the release commit's history", file=sys.stderr)
+        require(bool(eligible), "A selected component has no published version in the release commit's history")
         newest = max(eligible, key=lambda tag: history.position(tag["target"]))
         chosen[component] = newest["name"][len(prefix + "/v"):]
     return chosen
@@ -199,7 +202,9 @@ def plan(env, api, registry, policy, *, root, download, deployables, runner=subp
     # The same image string staging_cd_set gives the controller and its evidence records.
     images = {c: r["repository"] + "@" + r["digest"] for c, r in value["receipts"].items()}
     missing = sorted(set(images) - staging_verified(images, api.request, download))
-    require(not missing, "Staging never verified the released image for: " + ", ".join(missing))
+    if missing:
+        print("::error::Staging never verified the released image for: " + ", ".join(missing), file=sys.stderr)
+    require(not missing, "Staging never verified a released image")
     return value, released
 
 
