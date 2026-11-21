@@ -233,6 +233,12 @@ export function SandboxPage({
   const needsConnections =
     viewerId !== undefined && sandbox.owner === viewerId && !connectionsReady;
   const lifecycleAction = sandboxLifecycleAction(sandbox, pollError);
+  const canResume = sandbox.status === 'paused' && lifecycleAction.allowed;
+  const lifecycleAllowed =
+    lifecycleAction.kind === 'revive_sandbox' ? canResume : lifecycleAction.allowed;
+  // An eligible Resume owns its connection check from the click through submission.
+  const verifyConnectionsOnOpen =
+    needsConnections && !stale && !(permissions.pauseSandbox && canResume);
   const lifecycleReason = permissions.pauseSandbox ? lifecycleAction.reason : undefined;
   const actionContext = { busy: submitting, lifecycleBusy, stale, needsConnections };
   const childReason = sandboxCreateReason(sandbox, actionContext);
@@ -309,12 +315,7 @@ export function SandboxPage({
                     <IconPauseOutline16 />
                   )
                 }
-                disabled={
-                  busy ||
-                  stale ||
-                  !lifecycleAction.allowed ||
-                  (needsConnections && lifecycleAction.kind === 'revive_sandbox')
-                }
+                disabled={busy || stale || !lifecycleAllowed}
                 aria-describedby={
                   lifecycleAction.reason === undefined ? undefined : lifecycleReasonId
                 }
@@ -344,7 +345,7 @@ export function SandboxPage({
           )}
         </div>
       )}
-      {needsConnections && !stale ? (
+      {verifyConnectionsOnOpen ? (
         <ConnectionWizard
           target={{ type: 'sandbox', id: sandboxId }}
           presentation="dialog"
