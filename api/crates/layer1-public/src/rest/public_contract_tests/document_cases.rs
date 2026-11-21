@@ -1,7 +1,11 @@
 //! Durable-document REST contract fixtures, with no Agent or Sandbox dependency.
 use super::Scenario;
-use layer2_core::{document_artifacts::*, Authorization, Caller, Capability, SubjectId};
-use std::sync::Arc;
+use layer2_core::{
+    account_deletion::{AccountDeletionError, AccountStanding},
+    document_artifacts::*,
+    Authorization, Caller, Capability, SubjectId, UserDirectory,
+};
+use std::sync::{atomic::Ordering, Arc};
 
 pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     let mode = name.strip_prefix("document_")?.split("__").next().unwrap();
@@ -11,7 +15,10 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
     );
     let rows = Arc::new(memory::MemoryDocuments::default());
     let blobs = Arc::new(memory::MemoryDocumentBlobs::default());
-    let service = DocumentService::new(rows.clone(), blobs.clone());
+    let recipients = memory::MemoryRecipientDirectory::new(&["document-reader"]);
+    let directory = UserDirectory::new(recipients.clone());
+    let service =
+        DocumentService::new(rows.clone(), blobs.clone()).with_directory(directory.clone());
     let d = service
         .create(
             &owner,
@@ -88,13 +95,19 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
             }),
             blobs,
         )
+        .with_directory(directory)
     } else {
         service
     };
-    let service = if mode == "recipient_erasing" {
-        service.with_account_standing(Arc::new(super::account_deletion_cases::ErasingRecipient))
-    } else {
-        service
+    if mode == "directory-outage" {
+        recipients.unavailable.store(true, Ordering::SeqCst);
+    }
+    let service = match mode {
+        "recipient_erasing" => {
+            service.with_account_standing(Arc::new(super::account_deletion_cases::ErasingRecipient))
+        }
+        "owner-erasing" => service.with_account_standing(Arc::new(ErasingDocumentOwner)),
+        _ => service,
     };
     Some(Scenario {
         router: super::super::documents_router(service),
@@ -112,6 +125,14 @@ pub(super) async fn scenario(name: &str) -> Option<Scenario> {
         symbols: Default::default(),
     })
 }
+struct ErasingDocumentOwner;
+#[async_trait::async_trait]
+impl AccountStanding for ErasingDocumentOwner {
+    async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
+        Ok(subject.as_str() == "document-owner")
+    }
+}
+
 struct Faults {
     rows: Arc<memory::MemoryDocuments>,
     mode: String,

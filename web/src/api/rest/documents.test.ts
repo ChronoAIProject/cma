@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createClient } from '@cma/client';
 import { documentsClient } from './documents';
 import { newDocumentShareToken } from '../documents';
 
@@ -16,6 +17,7 @@ const view = {
   origin_agent_id: null,
   access: 'owner',
 };
+const client = () => documentsClient({ shareRecipients: vi.fn() });
 afterEach(() => vi.unstubAllGlobals());
 function response(body: unknown, status = 200) {
   const fetcher = vi.fn(
@@ -29,11 +31,24 @@ function response(body: unknown, status = 200) {
   return fetcher;
 }
 describe('Personal documents public transport', () => {
+  it('reads only bounded public recipient identities and preserves exact subjects', async () => {
+    const api = () =>
+      documentsClient(createClient({ baseUrl: 'https://example.invalid' }).documents);
+    response([{ subject: 'Person-A', display_name: 'Example Person', avatar_url: 'omit' }]);
+    await expect(api().shareRecipients(id, 'example')).resolves.toEqual([
+      { subject: 'Person-A', display_name: 'Example Person' },
+    ]);
+    response([{ subject: ' Person-A', display_name: null }]);
+    await expect(api().shareRecipients(id, 'example')).rejects.toThrow('recipient subject');
+    response(Array.from({ length: 21 }, () => ({ subject: 'Person-A', display_name: null })));
+    await expect(api().shareRecipients(id, 'example')).rejects.toThrow('recipient results');
+  });
+
   it('keeps share authority in its header and refuses redirect forwarding', async () => {
     const fetcher = response({ ...view, access: 'read' });
     const token = newDocumentShareToken();
     expect(token).toMatch(/^[a-f0-9]{64}$/);
-    await documentsClient().read(id, { shareToken: token });
+    await client().read(id, { shareToken: token });
     const [url, options] = fetcher.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe(`/api/v1/documents/${id}`);
     expect(url).not.toContain(token);
@@ -51,7 +66,7 @@ describe('Personal documents public transport', () => {
       409,
     );
     await expect(
-      documentsClient().update(
+      client().update(
         id,
         { expected_revision: 3, markdown: '# Edited' },
         { idempotencyKey: 'stable-save' },
@@ -67,26 +82,24 @@ describe('Personal documents public transport', () => {
   });
   it('keeps document metadata revision separate from source revision', async () => {
     response(view);
-    await expect(documentsClient().read(id)).resolves.toMatchObject({
+    await expect(client().read(id)).resolves.toMatchObject({
       revision: 3,
       source_revision: 2,
     });
     response({ id, revision: 2, markdown: '# source' });
-    await expect(documentsClient().source(id, { revision: 2 })).resolves.toMatchObject({
+    await expect(client().source(id, { revision: 2 })).resolves.toMatchObject({
       revision: 2,
     });
     response({ id, revision: 3, markdown: '# source' });
-    await expect(documentsClient().source(id, { revision: 2 })).rejects.toThrow(
-      'invalid document source',
-    );
+    await expect(client().source(id, { revision: 2 })).rejects.toThrow('invalid document source');
   });
   it('refuses mismatched identities, oversized sources and invalid listing receipts', async () => {
     response({ ...view, id: `doc_${'c'.repeat(32)}` });
-    await expect(documentsClient().read(id)).rejects.toThrow('identity mismatch');
+    await expect(client().read(id)).rejects.toThrow('identity mismatch');
     response({ id, revision: 2, markdown: '界'.repeat(350000) });
-    await expect(documentsClient().source(id)).rejects.toThrow('invalid document source');
+    await expect(client().source(id)).rejects.toThrow('invalid document source');
     response({ items: [view], next: 4 });
-    await expect(documentsClient().list()).rejects.toThrow('invalid document page');
+    await expect(client().list()).rejects.toThrow('invalid document page');
   });
   it('sends source mutations and comments through the same public API', async () => {
     const fetcher = response({
@@ -99,7 +112,7 @@ describe('Personal documents public transport', () => {
         created_at: view.created_at,
       },
     });
-    await documentsClient().comment(
+    await client().comment(
       id,
       { body: 'Review', document_revision: 2 },
       { idempotencyKey: 'one-comment', shareToken: 'd'.repeat(64) },

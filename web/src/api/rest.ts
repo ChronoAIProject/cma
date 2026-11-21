@@ -79,7 +79,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
   return {
     usageViews: createUsageClient(sdk),
     deliverables: sdk.agents,
-    documents: documentsClient(),
+    documents: documentsClient(sdk.documents),
     browser: sdk.agentBrowser,
     browserControl: computer.browserControl,
     taskExperience: sdk.taskExperience,
