@@ -390,3 +390,25 @@ async fn unsupported_control_ports_never_supply_completion() {
     pending(worker.reconcile(&store.id()).await.unwrap(), 0);
     assert_eq!(store.0.lock().unwrap().finalizations, 0);
 }
+
+#[tokio::test]
+async fn foreign_retained_completion_cannot_count_as_stopped() {
+    let (store, directory, worker) = setup(vec![member(1)]);
+    {
+        let mut state = store.0.lock().unwrap();
+        let mut other = state.operation.clone();
+        other.key.operation_id = digest('b');
+        let row = &mut state.members[0];
+        let completion = directory
+            .0
+            .values()
+            .next()
+            .unwrap()
+            .completion(&row.barrier_request(&other).unwrap());
+        let barrier = completion_barrier(&completion).clone();
+        row.observe_barrier(&barrier.request, &barrier).unwrap();
+        row.observe_completion(&completion).unwrap();
+    }
+    pending(worker.reconcile(&store.id()).await.unwrap(), 0);
+    assert_eq!(store.0.lock().unwrap().finalizations, 0);
+}

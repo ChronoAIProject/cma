@@ -110,6 +110,11 @@ impl RevocationWorker {
     ) -> ExecutionResult<()> {
         let request = member.barrier_request(operation)?;
         if member.completion.is_some() {
+            member
+                .barrier
+                .as_ref()
+                .ok_or(ExecutionError::EvidenceMismatch)?
+                .validate_for(&request)?;
             return Ok(());
         }
         let participant = self.participants.resolve(&member.member).await?;
