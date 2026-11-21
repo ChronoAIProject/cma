@@ -9,6 +9,14 @@ const reasons = [
 
 export type AgentUpdateReason = (typeof reasons)[number];
 
+export function agentUpdateHeaders(key: string): HeadersInit {
+  return {
+    'Content-Type': 'application/json',
+    'Idempotency-Key': key,
+    Prefer: 'cma-settings-reasons',
+  };
+}
+
 export function isAgentUpdateReason(value: unknown): value is AgentUpdateReason {
   return reasons.some((reason) => reason === value);
 }

@@ -1,5 +1,9 @@
 import { ApiError, ProtocolError, retryAfterMilliseconds } from '@cma/client';
-import { agentUpdateProblem, type AgentUpdateReason } from './agentUpdateProblem';
+import {
+  agentUpdateHeaders,
+  agentUpdateProblem,
+  type AgentUpdateReason,
+} from './agentUpdateProblem';
 import type { AgentPreferencesView, CmaWebClient } from '../client';
 
 export class AgentPreferencesError extends ApiError {
@@ -55,7 +59,7 @@ export function agentPreferencesClient(): Pick<
       request(id, {
         method: 'PATCH',
         signal: options.signal,
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': options.idempotencyKey },
+        headers: agentUpdateHeaders(options.idempotencyKey),
         body: JSON.stringify(preferences),
       }),
   };

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { settingsFailure, settingsWriteFailure, type SettingsFailure } from './settingsFailure';
 import {
   settingsJournalError,
+  type OpaqueSettingsIntent,
   type SettingsIntent,
   type SettingsIntentJournal,
 } from './settingsIntent';
@@ -18,13 +19,16 @@ export interface SettingsEditorAdapter<View, Proposal, Body> {
   retention?: {
     journal(): SettingsIntentJournal<Body>;
     proposal(body: Body): Proposal;
+    emptyReentry?: Proposal;
   };
 }
 
-interface Intent<Proposal, Body> extends SettingsIntent<Body> {
+interface WriteIntent<Proposal, Body> extends SettingsIntent<Body> {
   readonly proposal: Proposal;
   readonly phase: 'sending' | 'uncertain' | 'pending';
 }
+type ReentryIntent<Body> = OpaqueSettingsIntent<Body> & { readonly phase: 'reenter' };
+type Intent<Proposal, Body> = WriteIntent<Proposal, Body> | ReentryIntent<Body>;
 interface EditorState<View, Proposal, Body> {
   readonly snapshot?: View;
   readonly proposal?: Proposal;
@@ -45,6 +49,30 @@ function completeStoredIntent<Body>(journal: SettingsIntentJournal<Body> | undef
     return true;
   } catch {
     return false;
+  }
+}
+
+function hideDeniedContent<View, Proposal, Body>(
+  state: EditorState<View, Proposal, Body>,
+  journal: SettingsIntentJournal<Body> | undefined,
+): EditorState<View, Proposal, Body> {
+  const hidden = {
+    ...state,
+    snapshot: undefined,
+    proposal: undefined,
+    intent: undefined,
+    failure: state.failure && {
+      ...state.failure,
+      message: 'Access to these preferences was refused. Refresh to check access before saving.',
+    },
+  };
+  try {
+    const retained = journal?.read();
+    if (retained && 'recover' in retained)
+      return { ...hidden, intent: { ...retained, phase: 'reenter' } };
+    return hidden;
+  } catch {
+    return { ...hidden, storageBlocked: true };
   }
 }
 
@@ -96,10 +124,17 @@ export function useSettingsEditor<View, Proposal, Body>(
         journal.current = adapter.retention.journal();
         const restored = journal.current.read();
         if (restored && !current.current.intent) {
-          const proposal = adapter.retention.proposal(restored.body);
+          const intent: Intent<Proposal, Body> =
+            'recover' in restored
+              ? { ...restored, phase: 'reenter' }
+              : {
+                  ...restored,
+                  proposal: adapter.retention.proposal(restored.body),
+                  phase: 'uncertain',
+                };
           publish((previous) => ({
             ...previous,
-            intent: { ...restored, proposal, phase: 'uncertain' },
+            intent,
             failure: settingsFailure(undefined),
             refreshRequired: true,
             retryAt: restored.retryAt && restored.retryAt > Date.now() ? restored.retryAt : 0,
@@ -138,7 +173,8 @@ export function useSettingsEditor<View, Proposal, Body>(
             ...previous,
             snapshot: next,
             proposal: intent
-              ? (previous.proposal ?? intent.proposal)
+              ? (previous.proposal ??
+                (intent.phase === 'reenter' ? adapter.retention?.emptyReentry : intent.proposal))
               : dirty
                 ? previous.proposal
                 : proposal,
@@ -147,7 +183,12 @@ export function useSettingsEditor<View, Proposal, Body>(
             storageBlocked:
               previous.storageBlocked ||
               (confirmed && !completeStoredIntent(journal.current, intent.key)),
-            failure: previous.intent && !confirmed ? previous.failure : undefined,
+            failure:
+              intent &&
+              !confirmed &&
+              !(intent.phase === 'reenter' && previous.failure?.kind === 'denied')
+                ? previous.failure
+                : undefined,
             refreshRequired: false,
           };
         });
@@ -158,13 +199,18 @@ export function useSettingsEditor<View, Proposal, Body>(
       } catch (cause) {
         if (signal.aborted) return;
         const failure = settingsFailure(cause, true);
-        publish((previous) => ({
-          ...previous,
-          failure,
-          confirmed: false,
-          refreshRequired: true,
-          retryAt: failure.retryAfterMs ? Date.now() + failure.retryAfterMs : 0,
-        }));
+        publish((previous) => {
+          const next = {
+            ...previous,
+            failure,
+            confirmed: false,
+            refreshRequired: true,
+            retryAt: failure.retryAfterMs ? Date.now() + failure.retryAfterMs : 0,
+          };
+          return failure.kind === 'denied' && adapter.retention?.emptyReentry !== undefined
+            ? hideDeniedContent(next, journal.current)
+            : next;
+        });
         if (failure.kind === 'denied') return { cooldown: failure.retryAfterMs };
         return retrySchedule(cause, ++failures);
       } finally {
@@ -199,46 +245,65 @@ export function useSettingsEditor<View, Proposal, Body>(
 
   const apply = async (): Promise<View | undefined> => {
     const previous = current.current;
+    const { snapshot, proposal } = previous;
     if (
       !active ||
       request.current ||
-      previous.snapshot === undefined ||
-      previous.proposal === undefined ||
+      snapshot === undefined ||
+      proposal === undefined ||
       previous.refreshRequired ||
       previous.storageBlocked ||
       previous.intent?.phase === 'pending' ||
-      adapter.pending(previous.snapshot) ||
+      adapter.pending(snapshot) ||
       Date.now() < previous.retryAt
     )
       return;
-    const retained = previous.intent ?? {
-      key: crypto.randomUUID(),
-      startedAt: Date.now(),
-      body: adapter.body(previous.snapshot, previous.proposal),
-      proposal: previous.proposal,
-      phase: 'sending' as const,
-    };
-    try {
-      journal.current?.reserve({
-        key: retained.key,
-        body: retained.body,
-        startedAt: retained.startedAt,
-      });
-    } catch {
-      publish((value) => ({ ...value, storageBlocked: true }));
-      return;
-    }
     const controller = new AbortController();
     mutation.current = controller;
     request.current = controller.signal;
     publish((value) => ({
       ...value,
-      intent: { ...retained, phase: 'sending' },
       saving: true,
       failure: undefined,
       confirmed: false,
     }));
     try {
+      let retained: WriteIntent<Proposal, Body>;
+      try {
+        const intent = previous.intent;
+        const candidate = () => adapter.body(snapshot, proposal);
+        const body =
+          intent?.phase === 'reenter'
+            ? await intent.recover(candidate())
+            : (intent?.body ?? candidate());
+        if (controller.signal.aborted) return;
+        if (body === undefined) {
+          const failure = {
+            kind: 'invalid',
+            message: 'Enter the original system prompt exactly to retry this request.',
+            retryAfterMs: 0,
+          } satisfies SettingsFailure;
+          publish((value) => ({ ...value, failure }));
+          return;
+        }
+        retained = {
+          key: intent?.key ?? crypto.randomUUID(),
+          startedAt: intent?.startedAt ?? Date.now(),
+          body,
+          proposal: intent && intent.phase !== 'reenter' ? intent.proposal : proposal,
+          phase: 'sending',
+        };
+        const reservation = journal.current?.reserve(
+          { key: retained.key, body: retained.body, startedAt: retained.startedAt },
+          controller.signal,
+        );
+        if (reservation) await reservation;
+        if (controller.signal.aborted) return;
+      } catch {
+        if (!controller.signal.aborted) publish((value) => ({ ...value, storageBlocked: true }));
+        return;
+      }
+      publish((value) => ({ ...value, intent: retained }));
       const next = await adapter.update(retained.body, {
         signal: controller.signal,
         idempotencyKey: retained.key,
@@ -264,6 +329,8 @@ export function useSettingsEditor<View, Proposal, Body>(
       return next;
     } catch (cause) {
       if (controller.signal.aborted) return;
+      const retained = current.current.intent;
+      if (retained?.phase !== 'sending') return;
       const failure = settingsWriteFailure(cause, previous.intent !== undefined);
       const retryAt = failure.retryAfterMs ? Date.now() + failure.retryAfterMs : 0;
       let storageBlocked = false;
@@ -276,14 +343,20 @@ export function useSettingsEditor<View, Proposal, Body>(
           storageBlocked = true;
         }
       }
-      publish((value) => ({
-        ...value,
-        failure,
-        storageBlocked,
-        intent: failure.outcome === 'unconfirmed' ? { ...retained, phase: 'uncertain' } : undefined,
-        refreshRequired: failure.refreshRequired,
-        retryAt,
-      }));
+      publish((value) => {
+        const next: EditorState<View, Proposal, Body> = {
+          ...value,
+          failure,
+          storageBlocked,
+          intent:
+            failure.outcome === 'unconfirmed' ? { ...retained, phase: 'uncertain' } : undefined,
+          refreshRequired: failure.refreshRequired,
+          retryAt,
+        };
+        return failure.kind === 'denied' && adapter.retention?.emptyReentry !== undefined
+          ? hideDeniedContent(next, journal.current)
+          : next;
+      });
     } finally {
       if (request.current === controller.signal) request.current = undefined;
       if (mutation.current === controller) mutation.current = undefined;
@@ -291,7 +364,11 @@ export function useSettingsEditor<View, Proposal, Body>(
     }
   };
   const edit = (proposal: Proposal) => {
-    if (current.current.intent) return;
+    if (
+      current.current.saving ||
+      (current.current.intent && current.current.intent.phase !== 'reenter')
+    )
+      return;
     publish((previous) => ({
       ...previous,
       proposal,
@@ -318,7 +395,8 @@ export function useSettingsEditor<View, Proposal, Body>(
     waiting,
     pending,
     busy: state.reading || state.saving,
-    locked: state.intent !== undefined || pending,
+    locked:
+      state.saving || (state.intent !== undefined && state.intent.phase !== 'reenter') || pending,
     canApply:
       active &&
       !state.reading &&

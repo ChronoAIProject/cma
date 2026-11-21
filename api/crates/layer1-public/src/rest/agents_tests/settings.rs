@@ -183,7 +183,13 @@ async fn settings_refusal_replays_after_dispatch_settles_and_requires_explicit_n
         .await
         .expect("competing update must enter dispatch");
 
-    let apply = |key| request(Method::PATCH, path, OWNER, Some(key), Some(body.clone()));
+    let apply = |key| {
+        let mut request = request(Method::PATCH, path, OWNER, Some(key), Some(body.clone()));
+        request
+            .headers_mut()
+            .insert("prefer", "cma-settings-reasons".parse().unwrap());
+        request
+    };
     let (status, refused) = json_response(&router, apply("original")).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(refused["code"], "agent_operation_in_flight");
@@ -196,8 +202,11 @@ async fn settings_refusal_replays_after_dispatch_settles_and_requires_explicit_n
     refused_access
         .extensions_mut()
         .insert(Authorization::new([]));
-    let (status, denied) = json_response(&router, refused_access).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    let denial = router.clone().oneshot(refused_access).await.unwrap();
+    assert_eq!(denial.status(), StatusCode::FORBIDDEN);
+    assert_eq!(denial.headers()[header::CACHE_CONTROL], "private, no-store");
+    let denied: Value =
+        serde_json::from_slice(&to_bytes(denial.into_body(), 8192).await.unwrap()).unwrap();
     assert!(denied.get("settings_update_reason").is_none());
 
     let (status, replay) = json_response(&router, apply("original")).await;
@@ -233,7 +242,7 @@ async fn preferences_revision_reason_requires_an_explicit_revision_mismatch() {
     fixture.store.create_agent(agent).await.unwrap();
     let path = "/api/v1/agents/agt_preferences/preferences";
     let apply = |key, revision| {
-        request(
+        let mut request = request(
             Method::PATCH,
             path,
             OWNER,
@@ -241,7 +250,11 @@ async fn preferences_revision_reason_requires_an_explicit_revision_mismatch() {
             Some(json!({
                 "expected_revision": revision, "title": "Updated title"
             })),
-        )
+        );
+        request
+            .headers_mut()
+            .insert("prefer", "cma-settings-reasons".parse().unwrap());
+        request
     };
     let (status, rejected) = json_response(&fixture.router, apply("stale", 1)).await;
     assert_eq!(status, StatusCode::CONFLICT);

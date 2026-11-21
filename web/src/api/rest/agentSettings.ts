@@ -1,5 +1,9 @@
 import { agentPreferencesClient } from './agentPreferences';
-import { agentUpdateProblem, type AgentUpdateReason } from './agentUpdateProblem';
+import {
+  agentUpdateHeaders,
+  agentUpdateProblem,
+  type AgentUpdateReason,
+} from './agentUpdateProblem';
 import { ApiError, ProtocolError, retryAfterMilliseconds } from '@cma/client';
 import type { AgentSettingsView, CmaWebClient } from '../client';
 
@@ -91,7 +95,7 @@ export function agentSettingsClient(): Pick<
       settingsRequest(id, {
         method: 'PATCH',
         signal: options.signal,
-        headers: { 'Content-Type': 'application/json', 'Idempotency-Key': options.idempotencyKey },
+        headers: agentUpdateHeaders(options.idempotencyKey),
         body: JSON.stringify({
           model: settings.model,
           reasoning_effort: settings.reasoning_effort,

@@ -22,7 +22,11 @@ it('uses the public Agent preferences route and preserves retry identity and edi
       cache: 'no-store',
       credentials: 'same-origin',
       body: JSON.stringify(update),
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'same-request' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': 'same-request',
+        Prefer: 'cma-settings-reasons',
+      },
     }),
   );
 });

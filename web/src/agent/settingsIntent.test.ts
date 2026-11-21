@@ -27,9 +27,7 @@ it('recovers the body and key after reopening and protects a different Agent and
   expect(settings().read()).toEqual(pending);
   expect(settings('viewer-one', 'agent-two').read()).toBeUndefined();
   expect(
-    agentTransportJournal(sessionStorage, 'viewer-one', 'agent-one')
-      .settingsIntent('prompt', (body) => parsePreferencesIntentBody(body, 'prompt'))
-      .read(),
+    agentTransportJournal(sessionStorage, 'viewer-one', 'agent-one').promptSettingsIntent().read(),
   ).toBeUndefined();
   expect(() => journal.reserve({ ...pending, key: crypto.randomUUID() })).toThrow();
   expect(() =>
@@ -114,6 +112,43 @@ it('preserves exact prompt bytes and rejects payloads for the other preference e
   expect(
     parsePreferencesIntentBody({ ...rename, title: '界'.repeat(65) }, 'rename'),
   ).toBeUndefined();
+});
+
+it('stores only a scoped prompt fingerprint and recovers the original revision from exact re-entry', async () => {
+  const original = {
+    expected_revision: 3,
+    system_prompt: '  synthetic-prompt-marker\n with spaces ',
+  };
+  const identity = { key: crypto.randomUUID(), startedAt: Date.now() };
+  const setItem = vi.fn((key: string, value: string) => sessionStorage.setItem(key, value));
+  const storage = {
+    getItem: (key: string) => sessionStorage.getItem(key),
+    removeItem: (key: string) => sessionStorage.removeItem(key),
+    key: (index: number) => sessionStorage.key(index),
+    get length() {
+      return sessionStorage.length;
+    },
+    setItem,
+  };
+  const open = () =>
+    agentTransportJournal(storage, 'viewer-one', 'agent-one').promptSettingsIntent();
+  const journal = open();
+  await journal.reserve({ ...identity, body: original });
+  journal.defer(identity.key, identity.startedAt + 1000);
+  expect(setItem).toHaveBeenCalledTimes(3);
+  expect(
+    setItem.mock.calls.every(([, written]) => !written.includes('synthetic-prompt-marker')),
+  ).toBe(true);
+  const recovered = open().read();
+  expect(recovered).toMatchObject({ ...identity, retryAt: identity.startedAt + 1000 });
+  expect(recovered).not.toHaveProperty('body');
+  if (!recovered || !('recover' in recovered)) throw new Error('Missing prompt recovery');
+  await expect(
+    recovered.recover({ ...original, system_prompt: original.system_prompt.trim() }),
+  ).resolves.toBeUndefined();
+  await expect(recovered.recover({ ...original, expected_revision: 9 })).resolves.toEqual(original);
+  clearAgentTransport(storage);
+  await expect(recovered.recover(original)).rejects.toThrow();
 });
 
 it('does not overwrite a corrupt intent that might still refer to an unconfirmed write', () => {

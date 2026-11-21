@@ -54,12 +54,16 @@ function PreferencesForm({
       pending: (view) => mode === 'prompt' && view.prompt_pending,
       retention: viewerId
         ? {
-            journal: () =>
-              agentTransportJournal(sessionStorage, viewerId, agentId).settingsIntent(
-                mode,
-                (value) => parsePreferencesIntentBody(value, mode),
-              ),
+            journal: () => {
+              const journal = agentTransportJournal(sessionStorage, viewerId, agentId);
+              return mode === 'prompt'
+                ? journal.promptSettingsIntent()
+                : journal.settingsIntent('rename', (value) =>
+                    parsePreferencesIntentBody(value, 'rename'),
+                  );
+            },
             proposal: (body) => body.title ?? body.system_prompt ?? '',
+            emptyReentry: mode === 'prompt' ? '' : undefined,
           }
         : undefined,
     }),
@@ -67,6 +71,7 @@ function PreferencesForm({
   );
   const editor = useSettingsEditor(adapter, !!client.readAgentPreferences);
   const { snapshot: preferences, intent } = editor;
+  const showIntent = intent && (mode !== 'prompt' || preferences || !viewerId);
   const value = editor.proposal ?? '';
   const [confirmClose, setConfirmClose] = useState(false);
   useUnconfirmedSettings(intent !== undefined && !viewerId);
@@ -111,7 +116,7 @@ function PreferencesForm({
               disabled={!preferences || !editor.canApply || invalid || promptUnavailable}
               onClick={() => void save()}
             >
-              {editor.saving ? 'Saving…' : intent ? 'Retry change' : 'Save'}
+              {editor.saving ? 'Saving…' : showIntent ? 'Retry change' : 'Save'}
             </Button>
           </>
         )
@@ -160,7 +165,13 @@ function PreferencesForm({
           </p>
         ) : null}
         {editor.confirmed ? <p role="status">The changes are applied to this Agent.</p> : null}
-        {intent ? <p role="status">{unconfirmedSettingsWarning(viewerId)}</p> : null}
+        {showIntent ? (
+          <p role="status">
+            {intent?.phase === 'reenter'
+              ? 'Re-enter the exact original system prompt to check the pending change.'
+              : unconfirmedSettingsWarning(viewerId)}
+          </p>
+        ) : null}
         {confirmClose ? (
           <p role="alert">
             Discard the local edits and retry details? This does not cancel a server update.

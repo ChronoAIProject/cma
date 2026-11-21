@@ -1,9 +1,27 @@
+use axum::{
+    http::{header, HeaderMap},
+    response::Response,
+};
 use layer2_core::sandbox::{AgentConfigurationRead, AgentOperationError, AgentReadService};
 use layer2_core::{AgentId, Caller};
 
 use crate::{AuthenticatedResourceCaller, DelegatedCredential};
 
 use super::InstanceProblem;
+
+pub(in crate::rest) fn wants_reasons(headers: &HeaderMap) -> bool {
+    headers
+        .get("prefer")
+        .is_some_and(|value| value == "cma-settings-reasons")
+}
+
+pub(in crate::rest) fn private_response(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        header::HeaderValue::from_static("private, no-store"),
+    );
+    response
+}
 
 #[derive(Clone, Copy)]
 pub(crate) enum ConfigurationWriteReason {
@@ -53,7 +71,10 @@ impl ConfigurationWriteReason {
 
 /// Classify only the original attempt. The command receipt retains this reason
 /// even when the Agent's state changes before an exact-key replay.
-pub(in crate::rest) fn operation_problem(error: AgentOperationError) -> InstanceProblem {
+pub(in crate::rest) fn operation_problem(
+    error: AgentOperationError,
+    reason_requested: bool,
+) -> InstanceProblem {
     use ConfigurationWriteReason as Reason;
     let reason = match &error {
         AgentOperationError::DispatchInProgress { .. } => Some(Reason::DispatchInProgress),
@@ -82,7 +103,11 @@ pub(in crate::rest) fn operation_problem(error: AgentOperationError) -> Instance
                 reason = reason.as_str(),
                 "Agent configuration write did not confirm"
             );
-            InstanceProblem::ConfigurationWrite(Box::new(problem), reason)
+            if reason_requested {
+                InstanceProblem::ConfigurationWrite(Box::new(problem), reason)
+            } else {
+                problem
+            }
         }
         None => problem,
     }
@@ -154,7 +179,11 @@ mod tests {
             ),
         ] {
             let (legacy_status, legacy) = body(InstanceProblem::from(error.clone())).await;
-            let (status, configuration) = body(operation_problem(error)).await;
+            assert_eq!(
+                body(operation_problem(error.clone(), false)).await,
+                (legacy_status, legacy.clone())
+            );
+            let (status, configuration) = body(operation_problem(error, true)).await;
             assert_eq!(legacy_status, status);
             assert_eq!(legacy["code"], configuration["code"]);
             assert!(legacy.get("settings_update_reason").is_none());

@@ -55,8 +55,26 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
         prompt_supported: true,
       };
       const proposal =
-        mode === 'rename' ? 'Proposed title' : '  Proposed prompt\nKeep these spaces.  ';
+        mode === 'rename'
+          ? 'Proposed title'
+          : '  Synthetic prompt storage marker\nKeep these spaces.  ';
       const writes: Write[] = [];
+      const storageWrites: boolean[] = [];
+      if (mode === 'prompt') {
+        await page.exposeBinding('recordPromptStorageWrite', (_, containsPrompt: boolean) => {
+          storageWrites.push(containsPrompt);
+        });
+        await page.addInitScript(() => {
+          const write = Storage.prototype.setItem;
+          const { recordPromptStorageWrite } = window as Window & {
+            recordPromptStorageWrite?: (containsPrompt: boolean) => Promise<void>;
+          };
+          Storage.prototype.setItem = function (key, value) {
+            void recordPromptStorageWrite?.(value.includes('Synthetic prompt storage marker'));
+            return write.call(this, key, value);
+          };
+        });
+      }
       const receipts = new Map<string, { write: Write; result: Record<string, unknown> }>();
       let committed = 0;
       const deniedReplay = failure === 'lost-then-denied' || failure === '503-then-denied';
@@ -78,6 +96,7 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
         if (route.request().method() === 'GET')
           return route.fulfill({ json: mode === 'settings' ? settings : preferences });
         expect(route.request().method()).toBe('PATCH');
+        expect(route.request().headers()['prefer']).toBe('cma-settings-reasons');
         const body = route.request().postDataJSON() as Record<string, unknown>;
         const key = route.request().headers()['idempotency-key'];
         const write = { key, body, bytes: route.request().postData() };
@@ -195,16 +214,34 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
           const retry = editor.getByRole('button', {
             name: mode === 'settings' ? 'Retry settings update' : 'Retry change',
           });
+          if (mode === 'prompt' && failure === 'lost') {
+            await expect(field()).toHaveValue('');
+            await field().fill('A different proposed prompt');
+            await retry.click();
+            await expect(editor.getByRole('alert')).toContainText(
+              'Enter the original system prompt exactly',
+            );
+            expect(writes).toHaveLength(1);
+            await field().fill(proposal);
+          }
           if (unavailable || failure === 'throttled') await expect(retry).toBeDisabled();
           await expect(retry).toBeEnabled();
           expect(writes).toHaveLength(1);
           await retry.click();
           if (deniedReplay) {
-            await expect(retry).toBeDisabled();
             await expect(editor.getByRole('alert')).toContainText(
               /refresh to check access before saving/i,
             );
-            await expect(editor).toContainText('reopen this editor in the same tab');
+            if (mode === 'prompt') {
+              await expect(field()).toHaveCount(0);
+              await expect(retry).toHaveCount(0);
+              await expect(editor).not.toContainText(
+                /pending change|Synthetic prompt storage marker/,
+              );
+            } else {
+              await expect(retry).toBeDisabled();
+              await expect(editor).toContainText('reopen this editor in the same tab');
+            }
             expect(writes).toHaveLength(2);
             await editor
               .getByRole('button', {
@@ -212,11 +249,16 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
               })
               .click();
             await expect(retry).toBeEnabled();
-            if (mode !== 'settings') {
+            if (mode === 'prompt') {
+              await expect(field()).toHaveValue('');
+              await expect(editor).toContainText('Re-enter the exact original system prompt');
+              await field().fill(proposal);
+            } else if (mode === 'rename') {
               await expect(field()).toHaveValue(proposal);
               await expect(editor).toContainText('Current preferences revision: 9.');
             }
-            await expect(editor).toContainText('reopen this editor in the same tab');
+            if (mode !== 'prompt')
+              await expect(editor).toContainText('reopen this editor in the same tab');
             await expect(editor).not.toContainText('applied to this Agent');
             expect(writes).toHaveLength(2);
             await retry.click();
@@ -239,6 +281,10 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
         await expect(editor.getByRole('button', { name: 'Permission mode' })).toHaveText('Guarded');
       else await expect(field()).toHaveValue(proposal);
       expect(writes).toHaveLength(writeCount);
+      if (mode === 'prompt') {
+        expect(storageWrites.length).toBeGreaterThan(0);
+        expect(storageWrites).not.toContain(true);
+      }
       expect(boundary.writes).toEqual([]);
       expect(boundary.unexpected).toEqual([]);
       expect(boundary.errors).toEqual([]);

@@ -8,7 +8,11 @@ import { InterruptionJournal } from './interruptionJournal';
 import { LegacySuggestionJournal } from './legacySuggestionJournal';
 import { bindDraftCommand } from '../draftDelivery';
 import { acceptDraftCommand, clearOwnerDrafts } from '../draftStorage';
-import { settingsIntentJournal, type SettingsEditorKind } from '../settingsIntent';
+import {
+  promptIntentJournal,
+  settingsIntentJournal,
+  type RetainedSettingsEditor,
+} from '../settingsIntent';
 
 const PREFIX = 'cma:agent-transport:v1:';
 const IDENTITY = `${PREFIX}identity`;
@@ -143,12 +147,23 @@ export class AgentTransportJournal {
       throw new IdentityChangedError();
   }
 
-  settingsIntent<Body>(kind: SettingsEditorKind, parseBody: (value: unknown) => Body | undefined) {
+  settingsIntent<Body>(
+    kind: RetainedSettingsEditor,
+    parseBody: (value: unknown) => Body | undefined,
+  ) {
     return settingsIntentJournal(
       this.storage,
       `${this.key}:configuration:${kind}:${this.identity.epoch}`,
       () => this.requireIdentity(),
       parseBody,
+    );
+  }
+
+  promptSettingsIntent() {
+    return promptIntentJournal(
+      this.storage,
+      `${this.key}:configuration:prompt-fingerprint:${this.identity.epoch}`,
+      () => this.requireIdentity(),
     );
   }
 

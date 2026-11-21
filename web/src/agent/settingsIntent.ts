@@ -1,20 +1,28 @@
 import type { AgentSettingsView, UpdateAgentPreferences } from '../api/client';
 
-export interface SettingsIntent<Body> {
+export interface SettingsIntentIdentity {
   readonly key: string;
-  readonly body: Body;
   readonly startedAt: number;
   readonly retryAt?: number;
 }
 
+export interface SettingsIntent<Body> extends SettingsIntentIdentity {
+  readonly body: Body;
+}
+
+export interface OpaqueSettingsIntent<Body> extends SettingsIntentIdentity {
+  recover(candidate: Body): Promise<Body | undefined>;
+}
+
 export interface SettingsIntentJournal<Body> {
-  read(): SettingsIntent<Body> | undefined;
-  reserve(intent: SettingsIntent<Body>): void;
+  read(): SettingsIntent<Body> | OpaqueSettingsIntent<Body> | undefined;
+  reserve(intent: SettingsIntent<Body>, signal?: AbortSignal): void | Promise<void>;
   defer(key: string, retryAt: number): void;
   complete(key: string): void;
 }
 
-export type SettingsEditorKind = 'settings' | 'rename' | 'prompt';
+export type RetainedSettingsEditor = 'settings' | 'rename';
+type IntentStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 const retentionMs = 24 * 60 * 60 * 1000;
 const maxJournalLength = 200_000;
@@ -24,11 +32,11 @@ export const settingsJournalError =
   'The saved update could not be recovered from this tab. Reload to check the current settings before retrying.';
 
 export function settingsIntentJournal<Body>(
-  storage: Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>,
+  storage: IntentStorage,
   scope: string,
   requireIdentity: () => void,
   parseBody: (value: unknown) => Body | undefined,
-): SettingsIntentJournal<Body> {
+) {
   const read = () => {
     requireIdentity();
     const raw = storage.getItem(scope);
@@ -52,7 +60,7 @@ export function settingsIntentJournal<Body>(
   };
   return {
     read,
-    reserve(intent) {
+    reserve(intent: SettingsIntent<Body>) {
       const current = read();
       const now = Date.now();
       if (
@@ -67,14 +75,92 @@ export function settingsIntentJournal<Body>(
         throw new Error(settingsJournalError);
       if (!current) storage.setItem(scope, JSON.stringify(intent));
     },
-    defer(key, retryAt) {
+    defer(key: string, retryAt: number) {
       const current = read();
       if (current?.key === key) {
         storage.setItem(scope, JSON.stringify({ ...current, retryAt }));
       }
     },
-    complete(key) {
+    complete(key: string) {
       if (read()?.key === key) storage.removeItem(scope);
+    },
+  };
+}
+
+function parsePromptFingerprint(value: unknown) {
+  const fields = record(value);
+  if (
+    !fields ||
+    Object.keys(fields).length !== 2 ||
+    typeof fields.expected_revision !== 'number' ||
+    !Number.isSafeInteger(fields.expected_revision) ||
+    fields.expected_revision < 0 ||
+    typeof fields.fingerprint !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(fields.fingerprint)
+  )
+    return undefined;
+  return { expected_revision: fields.expected_revision, fingerprint: fields.fingerprint };
+}
+
+async function promptFingerprint(
+  key: string,
+  proposal: { expected_revision: number; system_prompt: string },
+) {
+  const bytes = new TextEncoder().encode(
+    JSON.stringify([
+      'cma:prompt-recovery:v1',
+      key,
+      proposal.expected_revision,
+      proposal.system_prompt,
+    ]),
+  );
+  const digest = await crypto.subtle.digest('SHA-256', bytes);
+  return [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+/** A prompt can be replayed only from memory or from an exact re-entry. */
+export function promptIntentJournal(
+  storage: IntentStorage,
+  scope: string,
+  requireIdentity: () => void,
+): SettingsIntentJournal<UpdateAgentPreferences> {
+  const journal = settingsIntentJournal(storage, scope, requireIdentity, parsePromptFingerprint);
+  return {
+    ...journal,
+    read() {
+      const saved = journal.read();
+      if (!saved) return undefined;
+      const { body, ...identity } = saved;
+      return {
+        ...identity,
+        async recover(candidate) {
+          const original = parsePreferencesIntentBody(
+            { expected_revision: body.expected_revision, system_prompt: candidate.system_prompt },
+            'prompt',
+          );
+          if (
+            original?.system_prompt === undefined ||
+            (await promptFingerprint(identity.key, {
+              expected_revision: original.expected_revision,
+              system_prompt: original.system_prompt,
+            })) !== body.fingerprint
+          )
+            return undefined;
+          requireIdentity();
+          return original;
+        },
+      };
+    },
+    async reserve({ body, key, startedAt }, signal) {
+      const candidate = parsePreferencesIntentBody(body, 'prompt');
+      if (candidate?.system_prompt === undefined) throw new Error(settingsJournalError);
+      const expected_revision = candidate.expected_revision;
+      const fingerprint = await promptFingerprint(key, {
+        expected_revision,
+        system_prompt: candidate.system_prompt,
+      });
+      signal?.throwIfAborted();
+      journal.reserve({ key, startedAt, body: { expected_revision, fingerprint } });
     },
   };
 }
