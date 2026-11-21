@@ -23,6 +23,11 @@ The re-run is automatic once per head: its attempt is triggered by the bot,
 which never earns another, and no head runs ATTEMPTS times. A lane still
 behind after that is reported as exhausted until a push or a maintainer acts.
 An unreadable controller outcome is reported as unknown and never re-runs.
+
+A head run whose plan stopped at its completion gate (a budget-stopped plan,
+or tags that could not be read) is re-run once too, with the same settling:
+from the hourly check, once every staging run has settled, never after a
+cancelled head, and never by the bot's own attempt.
 """
 import collections
 from datetime import datetime
@@ -32,6 +37,7 @@ from pathlib import Path
 import subprocess
 import time
 
+import ci_retry
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHub, GitHubNotFound
 from staging_cd_promotion import UNAVAILABLE, job_proof, proven_components, push_scope, read_snapshot
@@ -46,8 +52,13 @@ CHECK = ".github/workflows/staging-cd-catch-up.yml"
 DEVELOP = "refs/heads/develop"
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
 BOT = "github-actions[bot]"
-# The display name of staging-cd.yml's allocation job; a workflow test pins it.
+# The display names of staging-cd.yml's allocation job, its plan job and the
+# plan's gate for a transient stop; a workflow test pins them.
 ALLOCATION_JOB = "allocate"
+PLAN_JOB = "plan"
+PLAN_GATE = "Require a complete release plan"
+# Only these decisions re-run the head run; any other names no action.
+RERUNS = frozenset({"rerun", "plan-rerun"})
 # One automatic re-run per develop head; never re-run a head this many times.
 ATTEMPTS = 5
 SECONDS = 150
@@ -77,7 +88,9 @@ def advertised(runner=subprocess.run):
     result = runner(["git", "-c", "credential.helper=", "-c", "http.extraHeader=", "ls-remote", "--refs",
                      REMOTE, DEVELOP, "refs/tags/*"], env=env, text=True, capture_output=True,
                     timeout=60, check=False)
-    require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024, "Release tag inventory is incomplete")
+    if result.returncode != 0:
+        raise Refusal("Release tag inventory is incomplete") from ci_retry.cli_cause(result.stderr)
+    require(len(result.stdout) <= 16 * 1024 * 1024, "Release tag inventory is incomplete")
     refs = {}
     for line in result.stdout.splitlines():
         oid, _, ref = line.partition("\t")
@@ -251,6 +264,16 @@ def allocated(jobs):
     return len(rows) == 1 and rows[0].get("status") == "completed" and rows[0].get("conclusion") == "success"
 
 
+def plan_stopped(jobs):
+    """The plan job failed at its gate for a transient stop, not at a refusal or an error."""
+    rows = [job for job in jobs if job.get("name") == PLAN_JOB]
+    if len(rows) != 1 or rows[0].get("conclusion") != "failure" or not isinstance(rows[0].get("steps"), list):
+        return False
+    failed = [step.get("name") for step in rows[0]["steps"] if isinstance(step, dict)
+              and step.get("conclusion") == "failure"]
+    return failed == [PLAN_GATE]
+
+
 def settled(run, now):
     try:
         finished = datetime.fromisoformat(run["updated_at"].replace("Z", "+00:00")).timestamp()
@@ -277,9 +300,19 @@ def decide(api, read_refs, read_controller, *, event=None, now=None):
     # The bot's attempt was this head's automatic re-run; a maintainer's earns one more.
     spent = (isinstance(actor, dict) and actor.get("login") == BOT) or run["run_attempt"] >= ATTEMPTS
     jobs = run_jobs(api, run)
-    # A failed plan or allocation is a failure to retry on the next push, not a skip.
     if not spent and not allocated(jobs):
-        return "head-unallocated", None, []
+        # A plan stopped at its transient gate is re-run once, as a re-run for
+        # finals alone is: never after a cancelled head, and only from the hourly
+        # check once every staging run has settled. Any other failed plan or
+        # allocation is a failure to retry on the next push, not a skip.
+        if not plan_stopped(jobs):
+            return "head-unallocated", None, []
+        if run.get("conclusion") == "cancelled":
+            return "cancelled", None, []
+        current = time.time() if now is None else now
+        if event != "schedule" or not all(settled(row, current) for row in listing["workflow_runs"]):
+            return "plan-waiting", None, []
+        return "plan-rerun", run, []
     wait, lanes = left_behind(api, refs, run, jobs, read_controller)
     if wait:
         return wait, None, []
@@ -351,7 +384,7 @@ def main():
             api = GitHub(env.get("GH_TOKEN"), deadline=time.monotonic() + SECONDS)
             reason, run, lanes = decide(api, advertised, controller_reader(env), event=env["GITHUB_EVENT_NAME"])
             outcome.update(reason=reason, lanes=lanes)
-            if reason == "rerun":
+            if reason in RERUNS:
                 outcome.update(run=run["id"], attempt=rerun(api, run))
             elif reason == "exhausted":
                 outcome.update(run=run["id"], attempt=run["run_attempt"])
@@ -371,6 +404,8 @@ def main():
         print(f"CATCH-UP lane={lane.component} reason={lane.reason} version={lane.version}")
     if reason == "rerun":
         print(f"CATCH-UP rerun run={outcome['run']} attempt={outcome['attempt']} lanes={','.join(late)}")
+    elif reason == "plan-rerun":
+        print(f"CATCH-UP plan-rerun run={outcome['run']} attempt={outcome['attempt']}")
     elif reason == "exhausted":
         verb, pronoun = ("stays", "it") if len(late) == 1 else ("stay", "them")
         print(f"::warning title=Staging CD catch-up exhausted::{','.join(late)} {verb} behind after attempt "
