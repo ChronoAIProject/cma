@@ -91,12 +91,14 @@ export function ProfileFields({
         description="Name this agent configuration and describe the work it should do."
       >
         <TextField
+          path="/profile/metadata/name"
           label="Agent configuration name"
           value={metadata.name}
           onChange={(name) => set('metadata', { ...metadata, name })}
           required
         />
         <TextField
+          path="/profile/metadata/description"
           label="Description"
           value={metadata.description}
           onChange={(description) => set('metadata', { ...metadata, description })}
@@ -105,23 +107,27 @@ export function ProfileFields({
       </Section>
       <AdvancedFields title="Advanced Agent identity and queue" enabled={guided}>
         <Section
+          path="/profile/metadata"
           title="Ownership"
           description="The provider and owner identify this binding. Existing bindings retain their original identity."
         >
           <fieldset className="channel-form-section" disabled={immutableIdentity}>
             <TextField
+              path="/profile/metadata/provider"
               label="Profile provider"
               value={metadata.provider}
               onChange={(provider) => set('metadata', { ...metadata, provider })}
               required
             />
             <TextField
+              path="/profile/metadata/owner/subject"
               label="Owner subject"
               value={owner.subject}
               onChange={(subject) => set('metadata', { ...metadata, owner: { ...owner, subject } })}
               required
             />
             <Choice
+              path="/profile/metadata/owner/kind"
               label="Owner type"
               value={owner.kind}
               options={['human', 'service_account', 'agent_key', 'organization']}
@@ -130,10 +136,12 @@ export function ProfileFields({
           </fieldset>
         </Section>
         <Section
+          path="/profile/queue_lifetime_seconds"
           title="Queue wait"
           description="Messages can wait five minutes by default, or up to one day. When this time runs out, the message fails without starting. Changes apply to new messages."
         >
           <NumberField
+            path="/profile/queue_lifetime_seconds"
             label="Maximum wait (seconds)"
             value={value.queue_lifetime_seconds ?? 300}
             min={1}
@@ -148,12 +156,14 @@ export function ProfileFields({
       >
         <div className="channel-form-grid">
           <TextField
+            path="/profile/model/model"
             label="Model"
             value={model.model}
             onChange={(v) => setModel('model', v)}
             required
           />
           <Choice
+            path="/profile/model/thinking_effort"
             label="Thinking effort"
             value={model.thinking_effort}
             options={['minimal', 'low', 'medium', 'high', 'very_high']}
@@ -162,18 +172,21 @@ export function ProfileFields({
         </div>
         <AdvancedFields title="Advanced model connection" enabled={guided}>
           <Choice
+            path="/profile/model/access"
             label="Model access"
             value={model.access}
             options={['managed', 'custom']}
             onChange={(v) => setModel('access', v)}
           />
           <TextField
+            path="/profile/model/service"
             label="Model service"
             value={model.service}
             onChange={(v) => setModel('service', v)}
             required
           />
           <Choice
+            path="/profile/model/api_type"
             label="Model API"
             value={model.api_type}
             options={['responses', 'chat_completions']}
@@ -181,6 +194,7 @@ export function ProfileFields({
           />
         </AdvancedFields>
         <Choice
+          path="/profile/permission/action_mode"
           label="Permission mode"
           value={permission.action_mode}
           options={[
@@ -195,11 +209,13 @@ export function ProfileFields({
         description="Limit which services the agent can use and give it instructions for handling messages."
       >
         <StringList
+          path="/profile/permission/service_scope"
           label="Service scope"
           value={strings(permission.service_scope)}
           onChange={(service_scope) => set('permission', { ...permission, service_scope })}
         />
         <TextField
+          path="/profile/context/system_prompt"
           label="System prompt"
           value={context.system_prompt}
           onChange={(system_prompt) => set('context', { ...context, system_prompt })}
@@ -208,12 +224,14 @@ export function ProfileFields({
       </Section>
       <AdvancedFields title="Advanced Agent tools and environment" enabled={guided}>
         <Section
+          path="/profile/context/skills"
           title="Skills"
           description="Attach Ornn skills by ID. Leave this empty if the agent does not need additional skills."
         >
           {skills.map((skill, index) => (
             <Section key={index} title={`Skill ${index + 1}`}>
               <TextField
+                path={`/profile/context/skills/${index}/id`}
                 label={`Skill ${index + 1} ID`}
                 value={skill.id}
                 onChange={(id) =>
@@ -225,6 +243,7 @@ export function ProfileFields({
                 required
               />
               <TextField
+                path={`/profile/context/skills/${index}/version`}
                 label={`Skill ${index + 1} version`}
                 value={skill.version}
                 onChange={(version) =>
@@ -255,6 +274,7 @@ export function ProfileFields({
           </Button>
         </Section>
         <Section
+          path="/profile/context/mcp_servers"
           title="MCP servers"
           description="Additional tool servers requested in this profile. Provider support is required; the CMA provider currently does not install these extra servers. Saved values are retained."
         >
@@ -268,12 +288,14 @@ export function ProfileFields({
             return (
               <Section key={index} title={`MCP server ${index + 1}`}>
                 <TextField
+                  path={`/profile/context/mcp_servers/${index}/url`}
                   label={`Server ${index + 1} URL`}
                   value={server.url}
                   onChange={(url) => update({ ...server, url })}
                   required
                 />
                 <Choice
+                  path={`/profile/context/mcp_servers/${index}/auth/type`}
                   label={`Server ${index + 1} authentication`}
                   value={auth.type}
                   options={['none', 'nyxid_service']}
@@ -283,6 +305,7 @@ export function ProfileFields({
                 />
                 {auth.type === 'nyxid_service' ? (
                   <TextField
+                    path={`/profile/context/mcp_servers/${index}/auth/slug`}
                     label={`Server ${index + 1} service`}
                     value={auth.slug}
                     onChange={(slug) => update({ ...server, auth: { ...auth, slug } })}
@@ -315,6 +338,7 @@ export function ProfileFields({
           </Button>
         </Section>
         <Section
+          path="/profile/environment"
           title="Environment"
           description="Optional provider environment overrides. Keep the defaults unless your agent needs a specific environment."
         >

@@ -108,6 +108,7 @@ export function SourceFields({
             ) : null}
             <AdvancedFields title="Advanced connection settings" enabled={guided}>
               <TextField
+                path="issuer"
                 label="NyxID issuer"
                 value={value.issuer}
                 onChange={(v) => set('issuer', v)}
@@ -115,6 +116,7 @@ export function SourceFields({
                 required
               />
               <TextField
+                path="key_id"
                 label="Signing key ID"
                 value={value.key_id}
                 onChange={(v) => set('key_id', v)}
@@ -123,6 +125,7 @@ export function SourceFields({
               />
               <StringList
                 requiredItems
+                path="route_ids"
                 label="Route IDs"
                 value={strings(value.route_ids)}
                 onChange={(v) => set('route_ids', v)}

@@ -20,7 +20,7 @@ if (
 export default defineConfig({
   projects: browserProjects(),
   testDir: '.',
-  testMatch: 'channel-setup.check.ts',
+  testMatch: ['channel-setup.check.ts', 'channel-setup-validation.check.ts'],
   workers: 1,
   retries: 0,
   forbidOnly: true,

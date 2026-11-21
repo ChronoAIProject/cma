@@ -1,3 +1,4 @@
+import { ValidationScope } from './ValidationPath';
 import { SetupPolicy, SetupReview, SetupSection } from './SetupSections';
 import type { Denied } from '../client';
 import {
@@ -141,24 +142,26 @@ export function NodeFields({
                       }
                     />
                   ) : null}
-                  <SourceFields
-                    guided={create}
-                    hideAdmission={create}
-                    value={source}
-                    attachmentDescription={customAttachmentDescription(
-                      draft,
-                      create
-                        ? customExecutionSelected(discovery, draft)
-                        : savedCustomExecution === true,
-                    )}
-                    managedIdentity={Boolean(draft.connection_ref)}
-                    onChange={(next) =>
-                      set(
-                        'sources',
-                        sources.map((v, i) => (i === index ? next : v)),
-                      )
-                    }
-                  />
+                  <ValidationScope value={`/sources/${index}`}>
+                    <SourceFields
+                      guided={create}
+                      hideAdmission={create}
+                      value={source}
+                      attachmentDescription={customAttachmentDescription(
+                        draft,
+                        create
+                          ? customExecutionSelected(discovery, draft)
+                          : savedCustomExecution === true,
+                      )}
+                      managedIdentity={Boolean(draft.connection_ref)}
+                      onChange={(next) =>
+                        set(
+                          'sources',
+                          sources.map((v, i) => (i === index ? next : v)),
+                        )
+                      }
+                    />
+                  </ValidationScope>
                   {source.type === 'native_lark' ? (
                     <NativeLarkCredentialsFields
                       value={credentials}
