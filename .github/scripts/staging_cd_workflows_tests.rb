@@ -608,4 +608,13 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal 'ubuntu-24.04', plan['runs-on']
     refute plan.to_s.include?('secrets.')
   end
+
+  def test_planner_reads_final_release_tags_with_only_the_read_only_job_token
+    plan = workflow('staging-cd')['jobs']['plan']
+    step = plan['steps'].find { |candidate| candidate['id'] == 'plan' }
+    assert_equal({ 'CD_ADOPTION_SHA' => '${{ vars.CMA_CD_ADOPTION_SHA }}', 'GH_TOKEN' => '${{ github.token }}' },
+                 step['env'])
+    assert_equal 'read', plan.dig('permissions', 'contents')
+    refute_includes plan['permissions'].values, 'write'
+  end
 end

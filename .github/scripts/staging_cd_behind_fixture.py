@@ -27,6 +27,8 @@ class Develop:
         self.server = AllocationServer(count, reserved=False)
         self.changes, self.runs, self.queues, self.finals, self.posts = [], {}, {}, {}, []
         self.landing = True
+        # The release plan of each push; by default the whole adoption window.
+        self.plan = lambda queue: queue
         self.read = self.server.request
         self.server.request = self.serve
 
@@ -92,6 +94,7 @@ class Develop:
         queue = {"head": source, "event_source": source, "changes": list(self.changes)}
         if transition is not None:
             queue["contract_transition"] = transition
+        queue = self.plan(queue)
         run_id = 801 + index
         self.runs[run_id] = {"head": source, "attempts": []}
         self.queues[run_id] = queue

@@ -59,10 +59,14 @@ jobs:
           path: ${{ steps.selection-cache.outputs.directory }}
           key: ${{ steps.selection-cache.outputs.key }}
           restore-keys: ${{ steps.selection-cache.outputs.prefix }}
+      # The plan starts at the oldest lane's newest final release, never before
+      # the adoption commit. The read-only token reads those tag objects; the
+      # selector processes never receive it.
       - name: Reconcile first-parent merges with the shared selector
         id: plan
         env:
           CD_ADOPTION_SHA: ${{ vars.CMA_CD_ADOPTION_SHA }}
+          GH_TOKEN: ${{ github.token }}
         run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py'
       # A plan stopped by its budget still succeeds here, so every analysed
       # revision is saved and the next run continues instead of starting over.
