@@ -272,6 +272,29 @@ class CatchUpTests(unittest.TestCase):
         self.assertEqual((reason, run["run_attempt"], lanes), ("allocation-exhausted", catch_up.ATTEMPTS, []))
         self.assertEqual(develop.posts, [])
 
+    def test_only_a_job_that_failed_at_its_gate_alone_is_a_transient_stop(self):
+        def job(conclusion, steps):
+            return {"status": "completed", "conclusion": conclusion,
+                    "steps": [{"name": step, "conclusion": outcome} for step, outcome in steps]}
+        for stage, gate, work in (
+                ("plan", catch_up.PLAN_GATE, "Reconcile first-parent merges with the shared selector"),
+                ("allocation", catch_up.ALLOCATION_GATE, "Reserve independent immutable component versions")):
+            for case, shape, reason in (
+                    ("gate alone", job("failure", [(work, "success"), (gate, "failure")]), stage + "-rerun"),
+                    # The gate and another step failed: a refusal or an error, never a transient stop.
+                    ("gate and step", job("failure", [(work, "failure"), (gate, "failure")]), "head-unallocated"),
+                    # A failed gate in a job that did not fail (a cancelled one) is no stop either.
+                    ("job cancelled", job("cancelled", [(work, "success"), (gate, "failure")]),
+                     "head-unallocated")):
+                with self.subTest(stage=stage, case=case):
+                    develop = Develop()
+                    develop.push({"web"})
+                    develop.complete(801)
+                    attempt = develop.runs[801]["attempts"][-1]
+                    attempt.update(allocate=None, plan=shape) if stage == "plan" else attempt.update(allocate=shape)
+                    self.assertEqual(decide(develop)[0], reason)
+                    self.assertEqual(develop.posts, [])
+
     def test_a_re_run_attempt_takes_over_reservations_its_stopped_allocation_committed(self):
         # Run 44948149418: the atomic reservation push outlived its client bound
         # and settlement found nothing, so allocation stopped at its gate. The

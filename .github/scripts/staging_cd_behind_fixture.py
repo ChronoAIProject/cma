@@ -107,7 +107,9 @@ class Develop:
 
     @staticmethod
     def plan_job(outcome):
-        """The plan job: successful, stopped at its transient gate, or failed in its plan step."""
+        """The plan job: successful, stopped at its transient gate, failed in its plan step, or a given job."""
+        if isinstance(outcome, dict):
+            return dict(outcome, name="plan")
         steps = {"success": [("Reconcile first-parent merges with the shared selector", "success"),
                              ("Require a complete release plan", "skipped")],
                  "stopped": [("Reconcile first-parent merges with the shared selector", "success"),
@@ -119,7 +121,9 @@ class Develop:
 
     @staticmethod
     def allocate_job(outcome):
-        """The allocate job: not started, successful, stopped at its settlement gate, or failed in its step."""
+        """The allocate job: not started, successful, stopped at its settlement gate, failed, or a given job."""
+        if isinstance(outcome, dict):
+            return dict(outcome, name="allocate")
         if outcome is None:
             return {"name": "allocate", "status": "queued", "conclusion": None}
         steps = {"success": [("Reserve independent immutable component versions", "success"),
