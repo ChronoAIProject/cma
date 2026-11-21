@@ -183,7 +183,8 @@ class InvokeTests(unittest.TestCase):
                 if stage == "controller-abandoned":
                     # Only an operator can apply the stored generation; a re-run refuses again.
                     self.assertTrue(explained.endswith(" cause=operator"), explained)
-                    self.assertIn("/reconcile", public[2])
+                    self.assertIn("admin reconcile", public[2])
+                    self.assertNotIn("/api/", public[2])
                 self.assertNotIn(marker, summary.read_text())
                 self.assertEqual(runner.call_count, int(stage.startswith("controller")))
 

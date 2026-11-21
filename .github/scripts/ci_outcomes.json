@@ -845,9 +845,9 @@
         },
         "apply-abandoned": {
           "title": "Stored generation never applied",
-          "meaning": "chrono-cd stored a new generation of one of this release's apps but never applied it: the app stays pending with no reconcile result long after any apply ends. No rollout is running, so a re-run refuses again.",
+          "meaning": "chrono-cd stored a new generation of one of the staging apps this release depends on or deploys but never applied it: it stays pending with no reconcile result long after any apply ends. No rollout is running, so a re-run refuses again.",
           "cause": "operator",
-          "next": "An operator finds the app left pending, runs chrono-cd's admin reconcile POST /api/v1/admin/apps/<owner-slug>/<app>/reconcile or re-submits that generation, waits for ready, then re-runs."
+          "next": "An operator finds the app left pending, runs the deployment service's admin reconcile for that app (see the cma-infra staging README) or re-submits the same spec, waits for ready, then re-runs."
         },
         "transport": {
           "title": "Deployment service unreachable",
@@ -1153,7 +1153,7 @@
           "title": "Stored generation never applied",
           "meaning": "chrono-cd stored this deployment's new generation of an app but never applied it: the app stays pending with no reconcile result long after any apply ends, so staging may still run the earlier spec.",
           "cause": "operator",
-          "next": "Run chrono-cd's admin reconcile POST /api/v1/admin/apps/<owner-slug>/<app>/reconcile for the app left pending, or re-submit that generation; once it is ready, re-run the deployment."
+          "next": "Run the deployment service's admin reconcile for the app left pending (see the cma-infra staging README) or re-submit the same spec. That applies this run's unverified write, so then re-run this deployment so it is verified."
         },
         "transport": {
           "title": "Deployment service unreachable",

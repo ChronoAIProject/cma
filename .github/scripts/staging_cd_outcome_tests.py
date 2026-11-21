@@ -381,23 +381,39 @@ class RenderTests(unittest.TestCase):
         import staging_cd_refusal as refusal
         self.assertIn("apply-abandoned", refusal.REASONS)
         self.assertIn("apply-abandoned", refusal.VERIFICATION_REASONS)
-        route = "POST /api/v1/admin/apps/<owner-slug>/<app>/reconcile"
+        fix = "the deployment service's admin reconcile for"
+        pointer = "(see the cma-infra staging README)"
         line, annotation, row = render("deploy-private", "apply-abandoned", subject="deploy")
         self.assertEqual(line, "FAIL precondition=private-apply-abandoned cause=operator")
         self.assertIn("What changed: Nothing.", annotation)
-        self.assertIn("stored a new generation", annotation)
+        # The stuck app can be a dependency the release does not deploy.
+        self.assertIn("one of the staging apps this release depends on or deploys", annotation)
         self.assertIn("never applied", annotation)
         self.assertNotIn("settles", annotation)
-        self.assertIn(route, annotation)
-        self.assertIn(route, row)
+        for text in (annotation, row):
+            self.assertIn(fix, text)
+            self.assertIn(pointer, text)
+            # A re-submit stores a new generation; it cannot re-send the old one.
+            self.assertIn("re-submits the same spec", text)
         line, annotation, row = render("deploy-verification", "apply-abandoned", subject="deploy",
                                        recovery="unreported")
         self.assertEqual(line, "FAIL verification=apply-abandoned recovery=unreported cause=operator")
         self.assertIn("never applied", annotation)
         self.assertIn("Next step: An operator reconciles staging first. Then: ", annotation)
-        self.assertIn(route, row)
+        for text in (annotation, row):
+            self.assertIn(fix, text)
+            self.assertIn(pointer, text)
+            self.assertIn("re-submit the same spec", text)
+            # The reconcile applies this run's unverified write; only a re-run verifies it.
+            self.assertIn("re-run this deployment so it is verified", text)
         line, annotation, _ = render("deploy-release", "apply-abandoned", subject="deploy")
         self.assertEqual(line, "FAIL release=apply-abandoned recovery=verified cause=operator")
+
+    def test_the_catalogue_publishes_no_deployment_service_route(self):
+        # The exact admin route stays in the private deployment README.
+        text = CATALOGUE_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("/api/", text)
+        self.assertNotRegex(text, r"\b(?:POST|PUT|PATCH|DELETE) /")
 
     def test_values_outside_enums_and_patterns_print_as_unknown(self):
         hostile = PRIVATE + " x::error::y%0A\n|"
