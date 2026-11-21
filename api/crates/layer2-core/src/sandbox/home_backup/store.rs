@@ -1,4 +1,4 @@
-use super::{HomeBackup, HomeBackupError, HomeBackupSchedule};
+use super::{HomeBackup, HomeBackupDeletionObservation, HomeBackupError, HomeBackupSchedule};
 
 /// Both documents are acquired and published in one durable transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]

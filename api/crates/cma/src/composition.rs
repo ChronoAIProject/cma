@@ -178,6 +178,7 @@ impl ControlPlaneComposition {
             .with_detail_timings(config.features.sandbox_detail_timings)
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
+        let native_warm_pools = runtime.warm_pools;
         let admin = runtime_inventory::admin_state(
             config.features,
             Arc::clone(&settings),
