@@ -15,6 +15,13 @@ INTERNAL = (("[internal] load metadata for ", "base-image-metadata"),
             ("[internal] load build context", "build-context"),
             ("[internal] load build definition", "build-definition"),
             ("[internal] load .dockerignore", "build-context"))
+# BuildKit names the remote cache export vertex after its exporter and keeps an
+# export failure on it even with ignore-error. That build still succeeded, so
+# the error is evidence that the layers were not saved, never a failed step.
+CACHE_EXPORTERS = frozenset({"exporting to GitHub Actions Cache"})
+# go-actions-cache relays the cache service's refusal text. These fixed phrases
+# mark the read-only state it enters once the organization's budget is reached.
+READ_ONLY = ("configured budget", "cache is now read only")
 
 
 def summarize(raw):
@@ -43,11 +50,16 @@ def summarize(raw):
     intervals = {name: [] for name in CATEGORIES}
     cached = 0
     failed = []
+    export_errors = set()
     for row in vertices.values():
         name = row.get("name", "")
         if not isinstance(name, str):
             continue
-        if row.get("error"):
+        if row.get("error") and name in CACHE_EXPORTERS:
+            # Only the fixed classification leaves; the error text stays private.
+            text = row["error"].lower() if isinstance(row["error"], str) else ""
+            export_errors.add("read-only" if any(phrase in text for phrase in READ_ONLY) else "failed")
+        elif row.get("error"):
             # Cancelled siblings also carry an error; the earliest one is the cause.
             failed.append((str(row.get("completed") or ""), failed_step(name)))
         if row.get("cached") is True:
@@ -69,7 +81,7 @@ def summarize(raw):
             category = "media-compile"
         elif name.startswith("importing cache"):
             category = "cache-import"
-        elif name.startswith("exporting cache"):
+        elif name.startswith("exporting cache") or name in CACHE_EXPORTERS:
             category = "cache-export"
         elif name.startswith("exporting "):
             category = "archive-export"
@@ -96,6 +108,8 @@ def summarize(raw):
         # step; never the instruction text, its arguments or the error message.
         ordered = [label for _, label in sorted(failed)]
         result["failed_steps"] = list(dict.fromkeys(ordered))[:8]
+    if export_errors:
+        result["cache_export_error"] = "read-only" if "read-only" in export_errors else "failed"
     return result
 
 
