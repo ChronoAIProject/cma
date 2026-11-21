@@ -23,6 +23,7 @@ use self::support::{
 };
 
 mod execution;
+mod failure_settlement;
 mod prepare_recovery;
 mod prepared;
 mod profile;
@@ -141,7 +142,7 @@ impl WorkspaceWorker {
         if self.transfer_prepared(&workspace, now).await? {
             return Ok(());
         }
-        let (_, runtime) = match self.runtime(&workspace).await {
+        let (sandbox, runtime) = match self.runtime(&workspace).await {
             Ok(value) => value,
             Err(failure) => return self.handle_failure(workspace, failure, now).await,
         };
@@ -196,7 +197,10 @@ impl WorkspaceWorker {
                 self.handle_failure(workspace, WorkerFailure::invalid_receipt(), now)
                     .await
             }
-            Err(error) => self.handle_failure(workspace, failure(error), now).await,
+            Err(error) => {
+                self.handle_prepare_failure(workspace, failure(error), now, &sandbox)
+                    .await
+            }
         }
     }
 
@@ -416,67 +420,6 @@ impl WorkspaceWorker {
         .await
     }
 
-    async fn handle_failure(
-        &self,
-        mut workspace: Workspace,
-        failure: WorkerFailure,
-        now: SystemTime,
-    ) -> Result<(), SandboxStoreError> {
-        let expected = workspace.revision;
-        let fence = claimed_fence(&workspace, &self.config.holder)?;
-        let stamp = rfc3339_at(now);
-        if failure.retryable {
-            workspace
-                .work
-                .retry(
-                    &self.config.holder,
-                    fence,
-                    rfc3339_at(now + self.config.retry_delay),
-                )
-                .map_err(|_| SandboxStoreError::Conflict)?;
-            workspace.revision = expected.checked_add(1).ok_or(SandboxStoreError::Conflict)?;
-            return self
-                .dependencies
-                .store
-                .save_workspace(expected, workspace)
-                .await;
-        }
-        let recovering_prepare = workspace.work.step == WorkspaceWorkStep::RecoverPrepare;
-        workspace
-            .work
-            .advance(
-                &self.config.holder,
-                fence,
-                WorkspaceWorkStep::None,
-                stamp.clone(),
-            )
-            .map_err(|_| SandboxStoreError::Conflict)?;
-        let typed = failure.typed();
-        if recovering_prepare {
-            let attempt = workspace
-                .work
-                .prepare_recovery
-                .as_mut()
-                .and_then(|recovery| recovery.attempts.last_mut())
-                .ok_or(SandboxStoreError::WorkspaceRecoveryConflict)?;
-            attempt.failed = Some(typed.clone());
-        }
-        workspace
-            .transition(WorkspaceStatus::Failed, stamp.clone(), Some(typed.clone()))
-            .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))?;
-        let id = workspace.id.clone();
-        self.commit(
-            expected,
-            workspace,
-            stamp,
-            SandboxEventKind::WorkspaceFailed {
-                workspace_id: id,
-                failure: typed,
-            },
-        )
-        .await
-    }
-
     async fn commit(
         &self,
         expected_revision: u64,
@@ -487,6 +430,7 @@ impl WorkspaceWorker {
         self.dependencies
             .store
             .commit(SandboxTransaction::SaveWorkspaceAndAppend {
+                repository_runtime: None,
                 expected_revision,
                 workspace: Box::new(workspace),
                 event_at,
