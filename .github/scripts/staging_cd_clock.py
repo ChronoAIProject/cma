@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import os
 import time
 
+from cd_target import branch as target_branch, workflows as target_workflows
 from ci_outcome import error_site, report
 from staging_cd_common import matches, require
 
@@ -45,12 +46,12 @@ def remaining(started, limit=None, now=None, *, mode="release"):
 
 def run_created(env, request):
     require(matches(r"[1-9][0-9]*", env.get("GITHUB_RUN_ID")), "Deployment run identity is invalid")
-    workflows = {"push": "staging-cd.yml", "workflow_dispatch": "redeploy-staging.yml"}
+    workflows, branch = target_workflows(env), target_branch(env)
     event = env.get("GITHUB_EVENT_NAME")
     require(event in workflows, "Deployment event cannot supply an admission clock")
     run = request("actions/runs/" + env["GITHUB_RUN_ID"])
     require(isinstance(run, dict) and run.get("id") == int(env["GITHUB_RUN_ID"])
-            and run.get("event") == event and run.get("head_branch") == "develop"
+            and run.get("event") == event and run.get("head_branch") == branch
             and run.get("head_sha") == env["GITHUB_SHA"]
             and run.get("path") == ".github/workflows/" + workflows[event]
             and isinstance(run.get("repository"), dict)
