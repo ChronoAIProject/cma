@@ -304,8 +304,17 @@ impl Store {
             .await?)
     }
     pub async fn reject_dispatch(&self, current: &Build) -> Result<bool> {
+        if current.phase != BuildPhase::Dispatching || current.cloud_id.is_some() {
+            return Err(Error::Conflict);
+        }
+        let source = mongodb::bson::serialize_to_document(&current.source)
+            .map_err(|_| Error::Unavailable)?;
         let result = self.builds.update_one(
-            doc! {"_id":&current.id,"revision":current.revision,"phase":"dispatching","cloud_id":mongodb::bson::Bson::Null},
+            doc! {"_id":&current.id,"revision":current.revision,"owner":&current.owner,
+                "image_id":&current.image_id,"request_key_hash":&current.request_key_hash,
+                "request_sha256":&current.request_sha256,"schema_version":current.schema_version,
+                "source":source,"created_at_ms":current.created_at_ms,
+                "phase":"dispatching","cloud_id":mongodb::bson::Bson::Null},
             doc! {"$set":{"phase":"failed","error":"submission_rejected","updated_at_ms":now_ms()},"$inc":{"revision":1_i64}},
         ).await?;
         Ok(result.modified_count == 1)
