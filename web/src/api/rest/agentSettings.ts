@@ -1,11 +1,17 @@
 import { agentPreferencesClient } from './agentPreferences';
-import { agentUpdateProblemCode } from './agentUpdateProblem';
+import { agentUpdateProblem, type AgentUpdateReason } from './agentUpdateProblem';
 import { ApiError, ProtocolError, retryAfterMilliseconds } from '@cma/client';
 import type { AgentSettingsView, CmaWebClient } from '../client';
 
 export class AgentSettingsError extends ApiError {
-  constructor(message: string, status: number, retryAfterMs?: number, code?: string) {
-    super(status, message, code, undefined, retryAfterMs);
+  constructor(
+    message: string,
+    status: number,
+    retryAfterMs?: number,
+    code?: string,
+    reason?: AgentUpdateReason,
+  ) {
+    super(status, message, code, undefined, retryAfterMs, { settings_update_reason: reason });
   }
 }
 
@@ -16,11 +22,13 @@ async function settingsRequest(id: string, init: RequestInit): Promise<AgentSett
     ...init,
   });
   if (!response.ok) {
+    const problem = await agentUpdateProblem(response);
     throw new AgentSettingsError(
       'Agent settings could not be loaded or updated.',
       response.status,
       retryAfterMilliseconds(response),
-      await agentUpdateProblemCode(response),
+      problem.code,
+      problem.reason,
     );
   }
   const value = (await response.json()) as AgentSettingsView;

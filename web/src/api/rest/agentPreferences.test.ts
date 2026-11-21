@@ -63,6 +63,7 @@ it('retains preference problem and retry metadata without displaying upstream pa
       new Response(
         JSON.stringify({
           code: 'agent_operation_in_flight',
+          settings_update_reason: 'stale_revision',
           detail: '<html>private upstream response</html>',
         }),
         { status: 409, headers: { 'Retry-After': '3' } },
@@ -76,6 +77,7 @@ it('retains preference problem and retry metadata without displaying upstream pa
     status: 409,
     code: 'agent_operation_in_flight',
     retryAfterMs: 3000,
+    extensions: { settings_update_reason: 'stale_revision' },
   });
   expect(error).toHaveProperty('message', 'Agent preferences could not be loaded or updated.');
 });

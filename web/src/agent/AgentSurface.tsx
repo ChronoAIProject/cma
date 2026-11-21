@@ -414,6 +414,7 @@ export function AgentSurface({
                   usage={conversation?.usage}
                   key={`settings:${viewerId}:${agentId}`}
                   agentId={agentId}
+                  viewerId={viewerId}
                   active={!accessUncertain}
                   runtimeReady={modelCatalogReady(detail, observed, state.sandboxEvents)}
                   busy={status !== 'ready' || controller.pending !== undefined || historyIncomplete}

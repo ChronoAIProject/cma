@@ -1,5 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { settingsFailure, settingsWriteFailure, type SettingsFailure } from './settingsFailure';
+import {
+  settingsJournalError,
+  type SettingsIntent,
+  type SettingsIntentJournal,
+} from './settingsIntent';
 import { observeRead } from './transport/readObserver';
 import { retrySchedule } from './transport/readRetry';
 
@@ -10,11 +15,13 @@ export interface SettingsEditorAdapter<View, Proposal, Body> {
   body(view: View, proposal: Proposal): Body;
   equal(left: Proposal, right: Proposal): boolean;
   pending(view: View): boolean;
+  retention?: {
+    journal(): SettingsIntentJournal<Body>;
+    proposal(body: Body): Proposal;
+  };
 }
 
-interface Intent<Proposal, Body> {
-  readonly key: string;
-  readonly body: Body;
+interface Intent<Proposal, Body> extends SettingsIntent<Body> {
   readonly proposal: Proposal;
   readonly phase: 'sending' | 'uncertain' | 'pending';
 }
@@ -29,6 +36,16 @@ interface EditorState<View, Proposal, Body> {
   readonly saving: boolean;
   readonly confirmed: boolean;
   readonly retryAt: number;
+  readonly storageBlocked?: boolean;
+}
+
+function completeStoredIntent<Body>(journal: SettingsIntentJournal<Body> | undefined, key: string) {
+  try {
+    journal?.complete(key);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function useSettingsEditor<View, Proposal, Body>(
@@ -51,6 +68,7 @@ export function useSettingsEditor<View, Proposal, Body>(
   }, []);
   const request = useRef<AbortSignal | undefined>(undefined);
   const mutation = useRef<AbortController | undefined>(undefined);
+  const journal = useRef<SettingsIntentJournal<Body> | undefined>(undefined);
   const observer = useRef<ReturnType<typeof observeRead> | undefined>(undefined);
   useEffect(() => {
     if (!state.retryAt) return;
@@ -73,6 +91,24 @@ export function useSettingsEditor<View, Proposal, Body>(
   }, [state.confirmed, publish]);
   useEffect(() => {
     if (!active) return;
+    try {
+      if (adapter.retention) {
+        journal.current = adapter.retention.journal();
+        const restored = journal.current.read();
+        if (restored && !current.current.intent) {
+          const proposal = adapter.retention.proposal(restored.body);
+          publish((previous) => ({
+            ...previous,
+            intent: { ...restored, proposal, phase: 'uncertain' },
+            failure: settingsFailure(undefined),
+            refreshRequired: true,
+            retryAt: restored.retryAt && restored.retryAt > Date.now() ? restored.retryAt : 0,
+          }));
+        }
+      }
+    } catch {
+      publish((previous) => ({ ...previous, storageBlocked: true }));
+    }
     let failures = 0;
     let readSignal: AbortSignal | undefined;
     const read = observeRead(async (signal) => {
@@ -93,16 +129,24 @@ export function useSettingsEditor<View, Proposal, Body>(
             (previous.proposal !== undefined &&
               previous.snapshot !== undefined &&
               !adapter.equal(previous.proposal, adapter.proposal(previous.snapshot)));
+          const intent = previous.intent;
           const confirmed =
-            previous.intent?.phase === 'pending' &&
+            intent?.phase === 'pending' &&
             !adapter.pending(next) &&
-            adapter.equal(previous.intent.proposal, proposal);
+            adapter.equal(intent.proposal, proposal);
           return {
             ...previous,
             snapshot: next,
-            proposal: dirty || previous.intent ? previous.proposal : proposal,
+            proposal: intent
+              ? (previous.proposal ?? intent.proposal)
+              : dirty
+                ? previous.proposal
+                : proposal,
             intent: confirmed ? undefined : previous.intent,
             confirmed: confirmed || previous.confirmed,
+            storageBlocked:
+              previous.storageBlocked ||
+              (confirmed && !completeStoredIntent(journal.current, intent.key)),
             failure: previous.intent && !confirmed ? previous.failure : undefined,
             refreshRequired: false,
           };
@@ -131,6 +175,7 @@ export function useSettingsEditor<View, Proposal, Body>(
     observer.current = read;
     return () => {
       read.dispose();
+      journal.current = undefined;
       const write = mutation.current;
       write?.abort();
       if (request.current === readSignal || request.current === write?.signal)
@@ -160,6 +205,7 @@ export function useSettingsEditor<View, Proposal, Body>(
       previous.snapshot === undefined ||
       previous.proposal === undefined ||
       previous.refreshRequired ||
+      previous.storageBlocked ||
       previous.intent?.phase === 'pending' ||
       adapter.pending(previous.snapshot) ||
       Date.now() < previous.retryAt
@@ -167,10 +213,21 @@ export function useSettingsEditor<View, Proposal, Body>(
       return;
     const retained = previous.intent ?? {
       key: crypto.randomUUID(),
+      startedAt: Date.now(),
       body: adapter.body(previous.snapshot, previous.proposal),
       proposal: previous.proposal,
       phase: 'sending' as const,
     };
+    try {
+      journal.current?.reserve({
+        key: retained.key,
+        body: retained.body,
+        startedAt: retained.startedAt,
+      });
+    } catch {
+      publish((value) => ({ ...value, storageBlocked: true }));
+      return;
+    }
     const controller = new AbortController();
     mutation.current = controller;
     request.current = controller.signal;
@@ -188,6 +245,7 @@ export function useSettingsEditor<View, Proposal, Body>(
       });
       if (controller.signal.aborted) return;
       const pending = adapter.pending(next);
+      const storageBlocked = !pending && !completeStoredIntent(journal.current, retained.key);
       publish((value) => ({
         ...value,
         snapshot: next,
@@ -199,6 +257,7 @@ export function useSettingsEditor<View, Proposal, Body>(
           ? { ...retained, proposal: adapter.proposal(next), phase: 'pending' }
           : undefined,
         confirmed: !pending,
+        storageBlocked,
         retryAt: 0,
       }));
       if (pending) observer.current?.refresh();
@@ -206,12 +265,24 @@ export function useSettingsEditor<View, Proposal, Body>(
     } catch (cause) {
       if (controller.signal.aborted) return;
       const failure = settingsWriteFailure(cause, previous.intent !== undefined);
+      const retryAt = failure.retryAfterMs ? Date.now() + failure.retryAfterMs : 0;
+      let storageBlocked = false;
+      if (failure.outcome === 'rejected') {
+        storageBlocked = !completeStoredIntent(journal.current, retained.key);
+      } else if (retryAt) {
+        try {
+          journal.current?.defer(retained.key, retryAt);
+        } catch {
+          storageBlocked = true;
+        }
+      }
       publish((value) => ({
         ...value,
         failure,
+        storageBlocked,
         intent: failure.outcome === 'unconfirmed' ? { ...retained, phase: 'uncertain' } : undefined,
         refreshRequired: failure.refreshRequired,
-        retryAt: failure.retryAfterMs ? Date.now() + failure.retryAfterMs : 0,
+        retryAt,
       }));
     } finally {
       if (request.current === controller.signal) request.current = undefined;
@@ -234,6 +305,13 @@ export function useSettingsEditor<View, Proposal, Body>(
     (state.snapshot !== undefined && adapter.pending(state.snapshot));
   return {
     ...state,
+    failure: state.storageBlocked
+      ? ({
+          kind: 'retry',
+          message: settingsJournalError,
+          retryAfterMs: 0,
+        } satisfies SettingsFailure)
+      : state.failure,
     edit,
     apply,
     refresh: () => observer.current?.refresh(),
@@ -242,6 +320,12 @@ export function useSettingsEditor<View, Proposal, Body>(
     busy: state.reading || state.saving,
     locked: state.intent !== undefined || pending,
     canApply:
-      active && !state.reading && !state.saving && !state.refreshRequired && !waiting && !pending,
+      active &&
+      !state.reading &&
+      !state.saving &&
+      !state.refreshRequired &&
+      !state.storageBlocked &&
+      !waiting &&
+      !pending,
   };
 }

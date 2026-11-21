@@ -7,10 +7,13 @@ import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
 import { useSettingsEditor, type SettingsEditorAdapter } from './useSettingsEditor';
 import { unconfirmedSettingsWarning, useUnconfirmedSettings } from './useUnconfirmedSettings';
+import { parsePreferencesIntentBody } from './settingsIntent';
+import { agentTransportJournal } from './transport/journal';
 import './AgentPreferencesDialog.css';
 
 interface AgentPreferencesProps {
   readonly agentId: string;
+  readonly viewerId?: string;
   readonly mode: 'rename' | 'prompt';
   readonly currentTitle: string;
   readonly active: boolean;
@@ -20,11 +23,14 @@ interface AgentPreferencesProps {
 
 /** Preference mutations never reload or remount the conversation. */
 export function AgentPreferencesDialog(props: AgentPreferencesProps) {
-  return <PreferencesForm key={`${props.agentId}:${props.mode}`} {...props} />;
+  return (
+    <PreferencesForm key={JSON.stringify([props.viewerId, props.agentId, props.mode])} {...props} />
+  );
 }
 
 function PreferencesForm({
   agentId,
+  viewerId,
   mode,
   currentTitle,
   active,
@@ -46,16 +52,26 @@ function PreferencesForm({
       }),
       equal: (left, right) => left === right,
       pending: (view) => mode === 'prompt' && view.prompt_pending,
+      retention: viewerId
+        ? {
+            journal: () =>
+              agentTransportJournal(sessionStorage, viewerId, agentId).settingsIntent(
+                mode,
+                (value) => parsePreferencesIntentBody(value, mode),
+              ),
+            proposal: (body) => body.title ?? body.system_prompt ?? '',
+          }
+        : undefined,
     }),
-    [client, agentId, mode, initialTitle],
+    [client, agentId, mode, initialTitle, viewerId],
   );
   const editor = useSettingsEditor(adapter, !!client.readAgentPreferences);
   const { snapshot: preferences, intent } = editor;
   const value = editor.proposal ?? '';
   const [confirmClose, setConfirmClose] = useState(false);
-  useUnconfirmedSettings(intent !== undefined);
+  useUnconfirmedSettings(intent !== undefined && !viewerId);
   const close = () => {
-    if (intent) setConfirmClose(true);
+    if (intent && !viewerId) setConfirmClose(true);
     else onClose();
   };
   const promptUnavailable =
@@ -144,7 +160,7 @@ function PreferencesForm({
           </p>
         ) : null}
         {editor.confirmed ? <p role="status">The changes are applied to this Agent.</p> : null}
-        {intent ? <p role="status">{unconfirmedSettingsWarning}</p> : null}
+        {intent ? <p role="status">{unconfirmedSettingsWarning(viewerId)}</p> : null}
         {confirmClose ? (
           <p role="alert">
             Discard the local edits and retry details? This does not cancel a server update.

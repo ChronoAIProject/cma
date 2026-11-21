@@ -5,6 +5,7 @@ type Mode = 'settings' | 'rename' | 'prompt';
 interface Write {
   readonly key?: string;
   readonly body: Record<string, unknown>;
+  readonly bytes: string | null;
 }
 
 async function openEditor(page: Page, mode: Mode) {
@@ -56,6 +57,8 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
       const proposal =
         mode === 'rename' ? 'Proposed title' : '  Proposed prompt\nKeep these spaces.  ';
       const writes: Write[] = [];
+      const receipts = new Map<string, { write: Write; result: Record<string, unknown> }>();
+      let committed = 0;
       const deniedReplay = failure === 'lost-then-denied' || failure === '503-then-denied';
       const lostResponse = failure === 'lost' || failure === 'lost-then-denied';
       const unavailable = failure === 'unavailable' || failure === '503-then-denied';
@@ -76,7 +79,9 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
           return route.fulfill({ json: mode === 'settings' ? settings : preferences });
         expect(route.request().method()).toBe('PATCH');
         const body = route.request().postDataJSON() as Record<string, unknown>;
-        writes.push({ key: route.request().headers()['idempotency-key'], body });
+        const key = route.request().headers()['idempotency-key'];
+        const write = { key, body, bytes: route.request().postData() };
+        writes.push(write);
         if (writes.length === 2 && deniedReplay) {
           preferences.revision = 9;
           settings.reasoning_effort = 'low';
@@ -94,6 +99,8 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
             status: 409,
             json: {
               code: 'agent_operation_in_flight',
+              settings_update_reason:
+                mode === 'settings' ? 'dispatch_in_progress' : 'stale_revision',
               detail: 'Private upstream operation details',
             },
           });
@@ -104,6 +111,11 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
             headers: { 'Retry-After': '1' },
             json: { code: 'unknown_code', detail: '<html>Private upstream details</html>' },
           });
+        const receipt = receipts.get(key!);
+        if (receipt) {
+          expect(write).toEqual(receipt.write);
+          return route.fulfill({ json: receipt.result });
+        }
         if (mode === 'settings') {
           expect(body).toEqual({
             model: 'gpt-6',
@@ -121,9 +133,13 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
           if (mode === 'rename') preferences.title = proposal;
           else preferences.system_prompt = proposal;
         }
+        expect(key).toBeTruthy();
+        committed += 1;
+        const result = { ...(mode === 'settings' ? settings : preferences) };
+        receipts.set(key!, { write, result });
         // The lost response can follow a server acceptance; retry still uses that intent.
         if (writes.length === 1 && lostResponse) return route.abort('connectionfailed');
-        return route.fulfill({ json: mode === 'settings' ? settings : preferences });
+        return route.fulfill({ json: result });
       });
       await page.goto('/agents/agt_contract');
       let editor = await openEditor(page, mode);
@@ -149,7 +165,9 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
         else await expect(field()).toHaveValue(proposal);
         if (failure === 'conflict') {
           await expect(editor.getByRole('alert')).toContainText(
-            'The Agent state changed or an update is in progress.',
+            mode === 'settings'
+              ? 'A dispatch was in progress when this update was refused.'
+              : 'Preferences changed before this update.',
           );
           await editor
             .getByRole('button', {
@@ -168,6 +186,12 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
           expect(writes).toHaveLength(1);
           await apply.click();
         } else {
+          if (failure === 'lost') {
+            expect(committed).toBe(1);
+            await page.reload();
+            editor = await openEditor(page, mode);
+            expect(writes).toHaveLength(1);
+          }
           const retry = editor.getByRole('button', {
             name: mode === 'settings' ? 'Retry settings update' : 'Retry change',
           });
@@ -180,7 +204,7 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
             await expect(editor.getByRole('alert')).toContainText(
               /refresh to check access before saving/i,
             );
-            await expect(editor).toContainText('Leaving loses the local retry details');
+            await expect(editor).toContainText('reopen this editor in the same tab');
             expect(writes).toHaveLength(2);
             await editor
               .getByRole('button', {
@@ -192,7 +216,7 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
               await expect(field()).toHaveValue(proposal);
               await expect(editor).toContainText('Current preferences revision: 9.');
             }
-            await expect(editor).toContainText('Leaving loses the local retry details');
+            await expect(editor).toContainText('reopen this editor in the same tab');
             await expect(editor).not.toContainText('applied to this Agent');
             expect(writes).toHaveLength(2);
             await retry.click();
@@ -204,6 +228,7 @@ for (const mode of ['settings', 'rename', 'prompt'] as const) {
       else await expect(editor).toHaveCount(0);
       const writeCount = failure === 'none' ? 1 : deniedReplay ? 3 : 2;
       expect(writes).toHaveLength(writeCount);
+      expect(committed).toBe(1);
       expect(writes[0]?.key).toBeTruthy();
       if (failure === 'conflict') expect(writes[1]?.key).not.toBe(writes[0]?.key);
       else if (failure !== 'none') expect(writes[1]).toEqual(writes[0]);
