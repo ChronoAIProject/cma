@@ -7,6 +7,9 @@ use serde_json::{json, Value};
 mod fixture;
 use fixture::*;
 
+#[path = "settings_tests.rs"]
+mod settings;
+
 #[tokio::test]
 #[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
 async fn preferences_patch_on_either_replica_uses_owner_scope_and_replays_one_title_event() {

@@ -25,8 +25,21 @@ pub(super) async fn route(
             next.run(request).await
         };
     };
+    let settings = settings_patch(request.uri().path(), request.method());
+    if settings && relay.settings_owner_routing.get().is_none() {
+        // An enabled ingress can reach a replica with this rollout still disabled.
+        return if proof.is_some() {
+            StatusCode::FORBIDDEN.into_response()
+        } else {
+            next.run(request).await
+        };
+    }
     // Route operations whose publication or runtime effects require execution-owner authority.
-    if !private && proof.is_none() && !needs_owner(request.uri().path(), request.method()) {
+    if !private
+        && proof.is_none()
+        && !settings
+        && !needs_owner(request.uri().path(), request.method())
+    {
         return next.run(request).await;
     }
     if !private
@@ -229,6 +242,14 @@ fn needs_owner(path: &str, method: &axum::http::Method) -> bool {
         || suffix == "browser/control"
 }
 
+fn settings_patch(path: &str, method: &axum::http::Method) -> bool {
+    method == axum::http::Method::PATCH
+        && path
+            .strip_prefix("/api/v1/agents/")
+            .and_then(|path| path.split_once('/'))
+            .is_some_and(|(_, suffix)| suffix == "settings")
+}
+
 fn body_limit(path: &str) -> usize {
     if path.ends_with("/attachments") {
         layer2_core::sandbox::agent_attachments::MAX_ATTACHMENT_BYTES
@@ -374,12 +395,46 @@ mod tests {
         }
         for path in [
             "/api/v1/agents/agt-example/preferences/extra",
-            "/api/v1/agents/agt-example/settings",
             "/api/v1/agents/agt-example/stop",
             "/api/v1/agents/agt-example",
             "/api/v1/sandboxes/sbx-example/preferences",
         ] {
             assert!(!needs_owner(path, &Method::PATCH), "{path}");
+        }
+    }
+
+    #[test]
+    fn settings_owner_route_is_exact_and_patch_only() {
+        use axum::http::Method;
+        let path = "/api/v1/agents/agt-example/settings";
+        for method in [
+            Method::GET,
+            Method::HEAD,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+            Method::PATCH,
+        ] {
+            assert_eq!(settings_patch(path, &method), method == Method::PATCH);
+            assert!(
+                !needs_owner(path, &method),
+                "existing routes include {method} {path}"
+            );
+        }
+        for (method, path) in [
+            (Method::PATCH, "/api/v1/agents/agt-example/settings/extra"),
+            (Method::PATCH, "/api/v2/agents/agt-example/settings"),
+            (Method::POST, "/api/v1/agents/agt-example/stop"),
+            (Method::DELETE, "/api/v1/agents/agt-example"),
+            (Method::POST, "/api/v1/agents/agt-example/input"),
+            (Method::POST, "/api/v1/agents/agt-example/steer"),
+            (Method::POST, "/api/v1/agui/run"),
+            (Method::GET, "/api/v2/agents/agt-example/queued-inputs"),
+            (Method::POST, "/api/v2/agents/agt-example/responses"),
+        ] {
+            assert!(!settings_patch(path, &method), "{method} {path}");
+            assert!(!needs_owner(path, &method), "{method} {path}");
         }
     }
 }
