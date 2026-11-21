@@ -224,7 +224,7 @@ fn needs_owner(path: &str, method: &axum::http::Method) -> bool {
             | "attachments"
             | "files"
             | "browser"
-    ) || (method == axum::http::Method::PATCH && suffix == "preferences")
+    ) || (method == axum::http::Method::PATCH && matches!(suffix, "preferences" | "settings"))
         || suffix.starts_with("files/")
         || suffix == "browser/control"
 }
@@ -356,6 +356,38 @@ mod tests {
     use super::*;
 
     #[test]
+    fn settings_owner_route_is_exact_and_patch_only() {
+        use axum::http::Method;
+        for method in [
+            Method::GET,
+            Method::HEAD,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+            Method::PATCH,
+            Method::TRACE,
+            Method::CONNECT,
+            Method::from_bytes(b"CUSTOM").unwrap(),
+        ] {
+            assert_eq!(
+                needs_owner("/api/v1/agents/agt-example/settings", &method),
+                method == Method::PATCH
+            );
+            for path in [
+                "/api/v1/agents/agt-example/settings/",
+                "/api/v1/agents/agt-example/settings/extra",
+                "/api/v1/agents/agt-example/settings-extra",
+                "/api/v1/sandboxes/sbx-example/settings",
+                "/api/v1/agents/agt-example/stop",
+                "/api/v1/agents/agt-example",
+            ] {
+                assert!(!needs_owner(path, &method), "{method} {path}");
+            }
+        }
+    }
+
+    #[test]
     fn preferences_owner_route_is_exact_and_patch_only() {
         use axum::http::Method;
         for method in [
@@ -374,7 +406,6 @@ mod tests {
         }
         for path in [
             "/api/v1/agents/agt-example/preferences/extra",
-            "/api/v1/agents/agt-example/settings",
             "/api/v1/agents/agt-example/stop",
             "/api/v1/agents/agt-example",
             "/api/v1/sandboxes/sbx-example/preferences",
