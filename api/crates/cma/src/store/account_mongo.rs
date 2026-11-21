@@ -3,6 +3,9 @@ use super::*;
 use crate::config::BackendFreeConfig;
 use mongodb::Database;
 
+#[path = "account_inventory.rs"]
+mod inventory;
+
 pub(crate) struct MongoAccountStores {
     pub auth: Arc<MongoAuthStore>,
     pub activity: Arc<MongoActivityStore>,

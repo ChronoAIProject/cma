@@ -250,6 +250,7 @@ mod tests {
                     "CHRONO_SANDBOX_PROVIDER" => Some("none".into()),
                     "CHRONO_ENVIRONMENT" => Some(environment.into()),
                     "CHRONO_AUTH_MODE" => Some("trusted".into()),
+                    "CHRONO_DEPLOYMENT_ID" => Some("fixture".into()),
                     "CHRONO_AUTH_ENCRYPTION_KEY" => Some(STANDARD.encode([7; 32])),
                     "CHRONO_MONGODB_URI" => Some("mongodb://127.0.0.1:27017".into()),
                     _ => None,

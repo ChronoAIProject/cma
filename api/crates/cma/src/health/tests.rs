@@ -140,14 +140,26 @@ async fn stale_success_fails_closed_even_if_the_monitor_stops() {
         failure: None,
         diagnostic_check: 0,
     }));
-    let app = routes(state, None);
-    assert_eq!(response(&app, "/ready").await.0, StatusCode::OK);
+    let apps = [
+        routes(state.clone(), None),
+        health_routes(HealthState {
+            store: state,
+            workers: None,
+            diagnostics: None,
+            backend_free: true,
+        }),
+    ];
+    for app in &apps {
+        assert_eq!(response(app, "/ready").await.0, StatusCode::OK);
+    }
     tick(MAX_CHECK_AGE).await;
-    let (status, body) = response(&app, "/ready").await;
-    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(body["dependency"]["reason"], "stale");
-    assert_eq!(body["dependency"]["age_ms"], 5000);
-    assert_eq!(response(&app, "/livez").await.0, StatusCode::OK);
+    for app in &apps {
+        let (status, body) = response(app, "/ready").await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body["dependency"]["reason"], "stale");
+        assert_eq!(body["dependency"]["age_ms"], 5000);
+        assert_eq!(response(app, "/livez").await.0, StatusCode::OK);
+    }
 }
 
 #[tokio::test(start_paused = true)]

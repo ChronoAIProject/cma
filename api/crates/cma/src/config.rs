@@ -206,7 +206,7 @@ impl StartupConfig {
         Self::from_lookup(strict_env)
     }
 
-    fn from_lookup(
+    pub(crate) fn from_lookup(
         mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
         match runtime::RuntimeMode::from_lookup(&mut lookup)? {
@@ -220,10 +220,12 @@ impl StartupConfig {
 
 impl Config {
     /// Read and validate configuration exactly once at process startup.
+    #[cfg(test)]
     pub fn from_env() -> Result<Self, String> {
         Self::from_lookup(strict_env)
     }
 
+    #[cfg(test)]
     fn from_lookup(
         mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
