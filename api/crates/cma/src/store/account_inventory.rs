@@ -4,13 +4,15 @@ use layer2_core::resource_access::{
 };
 use layer2_core::sandbox::store::{Page, PageRequest, SandboxStoreError};
 use layer2_core::sandbox::{Agent, AgentListQuery, AgentReadError};
-use layer2_core::{Caller, Capability, CoreError, LaunchId, SubjectId};
+use layer2_core::{AgentId, Caller, Capability, CoreError, LaunchId, SubjectId};
 use mongodb::bson::{doc, Document};
 use mongodb::ClientSession;
 
 use super::MongoAccountStores;
 use crate::store::{
     agent_commands::read_command,
+    agent_log_integrity::TransactionLogError,
+    agent_log_segments::retained_turn,
     agent_reads::query_owned_agents,
     durability::majority_collection,
     resource_access::{
@@ -81,6 +83,36 @@ impl MongoAccountStores {
             return Err(ResourceAccessStoreError::NotFound);
         }
         Ok(())
+    }
+
+    pub(crate) async fn authorize_personal_turn(
+        &self,
+        caller: &Caller,
+        agent_id: AgentId,
+        turn: u64,
+    ) -> Result<(), ResourceAccessStoreError> {
+        let mut session = self.snapshot_session().await?;
+        let target = ResourceTarget::Agent {
+            agent_id: agent_id.clone(),
+        };
+        self.personal_resource_in_session(caller, &target, &mut session)
+            .await?;
+        let agents = majority_collection(&self.database, AGENTS);
+        let row = snapshot_collection::collection(&agents, true)
+            .find_one(doc! {"_id": agent_id.as_str()})
+            .session(&mut session)
+            .await
+            .map_err(|_| ResourceAccessStoreError::Unavailable)?
+            .ok_or(ResourceAccessStoreError::NotFound)?;
+        let exists = retained_turn(&self.database, &row, turn, &mut session)
+            .await
+            .map_err(|error| match error {
+                TransactionLogError::Driver(_) => ResourceAccessStoreError::Unavailable,
+                TransactionLogError::Domain(_) => ResourceAccessStoreError::Corrupt,
+            })?;
+        exists
+            .then_some(())
+            .ok_or(ResourceAccessStoreError::NotFound)
     }
 
     async fn snapshot_session(&self) -> Result<ClientSession, ResourceAccessStoreError> {

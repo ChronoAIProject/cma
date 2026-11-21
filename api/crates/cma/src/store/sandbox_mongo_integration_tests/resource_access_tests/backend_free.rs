@@ -19,6 +19,8 @@ use layer2_core::{ids::AgentResponseId, sandbox::agent_io::AgentCommandStore};
 
 #[path = "backend_free/authentication.rs"]
 mod authentication;
+#[path = "backend_free/legacy_responses.rs"]
+mod legacy_responses;
 use authentication::{assert_actor_callback_is_refused, browser_session, Identity};
 
 #[tokio::test]
@@ -31,6 +33,7 @@ async fn backend_free_http_uses_durable_owner_reads_without_resuming_pending_wor
     };
     let agent = store.get_agent(&agent_id).await.unwrap().unwrap();
     let parent = store.get_sandbox(&agent.sandbox_id).await.unwrap().unwrap();
+    let (agent, segmented_agent_id) = legacy_responses::seed(&store, agent, &parent).await;
     let command = command_ledger_tests::record(
         store
             .reserve_command(command_ledger_tests::request(
@@ -102,6 +105,9 @@ async fn backend_free_http_uses_durable_owner_reads_without_resuming_pending_wor
             .await
             .unwrap();
     assert_actor_callback_is_refused(&unauthenticated, &provider, &client, &name).await;
+    for id in [&agent_id, &segmented_agent_id] {
+        legacy_responses::assert_refusals(&owner, &foreign, &unauthenticated, id).await;
+    }
     let absent_response = AgentResponseId::generate();
     for suffix in ["", "/events", "/output", "/retained-output"] {
         assert_command_refusals(
@@ -169,7 +175,11 @@ async fn backend_free_http_uses_durable_owner_reads_without_resuming_pending_wor
 
     let (status, inventory) = request(&owner, Method::GET, "/api/v1/agents", None).await;
     assert_eq!(status, StatusCode::OK, "{inventory}");
-    assert_eq!(inventory["items"][0]["id"], agent_id.as_str());
+    let owned = inventory["items"].as_array().unwrap();
+    assert_eq!(owned.len(), 2);
+    for id in [&agent_id, &segmented_agent_id] {
+        assert!(owned.iter().any(|row| row["id"] == id.as_str()));
+    }
     let (status, inventory) = request(&foreign, Method::GET, "/api/v1/agents", None).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(inventory["items"], json!([]));

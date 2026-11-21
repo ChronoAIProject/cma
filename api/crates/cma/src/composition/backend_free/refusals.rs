@@ -10,7 +10,10 @@ use axum::{
 };
 use layer1_public::{
     auth::NotAuthenticated,
-    responses::v2::{authentication_required, resource_not_found},
+    responses::{
+        parse_response_id, response_not_found,
+        v2::{authentication_required, resource_not_found},
+    },
     rest::{
         worker_credentials::{VerifiedGatewayService, WORKER_CLASSIFIER_PATH},
         HttpProblem, Problem,
@@ -26,6 +29,8 @@ use layer2_core::{
 use mongodb::bson::doc;
 
 use crate::store::mongo::MongoAccountStores;
+
+const LEGACY_RESPONSE_PATH: &str = "/api/v1/responses/{response_id}";
 
 struct RefusalState {
     stores: Arc<MongoAccountStores>,
@@ -65,7 +70,8 @@ pub(super) fn router(stores: Arc<MongoAccountStores>, desktop_origins: Vec<Strin
                     .is_some_and(|security| security.is_empty())
                 {
                     methods = methods.on(method, public_unavailable);
-                } else if path == "/api/v2/commands/{command_id}"
+                } else if path == LEGACY_RESPONSE_PATH && method == MethodFilter::GET
+                    || path == "/api/v2/commands/{command_id}"
                     || path.starts_with("/api/v2/") && path.contains("/{response_id}")
                 {
                     methods = methods.on(method, command_unavailable);
@@ -102,42 +108,66 @@ async fn worker_unavailable(Extension(_service): Extension<VerifiedGatewayServic
 async fn command_unavailable(
     State(state): State<Arc<RefusalState>>,
     auth: Result<AuthenticatedResourceCaller, NotAuthenticated>,
+    matched: MatchedPath,
     Path(parameters): Path<BTreeMap<String, String>>,
 ) -> Response {
-    let Ok(auth) = auth else {
-        return authentication_required();
+    let legacy = matched.as_str() == LEGACY_RESPONSE_PATH;
+    let auth = match auth {
+        Ok(auth) => auth,
+        Err(error) if legacy => return error.into_response(),
+        Err(_) => return authentication_required(),
+    };
+    let missing = if legacy {
+        response_not_found
+    } else {
+        resource_not_found
     };
     let context = &auth.context;
     if let Err(error) = context.caller.require(Capability::UseOwnSandboxes) {
         return Problem(error).into_response();
     }
     if context.credential_source == CredentialSource::Binding {
-        return resource_not_found();
+        return missing();
     }
-    let selector = if let Some(response) = parameters.get("response_id") {
-        doc! { "response_id": response }
-    } else if let Some(command) = parameters.get("command_id") {
-        doc! { "_id": command }
-    } else {
-        return resource_not_found();
+    let authorization = async {
+        if legacy {
+            let (agent_id, turn) = parameters
+                .get("response_id")
+                .and_then(|id| parse_response_id(id))
+                .ok_or(ResourceAccessStoreError::NotFound)?;
+            return state
+                .stores
+                .authorize_personal_turn(&context.caller, agent_id, turn)
+                .await;
+        }
+        let selector = if let Some(response) = parameters.get("response_id") {
+            doc! { "response_id": response }
+        } else if let Some(command) = parameters.get("command_id") {
+            doc! { "_id": command }
+        } else {
+            return Err(ResourceAccessStoreError::NotFound);
+        };
+        state
+            .stores
+            .authorize_personal_command(
+                &context.caller,
+                selector,
+                parameters.get("agent_id").map(String::as_str),
+            )
+            .await
     };
-    let authorization = state.stores.authorize_personal_command(
-        &context.caller,
-        selector,
-        parameters.get("agent_id").map(String::as_str),
-    );
     match tokio::time::timeout(Duration::from_secs(15), authorization).await {
         Ok(Ok(())) if context.validate_principal() => {
             HttpProblem::SandboxBackendUnavailable.into_response()
         }
-        Ok(Ok(()) | Err(ResourceAccessStoreError::NotFound)) => resource_not_found(),
+        Ok(Ok(()) | Err(ResourceAccessStoreError::NotFound)) => missing(),
         Ok(Err(error)) => {
             tracing::debug!(%error, "backend-free command authorization failed");
-            resource_not_found()
+            missing()
         }
         Err(_) => {
             tracing::debug!("backend-free command authorization timed out");
-            resource_not_found()
+            missing()
         }
     }
 }
