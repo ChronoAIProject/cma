@@ -16,6 +16,8 @@ use super::*;
 pub(super) const IO_BOUND: Duration = Duration::from_secs(15);
 const QUEUE_LIFETIME: Duration = Duration::from_secs(300);
 const CREATION_ADMISSION_ATTEMPTS: usize = 3;
+#[path = "admission_ownership.rs"]
+mod ownership;
 
 #[path = "admission_model_credit.rs"]
 mod model_credit;
@@ -56,6 +58,7 @@ pub struct AgentCommandService {
     pub(super) access: Arc<ResourceAccessService>,
     authority: Arc<dyn AgentCommandAdmissionAuthority>,
     task_experience: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
+    ownership: Option<Arc<crate::agent_ownership::OwnershipCoordinator>>,
     model_credit_required: bool,
     model_funding: Option<Arc<crate::sandbox::model_credit::AgentTurnFunding>>,
 }
@@ -71,6 +74,7 @@ impl AgentCommandService {
             access,
             authority,
             task_experience: Default::default(),
+            ownership: None,
             model_credit_required: false,
             model_funding: None,
         })
