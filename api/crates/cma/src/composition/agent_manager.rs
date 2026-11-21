@@ -48,6 +48,9 @@ pub(super) fn relay(
     relay.install_public_access(crate::agent_manager::relay::PublicAccess::new(
         auth, reads, access, adapter,
     ))?;
+    if config.features.agent_settings_owner_relay {
+        relay.enable_settings_owner_routing();
+    }
     relay.install_controls(stores.clone(), controls);
     relay.install_reopen(lifecycle.reopen_worker.clone(), stores);
     updates.install_live_source(relay.live_source());

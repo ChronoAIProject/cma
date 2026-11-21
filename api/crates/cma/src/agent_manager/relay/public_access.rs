@@ -81,7 +81,7 @@ impl PublicAuthorization for PublicAccess {
         )
         .await?;
         match operation {
-            Operation::Preferences => {
+            Operation::Preferences | Operation::Settings => {
                 if !context.validate_principal()
                     || !context
                         .caller
@@ -171,6 +171,7 @@ impl PublicAuthorization for PublicAccess {
 #[derive(Debug, PartialEq, Eq)]
 enum Operation {
     Preferences,
+    Settings,
     Models,
     Skills,
     Recovery,
@@ -188,6 +189,7 @@ fn operation(method: &Method, uri: &Uri) -> Result<Operation, StatusCode> {
     let read = method == Method::GET || method == Method::HEAD;
     Ok(match suffix {
         "preferences" if method == Method::PATCH => Operation::Preferences,
+        "settings" if method == Method::PATCH => Operation::Settings,
         "models" if read => Operation::Models,
         "skills" if read || method == Method::POST => Operation::Skills,
         "recover-worktree" if method == Method::POST => Operation::Recovery,
