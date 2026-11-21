@@ -123,10 +123,19 @@ impl AgentProjectionServices {
         self
     }
 
-    pub(crate) fn with_features(mut self, flags: crate::config::FeatureFlags) -> Self {
+    pub(crate) fn with_features(
+        mut self,
+        flags: crate::config::FeatureFlags,
+        model_funding: Option<Arc<layer2_core::sandbox::model_credit::AgentTurnFunding>>,
+    ) -> Self {
         self.operations = self
             .operations
-            .with_skill_upgrades_enabled(flags.agent_skill_upgrade_enabled);
+            .with_skill_upgrades_enabled(flags.agent_skill_upgrade_enabled)
+            .with_model_credit_required(flags.model_credit_required)
+            .with_model_funding(model_funding);
+        self.agents = self
+            .agents
+            .with_model_credit_required(flags.model_credit_required);
         self.bounded_replay = flags.agui_bounded_replay;
         self
     }

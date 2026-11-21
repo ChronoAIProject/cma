@@ -113,6 +113,7 @@ struct ProxyState {
     client: reqwest::Client,
     allowed_host: Option<&'static str>,
     model_proxy: bool,
+    model_credit_required: bool,
 }
 
 struct PreparedProxy {
@@ -120,6 +121,7 @@ struct PreparedProxy {
     bind: std::net::SocketAddr,
     listener: tokio::net::TcpListener,
     target: TargetBase,
+    model_credit_required: bool,
 }
 
 pub(crate) struct PreparedProxies {
@@ -135,7 +137,9 @@ impl PreparedProxies {
             .into_iter()
             .flatten()
         {
-            proxies.push(bind_proxy(proxy).await?);
+            proxies.push(
+                bind_proxy(proxy, config.model_credit_required && proxy.role == "model").await?,
+            );
         }
         let github = match &config.github_proxy {
             Some(config) => Some(crate::github_proxy::PreparedGithubProxy::bind(config).await?),
@@ -165,7 +169,7 @@ impl PreparedProxies {
     }
 }
 
-async fn bind_proxy(config: &ProxyConfig) -> Result<PreparedProxy> {
+async fn bind_proxy(config: &ProxyConfig, model_credit_required: bool) -> Result<PreparedProxy> {
     let target = TargetBase::parse(&config.upstream)?;
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
@@ -183,11 +187,18 @@ async fn bind_proxy(config: &ProxyConfig) -> Result<PreparedProxy> {
         bind: config.bind,
         listener,
         target,
+        model_credit_required,
     })
 }
 
 fn spawn_proxy(proxy: PreparedProxy, credential: CredentialHolder) {
-    let app = proxy_router(proxy.target, credential, None, proxy.role == "model");
+    let app = proxy_router(
+        proxy.target,
+        credential,
+        None,
+        proxy.role == "model",
+        proxy.model_credit_required,
+    );
     tokio::spawn(async move {
         tracing::info!(proxy = proxy.role, bind = %proxy.bind, "credential proxy listening");
         if let Err(error) = axum::serve(proxy.listener, app).await {
@@ -201,7 +212,7 @@ pub(crate) fn router(
     credential: CredentialHolder,
     allowed_host: Option<&'static str>,
 ) -> Router {
-    proxy_router(target, credential, allowed_host, false)
+    proxy_router(target, credential, allowed_host, false, false)
 }
 
 fn proxy_router(
@@ -209,6 +220,7 @@ fn proxy_router(
     credential: CredentialHolder,
     allowed_host: Option<&'static str>,
     model_proxy: bool,
+    model_credit_required: bool,
 ) -> Router {
     let client = reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
@@ -221,6 +233,7 @@ fn proxy_router(
         client,
         allowed_host,
         model_proxy,
+        model_credit_required,
     };
     Router::new().fallback(any(forward)).with_state(state)
 }
@@ -231,6 +244,10 @@ async fn forward(State(state): State<ProxyState>, request: Request) -> Response 
         .is_some_and(|host| !allowed_request_host(&request, host))
     {
         return (StatusCode::FORBIDDEN, "proxy destination is not permitted").into_response();
+    }
+    if state.model_credit_required {
+        // The deployed model adapter cannot enforce an authoritative reservation.
+        return (StatusCode::SERVICE_UNAVAILABLE, "model_funding_unsupported").into_response();
     }
     let Some(credential) = state.credential.get().await else {
         return (

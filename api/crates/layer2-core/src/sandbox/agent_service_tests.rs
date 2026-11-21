@@ -229,6 +229,7 @@ async fn trigger_replay_is_exact_and_records_profile_use_once() {
         )
         .await
         .unwrap();
+    let service = service.with_model_credit_required(true);
     let replay = service
         .create_for_launch(
             &owner,
@@ -267,7 +268,7 @@ async fn trigger_replay_is_exact_and_records_profile_use_once() {
         1
     );
 
-    let mut changed = request(reference, origin);
+    let mut changed = request(reference.clone(), origin);
     changed.first_message = Some("A changed payload.".into());
     assert_eq!(
         service
@@ -279,6 +280,23 @@ async fn trigger_replay_is_exact_and_records_profile_use_once() {
             )
             .await,
         Err(AgentServiceError::CreationConflict)
+    );
+    assert_eq!(
+        service
+            .create_for_launch(
+                &owner,
+                Capability::CreateSandbox,
+                &workspace(WorkspaceStatus::Ready).id,
+                request(
+                    reference,
+                    AgentOrigin::Trigger {
+                        trigger_id: "trg_one".into(),
+                        launch_id: "different-launch".into(),
+                    }
+                ),
+            )
+            .await,
+        Err(AgentServiceError::ModelFundingUnsupported)
     );
 }
 

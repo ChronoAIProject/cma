@@ -109,6 +109,9 @@ impl AgentOperationService {
     ) -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
             skill_upgrades_enabled: self.skill_upgrades_enabled,
+            model_credit_required: self.model_credit_required,
+            model_funding: self.model_funding.clone(),
+            funded_message: self.funded_message.clone(),
             instruction_policy: policy,
             settings_authority: self.settings_authority.clone(),
             command_claim: self.command_claim.clone(),
