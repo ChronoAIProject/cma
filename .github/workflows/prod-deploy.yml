@@ -26,6 +26,8 @@ on:
         value: ${{ jobs.deploy.outputs.status }}
       component_result:
         value: ${{ jobs.deploy.outputs.component_result }}
+      disposition:
+        value: ${{ jobs.deploy.outputs.disposition }}
 
 permissions:
   contents: read
@@ -44,11 +46,16 @@ jobs:
     outputs:
       status: ${{ job.status }}
       component_result: ${{ steps.coordinate.outputs.component_result }}
+      # Only the coordinator hands this set to main's newer release; reproducing
+      # the approved set emits no disposition, so no later step needs that gate.
+      disposition: ${{ steps.coordinate.outputs.disposition }}
     env:
       CD_TARGET: production
       CD_DEPLOY_MODE: release
     environment: production
     steps:
+      # Complete history: release_commit reads this merge's parents, and contract
+      # checks read release sources without a lazy fetch.
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
         with:
           persist-credentials: false
