@@ -1,4 +1,8 @@
-use quick_xml::{events::Event, Reader};
+use quick_xml::{
+    events::{BytesStart, Event},
+    name::ResolveResult,
+    NsReader,
+};
 use serde::Deserialize;
 use std::io::{Cursor, Read};
 use std::path::Path;
@@ -6,6 +10,10 @@ use zip::ZipArchive;
 
 pub(super) const OPAQUE: &str = "application/octet-stream";
 const MAX_OFFICE_XML_BYTES: u64 = 64 * 1024;
+const RELATIONSHIPS_NAMESPACE: &[u8] =
+    b"http://schemas.openxmlformats.org/package/2006/relationships";
+const CONTENT_TYPES_NAMESPACE: &[u8] =
+    b"http://schemas.openxmlformats.org/package/2006/content-types";
 
 #[derive(Clone, Copy)]
 enum NativeFormat {
@@ -117,92 +125,100 @@ fn read_xml_part(zip: &mut ZipArchive<Cursor<&[u8]>>, name: &str) -> Option<Vec<
 }
 
 fn office_document_target(xml: &[u8]) -> Option<String> {
-    let mut reader = Reader::from_reader(xml);
-    if !read_xml_root(&mut reader, b"Relationships") {
-        return None;
-    }
     let mut target = None;
-    loop {
-        match reader.read_event().ok()? {
-            Event::Start(element) | Event::Empty(element)
-                if element.local_name().as_ref() == b"Relationship" =>
-            {
-                let relation = element.try_get_attribute("Type").ok()??;
-                if !matches!(relation.value.as_ref(),
-                    b"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
-                    | b"http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument")
-                {
-                    continue;
-                }
-                if target.is_some()
-                    || element
-                        .try_get_attribute("TargetMode")
-                        .ok()?
-                        .is_some_and(|mode| mode.value.as_ref() != b"Internal")
-                {
-                    return None;
-                }
-                let entry = element.try_get_attribute("Target").ok()??;
-                let path = std::str::from_utf8(&entry.value).ok()?;
-                let path = path.strip_prefix('/').unwrap_or(path);
-                if path.is_empty()
-                    || path.contains([':', '?', '#', '%', '&'])
-                    || !layer3_adapter::valid_agent_file_path(path)
-                {
-                    return None;
-                }
-                target = Some(path.to_owned());
-            }
-            Event::End(element) if element.local_name().as_ref() == b"Relationships" => {
-                return target;
-            }
-            Event::Eof | Event::DocType(_) => return None,
-            _ => {}
+    package_children(xml, b"Relationships", RELATIONSHIPS_NAMESPACE, |element| {
+        if element.local_name().as_ref() != b"Relationship" {
+            return Some(());
         }
-    }
+        let relation = element.try_get_attribute("Type").ok()??;
+        if !matches!(
+            relation.value.as_ref(),
+            b"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument"
+                | b"http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument"
+        ) {
+            return Some(());
+        }
+        if target.is_some()
+            || element
+                .try_get_attribute("TargetMode")
+                .ok()?
+                .is_some_and(|mode| mode.value.as_ref() != b"Internal")
+        {
+            return None;
+        }
+        let entry = element.try_get_attribute("Target").ok()??;
+        let path = std::str::from_utf8(&entry.value).ok()?;
+        let path = path.strip_prefix('/').unwrap_or(path);
+        if path.is_empty()
+            || path.contains([':', '?', '#', '%', '&'])
+            || !layer3_adapter::valid_agent_file_path(path)
+        {
+            return None;
+        }
+        target = Some(path.to_owned());
+        Some(())
+    })?;
+    target
 }
 
 fn declares_content_type(xml: &[u8], entry: &str, content_type: &[u8]) -> bool {
-    let mut reader = Reader::from_reader(xml);
-    if !read_xml_root(&mut reader, b"Types") {
-        return false;
-    }
     let mut matched = false;
-    loop {
-        match reader.read_event() {
-            Ok(Event::Empty(element) | Event::Start(element))
-                if element.local_name().as_ref() == b"Override" =>
-            {
-                let Ok(Some(part)) = element.try_get_attribute("PartName") else {
-                    return false;
-                };
-                if part.value.strip_prefix(b"/") != Some(entry.as_bytes()) {
-                    continue;
-                }
-                let Ok(Some(declared)) = element.try_get_attribute("ContentType") else {
-                    return false;
-                };
-                if matched || declared.value.as_ref() != content_type {
-                    return false;
-                }
-                matched = true;
-            }
-            Ok(Event::End(element)) if element.local_name().as_ref() == b"Types" => {
-                return matched;
-            }
-            Ok(Event::Eof | Event::DocType(_)) | Err(_) => return false,
-            _ => {}
+    let parsed = package_children(xml, b"Types", CONTENT_TYPES_NAMESPACE, |element| {
+        if element.local_name().as_ref() != b"Override" {
+            return Some(());
         }
-    }
+        let part = element.try_get_attribute("PartName").ok()??;
+        if part.value.strip_prefix(b"/") != Some(entry.as_bytes()) {
+            return Some(());
+        }
+        let declared = element.try_get_attribute("ContentType").ok()??;
+        if matched || declared.value.as_ref() != content_type {
+            return None;
+        }
+        matched = true;
+        Some(())
+    });
+    parsed.is_some() && matched
 }
 
-fn read_xml_root(reader: &mut Reader<&[u8]>, expected: &[u8]) -> bool {
+fn package_children(
+    xml: &[u8],
+    root: &[u8],
+    namespace: &[u8],
+    mut visit: impl FnMut(BytesStart<'_>) -> Option<()>,
+) -> Option<()> {
+    let mut reader = NsReader::from_reader(xml);
     reader.config_mut().trim_text(true);
+    reader.config_mut().expand_empty_elements = true;
+    let mut depth = 0;
+    let mut root_closed = false;
     loop {
-        match reader.read_event() {
-            Ok(Event::Decl(_) | Event::Comment(_) | Event::PI(_)) => {}
-            Ok(Event::Start(element)) => return element.local_name().as_ref() == expected,
-            _ => return false,
+        let (resolved, event) = reader.read_resolved_event().ok()?;
+        let in_package_namespace = matches!(
+            resolved,
+            ResolveResult::Bound(name) if name.as_ref() == namespace
+        );
+        match event {
+            Event::Start(element) if depth == 0 => {
+                if root_closed || !in_package_namespace || element.local_name().as_ref() != root {
+                    return None;
+                }
+                depth = 1;
+            }
+            Event::Start(element) => {
+                if depth == 1 && in_package_namespace {
+                    visit(element)?;
+                }
+                depth += 1;
+            }
+            Event::End(_) if depth > 0 => {
+                depth -= 1;
+                root_closed = depth == 0;
+            }
+            Event::Decl(_) if depth == 0 && !root_closed => {}
+            Event::Comment(_) | Event::PI(_) => {}
+            Event::Eof => return root_closed.then_some(()),
+            _ => return None,
         }
     }
 }
@@ -318,11 +334,97 @@ mod tests {
         )
     }
 
+    #[test]
+    fn office_metadata_requires_package_namespaces_and_direct_children() {
+        let relation = relationship("main/body.xml", "Internal");
+        for (file, content_type, expected) in [
+            (
+                "report.docx",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml",
+                NativeFormat::Word.media_type(),
+            ),
+            (
+                "report.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml",
+                NativeFormat::Spreadsheet.media_type(),
+            ),
+        ] {
+            let declaration =
+                format!(r#"<Override PartName="/main/body.xml" ContentType="{content_type}"/>"#);
+            let relationships = package_relationships(&relation);
+            let types = package_types(&declaration);
+            assert_eq!(
+                verified(file, &office_archive(&relationships, &types)),
+                expected
+            );
+            let prefixed_relationships = format!(
+                r#"<r:Relationships xmlns:r="{}">{}</r:Relationships>"#,
+                std::str::from_utf8(RELATIONSHIPS_NAMESPACE).unwrap(),
+                relation.replace("<Relationship ", "<r:Relationship "),
+            );
+            let prefixed_types = format!(
+                r#"<ct:Types xmlns:ct="{}">{}</ct:Types>"#,
+                std::str::from_utf8(CONTENT_TYPES_NAMESPACE).unwrap(),
+                declaration.replace("<Override ", "<ct:Override "),
+            );
+            assert_eq!(
+                verified(
+                    file,
+                    &office_archive(&prefixed_relationships, &prefixed_types)
+                ),
+                expected
+            );
+            for invalid in [
+                format!(r#"<Relationships xmlns="urn:unrelated">{relation}</Relationships>"#),
+                package_relationships(&format!("<Notes>{relation}</Notes>")),
+                package_relationships(
+                    &relation.replace("<Relationship ", r#"<Relationship xmlns="urn:unrelated" "#),
+                ),
+            ] {
+                assert_eq!(
+                    verified(file, &office_archive(&invalid, &types)),
+                    OPAQUE,
+                    "{invalid}"
+                );
+            }
+            for invalid in [
+                format!(r#"<Types xmlns="urn:unrelated">{declaration}</Types>"#),
+                package_types(&format!("<Notes>{declaration}</Notes>")),
+                package_types(
+                    &declaration.replace("<Override ", r#"<Override xmlns="urn:unrelated" "#),
+                ),
+            ] {
+                assert_eq!(
+                    verified(file, &office_archive(&relationships, &invalid)),
+                    OPAQUE,
+                    "{invalid}"
+                );
+            }
+        }
+    }
+
     fn office_fixture(content_type: &str, relationships: &str) -> Vec<u8> {
-        let relationships = format!("<Relationships>{relationships}</Relationships>");
-        let manifest = format!(
-            r#"<Types><Override PartName="/main/body.xml" ContentType="{content_type}"/></Types>"#
-        );
+        office_archive(
+            &package_relationships(relationships),
+            &package_types(&format!(
+                r#"<Override PartName="/main/body.xml" ContentType="{content_type}"/>"#
+            )),
+        )
+    }
+
+    fn package_relationships(children: &str) -> String {
+        format!(
+            r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{children}</Relationships>"#
+        )
+    }
+
+    fn package_types(children: &str) -> String {
+        format!(
+            r#"<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">{children}</Types>"#
+        )
+    }
+
+    fn office_archive(relationships: &str, manifest: &str) -> Vec<u8> {
         let mut archive = ZipWriter::new(Cursor::new(Vec::new()));
         for (name, bytes) in [
             ("main/body.xml", b"<test/>".as_slice()),
