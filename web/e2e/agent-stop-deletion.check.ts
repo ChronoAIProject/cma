@@ -1,5 +1,67 @@
 import { expect, test } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
+import { navigation, noEffects, resourceRow } from './resource-lifecycle.fixture';
+
+for (const source of ['header', 'task row'] as const) {
+  test(`LOCAL paused task deletion opens its Sandbox from the ${source} without writing`, async ({
+    page,
+    baseURL,
+  }) => {
+    const boundary = new LocalStartup();
+    const agentStatus = source === 'header' ? 'stopped' : 'failed';
+    const canResume = source === 'header';
+    boundary.sandbox = {
+      ...boundary.sandbox,
+      status: 'paused',
+      lifecycle: {
+        pause: { allowed: false, reason: 'not_active' },
+        revive: canResume ? { allowed: true } : { allowed: false, reason: 'work_in_progress' },
+      },
+    };
+    boundary.agent = {
+      ...boundary.agent,
+      status: agentStatus,
+      sandbox: { ...boundary.agent.sandbox, status: 'paused' },
+    };
+    boundary.workspace = {
+      ...boundary.workspace,
+      agents: boundary.workspace.agents.map((agent) => ({ ...agent, status: agentStatus })),
+    };
+    await boundary.route(page, baseURL!);
+    await page.goto(`/agents/${boundary.agent.id}`);
+    if (source === 'task row') await navigation(page, true);
+    const menu =
+      source === 'header'
+        ? page.getByRole('button', { name: 'More Agent actions', exact: true })
+        : resourceRow(page, 'agent', boundary.agent.id).getByRole('button', {
+            name: /^Options for /,
+          });
+    const remove = page.getByRole('menuitem', {
+      name: source === 'header' ? /^Delete task\b/ : /^Delete\b/,
+    });
+    // The header can draw before the exact Sandbox observation arrives.
+    await expect(async () => {
+      if ((await menu.getAttribute('aria-expanded')) === 'true') await menu.press('Escape');
+      await menu.press('Enter');
+      await expect(remove).toContainText(
+        'Resume the Sandbox before deleting this Agent and its Worktree.',
+        { timeout: 500 },
+      );
+    }).toPass({ timeout: 10_000 });
+    await expect(remove).toHaveAttribute('aria-disabled', 'true');
+    const recovery = page.getByRole('menuitem', { name: 'Open Sandbox to resume', exact: true });
+    await expect(recovery).toHaveAttribute('href', `/sandboxes/${boundary.sandbox.id}`);
+    await recovery.press('Enter');
+    await expect(page).toHaveURL(`${baseURL}/sandboxes/${boundary.sandbox.id}`);
+    await expect(
+      page.getByRole('heading', { name: boundary.sandbox.name, exact: true }),
+    ).toBeVisible();
+    const resume = page.getByRole('button', { name: 'Resume', exact: true });
+    if (canResume) await expect(resume).toBeEnabled();
+    else await expect(resume).toBeDisabled();
+    noEffects(boundary);
+  });
+}
 
 for (const uncertain of [false, true]) {
   test(`LOCAL header Stop then separate Delete with uncertain stop=${uncertain}`, async ({
