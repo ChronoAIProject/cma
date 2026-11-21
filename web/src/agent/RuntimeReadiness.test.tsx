@@ -145,7 +145,9 @@ it('refreshes unavailable files when readiness changes and preserves an edited f
   expect(await screen.findByRole('textbox', { name: 'Contents of notes.txt' })).toHaveValue(
     'Retain the unsaved draft',
   );
-  expect(fileClient.list).toHaveBeenCalledTimes(2);
+  // Returning to the files tab re-lists asynchronously; the retained editor can
+  // render before that listing resolves, so wait for it instead of racing it.
+  await waitFor(() => expect(fileClient.list).toHaveBeenCalledTimes(2));
   expect(fileClient.read).toHaveBeenCalledOnce();
 });
 
