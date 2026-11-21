@@ -103,19 +103,41 @@ impl AgentWorker {
         Fut: Future<Output = Result<AgentWorkPublication, SandboxStoreError>>,
     {
         let started = tokio::time::Instant::now();
-        let parents = match observed_parents {
-            Some(parents) => Some(parents),
-            None => self.publication_parents(&original).await?,
-        };
-        let Some(parents) = parents else {
-            return publication_result(publish(original, now, None).await?);
+        let (parents, mut current_parents) = match observed_parents {
+            Some(parents) => {
+                // A native reply retains the parents that authorized its request.
+                // Fresh reads supply only revisions for those same authorities.
+                let current = self
+                    .publication_parents(&original)
+                    .await?
+                    .ok_or(SandboxStoreError::Conflict)?;
+                if current != parents && !parents.compatible(&current, &original) {
+                    return Err(SandboxStoreError::Conflict);
+                }
+                (parents, current)
+            }
+            None => {
+                if original
+                    .work
+                    .cleanup_debt
+                    .iter()
+                    .any(|debt| debt.step == original.work.step)
+                {
+                    // This work has an outstanding native request. A fresh parent
+                    // snapshot cannot establish which runtime authorized it.
+                    return Err(SandboxStoreError::Conflict);
+                }
+                let Some(parents) = self.publication_parents(&original).await? else {
+                    return publication_result(publish(original, now, None).await?);
+                };
+                (parents.clone(), parents)
+            }
         };
         let authority = execution_authority();
         if self.config.ownership.is_some() && authority.is_none() {
             return Err(SandboxStoreError::Conflict);
         }
         let mut current = original.clone();
-        let mut current_parents = parents.clone();
         for attempt in 0..ATTEMPTS {
             let durable = layer2_core::seconds_from_rfc3339(&current.updated_at)
                 .map(|seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))

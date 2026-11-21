@@ -24,6 +24,7 @@ struct Intervention {
 #[derive(Default)]
 struct Trace {
     intervention: Mutex<Option<Intervention>>,
+    replace_before_failure: Mutex<Option<(AgentId, layer3_adapter::hosted::InMemoryHostedBackend)>>,
     pending_fault: Mutex<Option<(AgentId, Fault)>>,
     prepared: Mutex<Option<Agent>>,
     bodies: AtomicUsize,
@@ -55,6 +56,38 @@ impl Fixture {
         options.app_name = Some(app.clone());
         options.command_event_handler = Some(EventHandler::callback(move |event| match event {
             CommandEvent::Started(event) => {
+                if event.command.get_str("find").ok() == Some("worktrees") {
+                    let replacement = callback.replace_before_failure.lock().unwrap().clone();
+                    if let Some((agent, backend)) = replacement {
+                        tokio::task::block_in_place(|| {
+                            tokio::runtime::Handle::current().block_on(async {
+                                let sent = backend.requests().await.iter().any(|(_, request)| {
+                                    matches!(
+                                        request,
+                                        layer3_adapter::wire::RequestFrame::AddWorktree(_)
+                                    )
+                                });
+                                if sent
+                                    && callback
+                                        .replace_before_failure
+                                        .lock()
+                                        .unwrap()
+                                        .take()
+                                        .is_some()
+                                {
+                                    intervene(
+                                        &observer,
+                                        Intervention {
+                                            agent,
+                                            write: InterveningWrite::Runtime,
+                                        },
+                                    )
+                                    .await;
+                                }
+                            });
+                        });
+                    }
+                }
                 if event.command.get_bool("startTransaction").ok() == Some(true) {
                     callback.bodies.fetch_add(1, Ordering::SeqCst);
                 }
@@ -384,3 +417,6 @@ async fn failure_publication_uses_one_native_result_after_abort_or_unknown_ack()
         fixture.cleanup().await;
     }
 }
+
+#[path = "lifecycle_publication/native_failure_tests.rs"]
+mod native_failure;

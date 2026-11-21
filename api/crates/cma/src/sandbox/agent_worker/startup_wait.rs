@@ -60,13 +60,18 @@ impl AgentWorker {
                 WorkspaceStatus::Failed | WorkspaceStatus::Removing | WorkspaceStatus::Removed
             ) {
                 return self
-                    .handle_failure(
+                    .handle_failure_with_parents(
                         current,
                         WorkerFailure::terminal(
                             "agent_parent_failed",
                             "The Sandbox or Workspace could not finish preparing.",
                         ),
                         at,
+                        Some(PublicationParents {
+                            sandbox: parent,
+                            workspace,
+                            worktree,
+                        }),
                     )
                     .await;
             }

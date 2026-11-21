@@ -19,13 +19,44 @@ impl AgentWorker {
         failure: WorkerFailure,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        self.handle_failure_with_parents(agent, failure, now, None)
+            .await
+    }
+
+    pub(in crate::sandbox::agent_worker) async fn handle_context_failure(
+        &self,
+        context: &AgentContext,
+        agent: Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        self.handle_failure_with_parents(
+            agent,
+            failure,
+            now,
+            Some(PublicationParents {
+                sandbox: context.sandbox.clone(),
+                workspace: context.workspace.clone(),
+                worktree: context.worktree.clone(),
+            }),
+        )
+        .await
+    }
+
+    pub(in crate::sandbox::agent_worker) async fn handle_failure_with_parents(
+        &self,
+        agent: Agent,
+        failure: WorkerFailure,
+        now: SystemTime,
+        parents: Option<PublicationParents>,
+    ) -> Result<(), SandboxStoreError> {
         super::super::ledger_telemetry::observe(&failure);
         if agent.work.step == AgentWorkStep::PublishConnection {
             self.retry_connection_failure(&agent, failure, now).await
         } else if failure.retryable || agent.status != AgentStatus::Starting {
-            self.retry(agent, failure, now).await
+            self.retry(agent, failure, now, parents).await
         } else {
-            self.fail_startup(agent, failure, now).await
+            self.fail_startup(agent, failure, now, parents).await
         }
     }
 
@@ -34,10 +65,11 @@ impl AgentWorker {
         agent: Agent,
         failure: WorkerFailure,
         now: SystemTime,
+        parents: Option<PublicationParents>,
     ) -> Result<(), SandboxStoreError> {
         let delay = self.failure_retry_delay(&agent, &failure);
         let rebuild = can_rebuild(agent.work.step);
-        self.retry_at_inner(agent, failure, now, now + delay, rebuild)
+        self.retry_at_inner(agent, failure, now, now + delay, rebuild, parents)
             .await
     }
 
@@ -48,7 +80,7 @@ impl AgentWorker {
         now: SystemTime,
         ready_at: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        self.retry_at_inner(agent, failure, now, ready_at, false)
+        self.retry_at_inner(agent, failure, now, ready_at, false, None)
             .await
     }
 
@@ -59,6 +91,7 @@ impl AgentWorker {
         now: SystemTime,
         ready_at: SystemTime,
         rebuild: bool,
+        parents: Option<PublicationParents>,
     ) -> Result<(), SandboxStoreError> {
         let telemetry = self.config.work_retry_policy_enabled.then(|| {
             crate::sandbox::work_retry::RetryTelemetry::agent(
@@ -68,7 +101,7 @@ impl AgentWorker {
                 ready_at,
             )
         });
-        self.commit_retry_at(agent, failure, now, ready_at, rebuild)
+        self.commit_retry_at(agent, failure, now, ready_at, rebuild, parents)
             .await?;
         if let Some(telemetry) = telemetry {
             telemetry.published();
@@ -83,6 +116,7 @@ impl AgentWorker {
         now: SystemTime,
         ready_at: SystemTime,
         rebuild: bool,
+        parents: Option<PublicationParents>,
     ) -> Result<(), SandboxStoreError> {
         if failure.is_runtime_hold() {
             return self
@@ -101,7 +135,7 @@ impl AgentWorker {
         if rebuild && failure.observation.is_none() {
             let typed = failure.typed();
             return self
-                .publish_lifecycle_work(agent, None, now, |agent, at, parents| {
+                .publish_lifecycle_work(agent, parents, now, |agent, at, parents| {
                     let typed = typed.clone();
                     async move {
                         let mutation = self.retry_proposal(agent, typed, at, ready_at)?;
@@ -157,14 +191,18 @@ impl AgentWorker {
         agent: Agent,
         failure: WorkerFailure,
         now: SystemTime,
+        parents: Option<PublicationParents>,
     ) -> Result<(), SandboxStoreError> {
         let typed = failure.typed();
-        let mut worktree = self
-            .dependencies
-            .store
-            .get_worktree(&agent.worktree_id)
-            .await?
-            .ok_or(SandboxStoreError::NotFound)?;
+        let mut worktree = match &parents {
+            Some(parents) => parents.worktree.clone(),
+            None => self
+                .dependencies
+                .store
+                .get_worktree(&agent.worktree_id)
+                .await?
+                .ok_or(SandboxStoreError::NotFound)?,
+        };
         let versioned = if worktree.status == WorktreeStatus::Creating {
             let expected_revision = worktree.revision;
             worktree
@@ -177,17 +215,17 @@ impl AgentWorker {
         } else {
             None
         };
-        let initial =
-            self.startup_failure_proposal(agent.clone(), typed.clone(), versioned.clone(), now)?;
-        self.dependencies.registry.fence(
-            &agent.id,
-            agent.conversation.runtime_generation,
-            initial.fence,
-        );
+        let id = agent.id.clone();
+        let runtime_generation = agent.conversation.runtime_generation;
+        let fence = claimed_fence(&agent, &self.config.holder)?;
         if !can_rebuild(agent.work.step) {
-            return self.dependencies.store.commit_agent_work(initial).await;
+            let mutation = self.startup_failure_proposal(agent, typed, versioned, now)?;
+            self.dependencies
+                .registry
+                .fence(&id, runtime_generation, fence);
+            return self.dependencies.store.commit_agent_work(mutation).await;
         }
-        self.publish_lifecycle_work(agent, None, now, |agent, at, parents| {
+        self.publish_lifecycle_work(agent, parents, now, |agent, at, parents| {
             let typed = typed.clone();
             let worktree = versioned.clone();
             async move {
@@ -195,7 +233,11 @@ impl AgentWorker {
                 self.commit_lifecycle_publication(mutation, parents).await
             }
         })
-        .await
+        .await?;
+        self.dependencies
+            .registry
+            .fence(&id, runtime_generation, fence);
+        Ok(())
     }
 
     fn startup_failure_proposal(
