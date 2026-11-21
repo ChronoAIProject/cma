@@ -141,6 +141,7 @@ export function App() {
           <AgentApp
             router={{ ...router, route: agentVisible ? router.route : lastAgentRoute }}
             authEpoch={authEpoch}
+            visible={agentVisible && !usageOpen}
             onServiceNavigate={navigateService}
             {...sidebar}
           />
@@ -176,12 +177,14 @@ function HomeLanding({ router }: { readonly router: AppRouter }) {
 function AgentApp({
   router,
   authEpoch,
+  visible = true,
   sidebarCollapsed,
   onSidebarCollapsedChange,
   onServiceNavigate,
 }: {
   readonly router: AppRouter;
   readonly authEpoch: number;
+  readonly visible?: boolean;
   readonly sidebarCollapsed?: boolean;
   readonly onSidebarCollapsedChange?: (collapsed: boolean) => void;
   readonly onServiceNavigate?: (route: AppRoute) => void;
@@ -252,6 +255,7 @@ function AgentApp({
         key={state.user.id}
         user={state.user}
         authEpoch={authEpoch}
+        visible={visible}
         route={router.route}
         onNavigate={router.navigate}
         hierarchyRevision={hierarchyRevision}

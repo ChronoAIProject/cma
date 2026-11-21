@@ -4,7 +4,52 @@ import { SkeletonRows } from '../ui/Skeleton';
 import { Button } from '../ui/Button';
 import { PageHeader } from '../ui/PageHeader';
 import { Alert } from '../ui/Alert';
+import { Presence } from '../ui/Presence';
+import { IconCloseOutline16 } from '../ui/icons';
 import type { AgentController } from './controller';
+
+export function AgentSurfaceIssue({
+  issue,
+  historyIncomplete,
+  onRetry,
+  onDismiss,
+}: {
+  readonly issue?: string;
+  readonly historyIncomplete: boolean;
+  readonly onRetry?: () => void;
+  readonly onDismiss: () => void;
+}) {
+  return (
+    <Presence>
+      {issue === undefined ? null : historyIncomplete ? (
+        <p className="agent-surface__history-notice" role="status">
+          {issue}
+        </p>
+      ) : (
+        <Alert
+          tone="error"
+          actions={
+            <>
+              {onRetry ? (
+                <Button size="sm" onClick={onRetry}>
+                  Retry connections
+                </Button>
+              ) : null}
+              <Button
+                size="sm"
+                icon={<IconCloseOutline16 />}
+                aria-label="Dismiss error"
+                onClick={onDismiss}
+              />
+            </>
+          }
+        >
+          {issue}
+        </Alert>
+      )}
+    </Presence>
+  );
+}
 
 export function AgentCommandNotices({
   controller,
