@@ -90,11 +90,11 @@ pub struct Checkpoint {
     pub state: PhaseState,
 }
 
-/// An authenticated exact retry may reuse a Reserved admission. Once shared,
-/// neither writer may refund it based solely on its own refusal.
+/// The authority registers a unique participant before each attempted ledger
+/// write. Every exact retry uses the same reservation and has its own receipt.
 pub struct AdmissionHold {
     pub checkpoint: Checkpoint,
-    pub exclusive: bool,
+    pub participant: NonZeroU64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
@@ -128,17 +128,17 @@ pub trait ReservationAuthority: Send + Sync {
 
     /// Reserve for a new command, or recover the original command and response
     /// IDs for an exact retry of a still-Reserved hold. The payer, binding,
-    /// limit and request digest must all match. Returning a recovered hold
-    /// atomically makes the hold shared before either claimant can refund it.
+    /// limit and request digest must all match. Register the participant in the
+    /// same transaction as checking or creating the reservation.
     async fn reserve_command(&self, request: &Reservation) -> Result<AdmissionHold, FundingError>;
     async fn read(&self, id: &PhaseId) -> Result<Checkpoint, FundingError>;
 
-    /// Release an exclusively held admission after its ledger write definitively
-    /// failed. Compare the exact Reserved checkpoint including its command ID.
-    /// A shared hold makes an earlier exclusive release request a no-op.
-    /// Never remove or credit a concurrent or already dispatched reservation.
+    /// Retire exactly this participant after a definitive refusal. Repeating
+    /// this call is idempotent. Release the Reserved balance atomically only
+    /// when every registered participant has been retired. An uncertain reply
+    /// leaves its participant active until the durable command is recovered.
     /// A later hold for the same phase must have a fresh checkpoint version.
-    async fn release_refused(&self, expected: &Checkpoint) -> Result<(), FundingError>;
+    async fn refuse_admission(&self, hold: &AdmissionHold) -> Result<(), FundingError>;
 
     /// Unsettled command holds in ascending command-ID order, with the same
     /// continuation semantics as the command scheduler. Include terminal ledger

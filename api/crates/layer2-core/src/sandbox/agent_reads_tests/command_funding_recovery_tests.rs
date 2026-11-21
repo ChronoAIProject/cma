@@ -118,7 +118,7 @@ async fn model_credit_lost_admission_reply_retains_exact_committed_hold() {
 
 #[tokio::test]
 async fn model_credit_exact_retry_recovers_pending_identity_after_unavailable_admission() {
-    let (store, access, authority, _) = execution_fixture(MAX_MEMBERSHIP_AGE).await;
+    let (store, access, authority, agent) = execution_fixture(MAX_MEMBERSHIP_AGE).await;
     let ledger = Arc::new(Ledger::default());
     let payer = payer(credential(CredentialSource::Managed));
     ledger.lock().unwrap().add(&payer, 5);
@@ -160,6 +160,18 @@ async fn model_credit_exact_retry_recovers_pending_identity_after_unavailable_ad
     .with_model_funding(Some(funding.clone()));
     assert!(!worker.run_scheduled(id).await.unwrap().is_zero());
     assert_eq!(*ledger.lock().unwrap().available(&payer), 0);
+
+    let mut stale = submission(key);
+    stale.expected_agent_revision = Some(agent.revision + 1);
+    assert!(matches!(
+        admit(stale).await,
+        Err(CommandAdmissionError::Ledger(CommandLedgerError::Conflict))
+    ));
+    assert_eq!(*ledger.lock().unwrap().available(&payer), 0);
+    assert_eq!(
+        funding.pending_commands(&page).await.unwrap().items,
+        pending.items
+    );
 
     let mut changed = submission(key);
     changed.command = AgentCommand::message("a different request");
@@ -259,4 +271,80 @@ async fn model_credit_delayed_admission_cannot_release_recovered_winners_hold() 
         assert_eq!(*ledger.lock().unwrap().available(&payer), 0);
         assert_eq!(gateway.calls.load(Ordering::SeqCst), 0);
     }
+}
+
+#[tokio::test]
+async fn model_credit_two_definitive_refusals_return_the_balance_after_both_writers_finish() {
+    let (store, access, authority, agent) = execution_fixture(MAX_MEMBERSHIP_AGE).await;
+    let ledger = Arc::new(Ledger::default());
+    let payer = payer(credential(CredentialSource::Managed));
+    ledger.lock().unwrap().add(&payer, 5);
+    let gateway = gateway(false);
+    let funding = AgentTurnFunding::new(ledger.clone(), gateway.clone());
+    let entered = Arc::new(Notify::new());
+    let proceed = Arc::new(Notify::new());
+    let delayed = AdmissionStore::new(
+        store.clone(),
+        FirstWrite::Delay {
+            entered: entered.clone(),
+            proceed: proceed.clone(),
+            definite_refusal: false,
+        },
+    );
+    let access = Arc::new(access);
+    let first = AgentCommandService::new(delayed, access.clone(), authority.clone())
+        .with_model_credit_required(true)
+        .with_model_funding(Some(funding.clone()));
+    let retry = AgentCommandService::new(store.clone(), access, authority)
+        .with_model_credit_required(true)
+        .with_model_funding(Some(funding.clone()));
+    let revision = agent.revision;
+    let submit = move |commands: Arc<AgentCommandService>| async move {
+        let mut request = submission("two-definitive-refusals");
+        request.expected_agent_revision = Some(revision);
+        commands
+            .admit(
+                &context("owner"),
+                "selected-credential",
+                CommandSubmissionSource::Api,
+                request,
+            )
+            .await
+    };
+    let first = tokio::spawn(submit(first));
+    tokio::time::timeout(Duration::from_secs(2), entered.notified())
+        .await
+        .unwrap();
+
+    let mut changed = agent;
+    changed.revision += 1;
+    store.save_agent(revision, changed).await.unwrap();
+    assert!(matches!(
+        submit(retry).await,
+        Err(CommandAdmissionError::Ledger(CommandLedgerError::Conflict))
+    ));
+    assert_eq!(*ledger.lock().unwrap().available(&payer), 0);
+    let page = PageRequest::new(1, None).unwrap();
+    let pending = funding.pending_commands(&page).await.unwrap();
+    assert_eq!(pending.items.len(), 1);
+    proceed.notify_one();
+    assert!(matches!(
+        first.await.unwrap(),
+        Err(CommandAdmissionError::Ledger(CommandLedgerError::Conflict))
+    ));
+
+    assert!(store
+        .command_work_page(&page)
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert!(funding
+        .pending_commands(&page)
+        .await
+        .unwrap()
+        .items
+        .is_empty());
+    assert_eq!(*ledger.lock().unwrap().available(&payer), 5);
+    assert_eq!(gateway.calls.load(Ordering::SeqCst), 0);
 }

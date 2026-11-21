@@ -61,12 +61,10 @@ impl AgentCommandService {
             request.envelope.correlation_id = command_ref;
             request.response_id = Some(identity.response_id.clone());
             if let Err(error) = self.fence(authorized, target, capability).await {
-                if held.exclusive {
-                    release_refused(funding, &held.checkpoint).await?;
-                }
+                report_refusal(funding, &held).await?;
                 return Err(error);
             }
-            held.exclusive.then_some((funding, held.checkpoint))
+            Some((funding, held))
         } else {
             None
         };
@@ -78,12 +76,12 @@ impl AgentCommandService {
                 let result = self.store.reserve_command(request).await;
                 definitively_refused = hold
                     .as_ref()
-                    .is_some_and(|(_, held)| admission_refused(&result, held));
+                    .is_some_and(|(_, held)| admission_refused(&result, &held.checkpoint));
                 result
             })
             .await;
         if let Some((funding, held)) = hold.filter(|_| definitively_refused) {
-            release_refused(funding, &held).await?;
+            report_refusal(funding, &held).await?;
         }
         // An unavailable write or a failed authorization response may hide a commit.
         // Keep the exact hold so a worker can settle it from the durable receipt.
@@ -127,11 +125,11 @@ impl AgentCommandService {
     }
 }
 
-async fn release_refused(
+async fn report_refusal(
     funding: &AgentTurnFunding,
-    held: &Checkpoint,
+    held: &AdmissionHold,
 ) -> Result<(), CommandAdmissionError> {
-    bounded(funding.release_refused(held))
+    bounded(funding.refuse_admission(held))
         .await?
         .map_err(|error| AgentOperationError::from(error).into())
 }

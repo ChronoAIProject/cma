@@ -11,7 +11,8 @@ pub(in crate::sandbox) struct LedgerState {
     checkpoints: HashMap<PhaseId, Checkpoint>,
     expired: HashSet<PhaseId>,
     refused_versions: HashMap<PhaseId, NonZeroU64>,
-    shared_admissions: HashSet<PhaseId>,
+    admissions: HashMap<PhaseId, HashSet<NonZeroU64>>,
+    last_participant: u64,
 }
 
 pub(in crate::sandbox) type Ledger = Mutex<LedgerState>;
@@ -94,7 +95,12 @@ impl ReservationAuthority for Ledger {
             .command
             .as_ref()
             .ok_or(FundingError::CheckpointChanged)?;
-        if let Some(existing) = state.checkpoints.get(&request.id).cloned() {
+        let participant = state
+            .last_participant
+            .checked_add(1)
+            .map(units)
+            .ok_or(FundingError::Unavailable)?;
+        let checkpoint = if let Some(existing) = state.checkpoints.get(&request.id).cloned() {
             if existing.state != PhaseState::Reserved {
                 return Err(FundingError::CheckpointChanged);
             }
@@ -114,16 +120,19 @@ impl ReservationAuthority for Ledger {
                 ..request.clone()
             };
             require_reservation(&existing, &matched)?;
-            state.shared_admissions.insert(request.id.clone());
-            return Ok(AdmissionHold {
-                checkpoint: existing,
-                exclusive: false,
-            });
-        }
-        let checkpoint = state.hold_first(request)?;
+            existing
+        } else {
+            state.hold_first(request)?
+        };
+        state.last_participant = participant.get();
+        state
+            .admissions
+            .entry(request.id.clone())
+            .or_default()
+            .insert(participant);
         Ok(AdmissionHold {
             checkpoint,
-            exclusive: true,
+            participant,
         })
     }
 
@@ -136,20 +145,27 @@ impl ReservationAuthority for Ledger {
             .ok_or(FundingError::NoReservation)
     }
 
-    async fn release_refused(&self, expected: &Checkpoint) -> Result<(), FundingError> {
+    async fn refuse_admission(&self, hold: &AdmissionHold) -> Result<(), FundingError> {
         let mut state = self.lock().unwrap();
+        let expected = &hold.checkpoint;
         if expected.reservation.command.is_none() || expected.state != PhaseState::Reserved {
             return Err(FundingError::CheckpointChanged);
         }
         let id = &expected.reservation.id;
-        if state.shared_admissions.contains(id) || !state.checkpoints.contains_key(id) {
+        if state.checkpoints.get(id) != Some(expected) {
             return Ok(());
         }
-        state.next(expected, PhaseState::Settled(Effect::NotStarted))?;
+        let Some(participants) = state.admissions.get_mut(id) else {
+            return Ok(());
+        };
+        if !participants.remove(&hold.participant) || !participants.is_empty() {
+            return Ok(());
+        }
         state.add(
             &expected.reservation.binding,
             expected.reservation.limit.get(),
         );
+        state.admissions.remove(id);
         state.checkpoints.remove(id);
         state.active.remove(&id.turn);
         state.refused_versions.insert(id.clone(), expected.version);
@@ -195,6 +211,7 @@ impl ReservationAuthority for Ledger {
             return Err(FundingError::Expired);
         }
         let permit = state.next(expected, PhaseState::InFlight)?;
+        state.admissions.remove(&expected.reservation.id);
         state
             .checkpoints
             .insert(expected.reservation.id.clone(), permit.clone());
@@ -233,6 +250,7 @@ impl ReservationAuthority for Ledger {
             .checked_sub(spent)
             .ok_or(FundingError::ReconciliationRequired)?;
         state.add(&reservation.binding, release);
+        state.admissions.remove(&reservation.id);
         state
             .checkpoints
             .insert(reservation.id.clone(), settled.clone());

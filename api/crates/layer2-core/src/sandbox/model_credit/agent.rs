@@ -149,18 +149,16 @@ impl AgentTurnFunding {
         if identity.intent_fingerprint != admission.envelope.request_fingerprint {
             return Err(FundingError::CheckpointChanged);
         }
-        if !hold.exclusive {
-            reservation.command = Some(identity.clone());
-        }
+        reservation.command = Some(identity.clone());
         require_reservation(checkpoint, &reservation)?;
         Ok(hold)
     }
 
-    pub(in crate::sandbox) async fn release_refused(
+    pub(in crate::sandbox) async fn refuse_admission(
         &self,
-        held: &Checkpoint,
+        held: &AdmissionHold,
     ) -> Result<(), FundingError> {
-        self.authority.release_refused(held).await
+        self.authority.refuse_admission(held).await
     }
 
     pub(in crate::sandbox) async fn pending_commands(
