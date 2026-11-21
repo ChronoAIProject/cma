@@ -118,9 +118,16 @@ export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFe
                         </div>
                       ) : null}
                       <div>
-                        <dt>Response produced</dt>
+                        <dt>
+                          {!consumer.produced_at && consumer.produced_by
+                            ? 'Response produced by'
+                            : 'Response produced'}
+                        </dt>
                         <dd>
-                          <ActivityTimestamp value={consumer.produced_at} />
+                          <ActivityTimestamp value={consumer.produced_at ?? consumer.produced_by} />
+                          {!consumer.produced_at && consumer.produced_by ? (
+                            <span> · Confirmed answer delivery</span>
+                          ) : null}
                         </dd>
                       </div>
                     </dl>
