@@ -249,7 +249,8 @@ fn staging_loads_with_every_graduated_gate_explicitly_false() {
 #[test]
 fn staging_loads_with_each_graduated_gate_alone_explicitly_false() {
     for off in GRADUATED {
-        let config = staging(&[(off, "false")]).unwrap_or_else(|error| panic!("{off}: {error}"));
+        // A config error may echo fixture secrets, so only the gate is named.
+        let config = staging(&[(off, "false")]).unwrap_or_else(|_| panic!("{off}=false refused"));
         for (name, enabled) in observed(&config) {
             assert_eq!(enabled, name != *off, "{name} with {off}=false");
         }
