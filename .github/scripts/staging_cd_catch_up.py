@@ -124,6 +124,11 @@ def final_receipt(api, component, version, oid):
     return receipt
 
 
+def final_source(api, component, version, oid):
+    # Kept for callers that need only the verified source of a final.
+    return final_receipt(api, component, version, oid)["source"]
+
+
 def owner_attempt(api, value):
     try:
         run = api.request(f"actions/runs/{value['run_id']}/attempts/{value['run_attempt']}", allow_not_found=True)

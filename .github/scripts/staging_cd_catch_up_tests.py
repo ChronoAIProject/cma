@@ -166,6 +166,16 @@ class CatchUpTests(unittest.TestCase):
         develop.server._history = DevelopHistory(develop.source(2), [develop.source(index) for index in (2, 1, 0)])
         self.assertEqual(decide(develop), ("head-run-missing", None, []))
 
+    def test_final_source_names_the_verified_source_of_a_final(self):
+        from staging_cd_catch_up import final_source
+        develop = Develop()
+        receipt = develop.finalize(develop.push({"web"})["web"])
+        version = receipt["identity"]["version"]
+        oid = develop.server.refs[receipt["tag"]]
+        self.assertEqual(final_source(develop.server, "web", version, oid), develop.source(0))
+        with self.assertRaisesRegex(Refusal, "Release tag identity differs"):
+            final_source(develop.server, "eg", version, oid)
+
     def test_re_run_is_written_once_and_verified_by_reading_back(self):
         develop = Develop()
         develop.push({"runtime-omarchy"})
