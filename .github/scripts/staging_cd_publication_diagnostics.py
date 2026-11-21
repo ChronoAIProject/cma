@@ -75,7 +75,8 @@ class PublicationDiagnostics:
         return "unexpected_error"
 
 
-def run_publication(operation, *, on_superseded=None, component=None):
+def run_publication(operation, *, on_superseded=None, component=None, outcome=None):
+    """Run one publication privately; on failure, record its fixed stage token in `outcome`."""
     diagnostics = PublicationDiagnostics()
 
     def guarded(masker):
@@ -101,6 +102,8 @@ def run_publication(operation, *, on_superseded=None, component=None):
         # only fixed tokens and the public source line that failed.
         stage = diagnostics.stage if diagnostics.stage in STAGES else "validate"
         reason = diagnostics.reason if diagnostics.reason in REASONS else "unexpected_error"
+        if outcome is not None:
+            outcome["stage"] = stage
         report("publication", reason, subject="publication", stage=stage, site=diagnostics.site,
                component=component)
         if diagnostics.scan_evidence is not None:
