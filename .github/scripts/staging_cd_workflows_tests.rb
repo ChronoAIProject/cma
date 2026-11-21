@@ -559,10 +559,19 @@ class StagingWorkflowTest < Minitest::Test
     restore = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/restore@') }
     save = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
     select = steps.index { |step| step['id'] == 'plan' }
+    gate = steps.index { |step| step['name'] == 'Require a complete release plan' }
+    promotions = steps.index { |step| step['id'] == 'promotions' }
     assert_operator prepare, :<, restore
     assert_operator restore, :<, select
     assert_operator select, :<, save
     refute steps[save].key?('if'), 'the default success condition must guard cache writes'
+    # A budget-stopped plan saves its analysed revisions before the job fails,
+    # and a later step's failure cannot discard them.
+    assert_operator save, :<, gate
+    assert_operator gate, :<, promotions
+    assert_equal "steps.plan.outputs.complete != 'true'", steps[gate]['if']
+    assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete',
+                 steps[gate]['run']
     [steps[restore], steps[save]].each do |step|
       assert_equal '${{ steps.selection-cache.outputs.directory }}', step['with']['path']
       assert_equal '${{ steps.selection-cache.outputs.key }}', step['with']['key']
