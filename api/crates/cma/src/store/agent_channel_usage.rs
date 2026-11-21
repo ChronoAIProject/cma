@@ -21,7 +21,7 @@ use mongodb::{
     ClientSession,
 };
 
-mod records;
+pub(in crate::store) mod records;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read_snapshot as read_inventory_snapshot;
 use records::{event_document, read_snapshot, state_document};

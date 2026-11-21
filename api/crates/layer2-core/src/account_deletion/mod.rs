@@ -14,4 +14,6 @@ mod lease_tests;
 #[cfg(test)]
 mod model_tests;
 #[cfg(test)]
+mod reader_compatibility_tests;
+#[cfg(test)]
 mod service_tests;

@@ -79,7 +79,7 @@ async fn continuation(organization: bool, finish_erasure: bool) {
                 issuer: "cma:authenticated-provider-binding-manager".into(),
                 organization: parent.owner.clone(),
                 admitted_by: ResourceActor::Api {
-                    subject: SubjectId::new("unrelated-organization-administrator"),
+                    subject: seed.owner.clone(),
                     delegation_id: None,
                 },
                 verified_at: NOW.into(),

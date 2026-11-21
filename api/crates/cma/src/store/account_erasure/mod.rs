@@ -11,6 +11,7 @@ mod barrier;
 mod batches;
 pub(crate) mod catalog;
 mod context;
+mod delegation_debts;
 mod drain_qualification;
 mod guards;
 mod identity_activity;
@@ -158,6 +159,7 @@ pub(crate) struct Batch {
     pub deleted: BTreeMap<String, u64>,
     pub redacted: BTreeMap<String, u64>,
     pub pending_key_ids: BTreeMap<String, Vec<String>>,
+    pub pending_delegations: BTreeMap<String, Vec<layer2_core::account_deletion::DelegationDebt>>,
     pub discovered: BTreeMap<String, ErasureInventory>,
     pub has_more: bool,
     pub waiting: bool,
@@ -179,6 +181,10 @@ pub(crate) struct Cursor {
     selector: Option<indexed::Key>,
     billing_after: Option<mongodb::bson::Bson>,
     billing_checked: bool,
+    delegations_after: Option<mongodb::bson::Bson>,
+    delegations_checked: bool,
+    delegation_counts: BTreeMap<String, usize>,
+    delegation_bytes_by_subject: BTreeMap<String, usize>,
     contexts: Vec<context::Context>,
     retained_profiles: Option<BTreeSet<String>>,
     retained_profile_owners: BTreeMap<String, String>,
@@ -215,8 +221,6 @@ mod drain_authority_tests;
 #[cfg(test)]
 mod history_tests;
 #[cfg(test)]
-mod identity_pending_tests;
-#[cfg(test)]
 mod observer_tests;
 #[cfg(test)]
 pub(crate) mod optional_authority_tests;
@@ -243,6 +247,8 @@ mod round2_query_tests;
 #[cfg(test)]
 mod round2_tests;
 #[cfg(test)]
+mod round3_activity_tests;
+#[cfg(test)]
 mod round3_barrier_tests;
 #[cfg(test)]
 mod round3_capacity_tests;
@@ -251,12 +257,16 @@ mod round3_continuation_tests;
 #[cfg(test)]
 mod round3_discovery_tests;
 #[cfg(test)]
+mod scan_tests;
+#[cfg(test)]
+mod share_policy_tests;
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
 mod round4_continuation_tests;
 #[cfg(test)]
 mod round4_executor_tests;
+
 #[cfg(test)]
 mod round4_query_tests;
-#[cfg(test)]
-mod scan_tests;
-#[cfg(test)]
-mod tests;

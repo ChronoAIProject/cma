@@ -57,6 +57,16 @@ pub struct MongoBotStore {
     client: Client,
     records: Collection<BotDocument>,
 }
+pub(in crate::store) fn read_retained_bot(row: &mongodb::bson::Document) -> Result<Bot, BotError> {
+    mongodb::bson::deserialize_from_document::<BotDocument>(row.clone())
+        .map_err(|_| BotError::Unavailable)?
+        .decode()
+}
+pub(in crate::store) fn retained_bot_document(
+    bot: &Bot,
+) -> Result<mongodb::bson::Document, BotError> {
+    mongodb::bson::serialize_to_document(&BotDocument::new(bot)?).map_err(|_| BotError::Unavailable)
+}
 impl MongoBotStore {
     pub async fn open(client: &Client, database: &str) -> Result<Self, BotError> {
         let records = super::durability::majority_collection(&client.database(database), "bots");

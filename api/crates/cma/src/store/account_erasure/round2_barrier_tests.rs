@@ -98,6 +98,7 @@ fn assert_waiting(batch: &Batch, cursor: &Cursor) {
     assert!(batch.waiting && batch.has_more);
     assert!(batch.deleted.is_empty() && batch.redacted.is_empty());
     assert!(batch.discovered.is_empty() && batch.pending_key_ids.is_empty());
+    assert!(batch.pending_delegations.is_empty());
     assert!(cursor.contexts.is_empty());
     assert!(cursor.retained_profiles.is_none());
     assert!(!cursor.drain_complete);

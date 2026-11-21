@@ -330,3 +330,132 @@ async fn corrupt_activity_page_boundary_is_attributed_to_its_actor() {
     assert_eq!(count(&db, "activity").await, 500);
     db.drop().await.unwrap();
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn delegation_scan_capacity_is_per_subject_and_counts_only_acknowledged_pages() {
+    use layer2_core::{account_deletion::DelegationDebt, bots::BotOwnership};
+    let db = database().await;
+    let mut debts = BTreeMap::new();
+    for subject in ["a", "b"] {
+        let mut bot = crate::store::bots_mongo_integration_tests::bot("organization", subject);
+        bot.bot_id = format!("bot_{subject}");
+        let debt = DelegationDebt {
+            bot_id: bot.bot_id.clone(),
+            authorization_grant_id: format!("grant-{subject}"),
+            credential_incarnation: format!("sign-in-{subject}"),
+        };
+        bot.ownership = Some(BotOwnership {
+            owner: ResourceOwner::Organization {
+                subject: SubjectId::new("organization"),
+            },
+            created_by: ResourceActor::Api {
+                subject: SubjectId::new(subject),
+                delegation_id: Some(debt.authorization_grant_id.clone()),
+            },
+            credential_subject: SubjectId::new(subject),
+            credential_incarnation: Some(debt.credential_incarnation.clone()),
+            authorization_grant_id: Some(debt.authorization_grant_id.clone()),
+        });
+        put(
+            &db,
+            "bots",
+            crate::store::bots::retained_bot_document(&bot).unwrap(),
+        )
+        .await;
+        debts.insert(subject, debt);
+    }
+    let a = SubjectId::new("a");
+    let b = SubjectId::new("b");
+    let debt_bytes = |debt: &DelegationDebt| {
+        debt.bot_id.len() + debt.authorization_grant_id.len() + debt.credential_incarnation.len()
+    };
+    for (count, size) in [(19_999, 0), (0, 4 * 1024 * 1024 - debt_bytes(&debts["a"]))] {
+        // Legacy scalars make the old implementation fail through the real
+        // scanner; the replacement counters independently track each owner.
+        let mut cursor: Cursor = serde_json::from_value(serde_json::json!({
+            "delegation_count":count,"delegation_bytes":size,
+            "delegation_counts":{"a":count,"b":count},
+            "delegation_bytes_by_subject":{"a":size,"b":size},
+        }))
+        .unwrap();
+        let before = serde_json::to_value(&cursor).unwrap();
+        let empty = ErasureInventory::default();
+        let targets = [
+            Target {
+                subject: &a,
+                inventory: &empty,
+            },
+            Target {
+                subject: &b,
+                inventory: &empty,
+            },
+        ];
+        for _ in 0..2 {
+            let mut batch = Batch::default();
+            assert!(
+                !delegation_debts::page(&db, &targets, &mut cursor, &mut batch)
+                    .await
+                    .unwrap()
+            );
+            assert!(batch.waiting && batch.has_more);
+            assert_eq!(batch.pending_delegations["a"], [debts["a"].clone()]);
+            assert_eq!(batch.pending_delegations["b"], [debts["b"].clone()]);
+            assert_eq!(serde_json::to_value(&cursor).unwrap(), before);
+        }
+        let acknowledged_a = ErasureInventory {
+            pending_delegations: vec![debts["a"].clone()],
+            ..Default::default()
+        };
+        let acknowledged_b = ErasureInventory {
+            pending_delegations: vec![debts["b"].clone()],
+            ..Default::default()
+        };
+        let targets = [
+            Target {
+                subject: &a,
+                inventory: &acknowledged_a,
+            },
+            Target {
+                subject: &b,
+                inventory: &acknowledged_b,
+            },
+        ];
+        assert!(
+            delegation_debts::page(&db, &targets, &mut cursor, &mut Batch::default())
+                .await
+                .unwrap()
+        );
+        let updated = serde_json::to_value(&cursor).unwrap();
+        assert_eq!(updated["delegation_counts"]["a"], count + 1);
+        assert_eq!(updated["delegation_counts"]["b"], count + 1);
+        assert_eq!(
+            updated["delegation_bytes_by_subject"]["a"],
+            size + debt_bytes(&debts["a"])
+        );
+        assert_eq!(
+            updated["delegation_bytes_by_subject"]["b"],
+            size + debt_bytes(&debts["b"])
+        );
+        let overflow_count = if count == 0 { 0 } else { 20_000 };
+        let overflow_size = if count == 0 { 4 * 1024 * 1024 } else { 0 };
+        let mut overflow: Cursor = serde_json::from_value(serde_json::json!({
+            "delegation_count":overflow_count,"delegation_bytes":overflow_size,
+            "delegation_counts":{"a":overflow_count,"b":0},
+            "delegation_bytes_by_subject":{"a":overflow_size,"b":0},
+        }))
+        .unwrap();
+        let before = serde_json::to_value(&overflow).unwrap();
+        assert_capacity(
+            delegation_debts::page(&db, &targets, &mut overflow, &mut Batch::default())
+                .await
+                .unwrap_err(),
+            "a",
+            "delegation scan",
+            20_000,
+        );
+        assert_eq!(serde_json::to_value(&overflow).unwrap(), before);
+    }
+    assert_eq!(count(&db, "bots").await, 2);
+    db.drop().await.unwrap();
+}
