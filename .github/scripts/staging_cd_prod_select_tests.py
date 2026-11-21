@@ -10,6 +10,9 @@ from unittest.mock import Mock, patch
 
 import prod_cd_select as select
 from staging_cd_common import Refusal
+from staging_cd_policy import selected, switches
+from staging_cd_targets import RUNTIME_TARGETS, TARGETS
+from staging_cd_versions import DEPLOYABLES
 
 MERGE, RELEASED, PREVIOUS = "m" * 0 + "1" * 40, "2" * 40, "3" * 40
 WEB = "ghcr.io/chronoaiproject/cma-web@sha256:" + "4" * 64
@@ -74,13 +77,41 @@ class ReleaseCommitTests(unittest.TestCase):
 
 
 class SelectionTests(unittest.TestCase):
-    def test_runtime_images_follow_the_agent_manager_switch(self):
+    def test_production_selects_enabled_applications_without_runtime_images(self):
         policy = {"am": False, "eg": False, "web": True}
-        targets, runtimes = {"am", "eg", "web", "runtime", "runtime-omarchy"}, {"runtime", "runtime-omarchy"}
-        self.assertEqual(select.enabled_components(policy, targets, runtimes), ["web"])
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS), ["web"])
         policy["am"] = True
-        self.assertEqual(select.enabled_components(policy, targets, runtimes),
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS), ["am", "web"])
+        policy["eg"] = True
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS), ["am", "eg", "web"])
+        policy["runtime"] = False
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS), ["am", "eg", "web"])
+
+    def test_only_an_explicit_runtime_switch_promotes_runtime_images_and_only_with_am(self):
+        policy = {"am": True, "eg": False, "web": True, "runtime": True}
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS),
                          ["am", "runtime", "runtime-omarchy", "web"])
+        # Runtime images are Agent Manager settings: the switch alone promotes nothing.
+        policy["am"] = False
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS), ["web"])
+        # Only a literal true is an explicit switch.
+        policy.update(am=True, runtime="enabled")
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS), ["am", "web"])
+
+    def test_staging_still_deploys_runtime_images_with_am_from_the_same_switches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "chrono-cd/scripts/deploy_set.py"
+            script.parent.mkdir(parents=True)
+            config = script.parent.parent / "config.yaml"
+            config.write_text("apps:\n  am: {deploy: enabled}\n  eg: {deploy: enabled}\n  web: {deploy: enabled}\n")
+            self.assertEqual(select.enabled_components(switches(script), TARGETS, RUNTIME_TARGETS),
+                             ["am", "eg", "web"])
+            self.assertEqual(selected(script, sorted(TARGETS), automatic=True, mode="release"),
+                             ["am", "eg", "runtime", "runtime-omarchy", "web"])
+            # A private config cannot carry a runtime switch without a reviewed policy change.
+            config.write_text(config.read_text() + "  runtime: {deploy: enabled}\n")
+            with self.assertRaisesRegex(Refusal, "target set differs"):
+                switches(script)
 
     def test_newest_version_at_or_before_the_release_commit_is_chosen(self):
         newer, older = "5" * 40, "6" * 40
@@ -256,10 +287,14 @@ class EntryTests(unittest.TestCase):
                 # After approval the components come from the approved set, not the private config.
                 switches.assert_not_called()
                 self.assertEqual(planner.call_args.args[3], {"am": False, "eg": False, "web": False})
-                select.os.environ["CD_RELEASE_SET"] = json.dumps({"schema": "x", "receipts": {"web": {}, "runtime": {}}})
-                with self.assertRaises(Refusal):
-                    select.main()
-                self.assertEqual(planner.call_args.args[3], {"am": True, "eg": False, "web": True})
+                # An approved runtime image is refused before any re-selection, never dropped.
+                planner.reset_mock()
+                for runtime in sorted(RUNTIME_TARGETS):
+                    select.os.environ["CD_RELEASE_SET"] = json.dumps(
+                        dict(value, receipts={"am": {}, "eg": {}, "web": {}, runtime: {}}))
+                    with self.assertRaisesRegex(Refusal, "must not hold a runtime image"):
+                        select.main()
+                planner.assert_not_called()
                 select.os.environ["CD_RELEASE_SET"] = json.dumps(dict(value, receipts={"web": {}}))
                 with self.assertRaisesRegex(Refusal, "no longer matches"):
                     select.main()
@@ -268,6 +303,40 @@ class EntryTests(unittest.TestCase):
             with patch.object(select, "plan", return_value=(None, RELEASED)):
                 self.assertEqual(select.main(), 0)
             self.assertEqual(outputs, {"released": RELEASED, "release_set": ""})
+
+    def test_an_enabled_am_release_selects_and_reproduces_applications_without_runtimes(self):
+        outputs, plan, runner = {}, select.plan, git_runner([MERGE, PREVIOUS, RELEASED])
+        api = Mock(tags=lambda c: [{"name": DEPLOYABLES[c] + "/v1.2.3", "target": RELEASED}],
+                   history=Mock(return_value=History([RELEASED])))
+
+        def dispatch(inputs, _api, _registry):
+            return "release", {"schema": "cma-deployment-set-v1", "receipts": {
+                c: {"repository": "ghcr.io/chronoaiproject/" + DEPLOYABLES[c], "digest": "sha256:" + "4" * 64}
+                for c in inputs["deployables"].split(",")}}
+
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(PlanTests().environment(Path(directory)), GH_TOKEN="token",
+                       CD_PRIVATE_CONTROLLER="/private/prod/chrono-cd")
+            with patch.dict(select.os.environ, env, clear=True), \
+                    patch("staging_cd_runtime.run_private", autospec=True,
+                          side_effect=lambda operation, _, **_kw: 0 if operation(None) else 1), \
+                    patch("staging_cd_resolve.output", side_effect=lambda _env, name, v: outputs.__setitem__(name, v)), \
+                    patch("staging_cd_github.GitHub", return_value=api), patch("staging_cd_registry.Registry"), \
+                    patch("staging_cd_policy.switches", return_value={"am": True, "eg": True, "web": True}), \
+                    patch("staging_cd_clock.timestamp", return_value="2026-11-20T00:00:00Z"), \
+                    patch("staging_cd_set.dispatch_set", side_effect=dispatch) as dispatcher, \
+                    patch.object(select, "staging_verified", side_effect=lambda images, *_: set(images)), \
+                    patch.object(select, "plan", side_effect=lambda *a, **k: plan(*a, runner=runner, **k)):
+                self.assertEqual(select.main(), 0)
+                planned = dispatcher.call_args.args[0]
+                self.assertEqual((planned["deployables"], sorted(json.loads(planned["versions"]))),
+                                 ("am,eg,web", ["am", "eg", "web"]))
+                self.assertEqual(sorted(json.loads(outputs["release_set"])["receipts"]), ["am", "eg", "web"])
+                # The deploy job re-derives the policy from the approved set and reproduces it exactly.
+                select.os.environ["CD_RELEASE_SET"] = outputs["release_set"]
+                self.assertEqual(select.main(), 0)
+                self.assertEqual(dispatcher.call_args.args[0], planned)
+                self.assertEqual(outputs["started_at"], "2026-11-20T00:00:00Z")
 
 if __name__ == "__main__":
     unittest.main()

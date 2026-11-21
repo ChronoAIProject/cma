@@ -9,6 +9,12 @@ controller-verified by staging: a staging deployment evidence artifact,
 written by staging-cd.yml or redeploy-staging.yml on develop, must record it
 as controller-verified. The set is then rebuilt and re-verified by the same
 dispatch_set path staging redeploys use.
+
+Production selects only the application components (am, eg, web). It has no
+reviewed runtime-promotion design, so the runtime images stay pinned in
+Agent Manager's private configuration and are never selected, and an
+approved set that holds one is refused. Staging still deploys runtime images
+with Agent Manager; that rule lives in staging_cd_policy and is unchanged.
 """
 
 import io
@@ -92,8 +98,14 @@ def release_bounds(env, root, *, head=main_head, runner=subprocess.run):
 
 
 def enabled_components(policy, targets, runtime_targets):
-    """Runtime images are Agent Manager settings, so they follow the AM switch."""
-    return sorted(c for c in targets if policy["am" if c in runtime_targets else c])
+    """Enabled applications, plus runtime images only under an explicit promotion switch.
+
+    Production's private controller has no "runtime" switch, so it never
+    selects a runtime image. Runtime images are Agent Manager settings, so
+    even an explicit switch promotes them only together with AM.
+    """
+    runtimes = policy.get("runtime") is True and policy["am"]
+    return sorted(c for c in targets if (runtimes if c in runtime_targets else policy[c]))
 
 
 def select_versions(released, components, tags, history):
@@ -216,6 +228,8 @@ def main():
     re-selection reproduces the identical set, not when the run was created.
     The re-selection covers exactly the approved components; the controller
     invocation then applies production's deploy switches as the final word.
+    Selection never yields a runtime image, so an approved set holding one is
+    refused before anything is re-selected, never silently narrowed.
     """
     from staging_cd_clock import timestamp
     from staging_cd_github import GitHub
@@ -224,7 +238,7 @@ def main():
     from staging_cd_resolve import output
     from staging_cd_runtime import run_private
     from staging_cd_set import document
-    from staging_cd_targets import RUNTIME_TARGETS
+    from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS
     from staging_cd_versions import DEPLOYABLES
 
     env = os.environ
@@ -237,8 +251,9 @@ def main():
             policy = switches(Path(env["CD_PRIVATE_CONTROLLER"]) / "scripts" / "deploy_set.py")
         else:
             components = set(document(approved)["receipts"])
-            policy = {"am": "am" in components or bool(components & RUNTIME_TARGETS),
-                      "eg": "eg" in components, "web": "web" in components}
+            require(not components & RUNTIME_TARGETS,
+                    "An approved production release set must not hold a runtime image")
+            policy = {key: key in components for key in sorted(APP_TARGETS)}
         api, registry = GitHub(env.get("GH_TOKEN")), Registry()
         value, released = plan(env, api, registry, policy, root=Path.cwd(),
                                download=gh_download(env["GH_TOKEN"]), deployables=DEPLOYABLES)
