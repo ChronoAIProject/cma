@@ -150,6 +150,8 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "sandbox_retained_availability",
     "sandbox_sessions",
     "sandboxes",
+    super::home_backups::SCHEDULES_COLLECTION,
+    super::home_backups::BACKUPS_COLLECTION,
     "service_connection_handoffs",
     "trigger_definition_revisions",
     "trigger_definitions",
@@ -167,6 +169,8 @@ pub(crate) const COLLECTIONS: &[&str] = &[
 // These derived stores are activated separately. Existing credentials must
 // still start while the feature is disabled; partial grants remain invalid.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
+    super::home_backups::SCHEDULES_COLLECTION,
+    super::home_backups::BACKUPS_COLLECTION,
     super::allocation_buckets::COLLECTION,
     super::agent_observation::COLLECTION,
 ];
