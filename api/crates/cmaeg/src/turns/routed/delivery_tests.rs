@@ -11,6 +11,9 @@ use tokio::sync::mpsc;
 #[path = "complete_relay_tests.rs"]
 mod complete_relay;
 
+#[path = "delivery_replay_activity_tests.rs"]
+mod replay_activity;
+
 pub(super) fn lane(setup: &Setup) -> (RoutedDelivery, mpsc::Receiver<DeliveryCommand>) {
     let (tx, rx) = mpsc::channel(1);
     (

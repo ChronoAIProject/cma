@@ -206,6 +206,7 @@ mod tests {
             dispatched_at: None,
             accepted_at: None,
             produced_at: None,
+            produced_by: None,
             completed_at: None,
             response_id: None,
             deliveries: Vec::new(),

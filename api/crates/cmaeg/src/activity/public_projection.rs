@@ -13,6 +13,9 @@ pub(crate) fn public_activity(activity: &ChannelActivity) -> ChannelActivity {
         }
         .into(),
     );
+    for consumer in &mut public.consumers {
+        consumer.produced_by = consumer.answer_production_bound();
+    }
     public
 }
 

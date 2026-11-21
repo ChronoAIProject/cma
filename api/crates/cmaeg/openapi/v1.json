@@ -140,6 +140,13 @@
               "null"
             ]
           },
+          "produced_by": {
+            "description": "Upper bound from the earliest confirmed Answer receipt bound to this\nresponse. Only projected when the exact production time is unavailable.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "provider": {
             "type": [
               "string",
@@ -194,6 +201,13 @@
       },
       "ActivityDelivery": {
         "properties": {
+          "answer_response_id": {
+            "description": "Exact provider response bound to this confirmed Answer at delivery.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "confirmed_at": {
             "description": "Present only for a confirmed platform/transport receipt.",
             "type": [

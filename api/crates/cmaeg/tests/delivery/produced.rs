@@ -73,22 +73,27 @@ fn completed(text: &str) -> TurnOutcome {
     }
 }
 
-#[tokio::test]
-async fn terminal_only_provider_answer_records_produced_before_completion_and_delivery() {
-    let lifecycle = Arc::new(Lifecycle::default());
-    let mut app = App::observed_with(0, Default::default(), FakeProviderConfig {
+async fn terminal_answer(lifecycle: Arc<Lifecycle>, reported_response: &str) -> App {
+    let app = App::observed_with(0, Default::default(), FakeProviderConfig {
         frames: Some(vec![
             json!({"type":"response.created","response":{"id":"terminal-response"}}),
-            json!({"type":"response.completed","response":{"id":"terminal-response","output":[{"type":"message","content":[{"type":"output_text","text":"terminal answer"}]}]}}),
+            json!({"type":"response.completed","response":{"id":reported_response,"output":[{"type":"message","content":[{"type":"output_text","text":"terminal answer"}]}]}}),
         ]),
         ..Default::default()
-    }, lifecycle.clone()).await;
+    }, lifecycle).await;
     assert_eq!(app.fixture.send(&Envelope::new()).await.status(), 202);
     assert!(
         app.tracker
             .drain(Instant::now() + Duration::from_secs(10))
             .await
     );
+    app
+}
+
+#[tokio::test]
+async fn terminal_only_provider_answer_records_produced_before_completion_and_delivery() {
+    let lifecycle = Arc::new(Lifecycle::default());
+    let mut app = terminal_answer(lifecycle.clone(), "terminal-response").await;
     app.drain().await;
     assert_eq!(app.fake.texts(), ["terminal answer"]);
     assert_eq!(
@@ -109,6 +114,10 @@ async fn terminal_only_provider_answer_records_produced_before_completion_and_de
     assert_eq!(consumer.deliveries.len(), 1);
     assert_eq!(consumer.deliveries[0].step, "answer");
     assert_eq!(consumer.deliveries[0].outcome, "confirmed");
+    assert_eq!(
+        consumer.deliveries[0].answer_response_id.as_deref(),
+        Some("terminal-response")
+    );
     assert!(produced <= consumer.deliveries[0].confirmed_at.as_ref().unwrap());
     let changes = lifecycle.changes.lock().unwrap();
     let produced_index = changes
@@ -256,6 +265,7 @@ async fn terminal_production_stays_with_its_consumer_and_response() {
                 .send(DeliveryCommand::StreamOutcome {
                     turn: turn.clone(),
                     outcome,
+                    answer_response_id: Some(response.into()),
                 })
                 .await
                 .unwrap();
@@ -280,6 +290,10 @@ async fn terminal_production_stays_with_its_consumer_and_response() {
     assert!(a.produced_at.is_some());
     assert!(b.produced_at.is_none());
     assert_eq!(a.deliveries.len(), 1);
+    assert_eq!(
+        a.deliveries[0].answer_response_id.as_deref(),
+        Some("response-a")
+    );
     assert!(b.deliveries.is_empty());
     assert_eq!(a.state, ConsumerState::Completed);
     assert_eq!(b.state, ConsumerState::Completed);
@@ -291,15 +305,33 @@ async fn lost_produced_checkpoint_never_retries_the_answer() {
         discard_produced: true,
         ..Default::default()
     });
-    let mut app = App::observed(0, lifecycle.clone()).await;
-    app.outcome(accepted("response")).await;
-    app.outcome(completed("answer")).await;
-    app.outcome(completed("answer")).await;
+    let mut app = terminal_answer(lifecycle.clone(), "terminal-response").await;
+    app.outcome(completed("terminal answer")).await;
     app.drain().await;
-    assert_eq!(app.fake.texts(), ["answer"]);
+    assert_eq!(app.fake.texts(), ["terminal answer"]);
     let row = lifecycle.row(&app);
     assert!(row.consumers[0].produced_at.is_none());
     assert_eq!(row.consumers[0].state, ConsumerState::Completed);
     assert_eq!(row.consumers[0].deliveries.len(), 1);
     assert_eq!(row.consumers[0].deliveries[0].outcome, "confirmed");
+    assert_eq!(
+        row.consumers[0].deliveries[0].answer_response_id.as_deref(),
+        Some("terminal-response")
+    );
+}
+
+#[tokio::test]
+async fn conflicting_provider_identity_does_not_bind_a_confirmed_answer() {
+    let lifecycle = Arc::new(Lifecycle {
+        discard_produced: true,
+        ..Default::default()
+    });
+    let mut app = terminal_answer(lifecycle.clone(), "different-response").await;
+    app.drain().await;
+    assert_eq!(app.fake.texts(), ["terminal answer"]);
+    let row = lifecycle.row(&app);
+    let consumer = &row.consumers[0];
+    assert_eq!(consumer.response_id.as_deref(), Some("terminal-response"));
+    assert_eq!(consumer.deliveries[0].outcome, "confirmed");
+    assert!(consumer.deliveries[0].answer_response_id.is_none());
 }

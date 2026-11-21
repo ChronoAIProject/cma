@@ -51,6 +51,7 @@ export interface ActivityConsumer {
   dispatched_at: string | null;
   accepted_at: string | null;
   produced_at: string | null;
+  produced_by?: string;
   completed_at: string | null;
   response_id: string | null;
   deliveries: ActivityDelivery[];
@@ -128,6 +129,7 @@ export function useChannelActivity(channelId: string, owner: string, active: boo
                   (consumer.refusal_code != null && typeof consumer.refusal_code !== 'string') ||
                   (consumer.last_non_admission_code != null &&
                     typeof consumer.last_non_admission_code !== 'string') ||
+                  (consumer.produced_by != null && typeof consumer.produced_by !== 'string') ||
                   !Array.isArray(consumer.deliveries) ||
                   consumer.deliveries.some(
                     (delivery) =>

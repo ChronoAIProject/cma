@@ -53,9 +53,17 @@ impl Sender {
         event: &EventRefPayload,
         step: DeliveryStep,
         outcome: &DeliveryOutcome,
+        answer_response_id: Option<&str>,
     ) {
-        self.observe_at(event, step, outcome, Destination::Origin, None)
-            .await;
+        self.observe_at(
+            event,
+            step,
+            outcome,
+            Destination::Origin,
+            None,
+            answer_response_id,
+        )
+        .await;
     }
     pub async fn observe_at(
         &self,
@@ -64,6 +72,7 @@ impl Sender {
         outcome: &DeliveryOutcome,
         destination: Destination,
         default: Option<&super::destination::DefaultDestination>,
+        answer_response_id: Option<&str>,
     ) {
         self.observer.delivered(
             &event.record_id,
@@ -102,7 +111,8 @@ impl Sender {
                     destination,
                     &event.reply,
                     default,
-                ),
+                )
+                .with_answer_response(answer_response_id),
             )
             .await;
     }

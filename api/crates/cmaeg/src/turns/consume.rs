@@ -23,6 +23,7 @@ pub(super) async fn consume(
     admitted: &mut Option<oneshot::Sender<LaunchOutcome>>,
 ) -> Result<&'static str, &'static str> {
     let mut acceptance_pending = true;
+    let mut accepted_response = None;
     let mut projection = Projection::default();
     let mut trace = None;
     loop {
@@ -37,11 +38,23 @@ pub(super) async fn consume(
                     .record(accepted.at.saturating_duration_since(stream.request_started).as_secs_f64());
                 tracing::info!(metric="cmaeg_provider_accept_seconds",duration_seconds=accepted.at.saturating_duration_since(stream.request_started).as_secs_f64(),"provider accepted turn");
                 if let Some(sender) = admitted.take() {let _ = sender.send(LaunchOutcome::Accepted {response_id:accepted.response_id.clone()});}
-                send(delivery,&turn,TurnOutcome::Accepted {response_id:accepted.response_id,thread_reply:accepted.thread_reply}).await?;
+                accepted_response = Some(accepted.response_id.clone());
+                send(delivery,&turn,TurnOutcome::Accepted {response_id:accepted.response_id,thread_reply:accepted.thread_reply}, None).await?;
             }
             event = stream.events.recv() => {
                 let Some(event) = event else {return Err("stream_lost");};
                 adopt_trace(&stream, &turn, &mut trace);
+                let reported_response = match &event {
+                    crate::providers::ResponsesEvent::Created { response_id, .. } => Some(response_id.as_str()),
+                    crate::providers::ResponsesEvent::Completed { response } => {
+                        response.get("id").or_else(|| response.get("response_id")).and_then(serde_json::Value::as_str)
+                    }
+                    _ => None,
+                };
+                if reported_response.zip(accepted_response.as_deref()).is_some_and(|(reported, accepted)| reported != accepted) {
+                    tracing::warn!("provider stream reported conflicting response identity");
+                    accepted_response = None;
+                }
                 if let crate::providers::ResponsesEvent::Created {
                     response_id, native_agent_id: Some(agent_id), ..
                 } = &event {
@@ -59,7 +72,11 @@ pub(super) async fn consume(
                     if terminal && acceptance_pending {
                         refuse(admitted,ProblemCode::ProviderUnavailable,"provider stream ended before acceptance");
                     }
-                    send(delivery,&turn,outcome).await?;
+                    let answer_response_id = match &outcome {
+                        TurnOutcome::MessageCommitted { .. } | TurnOutcome::Completed { .. } => accepted_response.clone(),
+                        _ => None,
+                    };
+                    send(delivery,&turn,outcome, answer_response_id).await?;
                     if terminal {
                         if let Some(trace) = trace {trace.finish(Outcome::Streamed);}
                         return Ok(kind);
@@ -82,15 +99,17 @@ fn adopt_trace(stream: &TurnStream, turn: &LaunchRequest, trace: &mut Option<Bou
         *trace = Some(operation);
     }
 }
-pub(super) async fn send(
+async fn send(
     delivery: &dyn DeliverySink,
     turn: &Arc<LaunchRequest>,
     outcome: TurnOutcome,
+    answer_response_id: Option<String>,
 ) -> Result<(), &'static str> {
     delivery
         .submit(DeliveryCommand::StreamOutcome {
             turn: turn.clone(),
             outcome,
+            answer_response_id,
         })
         .await
         .map_err(|_| "delivery_unavailable")
