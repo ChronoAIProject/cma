@@ -17,6 +17,7 @@ import { AnswerDeliverables } from './AnswerDeliverables';
 import { answerProse } from './answerDeliveries';
 import type { ConversationState } from './model';
 import type { TaskAcceptance } from '@cma/client';
+import { taskAcceptanceLabel, taskAcceptanceReason } from './taskAcceptance';
 
 function StreamEntryView({
   entry,
@@ -26,6 +27,7 @@ function StreamEntryView({
   activeRunId,
   planOutcome,
   taskAcceptance,
+  verdictOnAnswer,
   onTaskDeliveryConfirmed,
   user,
   unknownUserName,
@@ -40,6 +42,7 @@ function StreamEntryView({
   readonly activeRunId?: string;
   readonly planOutcome?: NonNullable<ConversationState['turnOutcomes']>[string];
   readonly taskAcceptance?: TaskAcceptance;
+  readonly verdictOnAnswer?: boolean;
   readonly onTaskDeliveryConfirmed?: () => void;
   readonly user?: MessageUser;
   readonly unknownUserName?: string;
@@ -65,6 +68,7 @@ function StreamEntryView({
             references: 0,
           };
     const identity = messageIdentity(message.role, user, unknownUserName);
+    const verdict = canDeliver && verdictOnAnswer ? taskAcceptanceLabel(taskAcceptance) : undefined;
     return (
       <article
         className={`message message--${message.role}`}
@@ -90,6 +94,11 @@ function StreamEntryView({
               taskAcceptance={taskAcceptance}
               onTaskDeliveryConfirmed={onTaskDeliveryConfirmed}
             />
+          ) : null}
+          {verdict ? (
+            <p className="message__delivery" role="status">
+              {[verdict, taskAcceptanceReason(taskAcceptance)].filter(Boolean).join(' · ')}
+            </p>
           ) : null}
           {message.retainedPartial?.loading ? (
             <p className="message__delivery" role="status">
@@ -140,11 +149,7 @@ function StreamEntryView({
         plan={entry.item}
         active={entry.item.runId !== undefined && entry.item.runId === activeRunId}
         outcome={planOutcome}
-        taskAcceptance={
-          taskAcceptance && entry.item.runId === String(taskAcceptance.turn_sequence)
-            ? taskAcceptance
-            : undefined
-        }
+        taskAcceptance={taskAcceptance}
       />
     );
   if (entry.kind === 'recovery') {
@@ -204,6 +209,7 @@ export const StreamEntry = memo(StreamEntryView, (previous, next) => {
       previous.unknownUserName === next.unknownUserName &&
       previous.feedback === next.feedback &&
       previous.taskAcceptance === next.taskAcceptance &&
+      previous.verdictOnAnswer === next.verdictOnAnswer &&
       previous.onTaskDeliveryConfirmed === next.onTaskDeliveryConfirmed &&
       previous.continued === next.continued
     );

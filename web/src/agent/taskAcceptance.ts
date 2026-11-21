@@ -1,5 +1,9 @@
 import type { TaskAcceptance } from '@cma/client';
 
+export function acceptanceForTurn(task: TaskAcceptance | undefined, turnId: string | undefined) {
+  return task && String(task.turn_sequence) === turnId ? task : undefined;
+}
+
 export function taskAcceptanceStatus(task: TaskAcceptance | undefined) {
   switch (task?.verdict.status) {
     case 'succeeded':

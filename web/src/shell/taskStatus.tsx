@@ -4,7 +4,7 @@ import { sameAgent } from '../agent/status';
 import { sandboxChildStatus } from '../sandbox/lifecycle';
 import { toneDot } from '../ui/Badge';
 import { statusTone } from '../vocabulary/status';
-import { taskAcceptanceStatus } from '../agent/taskAcceptance';
+import { acceptanceForTurn, taskAcceptanceStatus } from '../agent/taskAcceptance';
 
 export const taskWords = {
   loading: 'Loading activity',
@@ -25,7 +25,8 @@ export type TaskStatus = keyof typeof taskWords;
 
 export interface CurrentTask {
   readonly agent: AgentDetail;
-  readonly status: ActivityStatus;
+  readonly status?: ActivityStatus;
+  readonly turnId?: string;
 }
 
 export function observedTaskStatus(
@@ -34,18 +35,26 @@ export function observedTaskStatus(
   current?: CurrentTask,
 ): TaskStatus {
   const status = sandbox === undefined ? agent.status : sandboxChildStatus(sandbox, agent.status);
-  const sameTask = current !== undefined && sameAgent(current.agent, agent);
-  if (status === 'ready') {
-    const verdict = taskAcceptanceStatus(
-      sameTask ? (current.agent.taskAcceptance ?? agent.taskAcceptance) : agent.taskAcceptance,
-    );
-    if (verdict) return verdict;
-  }
-  return current !== undefined &&
-    sameTask &&
+  if (
+    current !== undefined &&
+    sameAgent(current.agent, agent) &&
     (status === 'ready' || status === 'working' || status === 'waiting_approval')
-    ? current.status
-    : taskStatus(agent, sandbox);
+  ) {
+    const acceptance = acceptanceForTurn(
+      current.agent.taskAcceptance ?? agent.taskAcceptance,
+      current.turnId,
+    );
+    if (current.status !== undefined) {
+      const verdict =
+        status === 'ready' && current.status === 'completed'
+          ? taskAcceptanceStatus(acceptance)
+          : undefined;
+      return verdict ?? current.status;
+    }
+    if (status === 'ready' && current.turnId !== undefined)
+      return taskStatus({ ...agent, taskAcceptance: acceptance }, sandbox);
+  }
+  return taskStatus(agent, sandbox);
 }
 
 export function taskStatus(
@@ -55,8 +64,11 @@ export function taskStatus(
   if (agent.status === 'ready' && (agent.taskStatus === 'failed' || agent.taskStatus === 'stopped'))
     return agent.taskStatus;
   const status = sandbox === undefined ? agent.status : sandboxChildStatus(sandbox, agent.status);
-  if (status === 'ready')
-    return taskAcceptanceStatus(agent.taskAcceptance) ?? agent.taskStatus ?? 'unknown';
+  if (status === 'ready') {
+    const verdict =
+      agent.taskStatus === 'completed' ? taskAcceptanceStatus(agent.taskAcceptance) : undefined;
+    return verdict ?? agent.taskStatus ?? 'unknown';
+  }
   if (status === 'pausing') return 'paused';
   if (
     status === 'working' ||

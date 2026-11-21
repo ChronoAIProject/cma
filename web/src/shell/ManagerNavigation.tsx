@@ -31,6 +31,7 @@ function ViewerNavigation({
   navigation,
   currentAgent,
   currentActivity,
+  currentTurnId,
   permissions,
   pending,
   busySandboxIds,
@@ -49,6 +50,7 @@ function ViewerNavigation({
   readonly navigation: NavigationState & { refresh: () => void };
   readonly currentAgent?: AgentDetail;
   readonly currentActivity?: ActivityStatus;
+  readonly currentTurnId?: string;
   readonly permissions: TreePermissions;
   readonly pending: boolean;
   readonly busySandboxIds: ReadonlySet<string>;
@@ -126,8 +128,8 @@ function ViewerNavigation({
             ) : null}
             <Tree
               currentTask={
-                currentAgent && currentActivity
-                  ? { agent: currentAgent, status: currentActivity }
+                currentAgent && (currentActivity !== undefined || currentTurnId !== undefined)
+                  ? { agent: currentAgent, status: currentActivity, turnId: currentTurnId }
                   : undefined
               }
               active={panelView === view}

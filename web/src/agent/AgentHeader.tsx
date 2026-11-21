@@ -6,7 +6,7 @@ import { activityWords, type ActivityStatus } from './activityStatus';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
 import type { TaskAcceptance } from '@cma/client';
-import { taskAcceptanceLabel, taskAcceptanceReason } from './taskAcceptance';
+import { acceptanceForTurn, taskAcceptanceLabel, taskAcceptanceReason } from './taskAcceptance';
 import { Menu, type MenuEntry } from '../ui/Menu';
 import type { Crumb } from '../ui/PageHeader';
 import {
@@ -26,6 +26,7 @@ export function AgentHeader({
   title,
   status,
   activityStatus,
+  turnId,
   taskAcceptance,
   headingRef,
   detailsOpen,
@@ -44,6 +45,7 @@ export function AgentHeader({
   readonly title: string;
   readonly status: AgentStatus;
   readonly activityStatus?: ActivityStatus;
+  readonly turnId?: string;
   readonly taskAcceptance?: TaskAcceptance;
   readonly breadcrumb: readonly Crumb[];
   readonly branch?: string;
@@ -64,8 +66,9 @@ export function AgentHeader({
   readonly onViewDeletionStatus?: () => void;
   readonly onReviewEnvironment?: () => void;
 }) {
-  const acceptanceLabel = status === 'ready' ? taskAcceptanceLabel(taskAcceptance) : undefined;
-  const acceptanceReason = taskAcceptanceReason(taskAcceptance);
+  const acceptance = status === 'ready' ? acceptanceForTurn(taskAcceptance, turnId) : undefined;
+  const acceptanceLabel = taskAcceptanceLabel(acceptance);
+  const acceptanceReason = taskAcceptanceReason(acceptance);
   const [open, setOpen] = useState(false);
   const sidebar = useContext(SidebarContext);
   const remove = moreActions.find((item) => item.id === 'delete_agent');

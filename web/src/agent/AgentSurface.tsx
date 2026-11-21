@@ -248,6 +248,9 @@ export function AgentSurface({
           title={title}
           status={status}
           activityStatus={state.activityStatus}
+          turnId={
+            historyIncomplete || running || accessUncertain ? undefined : conversation.latestTurnId
+          }
           taskAcceptance={accessUncertain ? undefined : detail.taskAcceptance}
           headingRef={headingRef}
           viewerId={viewerId}
