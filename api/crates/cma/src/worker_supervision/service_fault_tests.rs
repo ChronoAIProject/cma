@@ -7,6 +7,7 @@ pub(super) enum Fault {
     Panic,
     Exit,
     Stall,
+    ExitThenStartupStall,
 }
 
 fn activities() -> &'static Mutex<HashMap<&'static str, Activity>> {
@@ -24,6 +25,10 @@ pub(super) async fn inject(activity: Activity, future: impl Future<Output = ()>)
         match fault {
             Some(Fault::Panic) => panic!("injected scheduling panic: {name}"),
             Some(Fault::Exit) => return Poll::Ready(()),
+            Some(Fault::ExitThenStartupStall) => {
+                activity.0.lock().unwrap().fault = Some(Fault::Stall);
+                return Poll::Ready(());
+            }
             Some(Fault::Stall) => stalled = true,
             None => {}
         }
@@ -44,14 +49,7 @@ struct Probe {
 
 impl Probe {
     async fn ready(&self) -> Option<(u16, serde_json::Value)> {
-        let response = self
-            .client
-            .get(format!("{}/ready", self.http))
-            .send()
-            .await
-            .ok()?;
-        let code = response.status().as_u16();
-        Some((code, response.json().await.ok()?))
+        read_ready(&self.client, &self.http).await
     }
 
     async fn metrics(&self) -> String {
@@ -79,6 +77,12 @@ impl Probe {
     }
 }
 
+async fn read_ready(client: &reqwest::Client, http: &str) -> Option<(u16, serde_json::Value)> {
+    let response = client.get(format!("{http}/ready")).send().await.ok()?;
+    let code = response.status().as_u16();
+    Some((code, response.json().await.ok()?))
+}
+
 fn counter(metrics: &str, name: &str, worker: &str, reason: Option<&str>) -> u64 {
     metrics
         .lines()
@@ -91,9 +95,7 @@ fn counter(metrics: &str, name: &str, worker: &str, reason: Option<&str>) -> u64
         .sum()
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "starts the full service; requires explicitly isolated Mongo/provider configuration"]
-async fn whole_service_worker_failures_recover_over_http() {
+fn fixture_config() -> crate::config::Config {
     assert_eq!(
         std::env::var("CHRONO_TEST_WORKER_SERVICE_FAULTS").as_deref(),
         Ok("isolated")
@@ -107,6 +109,20 @@ async fn whole_service_worker_failures_recover_over_http() {
     assert!(config
         .mongodb_database
         .starts_with("cma_worker_supervision_"));
+    config
+}
+
+fn probe_client() -> reqwest::Client {
+    reqwest::Client::builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "starts the full service; requires explicitly isolated Mongo/provider configuration"]
+async fn whole_service_worker_failures_recover_over_http() {
+    let config = fixture_config();
     assert!(
         config.bind.ip().is_loopback(),
         "fault tests require loopback HTTP"
@@ -115,16 +131,41 @@ async fn whole_service_worker_failures_recover_over_http() {
         config.metrics_bind.ip().is_loopback(),
         "fault tests require loopback metrics"
     );
+    assert!(
+        std::env::var_os("KUBECONFIG").is_some()
+            && config.runtime.agent_sandbox_connection.is_none(),
+        "fault tests require an explicit local Kubernetes fixture"
+    );
+    let kube = kube::Config::infer()
+        .await
+        .expect("local Kubernetes fixture");
+    assert!(
+        matches!(
+            kube.cluster_url.host(),
+            Some("127.0.0.1" | "localhost" | "[::1]")
+        ),
+        "fault tests require a loopback Kubernetes endpoint"
+    );
+    if !config.runtime.sandbox_base_url.is_empty() {
+        let provider = url::Url::parse(&config.runtime.sandbox_base_url).unwrap();
+        assert!(
+            matches!(
+                provider.host_str(),
+                Some("127.0.0.1" | "localhost" | "[::1]")
+            ),
+            "fault tests require a loopback Sandbox provider"
+        );
+    }
     let probe = Probe {
-        client: reqwest::Client::builder()
-            .timeout(Duration::from_secs(3))
-            .build()
-            .unwrap(),
+        client: probe_client(),
         http: format!("http://{}", config.bind),
         metrics: format!("http://{}/metrics", config.metrics_bind),
     };
-    let service = tokio::spawn(crate::serve());
-    probe.ready_within(45).await;
+    let mut service = tokio::spawn(crate::serve());
+    tokio::select! {
+        result = &mut service => panic!("whole service exited before readiness: {result:?}"),
+        () = probe.ready_within(45) => {}
+    }
     let mut results = Vec::new();
     for worker in [
         "launches",
@@ -164,6 +205,7 @@ async fn exercise(probe: &Probe, worker: &'static str, fault: Fault) -> serde_js
         Fault::Panic => "panic",
         Fault::Exit => "exit",
         Fault::Stall => "stall",
+        Fault::ExitThenStartupStall => unreachable!("startup fault has a dedicated exercise"),
     };
     let exits = counter(
         &before,
@@ -251,4 +293,185 @@ async fn exercise(probe: &Probe, worker: &'static str, fault: Fault) -> serde_js
         unavailable_at.unwrap()
     );
     result
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires explicitly isolated Mongo configuration"]
+async fn startup_recovery_with_owned_completion() {
+    use layer2_core::{OperationClaim, OperationReservation, OperationStore, SubjectId};
+    use std::time::SystemTime;
+    use tokio::{
+        sync::{mpsc, oneshot},
+        task::JoinSet,
+    };
+
+    let config = fixture_config();
+    let client = probe_client();
+    let stores = Arc::new(
+        crate::store::MongoStores::connect_with_authority(
+            &config.mongodb_uri,
+            &config.mongodb_database,
+            &config.deployment_id,
+            &config.auth_encryption_key,
+            config.activity_retention,
+            (
+                &config.runtime.sandbox_image,
+                config.runtime.home_policy.as_ref(),
+            ),
+            config.mongodb_authority,
+        )
+        .await
+        .unwrap(),
+    );
+    let claim = OperationClaim::new(
+        SubjectId::new("worker-supervision-fixture"),
+        "complete-owned-work",
+        uuid::Uuid::new_v4().simple().to_string(),
+        [1; 32],
+        SystemTime::now() + Duration::from_secs(60),
+        Duration::from_secs(60),
+    );
+    let operations = stores.operations.clone();
+    assert_eq!(
+        operations.reserve(&claim).await.unwrap(),
+        OperationReservation::Acquired
+    );
+    let (release, held) = oneshot::channel();
+    let (finished, mut completion) = mpsc::unbounded_channel();
+    let mut children = JoinSet::new();
+    let child_claim = claim.clone();
+    let child_store = operations.clone();
+    children.spawn(async move {
+        held.await.unwrap();
+        child_store
+            .complete(&child_claim, b"completed".to_vec())
+            .await
+            .unwrap();
+        Instant::now()
+    });
+    let workers = Workers::new();
+    let activity = workers.get("agent_commands");
+    for other in workers
+        .snapshot()
+        .iter()
+        .filter(|worker| worker.worker != "agent_commands")
+    {
+        let other = workers.get(other.worker);
+        other.scheduled();
+        other.waiting(Duration::from_secs(30), "idle_scan");
+    }
+    let (stop, signal) = watch::channel(false);
+    let worker = spawn(
+        children,
+        activity.clone(),
+        signal.clone(),
+        move |children, activity, shutdown| {
+            let finished = finished.clone();
+            Box::pin(async move {
+                let interval = Duration::from_millis(20);
+                loop {
+                    activity.waiting(interval, "idle_scan");
+                    tokio::select! {
+                        _ = crate::shutdown::signalled(shutdown.clone()) => return,
+                        _ = tokio::time::sleep(interval) => {}
+                        result = children.join_next(), if !children.is_empty() => {
+                            finished.send(result.unwrap().unwrap()).unwrap();
+                        }
+                    }
+                    activity.scheduled();
+                }
+            })
+        },
+        |children| Box::pin(children.shutdown()),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let http = format!("http://{}", listener.local_addr().unwrap());
+    let router = crate::health::router_with_workers(stores, workers);
+    let server = tokio::spawn(async move {
+        axum::serve(listener, router)
+            .with_graceful_shutdown(crate::shutdown::signalled(signal))
+            .await
+            .unwrap();
+    });
+    tokio::time::timeout(LOOP_GRACE, async {
+        while read_ready(&client, &http)
+            .await
+            .is_none_or(|(code, _)| code != 200)
+        {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the original scheduler must reach readiness");
+
+    let fault_at = Instant::now();
+    activity.0.lock().unwrap().fault = Some(Fault::ExitThenStartupStall);
+    let mut saw_startup_stall = false;
+    let mut detected_at = None;
+    let resumed_at = tokio::time::timeout(Duration::from_secs(15), async {
+        loop {
+            let (code, body) = read_ready(&client, &http).await.unwrap();
+            assert!(body["dependency"]["reason"].is_null(), "{body}");
+            let workers = body["workers"].as_array().unwrap();
+            let target = workers
+                .iter()
+                .find(|worker| worker["worker"] == "agent_commands")
+                .unwrap();
+            assert!(
+                workers
+                    .iter()
+                    .filter(|worker| worker["worker"] != "agent_commands")
+                    .all(|worker| worker["state"] == "running"),
+                "{body}"
+            );
+            let state = target["state"].as_str().unwrap();
+            let live = client.get(format!("{http}/livez")).send().await.unwrap();
+            assert_eq!(live.status().as_u16(), 200);
+            if state == "running" {
+                assert_eq!(code, 200);
+                if saw_startup_stall {
+                    assert!(
+                        detected_at.is_some(),
+                        "the stalled successor must be restarted"
+                    );
+                    break fault_at.elapsed();
+                }
+            } else {
+                assert_eq!(code, 503);
+                assert_eq!(body["reason"], "workers");
+                if state == "starting" && target["waiting"] == "startup" {
+                    saw_startup_stall = true;
+                }
+                if saw_startup_stall && matches!(state, "suspected_stall" | "backoff") {
+                    detected_at.get_or_insert(fault_at.elapsed());
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("readiness must recover after restarting the stalled successor");
+
+    assert_eq!(
+        operations.reserve(&claim).await.unwrap(),
+        OperationReservation::Pending
+    );
+    release.send(()).unwrap();
+    let completed_at = tokio::time::timeout(LOOP_GRACE, completion.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        operations.reserve(&claim).await.unwrap(),
+        OperationReservation::Complete(b"completed".to_vec())
+    );
+    println!(
+        "startup successor fault: detection={:?}, scheduling={resumed_at:?}, durable completion={:?}",
+        detected_at.unwrap(),
+        completed_at.duration_since(fault_at),
+    );
+    stop.send(true).unwrap();
+    worker.await.unwrap();
+    server.await.unwrap();
+    assert_eq!(completion.recv().await, None, "owned work completes once");
 }
