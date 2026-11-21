@@ -5,14 +5,19 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import staging_cd_publish as publication
 import staging_cd_test_failures as failures
+from staging_cd_build import build
 from staging_cd_build_progress import summarize
+import staging_cd_build_tests
+from staging_cd_publication_diagnostics import ImageCommandRefusal
+from staging_cd_reservations import next_reservation
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt
 
 # Stdout of `node --test` on Node 24.19.0 without a TTY. Each test throws or
@@ -22,6 +27,9 @@ from staging_cd_receipts_tests import fixture_identity, fixture_receipt
 # load; forged.log's test prints a fake spec summary with console.log and a
 # fake unittest block with console.error, which Node forwards to stdout.
 CAPTURES = Path(__file__).resolve().parent / "fixtures" / "node24-test-reporter"
+ROOT = Path(__file__).resolve().parents[2]
+RUNTIME = "api/crates/layer4-runtime/Dockerfile"
+GATEWAY = "api/crates/cmaeg/Dockerfile"
 QUALIFICATION = "[runtime-qualification 1/1] RUN --mount=type=bind,source=private-source cp -a /payload/. /"
 STEP = "runtime-qualification 1/1"
 MEDIA_STEP = "[media-self-test 7/7] RUN --network=none <<'MEDIA_SELF_TEST'"
@@ -226,7 +234,8 @@ def progress(*steps, chunk=37):
 
 
 def failed_qualification(stdout="", stderr=""):
-    return summarize(progress((1, QUALIFICATION, "process did not complete successfully: private", {1: stdout, 2: stderr})))
+    raw = progress((1, QUALIFICATION, "process did not complete successfully: private", {1: stdout, 2: stderr}))
+    return summarize(raw, dockerfile=RUNTIME)
 
 
 class ExtractionTests(unittest.TestCase):
@@ -259,7 +268,7 @@ class ExtractionTests(unittest.TestCase):
         self.assertNotIn("failed_tests", failed_qualification(stderr=TAP))
 
     def test_media_self_test_names_failed_cases_only_in_its_own_stage(self):
-        result = summarize(progress((7, MEDIA_STEP, "private", {1: MEDIA + SPEC})))
+        result = summarize(progress((7, MEDIA_STEP, "private", {1: MEDIA + SPEC})), dockerfile=GATEWAY)
         self.assertEqual(result["failed_tests"], [{"step": "media-self-test 7/7", "file": "voice.ogg",
                                                    "test": "audio timeout"}])
         self.assertNotIn("failed_tests", failed_qualification(stdout=MEDIA))
@@ -276,22 +285,35 @@ class ExtractionTests(unittest.TestCase):
         }
         for case, raw in cases.items():
             with self.subTest(case=case):
-                result = summarize(raw)
+                result = summarize(raw, dockerfile=RUNTIME)
                 self.assertNotIn("failed_tests", result)
                 self.assertNotIn("private", json.dumps(result))
         # Another vertex's output never names a failed qualification step.
         passing = (1, "[runtime-tools 9/12] RUN node private.cjs", None, {1: SPEC})
         failed = (2, QUALIFICATION, "private", {})
-        self.assertNotIn("failed_tests", summarize(progress(passing, failed)))
+        self.assertNotIn("failed_tests", summarize(progress(passing, failed), dockerfile=RUNTIME))
+
+    def test_a_listed_stage_names_tests_only_in_the_dockerfile_bound_to_it(self):
+        qualification = progress((1, QUALIFICATION, "private", {1: SPEC}))
+        media = progress((7, MEDIA_STEP, "private", {1: MEDIA}))
+        self.assertEqual(summarize(qualification, dockerfile=RUNTIME)["failed_tests"], SPEC_NAMES)
+        self.assertEqual(len(summarize(media, dockerfile=GATEWAY)["failed_tests"]), 1)
+        for raw, dockerfile in ((qualification, GATEWAY), (media, RUNTIME), (qualification, None), (media, None),
+                                (qualification, "web/Dockerfile"), (qualification, "private/Dockerfile")):
+            with self.subTest(dockerfile=dockerfile):
+                result = summarize(raw, dockerfile=dockerfile)
+                self.assertNotIn("failed_tests", result)
+                self.assertEqual(len(result["failed_steps"]), 1)
 
     def test_names_are_de_duplicated_bounded_and_ordered_by_failure(self):
         repeated = "".join(f"not ok {n} - flaky {n % 12}\n  ---\n  ...\n" for n in range(1, 40))
         result = failed_qualification(stdout="TAP version 13\n" + repeated)
         self.assertEqual([row["test"] for row in result["failed_tests"]],
                          [f"flaky {n}" for n in range(1, failures.MAX_NAMES + 1)])
-        two = summarize(progress((2, "[runtime-qualification 1/1] RUN y", "private", {1: "TAP version 13\nnot ok 1 - second\n  ---\n"}),
-                                 (1, "[media-self-test 7/7] RUN x", "private", {1: MEDIA})))
-        self.assertEqual([row["step"] for row in two["failed_tests"]], ["media-self-test 7/7", STEP])
+        two = summarize(progress((2, QUALIFICATION, "private", {1: "TAP version 13\nnot ok 1 - second\n  ---\n"}),
+                                 (1, QUALIFICATION, "private", {1: "TAP version 13\nnot ok 1 - first\n  ---\n"})),
+                        dockerfile=RUNTIME)
+        self.assertEqual([row["test"] for row in two["failed_tests"]], ["first", "second"])
 
     def test_malformed_records_are_ignored(self):
         good = {"vertex": digest(1), "stream": 1, "data": base64.b64encode(b"TAP version 13\nnot ok 1 - kept\n  ---\n").decode()}
@@ -303,9 +325,9 @@ class ExtractionTests(unittest.TestCase):
         rows = [{"vertexes": [{"digest": digest(1), "name": QUALIFICATION, "started": "2026-11-21T00:00:01Z",
                                "completed": "2026-11-21T00:00:02Z", "error": "private"}]}]
         raw = b"\n".join(json.dumps(row).encode() for row in records + rows) + b"\nlogs private\n"
-        result = summarize(raw)
+        result = summarize(raw, dockerfile=RUNTIME)
         self.assertEqual(result["failed_tests"], [{"step": STEP, "test": "kept"}])
-        self.assertEqual(summarize(raw.decode())["failed_tests"], result["failed_tests"])
+        self.assertEqual(summarize(raw.decode(), dockerfile=RUNTIME)["failed_tests"], result["failed_tests"])
 
 
     def test_real_node_24_captures_name_only_the_reporters_own_failures(self):
@@ -441,6 +463,86 @@ class SanitizationTests(unittest.TestCase):
         huge.add(b"x" * (failures.HEAD + failures.TAIL) * 3)
         self.assertEqual((len(huge.head), len(huge.tail)), (failures.HEAD, failures.TAIL))
         self.assertEqual(huge.text(), "")
+
+
+def instructions(text):
+    """Dockerfile instructions by stage: continuations joined, heredoc bodies kept."""
+    stages, current, lines, index = {}, None, text.splitlines(), 0
+    while index < len(lines):
+        line = lines[index].strip()
+        index += 1
+        if not line or line.startswith("#"):
+            continue
+        while line.endswith("\\") and index < len(lines):
+            line = line[:-1] + " " + lines[index].strip()
+            index += 1
+        for marker in re.findall(r"<<-?['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?", line):
+            while index < len(lines) and lines[index].strip() != marker:
+                line += "\n" + lines[index]
+                index += 1
+            index += 1
+        keyword = line.split(None, 1)[0].upper()
+        if keyword == "FROM":
+            named = re.search(r"\sAS\s+([A-Za-z0-9_.-]+)\s*$", line, re.IGNORECASE)
+            current = named[1] if named else None
+            if current:
+                stages.setdefault(current, []).append([])
+        elif current:
+            stages[current][-1].append((keyword, line))
+    return stages
+
+
+class BindingTests(unittest.TestCase):
+    def test_each_listed_stage_is_defined_once_in_its_bound_dockerfile_on_public_inputs(self):
+        tracked = subprocess.run(["git", "-C", str(ROOT), "ls-files", "-z", "--", "*Dockerfile", "*.Dockerfile",
+                                  "*Dockerfile.*"], capture_output=True, check=True).stdout.decode().split("\0")
+        parsed = {path: instructions((ROOT / path).read_text()) for path in tracked if path}
+        self.assertIn("api/crates/layer4-runtime/Dockerfile", parsed)
+        # Build arguments the stage may declare itself: only BuildKit's public platform value.
+        arguments = {"runtime-qualification": set(), "media-self-test": {"TARGETARCH"}}
+        self.assertEqual(set(failures.STAGES), set(arguments))
+        for stage, (dockerfile, _parsers) in failures.STAGES.items():
+            with self.subTest(stage=stage):
+                self.assertEqual([path for path, stages in parsed.items() if stage in stages], [dockerfile])
+                self.assertEqual(len(parsed[dockerfile][stage]), 1, "defined exactly once")
+                steps = parsed[dockerfile][stage][0]
+                runs = [line for keyword, line in steps if keyword == "RUN"]
+                self.assertTrue(runs)
+                for line in runs:
+                    self.assertNotRegex(line, r"type=(?:secret|ssh)\b")
+                    self.assertNotRegex(line, r"--(?:secret|ssh)\b")
+                declared = {re.split(r"[=\s]", line.split(None, 1)[1], maxsplit=1)[0]
+                            for keyword, line in steps if keyword == "ARG"}
+                self.assertEqual(declared, arguments[stage])
+        media = parsed["api/crates/cmaeg/Dockerfile"]["media-self-test"][0]
+        tests = [line for keyword, line in media if keyword == "RUN" and "--media-self-test" in line]
+        self.assertEqual(len(tests), 1)
+        self.assertTrue(tests[0].startswith("RUN --network=none "))
+
+    def test_static_check_reads_continuations_heredocs_and_stage_reuse(self):
+        stages = instructions("FROM a AS one\nARG X=1\nRUN --mount=type=secret,id=k \\\n  true\n"
+                              "RUN <<'EOF'\nFROM b AS hidden\nEOF\nFROM one AS one\n# FROM c AS comment\n")
+        self.assertEqual(list(stages), ["one"])
+        self.assertEqual(len(stages["one"]), 2)
+        self.assertEqual([keyword for keyword, _ in stages["one"][0]], ["ARG", "RUN", "RUN"])
+        self.assertIn("type=secret", stages["one"][0][1][1])
+
+    def test_the_build_binds_names_to_the_recipe_dockerfile(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            staging_cd_build_tests.BuildTests().source(source)
+            reservation = next_reservation("web", "a" * 40, "b" * 40, 42, "patch", 1, 1, [], [])
+            stderr = progress((1, QUALIFICATION, "private", {1: SPEC}))
+            for stages, expected in (({}, None), ({"runtime-qualification": ("web/Dockerfile", ("spec",))}, SPEC_NAMES)):
+                with self.subTest(stages=stages), patch.dict(failures.STAGES, stages), \
+                        patch("staging_cd_build.subprocess.run", return_value=Mock(returncode=1, stdout=b"", stderr=stderr)):
+                    summary = {}
+                    with self.assertRaises(ImageCommandRefusal):
+                        build(root, reservation, root, source=source, progress=summary)
+                    self.assertEqual(summary["failed_steps"], [STEP])
+                    self.assertEqual(summary.get("failed_tests"), expected)
 
 
 class AnnotationTests(unittest.TestCase):

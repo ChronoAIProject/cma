@@ -19,7 +19,8 @@ INTERNAL = (("[internal] load metadata for ", "base-image-metadata"),
             ("[internal] load .dockerignore", "build-context"))
 
 
-def summarize(raw):
+def summarize(raw, dockerfile=None):
+    """Fixed facts about one build; failing test names need the Dockerfile that was built."""
     if len(raw) > 64 * 1024**2:
         return {"complete": False, "reason": "progress-size-limit"}
     vertices = {}
@@ -100,7 +101,7 @@ def summarize(raw):
         result["failed_steps"] = list(dict.fromkeys(label for _, label, _ in ordered))[:8]
         # A failed test stage also names its failing tests: only names matched
         # by fixed failure patterns, never its log lines or error messages.
-        tests = failed_tests(raw, [(label, digest) for _, label, digest in ordered])
+        tests = failed_tests(raw, [(label, digest) for _, label, digest in ordered], dockerfile) if dockerfile else []
         if tests:
             result["failed_tests"] = tests
     return result

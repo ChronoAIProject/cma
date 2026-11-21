@@ -16,13 +16,16 @@ import binascii
 import json
 import re
 
-# Each listed stage only runs tests; every other stage's output is never read.
-# runtime-qualification (layer4-runtime/Dockerfile): `node --test` over the
-#   codex adapter's *.test.cjs files and the two unittest scripts
-#   recovery_test.py and recovery_desktop_test.py, then a fixed marker file.
-# media-self-test (cmaeg/Dockerfile): `cmaeg --media-self-test` prints one
-#   fixed-format line per committed fixture: name, op and outcome tokens only.
-STAGES = {"runtime-qualification": ("tap", "spec", "unittest"), "media-self-test": ("media",)}
+# Each listed stage only runs tests, and only in the one Dockerfile bound to
+# it; every other stage's output, and a same-named stage elsewhere, is never
+# read. staging_cd_test_failures_tests checks each stage's definition.
+# runtime-qualification: `node --test` over the codex adapter's *.test.cjs
+#   files and the two unittest scripts recovery_test.py and
+#   recovery_desktop_test.py, then a fixed marker file.
+# media-self-test: `cmaeg --media-self-test` prints one fixed-format line per
+#   committed fixture: name, op and outcome tokens only.
+STAGES = {"runtime-qualification": ("api/crates/layer4-runtime/Dockerfile", ("tap", "spec", "unittest")),
+          "media-self-test": ("api/crates/cmaeg/Dockerfile", ("media",))}
 # BuildKit records a RUN step's stdout as stream 1 and its stderr as stream 2.
 # node --test writes its reporter to stdout and forwards each test file's own
 # stdout and stderr there; unittest writes only to stderr; the media report is
@@ -255,13 +258,14 @@ def _collect(raw, wanted):
     return streams
 
 
-def failed_tests(raw, failed):
-    """Names of failing tests in listed stages; `failed` is [(step label, vertex digest)] in failure order."""
+def failed_tests(raw, failed, dockerfile):
+    """Failing test names of `dockerfile`'s listed stages; `failed` is [(step label, vertex digest)] in failure order."""
     wanted = {}
     for label, digest in failed:
         step = STEP.fullmatch(label)
-        if step and step[1] in STAGES and isinstance(digest, str):
-            wanted.setdefault(digest, (label, STAGES[step[1]]))
+        bound = STAGES.get(step[1]) if step else None
+        if bound and bound[0] == dockerfile and isinstance(digest, str):
+            wanted.setdefault(digest, (label, bound[1]))
     if not wanted:
         return []
     streams = _collect(raw, wanted)
