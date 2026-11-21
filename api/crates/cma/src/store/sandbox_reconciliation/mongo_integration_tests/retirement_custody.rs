@@ -196,7 +196,7 @@ async fn retirement_custody_reconciles_admission_and_atomically_releases_dispatc
             Some(action.clone())
         );
         let previous = action.clone();
-        action.phase = RetirementPhase::Dispatched;
+        action.phase = RetirementPhase::Dispatching;
         restarted
             .transition(&parent, &previous, Some(&action))
             .await

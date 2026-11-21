@@ -19,6 +19,7 @@ use super::sandboxes::read_sandbox;
 
 pub(super) const FIELD: &str = "native_retirement_action_v1";
 mod child_write;
+mod reconciliation;
 pub(super) use child_write::{adds_obligation, fence_obligation, insert_child};
 
 pub(super) const OBSERVATION: &str = "native_retirement_receiver_v1";
@@ -39,7 +40,8 @@ pub(crate) struct RetirementObservation {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum RetirementPhase {
     Admitted,
-    Dispatched,
+    // Dispatch is authorized. Its result may still be unknown or not yet sent.
+    Dispatching,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,7 +121,7 @@ impl RetirementRecords for MongoSandboxStore {
             && match next {
                 Some(next) => {
                     let mut dispatched = previous.clone();
-                    dispatched.phase = RetirementPhase::Dispatched;
+                    dispatched.phase = RetirementPhase::Dispatching;
                     dispatched == *next
                 }
                 None => true,
@@ -388,14 +390,17 @@ async fn transact(
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => return Ok(()),
             CommitOutcome::Retry(_) => continue,
-            CommitOutcome::Unknown(_)
-                if store.retirement_action(&parent.id).await?.as_ref() == next =>
-            {
-                return Ok(());
+            CommitOutcome::Unknown(error) => {
+                return reconciliation::prove_commit(
+                    store,
+                    &parent.id,
+                    next,
+                    session.operation_time(),
+                    error,
+                )
+                .await;
             }
-            CommitOutcome::Unknown(error) | CommitOutcome::Failed(error) => {
-                return Err(unavailable(error))
-            }
+            CommitOutcome::Failed(error) => return Err(unavailable(error)),
         }
     }
     Err(SandboxStoreError::Conflict)

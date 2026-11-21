@@ -303,7 +303,7 @@ impl NativeRetirementFinalizer {
         }
         if action.phase == RetirementPhase::Admitted {
             let mut dispatched = action.clone();
-            dispatched.phase = RetirementPhase::Dispatched;
+            dispatched.phase = RetirementPhase::Dispatching;
             self.records
                 .transition(parent, action, Some(&dispatched))
                 .await?;
