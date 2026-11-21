@@ -1,9 +1,10 @@
-"""Each cache save point proves its entry exists, or names why later runs will be cold."""
+"""A develop build proves its layer index was saved, or names why later builds will be cold."""
 import contextlib
 import datetime
 import io
 import json
 import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -43,44 +44,29 @@ class Lists:
         return answer if isinstance(answer, dict) else {"total_count": len(answer), "actions_caches": answer}
 
 
-class ObserveTests(unittest.TestCase):
-    """Absence counts only after the last bounded read; an unreadable list proves nothing."""
+def gh_response(status, rows):
+    """What `gh api --include` prints: the status line, headers, a blank line and the body."""
+    return ("HTTP/2.0 " + status + "\r\nContent-Type: application/json; charset=utf-8\r\n"
+            "X-Github-Api-Version-Selected: 2022-11-28\r\n\r\n"
+            + json.dumps({"total_count": len(rows), "actions_caches": rows}))
 
-    def observe(self, *answers):
-        sleeps, rows = [], list(answers)
 
-        def read():
-            answer = rows.pop(0)
-            if isinstance(answer, BaseException):
-                raise answer
-            return answer
-        result = cache_save.observe(read, lambda row: row == "present", sleep=sleeps.append)
-        return result, sleeps
+class Clock:
+    def __init__(self):
+        self.now = 1000.0
 
-    def test_an_entry_seen_on_any_read_is_saved_without_further_waiting(self):
-        self.assertEqual(self.observe(["present"]), ("saved", []))
-        self.assertEqual(self.observe([], ["other", "present"]), ("saved", [cache_save.WAITS[0]]))
+    def __call__(self):
+        return self.now
 
-    def test_absence_is_concluded_only_after_every_bounded_wait(self):
-        result, sleeps = self.observe([], [], [], [])
-        self.assertEqual(result, "not-saved")
-        self.assertEqual(sleeps, list(cache_save.WAITS))
-        self.assertLessEqual(sum(sleeps), 30)
-
-    def test_api_errors_are_unknown_never_not_saved(self):
-        failure = Refusal("GitHub API request failed")
-        self.assertEqual(self.observe(failure, failure, failure, failure)[0], "unknown")
-        # An early absence may be eventual consistency; only the last read decides.
-        self.assertEqual(self.observe([], [], [], failure)[0], "unknown")
-        self.assertEqual(self.observe(failure, failure, failure, [])[0], "not-saved")
-        self.assertEqual(self.observe(failure, ["present"])[0], "saved")
+    def advance(self, seconds):
+        self.now += seconds
 
 
 class LayerTests(unittest.TestCase):
     def check(self, api, *, summary=None, env=None, component="runtime", scope="cma-runtime"):
         stream = io.StringIO()
         self.assertIsNone(cache_save.report_layers(component, scope, summary or {}, STARTED, env or DEVELOP,
-                                                   stream=stream, api=api, sleep=lambda _seconds: None))
+                                                   stream=stream, api=api))
         return stream.getvalue().splitlines()
 
     def test_a_new_index_entry_of_this_scope_and_writer_is_saved(self):
@@ -88,7 +74,7 @@ class LayerTests(unittest.TestCase):
         self.assertEqual(self.check(api), ["CACHE-SAVE cache=build-layers component=runtime result=saved"])
         self.assertEqual(api.paths, ["actions/caches?key=index-cma-runtime-&ref=refs/heads/develop"
                                      "&sort=created_at&direction=desc&per_page=100"])
-        # Each read has its own short absolute bound.
+        # The single read carries a short absolute bound.
         self.assertIsInstance(api.deadlines[0], float)
         # A runner clock slightly ahead of the service still proves the save.
         self.assertEqual(self.check(Lists([entry("index-cma-runtime-1-fd3dfe2c#71", seconds=-30)]))[0],
@@ -100,12 +86,13 @@ class LayerTests(unittest.TestCase):
                 entry("index-cma-runtime-1-fd3dfe2c#99", seconds=300, ref="refs/pull/12/merge"),
                 entry("index-cma-runtime-1-fd3dfe2c", seconds=300),
                 entry("index-cma-runtime-1-fd3dfe2c#70", seconds=-3300)]
-        api = Lists(rows, rows, rows, rows)
+        api = Lists(rows)
         self.assertEqual(self.check(api), ["CACHE-SAVE cache=build-layers component=runtime result=not-saved "
                                            "reason=absent", LAYER_WARNING])
-        self.assertEqual(len(api.paths), 1 + len(cache_save.WAITS))
+        # The check runs minutes after the export, so one read settles absence.
+        self.assertEqual(len(api.paths), 1)
 
-    def test_buildkit_export_errors_name_the_cause_without_waiting_for_the_api(self):
+    def test_buildkit_export_errors_name_the_cause_without_reading_the_cache_list(self):
         for error, reason, cause in (
                 ("read-only", "read-only", "Actions cache is read-only: organization budget reached."),
                 ("failed", "export-failed", "BuildKit reported that their cache export failed")):
@@ -121,12 +108,13 @@ class LayerTests(unittest.TestCase):
 
     def test_unreadable_or_invalid_cache_lists_are_unknown_and_never_warn(self):
         failure = Refusal("GitHub API request failed")
-        for api in (Lists(failure, failure, failure, failure),
-                    Lists({"actions_caches": PRIVATE}, {}, {"actions_caches": [{"key": 1}]},
-                          {"actions_caches": [dict(entry("index-cma-runtime-1-fd3dfe2c#71"), created_at=PRIVATE)]})):
-            with self.subTest(api=api):
+        for answer in (failure, {"actions_caches": PRIVATE}, {}, {"actions_caches": [{"key": 1}]},
+                       {"actions_caches": [dict(entry("index-cma-runtime-1-fd3dfe2c#71"), created_at=PRIVATE)]}):
+            with self.subTest(answer=answer):
+                api = Lists(answer)
                 self.assertEqual(self.check(api), ["CACHE-SAVE cache=build-layers component=runtime "
                                                    "result=unknown reason=unreadable"])
+                self.assertEqual(len(api.paths), 1)
         # A missing credential is also unknown, and the check never raises.
         self.assertEqual(self.check(None, env={k: v for k, v in DEVELOP.items() if k != "GH_TOKEN"}),
                          ["CACHE-SAVE cache=build-layers component=runtime result=unknown reason=unreadable"])
@@ -154,6 +142,64 @@ class LayerTests(unittest.TestCase):
             cache = BuildCache(root, dict(base, **runtime), root, "runtime")
             cache.env = dict(cache.env, GITHUB_EVENT_NAME="pull_request", GITHUB_REF="refs/pull/12/merge")
             self.assertIs(cache.exports_layers(), False)
+
+
+class GitHubReadTests(unittest.TestCase):
+    """The check reads through the real GitHub helper, inside one short bound."""
+
+    def check(self, api, clock=None):
+        stream = io.StringIO()
+        options = {} if clock is None else {"clock": clock}
+        cache_save.report_layers("runtime", "cma-runtime", {}, STARTED, DEVELOP, stream=stream, api=api, **options)
+        return stream.getvalue().splitlines()
+
+    def test_a_gh_api_include_response_reaches_a_saved_or_absent_result(self):
+        # A drifted request signature or response parser would turn every
+        # result into unknown; this reads a canned response end to end.
+        from staging_cd_github import GitHub
+        for rows, outcome in (([entry("index-cma-runtime-1-fd3dfe2c#71", seconds=300)], "result=saved"),
+                              ([entry("index-cma-runtime-1-fd3dfe2c#70", seconds=-3300)], "result=not-saved reason=absent")):
+            with self.subTest(outcome=outcome):
+                runner = Mock(return_value=None)
+                runner.side_effect = lambda args, rows=rows, **_kwargs: subprocess.CompletedProcess(
+                    args, 0, stdout=gh_response("200 OK", rows), stderr="")
+                lines = self.check(GitHub("synthetic-token", runner=runner))
+                self.assertEqual(lines[0], "CACHE-SAVE cache=build-layers component=runtime " + outcome)
+                runner.assert_called_once()
+                args, kwargs = runner.call_args.args[0], runner.call_args.kwargs
+                self.assertEqual(args[-1], "repos/ChronoAIProject/cma/actions/caches?key=index-cma-runtime-"
+                                           "&ref=refs/heads/develop&sort=created_at&direction=desc&per_page=100")
+                self.assertIn("--include", args)
+                self.assertEqual(args[args.index("--method") + 1], "GET")
+                self.assertEqual(kwargs["env"]["GH_TOKEN"], "synthetic-token")
+                self.assertLessEqual(kwargs["timeout"], cache_save.READ_SECONDS)
+
+    def test_the_worst_case_is_one_bounded_read_and_no_wait(self):
+        from staging_cd_github import GitHub
+        # Well under any step limit; the publish job allows hours.
+        self.assertLessEqual(cache_save.READ_SECONDS, 30)
+
+        def hang(args, *, timeout, **_kwargs):
+            clock.advance(timeout)
+            raise subprocess.TimeoutExpired(args, timeout)
+
+        def unavailable(args, **_kwargs):
+            clock.advance(0.5)
+            return subprocess.CompletedProcess(args, 1, stdout=gh_response("503 Service Unavailable", []),
+                                               stderr="gh: Service Unavailable (HTTP 503)")
+        for behaviour in (hang, unavailable):
+            with self.subTest(behaviour=behaviour.__name__), patch("time.sleep") as sleep:
+                clock = Clock()
+                runner = Mock(side_effect=behaviour)
+                api = GitHub("synthetic-token", runner=runner,
+                             retry={"clock": clock, "sleep": clock.advance, "rand": lambda: 1.0,
+                                    "log": lambda _line: None})
+                self.assertEqual(self.check(api, clock),
+                                 ["CACHE-SAVE cache=build-layers component=runtime result=unknown reason=unreadable"])
+                # One read: its repeats share one bound, and nothing else waits.
+                self.assertLessEqual(clock.now - 1000.0, cache_save.READ_SECONDS)
+                self.assertLessEqual(runner.call_count, 3)
+                sleep.assert_not_called()
 
 
 class PublicationTests(unittest.TestCase):
