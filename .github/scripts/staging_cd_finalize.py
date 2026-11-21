@@ -99,7 +99,7 @@ def main():
         output(env, "component", receipt["identity"]["component"])
         pruned.append((receipt["identity"]["component"], *prune(publisher, receipt, deadline)))
         return True
-    status = run_finalization(operation)
+    status = run_finalization(operation, component=env.get("CD_COMPONENT"))
     # Only fixed fields cross the private output boundary.
     for component, result, removed in pruned:
         print(f"PRUNE finalize component={component} result={result} removed={removed}")
