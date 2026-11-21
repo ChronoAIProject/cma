@@ -1,24 +1,20 @@
 use axum::{
     body::{to_bytes, Body},
     extract::ConnectInfo,
-    http::{header, HeaderMap, Method, Request, StatusCode},
-    response::{IntoResponse as _, Response},
-    routing::{get, post},
-    Form, Json, Router,
+    http::{header, Method, Request, StatusCode},
+    Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
-use std::{collections::HashMap, net::SocketAddr, time::Duration};
+use std::{net::SocketAddr, time::Duration};
 use tower::ServiceExt as _;
 
 use super::*;
-use crate::{
-    auth::{
-        actor_links::ActorLoginIntent,
-        persistence::{AuthStore as _, SecretDigest},
-    },
-    config::{BackendFreeConfig, StartupConfig},
-};
+use crate::config::{BackendFreeConfig, StartupConfig};
+
+#[path = "backend_free/authentication.rs"]
+mod authentication;
+use authentication::{assert_actor_callback_is_refused, browser_session, Identity};
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
@@ -32,6 +28,7 @@ async fn backend_free_http_uses_durable_owner_reads_without_resuming_pending_wor
     pending.name = "pending backend-free fixture".into();
     store.create_sandbox(pending.clone()).await.unwrap();
     let db = client.database(&name);
+    let mongo_uri = isolated_uri(&db).await;
     let sandbox_records = db.collection::<Document>(SANDBOXES);
     let pending_key = doc! {"_id": pending.id.as_str()};
     let before = sandbox_records
@@ -54,16 +51,19 @@ async fn backend_free_http_uses_durable_owner_reads_without_resuming_pending_wor
     }
     drop(store);
 
-    let owner_config = config(&name, Some("owner"));
+    let owner_config = config(&name, mongo_uri.as_str(), Some("owner"));
     let (owner, owner_refresh) = crate::composition::backend_free::compose(&owner_config)
         .await
         .unwrap();
-    let (foreign, foreign_refresh) =
-        crate::composition::backend_free::compose(&config(&name, Some("other-owner")))
-            .await
-            .unwrap();
+    let (foreign, foreign_refresh) = crate::composition::backend_free::compose(&config(
+        &name,
+        mongo_uri.as_str(),
+        Some("other-owner"),
+    ))
+    .await
+    .unwrap();
     let identity = Identity::start().await;
-    let mut provider = config(&name, None);
+    let mut provider = config(&name, mongo_uri.as_str(), None);
     if let crate::auth::AuthMode::Provider { base_url, .. } = &mut provider.authentication.auth_mode
     {
         *base_url = identity.origin.clone();
@@ -238,189 +238,40 @@ async fn backend_free_http_uses_durable_owner_reads_without_resuming_pending_wor
     for (collection, before) in work_counts {
         assert_eq!(collection.count_documents(doc! {}).await.unwrap(), before);
     }
+    db.run_command(doc! {"dropUser": "control-plane-fixture"})
+        .await
+        .unwrap();
+    db.run_command(doc! {"dropRole": "cma_am_runtime"})
+        .await
+        .unwrap();
     db.drop().await.unwrap();
 }
 
-struct Identity {
-    origin: String,
-    server: tokio::task::JoinHandle<()>,
-}
-
-impl Identity {
-    async fn start() -> Self {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let origin = format!("http://{}", listener.local_addr().unwrap());
-        let discovery = Arc::new(json!({
-            "authorization_endpoint": format!("{origin}/authorize"),
-            "token_endpoint": format!("{origin}/token"),
-            "userinfo_endpoint": format!("{origin}/userinfo"),
-        }));
-        let app = Router::new()
-            .route(
-                "/.well-known/openid-configuration",
-                get(move || {
-                    let discovery = discovery.clone();
-                    async move { Json((*discovery).clone()) }
-                }),
-            )
-            .route(
-                "/token",
-                post(|Form(form): Form<HashMap<String, String>>| async move {
-                    match form.get("code").map(String::as_str) {
-                        Some("fixture-operator-code") => {
-                            Json(json!({"access_token":"fixture-operator"})).into_response()
-                        }
-                        Some("fixture-owner-code") => {
-                            Json(json!({"access_token":"fixture-owner"})).into_response()
-                        }
-                        _ => StatusCode::UNAUTHORIZED.into_response(),
-                    }
-                }),
-            )
-            .route(
-                "/userinfo",
-                get(|headers: HeaderMap| async move {
-                    match headers
-                        .get(header::AUTHORIZATION)
-                        .and_then(|header| header.to_str().ok())
-                    {
-                        Some("Bearer fixture-operator") => {
-                            Json(json!({"sub":"operator","permissions":["cma:admin:settings"]}))
-                                .into_response()
-                        }
-                        Some("Bearer fixture-owner") => {
-                            Json(json!({"sub":"owner","permissions":["cma:sandbox:use"]}))
-                                .into_response()
-                        }
-                        _ => StatusCode::UNAUTHORIZED.into_response(),
-                    }
-                }),
-            );
-        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        Self { origin, server }
-    }
-}
-
-impl Drop for Identity {
-    fn drop(&mut self) {
-        self.server.abort();
-    }
-}
-
-async fn browser_session(app: &Router, code: &str) -> Router {
-    let (state, binding) = begin_browser_login(app).await;
-    let callback = browser_get(
-        app,
-        &format!("/auth/callback?state={state}&code={code}"),
-        Some(&binding),
-    )
-    .await;
-    assert!(callback.status().is_redirection(), "{}", callback.status());
-    let cookie: axum::http::HeaderValue = callback
-        .headers()
-        .get_all(header::SET_COOKIE)
-        .iter()
-        .find_map(|value| {
-            value
-                .to_str()
-                .ok()?
-                .split(';')
-                .next()
-                .filter(|pair| pair.starts_with(crate::auth::AUTH_COOKIE))
-                .map(|pair| pair.parse().unwrap())
-        })
-        .expect("successful callback issues a browser session");
-    app.clone().layer(axum::middleware::map_request(
-        move |mut request: axum::extract::Request| {
-            let cookie = cookie.clone();
-            async move {
-                request.headers_mut().insert(header::COOKIE, cookie);
-                request
-            }
-        },
-    ))
-}
-
-async fn begin_browser_login(app: &Router) -> (String, String) {
-    let login = browser_get(app, "/auth/login", None).await;
-    assert!(login.status().is_redirection());
-    let redirect =
-        reqwest::Url::parse(login.headers()[header::LOCATION].to_str().unwrap()).unwrap();
-    let (_, state) = redirect
-        .query_pairs()
-        .find(|(name, _)| name == "state")
+async fn isolated_uri(db: &mongodb::Database) -> url::Url {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let mut uri = url::Url::parse(&uri).unwrap();
+    let password = uuid::Uuid::new_v4().simple().to_string();
+    db.run_command(crate::store::isolation::role(db.name()))
+        .await
         .unwrap();
-    let binding = login.headers()[header::SET_COOKIE]
-        .to_str()
-        .unwrap()
-        .split(';')
-        .next()
-        .unwrap();
-    (state.into_owned(), binding.to_owned())
-}
-
-async fn assert_actor_callback_is_refused(
-    app: &Router,
-    config: &BackendFreeConfig,
-    client: &Client,
-    database: &str,
-) {
-    let (state, binding) = begin_browser_login(app).await;
-    let (_, binding_value) = binding.split_once('=').unwrap();
-    let auth = crate::store::MongoAuthStore::open(
-        client,
-        database,
-        &config.database.deployment_id,
-        &config.encryption_key,
-    )
+    db.run_command(doc! {
+        "createUser": "control-plane-fixture", "pwd": &password,
+        "roles": [{"role": "cma_am_runtime", "db": db.name()}],
+    })
     .await
     .unwrap();
-    let mut attempt = auth
-        .take_login_attempt(
-            &SecretDigest::identify("oidc-login-attempt", &state),
-            &SecretDigest::identify("oidc-browser-binding", binding_value),
-        )
-        .await
-        .unwrap()
-        .unwrap();
-    // Simulate a predecessor that initiated an actor link before changing modes.
-    attempt.actor_link_intent = Some(ActorLoginIntent {
-        link_id: "fixture-link".into(),
-        actor_key: "fixture-actor".into(),
-        revision: 1,
-    });
-    auth.put_login_attempt(attempt).await.unwrap();
-    let response = browser_get(
-        app,
-        &format!("/auth/callback?state={state}&code=fixture-operator-code"),
-        Some(&binding),
-    )
-    .await;
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    let body = to_bytes(response.into_body(), 4096).await.unwrap();
-    let problem: Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(problem["code"], "sandbox_backend_unavailable");
+    uri.set_username("control-plane-fixture").unwrap();
+    uri.set_password(Some(&password)).unwrap();
+    uri.query_pairs_mut().append_pair("authSource", db.name());
+    uri
 }
 
-async fn browser_get(app: &Router, path: &str, cookie: Option<&str>) -> Response {
-    let mut request =
-        Request::get(path).extension(ConnectInfo("127.0.0.1:1234".parse::<SocketAddr>().unwrap()));
-    if let Some(cookie) = cookie {
-        request = request.header(header::COOKIE, cookie);
-    }
-    app.clone()
-        .oneshot(request.body(Body::empty()).unwrap())
-        .await
-        .unwrap()
-}
-
-fn config(database: &str, trusted: Option<&str>) -> BackendFreeConfig {
-    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+fn config(database: &str, uri: &str, trusted: Option<&str>) -> BackendFreeConfig {
     let selected = StartupConfig::from_lookup(|key| {
         Ok(match key {
             "CHRONO_SANDBOX_PROVIDER" => Some("none".into()),
             "CHRONO_ENVIRONMENT" => Some("staging".into()),
-            "CHRONO_MONGODB_URI" => Some(uri.clone()),
+            "CHRONO_MONGODB_URI" => Some(uri.into()),
             "CHRONO_MONGODB_DATABASE" => Some(database.into()),
             "CHRONO_DEPLOYMENT_ID" => Some("fixture".into()),
             "CHRONO_AUTH_ENCRYPTION_KEY" => Some(STANDARD.encode([9; 32])),
