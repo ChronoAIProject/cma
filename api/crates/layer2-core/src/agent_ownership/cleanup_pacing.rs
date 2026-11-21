@@ -124,7 +124,7 @@ impl CleanupPacing {
         ids
     }
 
-    pub(super) fn receiver_acknowledged(&self, id: &AgentId) {
+    pub(super) fn receiver_cleanup_completed(&self, id: &AgentId) {
         if self.enabled {
             let mut state = self.state.lock().unwrap();
             state.schedule.recovered(id);
