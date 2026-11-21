@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
+import { EventGateway } from '../EventGateway';
 import { ManagedConnectionFields } from './ManagedConnectionFields';
 import { channelRequest, type Fields } from './model';
 afterEach(() => vi.unstubAllGlobals());
@@ -9,6 +10,12 @@ const manual = {
     { type: 'nyxid_relay', platform: 'discord', verify_raw_event: true, route_ids: ['retained'] },
   ],
 };
+const listPath = '/api/event-gateway/v1/channel-connections';
+const toggleLabel = 'Use an existing CMA-managed Telegram connection';
+const ready = { connection_ref: 'ready-owned', status: 'ready', label: 'My Telegram bot' };
+function response(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), { status });
+}
 function Editor({
   inspect,
   denied,
@@ -89,11 +96,151 @@ it('omits manual platform credentials only from the managed create request, reta
     /Choose a ready/,
   );
 });
-it('does not treat an ownership refusal as an empty list or broaden the owner', async () => {
-  vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response('{}', { status: 403 })));
+it.each([401, 403])(
+  'routes HTTP %i through access handling without showing empty or retry options',
+  async (status) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response({}, status)));
+    const denied = vi.fn();
+    render(<Editor inspect={vi.fn()} denied={denied} />);
+    fireEvent.click(screen.getByLabelText(toggleLabel));
+    await waitFor(() => expect(denied).toHaveBeenCalledWith(status));
+    expect(screen.queryByText(/No saved CMA connections/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry connections' })).not.toBeInTheDocument();
+  },
+);
+
+it.each([{ items: [] }, { items: [ready] }])(
+  'checks the continuation after an empty page: $items',
+  async ({ items }) => {
+    const fetcher = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(response({ items: [], next_after: 'next / page' }))
+      .mockResolvedValueOnce(response({ items, next_after: null }));
+    vi.stubGlobal('fetch', fetcher);
+    const inspect = vi.fn();
+    render(<Editor inspect={inspect} denied={vi.fn()} />);
+    fireEvent.click(screen.getByLabelText(toggleLabel));
+    const more = await screen.findByRole('button', { name: 'Load more connections' });
+    expect(screen.queryByText(/No saved CMA connections/)).not.toBeInTheDocument();
+    expect(fetcher).toHaveBeenCalledOnce();
+    fireEvent.click(more);
+    if (items.length === 0) {
+      expect(await screen.findByText(/No saved CMA connections/)).toBeVisible();
+    } else {
+      fireEvent.click(screen.getByRole('button', { name: 'Saved Telegram connection' }));
+      fireEvent.click(await screen.findByRole('menuitemradio', { name: 'My Telegram bot' }));
+      expect(inspect.mock.lastCall?.[0]).toMatchObject({ connection_ref: ready.connection_ref });
+      expect(screen.queryByText(/No saved CMA connections/)).not.toBeInTheDocument();
+    }
+    expect(screen.queryByRole('button', { name: 'Load more connections' })).not.toBeInTheDocument();
+    expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+      listPath,
+      `${listPath}?after=next%20%2F%20page`,
+    ]);
+  },
+);
+
+it('retries only the failed page and preserves the managed selection and independent manual draft', async () => {
+  const fetcher = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(response({ items: [ready], next_after: 'second' }))
+    .mockResolvedValueOnce(
+      response({ code: 'provider_unavailable', detail: 'Fixture failure detail' }, 503),
+    )
+    .mockResolvedValueOnce(
+      response({
+        items: [ready, { ...ready, connection_ref: 'second', label: 'Second bot' }],
+        next_after: null,
+      }),
+    );
+  vi.stubGlobal('fetch', fetcher);
+  const inspect = vi.fn();
   const denied = vi.fn();
-  render(<Editor inspect={vi.fn()} denied={denied} />);
-  fireEvent.click(screen.getByLabelText('Use an existing CMA-managed Telegram connection'));
-  await waitFor(() => expect(denied).toHaveBeenCalledWith(403));
-  expect(screen.getByRole('alert')).toBeVisible();
+  render(<Editor inspect={inspect} denied={denied} />);
+  const toggle = screen.getByLabelText(toggleLabel);
+  fireEvent.click(toggle);
+  const more = await screen.findByRole('button', { name: 'Load more connections' });
+  const picker = screen.getByRole('button', { name: 'Saved Telegram connection' });
+  fireEvent.click(picker);
+  fireEvent.click(screen.getByRole('menuitemradio', { name: 'My Telegram bot' }));
+  fireEvent.click(more);
+  expect(await screen.findByRole('alert')).toHaveTextContent(/draft is retained/i);
+  expect(screen.queryByText('Fixture failure detail')).not.toBeInTheDocument();
+  expect(screen.queryByText(/No saved CMA connections/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Load more connections' })).not.toBeInTheDocument();
+  expect(fetcher).toHaveBeenCalledTimes(2);
+  expect(denied).not.toHaveBeenCalled();
+
+  fireEvent.click(toggle);
+  expect(inspect.mock.lastCall?.[0]).toEqual(manual);
+  fireEvent.click(toggle);
+  expect(inspect.mock.lastCall?.[0]).toMatchObject({ connection_ref: ready.connection_ref });
+  fireEvent.click(screen.getByRole('button', { name: 'Retry connections' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Saved Telegram connection' }));
+  expect(await screen.findByRole('menuitemradio', { name: 'Second bot' })).toBeVisible();
+  expect(screen.getAllByRole('menuitemradio', { name: 'My Telegram bot' })).toHaveLength(1);
+  expect(screen.getByRole('menuitemradio', { name: 'My Telegram bot' })).toHaveAttribute(
+    'aria-checked',
+    'true',
+  );
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+    listPath,
+    `${listPath}?after=second`,
+    `${listPath}?after=second`,
+  ]);
+});
+
+it.each([200, 403])('discards a previous owner’s outstanding HTTP %i reply', async (status) => {
+  let resolvePrevious!: (response: Response) => void;
+  const previous = new Promise<Response>((resolve) => (resolvePrevious = resolve));
+  const lists = vi
+    .fn<typeof fetch>()
+    .mockReturnValueOnce(previous)
+    .mockResolvedValueOnce(
+      response({ items: [{ ...ready, connection_ref: 'current', label: 'Current bot' }] }),
+    );
+  const fetcher = vi.fn<typeof fetch>((url, init) => {
+    if (url === listPath) return lists(url, init);
+    return Promise.resolve(response({ platforms: [], items: [] }));
+  });
+  vi.stubGlobal('fetch', fetcher);
+  const denied = vi.fn();
+  const view = (subject: string) => (
+    <EventGateway
+      session={{
+        authenticated: true,
+        permissions: ['cma-eg:admin'],
+        expires_at: 9999999999,
+        subject,
+      }}
+      denied={denied}
+    />
+  );
+  const openEditor = () =>
+    fireEvent.click(
+      within(screen.getByRole('region', { name: 'Channel workspace' })).getByRole('button', {
+        name: 'New channel',
+      }),
+    );
+  const { rerender } = await act(async () => render(view('previous-owner')));
+  openEditor();
+  fireEvent.click(screen.getByLabelText(toggleLabel));
+  expect(lists).toHaveBeenCalledOnce();
+  const signal = lists.mock.calls[0]?.[1]?.signal;
+  expect(signal?.aborted).toBe(false);
+
+  await act(async () => rerender(view('current-owner')));
+  expect(signal?.aborted).toBe(true);
+  openEditor();
+  fireEvent.click(screen.getByLabelText(toggleLabel));
+  fireEvent.click(screen.getByRole('button', { name: 'Saved Telegram connection' }));
+  expect(await screen.findByRole('menuitemradio', { name: 'Current bot' })).toBeVisible();
+  await act(async () =>
+    resolvePrevious(response({ items: [ready], next_after: 'old-page' }, status)),
+  );
+  expect(screen.getByRole('menuitemradio', { name: 'Current bot' })).toBeVisible();
+  expect(screen.queryByRole('menuitemradio', { name: 'My Telegram bot' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: 'Load more connections' })).not.toBeInTheDocument();
+  expect(denied).not.toHaveBeenCalled();
 });
