@@ -56,51 +56,50 @@ impl Fixture {
         let fault_app = app.clone();
         let mut options = ClientOptions::parse(&uri).await.unwrap();
         options.app_name = Some(app.clone());
-        options.command_event_handler = Some(EventHandler::async_callback(move |event| {
-            let observed = observed.clone();
-            let mixed_fault = mixed_fault.clone();
-            let admin = fault_admin.clone();
-            let app = fault_app.clone();
-            Box::pin(async move {
-                if matches!(&event, CommandEvent::Failed(event) if event.command_name == "commitTransaction"
-                    && event.failure.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT))
-                    && mixed_fault.swap(false, Ordering::SeqCst)
-                {
-                    admin.database("admin").run_command(doc! {
-                        "configureFailPoint": "failCommand",
-                        "mode": {"times": 1_i32},
-                        "data": {"appName": app, "failCommands": ["commitTransaction"], "errorCode": 112_i32,
-                            "errorLabels": ["TransientTransactionError"]},
-                    }).await.expect("reply with a transient error to the next commit");
+        options.command_event_handler = Some(EventHandler::callback(move |event| {
+            if matches!(&event, CommandEvent::Failed(event) if event.command_name == "commitTransaction"
+                && event.failure.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT))
+                && mixed_fault.swap(false, Ordering::SeqCst)
+            {
+                // Install the second response before the driver can send another commit.
+                tokio::task::block_in_place(|| {
+                    tokio::runtime::Handle::current().block_on(async {
+                        fault_admin.database("admin").run_command(doc! {
+                            "configureFailPoint": "failCommand",
+                            "mode": {"times": 1_i32},
+                            "data": {"appName": &fault_app, "failCommands": ["commitTransaction"], "errorCode": 112_i32,
+                                "errorLabels": ["TransientTransactionError"]},
+                        }).await.expect("reply with transient failure to the next commit");
+                    });
+                });
+            }
+            let CommandEvent::Started(event) = event else {
+                return;
+            };
+            let mut trace = observed.lock().unwrap();
+            if matches!(event.command.get_bool("startTransaction"), Ok(true)) {
+                trace.starts += 1;
+                let session = event.command.get_document("lsid").unwrap().clone();
+                if !trace.sessions.contains(&session) {
+                    trace.sessions.push(session);
                 }
-                let CommandEvent::Started(event) = event else {
-                    return;
-                };
-                let mut trace = observed.lock().unwrap();
-                if matches!(event.command.get_bool("startTransaction"), Ok(true)) {
-                    trace.starts += 1;
-                    let session = event.command.get_document("lsid").unwrap().clone();
-                    if !trace.sessions.contains(&session) {
-                        trace.sessions.push(session);
+            }
+            if event.command_name == "commitTransaction" {
+                trace.commits += 1;
+            }
+            if matches!(event.command.get_str("update"), Ok("provider_bindings")) {
+                for update in event.command.get_array("updates").unwrap() {
+                    let at = update
+                        .as_document()
+                        .and_then(|value| value.get_document("u").ok())
+                        .and_then(|value| value.get_document("$set").ok())
+                        .and_then(|value| value.get_document("record").ok())
+                        .and_then(|value| value.get_str("updated_at").ok());
+                    if let Some(at) = at {
+                        trace.timestamps.push(at.to_owned());
                     }
                 }
-                if event.command_name == "commitTransaction" {
-                    trace.commits += 1;
-                }
-                if matches!(event.command.get_str("update"), Ok("provider_bindings")) {
-                    for update in event.command.get_array("updates").unwrap() {
-                        let at = update
-                            .as_document()
-                            .and_then(|value| value.get_document("u").ok())
-                            .and_then(|value| value.get_document("$set").ok())
-                            .and_then(|value| value.get_document("record").ok())
-                            .and_then(|value| value.get_str("updated_at").ok());
-                        if let Some(at) = at {
-                            trace.timestamps.push(at.to_owned());
-                        }
-                    }
-                }
-            })
+            }
         }));
         let client = Client::with_options(options).unwrap();
         crate::store::migrations::prepare_bindings_for_test(&client.database(&database)).await;

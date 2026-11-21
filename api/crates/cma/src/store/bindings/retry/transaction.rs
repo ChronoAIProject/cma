@@ -9,15 +9,34 @@ use layer2_core::sandbox::{
 use mongodb::ClientSession;
 
 #[derive(PartialEq, Eq)]
-pub(in crate::store::bindings::retry) struct RecoveryParents {
+struct RecoverySandbox {
     runtime: Option<RuntimeBinding>,
     runtime_generation_high_water: u64,
     credential: Option<SandboxCredentialAuthority>,
-    workspace_origin: WorkspaceOrigin,
-    workspace_profile: WorkspaceProfileSnapshot,
-    workspace_path: String,
-    workspace_source: WorkspaceSource,
+}
+
+#[derive(PartialEq, Eq)]
+struct RecoveryWorkspace {
+    origin: WorkspaceOrigin,
+    profile: WorkspaceProfileSnapshot,
+    path: String,
+    source: WorkspaceSource,
     resolved_commit: Option<String>,
+}
+
+#[derive(Default)]
+pub(super) struct RecoveryParents {
+    sandbox: Option<RecoverySandbox>,
+    workspace: Option<RecoveryWorkspace>,
+}
+
+fn retain_authority<T: Eq>(original: &mut Option<T>, observed: T) -> Result<(), CoreError> {
+    match original {
+        Some(original) if *original != observed => return Err(conflict()),
+        Some(_) => {}
+        None => *original = Some(observed),
+    }
+    Ok(())
 }
 
 impl MongoBindingCredentials {
@@ -26,7 +45,7 @@ impl MongoBindingCredentials {
         binding: &ProviderBinding,
         credential: Option<&ProvidedCredential>,
         at: &str,
-        captured: &mut Option<RecoveryParents>,
+        captured: &mut RecoveryParents,
         session: &mut ClientSession,
     ) -> Result<ProviderBinding, BindingTransactionError> {
         let sandbox_document = self
@@ -37,6 +56,16 @@ impl MongoBindingCredentials {
             .await
             .map_err(BindingTransactionError::Driver)?
             .ok_or_else(conflict)?;
+        let sandbox = read_sandbox(&sandbox_document).map_err(unavailable)?;
+        // Keep the observed Sandbox even if the Workspace read aborts this transaction.
+        retain_authority(
+            &mut captured.sandbox,
+            RecoverySandbox {
+                runtime: sandbox.runtime.clone(),
+                runtime_generation_high_water: sandbox.lifecycle.runtime_generation_high_water,
+                credential: sandbox.credential.current.clone(),
+            },
+        )?;
         let workspace_document = self
             .store
             .workspaces
@@ -45,25 +74,17 @@ impl MongoBindingCredentials {
             .await
             .map_err(BindingTransactionError::Driver)?
             .ok_or_else(conflict)?;
-        let sandbox = read_sandbox(&sandbox_document).map_err(unavailable)?;
         let workspace = read_workspace(&workspace_document).map_err(unavailable)?;
-        let parents = RecoveryParents {
-            runtime: sandbox.runtime.clone(),
-            runtime_generation_high_water: sandbox.lifecycle.runtime_generation_high_water,
-            credential: sandbox.credential.current.clone(),
-            workspace_origin: workspace.origin.clone(),
-            workspace_profile: workspace.profile.clone(),
-            workspace_path: workspace.path.clone(),
-            workspace_source: workspace.source.clone(),
-            resolved_commit: workspace.resolved_commit.clone(),
-        };
-        // Keep the first observed runtime, repository and credential authority
-        // when a fresh transaction must re-read the parent records.
-        match captured {
-            Some(original) if *original != parents => return Err(conflict().into()),
-            Some(_) => {}
-            None => *captured = Some(parents),
-        }
+        retain_authority(
+            &mut captured.workspace,
+            RecoveryWorkspace {
+                origin: workspace.origin.clone(),
+                profile: workspace.profile.clone(),
+                path: workspace.path.clone(),
+                source: workspace.source.clone(),
+                resolved_commit: workspace.resolved_commit.clone(),
+            },
+        )?;
         // Conversation writes also touch this fence. Retirement or a key
         // rotation cannot commit between admission and the readiness CAS.
         self.fence_transaction(binding, session).await?;

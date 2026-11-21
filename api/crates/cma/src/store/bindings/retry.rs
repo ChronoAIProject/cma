@@ -9,6 +9,7 @@ use layer2_core::CoreError;
 mod error;
 mod transaction;
 pub(in crate::store) use error::BindingTransactionError;
+use transaction::RecoveryParents;
 
 impl MongoBindingCredentials {
     pub(super) async fn retry_recovered(
@@ -19,7 +20,7 @@ impl MongoBindingCredentials {
         // Identity and intent do not change when an aborted transaction reads a
         // fresh hierarchy. The eventual write also retains this operation time.
         let at = layer2_core::now_rfc3339();
-        let mut captured = None;
+        let mut captured = RecoveryParents::default();
         for attempt in 0..TRANSACTION_ATTEMPTS {
             if attempt > 0 {
                 tokio::task::yield_now().await;

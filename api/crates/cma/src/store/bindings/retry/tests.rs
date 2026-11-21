@@ -124,7 +124,7 @@ async fn binding_recovery_bounds_known_aborts_and_never_replays_unknown_commit()
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
 async fn binding_recovery_keeps_the_original_commit_unknown_after_a_transient_reply() {
     let fixture = Fixture::new(true, 1).await;
