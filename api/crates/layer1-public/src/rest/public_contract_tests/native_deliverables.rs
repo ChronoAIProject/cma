@@ -320,24 +320,36 @@ async fn verify_receipts(
     );
     for item in items {
         let reference = &item["reference"];
-        let expected = match reference["resource"]["kind"].as_str().unwrap() {
+        let (expected, media_type) = match reference["resource"]["kind"].as_str().unwrap() {
             "live_file" => {
                 let path = reference["resource"]["path"].as_str().unwrap();
                 let verified = files.iter().find(|file| file["path"] == path).unwrap();
                 assert_eq!(reference["sha256"], verified["sha256"]);
                 assert_eq!(reference["size_bytes"], verified["size_bytes"]);
-                std::fs::read(directory.join(path)).unwrap()
+                assert_eq!(reference["media_type"], verified["media_type"]);
+                (
+                    std::fs::read(directory.join(path)).unwrap(),
+                    verified["media_type"].as_str().unwrap(),
+                )
             }
-            "document" => b"# Native document\n\nKnown persistent content.\n".to_vec(),
+            "document" => (
+                b"# Native document\n\nKnown persistent content.\n".to_vec(),
+                "application/octet-stream",
+            ),
             other => panic!("unexpected delivery kind: {other}"),
         };
         let target = format!("{root}/{}/download", item["id"].as_str().unwrap());
         let download = |subject| agents_tests::request(Method::GET, &target, subject, None, None);
         let response = router.clone().oneshot(download("owner-a")).await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()["content-type"], media_type);
         assert_eq!(
-            response.headers()["content-type"],
-            "application/octet-stream"
+            response.headers()["content-length"],
+            expected.len().to_string()
+        );
+        assert_eq!(
+            response.headers()["etag"],
+            format!("\"{}\"", reference["sha256"].as_str().unwrap())
         );
         assert_eq!(response.headers()["x-content-type-options"], "nosniff");
         assert!(response.headers()["content-disposition"]

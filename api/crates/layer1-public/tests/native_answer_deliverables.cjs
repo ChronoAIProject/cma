@@ -9,7 +9,7 @@ const {
   stop,
 } = require("../../layer3-adapter/src/codex/native_tools_fixture.cjs");
 const {
-  files, digest, relayTool, requestText, verifyFileRead,
+  files, stageFiles, digest, relayTool, requestText, verifyFileRead,
 } = require("./native_answer_delivery_fixture.cjs");
 
 async function prove() {
@@ -28,6 +28,7 @@ async function prove() {
     encoding: "utf8",
   }).trim();
   assert.equal(version, "codex-cli 0.147.0");
+  stageFiles(directory);
   const markers = new Set();
   const receipts = new Map();
   const describe = [...files, files[0]];
@@ -85,7 +86,7 @@ async function prove() {
       let item;
       if (round === 0)
         item = call("exec_command", {
-          cmd: "mkdir -p output/nested && printf 'name,count\\nExample,3\\n' > output/nested/report.csv && printf '# Native notes\\n\\nFixed text.\\n' > output/nested/readme.md",
+          cmd: "mkdir -p output/nested && cp fixture-source/* output/nested/",
           workdir: directory,
         });
       else if (round <= describe.length) {
@@ -102,6 +103,7 @@ async function prove() {
           assert.deepEqual(reference.resource, { kind: "live_file", path: file.path });
           assert.equal(reference.size_bytes, file.bytes.length);
           assert.equal(reference.sha256, digest(file.bytes));
+          assert.equal(reference.media_type, file.mediaType, `MCP media type for ${file.path}`);
           assert(markers.has(marker), `The native tool reply must supply its marker for ${file.path}`);
         }
         item = call("__publish_document", {
@@ -326,14 +328,14 @@ async function prove() {
       prompt: [
         {
           type: "text",
-          text: "Create and verify the CSV and Markdown live files, then publish a separate persistent document. Include the verified receipts in the final answer.",
+          text: "Create and verify the six native live files, then publish a separate persistent document. Include their receipts in the final answer.",
         },
       ],
     });
     assert.equal(markers.size, files.length + 1);
     assert(
       [...markers].every((marker) => answer.includes(marker)),
-      `ACP answer must actually contain both observed receipts: ${JSON.stringify(answer)}`,
+      `ACP answer must contain every observed receipt: ${JSON.stringify(answer)}`,
     );
     process.stdout.write(
       JSON.stringify({
@@ -341,7 +343,7 @@ async function prove() {
         bridge_sha256: bridgeHash,
         sessionId: created.sessionId,
         stopReason: result.stopReason,
-        files: files.map(({ path, bytes }) => ({ path, size_bytes: bytes.length, sha256: digest(bytes) })),
+        files: files.map(({ path, bytes, mediaType }) => ({ path, size_bytes: bytes.length, sha256: digest(bytes), media_type: mediaType })),
         answer,
       }),
     );

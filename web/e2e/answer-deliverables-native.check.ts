@@ -59,7 +59,15 @@ test('NATIVE receipts reach answer cards and authenticated public downloads with
     items: { reference: { name: string; size_bytes: number; sha256: string } }[];
   };
   expect(items.map(({ reference }) => reference.name).sort()).toEqual(
-    ['Native document.md', 'readme.md', 'report.csv'].sort(),
+    [
+      'Native document.md',
+      'readme.md',
+      'report.csv',
+      'report.docx',
+      'report.xlsx',
+      'report.zip',
+      'report.json',
+    ].sort(),
   );
   await expect(answer.getByRole('button', { name: /^Download / })).toHaveCount(items.length);
   await page.reload();

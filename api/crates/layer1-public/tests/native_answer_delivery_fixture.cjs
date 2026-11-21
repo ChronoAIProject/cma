@@ -1,13 +1,24 @@
 const assert = require("node:assert/strict");
 const { createHash } = require("node:crypto");
-const { readFileSync } = require("node:fs");
-const { join } = require("node:path");
+const { mkdirSync, readFileSync, writeFileSync } = require("node:fs");
+const { basename, join } = require("node:path");
+const { word, workbook, archive } = require("./native_archive_fixtures.cjs");
 
 const agentId = `agt_${"a".repeat(32)}`;
 const files = [
-  { path: "output/nested/report.csv", bytes: Buffer.from("name,count\nExample,3\n") },
-  { path: "output/nested/readme.md", bytes: Buffer.from("# Native notes\n\nFixed text.\n") },
-];
+  ["report.csv", Buffer.from("name,count\nExample,3\n"), "text/csv"],
+  ["readme.md", Buffer.from("# Native notes\n\nFixed text.\n"), "application/octet-stream"],
+  ["report.docx", word, "application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
+  ["report.xlsx", workbook, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"],
+  ["report.zip", archive, "application/zip"],
+  ["report.json", Buffer.from('{"name":"Example","count":3}\n'), "application/json"],
+].map(([name, bytes, mediaType]) => ({ path: `output/nested/${name}`, bytes, mediaType }));
+
+function stageFiles(directory) {
+  const source = join(directory, "fixture-source");
+  mkdirSync(source);
+  for (const file of files) writeFileSync(join(source, basename(file.path)), file.bytes);
+}
 
 function digest(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -68,4 +79,4 @@ async function relayTool(origin, request, response, receipts) {
   response.end(text);
 }
 
-module.exports = { files, digest, relayTool, requestText, verifyFileRead };
+module.exports = { files, stageFiles, digest, relayTool, requestText, verifyFileRead };
