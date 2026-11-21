@@ -43,11 +43,12 @@ class CertificateBlockTests(unittest.TestCase):
         self.scratch.cleanup()
 
     def certificate(self):
-        # Pad inside the key identifier, one byte at a time, until one 64-character
-        # body line decodes to the packet header (issuer and subject repeat a name).
+        # Fix the serial and extension size so DER length fields cannot shift
+        # while the packet visits every offset within one 64-character PEM line.
         for pad in range(48):
             der = openssl("req", "-x509", "-new", "-key", str(self.key), "-subj", "/CN=fixture", "-days", "1",
-                          "-addext", f"subjectKeyIdentifier={'ab' * pad}{PACKET}aabbccddeeff00112233445566778899",
+                          "-set_serial", "1",
+                          "-addext", f"subjectKeyIdentifier={'ab' * pad}{PACKET}{'ab' * (47 - pad)}",
                           "-outform", "DER")
             if der.find(bytes.fromhex(PACKET)) % 48 == 0:
                 return der
@@ -70,6 +71,24 @@ class CertificateBlockTests(unittest.TestCase):
 
     def test_pinned_certificate_lines_skip_only_the_encoded_guard(self):
         path, proof, blocks = self.fixture()
+        self.assertFalse(reviewed_literals.encoded_material_absent(path.read_bytes()))
+        self.assertEqual(reviewed_literals.verify(path, b"metadata", proof), {})
+        self.assertEqual(set(reviewed_literals.verify(path, b"metadata", proof, certificates=blocks)), {RULE})
+
+    def test_fixture_alignment_survives_variable_implicit_serial_lengths(self):
+        real_openssl = openssl
+
+        def variable_serial(*args, **kwargs):
+            if args[0] != "req" or "-set_serial" in args:
+                return real_openssl(*args, **kwargs)
+            # Both lengths can be produced by OpenSSL's random serial generator.
+            der = real_openssl(*args, "-set_serial", "0x" + "11" * 20, **kwargs)
+            if der.find(bytes.fromhex(PACKET)) % 48 == 0:
+                der = real_openssl(*args, "-set_serial", "0x" + "11" * 19, **kwargs)
+            return der
+
+        with patch(__name__ + ".openssl", side_effect=variable_serial):
+            path, proof, blocks = self.fixture()
         self.assertFalse(reviewed_literals.encoded_material_absent(path.read_bytes()))
         self.assertEqual(reviewed_literals.verify(path, b"metadata", proof), {})
         self.assertEqual(set(reviewed_literals.verify(path, b"metadata", proof, certificates=blocks)), {RULE})
