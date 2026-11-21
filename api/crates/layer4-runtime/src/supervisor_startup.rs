@@ -1,5 +1,11 @@
 //! Format selection precedes installation recovery, desktop launch and serving.
+use std::{future::Future, time::Duration};
+
 use super::*;
+
+const DEFAULT_DESKTOP_STARTUP_BUDGET: Duration = Duration::from_secs(30);
+const EXTENDED_DESKTOP_STARTUP_BUDGET: Duration = Duration::from_secs(90);
+const DESKTOP_PROBE_INTERVAL: Duration = Duration::from_millis(100);
 
 struct Prepared {
     boot_id: String,
@@ -60,26 +66,39 @@ impl Supervisor {
     }
 
     pub(super) async fn finish_startup(supervisor: Arc<Self>) -> Result<Arc<Self>> {
+        Self::finish_startup_with_probe(supervisor, || async {
+            tokio::net::TcpStream::connect("127.0.0.1:6080")
+                .await
+                .is_ok()
+        })
+        .await
+    }
+
+    async fn finish_startup_with_probe<Fut: Future<Output = bool>>(
+        supervisor: Arc<Self>,
+        mut connect: impl FnMut() -> Fut,
+    ) -> Result<Arc<Self>> {
         if supervisor.config.machine_included {
+            let budget = if supervisor.config.extended_desktop_startup {
+                EXTENDED_DESKTOP_STARTUP_BUDGET
+            } else {
+                DEFAULT_DESKTOP_STARTUP_BUDGET
+            };
             let ready = async {
-                loop {
-                    if tokio::net::TcpStream::connect("127.0.0.1:6080")
-                        .await
-                        .is_ok()
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                while !connect().await {
+                    tokio::time::sleep(DESKTOP_PROBE_INTERVAL).await;
                 }
             };
-            tokio::time::timeout(std::time::Duration::from_secs(30), ready)
-                .await
-                .map_err(|_| {
-                    RuntimeError::unavailable(
+            tokio::select! {
+                biased;
+                _ = tokio::time::sleep(budget) => {
+                    return Err(RuntimeError::unavailable(
                         "desktop_start_failed",
                         "desktop did not become ready",
-                    )
-                })?;
+                    ));
+                }
+                _ = ready => {}
+            }
         }
         supervisor.recover_journals().await?;
         Ok(supervisor)
@@ -177,3 +196,7 @@ impl Supervisor {
         }))
     }
 }
+
+#[cfg(test)]
+#[path = "supervisor_startup_tests.rs"]
+mod tests;
