@@ -10,7 +10,8 @@ active, that run's allocation completed, and some lane's newest version is
 either an unfinalized reservation of an earlier run or a final of a settled
 owner that no controller proof covers. A re-run for finals alone waits for
 the hourly check, once its head has settled for a while, so a stuck app or
-a namespace fence that failed the deploy can clear first. A re-run attempt
+a namespace fence that failed the deploy can clear first, and never follows
+a cancelled head. A re-run attempt
 is the same develop push event, so every push-only authority, cache and
 admission check applies unchanged, its admission clock starts afresh, and
 staging-cd.yml gains no trigger. Like any allocation it also retries the
@@ -21,8 +22,7 @@ for a failed AM build.
 The re-run is automatic once per head: its attempt is triggered by the bot,
 which never earns another, and no head runs ATTEMPTS times. A lane still
 behind after that is reported as exhausted until a push or a maintainer acts.
-An unreadable controller outcome is reported as unknown and never re-runs,
-and a cancelled head run is never re-run automatically.
+An unreadable controller outcome is reported as unknown and never re-runs.
 """
 import collections
 from datetime import datetime
@@ -273,8 +273,6 @@ def decide(api, read_refs, read_controller, *, event=None, now=None):
     require(len(runs) == 1 and push_run(runs[0]) and runs[0].get("path") == WORKFLOW,
             "Develop head run identity is invalid")
     run = runs[0]
-    if run.get("conclusion") == "cancelled":
-        return "cancelled", None, []  # Someone stopped it; only a person resumes it.
     actor = run.get("triggering_actor")
     # The bot's attempt was this head's automatic re-run; a maintainer's earns one more.
     spent = (isinstance(actor, dict) and actor.get("login") == BOT) or run["run_attempt"] >= ATTEMPTS
@@ -288,11 +286,15 @@ def decide(api, read_refs, read_controller, *, event=None, now=None):
     late = [lane for lane in lanes if lane.reason in BEHIND]
     if late and spent:
         return "exhausted", run, lanes
-    if late:
+    if late and all(lane.reason != BEHIND[0] for lane in late):
+        # A person or a job timeout cancelled the head; a build left behind still re-runs.
+        if run.get("conclusion") == "cancelled":
+            return "cancelled", None, lanes
         # A deploy failure's cause may outlast its run; the single retry waits for it.
-        if all(lane.reason != BEHIND[0] for lane in late) and (
-                event != "schedule" or not settled(run, time.time() if now is None else now)):
+        current = time.time() if now is None else now
+        if event != "schedule" or not settled(run, current):
             return "final-waiting", None, lanes
+    if late:
         return "rerun", run, lanes
     if spent:
         return "head-caught-up", None, lanes

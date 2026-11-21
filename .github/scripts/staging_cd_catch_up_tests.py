@@ -158,21 +158,31 @@ class CatchUpTests(unittest.TestCase):
         self.assertEqual((reason, run["run_attempt"], lanes), ("exhausted", catch_up.ATTEMPTS, behind))
         self.assertEqual(develop.posts, [])
 
-    def test_a_cancelled_head_is_never_re_run_automatically(self):
+    def test_a_cancelled_head_still_re_runs_for_a_build_left_behind(self):
         develop = Develop()
         develop.push({"runtime-omarchy"})
         develop.finalize(develop.push({"web"})["web"])
         develop.deploy(802, "web", "failed")
         develop.complete(801, 802)
-        self.assertEqual(decide(develop)[0], "rerun")
+        # A job timeout cancels its run too, so the busy owner's lane is re-planned as before.
         develop.runs[802]["attempts"][-1]["conclusion"] = "cancelled"
+        reason, run, lanes = decide(develop, event="workflow_run", now=develop.later(0))
+        self.assertEqual((reason, run["id"], lanes), ("rerun", 802, [
+            ("runtime-omarchy", "unfinalized-reservation"), ("web", "unproven-final")]))
+
+    def test_a_cancelled_head_is_never_re_run_for_finals_alone(self):
+        develop = Develop()
+        develop.finalize(develop.push({"web"})["web"])
+        develop.deploy(801, "web", "failed")
+        develop.complete(801)
+        develop.runs[801]["attempts"][-1]["conclusion"] = "cancelled"
         for event in ("workflow_run", "schedule"):
-            self.assertEqual(decide(develop, event=event), ("cancelled", None, []))
+            self.assertEqual(decide(develop, event=event), ("cancelled", None, [("web", "unproven-final")]))
         # A maintainer's re-run of it is a new attempt that may be caught up again.
-        develop.start(802)
-        develop.allocate(802)
-        develop.complete(802)
-        self.assertEqual(decide(develop)[0], "rerun")
+        develop.start(801)
+        develop.allocate(801)
+        develop.complete(801)
+        self.assertEqual(decide(develop)[::2], ("rerun", [("web", "unproven-final")]))
         self.assertEqual(develop.posts, [])
 
     def test_owner_without_a_run_is_settled_and_an_unknown_head_waits(self):
