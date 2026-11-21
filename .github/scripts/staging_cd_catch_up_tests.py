@@ -15,7 +15,8 @@ from staging_cd_catch_up import Lane
 from staging_cd_common import Refusal
 from staging_cd_compatibility import GROUP
 from staging_cd_history import DevelopHistory
-from staging_cd_versions import REPOSITORY
+from staging_cd_targets import TARGETS
+from staging_cd_versions import DEPLOYABLES, REPOSITORY
 
 COMPLETED = {"action": "completed", "workflow_run": {
     "path": catch_up.WORKFLOW, "event": "push", "head_branch": "develop",
@@ -373,6 +374,15 @@ class UnprovenFinalTests(unittest.TestCase):
         retried = develop.allocate(802)
         self.assertEqual({key: task["mode"] for key, task in retried.items()},
                          {"runtime-omarchy": "publish", "web": "resume"})
+
+    def test_every_deployable_is_a_staging_target_and_no_other_final_is_judged(self):
+        # A deployable no controller can prove would look undeployed after every push.
+        self.assertEqual(set(DEPLOYABLES), TARGETS)
+        develop = self.failed_deploy()
+        develop.complete(801)
+        with patch.object(catch_up, "TARGETS", TARGETS - {"web"}):
+            self.assertEqual(decide(develop), ("nothing-behind", None, []))
+        self.assertEqual(decide(develop)[::2], ("rerun", [("web", "unproven-final")]))
 
     def test_final_no_writer_covered_since_its_owner_started_is_undeployed(self):
         develop = Develop()

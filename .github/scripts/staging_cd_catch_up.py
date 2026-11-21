@@ -10,11 +10,13 @@ active, that run's allocation completed, and some lane's newest version is
 either an unfinalized reservation of an earlier run or a final of a settled
 owner that no controller proof covers. A re-run for finals alone waits for
 the hourly check, once its head has settled for a while, so a stuck app or
-a namespace fence that failed the deploy can clear first. A re-run attempt is the same develop
-push event, so every push-only authority, cache and admission check applies
-unchanged, its admission clock starts afresh, and staging-cd.yml gains no
-trigger. Like any allocation it also retries the head's own failed builds,
-though those alone never trigger a re-run.
+a namespace fence that failed the deploy can clear first. A re-run attempt
+is the same develop push event, so every push-only authority, cache and
+admission check applies unchanged, its admission clock starts afresh, and
+staging-cd.yml gains no trigger. Like any allocation it also retries the
+head's own failed builds. Those alone never trigger a re-run, but finals
+they leave undeployed do: a group transition holds its runtimes' finals
+for a failed AM build.
 
 The re-run is automatic once per head: its attempt is triggered by the bot,
 which never earns another, and no head runs ATTEMPTS times. A lane still
@@ -36,6 +38,7 @@ from staging_cd_promotion import UNAVAILABLE, job_proof, proven_components, push
 from staging_cd_receipts import parse_annotation
 from staging_cd_reservations import pending_name, validate_reservation
 from staging_cd_runtime import run_private
+from staging_cd_targets import TARGETS
 from staging_cd_versions import DEPLOYABLES, REPOSITORY, version_tuple
 
 WORKFLOW = ".github/workflows/staging-cd.yml"
@@ -155,16 +158,18 @@ def left_behind(api, refs, head_run, jobs, read_controller):
     Versions only grow, so a lane's newest version is its latest attempt. One
     the head's run reserved itself failed at the newest opportunity; it never
     triggers a re-run by itself, so it waits for the next push or is retried by
-    a re-run another lane triggered. A same-source group claim that yielded to
-    its finalized peer is current. Every other unfinalized newest reservation
-    predates the head's allocation, which would have retried it unless its
-    owner was still running then.
+    a re-run another lane triggered. Finals it leaves undeployed, such as the
+    runtimes a group transition holds for it, are judged as finals below. A
+    same-source group claim that yielded to its finalized peer is current.
+    Every other unfinalized newest reservation predates the head's allocation,
+    which would have retried it unless its owner was still running then.
 
     A newest final is current once a controller proof covers it, whether from
     the newest staging writers or the head's own deploy. Otherwise it is
     behind when its lane's newest writer left no proof of it, or when no writer
     has covered the lane since the final's owner started. A lane whose last
-    writer is older than the recent listing waits for the next push.
+    writer is older than the recent listing waits for the next push. Only a
+    staging target's final can be proven, so no other lane's final is judged.
     """
     lanes, finals_due, latest = [], {}, {}
     for component, (finals, pending) in sorted(lane_versions(refs).items()):
@@ -176,7 +181,8 @@ def left_behind(api, refs, head_run, jobs, read_controller):
             top = max(finals, key=version_tuple)
             latest[component] = final_receipt(api, component, top, finals[top])
         if newest in finals:
-            finals_due[component] = newest
+            if component in TARGETS:
+                finals_due[component] = newest
             continue
         value = reservation(api, component, newest, pending[newest])
         if value["run_id"] == head_run["id"]:
