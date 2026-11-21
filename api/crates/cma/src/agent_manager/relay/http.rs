@@ -2,7 +2,7 @@ use super::*;
 use axum::{
     body::{to_bytes, Body},
     extract::{Request, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -13,6 +13,24 @@ pub(super) async fn route(
     State(relay): State<Arc<Relay>>,
     request: Request,
     next: Next,
+) -> Response {
+    let settings = settings_patch(request.uri().path(), request.method());
+    let mut response = route_request(relay, request, next, settings).await;
+    if settings {
+        // Owner and authorization failures can occur before the public handler.
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("private, no-store"),
+        );
+    }
+    response
+}
+
+async fn route_request(
+    relay: Arc<Relay>,
+    request: Request,
+    next: Next,
+    settings: bool,
 ) -> Response {
     if relay.observation.get().is_some() && observation::eligible(&request) {
         return observation::route(&relay, request, next).await;
@@ -26,7 +44,6 @@ pub(super) async fn route(
             next.run(request).await
         };
     };
-    let settings = settings_patch(request.uri().path(), request.method());
     if settings && relay.settings_owner_routing.get().is_none() {
         // An enabled ingress can reach a replica with this rollout still disabled.
         return if proof.is_some() {
@@ -268,7 +285,7 @@ fn settings_patch(path: &str, method: &axum::http::Method) -> bool {
         && path
             .strip_prefix("/api/v1/agents/")
             .and_then(|path| path.split_once('/'))
-            .is_some_and(|(_, suffix)| suffix == "settings")
+            .is_some_and(|(id, suffix)| !id.is_empty() && suffix == "settings")
 }
 
 fn body_limit(path: &str) -> usize {
@@ -462,6 +479,7 @@ mod tests {
         }
         for (method, path) in [
             (Method::PATCH, "/api/v1/agents/agt-example/settings/extra"),
+            (Method::PATCH, "/api/v1/agents//settings"),
             (Method::PATCH, "/api/v2/agents/agt-example/settings"),
             (Method::POST, "/api/v1/agents/agt-example/stop"),
             (Method::DELETE, "/api/v1/agents/agt-example"),

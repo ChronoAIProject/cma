@@ -18,6 +18,7 @@ fn patch(replica: &Replica, key: &str) -> reqwest::RequestBuilder {
 
 async fn view(response: reqwest::Response) -> (StatusCode, Value) {
     let status = response.status();
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
     (status, response.json().await.unwrap())
 }
 
@@ -135,6 +136,7 @@ async fn settings_patch_on_peer_dispatches_on_owner_once_and_replays_after_hando
         .await
         .unwrap();
     assert_eq!(stale.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(stale.headers()["cache-control"], "private, no-store");
     assert_eq!(
         read(&replicas[owner]).await,
         (StatusCode::OK, expected.clone())
@@ -183,6 +185,7 @@ async fn settings_patch_refuses_foreign_principal_and_mixed_rollout() {
         .await
         .unwrap();
     assert_eq!(mixed.status(), StatusCode::FORBIDDEN);
+    assert_eq!(mixed.headers()["cache-control"], "private, no-store");
     assert_eq!(replicas[peer].scopes.lock().unwrap().as_slice(), &[None]);
     assert!(replicas[owner].scopes.lock().unwrap().is_empty());
     enable(&replicas[owner]);

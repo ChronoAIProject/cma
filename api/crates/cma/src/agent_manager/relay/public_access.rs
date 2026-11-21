@@ -81,7 +81,7 @@ impl PublicAuthorization for PublicAccess {
         )
         .await?;
         match operation {
-            Operation::Preferences => {
+            Operation::Preferences | Operation::Settings => {
                 if !context.validate_principal()
                     || !context
                         .caller
@@ -111,7 +111,7 @@ impl PublicAuthorization for PublicAccess {
                     .await
                     .map_err(access_error)?;
             }
-            Operation::Models | Operation::Settings => {
+            Operation::Models => {
                 let read = self
                     .reads
                     .configuration_authorized(context, credential, id)

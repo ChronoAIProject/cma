@@ -298,3 +298,35 @@ async fn revoked_write_share_cannot_route_preferences() {
         .is_client_error());
     assert_eq!(ownership.calls.load(Ordering::SeqCst), 0);
 }
+
+#[tokio::test]
+async fn settings_mutation_refuses_a_read_only_or_revoked_share_before_lookup() {
+    for mode in [ShareMode::View, ShareMode::ViewWrite] {
+        let f = fixture(auth("viewer"), "agt-public", "owner").await;
+        let share = share(&f, mode).await;
+        let viewer = context("viewer");
+        if mode == ShareMode::ViewWrite {
+            authorize(&f, &viewer, "PATCH", "settings").await.unwrap();
+            f.access
+                .change_share(
+                    &context("owner"),
+                    None,
+                    ShareCommand {
+                        selector: share.selector.clone(),
+                        change: ShareChange::Revoke { share_id: share.id },
+                        expected_share_revision: Some(share.revision),
+                        idempotency_key: "revoke-settings".into(),
+                    },
+                )
+                .await
+                .unwrap();
+        }
+        assert!(authorize(&f, &viewer, "PATCH", "settings").await.is_err());
+    }
+    let f = fixture(auth("owner"), "agt-public", "owner").await;
+    let mut proof = context("owner");
+    proof.credential_source = CredentialSource::RequestBoundRead {
+        expires_at: SystemTime::now() + std::time::Duration::from_secs(10),
+    };
+    assert!(authorize(&f, &proof, "PATCH", "settings").await.is_err());
+}

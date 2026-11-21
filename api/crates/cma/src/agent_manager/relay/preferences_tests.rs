@@ -7,6 +7,9 @@ use serde_json::{json, Value};
 mod fixture;
 use fixture::*;
 
+#[path = "preferences_tests/settings_receipts.rs"]
+mod settings_receipts;
+
 #[path = "settings_tests.rs"]
 mod settings;
 
