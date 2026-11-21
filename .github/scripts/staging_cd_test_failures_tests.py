@@ -1,0 +1,367 @@
+"""Failing test names leave private BuildKit logs only through strict failure patterns."""
+import base64
+import json
+import unittest
+
+import staging_cd_test_failures as failures
+from staging_cd_build_progress import summarize
+
+QUALIFICATION = "[runtime-qualification 1/1] RUN --mount=type=bind,source=private-source cp -a /payload/. /"
+STEP = "runtime-qualification 1/1"
+MEDIA_STEP = "[media-self-test 7/7] RUN --network=none <<'MEDIA_SELF_TEST'"
+
+# Node 24's default reporter without a TTY (BuildKit gives none) is spec.
+# Captured from `docker buildx build --progress=rawjson`, with private markers added.
+SPEC = """\
+✔ passes quickly (0.438875ms)
+✖ reopens the original conversation after restart (0.548ms)
+▶ suite of things
+  ✖ nested failure with <angle> & "quotes" (0.112292ms)
+  ✔ nested pass (0.106666ms)
+✖ suite of things (0.461083ms)
+✖ /tmp/cma-codex-source/crash.test.cjs (24.379458ms)
+✖ inline private-only line before the summary (1ms)
+ℹ tests 6
+ℹ fail 4
+
+✖ failing tests:
+
+test at tmp/cma-codex-source/sample.test.cjs:4:1
+✖ reopens the original conversation after restart (0.548ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:
+
+  'private-actual' !== 'private-expected'
+
+      at TestContext.<anonymous> (/tmp/cma-codex-source/sample.test.cjs:4:72)
+
+test at tmp/cma-codex-source/sample.test.cjs:6:8
+✖ nested failure with <angle> & "quotes" (0.112292ms)
+  Error: private-detail
+  ✖ indented private line inside an error (1ms)
+
+test at tmp/cma-codex-source/crash.test.cjs:1:1
+✖ /tmp/cma-codex-source/crash.test.cjs (24.379458ms)
+  'test failed'
+
+test at tmp/cma-codex-source/timeout.test.cjs:2:1
+✖ session open overlap stays bounded (21.798166ms)
+  'test timed out after 20ms'
+"""
+
+TAP = """\
+TAP version 13
+# node:internal/test_runner/harness:124
+# Error: private load failure
+# Subtest: passes quickly
+ok 1 - passes quickly
+  ---
+  duration_ms: 0.490833
+  type: 'test'
+  ...
+# Subtest: reopens the original conversation after restart
+not ok 2 - reopens the original conversation after restart
+  ---
+  duration_ms: 0.56325
+  type: 'test'
+  location: '/tmp/cma-codex-source/sample.test.cjs:4:1'
+  failureType: 'testCodeFailure'
+  error: |-
+    private-detail
+    not ok 9 - private line inside an error
+  code: 'ERR_ASSERTION'
+  ...
+# Subtest: suite of things
+    # Subtest: nested failure with <angle> & "quotes"
+    not ok 1 - nested failure with <angle> & "quotes"
+      ---
+      duration_ms: 0.132208
+      type: 'test'
+      location: '/tmp/cma-codex-source/sample.test.cjs:6:8'
+      failureType: 'testCodeFailure'
+      error: 'private-detail'
+      ...
+    1..1
+not ok 3 - suite of things
+  ---
+  duration_ms: 0.805334
+  type: 'suite'
+  location: '/tmp/cma-codex-source/sample.test.cjs:5:6'
+  failureType: 'subtestsFailed'
+  error: '1 subtest failed'
+  ...
+# Subtest: /tmp/cma-codex-source/crash.test.cjs
+not ok 4 - /tmp/cma-codex-source/crash.test.cjs
+  ---
+  duration_ms: 25.966542
+  type: 'test'
+  location: '/tmp/cma-codex-source/crash.test.cjs:1:1'
+  failureType: 'testCodeFailure'
+  exitCode: 7
+  error: 'test failed'
+  ...
+not ok 5 - retries a known flake # TODO private reason
+  ---
+  duration_ms: 1
+  ...
+not ok 6 - escaped \\# hash and first\\nsecond
+  ---
+  location: '/tmp/cma-codex-source/turn_steering.test.cjs:9:1'
+  ...
+not ok 7 - private line without a diagnostic block
+1..7
+"""
+
+# Python 3.12 unittest, as both recovery scripts run (`unittest.main()`).
+UNITTEST = """\
+.FEF
+======================================================================
+ERROR: test_beta_errors (__main__.Fixture.test_beta_errors)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/cma-codex-source/recovery_test.py", line 6, in test_beta_errors
+    raise RuntimeError("private detail")
+RuntimeError: private detail
+FAIL: test_private_inside_a_traceback (private.Module)
+
+======================================================================
+FAIL: test_alpha_fails (__main__.Fixture.test_alpha_fails)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/cma-codex-source/recovery_test.py", line 4, in test_alpha_fails
+    self.assertEqual(1, 2)
+AssertionError: 1 != 2
+
+======================================================================
+FAIL: test_gamma_sub (__main__.Fixture.test_gamma_sub) (mode='private-b')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/cma-codex-source/recovery_test.py", line 10, in test_gamma_sub
+AssertionError: 'private-b' != 'a'
+
+======================================================================
+FAIL: test_gamma_sub (__main__.Fixture.test_gamma_sub) (mode='private-c')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/cma-codex-source/recovery_test.py", line 10, in test_gamma_sub
+AssertionError: 'private-c' != 'a'
+
+======================================================================
+ERROR: setUpClass (__main__.DesktopRecovery)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/cma-codex-source/recovery_desktop_test.py", line 30, in setUpClass
+OSError: private
+
+======================================================================
+FAIL: test_older_python (recovery_test.Fixture)
+Docstring line of a private description.
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/private/helper.py", line 3, in helper
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.001s
+
+FAILED (failures=3, errors=2)
+"""
+
+MEDIA = """\
+media-self-test case=h264_aac.mp4 op=keyframes outcome=ok frames=6 pcm_bytes=0 ms=12
+media-self-test case=voice.ogg op=audio outcome=timeout frames=0 pcm_bytes=0 ms=30000
+media-self-test case=private;fixture op=audio outcome=exit_nonzero frames=0 pcm_bytes=0 ms=1
+"""
+
+
+def digest(number):
+    return "sha256:" + format(number, "x") * 64
+
+
+def progress(*steps, chunk=37):
+    """BuildKit rawjson: a started vertex, its base64 log chunks, then its completion."""
+    lines = []
+    for number, name, error, streams in steps:
+        started = {"digest": digest(number), "name": name, "started": "2026-11-21T00:00:01Z"}
+        lines.append({"vertexes": [started]})
+        for stream, text in streams.items():
+            data = text.encode() if isinstance(text, str) else text
+            for start in range(0, len(data), chunk):
+                lines.append({"logs": [{"vertex": digest(number), "stream": stream, "timestamp": "2026-11-21T00:00:02Z",
+                                        "data": base64.b64encode(data[start:start + chunk]).decode()}]})
+        completed = dict(started, completed=f"2026-11-21T00:00:{number:02d}Z")
+        if error:
+            completed["error"] = error
+        lines.append({"vertexes": [completed]})
+    # buildx prints its private error text after the JSON stream.
+    return b"\n".join(json.dumps(line).encode() for line in lines) + b"\nERROR: failed to solve: private trailer\n"
+
+
+def failed_qualification(stdout="", stderr=""):
+    return summarize(progress((1, QUALIFICATION, "process did not complete successfully: private", {1: stdout, 2: stderr})))
+
+
+class ExtractionTests(unittest.TestCase):
+    def test_node_spec_summary_names_each_failing_test_and_its_file(self):
+        result = failed_qualification(stdout=SPEC)
+        self.assertEqual(result["failed_steps"], [STEP])
+        self.assertEqual(result["failed_tests"], [
+            {"step": STEP, "file": "sample.test.cjs", "test": "reopens the original conversation after restart"},
+            {"step": STEP, "file": "sample.test.cjs", "test": "nested failure with <angle> quotes"},
+            {"step": STEP, "file": "crash.test.cjs"},
+            {"step": STEP, "file": "timeout.test.cjs", "test": "session open overlap stays bounded"}])
+        self.assertNotIn("private", json.dumps(result))
+
+    def test_node_tap_names_leaf_failures_and_skips_parents_todos_and_unstructured_lines(self):
+        result = failed_qualification(stdout=TAP)
+        self.assertEqual(result["failed_tests"], [
+            {"step": STEP, "file": "sample.test.cjs", "test": "reopens the original conversation after restart"},
+            {"step": STEP, "file": "sample.test.cjs", "test": "nested failure with <angle> quotes"},
+            {"step": STEP, "file": "crash.test.cjs"},
+            {"step": STEP, "file": "turn_steering.test.cjs", "test": "escaped # hash and first second"}])
+        self.assertNotIn("private", json.dumps(result))
+
+    def test_python_unittest_names_failures_errors_and_their_script(self):
+        result = failed_qualification(stderr=UNITTEST)
+        self.assertEqual(result["failed_tests"], [
+            {"step": STEP, "file": "recovery_test.py", "test": "Fixture.test_beta_errors"},
+            {"step": STEP, "file": "recovery_test.py", "test": "Fixture.test_alpha_fails"},
+            {"step": STEP, "file": "recovery_test.py", "test": "Fixture.test_gamma_sub"},
+            {"step": STEP, "file": "recovery_desktop_test.py", "test": "DesktopRecovery.setUpClass"},
+            {"step": STEP, "test": "recovery_test.Fixture.test_older_python"}])
+        self.assertNotIn("private", json.dumps(result))
+
+    def test_both_streams_of_one_step_are_read_separately(self):
+        result = failed_qualification(stdout=SPEC, stderr=UNITTEST)
+        self.assertEqual(len(result["failed_tests"]), 9)
+        self.assertEqual(result["failed_tests"][0]["file"], "sample.test.cjs")
+        self.assertEqual(result["failed_tests"][-1]["test"], "recovery_test.Fixture.test_older_python")
+
+    def test_media_self_test_names_failed_cases_only_in_its_own_stage(self):
+        result = summarize(progress((7, MEDIA_STEP, "private", {1: MEDIA + SPEC})))
+        self.assertEqual(result["failed_tests"], [{"step": "media-self-test 7/7", "file": "voice.ogg",
+                                                   "test": "audio timeout"}])
+        self.assertNotIn("failed_tests", failed_qualification(stdout=MEDIA))
+        self.assertNotIn("private", json.dumps(result))
+
+    def test_a_passing_build_or_another_stage_publishes_no_names(self):
+        cases = {
+            "passing step": progress((1, QUALIFICATION, None, {1: SPEC, 2: UNITTEST})),
+            "unlisted stage": progress((2, "[runtime-tools 9/12] RUN node private.cjs", "private", {1: SPEC})),
+            "internal vertex": progress((3, "[internal] load build context", "private", {1: TAP})),
+            "unnamed vertex": progress((4, "private vertex", "private", {1: TAP})),
+            "prefix of a listed stage": progress((5, "[runtime-qualification-extra 1/1] RUN x", "private", {1: TAP})),
+            "no output": progress((6, QUALIFICATION, "private", {})),
+        }
+        for case, raw in cases.items():
+            with self.subTest(case=case):
+                result = summarize(raw)
+                self.assertNotIn("failed_tests", result)
+                self.assertNotIn("private", json.dumps(result))
+        # Another vertex's output never names a failed qualification step.
+        passing = (1, "[runtime-tools 9/12] RUN node private.cjs", None, {1: SPEC})
+        failed = (2, QUALIFICATION, "private", {})
+        self.assertNotIn("failed_tests", summarize(progress(passing, failed)))
+
+    def test_names_are_de_duplicated_bounded_and_ordered_by_failure(self):
+        repeated = "".join(f"not ok {n} - flaky {n % 12}\n  ---\n  ...\n" for n in range(1, 40))
+        result = failed_qualification(stdout=repeated)
+        self.assertEqual([row["test"] for row in result["failed_tests"]], [f"flaky {n}" for n in range(1, 11)])
+        two = summarize(progress((2, "[runtime-qualification 1/1] RUN y", "private", {1: "not ok 1 - second\n  ---\n"}),
+                                 (1, "[media-self-test 7/7] RUN x", "private", {1: MEDIA})))
+        self.assertEqual([row["step"] for row in two["failed_tests"]], ["media-self-test 7/7", STEP])
+
+    def test_malformed_records_are_ignored(self):
+        good = {"vertex": digest(1), "stream": 1, "data": base64.b64encode(b"not ok 1 - kept\n  ---\n").decode()}
+        records = [{"logs": "private"}, {"logs": [None, "private", 7]},
+                   {"logs": [dict(good, vertex=["private"])]}, {"logs": [dict(good, vertex=None)]},
+                   {"logs": [dict(good, stream=3)]}, {"logs": [dict(good, stream=True)]},
+                   {"logs": [dict(good, stream="1")]}, {"logs": [dict(good, data="!!private!!")]},
+                   {"logs": [dict(good, data=None)]}, {"logs": [good]}, ["logs"], "private"]
+        rows = [{"vertexes": [{"digest": digest(1), "name": QUALIFICATION, "started": "2026-11-21T00:00:01Z",
+                               "completed": "2026-11-21T00:00:02Z", "error": "private"}]}]
+        raw = b"\n".join(json.dumps(row).encode() for row in records + rows) + b"\nlogs private\n"
+        result = summarize(raw)
+        self.assertEqual(result["failed_tests"], [{"step": STEP, "test": "kept"}])
+        self.assertEqual(summarize(raw.decode())["failed_tests"], result["failed_tests"])
+
+
+class SanitizationTests(unittest.TestCase):
+    def test_hostile_or_secret_looking_titles_are_dropped_or_neutralized(self):
+        token = "gh" + "p_" + "Ab1Cd2" * 6
+        cases = [
+            ("leaks " + token, None),
+            ("digest " + "0123456789abcdef" * 2, None),
+            ("blob " + base64.b64encode(bytes(range(40))).decode(), None),
+            ("lowercase key " + "k3y" * 9, None),
+            ("sets password=hunter2", None),
+            ("api_key: short", None),
+            ("value=" + "v" * 12, None),
+            ("opens https://user:pass@example.invalid/path", None),
+            ("auth header Bearer abc", None),
+            ("pem -----BEGIN key", None),
+            ("::error title=x::injected", None),
+            ("percent %0A::warning::injected", None),
+            ("\x1b[31mred\x1b[0m title", "red title"),
+            ("zero​width ‮right-to-left\ttab", "zerowidth right-to-left tab"),
+            ("only ✖�\x00\x07 symbols", "only symbols"),
+            ("✖✖", None),
+            ("word " * 60, ("word " * 24).rstrip()),
+            ("unbroken " + "x" * 40, None),
+            ("keeps punctuation: (a, b) <c> = d + e # f/g", "keeps punctuation: (a, b) <c> = d + e # f/g"),
+            ("Fixture.test_plan_digest_matches_adapter_utf8_workspace_paths",
+             "Fixture.test_plan_digest_matches_adapter_utf8_workspace_paths"),
+        ]
+        for raw, expected in cases:
+            with self.subTest(raw=raw[:40]):
+                self.assertEqual(failures.clean_name(raw), expected)
+        self.assertEqual(failures.clean_file("/tmp/cma-codex-source/open_completion_native.test.cjs"),
+                         "open_completion_native.test.cjs")
+        for path in ("/tmp/x/" + token + ".test.cjs", "/tmp/x/has space.cjs", "/tmp/x/", "/tmp/x/" + "f" * 90,
+                     "/tmp/x/" + "0123456789abcdef0.cjs", "/tmp/x/-flag.cjs", "/tmp/x/a\x1b.cjs"):
+            with self.subTest(path=path[:40]):
+                self.assertIsNone(failures.clean_file(path))
+
+    def test_hostile_log_content_never_reaches_the_summary(self):
+        token = "gh" + "p_" + "Ab1Cd2" * 6
+        hostile = "".join(f"not ok {n} - {title}\n  ---\n  location: '{location}:1:1'\n  ...\n" for n, (title, location) in
+                          enumerate([("leaks " + token, "/tmp/x/a.test.cjs"),
+                                     ("::error::injected", "/tmp/x/b.test.cjs"),
+                                     ("clean title", "/tmp/x/" + token + ".cjs"),
+                                     ("\x1b]8;;https://user:pass@example.invalid\x07link\x1b]8;;\x07", "/tmp/x/c.cjs"),
+                                     ("first\r::warning::injected", "/tmp/x/d.cjs")], 1))
+        hostile += "::error title=Image test failed::private injected line\n"
+        hostile += "\x1b[2Knot ok 9 - ansi prefixed title\n  ---\n  ...\n"
+        # A unittest-shaped line counts only between its own separators.
+        stray = ("FAIL: test_x (a.B)\n" + "-" * 70 + "\nnoise\nERROR: test_y (a.B)\n" + "-" * 70 + "\n"
+                 + "=" * 70 + "\nFAIL: test_z (a.B)\nnoise\nnoise\n" + "-" * 70 + "\n")
+        result = failed_qualification(stdout=hostile, stderr=stray)
+        self.assertEqual(result["failed_tests"], [
+            {"step": STEP, "file": "a.test.cjs"}, {"step": STEP, "file": "b.test.cjs"},
+            {"step": STEP, "test": "clean title"}, {"step": STEP, "file": "c.cjs", "test": "link"},
+            {"step": STEP, "test": "ansi prefixed title"}])
+        text = json.dumps(result)
+        for leaked in (token, "injected", "user", "pass@", "\\u001b", "::", "%"):
+            self.assertNotIn(leaked, text)
+
+    def test_an_oversized_log_keeps_only_its_bounded_head_and_tail(self):
+        # At most 1 MiB of one step's output is ever held: 512 KiB per stream.
+        self.assertLessEqual(failures.HEAD + failures.TAIL, 512 * 1024)
+        head = "not ok 1 - early failure\n  ---\n  ...\n"
+        middle = "not ok 2 - middle failure\n  ---\n  ...\n"
+        tail = "not ok 3 - late failure\n  ---\n  ...\n"
+        filler = ("private filler line\n" * (failures.HEAD // 20 + 1000))
+        text = head + filler + middle + filler + tail
+        result = failed_qualification(stdout=text.encode())
+        self.assertEqual([row["test"] for row in result["failed_tests"]], ["early failure", "late failure"])
+        retained = failures.Retained()
+        for start in range(0, len(text), 4096):
+            retained.add(text[start:start + 4096].encode())
+        self.assertLessEqual(len(retained.head) + len(retained.tail), failures.HEAD + failures.TAIL)
+        # A single chunk larger than both bounds is still cut to them.
+        huge = failures.Retained()
+        huge.add(b"x" * (failures.HEAD + failures.TAIL) * 3)
+        self.assertEqual((len(huge.head), len(huge.tail)), (failures.HEAD, failures.TAIL))
+        self.assertEqual(huge.text(), "")
+
+
+if __name__ == "__main__":
+    unittest.main()
