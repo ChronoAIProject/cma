@@ -33,6 +33,7 @@ import {
 } from './model';
 export function NodeFields({
   draft,
+  active = true,
   onChange,
   credentials,
   onCredentials,
@@ -43,6 +44,7 @@ export function NodeFields({
   denied,
 }: {
   draft: Fields;
+  active?: boolean;
   onChange: (v: Fields) => void;
   credentials: Fields;
   onCredentials: (v: Fields) => void;
@@ -79,6 +81,7 @@ export function NodeFields({
         ) : null}
         {create ? (
           <ManagedConnectionFields
+            active={active}
             value={draft}
             onChange={onChange}
             denied={denied}
