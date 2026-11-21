@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn exact_answer_replay_binds_the_retained_receipt_without_sending() {
     use crate::{
-        activity::{facts, ActivityStore},
+        activity::{facts, public_page, ActivityStore, Change, ConsumerState},
         ingress::{routing_plan::fixture, routing_store::test_server::Server},
         providers::ResponsesEvent,
         turns::observer::{DeliveryStep, Destination},
@@ -49,7 +49,7 @@ async fn exact_answer_replay_binds_the_retained_receipt_without_sending() {
 
     let mut lease = accepted(&setup).await;
     let (mut delivery, mut rx) = lane(&setup);
-    delivery.journal = delivery.journal.with_activity(activity.clone());
+    // The original production observation never reached the Activity store.
     let mut frame = recovery_frame("resp_1", 0, false);
     frame.event = ResponsesEvent::OutputTextDone {
         item_id: "item-1".into(),
@@ -68,10 +68,43 @@ async fn exact_answer_replay_binds_the_retained_receipt_without_sending() {
         }
     );
     assert!(matches!(result.unwrap(), FrameDelivery::Settled { .. }));
-    let page = activity.latest(&identity.owner, record).await.unwrap();
-    assert!(page.items[0].consumers[0].deliveries[0]
-        .answer_response_id
-        .is_none());
+    let admitted = Change::state(
+        target.launch.consumer.as_str(),
+        ConsumerState::Accepted,
+        Some("resp_1".into()),
+    );
+    activity.change(record, event, &admitted).await.unwrap();
+    delivery.journal = delivery.journal.with_activity(activity.clone());
+    let snapshot =
+        || async { public_page(&activity.latest(&identity.owner, record).await.unwrap()) };
+    let before = snapshot().await;
+    let consumer = &before.items[0].consumers[0];
+    assert!(consumer.produced_at.is_none());
+    assert!(consumer.produced_by.is_none());
+    assert!(consumer.deliveries[0].answer_response_id.is_none());
+
+    let mut conflicting_frame = frame.clone();
+    conflicting_frame.event = ResponsesEvent::OutputTextDone {
+        item_id: "item-1".into(),
+        text: "different answer".into(),
+    };
+    conflicting_frame.raw["text"] = "different answer".into();
+    for (candidate, proposed_effect) in [
+        (&conflicting_frame, effect()),
+        (&frame, ReplayEffect::NoEffect),
+    ] {
+        assert!(matches!(
+            delivery
+                .deliver_frame(identity, &target.id, &mut lease, candidate, proposed_effect)
+                .await,
+            Err(ExecutionError::Invalid)
+        ));
+        assert_eq!(
+            serde_json::to_value(snapshot().await).unwrap(),
+            serde_json::to_value(&before).unwrap()
+        );
+        assert!(rx.try_recv().is_err());
+    }
 
     assert!(matches!(
         delivery
@@ -81,8 +114,14 @@ async fn exact_answer_replay_binds_the_retained_receipt_without_sending() {
         FrameDelivery::Settled { .. }
     ));
     assert!(rx.try_recv().is_err());
-    let page = activity.latest(&identity.owner, record).await.unwrap();
-    let receipts = &page.items[0].consumers[0].deliveries;
+    let page = snapshot().await;
+    let consumer = &page.items[0].consumers[0];
+    assert!(consumer.produced_at.is_none());
+    assert_eq!(
+        consumer.produced_by.as_deref(),
+        Some(original_time.as_str())
+    );
+    let receipts = &consumer.deliveries;
     assert_eq!(receipts.len(), 1);
     assert_eq!(receipts[0].answer_response_id.as_deref(), Some("resp_1"));
     assert_eq!(
