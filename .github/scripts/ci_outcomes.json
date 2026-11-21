@@ -623,6 +623,12 @@
           "cause": "transient",
           "next": "Re-run the failed jobs."
         },
+        "RESERVATION_PUSH_REJECTED": {
+          "title": "Reservation push rejected",
+          "meaning": "GitHub declined the atomic reservation push and none of its refs exist: the token may not write tags, or a tag ruleset or hook refused them.",
+          "cause": "operator",
+          "next": "An operator must check the allocate job's contents permission and the rulesets and hooks that cover cma- tags, then re-run the failed jobs."
+        },
         "RESERVATION_VERIFY_FAILED": {
           "title": "Reservation not verified",
           "meaning": "The pushed reservation could not be read back as this run's claim.",
@@ -661,15 +667,39 @@
         },
         "INVENTORY_INCOMPLETE": {
           "title": "Tag inventory incomplete",
-          "meaning": "The version tag inventory was incomplete, or a claim had no durable version.",
+          "meaning": "The version tag inventory could not be read completely.",
           "cause": "transient",
           "next": "Re-run the failed jobs."
+        },
+        "INVENTORY_CLAIM_CONFLICT": {
+          "title": "Claim and reservation differ",
+          "meaning": "A version claim and the pending reservation of its version name different objects in one tag advertisement, so the inventory is damaged and every read repeats it.",
+          "cause": "operator",
+          "next": "An operator must compare the cma-allocation claim with the pending tag of that version and restore the pair one run wrote."
+        },
+        "INVENTORY_CLAIM_ORPHANED": {
+          "title": "Claim without a version",
+          "meaning": "A version claim has neither its pending reservation nor its final tag, so a burned version is no longer visible and every read repeats it.",
+          "cause": "operator",
+          "next": "An operator must restore the deleted pending or final tag for that claim before allocation can continue."
+        },
+        "INVENTORY_TOO_LARGE": {
+          "title": "Tag inventory too large",
+          "meaning": "The repository's tag advertisement exceeds the 16 MiB that allocation reads, and grows with every release.",
+          "cause": "operator",
+          "next": "An operator must prune obsolete tags, or raise the bound in staging_cd_allocation_snapshot.py in its own change."
         },
         "RESERVATION_COLLISION": {
           "title": "Reservation collision",
           "meaning": "Another run claimed the planned version slot first.",
           "cause": "transient",
           "next": "Re-run the failed jobs; the next allocation plans a new version."
+        },
+        "RESERVATION_PLAN_INVALID": {
+          "title": "Reservation plan invalid",
+          "meaning": "Planning produced a reservation for a retired component, or for a version the inventory or this plan already holds; an allocator defect, not a race.",
+          "cause": "unknown",
+          "next": "Reproduce allocation from the reported line, fix the planner and add a test; a re-run plans the same reservation."
         },
         "RESERVATION_NOT_VISIBLE": {
           "title": "Reservation not yet visible",

@@ -39,15 +39,19 @@ REFUSAL_CODES = {
     "Version reservation collision limit exceeded": "RESERVATION_COLLISION_LIMIT",
     "Reservation push failed without a collision": "RESERVATION_PUSH_FAILED",
     "Reservation push was not verified": "RESERVATION_VERIFY_FAILED",
+    "Reservation push was rejected": "RESERVATION_PUSH_REJECTED",
     "Terminal reservation settlement is uncertain": "FINAL_SETTLEMENT_UNCERTAIN",
     "Terminal reservation differs from final receipt": "FINAL_SETTLEMENT_CONFLICT",
     "Allocation deadline exceeded": "DEADLINE_EXCEEDED",
     "Allocation read failed": "READ_FAILED",
     "Allocation write settlement is uncertain": "WRITE_UNCERTAIN",
-    "Allocation claim owner differs": "RESERVATION_VERIFY_FAILED",
-    "Allocation claim has no durable version": "INVENTORY_INCOMPLETE",
+    "Allocation claim owner differs": "INVENTORY_CLAIM_CONFLICT",
+    "Allocation claim has no durable version": "INVENTORY_CLAIM_ORPHANED",
     "Allocation reservation collision": "RESERVATION_COLLISION",
+    "Allocation planned a duplicate reservation": "RESERVATION_PLAN_INVALID",
+    "Unknown reservation component": "RESERVATION_PLAN_INVALID",
     "Allocation tag inventory is incomplete": "INVENTORY_INCOMPLETE",
+    "Allocation tag inventory exceeds 16 MiB": "INVENTORY_TOO_LARGE",
     "Allocation reservation readback differs": "RESERVATION_VERIFY_FAILED",
     "Allocation reservation readback is unavailable": "RESERVATION_NOT_VISIBLE",
 }
@@ -63,6 +67,13 @@ TRANSIENT_CODES = frozenset({
 })
 
 
+def refusal_code(error):
+    """The fixed public code of an allocation failure."""
+    if not isinstance(error, Refusal):
+        return "UNEXPECTED_ERROR"
+    return REFUSAL_CODES.get(str(error), "UNCLASSIFIED_REFUSAL")
+
+
 def run_allocation(operation, env=None):
     # Never echo exception text or private output. Only this closed vocabulary
     # crosses the existing output boundary; unknown failures remain generic.
@@ -74,8 +85,7 @@ def run_allocation(operation, env=None):
             return operation(masker)
         except Exception as error:
             site = error_site(error)
-            if isinstance(error, Refusal):
-                reason = REFUSAL_CODES.get(str(error), "UNCLASSIFIED_REFUSAL")
+            reason = refusal_code(error)
             raise
 
     status = run_private(guarded, None, subject="allocation", explain=False)

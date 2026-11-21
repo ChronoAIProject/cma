@@ -121,6 +121,11 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertLessEqual(allocation.TRANSIENT_CODES, set(allocation.REFUSAL_CODES.values()))
         # The incident codes of an uncertain push and a spent budget are among them.
         self.assertLessEqual({"WRITE_UNCERTAIN", "READ_FAILED", "DEADLINE_EXCEEDED"}, allocation.TRANSIENT_CODES)
+        # Durable causes are no longer catalogued as transient.
+        for code in ("RESERVATION_PUSH_REJECTED", "INVENTORY_CLAIM_CONFLICT", "INVENTORY_CLAIM_ORPHANED",
+                     "INVENTORY_TOO_LARGE"):
+            self.assertEqual(codes[code]["cause"], "operator", code)
+        self.assertEqual(codes["RESERVATION_PLAN_INVALID"]["cause"], "unknown")
 
     def test_replan_keeps_controller_proof_for_current_final(self):
         head = "a" * 40
