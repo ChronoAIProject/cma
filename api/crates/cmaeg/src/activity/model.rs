@@ -2,6 +2,8 @@ use cmaeg_core::activity::{ActivityConversation, Actor, SourceKind};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
+use super::ExecutionAttribution;
+
 pub const LIMIT: usize = 50;
 pub const RETENTION_DAYS: i64 = 7;
 
@@ -94,6 +96,12 @@ pub struct ActivityConsumer {
     pub consumer_id: String,
     pub display_name: Option<String>,
     pub agent_id: Option<String>,
+    /// Provider-verified execution reference for this response, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schema(ignore)]
+    pub(crate) execution_attributions: Vec<ExecutionAttribution>,
     pub provider: Option<String>,
     pub conversation_id: Option<String>,
     pub state: ConsumerState,
@@ -126,6 +134,8 @@ impl ActivityConsumer {
             last_non_admission_code: None,
             display_name: None,
             agent_id: None,
+            execution_reference: None,
+            execution_attributions: Vec::new(),
             provider: None,
             conversation_id: None,
             state: ConsumerState::Received,
@@ -162,6 +172,7 @@ pub struct ActivityRecipient {
 
 #[derive(Clone)]
 pub struct Change {
+    pub(crate) execution_attribution: Option<ExecutionAttribution>,
     pub refusal_code: Option<String>,
     pub last_non_admission_code: Option<String>,
     pub consumer: String,
@@ -180,6 +191,7 @@ impl Change {
     pub fn state(consumer: &str, state: ConsumerState, response_id: Option<String>) -> Self {
         Self {
             consumer: consumer.into(),
+            execution_attribution: None,
             refusal_code: None,
             last_non_admission_code: None,
             state: Some(state),
@@ -193,6 +205,12 @@ impl Change {
             processing_completed: false,
             media_response: None,
         }
+    }
+    pub(crate) fn execution_attribution(consumer: &str, value: ExecutionAttribution) -> Self {
+        let mut change = Self::state(consumer, ConsumerState::Received, None);
+        change.state = None;
+        change.execution_attribution = Some(value);
+        change
     }
     pub fn refused(consumer: &str, code: &str) -> Self {
         let mut change = Self::state(consumer, ConsumerState::Refused, None);
@@ -299,6 +317,9 @@ impl Change {
         }
         if let Some(value) = &self.agent_id {
             consumer.agent_id = Some(value.clone());
+        }
+        if let Some(attribution) = &self.execution_attribution {
+            attribution.retain(&mut consumer.execution_attributions);
         }
         if let Some(delivery) = &self.delivery {
             // Bounded receipt list. Heartbeats replace their prior receipt.
