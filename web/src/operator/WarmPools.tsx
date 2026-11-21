@@ -58,8 +58,14 @@ export function WarmPools({ client }: { readonly client: OperatorClient }) {
           },
     );
   };
-  const current = data?.items.filter((pool) => pool.image === data.default_image) ?? [];
-  const previous = data?.items.filter((pool) => pool.image !== data.default_image) ?? [];
+  // The deployment seeds the shared desktop pool for its own image; an operator only resizes it.
+  // A desktop pool for any other image is previous capacity like any other runtime.
+  const desktop = (pool: WarmPoolView) =>
+    pool.machine === true && !!data?.machine_image && pool.image === data.machine_image;
+  const agent = (pool: WarmPoolView) => pool.machine !== true && pool.image === data?.default_image;
+  const current = data?.items.filter(agent) ?? [];
+  const shared = data?.items.filter(desktop) ?? [];
+  const previous = data?.items.filter((pool) => !agent(pool) && !desktop(pool)) ?? [];
   const previousNeedsAttention = previous.some(
     (pool) =>
       pool.target_replicas > 0 ||
@@ -134,6 +140,28 @@ export function WarmPools({ client }: { readonly client: OperatorClient }) {
               ))}
             </Table>
           </div>
+          {data.machine_image ? (
+            <div className="warm-pool-list">
+              <div className="warm-pool-image">
+                <span>Shared desktop pool</span>
+                <code>{data.machine_image}</code>
+              </div>
+              <p className="operator-notice">
+                The deployment seeds this pool for the shared desktop image above. Set a target to
+                resize it, or 0 to disable spare capacity. Claimed Sandboxes keep running.
+              </p>
+              <Table
+                label="Shared desktop pool"
+                columns={warmPoolColumns(false)}
+                actions="Actions"
+                empty="No shared desktop pool is recorded for this image yet."
+              >
+                {shared.map((pool) => (
+                  <WarmPoolRow key={pool.id} client={client} pool={pool} onChanged={changed} />
+                ))}
+              </Table>
+            </div>
+          ) : null}
           {previousNeedsAttention ? (
             <Alert tone="warning">
               Previous runtime pools still have spare capacity or need attention. Review them below;
