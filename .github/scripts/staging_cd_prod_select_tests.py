@@ -188,6 +188,30 @@ class PlanTests(unittest.TestCase):
                 select.plan(dict(env, CD_TARGET="staging"), Mock(), Mock(), off, root=Path(directory),
                             download=Mock(), deployables={}, runner=runner)
 
+    def test_a_dispatch_retry_requires_maintainer_actors(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = self.environment(Path(directory))
+            Path(env["GITHUB_EVENT_PATH"]).write_text(json.dumps({"ref": "refs/heads/main", "inputs": {"infra_ref": ""},
+                                                                  "repository": {"full_name": "ChronoAIProject/cma"}}))
+            env.update(GITHUB_EVENT_NAME="workflow_dispatch", GITHUB_ACTOR="fixture-author",
+                       GITHUB_TRIGGERING_ACTOR="fixture-maintainer")
+            runner = git_runner([MERGE, PREVIOUS, RELEASED])
+            off = {"am": False, "eg": False, "web": False}
+            api = Mock(request=Mock(return_value={"role_name": "maintain"}))
+            self.assertEqual(select.plan(env, api, Mock(), off, root=Path(directory), download=Mock(),
+                                         deployables={}, runner=runner), (None, RELEASED))
+            self.assertEqual([call.args[0] for call in api.request.call_args_list],
+                             ["collaborators/fixture-author/permission", "collaborators/fixture-maintainer/permission"])
+            api.request.side_effect = [{"role_name": "admin"}, {"role_name": "write"}]
+            with self.assertRaisesRegex(Refusal, "maintainer permission"):
+                select.plan(env, api, Mock(), off, root=Path(directory), download=Mock(), deployables={},
+                            runner=runner)
+            # A push needs no actor permission read.
+            api = Mock()
+            select.plan(self.environment(Path(directory)), api, Mock(), off, root=Path(directory),
+                        download=Mock(), deployables={}, runner=runner)
+            api.request.assert_not_called()
+
 
 
 class EntryTests(unittest.TestCase):

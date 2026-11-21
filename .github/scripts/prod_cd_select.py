@@ -178,13 +178,17 @@ def gh_download(token):
 
 def plan(env, api, registry, policy, *, root, download, deployables, runner=subprocess.run):
     """Return (release_set or None, release commit) for the production event in env."""
-    from staging_cd_admission import event_identity
+    from staging_cd_admission import event_identity, maintainer_dispatch
     from staging_cd_receipts import canonical
     from staging_cd_set import dispatch_set
     from staging_cd_targets import RUNTIME_TARGETS, TARGETS
 
     require(env.get("CD_TARGET") == "production", "Production selection requires the production target")
-    event_identity(env)
+    if env.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+        # Like a staging redeploy, a retry needs maintainer actors, before and after approval.
+        maintainer_dispatch(env, api.request)
+    else:
+        event_identity(env)
     released = release_commit(env["GITHUB_SHA"], root, runner=runner)
     components = enabled_components(policy, TARGETS, RUNTIME_TARGETS)
     if not components:
