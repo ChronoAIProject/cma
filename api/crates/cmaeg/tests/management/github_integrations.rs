@@ -6,6 +6,8 @@ mod bindings;
 mod contention;
 #[path = "github_integrations/dispatch.rs"]
 mod dispatch;
+#[path = "github_integrations/dispatch_batches.rs"]
+mod dispatch_batches;
 #[path = "github_integrations/legacy.rs"]
 mod legacy;
 #[path = "github_integrations/lifecycle.rs"]

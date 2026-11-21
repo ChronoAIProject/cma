@@ -144,6 +144,7 @@ impl RoutedDelivery {
             frame_hash,
             effect_hash,
             status: DeliveryStatus::Intent,
+            execution_attribution: None,
             custom: custom_effect.as_ref().map(|effect| {
                 CustomCheckpoint::new(
                     &super::model::delivery_event(&plan, target),
@@ -194,7 +195,7 @@ impl RoutedDelivery {
                             return Ok(FrameDelivery::Unknown);
                         }
                         self.journal
-                            .acknowledge_delivery(lease, &frame.response_id, frame.sequence_number)
+                            .acknowledge_frame(&plan, target, lease, frame)
                             .await?;
                         if let (Some(id), Some(receipt)) = (answer_response_id, &receipt) {
                             self.observe_replayed_answer(&plan, target, &body, id, receipt)
@@ -438,7 +439,7 @@ impl RoutedDelivery {
             return Ok(FrameDelivery::Unknown);
         }
         self.journal
-            .acknowledge_delivery(lease, &frame.response_id, frame.sequence_number)
+            .acknowledge_frame(&plan, target, lease, frame)
             .await?;
         Ok(FrameDelivery::Settled {
             cursor: frame.sequence_number,

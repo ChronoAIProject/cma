@@ -2,6 +2,7 @@
 mod audience;
 mod consume;
 mod custom_replay;
+pub mod execution_receipt;
 pub(crate) mod metadata;
 pub mod observer;
 pub mod outcomes;

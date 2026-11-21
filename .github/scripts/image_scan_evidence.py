@@ -6,8 +6,11 @@ import re
 OUTCOMES = frozenset({"scan_refused", "scanner_findings", "scanner_error", "scanner_timeout",
                       "scanner_unavailable", "receipt_invalid", "content_refused"})
 DIGEST = re.compile(r"[a-f0-9]{64}")
+# Every rule the pinned scanner can report. image_scan_evidence_tests checks this
+# set against the scanner bundle, so a new rule cannot surface as unrecognized_rule.
 RULES = frozenset({"path.key-or-certificate", "gitleaks.image-secret-assignment",
                   "gitleaks.generic-api-key", "gitleaks.image-high-entropy",
+                  "gitleaks.image-hex-secret-assignment",
                   "content.private-key-header", "content.binary-private-key", "content.openpgp-private-key",
                   "content.service-account", "content.credential-url",
                   "config.secret-assignment", "path.auth-config", "path.env-file", "path.ssh-key",

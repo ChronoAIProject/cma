@@ -102,6 +102,7 @@ it.each(['lark', 'telegram'])(
       act(() => Feed.instances[0]!.snapshot(page));
       const identity = screen.getByText('Provider Agent', { selector: 'dt' }).parentElement!;
       expect(within(identity).getByText('Provider Agent identity was not reported')).toBeVisible();
+      expect(screen.queryByText('Provider execution reference')).not.toBeInTheDocument();
       expect(screen.queryByText('Produced by')).not.toBeInTheDocument();
       expect(screen.getByText('Agent completed')).toBeVisible();
       expect(screen.getByText('Delivery confirmed')).toBeVisible();
@@ -120,10 +121,16 @@ it.each(['lark', 'telegram'])(
     const page = snapshot('produced');
     page.items[0]!.source = { type: 'nyxid_relay', platform };
     page.items[0]!.consumers[0]!.agent_id = 'agt_provider';
+    page.items[0]!.consumers[0]!.execution_reference = 'exec_terminal_worker';
     act(() => Feed.instances[0]!.snapshot(page));
     const identity = () =>
       within(screen.getByText('Provider Agent', { selector: 'dt' }).parentElement!);
     expect(identity().getByText('agt_provider')).toBeVisible();
+    expect(
+      within(screen.getByText('Provider execution reference').parentElement!).getByText(
+        'exec_terminal_worker',
+      ),
+    ).toBeVisible();
     expect(screen.queryByText('Provider Agent identity was not reported')).not.toBeInTheDocument();
     act(() => Feed.instances[0]!.snapshot(page, 'reset'));
     expect(identity().getByText('agt_provider')).toBeVisible();
@@ -134,6 +141,7 @@ it.each(['lark', 'telegram'])(
     await userEvent.setup().click(screen.getByRole('button', { name: 'Reconnect activity' }));
     act(() => Feed.instances[1]!.snapshot(page));
     expect(identity().getByText('agt_provider')).toBeVisible();
+    expect(screen.getByText('exec_terminal_worker')).toBeVisible();
     expect(Feed.instances[0]!.closed).toBe(true);
   },
 );

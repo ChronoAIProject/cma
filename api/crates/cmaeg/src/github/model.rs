@@ -200,6 +200,8 @@ mod tests {
             consumer_id: "goal-agent".into(),
             display_name: None,
             agent_id: None,
+            execution_reference: None,
+            execution_attributions: Vec::new(),
             provider: None,
             conversation_id: None,
             state,

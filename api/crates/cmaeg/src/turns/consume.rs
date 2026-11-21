@@ -1,4 +1,5 @@
 use super::{
+    execution_receipt::{self, ExecutionReceiptVerifier},
     outcomes::{DeliveryCommand, TurnOutcome},
     projection::Projection,
 };
@@ -20,6 +21,7 @@ pub(super) async fn consume(
     provider: &str,
     delivery: &dyn DeliverySink,
     activity: &dyn super::observer::ActivityObserver,
+    execution_verifier: Option<&dyn ExecutionReceiptVerifier>,
     admitted: &mut Option<oneshot::Sender<LaunchOutcome>>,
 ) -> Result<&'static str, &'static str> {
     let mut acceptance_pending = true;
@@ -56,6 +58,9 @@ pub(super) async fn consume(
                     activity.checkpoint(&turn.channel.definition.record_id,
                         &turn.activity.event_id, change).await;
                 }
+                let execution = execution_receipt::observe(
+                    execution_verifier, &turn, provider, accepted_response.as_deref(), &event,
+                );
                 if let Some(outcome) = projection.event(event)? {
                     let terminal = outcome.terminal();
                     let kind = outcome.kind();
@@ -69,7 +74,12 @@ pub(super) async fn consume(
                     } else {
                         None
                     };
-                    send(delivery,&turn,outcome, answer_response_id).await?;
+                    let delivery = send(delivery,&turn,outcome, answer_response_id).await;
+                    if let Some(change) = execution {
+                        activity.checkpoint(&turn.channel.definition.record_id,
+                            &turn.activity.event_id, change).await;
+                    }
+                    delivery?;
                     if terminal {
                         if let Some(trace) = trace {trace.finish(Outcome::Streamed);}
                         return Ok(kind);

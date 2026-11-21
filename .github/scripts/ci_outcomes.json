@@ -122,9 +122,9 @@
         },
         "scan_refused": {
           "title": "Image scan refused",
-          "meaning": "The layer scan found content or packages that the image policy forbids; the findings stay in the job's retained evidence.",
-          "cause": "change",
-          "next": "Read the SCAN_EVIDENCE line and the retained package decisions of this job, remove the flagged file or package from the image, and push."
+          "meaning": "The layer scan found content or packages the image policy forbids. OS package layers can change without a source change when a build applies the latest upstream security updates.",
+          "cause": "unknown",
+          "next": "Read SCAN_EVIDENCE: findings in OS package layers need the image owner's reviewed classification of the new upstream content; remove findings this change added to the image, then push."
         },
         "registry_read_failed": {
           "title": "Registry read failed",
@@ -223,8 +223,8 @@
         "scan": {
           "title": "Scan image layers",
           "meaning": "scans every layer for secrets and checks packages against the image policy.",
-          "cause": "change",
-          "next": "Remove the flagged content from the image."
+          "cause": "unknown",
+          "next": "Read SCAN_EVIDENCE: get upstream OS package content reviewed by the image owner, or remove content this change added."
         },
         "runtime_smoke": {
           "title": "Runtime smoke test",
@@ -867,6 +867,24 @@
           "cause": "transient",
           "next": "Re-run after the other deployment finishes."
         },
+        "configuration": {
+          "title": "Controller configuration refused",
+          "meaning": "The controller's reviewed configuration, deployment budgets, web overlays or the secret bindings the spec requires failed validation.",
+          "cause": "operator",
+          "next": "An operator must check the deployment controller's configuration for this component."
+        },
+        "publication": {
+          "title": "Publication evidence refused",
+          "meaning": "The controller refused the release's publication evidence: its receipt, signal, publisher or scan policy.",
+          "cause": "unknown",
+          "next": "Check the component's Release job and its publication receipt; if they are valid, an operator checks the controller's publication policy."
+        },
+        "internal-error": {
+          "title": "Controller internal error",
+          "meaning": "The controller refused its own malformed call or raised an unexpected error. This is a controller defect, not a property of the release.",
+          "cause": "operator",
+          "next": "An operator must give this run's deployment controller log to the controller's owner."
+        },
         "interrupted": {
           "title": "Controller interrupted",
           "meaning": "The controller was interrupted before it changed anything.",
@@ -1070,6 +1088,96 @@
           "meaning": "The controller's component result was missing or failed validation.",
           "cause": "unknown",
           "next": "An operator must read the deployment controller's log for this run."
+        },
+        "permit": {
+          "title": "Deployment permit refused",
+          "meaning": "After staging changed, the deployment permit or the reviewed mode policy refused a later step.",
+          "cause": "operator",
+          "next": "An operator must check the deployment permit for this repository."
+        },
+        "authentication": {
+          "title": "Deployment authentication failed",
+          "meaning": "After staging changed, the deployment service rejected the deployment credential.",
+          "cause": "operator",
+          "next": "An operator must rotate or restore the deployment client credentials."
+        },
+        "authorization": {
+          "title": "Deployment authorization refused",
+          "meaning": "After staging changed, the deployment credential lacked permission for a later step.",
+          "cause": "operator",
+          "next": "An operator must grant the deployment client its required permission."
+        },
+        "clock": {
+          "title": "Controller clock refused",
+          "meaning": "After staging changed, the controller's timing check refused to continue.",
+          "cause": "transient",
+          "next": "Re-run once staging is reconciled."
+        },
+        "inventory": {
+          "title": "Deployment inventory unreadable",
+          "meaning": "After staging changed, the controller could not read or validate the deployment inventory.",
+          "cause": "transient",
+          "next": "Re-run once staging is reconciled; if it repeats, an operator must check the staging deployment state."
+        },
+        "compatibility": {
+          "title": "Compatibility unverified",
+          "meaning": "After staging changed, the runtime compatibility state could not be read, validated or promoted.",
+          "cause": "unknown",
+          "next": "An operator checks the runtime promotion and compatibility state; then re-run."
+        },
+        "image-version": {
+          "title": "Image version refused",
+          "meaning": "After staging changed, the controller refused the released or deployed image version.",
+          "cause": "unknown",
+          "next": "Compare the released and deployed versions in the controller log."
+        },
+        "baseline": {
+          "title": "Baseline unproven",
+          "meaning": "The previous release or the rollback baseline could not be read or proved.",
+          "cause": "operator",
+          "next": "An operator must reconcile the staging deployment with its recorded state."
+        },
+        "readiness": {
+          "title": "Target not ready",
+          "meaning": "A readiness check outside the named rollout and pod checks failed, such as the Event Gateway's readiness or startup logs.",
+          "cause": "unknown",
+          "next": "Check the released components' staging pods and startup logs; if this change caused it, fix it and push."
+        },
+        "transport": {
+          "title": "Deployment service unreachable",
+          "meaning": "The controller could not reach the deployment service or a public endpoint, including after its retries.",
+          "cause": "transient",
+          "next": "Re-run once staging is reconciled."
+        },
+        "schema": {
+          "title": "Document schema refused",
+          "meaning": "A release request, app spec, live view or schema-state document failed its closed schema or the reviewed spec policy.",
+          "cause": "unknown",
+          "next": "Read the controller log for the refused document; a release that requires a migration needs the reviewed migration first."
+        },
+        "fence": {
+          "title": "Deployment fence changed",
+          "meaning": "Resource ownership or the recorded preimage changed during the deployment, or the write would change more than the owned image.",
+          "cause": "operator",
+          "next": "An operator must check for a concurrent manual or second deployment."
+        },
+        "configuration": {
+          "title": "Controller configuration refused",
+          "meaning": "The controller's reviewed configuration, deployment budgets, web overlays or the secret bindings the spec requires failed validation.",
+          "cause": "operator",
+          "next": "An operator must check the deployment controller's configuration for this component."
+        },
+        "publication": {
+          "title": "Publication evidence refused",
+          "meaning": "The controller refused the release's publication evidence: its receipt, signal, publisher or scan policy.",
+          "cause": "unknown",
+          "next": "Check the component's Release job and its publication receipt; if they are valid, an operator checks the controller's publication policy."
+        },
+        "internal-error": {
+          "title": "Controller internal error",
+          "meaning": "The controller refused its own malformed call or raised an unexpected error. This is a controller defect, not a property of the release.",
+          "cause": "operator",
+          "next": "An operator must give this run's deployment controller log to the controller's owner."
         },
         "unreported": {
           "title": "Reason unreported",
@@ -1319,6 +1427,36 @@
           "meaning": "The exported cache failed validation.",
           "cause": "unknown",
           "next": "Check the cache exporter in staging_cd_build_cache.py."
+        }
+      }
+    },
+    "release-plan": {
+      "title": "Release plan incomplete",
+      "effect": "Nothing. No image was published or deployed by this run.",
+      "codes": {
+        "incomplete": {
+          "title": "Selection budget exhausted",
+          "meaning": "The selection cache did not cover develop's history since CMA_CD_ADOPTION_SHA, usually after a selector policy change, and analysing the rest exceeded the plan's budget. Analysed revisions were saved; INCOMPLETE gives the count.",
+          "cause": "transient",
+          "next": "Re-run this workflow or wait for the next develop push; planning continues from the saved revisions. If it repeats, an operator can advance CMA_CD_ADOPTION_SHA to the first merge after the last fully deployed run."
+        }
+      }
+    },
+    "scan-review": {
+      "title": "Scanner bundle not accepted",
+      "effect": "Nothing. No image was built, published or deployed by this run.",
+      "codes": {
+        "unreviewed": {
+          "title": "Scanner bundle not reviewed by the controller",
+          "meaning": "This checkout scans with a bundle (the SCAN-REVIEW line names it) that the pinned deployment controller does not list in REVIEWED_SCANS, so every deployment would be refused.",
+          "cause": "operator",
+          "next": "Merge the infrastructure repository's REVIEWED_SCANS entry for this bundle after its independent review, then re-run this workflow."
+        },
+        "unreadable": {
+          "title": "Controller scan policy unreadable",
+          "meaning": "The deployment controller's reviewed scanner set could not be read or parsed at the pinned infrastructure revision.",
+          "cause": "unknown",
+          "next": "Re-run the workflow; if it repeats, check the infrastructure reader token and the controller's reviewed_scan.py declaration."
         }
       }
     }

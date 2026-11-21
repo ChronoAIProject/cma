@@ -23,7 +23,6 @@ import { Alert } from '../ui/Alert';
 import { useDocumentTitle } from '../ui/useDocumentTitle';
 import { agentBreadcrumb, agentHeaderMenu, agentHeaderActionHandler } from './headerActions';
 import type { TreeAction, TreePermissions } from '../shell/Tree';
-import { sandboxChildrenAvailable } from '../sandbox/lifecycle';
 import { ProvisioningProgress } from '../sandbox/ProvisioningProgress';
 import { agentProgress } from '../sandbox/progress';
 import type { SteeringMode } from './SteeringMode';
@@ -214,12 +213,12 @@ export function AgentSurface({
     observed,
   );
   const reviewEnvironment = setupRoute ? () => onNavigate(setupRoute) : undefined;
-  const headerMenu = agentHeaderMenu(
-    status,
-    readOnly ? undefined : permissions,
-    observed !== undefined && !observed.stale && sandboxChildrenAvailable(observed.sandbox),
-    actionsBusy,
-  );
+  const headerMenu = agentHeaderMenu(status, readOnly ? undefined : permissions, {
+    sandbox: observed?.sandbox.id === detail.sandbox.id ? observed.sandbox : undefined,
+    viewerId,
+    stale: observed?.stale,
+    busy: actionsBusy,
+  });
   // A subscription Agent can be signed in again from the header menu.
   const signInAgain =
     !readOnly && verified?.services.some((service) => service.service === subscriptionService);
@@ -274,7 +273,9 @@ export function AgentSurface({
           }}
           moreActions={headerMenu}
           onReviewEnvironment={reviewEnvironment}
-          onMoreAction={agentHeaderActionHandler(agentId, readOnly, onAgentAction)}
+          onMoreAction={agentHeaderActionHandler(agentId, readOnly, onAgentAction, () =>
+            onNavigate({ kind: 'sandbox', sandboxId: detail.sandbox.id }),
+          )}
         />
 
         <div className="agent-surface__alerts">
@@ -414,6 +415,7 @@ export function AgentSurface({
                   usage={conversation?.usage}
                   key={`settings:${viewerId}:${agentId}`}
                   agentId={agentId}
+                  viewerId={viewerId}
                   active={!accessUncertain}
                   runtimeReady={modelCatalogReady(detail, observed, state.sandboxEvents)}
                   busy={status !== 'ready' || controller.pending !== undefined || historyIncomplete}

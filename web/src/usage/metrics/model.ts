@@ -5,6 +5,7 @@ import type {
   UsageMetricSort,
   UsageMetricStatus,
 } from '@cma/client';
+import { statusLabel } from '../../vocabulary/status';
 
 export type MetricsClient = Pick<
   Cma['usageMetrics'],
@@ -58,6 +59,7 @@ export const statuses: readonly UsageMetricStatus[] = [
   'retiring',
   'retired',
 ];
+export const statusOptions = statuses.map((value) => ({ value, label: statusLabel(value) }));
 export const defaultSelection: Selection = {
   range: '24h',
   from: '',

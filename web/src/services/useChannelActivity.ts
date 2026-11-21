@@ -31,6 +31,7 @@ export interface ActivityDelivery {
   recipients?: { kind: string; id: string; thread_id: string | null }[];
 }
 export interface ActivityConsumer {
+  execution_reference?: string | null;
   refusal_code?: string | null;
   last_non_admission_code?: string | null;
   consumer_id: string;
