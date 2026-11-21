@@ -82,24 +82,41 @@ struct TokenResponse {
 }
 
 pub fn router(auth: Arc<AuthState>) -> Router {
+    no_store(
+        session_routes()
+            .route("/auth/callback", get(callback))
+            .merge(super::actor_links::routes())
+            .with_state(auth),
+    )
+}
+
+pub(crate) fn account_router(auth: Arc<AuthState>) -> Router {
+    no_store(
+        session_routes()
+            .route("/auth/callback", get(callback::account_callback))
+            .with_state(auth),
+    )
+}
+
+fn session_routes() -> Router<Arc<AuthState>> {
     Router::new()
         .route("/auth/login", get(login))
-        .route("/auth/callback", get(callback))
         .route("/auth/session", get(read))
         .route("/auth/signup-options", get(signup_options))
         .route("/auth/logout", get(logout))
-        .merge(super::actor_links::routes())
-        .with_state(auth)
-        .layer(axum::middleware::map_response(
-            |mut response: Response| async move {
-                if !response.headers().contains_key(header::CACHE_CONTROL) {
-                    response
-                        .headers_mut()
-                        .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
-                }
+}
+
+fn no_store(router: Router) -> Router {
+    router.layer(axum::middleware::map_response(
+        |mut response: Response| async move {
+            if !response.headers().contains_key(header::CACHE_CONTROL) {
                 response
-            },
-        ))
+                    .headers_mut()
+                    .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+            }
+            response
+        },
+    ))
 }
 
 /// Reuse the established browser-bound PKCE flow for an opaque actor-link intent.

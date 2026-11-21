@@ -8,7 +8,7 @@ use std::{
 use crate::{
     agent_manager,
     composition::{self, ControlPlaneComposition},
-    config::Config,
+    config::StartupConfig,
     read_telemetry,
     shutdown::{self, signalled, ShutdownCoordinator},
     startup_timing::{observe, Phase},
@@ -20,8 +20,14 @@ const HTTP_DRAIN_TIMEOUT: Duration = Duration::from_secs(660);
 
 pub(crate) async fn serve() -> Result<(), String> {
     let startup_started = Instant::now();
-    let config =
-        Config::from_env().map_err(|error| format!("configuration is not usable: {error}"))?;
+    let config = StartupConfig::from_env()
+        .map_err(|error| format!("configuration is not usable: {error}"))?;
+    let config = match config {
+        StartupConfig::Execution(config) => *config,
+        StartupConfig::BackendFree(config) => {
+            return composition::backend_free::serve(*config).await
+        }
+    };
     if std::env::args().nth(1).as_deref() == Some("--agent-manager-drain") {
         return agent_manager::relay::prestop(&config).await;
     }

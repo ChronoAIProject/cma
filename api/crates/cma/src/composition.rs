@@ -4,6 +4,7 @@ mod account_deletion;
 pub(crate) mod activity;
 mod adapter;
 mod agent_manager;
+pub(crate) mod backend_free;
 mod bindings;
 mod bots;
 mod capacity_recovery;

@@ -12,6 +12,10 @@ use super::{
     MongoUserDirectoryStore,
 };
 
+#[path = "account_mongo.rs"]
+mod account;
+pub(crate) use account::MongoAccountStores;
+
 pub(crate) struct MongoConnectionPolicy {
     pub authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     pub agent_manager_replicas: bool,
