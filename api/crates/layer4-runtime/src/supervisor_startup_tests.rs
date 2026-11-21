@@ -130,7 +130,9 @@ async fn deadline_drops_the_managed_desktop_and_its_background_child() {
 
     let (_root, mut supervisor) = startup(true, true);
     let (desktop, output) = child_with_open_output().await;
-    Arc::get_mut(&mut supervisor).unwrap().desktop_process = Some(desktop);
+    Arc::get_mut(&mut supervisor).unwrap().desktop_process = Some(
+        crate::desktop_process::DesktopSession::Legacy(Box::new(desktop)),
+    );
     tokio::time::pause();
     assert_desktop_timeout(
         Supervisor::finish_startup_with_probe(supervisor, || ready(false)).await,
@@ -146,7 +148,9 @@ async fn cancelling_an_unanswered_probe_drops_the_managed_desktop() {
 
     let (_root, mut supervisor) = startup(true, true);
     let (desktop, output) = child_with_open_output().await;
-    Arc::get_mut(&mut supervisor).unwrap().desktop_process = Some(desktop);
+    Arc::get_mut(&mut supervisor).unwrap().desktop_process = Some(
+        crate::desktop_process::DesktopSession::Legacy(Box::new(desktop)),
+    );
     let (entered, probe_started) = tokio::sync::oneshot::channel();
     let mut entered = Some(entered);
     let startup = tokio::spawn(Supervisor::finish_startup_with_probe(
