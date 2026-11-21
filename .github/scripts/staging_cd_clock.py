@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import os
 import time
 
+from ci_outcome import error_site, report
 from staging_cd_common import matches, require
 
 ADMISSION_SECONDS = 120
@@ -12,6 +13,7 @@ RELEASE_TOTAL_SECONDS = 990
 CONTROLLER_TOTAL_ENV = "CD_CONTROLLER_TOTAL_SECONDS"
 TERMINATION_GRACE_SECONDS = 15
 WATCHDOG_SECONDS = RELEASE_TOTAL_SECONDS + TERMINATION_GRACE_SECONDS
+ADMISSION_FAILURE = "admission-time"
 
 
 def controller_seconds(mode):
@@ -69,8 +71,9 @@ def dispatch_started(env, request, mode="release"):
 def main():
     try:
         remaining(os.environ.get("CD_STARTED_AT"), mode=os.environ.get("CD_DEPLOY_MODE", "release"))
-    except (ValueError, TypeError, OverflowError):
-        print("FAIL: deployment not admitted; invalid or expired admission time")
+    except (ValueError, TypeError, OverflowError) as error:
+        # The line is unchanged; the reported check says which bound refused.
+        report("deploy-clock", ADMISSION_FAILURE, subject="deploy-admission", site=error_site(error))
         return 30
     return 0
 

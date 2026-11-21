@@ -37,7 +37,7 @@ def main():
         event_identity(os.environ)
         api = GitHub(os.environ.get("GH_TOKEN"), deadline=time.monotonic() + RECHECK_SECONDS)
         return recheck(json.loads(os.environ["CD_QUEUE"])["head"], api)
-    return run_private(operation, None)
+    return run_private(operation, None, subject="develop-recheck")
 
 
 if __name__ == "__main__":
