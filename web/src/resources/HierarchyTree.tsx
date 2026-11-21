@@ -12,6 +12,7 @@ import { loadSandbox, loadWorkspace } from './loadHierarchy';
 import { useAuthorizedRead } from './useAuthorizedRead';
 import { useChannelFacts } from './useChannelFacts';
 import { channelLabel } from './channelLabels';
+import { sandboxStatusPresentation } from '../sandbox/presentation';
 
 export interface TreeExpansion {
   readonly collapsed: ReadonlySet<string>;
@@ -47,6 +48,7 @@ export function SandboxBranch({
   readonly accessSummary?: AccessSummary;
 }) {
   const node = `sandbox:${sandbox.id}`;
+  const { status } = sandboxStatusPresentation(sandbox);
   const open = !expansion.collapsed.has(node);
   const collapse = expansion.collapse;
   const accessChanged = useCallback(() => {
@@ -63,9 +65,9 @@ export function SandboxBranch({
         route={{ kind: 'sandbox', sandboxId: sandbox.id }}
         selected={route.kind === 'sandbox' && route.sandboxId === sandbox.id}
         expanded={open}
-        reviving={sandbox.status === 'reviving'}
+        reviving={status === 'reviving'}
         meta={stateMeta(
-          sandbox.status,
+          status,
           <>
             <span>{resourceCount(sandbox.agent_count, 'Agent')}</span>
             <ResourceAccessSummary compact value={accessSummary} />

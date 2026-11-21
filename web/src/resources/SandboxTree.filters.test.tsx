@@ -93,3 +93,66 @@ it('names the selected status when the authorized page itself is empty', async (
   render(<SandboxTree client={client} shared statusFilter="provisioning" onNavigate={vi.fn()} />);
   expect(await screen.findByText('No Sandboxes match Provisioning on this page.')).toBeVisible();
 });
+
+it.each([true, false])(
+  'agrees with the row label and respects the lifecycle fields exposed to the scope (shared=%s)',
+  async (shared) => {
+    const wire = (id: string, name: string, status: string) => ({
+      ...row(id, status),
+      name,
+      access: shared ? 'shared' : undefined,
+      profile: { id: 'sbp_fixture', revision: 1 },
+      limits: { max_workspaces: 1, max_agents_per_workspace: 1 },
+      revision: 2,
+    });
+    const operation = {
+      purpose: 'image_rotation',
+      phase: 'publish_active',
+      started_at: '2026-11-01T00:00:00Z',
+    };
+    const updating = {
+      ...wire('sbx_a', 'Update with operation', 'active'),
+      lifecycle: { pause: { allowed: false }, revive: { allowed: false }, operation },
+    };
+    const records = [
+      updating,
+      wire('sbx_b', 'Update with status', 'rotating'),
+      wire('sbx_c', 'Access update', 'credential_rotating'),
+      wire('sbx_d', 'Settled', 'active'),
+    ];
+    const client = createClient({
+      baseUrl: 'https://fixture.invalid',
+      fetch: async (input) => {
+        const { pathname } = new URL(String(input));
+        if (pathname === '/api/v1/sandboxes') return Response.json({ items: records });
+        if (pathname.startsWith('/api/v1/resource-access/'))
+          return Response.json({ capabilities: ['view_details'], policy_revision: 1 });
+        const entry = records.find((record) => pathname.endsWith(record.id));
+        return Response.json({ ...entry, workspaces: [] });
+      },
+    });
+    const props = {
+      client,
+      shared,
+      organization: shared ? undefined : 'research',
+      onNavigate: vi.fn(),
+    };
+    const view = render(<SandboxTree {...props} />);
+    const live = await screen.findByRole('tree', { name: 'Live sandboxes' });
+    const liveNames = within(live)
+      .getAllByRole('treeitem')
+      .map((item) => item.textContent);
+    expect(liveNames).toHaveLength(shared ? 2 : 1);
+    view.rerender(<SandboxTree {...props} statusFilter="active" />);
+    expect(screen.getAllByRole('treeitem').map((item) => item.textContent)).toEqual(liveNames);
+    view.rerender(<SandboxTree {...props} statusFilter="rotating" />);
+    const group = screen.getByRole('region', { name: 'Updating runtime sandboxes' });
+    const candidates = within(group).getAllByRole('treeitem');
+    expect(candidates).toHaveLength(shared ? 1 : 2);
+    expect(group.querySelector('.resource-tree__count')).toHaveTextContent(shared ? '1' : '2');
+    for (const item of candidates) expect(item).toHaveTextContent('Updating runtime');
+    expect(group).not.toHaveTextContent('Access update');
+    view.rerender(<SandboxTree {...props} statusFilter="credential_rotating" />);
+    expect(screen.getByRole('treeitem')).toHaveTextContent('Updating access');
+  },
+);
