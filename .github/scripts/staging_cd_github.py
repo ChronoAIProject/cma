@@ -3,6 +3,7 @@ import copy
 import json
 import os
 import subprocess
+import threading
 import time
 
 import ci_retry
@@ -34,27 +35,34 @@ class GitHub:
         # attempt and ends repeats, so a step refuses before its job is killed.
         self.deadline = deadline
         self._history = None
+        # Allocation reads tags on several threads, and each may need develop
+        # history first. One lock keeps them to a single fetch into the checkout:
+        # concurrent fetches into one repository race on its lock files.
+        self._history_lock = threading.RLock()
         # Annotated tag objects are immutable and keyed by their verified ID.
         # Live ref inventories are never cached; each read is still a fence.
         self._tags = {}
 
     def history_at(self, head, *, root):
-        if self._history is None or self._history.head != head:
-            self._history = DevelopHistory.from_head(head, root=root, runner=self.runner)
-        return self._history
+        with self._history_lock:
+            if self._history is None or self._history.head != head:
+                self._history = DevelopHistory.from_head(head, root=root, runner=self.runner)
+            return self._history
 
     def history(self):
-        if self._history is None:
-            self._history = DevelopHistory.load(self.request, runner=self.runner)
-        return self._history
+        with self._history_lock:
+            if self._history is None:
+                self._history = DevelopHistory.load(self.request, runner=self.runner)
+            return self._history
 
     def history_containing(self, source):
-        history = self.history()
-        if source not in history.positions and history is self._history:
-            # A long-lived publisher can observe a tag created after its first
-            # history read. Re-read develop before judging the new tag's source.
-            self._history = DevelopHistory.load(self.request, runner=self.runner)
-            history = self._history
+        with self._history_lock:
+            history = self.history()
+            if source not in history.positions and history is self._history:
+                # A long-lived publisher can observe a tag created after its first
+                # history read. Re-read develop before judging the new tag's source.
+                self._history = DevelopHistory.load(self.request, runner=self.runner)
+                history = self._history
         history.position(source)
         return history
 
