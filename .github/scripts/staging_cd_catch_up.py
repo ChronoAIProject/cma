@@ -240,7 +240,7 @@ def undeployed(owner, since):
     return matches(TIMESTAMP, since) and matches(TIMESTAMP, started) and started > since
 
 
-def head_jobs(api, run):
+def run_jobs(api, run):
     jobs = api.request(f"actions/runs/{run['id']}/attempts/{run['run_attempt']}/jobs?per_page=100")
     require(isinstance(jobs, dict) and isinstance(jobs.get("jobs"), list), "Head run jobs could not be read")
     return [job for job in jobs["jobs"] if isinstance(job, dict)]
@@ -278,7 +278,7 @@ def decide(api, read_refs, read_controller, *, event=None, now=None):
     actor = run.get("triggering_actor")
     # The bot's attempt was this head's automatic re-run; a maintainer's earns one more.
     spent = (isinstance(actor, dict) and actor.get("login") == BOT) or run["run_attempt"] >= ATTEMPTS
-    jobs = head_jobs(api, run)
+    jobs = run_jobs(api, run)
     # A failed plan or allocation is a failure to retry on the next push, not a skip.
     if not spent and not allocated(jobs):
         return "head-unallocated", None, []
