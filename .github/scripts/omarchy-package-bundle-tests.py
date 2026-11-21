@@ -22,7 +22,7 @@ SCRIPT = Path(__file__).with_name("omarchy-package-bundle.py")
 SPEC = importlib.util.spec_from_file_location("omarchy_package_bundle", SCRIPT)
 BUNDLE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BUNDLE)
-GPG = shutil.which("gpg") and shutil.which("gpgv")
+SIGNATURE_TOOLS = all(shutil.which(tool) for tool in ("gpg", "gpgv", "zstd"))
 
 
 def digest(data):
@@ -259,9 +259,12 @@ def fake_package(files):
     return subprocess.run(["zstd", "-q", "-c"], input=buffer.getvalue(), capture_output=True, check=True).stdout
 
 
-@unittest.skipUnless(GPG and shutil.which("zstd"), "gpg, gpgv and zstd are required")
+# Only a local run may skip the signature regressions. Under CI a missing tool
+# fails them, so a runner image that drops gpg or zstd cannot pass silently.
+@unittest.skipUnless(SIGNATURE_TOOLS or os.environ.get("CI"), "gpg, gpgv and zstd are required")
 class SignatureTests(unittest.TestCase):
     def setUp(self):
+        self.assertTrue(SIGNATURE_TOOLS, "CI is set, so gpg, gpgv and zstd must be installed")
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.root = Path(self.directory.name)
