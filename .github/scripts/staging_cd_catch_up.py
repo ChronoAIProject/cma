@@ -9,9 +9,9 @@ re-runs the develop head's own push run once when no Staging CD run is
 active, that run's allocation completed, and some lane's newest version is
 either an unfinalized reservation of an earlier run or a final of a settled
 owner that no controller proof covers. A re-run for finals alone waits for
-the hourly check, once its head has settled for a while, so a stuck app or
-a namespace fence that failed the deploy can clear first, and never follows
-a cancelled head. A re-run attempt
+the hourly check, once every staging run has settled for a while, so a stuck
+app or a namespace fence that failed the deploy can clear first, and never
+follows a cancelled head. A re-run attempt
 is the same develop push event, so every push-only authority, cache and
 admission check applies unchanged, its admission clock starts afresh, and
 staging-cd.yml gains no trigger. Like any allocation it also retries the
@@ -51,7 +51,7 @@ ALLOCATION_JOB = "allocate"
 # One automatic re-run per develop head; never re-run a head this many times.
 ATTEMPTS = 5
 SECONDS = 150
-# A re-run for finals alone waits until its head has been settled this long.
+# A re-run for finals alone waits until every staging run has been settled this long.
 SETTLE_SECONDS = 600
 # Nothing waits on this check, so the controller read may repeat for longer than the planner's.
 CONTROLLER_SECONDS = 30
@@ -292,7 +292,7 @@ def decide(api, read_refs, read_controller, *, event=None, now=None):
             return "cancelled", None, lanes
         # A deploy failure's cause may outlast its run; the single retry waits for it.
         current = time.time() if now is None else now
-        if event != "schedule" or not settled(run, current):
+        if event != "schedule" or not all(settled(row, current) for row in listing["workflow_runs"]):
             return "final-waiting", None, lanes
     if late:
         return "rerun", run, lanes

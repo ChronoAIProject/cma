@@ -275,6 +275,25 @@ class UnprovenFinalTests(unittest.TestCase):
         self.assertEqual(decide(develop)[0], "final-waiting")
         self.assertEqual(develop.posts, [])
 
+    def test_settling_is_measured_from_the_newest_staging_run_not_the_head(self):
+        develop = Develop()
+        first = develop.push({"runtime-omarchy", "web"})
+        develop.finalize(develop.push({"eg"})["eg"])
+        develop.deploy(802, "eg")
+        develop.complete(802)
+        develop.minutes += 45  # The head settled long ago; the older run 801 still deploys.
+        for key in ("web", "runtime-omarchy"):
+            develop.finalize(first[key])
+        develop.deploy(801, "web", "failed")
+        develop.deploy(801, "runtime-omarchy")
+        develop.complete(801)
+        behind = [("web", "unproven-final")]
+        for minutes in (1, 9):
+            self.assertEqual(decide(develop, event="schedule", now=develop.later(minutes)),
+                             ("final-waiting", None, behind))
+        reason, run, lanes = decide(develop, event="schedule", now=develop.later(10))
+        self.assertEqual((reason, run["id"], lanes), ("rerun", 802, behind))
+
     def test_proven_or_superseded_final_never_re_runs(self):
         develop = self.failed_deploy()
         # A newer final replaced the failed one and its own run deployed it.
