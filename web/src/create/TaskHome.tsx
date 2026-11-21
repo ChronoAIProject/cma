@@ -22,6 +22,7 @@ import { TaskTemplates } from './TaskTemplates';
 import { AgentLifecycleCard } from './AgentLifecycleCard';
 import { useTaskExperience } from '../taskExperience';
 import { useTaskDraft } from './taskDraft';
+import { taskCreateRequest, useTaskTitleModeSupport } from './taskCreateRequest';
 import { useTaskTemplateDraftSwitch } from './TaskTemplateDraftSwitch';
 import { useConnectionGate } from '../connections/useConnectionGate';
 import '../ui/Input.css';
@@ -71,6 +72,7 @@ function TaskHomeContent({
   onRefresh,
 }: TaskHomeProps & { readonly onRefresh: () => void }) {
   const policy = useTaskExperience(client, viewerId);
+  const titleModeSupported = useTaskTitleModeSupport(client);
   const capacity = useSandboxCapacity(client, viewerId);
   const [checkingCapacity, setCheckingCapacity] = useState(false);
   const mounted = useRef(true);
@@ -166,6 +168,7 @@ function TaskHomeContent({
     lifecycle.blocked ||
     Boolean(intent) ||
     !canCreate ||
+    titleModeSupported === undefined ||
     supported !== true;
   return (
     <section
@@ -252,22 +255,11 @@ function TaskHomeContent({
           }
           setRecovering(false);
           void lifecycle.submit(
-            {
-              name: 'New task',
-              initial_message: submission.text,
-              ...(draft.template ? { template: draft.template } : {}),
-              ...(draft.machineIncluded ? { machine_included: true } : {}),
-              ...(!workspaceId && !sandboxId && draft.repositoryUrl
-                ? {
-                    repository: {
-                      url: draft.repositoryUrl,
-                      ...(draft.repositoryRef ? { ref: draft.repositoryRef } : {}),
-                    },
-                  }
-                : {}),
-              ...(workspaceId ? { workspace_id: workspaceId } : {}),
-              ...(sandboxId ? { sandbox_id: sandboxId } : {}),
-            },
+            taskCreateRequest(
+              { ...draft, text: submission.text },
+              { workspaceId, sandboxId },
+              titleModeSupported,
+            ),
             draftRevision,
           );
         }}
@@ -346,7 +338,7 @@ function TaskHomeContent({
         <span className="task-home__dot" aria-hidden="true" />
         GPT-6 · High reasoning · Autonomous
       </p>
-      {supported === undefined ? (
+      {supported === undefined || titleModeSupported === undefined ? (
         <p className="sr-only" role="status">
           Checking task creation…
         </p>

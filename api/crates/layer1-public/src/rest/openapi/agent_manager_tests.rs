@@ -168,8 +168,17 @@ fn focused_contract_has_one_creation_and_interaction_model() {
 fn public_contract_preserves_optional_task_and_desktop_creation_contracts() {
     for contract in [full(), document()] {
         assert_eq!(contract["x-cma-task-repository"], json!(true));
+        assert_eq!(contract["x-cma-agent-title-mode"], json!(true));
         assert_eq!(contract["x-cma-task-templates-v1"], json!(true));
         let schema = &contract["components"]["schemas"]["AgentLifecycleCreateRequest"];
+        assert!(schema["properties"].get("title_mode").is_some());
+        assert!(!schema["required"]
+            .as_array()
+            .is_some_and(|fields| fields.contains(&json!("title_mode"))));
+        assert_eq!(
+            contract["components"]["schemas"]["AgentLifecycleTitleMode"]["enum"],
+            json!(["automatic", "named"])
+        );
         for (field, expected_type) in [
             ("initial_message", "string"),
             ("desktop", "boolean"),
