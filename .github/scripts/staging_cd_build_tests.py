@@ -3,6 +3,7 @@ import io
 import hashlib
 import json
 import os
+import re
 import tarfile
 import tempfile
 import unittest
@@ -43,6 +44,7 @@ class BuildTests(unittest.TestCase):
             first, _, args = identity(reservation, root)
             self.assertEqual(args["CHRONO_BUILD"], "0.10.1")
             self.assertEqual(args["CHRONO_BUILD_SHA"], "a" * 40)
+            self.assertEqual(args["OS_SECURITY_REFRESH"], "a" * 40, "non-runtime images keep a per-build refresh")
             (root / "web/Dockerfile").write_text("FROM scratch AS runtime\nUSER 101\n")
             with self.assertRaises(Refusal):
                 identity(reservation, root)
@@ -105,27 +107,56 @@ class BuildTests(unittest.TestCase):
                 with self.assertRaises(Refusal):
                     snapshot(root, "a" * 40, root / "source", runner)
 
-    def test_runtime_exports_bind_fixed_epoch_and_preserve_security_refresh(self):
+    def runtime_source(self, root, component, pin="ARG DEBIAN_SNAPSHOT=20261121T100000Z\n"):
+        self.source(root)
+        project = Path(__file__).resolve().parents[2]
+        for filename in (VERSION_FILE, RECIPE):
+            destination = root / filename
+            destination.parent.mkdir(parents=True)
+            destination.write_bytes((project / filename).read_bytes())
+        dockerfile = root / RECIPE
+        unpinned = re.sub(r"(?m)^\s*ARG\s+DEBIAN_SNAPSHOT\s*=.*\n", "", dockerfile.read_text())
+        dockerfile.write_text(pin + unpinned)
+        manifest = root / ".github/scripts/deployables.json"
+        values = json.loads(manifest.read_text())
+        values["cma-" + component]["dockerfile_sha256"] = hashlib.sha256(dockerfile.read_bytes()).hexdigest()
+        manifest.write_text(json.dumps(values))
+
+    def test_runtime_security_refresh_follows_the_pinned_snapshot_not_the_source(self):
         for component in ("runtime", "runtime-omarchy"):
             with self.subTest(component=component), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
-                self.source(root)
-                project = Path(__file__).resolve().parents[2]
-                for filename in (VERSION_FILE, RECIPE):
-                    destination = root / filename
-                    destination.parent.mkdir(parents=True)
-                    destination.write_bytes((project / filename).read_bytes())
-                dockerfile = root / RECIPE
-                manifest = root / ".github/scripts/deployables.json"
-                values = json.loads(manifest.read_text())
-                values["cma-" + component]["dockerfile_sha256"] = hashlib.sha256(dockerfile.read_bytes()).hexdigest()
-                manifest.write_text(json.dumps(values))
+                self.runtime_source(root, component)
+                first = next_reservation(component, "a" * 40, "b" * 40, 42, "patch", 1, 1, [], [])
+                second = next_reservation(component, "c" * 40, "d" * 40, 43, "patch", 1, 1, [], [])
+                for reservation in (first, second):
+                    _release, _value, arguments = identity(reservation, root)
+                    self.assertEqual(arguments["OS_SECURITY_REFRESH"], "20261121T100000Z")
+
+    def test_runtime_build_refuses_a_missing_or_ambiguous_snapshot_pin(self):
+        pins = ("", "ARG DEBIAN_SNAPSHOT=latest\n",
+                "ARG DEBIAN_SNAPSHOT=20261121T100000Z\nARG DEBIAN_SNAPSHOT=20261128T100000Z\n")
+        for component in ("runtime", "runtime-omarchy"):
+            for pin in pins:
+                with self.subTest(component=component, pin=pin), tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    self.runtime_source(root, component, pin)
+                    reservation = next_reservation(component, "a" * 40, "b" * 40, 42, "patch", 1, 1, [], [])
+                    with self.assertRaisesRegex(Refusal, "DEBIAN_SNAPSHOT"):
+                        identity(reservation, root)
+
+    def test_runtime_exports_bind_fixed_epoch_and_snapshot_security_refresh(self):
+        for component in ("runtime", "runtime-omarchy"):
+            with self.subTest(component=component), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                self.runtime_source(root, component)
                 reservation = next_reservation(component, "a" * 40, "b" * 40, 42, "patch", 1, 1, [], [])
                 def runner(args, **_kwargs):
                     output = args[args.index("--output") + 1]
                     self.assertTrue(output.endswith(",rewrite-timestamp=true"))
                     self.assertIn("SOURCE_DATE_EPOCH=0", args)
-                    self.assertIn("OS_SECURITY_REFRESH=" + reservation["source"], args)
+                    self.assertIn("OS_SECURITY_REFRESH=20261121T100000Z", args)
+                    self.assertNotIn("OS_SECURITY_REFRESH=" + reservation["source"], args)
                     self.assertNotIn("--squash", args)
                     Path(output.split("dest=", 1)[1].split(",")[0]).write_bytes(b"fixture")
                 build(root, reservation, root, runner, source=root)

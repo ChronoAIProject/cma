@@ -49,7 +49,7 @@ pub(super) async fn command(rx: &mut mpsc::Receiver<DeliveryCommand>) -> Box<Dur
     };
     reply
 }
-pub(super) async fn stored(setup: &Setup) -> TargetState {
+pub(crate) async fn stored(setup: &Setup) -> TargetState {
     setup
         .journal()
         .read::<TargetState>(&setup.target().id)

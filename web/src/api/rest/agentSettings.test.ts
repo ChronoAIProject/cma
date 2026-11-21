@@ -62,7 +62,11 @@ it('routes settings updates to Agent Manager with command identity and validates
     '/api/agent-manager/v1/agents/agent-one/settings',
     expect.objectContaining({
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json', 'Idempotency-Key': 'fixed-key' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Idempotency-Key': 'fixed-key',
+        Prefer: 'cma-settings-reasons',
+      },
       body: JSON.stringify(defaults),
     }),
   );

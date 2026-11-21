@@ -268,6 +268,7 @@ pub fn recovery_frame(
         event: if terminal {
             ResponsesEvent::Completed {
                 response: json!({"id":response}),
+                matching_response_identity: true,
             }
         } else {
             ResponsesEvent::InProgress
