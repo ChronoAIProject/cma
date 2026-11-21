@@ -1,4 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
+import {
+  navigateToServiceAuthorization,
+  startServiceAuthorization,
+} from '../auth/serviceAuthorization';
 import { StateDot } from '../ui/StateDot';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
@@ -83,6 +87,8 @@ function ConnectionSequence({
   const sequence = useRef(false);
   const generation = useRef(0);
   const cancelled = useRef(false);
+  const recovery = useRef<AbortController | null>(null);
+  const recoveryPopup = useRef<Window | null>(null);
 
   const persist = (value: StartedConnection | undefined) => {
     attempt.current = value;
@@ -199,11 +205,19 @@ function ConnectionSequence({
     }
     const poll = async () => {
       if (controller.signal.aborted || completed.current) return;
+      if (recovery.current !== null) {
+        timer = setTimeout(() => void poll(), POLL_MS);
+        return;
+      }
       try {
         // First establish the current owner before restoring browser recovery.
         const active = attempt.current;
         const result = await client.check(target, active, controller.signal);
         if (controller.signal.aborted || cancelled.current) return;
+        if (recovery.current !== null) {
+          timer = setTimeout(() => void poll(), POLL_MS);
+          return;
+        }
         if (owner.current !== undefined && result.owner !== owner.current)
           throw new Error('Your CMA account changed. Reopen this connection step to continue.');
         owner.current = result.owner;
@@ -279,6 +293,10 @@ function ConnectionSequence({
       live.current = false;
       generation.current += 1;
       controller.abort();
+      recovery.current?.abort();
+      recovery.current = null;
+      recoveryPopup.current?.close();
+      recoveryPopup.current = null;
       clearTimeout(timer);
       popup.current?.close();
       popup.current = null;
@@ -301,6 +319,10 @@ function ConnectionSequence({
     generation.current += 1;
     cancelled.current = true;
     starting.current = false;
+    recovery.current?.abort();
+    recovery.current = null;
+    recoveryPopup.current?.close();
+    recoveryPopup.current = null;
     setBusy(false);
     sequence.current = false;
     setRunning(false);
@@ -310,6 +332,44 @@ function ConnectionSequence({
     popup.current?.close();
     popup.current = null;
     onCancel?.();
+  };
+  const authorize = async () => {
+    if (busy || report === undefined || recovery.current !== null) return;
+    const authorizationWindow = window.open('about:blank', '_blank', 'popup,width=580,height=760');
+    if (authorizationWindow === null) {
+      setError('Allow pop-ups to authorize required services. Your draft is still here.');
+      return;
+    }
+    authorizationWindow.opener = null;
+    recoveryPopup.current = authorizationWindow;
+    const controller = new AbortController();
+    recovery.current = controller;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const location = window.location;
+      const destination = await startServiceAuthorization(
+        target,
+        report.owner,
+        location.pathname + location.search,
+        controller.signal,
+      );
+      if (controller.signal.aborted) return;
+      // Keep the draft tab alive and discard its queued action before consent starts.
+      recoveryPopup.current = null;
+      cancel();
+      if (!authorizationWindow.closed)
+        navigateToServiceAuthorization(authorizationWindow, destination);
+    } catch {
+      if (!controller.signal.aborted) {
+        authorizationWindow.close();
+        recoveryPopup.current = null;
+        setError('Service authorization could not start. Your draft is still here.');
+        setBusy(false);
+      }
+    } finally {
+      if (recovery.current === controller) recovery.current = null;
+    }
   };
   const connected = report?.services.filter((row) => row.state === 'satisfied').length ?? 0;
   const missing = report?.services.filter((row) => row.state !== 'satisfied') ?? [];
@@ -401,6 +461,14 @@ function ConnectionSequence({
           </Button>
         )}
         {error === undefined ? null : <Button onClick={onRetry}>Verify again</Button>}
+        {report?.service_authorization_recovery === true &&
+        !running &&
+        onCancel !== undefined &&
+        missing.some((row) => row.kind === 'nyxid') ? (
+          <Button onClick={() => void authorize()} disabled={busy}>
+            Authorize required services
+          </Button>
+        ) : null}
         {running || onCancel !== undefined ? <Button onClick={cancel}>Cancel</Button> : null}
       </div>
     </section>

@@ -51,6 +51,7 @@ interface IdentityResponse {
   capabilities?: unknown;
   visitor?: unknown;
   silent_sign_in?: unknown;
+  service_authorization?: unknown;
 }
 
 /**
@@ -263,6 +264,7 @@ export function createNyxidAuthProvider(): AuthProvider {
           avatarUrl: optionalText(body.avatar_url),
           capabilities: capabilitiesFrom(body.capabilities),
           visitor: body.visitor === true,
+          ...(body.service_authorization === true ? { serviceAuthorization: true } : {}),
         },
       };
     },

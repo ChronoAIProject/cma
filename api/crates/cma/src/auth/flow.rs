@@ -28,7 +28,7 @@ use super::{
 
 mod callback;
 use callback::callback;
-mod return_target;
+pub(in crate::auth) mod return_target;
 mod silent;
 
 use return_target::{app_return_target, opaque_path_segment, MAX_LOGIN_URL_BYTES};
@@ -89,6 +89,7 @@ pub fn router(auth: Arc<AuthState>) -> Router {
         .route("/auth/signup-options", get(signup_options))
         .route("/auth/logout", get(logout))
         .merge(super::actor_links::routes())
+        .merge(super::service_authorization::routes())
         .with_state(auth)
         .layer(axum::middleware::map_response(
             |mut response: Response| async move {
@@ -260,6 +261,7 @@ async fn begin_login_with_intent(
         verifier: SecretValue::new(verifier.clone()),
         return_to: return_to.clone(),
         actor_link_intent,
+        service_authorization: None,
         silent,
         consent_requested: continuation_binding.is_some(),
         custody_reserved: true,
@@ -324,7 +326,7 @@ fn binding_cookie_name(state: &str) -> String {
     format!("{BINDING_COOKIE_PREFIX}{suffix}")
 }
 
-fn code_challenge(verifier: &str) -> String {
+pub(super) fn code_challenge(verifier: &str) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 

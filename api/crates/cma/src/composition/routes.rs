@@ -26,7 +26,7 @@ pub(super) fn compose(
     relay: Option<&Arc<crate::agent_manager::relay::Relay>>,
 ) -> Router {
     let public = crate::rest_router(resources)
-        .merge(crate::connections::router(connections))
+        .merge(crate::connections::router(connections, auth.clone()))
         .merge(crate::auth::router(auth.clone()))
         .layer(axum::middleware::from_fn_with_state(
             recorder,
