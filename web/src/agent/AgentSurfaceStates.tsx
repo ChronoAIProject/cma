@@ -26,6 +26,7 @@ export function AgentConnectionSetup({
   readonly onReady: (report: ConnectionReport) => void;
   readonly onCancel: () => void;
 }) {
+  if (gate.pending) return null;
   const target = { type: 'agent', id: agentId } as const;
   if (!explicit)
     return (
@@ -37,7 +38,6 @@ export function AgentConnectionSetup({
         onCancel={onCancel}
       />
     );
-  if (gate.pending) return null;
   return (
     <Button
       size="sm"

@@ -215,6 +215,35 @@ it('lets a slash-command draft open and cancel account setup after passive refus
   expect(send).not.toHaveBeenCalled();
 });
 
+it('keeps one account setup dialog when the Agent starts working', async () => {
+  const completePassive = holdCheck();
+  vi.mocked(connectionClient.check).mockResolvedValue(missing);
+  const view = compose();
+  await act(async () => completePassive(missing));
+  fireEvent.click(screen.getByRole('button', { name: 'Connect accounts' }));
+  const wizard = await screen.findByRole('dialog', { name: 'Connect your accounts' });
+  expect(connectionClient.check).toHaveBeenCalledTimes(2);
+
+  await act(async () =>
+    view.rerender(
+      view.draw({
+        controller: {
+          ...view.ready,
+          state: {
+            ...view.state,
+            conversation: { ...view.state.conversation, activeRunId: 'active-turn' },
+          },
+        },
+      }),
+    ),
+  );
+  expect(screen.getAllByRole('dialog')).toEqual([wizard]);
+  expect(connectionClient.check).toHaveBeenCalledTimes(2);
+
+  expect(view.field).toHaveValue(draft);
+  expect(view.send).not.toHaveBeenCalled();
+});
+
 it('uses the same cooldown after Retry-After and needs a second explicit Send after refusal', async () => {
   const completePassive = holdCheck();
   vi.mocked(connectionClient.check).mockRejectedValueOnce(
