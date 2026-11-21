@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from cd_target import branch
+from cd_target import PRODUCTION, branch
 from staging_cd_common import matches, require
 from staging_cd_versions import REPOSITORY
 
@@ -22,6 +22,14 @@ def event_identity(env):
         require(event["ref"] == ref and event.get("after") == env["GITHUB_SHA"]
                 and event.get("deleted") is False and event.get("forced", False) is False,
                 "Deployment push identity differs")
+    elif env.get("CD_TARGET") == PRODUCTION:
+        # prod-cd.yml declares only infra_ref, defaulting to empty, which resolves
+        # cma-infra main once at run start. prepare_app accepts the same references.
+        inputs = event.get("inputs")
+        reference = inputs.get("infra_ref", "") if isinstance(inputs, dict) else None
+        require(isinstance(inputs, dict) and set(inputs) <= {"infra_ref"} and isinstance(reference, str)
+                and (reference in ("", "main") or matches(r"[0-9a-f]{40}", reference)),
+                "Deployment dispatch inputs are invalid")
     else:
         require(isinstance(event.get("inputs"), dict) and isinstance(event["inputs"].get("deployables"), str),
                 "Deployment dispatch inputs are invalid")

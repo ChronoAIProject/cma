@@ -16,6 +16,7 @@ from staging_cd_tools import install_requirements
 
 SHA = "a" * 40
 INFRA = "c" * 40
+DECLARED = object()  # the inputs the dispatch workflow declares, at their defaults
 
 
 def timestamp(seconds):
@@ -24,12 +25,16 @@ def timestamp(seconds):
     return datetime.fromtimestamp(seconds, timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def environment(root, branch, target=None, event_name="push"):
+def environment(root, branch, target=None, event_name="push", inputs=DECLARED):
     event = root / "event.json"
     value = {"ref": "refs/heads/" + branch, "after": SHA, "deleted": False,
              "repository": {"full_name": "ChronoAIProject/cma"}}
     if event_name == "workflow_dispatch":
-        value = {"ref": "refs/heads/" + branch, "inputs": {"deployables": "web"},
+        # The inputs each dispatch workflow declares: prod-cd.yml or redeploy-staging.yml.
+        if inputs is DECLARED:
+            inputs = ({"infra_ref": ""} if target == "production"
+                      else {"deployables": "web", "version": "", "versions": "", "mode": "release", "infra_ref": ""})
+        value = {"ref": "refs/heads/" + branch, "inputs": inputs,
                  "repository": {"full_name": "ChronoAIProject/cma"}}
     event.write_text(json.dumps(value))
     env = {"GITHUB_REPOSITORY": "ChronoAIProject/cma", "GITHUB_REF": "refs/heads/" + branch,
@@ -71,6 +76,30 @@ class EventIdentityTests(unittest.TestCase):
             for env in (environment(root, "develop", "production"), environment(root, "main")):
                 with self.assertRaises(Refusal):
                     event_identity(env)
+
+    def test_a_prod_cd_dispatch_is_admitted_with_only_the_inputs_it_declares(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            # Empty resolves cma-infra main at run start; a pinned commit or main is explicit.
+            for inputs in ({"infra_ref": ""}, {"infra_ref": INFRA}, {"infra_ref": "main"}, {}):
+                with self.subTest(inputs=inputs):
+                    event = event_identity(environment(root, "main", "production", "workflow_dispatch", inputs))
+                    self.assertEqual(event["inputs"], inputs)
+            for inputs in ({"deployables": "web"}, {"infra_ref": "", "deployables": "web"},
+                           {"infra_ref": "", "mode": "bootstrap"}, {"infra_ref": None}, {"infra_ref": 5},
+                           {"infra_ref": "feature"}, {"infra_ref": "C" * 40}, None, []):
+                with self.subTest(inputs=inputs), self.assertRaisesRegex(Refusal, "dispatch inputs are invalid"):
+                    event_identity(environment(root, "main", "production", "workflow_dispatch", inputs))
+
+    def test_a_staging_dispatch_still_requires_its_deployables(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            event_identity(environment(root, "develop", event_name="workflow_dispatch"))
+            event_identity(environment(root, "develop", event_name="workflow_dispatch",
+                                       inputs={"deployables": "web", "unexpected": "kept"}))
+            for inputs in ({"infra_ref": ""}, {"deployables": 5}):
+                with self.subTest(inputs=inputs), self.assertRaisesRegex(Refusal, "dispatch inputs are invalid"):
+                    event_identity(environment(root, "develop", event_name="workflow_dispatch", inputs=inputs))
 
 
 class ClockTests(unittest.TestCase):
