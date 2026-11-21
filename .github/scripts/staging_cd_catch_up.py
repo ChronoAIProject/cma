@@ -30,7 +30,9 @@ settlement gate (a transient read, write or budget refusal), is re-run once
 too, with the same settling: from the hourly check, once every staging run
 has settled, never after a cancelled head, and never by the bot's own
 attempt. Reservations a stopped allocation committed belong to its settled
-attempt, so the re-run attempt reserves their sources again.
+attempt, so the re-run attempt reserves their sources again. A spent head
+whose plan or allocation stopped at its gate again is never caught up: it is
+reported as exhausted, with a warning, until a push or a maintainer acts.
 """
 import collections
 from datetime import datetime
@@ -63,6 +65,8 @@ PLAN_JOB = "plan"
 PLAN_GATE = "Require a complete release plan"
 # Only these decisions re-run the head run; any other names no action.
 RERUNS = frozenset({"rerun", "plan-rerun", "allocation-rerun"})
+# A spent head still behind, or stopped at a gate again, is reported with a warning.
+EXHAUSTED = frozenset({"exhausted", "plan-exhausted", "allocation-exhausted"})
 # One automatic re-run per develop head; never re-run a head this many times.
 ATTEMPTS = 5
 SECONDS = 150
@@ -312,13 +316,15 @@ def decide(api, read_refs, read_controller, *, event=None, now=None):
     # The bot's attempt was this head's automatic re-run; a maintainer's earns one more.
     spent = (isinstance(actor, dict) and actor.get("login") == BOT) or run["run_attempt"] >= ATTEMPTS
     jobs = run_jobs(api, run)
+    # The stage whose transient gate stopped the head before it allocated, if any.
+    stage = (None if allocated(jobs) else "plan" if plan_stopped(jobs)
+             else "allocation" if allocation_stopped(jobs) else None)
     if not spent and not allocated(jobs):
         # A plan or an allocation stopped at its transient gate is re-run once,
         # as a re-run for finals alone is: never after a cancelled head, and
         # only from the hourly check once every staging run has settled. Any
         # other failed plan or allocation is a failure to retry on the next
         # push, not a skip.
-        stage = "plan" if plan_stopped(jobs) else "allocation" if allocation_stopped(jobs) else None
         if stage is None:
             return "head-unallocated", None, []
         if run.get("conclusion") == "cancelled":
@@ -331,6 +337,10 @@ def decide(api, read_refs, read_controller, *, event=None, now=None):
     if wait:
         return wait, None, []
     late = [lane for lane in lanes if lane.reason in BEHIND]
+    if spent and stage:
+        # Its last attempt stopped at the gate again, so the head's own sources
+        # were never allocated: whatever its lanes show, it is not caught up.
+        return stage + "-exhausted", run, lanes
     if late and spent:
         return "exhausted", run, lanes
     if late and all(lane.reason != BEHIND[0] for lane in late):
@@ -400,7 +410,7 @@ def main():
             outcome.update(reason=reason, lanes=lanes)
             if reason in RERUNS:
                 outcome.update(run=run["id"], attempt=rerun(api, run))
-            elif reason == "exhausted":
+            elif reason in EXHAUSTED:
                 outcome.update(run=run["id"], attempt=run["run_attempt"])
         except Refusal as error:
             outcome["failure"] = str(error)  # Refusals carry only fixed messages.
@@ -424,6 +434,13 @@ def main():
         verb, pronoun = ("stays", "it") if len(late) == 1 else ("stay", "them")
         print(f"::warning title=Staging CD catch-up exhausted::{','.join(late)} {verb} behind after attempt "
               f"{outcome['attempt']} of run {outcome['run']}; a push or a maintainer re-run retries {pronoun}")
+        for component in late:
+            print(f"CATCH-UP exhausted lane={component} attempts={outcome['attempt']}")
+    elif reason in EXHAUSTED:
+        stage = reason.removesuffix("-exhausted")
+        print(f"::warning title=Staging CD catch-up exhausted::the {stage} of run {outcome['run']} stopped at its "
+              f"transient gate again after attempt {outcome['attempt']}; a push or a maintainer re-run retries it")
+        print(f"CATCH-UP {reason} run={outcome['run']} attempts={outcome['attempt']}")
         for component in late:
             print(f"CATCH-UP exhausted lane={component} attempts={outcome['attempt']}")
     elif reason == "cancelled":

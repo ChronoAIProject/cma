@@ -208,9 +208,10 @@ class CatchUpTests(unittest.TestCase):
         attempt.update(plan="stopped", conclusion="cancelled")
         self.assertEqual(check("schedule", 10), ("cancelled", None, []))
         del attempt["conclusion"]
-        # Once re-run by the check itself, the head is caught up: never a second time.
+        # Once re-run by the check itself, a plan that stops again is exhausted: never a second time.
         attempt["actor"] = BOT
-        self.assertEqual(check("schedule", 10), ("head-caught-up", None, []))
+        reason, run, lanes = check("schedule", 10)
+        self.assertEqual((reason, run["id"], lanes), ("plan-exhausted", 801, []))
         attempt["actor"] = HUMAN
         attempt["updated"] = "not a time"
         self.assertEqual(check("schedule", 10), ("plan-waiting", None, []))
@@ -228,11 +229,12 @@ class CatchUpTests(unittest.TestCase):
             return catch_up.decide(develop.server, develop.refs, develop.controller, event="schedule",
                                    now=develop.later(10))
         self.assertEqual(check()[0], "plan-rerun")
-        # The check's own attempt spent this head's automatic re-run: a lane still behind is exhausted.
+        # The check's own attempt spent this head's automatic re-run: its stopped plan is exhausted,
+        # and a lane still behind is reported with it.
         attempt["actor"] = BOT
         reason, run, lanes = check()
         self.assertEqual((reason, run["id"], [lane.component for lane in lanes]),
-                         ("exhausted", 802, ["runtime-omarchy"]))
+                         ("plan-exhausted", 802, ["runtime-omarchy"]))
         self.assertNotIn(reason, catch_up.RERUNS)
         self.assertEqual(develop.posts, [])
 
@@ -259,14 +261,15 @@ class CatchUpTests(unittest.TestCase):
         attempt.update(allocate="stopped", conclusion="cancelled")
         self.assertEqual(check("schedule", 10), ("cancelled", None, []))
         del attempt["conclusion"]
-        # Once re-run by the check itself, the head is spent: never a second time.
+        # Once re-run by the check itself, an allocation that stops again is exhausted: never a second time.
         attempt["actor"] = BOT
-        self.assertEqual(check("schedule", 10), ("head-caught-up", None, []))
+        self.assertEqual(check("schedule", 10)[::2], ("allocation-exhausted", []))
         # A maintainer's re-run earns one more, never at the attempt cap.
         attempt["actor"] = HUMAN
         self.assertEqual(check("schedule", 10)[0], "allocation-rerun")
         develop.runs[801]["attempts"].extend(dict(attempt) for _ in range(catch_up.ATTEMPTS - 1))
-        self.assertEqual(check("schedule", 10), ("head-caught-up", None, []))
+        reason, run, lanes = check("schedule", 10)
+        self.assertEqual((reason, run["run_attempt"], lanes), ("allocation-exhausted", catch_up.ATTEMPTS, []))
         self.assertEqual(develop.posts, [])
 
     def test_a_re_run_attempt_takes_over_reservations_its_stopped_allocation_committed(self):
@@ -304,8 +307,10 @@ class CatchUpTests(unittest.TestCase):
             attempt.update(allocate=None, plan="stopped") if stage == "plan" else attempt.update(allocate="stopped")
 
         # A stopped plan or allocation spends the head's re-run; the bot's attempt
-        # is never re-run for the other stop, or for a final it leaves undeployed.
-        for first, then in (("plan", "allocation"), ("allocation", "plan"), ("allocation", "final")):
+        # is never re-run for the same or the other stop, or for a final it
+        # leaves undeployed. A second stop is reported as exhausted.
+        for first, then in (("plan", "plan"), ("plan", "allocation"), ("allocation", "allocation"),
+                            ("allocation", "plan"), ("allocation", "final")):
             with self.subTest(first=first, then=then):
                 develop = Develop()
                 develop.push({"web"})
@@ -323,7 +328,7 @@ class CatchUpTests(unittest.TestCase):
                 reason, run, lanes = decide(develop)
                 self.assertNotIn(reason, catch_up.RERUNS)
                 self.assertEqual((reason, lanes), ("exhausted", [("web", "unproven-final")]) if then == "final"
-                                 else ("head-caught-up", []))
+                                 else (then + "-exhausted", []))
                 self.assertEqual(develop.posts, [801])
         # A re-run for a final spends it too: the bot's stopped allocation is not re-run.
         develop = Develop()
@@ -336,7 +341,7 @@ class CatchUpTests(unittest.TestCase):
         stop(develop.runs[801]["attempts"][-1], "allocation")
         develop.complete(801)
         reason, run, lanes = decide(develop)
-        self.assertEqual((reason, run["run_attempt"], lanes), ("exhausted", 2, [("web", "unproven-final")]))
+        self.assertEqual((reason, run["run_attempt"], lanes), ("allocation-exhausted", 2, [("web", "unproven-final")]))
         self.assertEqual(develop.posts, [801])
 
     def test_owner_without_a_run_is_settled_and_an_unknown_head_waits(self):
@@ -695,6 +700,35 @@ class EntryTests(unittest.TestCase):
             decide = Mock(return_value=("nothing-behind", None, []))
             self.run_main(decide, env=env)
             self.assertEqual(decide.call_args.kwargs, {"event": event})
+
+    def test_a_second_stop_at_the_same_gate_warns_and_is_never_re_run(self):
+        for stage in ("allocation", "plan"):
+            with self.subTest(stage=stage):
+                develop = Develop()
+                develop.push({"web", "am"})
+                attempt = develop.runs[801]["attempts"][-1]
+                attempt.update(allocate=None, plan="stopped") if stage == "plan" else attempt.update(allocate="stopped")
+                develop.complete(801)
+                _reason, run, _lanes = decide_raw(develop)
+                catch_up.rerun(develop.server, run, sleep=instant)
+                # The bot's attempt reserves the same sources again, then stops at the same gate.
+                if stage == "allocation":
+                    develop.allocate(801)
+                    develop.runs[801]["attempts"][-1]["allocate"] = "stopped"
+                else:
+                    develop.runs[801]["attempts"][-1].update(allocate=None, plan="stopped")
+                develop.complete(801)
+                decision = decide_raw(develop)
+                self.assertEqual((decision[0], decision[1]["run_attempt"]), (stage + "-exhausted", 2))
+                never = Mock(side_effect=AssertionError("re-run"))
+                status, lines = self.run_main(lambda *_, **__: decision, never, every=True)
+                never.assert_not_called()
+                self.assertEqual((status, lines), (0, [
+                    "PASS catch-up",
+                    f"::warning title=Staging CD catch-up exhausted::the {stage} of run 801 stopped at its "
+                    "transient gate again after attempt 2; a push or a maintainer re-run retries it",
+                    f"CATCH-UP {stage}-exhausted run=801 attempts=2"]))
+                self.assertEqual(develop.posts, [801])
 
     def test_an_exhausted_head_names_each_lane_still_behind_and_its_attempts(self):
         run = {"id": 802, "run_attempt": 2}
