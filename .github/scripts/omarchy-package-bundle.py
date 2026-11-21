@@ -453,6 +453,13 @@ def generate(args):
     Path(args.output).write_text(canonical(lock))
 
 
+class RefuseRedirects(urllib.request.HTTPRedirectHandler):
+    """A redirect is raised as its HTTP error, so credentials never follow it to another URL."""
+
+    def redirect_request(self, *args):
+        return None
+
+
 def absent(args):
     """Succeed only when the registry reports the tag (or its whole repository) as unknown."""
     user, token = os.environ.get("REGISTRY_USER", ""), os.environ.get("REGISTRY_TOKEN", "")
@@ -460,9 +467,10 @@ def absent(args):
     require(re.fullmatch(r"[a-z0-9]+(?:[._/-][a-z0-9]+)*", args.repository) and re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", args.tag),
             "repository or tag is invalid")
     basic = base64.b64encode(f"{user}:{token}".encode()).decode()
+    opener = urllib.request.build_opener(RefuseRedirects)
     scope = urllib.parse.urlencode({"scope": f"repository:{args.repository}:pull,push", "service": urllib.parse.urlparse(args.registry).hostname})
     try:
-        with urllib.request.urlopen(urllib.request.Request(f"{args.registry}/token?{scope}", headers={"Authorization": "Basic " + basic}), timeout=30) as r:
+        with opener.open(urllib.request.Request(f"{args.registry}/token?{scope}", headers={"Authorization": "Basic " + basic}), timeout=30) as r:
             bearer = json.load(r)["token"]
     except (urllib.error.URLError, ValueError, KeyError) as error:
         raise BundleError("registry did not issue a token") from error
@@ -471,7 +479,7 @@ def absent(args):
     request = urllib.request.Request(f"{args.registry}/v2/{args.repository}/manifests/{args.tag}",
                                      headers={"Authorization": "Bearer " + bearer, "Accept": accept})
     try:
-        with urllib.request.urlopen(request, timeout=30):
+        with opener.open(request, timeout=30):
             raise BundleError(f"tag {args.tag} already exists; it is never overwritten")
     except urllib.error.HTTPError as error:
         try:

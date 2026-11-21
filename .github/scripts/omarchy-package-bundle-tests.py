@@ -433,16 +433,23 @@ class LayoutTests(unittest.TestCase):
             self.assertEqual(index["manifests"][0]["annotations"]["org.opencontainers.image.ref.name"], "2026-10-22-abc")
 
 
+def unknown(code):
+    return json.dumps({"errors": [{"code": code}]}).encode()
+
+
 class AbsenceTests(unittest.TestCase):
-    def check(self, status, body):
+    def check(self, status, body, headers=()):
         def respond(handler, _):
             if handler.path.startswith("/token"):
                 self.assertEqual(handler.headers["Authorization"], "Basic " + base64.b64encode(b"user:secret").decode())
                 send(handler, 200, b'{"token": "bearer"}')
             else:
                 self.assertEqual(handler.headers["Authorization"], "Bearer bearer")
-                send(handler, status, body)
+                send(handler, status, body, headers)
 
+        return self.run_against(respond)
+
+    def run_against(self, respond):
         server = Server(respond)
         server.start()
         self.addCleanup(server.stop)
@@ -451,13 +458,33 @@ class AbsenceTests(unittest.TestCase):
             return BUNDLE.main(["absent", "--registry", server.url, "--repository", "owner/packages", "--tag", "2026-10-22-abc"])
 
     def test_only_a_registry_not_found_proves_absence(self):
-        unknown = lambda code: json.dumps({"errors": [{"code": code}]}).encode()
         self.assertEqual(self.check(404, unknown("MANIFEST_UNKNOWN")), 0)
         self.assertEqual(self.check(404, unknown("NAME_UNKNOWN")), 0)
         self.assertEqual(self.check(200, b"{}"), 1)
         self.assertEqual(self.check(403, unknown("DENIED")), 1)
         self.assertEqual(self.check(404, b"not json"), 1)
         self.assertEqual(self.check(500, b""), 1)
+
+    def test_a_redirect_is_refused_and_credentials_stay_with_the_registry(self):
+        # Another host that would issue a token and report the tag unknown, if anything reached it.
+        elsewhere = Server(lambda h, _: send(h, 200, b'{"token": "bearer"}') if h.path.startswith("/token")
+                           else send(h, 404, unknown("MANIFEST_UNKNOWN")))
+        elsewhere.start()
+        self.addCleanup(elsewhere.stop)
+        for redirected in ("/token", "/v2/"):
+            with self.subTest(redirected):
+                def respond(handler, _, redirected=redirected):
+                    if handler.path.startswith(redirected):
+                        send(handler, 307, b"", [("Location", elsewhere.url + handler.path)])
+                    elif handler.path.startswith("/token"):
+                        send(handler, 200, b'{"token": "bearer"}')
+                    else:
+                        send(handler, 404, unknown("MANIFEST_UNKNOWN"))
+
+                with contextlib.redirect_stderr(io.StringIO()) as errors:
+                    self.assertEqual(self.run_against(respond), 1)
+                self.assertIn("did not issue a token" if redirected == "/token" else "answered 307", errors.getvalue())
+        self.assertEqual(elsewhere.requests, [])
 
 
 if __name__ == "__main__":
