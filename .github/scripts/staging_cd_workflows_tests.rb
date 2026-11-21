@@ -141,6 +141,10 @@ class StagingWorkflowTest < Minitest::Test
     final = workflow('staging-release')['jobs']['finalize']
     assert_equal 'read', image['permissions']['contents']
     assert_equal 'write', image['permissions']['packages']
+    # Publication lists the Actions caches to verify its layer export.
+    assert_equal 'read', image['permissions']['actions']
+    publication = image['steps'].find { |step| step['id'] == 'publication' }
+    assert_equal '${{ github.token }}', publication.dig('env', 'GH_TOKEN')
     assert_equal 'write', final['permissions']['contents']
     refute final['permissions'].key?('packages')
     refute workflow('redeploy-staging').to_s.include?('packages')
@@ -626,6 +630,9 @@ class StagingWorkflowTest < Minitest::Test
       assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete',
                    steps[index]['run']
     end
+    # actions/cache/save already annotates a refused write with its cause, so the
+    # plan waits on no cache verification of its own.
+    refute plan.to_s.include?('staging_cd_cache_save.py'), 'the plan must not poll the Actions cache'
     [steps[restore], steps[save]].each do |step|
       assert_equal '${{ steps.selection-cache.outputs.directory }}', step['with']['path']
       assert_equal '${{ steps.selection-cache.outputs.key }}', step['with']['key']
