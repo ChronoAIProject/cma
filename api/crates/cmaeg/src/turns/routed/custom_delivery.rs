@@ -88,6 +88,13 @@ impl RoutedDelivery {
             .custom
             .as_ref()
             .ok_or(ExecutionError::Unsupported)?;
+        let answer_response_id = match effect {
+            CustomStreamEffect::Message { text }
+            | CustomStreamEffect::Completed {
+                final_text: Some(text),
+            } if !text.trim().is_empty() => Some(frame.response_id.as_str()),
+            _ => None,
+        };
         let event =
             body.settlement_event(plan, target, &self.journal.keys, (self.journal.clock)())?;
         let mut evidence = lease
@@ -286,7 +293,8 @@ impl RoutedDelivery {
                             hmac_key_id: String::new(),
                         },
                         None,
-                    ),
+                    )
+                    .with_answer_response(answer_response_id),
                 )
                 .await;
             evidence.webhooks[index].status = WebhookStatus::Settled { outcome };

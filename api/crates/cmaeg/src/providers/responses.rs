@@ -115,6 +115,14 @@ pub(crate) fn parse_event_with_trace(
     frame: &SseFrame,
     trace: Option<&mut crate::telemetry::turn_trace::ProviderReader>,
 ) -> Result<ResponsesEvent, ResponsesEventError> {
+    parse_event_for_turn(frame, trace, None).map(|(event, _)| event)
+}
+
+pub(super) fn parse_event_for_turn(
+    frame: &SseFrame,
+    trace: Option<&mut crate::telemetry::turn_trace::ProviderReader>,
+    accepted_response: Option<&str>,
+) -> Result<(ResponsesEvent, bool), ResponsesEventError> {
     let value = serde_json::from_str::<Value>(&frame.data)
         .map_err(|error| ResponsesEventError::InvalidJson(error.to_string()))?;
     let object = value
@@ -130,9 +138,10 @@ pub(crate) fn parse_event_with_trace(
         // annotations cannot reject an otherwise valid provider event.
         trace.event(&value);
         if kind == "response.nyxid_trace" {
-            return Ok(ResponsesEvent::NyxidTrace);
+            return Ok((ResponsesEvent::NyxidTrace, true));
         }
     }
+    let matching_identity = matches_turn_identity(object, kind, accepted_response);
     match kind {
         "response.created" => Ok(ResponsesEvent::Created {
             response_id: response_id(object)?,
@@ -231,6 +240,40 @@ pub(crate) fn parse_event_with_trace(
             r#type: other.to_owned(),
         }),
     }
+    .map(|event| (event, matching_identity))
+}
+
+fn matches_turn_identity(
+    object: &serde_json::Map<String, Value>,
+    kind: &str,
+    accepted_response: Option<&str>,
+) -> bool {
+    let response = object.get("response");
+    let nested = response.and_then(|response| response.get("id"));
+    // The legacy top-level id only supplies response identity without a nested id.
+    let top = (nested.is_none()
+        && matches!(
+            kind,
+            "response.created" | "response.in_progress" | "response.completed"
+        ))
+    .then(|| object.get("id"))
+    .flatten();
+    let accepted_response = accepted_response.or_else(|| {
+        matches!(kind, "response.created" | "response.in_progress")
+            .then(|| nested.or(top).and_then(Value::as_str))
+            .flatten()
+    });
+    accepted_response.is_none_or(|accepted| {
+        [
+            object.get("response_id"),
+            nested,
+            response.and_then(|response| response.get("response_id")),
+            top,
+        ]
+        .into_iter()
+        .flatten()
+        .all(|id| id.as_str() == Some(accepted))
+    })
 }
 
 /// Recover the response identifier from an acceptance frame without changing
