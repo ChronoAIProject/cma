@@ -139,6 +139,7 @@ impl Replica {
                     Arc::new(adapter),
                 ))
                 .unwrap();
+            route.enable_settings_owner_routing();
             let app = route.authenticated_routes(public, auth);
             coordinator = Some(owner);
             relay = Some(route);

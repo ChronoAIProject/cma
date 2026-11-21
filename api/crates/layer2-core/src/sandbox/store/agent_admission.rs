@@ -416,6 +416,15 @@ impl AgentAdmissionResult {
 
 #[async_trait]
 pub trait AgentAdmissionStore: Send + Sync {
+    /// Read only an exact already committed creation. Never provision, adopt
+    /// a prepared Agent or update Trigger attribution on a refusal path.
+    async fn replay_agent_admission(
+        &self,
+        _admission: &AgentAdmission,
+    ) -> Result<Option<AgentAdmissionResult>, SandboxStoreError> {
+        Ok(None)
+    }
+
     async fn admit_catalogue_agent_with_trigger_initiator(
         &self,
         admission: AgentAdmission,

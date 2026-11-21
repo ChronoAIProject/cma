@@ -325,7 +325,10 @@ fn admission_filter(admission: &SandboxAdmission) -> Option<mongodb::bson::Docum
     origin_filter(admission.sandbox.owner.as_str(), &admission.sandbox.origin)
 }
 
-fn origin_filter(owner: &str, origin: &SandboxOrigin) -> Option<mongodb::bson::Document> {
+pub(super) fn origin_filter(
+    owner: &str,
+    origin: &SandboxOrigin,
+) -> Option<mongodb::bson::Document> {
     let (kind, id) = origin.replay_key()?;
     let (query_field, record_field) = match origin {
         SandboxOrigin::Trigger { .. } => ("origin_launch_id", "record.origin.launch_id"),

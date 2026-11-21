@@ -9,6 +9,7 @@ import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Table, TableCell } from '../ui/Table';
 import { statusLabel } from '../vocabulary/status';
+import { sandboxLifecycleLabel } from './lifecycle';
 import type { useSandboxCapacity } from './useSandboxCapacity';
 import './SandboxCapacityPanel.css';
 
@@ -131,7 +132,7 @@ function EnvironmentInventory({
               <TableCell>
                 {sandbox.status === 'retiring'
                   ? 'Deleting — still uses one Sandbox slot'
-                  : statusLabel(sandbox.status)}
+                  : sandboxLifecycleLabel(sandbox)}
               </TableCell>
             </tr>
           ))}

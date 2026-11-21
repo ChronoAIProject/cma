@@ -404,6 +404,7 @@ function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPagePro
       </div>
       {loaded && owner ? (
         <DocumentSharing
+          key={loaded.document.id}
           client={client}
           document={loaded.document}
           open={shareOpen}

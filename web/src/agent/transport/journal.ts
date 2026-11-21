@@ -8,6 +8,11 @@ import { InterruptionJournal } from './interruptionJournal';
 import { LegacySuggestionJournal } from './legacySuggestionJournal';
 import { bindDraftCommand } from '../draftDelivery';
 import { acceptDraftCommand, clearOwnerDrafts } from '../draftStorage';
+import {
+  promptIntentJournal,
+  settingsIntentJournal,
+  type RetainedSettingsEditor,
+} from '../settingsIntent';
 
 const PREFIX = 'cma:agent-transport:v1:';
 const IDENTITY = `${PREFIX}identity`;
@@ -135,11 +140,35 @@ export class AgentTransportJournal {
     return this.agent;
   }
 
-  private current(): TransportRecord | undefined {
+  private requireIdentity(): void {
     if (this.invalidated) throw new IdentityChangedError();
     const identity = readIdentity(this.storage);
     if (identity?.user !== this.identity.user || identity.epoch !== this.identity.epoch)
       throw new IdentityChangedError();
+  }
+
+  settingsIntent<Body>(
+    kind: RetainedSettingsEditor,
+    parseBody: (value: unknown) => Body | undefined,
+  ) {
+    return settingsIntentJournal(
+      this.storage,
+      `${this.key}:configuration:${kind}:${this.identity.epoch}`,
+      () => this.requireIdentity(),
+      parseBody,
+    );
+  }
+
+  promptSettingsIntent() {
+    return promptIntentJournal(
+      this.storage,
+      `${this.key}:configuration:prompt-fingerprint:${this.identity.epoch}`,
+      () => this.requireIdentity(),
+    );
+  }
+
+  private current(): TransportRecord | undefined {
+    this.requireIdentity();
     const source = this.storage.getItem(this.key);
     return source === null ? undefined : parseRecord(source, this.agent, this.identity.epoch);
   }

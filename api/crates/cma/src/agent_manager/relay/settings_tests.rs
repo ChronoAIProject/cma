@@ -1,125 +1,157 @@
+//! Live settings use the exact execution owner through the authenticated HTTP relay.
 use super::*;
-use crate::store::MongoSandboxStore;
-use layer2_core::sandbox::store::{AgentStore, SandboxStore, WorkspaceStore, WorktreeStore};
-use serde_json::{json, Value};
 
-#[path = "settings_tests/fixture.rs"]
-mod fixture;
-#[path = "settings_tests/runtime.rs"]
-mod runtime;
-use fixture::*;
-#[path = "settings_tests/access.rs"]
-mod access;
-#[path = "settings_tests/guards.rs"]
-mod guards;
-#[path = "settings_tests/lifecycle.rs"]
-mod lifecycle;
+const BODY: &str =
+    r#"{"model":"fixture-settings-model","reasoning_effort":"high","permission_mode":"guarded"}"#;
 
-fn changed() -> Value {
-    json!({"model":"gpt-6", "reasoning_effort":"medium", "permission_mode":"guarded"})
+fn path() -> String {
+    format!("/api/v1/agents/{AGENT}/settings")
 }
 
-async fn changed_request_uses_owner(direct: bool) {
+fn patch(replica: &Replica, key: &str) -> reqwest::RequestBuilder {
+    client()
+        .patch(format!("{}{}", replica.address, path()))
+        .header("content-type", "application/json")
+        .header("idempotency-key", key)
+        .body(BODY)
+}
+
+async fn view(response: reqwest::Response) -> (StatusCode, Value) {
+    let status = response.status();
+    assert_eq!(response.headers()["cache-control"], "private, no-store");
+    (status, response.json().await.unwrap())
+}
+
+async fn read(replica: &Replica) -> (StatusCode, Value) {
+    view(
+        client()
+            .get(format!("{}{}", replica.address, path()))
+            .send()
+            .await
+            .unwrap(),
+    )
+    .await
+}
+
+fn enable(replica: &Replica) {
+    replica
+        .relay
+        .as_ref()
+        .unwrap()
+        .enable_settings_owner_routing();
+}
+
+#[tokio::test]
+#[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
+async fn settings_patch_on_peer_dispatches_on_owner_once_and_replays_after_handoff() {
     let (mongo, name, durable) =
         crate::store::sandbox_maintenance::mongo_integration_tests::database().await;
     seed(&durable).await;
-    let replicas = vec![
+    let replicas = [
         Replica::open(&name, true).await,
         Replica::open(&name, true).await,
     ];
+    for replica in &replicas {
+        enable(replica);
+    }
+    assert_eq!(read(&replicas[0]).await.0, StatusCode::OK);
+    let (status, problem) = view(patch(&replicas[0], "settings-once").send().await.unwrap()).await;
+    assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(problem["code"], "agent_owner_unavailable");
+
     let (owner, authority) = fixture::acquire(&replicas).await;
     let peer = 1 - owner;
-    let executing = if direct { owner } else { peer };
-    let before = replicas[peer]
-        .store
-        .get_agent(&AgentId(AGENT.into()))
+    let response = patch(&replicas[peer], "settings-once")
+        .send()
         .await
-        .unwrap()
         .unwrap();
-    assert_eq!(
-        before.settings().reasoning_effort,
-        layer2_core::profiles::ThinkingEffort::High
-    );
-    assert_eq!(
-        before.settings().permission_mode,
-        layer2_core::profiles::PermissionLevel::Autonomous
-    );
-    let (status, result) = replicas[executing]
-        .request(Method::PATCH, Some("settings-once"), Some(changed()))
-        .await;
-    let after = replicas[peer]
-        .store
-        .get_agent(&before.id)
-        .await
-        .unwrap()
-        .unwrap();
-    eprintln!("direct={direct} ingress={executing} owner={owner} epoch={} status={status} result={result} owner_configures={} peer_configures={} before={:?} after={:?}",
-        authority.token.epoch, replicas[owner].runtime.inputs.lock().unwrap().len(),
-        replicas[peer].runtime.inputs.lock().unwrap().len(), before.settings(), after.settings());
-    assert_eq!(status, StatusCode::OK, "{result}");
-    assert_eq!(
-        result,
-        json!({"model":"gpt-6", "reasoning_effort":"medium", "permission_mode":"guarded", "pending":false})
-    );
-    assert_eq!(after.profile, before.profile);
-    assert_eq!(
-        after.settings().system_prompt,
-        before.settings().system_prompt
-    );
-    assert_eq!(replicas[owner].runtime.inputs.lock().unwrap().len(), 1);
-    assert!(replicas[peer]
-        .runtime
-        .resolutions
-        .lock()
-        .unwrap()
-        .is_empty());
-    assert!(replicas[peer].runtime.inputs.lock().unwrap().is_empty());
-    assert_eq!(
-        *replicas[owner].scopes.lock().unwrap(),
-        vec![Some(authority.token.clone())]
-    );
-    assert!(replicas[owner]
-        .runtime
-        .resolutions
-        .lock()
-        .unwrap()
-        .iter()
-        .all(|(_, scope)| scope.as_ref() == Some(&authority.token)));
+    assert_eq!(response.status(), StatusCode::OK);
+    drop(response);
+    let expected = json!({
+        "model":"fixture-settings-model", "reasoning_effort":"high",
+        "permission_mode":"guarded", "pending":false
+    });
     for replica in &replicas {
+        assert_eq!(read(replica).await, (StatusCode::OK, expected.clone()));
         assert_eq!(
-            replica.request(Method::GET, None, None).await,
-            (status, result.clone())
-        );
-        assert_eq!(
-            replica
-                .request(Method::PATCH, Some("settings-once"), Some(changed()))
-                .await,
-            (status, result.clone())
+            view(patch(replica, "settings-once").send().await.unwrap()).await,
+            (StatusCode::OK, expected.clone())
         );
     }
+    assert_eq!(
+        replicas[owner].scopes.lock().unwrap().as_slice(),
+        &[
+            Some(authority.token.clone()),
+            Some(authority.token.clone()),
+            Some(authority.token.clone()),
+        ]
+    );
+    assert!(replicas[peer].scopes.lock().unwrap().is_empty());
+    assert!(matches!(
+        replicas[owner].runtime.inputs.lock().unwrap().as_slice(),
+        [layer3_adapter::ConversationInput::Configure { model, .. }] if model == "fixture-settings-model"
+    ));
+    assert!(replicas[peer].runtime.inputs.lock().unwrap().is_empty());
+
+    let old = replicas[owner].coordinator.as_ref().unwrap();
+    for owned in old.begin_drain().await {
+        old.handoff(&owned, async { Ok(()) }).await.unwrap();
+    }
+    let next = replicas[peer]
+        .coordinator
+        .as_ref()
+        .unwrap()
+        .acquire(&AgentId(AGENT.into()))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(next.token.epoch > authority.token.epoch);
+    let headers = HeaderMap::from_iter([
+        (
+            axum::http::header::CONTENT_TYPE,
+            "application/json".parse().unwrap(),
+        ),
+        (
+            axum::http::HeaderName::from_static("idempotency-key"),
+            "stale-epoch".parse().unwrap(),
+        ),
+    ]);
+    let proof = replicas[peer]
+        .relay
+        .as_ref()
+        .unwrap()
+        .authentication
+        .sign(
+            &next.token.instance_id,
+            &authority.token,
+            &Method::PATCH,
+            &path().parse().unwrap(),
+            &headers,
+            BODY.as_bytes(),
+        )
+        .unwrap();
+    let stale = patch(&replicas[owner], "stale-epoch")
+        .header(PROOF, proof)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(stale.status(), StatusCode::SERVICE_UNAVAILABLE);
+    assert_eq!(stale.headers()["cache-control"], "private, no-store");
+    assert_eq!(
+        read(&replicas[owner]).await,
+        (StatusCode::OK, expected.clone())
+    );
+    assert_eq!(
+        view(
+            patch(&replicas[peer], "settings-once")
+                .send()
+                .await
+                .unwrap()
+        )
+        .await,
+        (StatusCode::OK, expected)
+    );
     assert_eq!(replicas[owner].runtime.inputs.lock().unwrap().len(), 1);
-    assert_eq!(
-        replicas[peer]
-            .store
-            .get_agent(&before.id)
-            .await
-            .unwrap()
-            .unwrap(),
-        after
-    );
-    let mut alternate = changed();
-    alternate["model"] = json!("fixture-alternate-model");
-    let (status, updated) = replicas[peer]
-        .request(Method::PATCH, Some("different-model"), Some(alternate))
-        .await;
-    assert_eq!(status, StatusCode::OK, "{updated}");
-    assert_eq!(updated["model"], "fixture-alternate-model");
-    assert_eq!(updated["pending"], false);
-    assert_eq!(
-        replicas[owner].request(Method::GET, None, None).await.1,
-        updated
-    );
-    assert_eq!(replicas[owner].runtime.inputs.lock().unwrap().len(), 2);
     assert!(replicas[peer].runtime.inputs.lock().unwrap().is_empty());
     for replica in replicas {
         replica.close().await;
@@ -129,44 +161,50 @@ async fn changed_request_uses_owner(direct: bool) {
 
 #[tokio::test]
 #[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
-async fn settings_patch_from_peer_reaches_only_owner_runtime_and_replays() {
-    changed_request_uses_owner(false).await;
-}
-
-#[tokio::test]
-#[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
-async fn settings_patch_direct_to_owner_supplies_publication_scope() {
-    changed_request_uses_owner(true).await;
-}
-
-#[tokio::test]
-#[ignore = "requires disposable Mongo replica set via CHRONO_TEST_MONGODB_URI"]
-async fn settings_patch_without_coordination_keeps_local_handler_and_noop_behavior() {
+async fn settings_patch_refuses_foreign_principal_and_mixed_rollout() {
     let (mongo, name, durable) =
         crate::store::sandbox_maintenance::mongo_integration_tests::database().await;
     seed(&durable).await;
-    let replica = Replica::open(&name, false).await;
-    let (status, result) = replica
-        .request(Method::PATCH, Some("local-settings"), Some(changed()))
-        .await;
-    assert_eq!(status, StatusCode::OK, "{result}");
-    assert_eq!(result["pending"], false);
-    assert_eq!(replica.runtime.inputs.lock().unwrap().len(), 1);
-    assert_eq!(*replica.scopes.lock().unwrap(), vec![None]);
-    assert!(replica
-        .runtime
-        .resolutions
-        .lock()
-        .unwrap()
+    let replicas = [
+        Replica::open(&name, true).await,
+        Replica::open(&name, true).await,
+    ];
+    let (owner, _) = fixture::acquire(&replicas).await;
+    let peer = 1 - owner;
+    let off = patch(&replicas[peer], "settings-disabled")
+        .send()
+        .await
+        .unwrap();
+    assert!(!off.status().is_success());
+    assert_eq!(replicas[peer].scopes.lock().unwrap().as_slice(), &[None]);
+    assert!(replicas[owner].scopes.lock().unwrap().is_empty());
+
+    enable(&replicas[peer]);
+    let mixed = patch(&replicas[peer], "settings-mixed")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(mixed.status(), StatusCode::FORBIDDEN);
+    assert_eq!(mixed.headers()["cache-control"], "private, no-store");
+    assert_eq!(replicas[peer].scopes.lock().unwrap().as_slice(), &[None]);
+    assert!(replicas[owner].scopes.lock().unwrap().is_empty());
+    enable(&replicas[owner]);
+
+    let foreign = Replica::open_as(&name, true, "outside-settings-owner").await;
+    enable(&foreign);
+    let denied = patch(&foreign, "settings-denied").send().await.unwrap();
+    assert!(matches!(
+        denied.status(),
+        StatusCode::NOT_FOUND | StatusCode::FORBIDDEN
+    ));
+    assert!(foreign.scopes.lock().unwrap().is_empty());
+    assert!(replicas[owner].scopes.lock().unwrap().is_empty());
+    assert!(replicas
         .iter()
-        .all(|(_, scope)| scope.is_none()));
-    assert_eq!(
-        replica
-            .request(Method::PATCH, Some("unchanged-settings"), Some(changed()))
-            .await,
-        (status, result)
-    );
-    assert_eq!(replica.runtime.inputs.lock().unwrap().len(), 1);
-    replica.close().await;
+        .all(|replica| replica.runtime.inputs.lock().unwrap().is_empty()));
+    foreign.close().await;
+    for replica in replicas {
+        replica.close().await;
+    }
     mongo.database(&name).drop().await.unwrap();
 }

@@ -1,4 +1,5 @@
 import type { ResolvedConfig } from './config.js';
+import { ProtocolError } from './errors.js';
 import type { OperationOptions, RequestOptions } from './http.js';
 import { command, input, query, read, segment, type CommandOptions } from './resources.js';
 import {
@@ -44,6 +45,20 @@ const comment = object({
   created_at: text,
 });
 const share = object({ subject: text, permission });
+const shareRecipient = object({
+  subject: (value) => {
+    const subject = text(value);
+    if (!/^[ -~]{1,255}$/.test(subject) || subject.trim() !== subject)
+      throw new ProtocolError('Invalid document share recipient subject');
+    return subject;
+  },
+  display_name: nullable(text),
+});
+const shareRecipients = (value: unknown) => {
+  if (!Array.isArray(value) || value.length > 20)
+    throw new ProtocolError('Invalid document share recipient results');
+  return array(shareRecipient)(value);
+};
 const link = object({ id: text, permission, created_at: text });
 const mutation = object({ document: metadata, comment: optional(comment), link: optional(link) });
 const create = object({ title: text, markdown: text, origin_agent_id: optional(nullable(text)) });
@@ -71,6 +86,7 @@ export type DocumentSource = Output<typeof source>;
 export type DocumentComment = Output<typeof comment>;
 /** An explicit recipient grant. */
 export type DocumentShare = Output<typeof share>;
+export type DocumentShareRecipient = Output<typeof shareRecipient>;
 /** Share-link metadata never includes the secret token. */
 export type DocumentLink = Output<typeof link>;
 /** An admitted document mutation. */
@@ -129,6 +145,14 @@ export class Documents {
   }
   shares(id: string, options: OperationOptions = {}) {
     return this.get(id, '/shares', array(share), options);
+  }
+  shareRecipients(id: string, text?: string, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      query(this.path(id, '/share-recipients'), { q: text }),
+      shareRecipients,
+      options,
+    );
   }
   links(id: string, options: OperationOptions = {}) {
     return this.get(id, '/share-links', array(link), options);

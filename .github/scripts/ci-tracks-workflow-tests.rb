@@ -56,8 +56,8 @@ def check_component_cache_writers(documents)
   require_check(builds.size == 2 && builds.all? { |s| s.dig('with', 'cache-from') == "type=gha,version=2,scope=${{ #{scope} }}" },
     'both image builds must restore the component cache')
   exports = builds.map { |s| s.dig('with', 'cache-to') }.compact
-  require_check(exports == ["${{ #{develop} && format('type=gha,version=2,mode=max,scope={0}', #{scope}) || '' }}"],
-    'image layers may be exported only on develop pushes')
+  require_check(exports == ["${{ #{develop} && format('type=gha,version=2,mode=max,ignore-error=true,scope={0}', #{scope}) || '' }}"],
+    'image layers may be exported only on develop pushes, and a failed export must never fail the build')
   {'docker/setup-qemu-action' => 'cache-image', 'docker/setup-buildx-action' => 'cache-binary',
    'aquasecurity/trivy-action' => 'cache'}.each do |action, option|
     step = images.find { |s| s.fetch('uses', '').start_with?(action + '@') }
@@ -253,6 +253,22 @@ def validate(documents, actions)
   require_check(!serialized.match?(%r{ci-contract\.rb|staging-authority\.mjs|deployment-observer\.mjs|gh workflow run|gh api[^\n]*dispatches|kubectl}),
     'live authority, observer or mutation tooling retained')
   check_omarchy_archive(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
+  check_os_refresh(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'), 'Omarchy')
+  check_os_refresh(documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps'), 'Images')
+end
+
+# Runtime images install from one pinned Debian snapshot, so their OS refresh is
+# keyed on that snapshot and their package layers come from cache until it is
+# bumped. A per-run key here would rebuild them against the archive every run.
+def check_os_refresh(steps, label)
+  key = steps.find { |s| s['id'] == 'os-refresh' }
+  builds = steps.select { |s| s.fetch('uses', '').start_with?('docker/build-push-action@') }
+  args = builds.map { |b| b.fetch('with').fetch('build-args', '').lines.map(&:strip).grep(/\AOS_SECURITY_REFRESH=/) }
+  require_check(key && key['run'].to_s.start_with?('python3 .github/scripts/os_refresh_key.py ') &&
+    !key.key?('if') && !key.key?('continue-on-error') && !builds.empty? &&
+    args.all? { |a| a == ['OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}'] } &&
+    steps.index(key) < steps.index(builds.first),
+    "#{label} image builds must take OS_SECURITY_REFRESH from the snapshot-aware refresh key")
 end
 
 def check_omarchy_archive(steps)
@@ -331,6 +347,7 @@ mutations = [
   ->(d) { d['ci-repo']['jobs']['structure']['if'] = 'false' },
   ->(d) { d['ci-repo']['jobs']['structure']['continue-on-error'] = true },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-to') }['with']['cache-to'].sub!("|| ''", "|| 'type=gha'") },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-to') }['with']['cache-to'].sub!('ignore-error=true,', '') },
   ->(d) { d['ci-web']['jobs']['web']['steps'].find { |s| s['name'] == 'Restore npm download cache' }['uses'] = 'actions/cache@v4' },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Restore Trivy databases' }['with'].delete('restore-keys') },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['with'].delete('cache') },
@@ -380,6 +397,10 @@ mutations = [
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['outputs'] = 'type=docker' },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['build-args'].sub!('SOURCE_DATE_EPOCH=0', 'SOURCE_DATE_EPOCH=1') },
   ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'omarchy-cache-restore' }['if'] = "github.event_name == 'push'" },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].find { |s| s['id'] == 'build' }['with']['build-args'].sub!('${{ steps.os-refresh.outputs.value }}', '${{ github.run_id }}-${{ github.run_attempt }}') },
+  ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'].reject! { |s| s['id'] == 'os-refresh' } },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Load native image for scanning' }['with']['build-args'].sub!('${{ steps.os-refresh.outputs.value }}', '${{ github.run_id }}-${{ github.run_attempt }}') },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['id'] == 'os-refresh' }['continue-on-error'] = true },
 ]
 synthetic_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic authority and observer regressions' }
 restore_index = documents['ci-repo']['jobs']['structure']['steps'].index { |s| s['name'] == 'Synthetic home restore evidence regressions' }

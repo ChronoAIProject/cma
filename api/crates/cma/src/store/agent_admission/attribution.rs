@@ -1,6 +1,20 @@
 use super::*;
 #[async_trait::async_trait]
 impl AgentAdmissionStore for MongoSandboxStore {
+    async fn replay_agent_admission(
+        &self,
+        admission: &AgentAdmission,
+    ) -> Result<Option<AgentAdmissionResult>, SandboxStoreError> {
+        let mut session = self
+            .client
+            .start_session()
+            .snapshot(true)
+            .await
+            .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
+        super::super::agent_admission_records::replay_at_snapshot(self, admission, &mut session)
+            .await
+    }
+
     async fn admit_catalogue_agent_with_trigger_initiator(
         &self,
         admission: AgentAdmission,

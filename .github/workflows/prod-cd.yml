@@ -2,6 +2,8 @@ name: prod-cd
 
 # A merge into main releases to production by promoting the exact images staging
 # already verified for the merged develop commit. Nothing is rebuilt here.
+# Only the applications (am, eg, web) are promoted; runtime images stay pinned
+# in Agent Manager's private configuration until runtime promotion is designed.
 # production-plan (no reviewers) only reads the private deploy switches;
 # production (required reviewers) holds the deploy credential and gates the write.
 

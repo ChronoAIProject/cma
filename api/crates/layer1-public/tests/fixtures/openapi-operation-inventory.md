@@ -480,6 +480,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v1/agui/capabilities` | - | - | 200 JSON |
 | `GET /api/v1/agui/events` | - | thread_id*, starting_after, after, follow | 200 SSE |
 | `POST /api/v1/agui/run` | RunRequest | - | 200 SSE |
+| `POST /api/v1/agui/run/receipt` | RunRequest / required Idempotency-Key | - | 200 InputReceipt or null |
 
 ### Trigger launches
 
@@ -517,6 +518,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v2` | - | - | 200 JSON capabilities |
 | `POST /api/v2/responses` | CreateV2ResponseRequest | - | 200 SSE |
 | `POST /api/v2/agents/{agent_id}/responses` | CreateV2ResponseRequest | - | 200 SSE |
+| `POST /api/v2/agents/{agent_id}/responses/receipt` | CreateV2ResponseRequest / required Idempotency-Key | - | 200 V2CommandStatus or null |
 | `GET /api/v2/responses/{response_id}` | - | - | 200 V2ResponseObject |
 | `GET /api/v2/responses/{response_id}/events` | - | starting_after | 200 SSE |
 | `GET /api/v2/responses/{response_id}/output` | - | after | 200 JSON output page |
@@ -862,6 +864,7 @@ Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_
 | `GET /api/v1/documents/{id}/source` | Read current or specific source revision. |
 | `GET /api/v1/documents/{id}/revisions` | Page immutable source revision metadata. |
 | `GET /api/v1/documents/{id}/shares` | Owner direct recipient inventory. |
+| `GET /api/v1/documents/{id}/share-recipients` | Owner search for eligible direct recipients. |
 | `PUT /api/v1/documents/{id}/shares/{subject}` | Grant/update read or comment access. |
 | `DELETE /api/v1/documents/{id}/shares/{subject}` | Revoke direct recipient access. |
 | `GET /api/v1/documents/{id}/share-links` | Owner link metadata, never secrets. |

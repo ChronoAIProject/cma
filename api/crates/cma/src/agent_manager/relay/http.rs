@@ -2,16 +2,35 @@ use super::*;
 use axum::{
     body::{to_bytes, Body},
     extract::{Request, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
+use environment_diagnostics::EnvironmentRead;
 use futures_util::StreamExt;
 
 pub(super) async fn route(
     State(relay): State<Arc<Relay>>,
     request: Request,
     next: Next,
+) -> Response {
+    let settings = settings_patch(request.uri().path(), request.method());
+    let mut response = route_request(relay, request, next, settings).await;
+    if settings {
+        // Owner and authorization failures can occur before the public handler.
+        response.headers_mut().insert(
+            header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("private, no-store"),
+        );
+    }
+    response
+}
+
+async fn route_request(
+    relay: Arc<Relay>,
+    request: Request,
+    next: Next,
+    settings: bool,
 ) -> Response {
     if relay.observation.get().is_some() && observation::eligible(&request) {
         return observation::route(&relay, request, next).await;
@@ -25,8 +44,20 @@ pub(super) async fn route(
             next.run(request).await
         };
     };
+    if settings && relay.settings_owner_routing.get().is_none() {
+        // An enabled ingress can reach a replica with this rollout still disabled.
+        return if proof.is_some() {
+            StatusCode::FORBIDDEN.into_response()
+        } else {
+            next.run(request).await
+        };
+    }
     // Route operations whose publication or runtime effects require execution-owner authority.
-    if !private && proof.is_none() && !needs_owner(request.uri().path(), request.method()) {
+    if !private
+        && proof.is_none()
+        && !settings
+        && !needs_owner(request.uri().path(), request.method())
+    {
         return next.run(request).await;
     }
     if !private
@@ -37,6 +68,7 @@ pub(super) async fn route(
     {
         return layer1_public::auth::NotAuthenticated.into_response();
     }
+    let mut environment = EnvironmentRead::from_request(&request);
     let observer = request
         .uri()
         .path()
@@ -46,7 +78,7 @@ pub(super) async fn route(
         return capacity::refused(observer);
     };
     if !relay.coordinator.is_ready() {
-        return unavailable();
+        return unavailable_with(environment.as_ref(), Refusal::CoordinatorNotReady);
     }
     let body_limit = body_limit(request.uri().path());
     let Ok(_body_budget) = relay
@@ -66,7 +98,7 @@ pub(super) async fn route(
     let mut request = Request::from_parts(parts, Body::from(bytes.clone()));
     if !private {
         let Some(access) = relay.public_access.get() else {
-            return unavailable();
+            return unavailable_with(environment.as_ref(), Refusal::AuthorizationUnavailable);
         };
         let Some(context) = request
             .extensions()
@@ -111,14 +143,19 @@ pub(super) async fn route(
         let Some(verified) = verified else {
             return StatusCode::FORBIDDEN.into_response();
         };
+        if let Some(environment) = environment.as_mut() {
+            environment.correlate_hop(raw.as_bytes());
+        }
         if verified.owner.agent_id != id
             || verified.owner.instance_id != relay.coordinator.instance_id
         {
-            return unavailable();
+            return unavailable_with(environment.as_ref(), Refusal::AuthorityChanged);
         }
         let membership = match bounded(relay.coordinator.store.membership()).await {
             Ok(membership) => membership,
-            Err(_) => return unavailable(),
+            Err(_) => {
+                return unavailable_with(environment.as_ref(), Refusal::MembershipUnavailable)
+            }
         };
         if membership.require_compatible().is_err()
             || !membership.members.iter().any(|member| {
@@ -127,6 +164,9 @@ pub(super) async fn route(
                     && !member.draining
             })
         {
+            if let Some(environment) = &environment {
+                environment.record(Refusal::MembershipUnavailable);
+            }
             return StatusCode::FORBIDDEN.into_response();
         }
         let destination = match if private
@@ -135,12 +175,15 @@ pub(super) async fn route(
                 .path()
                 .starts_with("/internal/agent-manager/v1/control/")
         {
-            relay.control_destination(&id).await
+            relay
+                .control_destination(&id)
+                .await
+                .map_err(|_| Refusal::AuthorityChanged)
         } else {
             relay.destination(&id).await
         } {
             Ok(value) => value,
-            Err(_) => return unavailable(),
+            Err(reason) => return unavailable_with(environment.as_ref(), reason),
         };
         if destination.token != verified.owner
             && !(verified.owner.epoch == 0
@@ -151,7 +194,7 @@ pub(super) async fn route(
                     .starts_with("/internal/agent-manager/v1/control/")
                 && destination.token.instance_id == verified.owner.instance_id)
         {
-            return unavailable();
+            return unavailable_with(environment.as_ref(), Refusal::AuthorityChanged);
         }
         request.headers_mut().remove(PROOF);
         request.extensions_mut().insert(VerifiedPeer);
@@ -162,7 +205,7 @@ pub(super) async fn route(
         }
         match relay.destination(&id).await {
             Ok(value) => value,
-            Err(_) => return unavailable(),
+            Err(reason) => return unavailable_with(environment.as_ref(), reason),
         }
     };
     if destination.member.instance_id == relay.coordinator.instance_id {
@@ -170,14 +213,22 @@ pub(super) async fn route(
             .authority
             .run(next.run(request))
             .await
-            .unwrap_or_else(|_| unavailable());
+            .unwrap_or_else(|_| unavailable_with(environment.as_ref(), Refusal::AuthorityChanged));
         // One admission covers the owner response body, including live streams.
         return retain(response, slot);
     }
     if private {
         return unavailable();
     }
-    forward(&relay, destination, request, bytes.as_ref(), slot).await
+    forward(
+        &relay,
+        destination,
+        request,
+        bytes.as_ref(),
+        slot,
+        environment,
+    )
+    .await
 }
 
 #[derive(Clone)]
@@ -224,9 +275,17 @@ fn needs_owner(path: &str, method: &axum::http::Method) -> bool {
             | "attachments"
             | "files"
             | "browser"
-    ) || (method == axum::http::Method::PATCH && matches!(suffix, "preferences" | "settings"))
+    ) || (method == axum::http::Method::PATCH && suffix == "preferences")
         || suffix.starts_with("files/")
         || suffix == "browser/control"
+}
+
+fn settings_patch(path: &str, method: &axum::http::Method) -> bool {
+    method == axum::http::Method::PATCH
+        && path
+            .strip_prefix("/api/v1/agents/")
+            .and_then(|path| path.split_once('/'))
+            .is_some_and(|(id, suffix)| !id.is_empty() && suffix == "settings")
 }
 
 fn body_limit(path: &str) -> usize {
@@ -245,6 +304,7 @@ async fn forward(
     request: Request,
     body: &[u8],
     permit: capacity::Permit,
+    mut environment: Option<EnvironmentRead>,
 ) -> Response {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     let mut headers = HeaderMap::new();
@@ -262,8 +322,11 @@ async fn forward(
         body,
     ) {
         Ok(proof) => proof,
-        Err(_) => return unavailable(),
+        Err(_) => return unavailable_with(environment.as_ref(), Refusal::PeerSignature),
     };
+    if let Some(environment) = environment.as_mut() {
+        environment.correlate_hop(proof.as_bytes());
+    }
     let url = format!(
         "{}{}",
         destination.member.relay_address.trim_end_matches('/'),
@@ -285,9 +348,15 @@ async fn forward(
     .await
     {
         Ok(Ok(response)) => response,
-        _ => return unavailable(),
+        _ => return unavailable_with(environment.as_ref(), Refusal::PeerTransport),
     };
     let status = response.status();
+    if let Some(environment) = environment
+        .as_ref()
+        .filter(|_| status.is_client_error() || status.is_server_error())
+    {
+        environment.record(Refusal::PeerResponse);
+    }
     let headers = response.headers().clone();
     // Hold capacity through the response body, including slow readers. Headers
     // alone do not finish a relay, and a trickle cannot extend its total deadline.
@@ -337,6 +406,13 @@ pub(super) fn unavailable() -> Response {
     }))).into_response()
 }
 
+fn unavailable_with(environment: Option<&EnvironmentRead>, reason: Refusal) -> Response {
+    if let Some(environment) = environment {
+        environment.record(reason);
+    }
+    unavailable()
+}
+
 pub(super) fn retain(response: Response, permit: capacity::Permit) -> Response {
     let (parts, body) = response.into_parts();
     let stream = futures_util::stream::unfold(
@@ -354,38 +430,6 @@ pub(super) fn retain(response: Response, permit: capacity::Permit) -> Response {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn settings_owner_route_is_exact_and_patch_only() {
-        use axum::http::Method;
-        for method in [
-            Method::GET,
-            Method::HEAD,
-            Method::POST,
-            Method::PUT,
-            Method::DELETE,
-            Method::OPTIONS,
-            Method::PATCH,
-            Method::TRACE,
-            Method::CONNECT,
-            Method::from_bytes(b"CUSTOM").unwrap(),
-        ] {
-            assert_eq!(
-                needs_owner("/api/v1/agents/agt-example/settings", &method),
-                method == Method::PATCH
-            );
-            for path in [
-                "/api/v1/agents/agt-example/settings/",
-                "/api/v1/agents/agt-example/settings/extra",
-                "/api/v1/agents/agt-example/settings-extra",
-                "/api/v1/sandboxes/sbx-example/settings",
-                "/api/v1/agents/agt-example/stop",
-                "/api/v1/agents/agt-example",
-            ] {
-                assert!(!needs_owner(path, &method), "{method} {path}");
-            }
-        }
-    }
 
     #[test]
     fn preferences_owner_route_is_exact_and_patch_only() {
@@ -411,6 +455,42 @@ mod tests {
             "/api/v1/sandboxes/sbx-example/preferences",
         ] {
             assert!(!needs_owner(path, &Method::PATCH), "{path}");
+        }
+    }
+
+    #[test]
+    fn settings_owner_route_is_exact_and_patch_only() {
+        use axum::http::Method;
+        let path = "/api/v1/agents/agt-example/settings";
+        for method in [
+            Method::GET,
+            Method::HEAD,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+            Method::PATCH,
+        ] {
+            assert_eq!(settings_patch(path, &method), method == Method::PATCH);
+            assert!(
+                !needs_owner(path, &method),
+                "existing routes include {method} {path}"
+            );
+        }
+        for (method, path) in [
+            (Method::PATCH, "/api/v1/agents/agt-example/settings/extra"),
+            (Method::PATCH, "/api/v1/agents//settings"),
+            (Method::PATCH, "/api/v2/agents/agt-example/settings"),
+            (Method::POST, "/api/v1/agents/agt-example/stop"),
+            (Method::DELETE, "/api/v1/agents/agt-example"),
+            (Method::POST, "/api/v1/agents/agt-example/input"),
+            (Method::POST, "/api/v1/agents/agt-example/steer"),
+            (Method::POST, "/api/v1/agui/run"),
+            (Method::GET, "/api/v2/agents/agt-example/queued-inputs"),
+            (Method::POST, "/api/v2/agents/agt-example/responses"),
+        ] {
+            assert!(!settings_patch(path, &method), "{method} {path}");
+            assert!(!needs_owner(path, &method), "{method} {path}");
         }
     }
 }

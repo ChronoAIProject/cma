@@ -2,6 +2,7 @@
 mod authentication;
 mod control;
 pub(crate) use control::prestop;
+mod environment_diagnostics;
 mod http;
 mod ingress;
 mod live;
@@ -14,6 +15,7 @@ pub(crate) use public_access::PublicAccess;
 mod reopen;
 pub(crate) use reopen::ReopenCall;
 
+use environment_diagnostics::Refusal;
 use layer2_core::agent_ownership::{
     bounded, Authority, Member, OwnershipCoordinator, OwnershipToken,
 };
@@ -44,6 +46,7 @@ pub(crate) struct Relay {
     updates: Weak<DurableAgentUpdateRecorder>,
     authentication: authentication::Authentication,
     public_access: std::sync::OnceLock<Arc<dyn public_access::PublicAuthorization>>,
+    settings_owner_routing: std::sync::OnceLock<()>,
     client: reqwest::Client,
     slots: Arc<Semaphore>,
     capacity: crate::config::RelayCapacityConfig,
@@ -80,6 +83,7 @@ impl Relay {
             updates: Arc::downgrade(updates),
             authentication: authentication::Authentication::new(key),
             public_access: std::sync::OnceLock::new(),
+            settings_owner_routing: std::sync::OnceLock::new(),
             client: reqwest::Client::builder()
                 .connect_timeout(Duration::from_secs(2))
                 .read_timeout(Duration::from_secs(10))
@@ -100,19 +104,25 @@ impl Relay {
             .map_err(|_| "public relay authorization already installed".into())
     }
 
-    async fn destination(&self, id: &AgentId) -> Result<Destination, ()> {
+    pub(crate) fn enable_settings_owner_routing(&self) {
+        self.settings_owner_routing.get_or_init(|| ());
+    }
+
+    async fn destination(&self, id: &AgentId) -> Result<Destination, Refusal> {
         if !self.coordinator.is_ready() {
-            return Err(());
+            return Err(Refusal::CoordinatorNotReady);
         }
         let started = tokio::time::Instant::now();
         let membership = bounded(self.coordinator.store.membership())
             .await
-            .map_err(|_| ())?;
-        membership.require_compatible().map_err(|_| ())?;
+            .map_err(|_| Refusal::MembershipUnavailable)?;
+        membership
+            .require_compatible()
+            .map_err(|_| Refusal::MembershipUnavailable)?;
         let owner = bounded(self.coordinator.store.owner(id))
             .await
-            .map_err(|_| ())?
-            .ok_or(())?;
+            .map_err(|_| Refusal::OwnerLookupUnavailable)?
+            .ok_or(Refusal::OwnerMissing)?;
         let member = membership
             .members
             .into_iter()
@@ -121,17 +131,17 @@ impl Relay {
                     && !member.draining
                     && member.is_live(membership.now_ms)
             })
-            .ok_or(())?;
+            .ok_or(Refusal::OwnerMemberUnavailable)?;
         let remaining = owner.expires_at_ms.min(member.expires_at_ms) - membership.now_ms;
         if remaining <= 0 {
-            return Err(());
+            return Err(Refusal::AuthorityChanged);
         }
         let authority = if member.instance_id == self.coordinator.instance_id {
             self.coordinator
                 .acquire(id)
                 .await
-                .map_err(|_| ())?
-                .ok_or(())?
+                .map_err(|_| Refusal::AuthorityChanged)?
+                .ok_or(Refusal::AuthorityChanged)?
         } else {
             Authority::new(
                 owner.token.clone(),
@@ -139,7 +149,7 @@ impl Relay {
             )
         };
         if !authority.is_current() || authority.token != owner.token {
-            return Err(());
+            return Err(Refusal::AuthorityChanged);
         }
         Ok(Destination {
             member,
