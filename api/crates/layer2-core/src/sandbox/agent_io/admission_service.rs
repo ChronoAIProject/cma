@@ -8,7 +8,9 @@ use crate::resource_access::{
     AccessError, AccessPurpose, AuthorizedResource, CallerContext, ResourceAccessError,
     ResourceAccessService, ResourceCapability, ResourceTarget,
 };
-use crate::sandbox::{store::SandboxMutationGuard, AgentOperationError};
+use crate::sandbox::{
+    store::SandboxMutationGuard, task_acceptance::permits_admission, AgentOperationError,
+};
 use crate::{rfc3339_at, AgentId};
 
 use super::*;
@@ -177,9 +179,10 @@ impl AgentCommandService {
         let requires_funding = self
             .require_model_credit(&request.envelope.command)
             .is_err();
-        let policy_refused = AnswerContext::from_command(&request.envelope.command)?.is_some()
+        let policy_refused = (AnswerContext::from_command(&request.envelope.command)?.is_some()
             && !self.task_experience.allows(&context.caller.subject,
-                crate::sandbox::task_experience::TaskExperienceCapability::SuggestedFollowupAdmission);
+                crate::sandbox::task_experience::TaskExperienceCapability::SuggestedFollowupAdmission))
+            || !permits_admission(&self.task_experience, context, &request.envelope);
         if requires_funding || policy_refused {
             let existing = self
                 .with_authority_bound(

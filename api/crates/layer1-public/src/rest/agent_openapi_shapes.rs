@@ -187,6 +187,8 @@ pub(crate) struct AgentBootstrapView {
 
 #[derive(Debug, Serialize, ToSchema)]
 pub(crate) struct AgentView {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    task_acceptance: Option<super::task_acceptance_shapes::TaskAcceptanceView>,
     /// Browser page for this CMA Agent.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) callback_url: Option<String>,
@@ -264,6 +266,12 @@ impl AgentView {
                 });
         Self {
             callback_url: None,
+            task_acceptance: agent
+                .conversation
+                .observations
+                .task_acceptance
+                .as_ref()
+                .map(|task| task.summary().into()),
             id: agent.id.to_string(),
             desktop: !agent.profile.content.isolated_agent
                 && sandbox

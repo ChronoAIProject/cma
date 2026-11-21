@@ -51,6 +51,7 @@ pub(super) fn deliverables(
     )
     .with_documents(documents)
     .with_files(AgentFileService::new(access, adapter))
+    .with_task_store(stores.sandbox_model.clone())
 }
 
 pub(super) fn compose(

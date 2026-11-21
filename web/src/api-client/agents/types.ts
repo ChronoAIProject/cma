@@ -1,4 +1,5 @@
 import { retainedOutputAvailability } from '../agents/retained-output.js';
+import { taskAcceptance } from '../task-acceptance.js';
 import {
   agentStatus,
   failure,
@@ -113,6 +114,7 @@ export const agentSummary = object({
 });
 export type AgentSummary = Output<typeof agentSummary>;
 export const agent = object({
+  task_acceptance: optional(taskAcceptance),
   callback_url: optional(nullable(text)),
   runtime_metadata: optional(agentRuntimeMetadata),
   owner_title: optional(text),
