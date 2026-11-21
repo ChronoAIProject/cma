@@ -35,6 +35,9 @@ mod publication_transaction;
 pub(in crate::store) mod retry_audit;
 mod segmented;
 mod sign_in;
+mod skill_result;
+#[cfg(test)]
+pub(crate) mod skill_result_test_support;
 use super::agent_log_segments::transaction_scope::TransactionScope;
 use publication_log::{final_agent_and_logs, insert_logs};
 mod prepared_open_ready;
@@ -79,7 +82,17 @@ pub(super) async fn commit_agent_work(
     store: &MongoSandboxStore,
     mutation: AgentWorkMutation,
 ) -> Result<(), SandboxStoreError> {
-    publication_transaction::commit(store, mutation, None, None)
+    publication_transaction::commit(store, mutation, None, None, None)
+        .await
+        .map(|_| ())
+}
+
+pub(super) async fn commit_agent_skill_result(
+    store: &MongoSandboxStore,
+    mutation: AgentWorkMutation,
+    guard: &layer2_core::sandbox::store::AgentSkillResultGuard,
+) -> Result<(), SandboxStoreError> {
+    publication_transaction::commit(store, mutation, None, None, Some(guard))
         .await
         .map(|_| ())
 }
@@ -89,7 +102,7 @@ pub(super) async fn commit_prepared_agent_open_ready(
     mutation: AgentWorkMutation,
     observed: layer2_core::sandbox::store::PreparedAgentOpenContext,
 ) -> Result<bool, SandboxStoreError> {
-    publication_transaction::commit(store, mutation, Some(&observed), None).await
+    publication_transaction::commit(store, mutation, Some(&observed), None, None).await
 }
 
 #[cfg(test)]
@@ -105,6 +118,7 @@ async fn apply_publication(
         None,
         &mut publication_history::AttemptHistory::default(),
         scope,
+        None,
     )
     .await
 }
@@ -113,9 +127,15 @@ pub(super) async fn commit_repeated_failure(
     store: &MongoSandboxStore,
     retry: &layer2_core::sandbox::store::AgentRepeatedFailure,
 ) -> Result<(), SandboxStoreError> {
-    publication_transaction::commit(store, retry.mutation.clone(), None, Some(&retry.marker))
-        .await
-        .map(|_| ())
+    publication_transaction::commit(
+        store,
+        retry.mutation.clone(),
+        None,
+        Some(&retry.marker),
+        None,
+    )
+    .await
+    .map(|_| ())
 }
 
 async fn apply_publication_observed(
@@ -125,6 +145,7 @@ async fn apply_publication_observed(
     repeated_marker: Option<&AgentLogEntry>,
     history_cache: &mut publication_history::AttemptHistory,
     mut scope: TransactionScope<'_>,
+    skill_guard: Option<&layer2_core::sandbox::store::AgentSkillResultGuard>,
 ) -> Result<PublicationReceipt, ApplyError> {
     let current_row = scope
         .find_one(&store.agents, doc! { "_id": mutation.agent.id.as_str() })
@@ -132,6 +153,7 @@ async fn apply_publication_observed(
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::NotFound))?;
     let current = read_agent(&current_row).map_err(ApplyError::Domain)?;
+    skill_result::fence(store, &current, mutation, skill_guard, &mut scope).await?;
     let segmented = if super::agent_log_segments::read_format(&current_row)
         .map_err(ApplyError::Domain)?
         .is_some()

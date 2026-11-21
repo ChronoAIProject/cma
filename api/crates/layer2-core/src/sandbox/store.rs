@@ -82,6 +82,8 @@ pub use agent_conversation::{
 pub use agent_message_checkpoint::{AgentMessageCheckpoint, AgentMessageSnapshot};
 pub use agent_reopen::AgentReopenGuard;
 mod agent_lifecycle;
+mod agent_skill_result;
+pub use agent_skill_result::{requires_agent_skill_result_guard, AgentSkillResultGuard};
 mod agent_log_capacity;
 pub use agent_log_capacity::{plan_agent_log_capacity_failure, AGENT_LOG_CAPACITY_FAILURE};
 mod agent_repeated_failure;

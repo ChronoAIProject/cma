@@ -6,6 +6,7 @@ pub(super) async fn commit(
     mutation: AgentWorkMutation,
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
     repeated_marker: Option<&AgentLogEntry>,
+    skill_guard: Option<&layer2_core::sandbox::store::AgentSkillResultGuard>,
 ) -> Result<bool, SandboxStoreError> {
     ensure_append_batch_size(mutation.agent_logs.len())?;
     let mut timing = contention::PublicationTiming::new(&mutation);
@@ -42,6 +43,7 @@ pub(super) async fn commit(
             repeated_marker,
             &mut history_cache,
             scope,
+            skill_guard,
         ))
         .await;
         let receipt = match publication {
