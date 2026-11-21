@@ -8,6 +8,34 @@ const MAX_URL_LENGTH: usize = 2_048;
 const MAX_IMAGE_REFERENCE_LENGTH: usize = 2_048;
 const SHA256_SEPARATOR: &str = "@sha256:";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Provider {
+    OpenSandbox,
+    AgentSandbox,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RuntimeMode {
+    Execution(Provider),
+    BackendFree,
+}
+
+impl RuntimeMode {
+    pub(super) fn from_lookup(
+        lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+    ) -> Result<Self, String> {
+        match lookup("CHRONO_SANDBOX_PROVIDER")?.as_deref() {
+            None | Some("opensandbox") => Ok(Self::Execution(Provider::OpenSandbox)),
+            Some("agent-sandbox") => Ok(Self::Execution(Provider::AgentSandbox)),
+            Some("none") => match lookup("CHRONO_ENVIRONMENT")?.as_deref() {
+                Some("development" | "staging") => Ok(Self::BackendFree),
+                _ => Err("CHRONO_SANDBOX_PROVIDER=none requires CHRONO_ENVIRONMENT=development or staging".into()),
+            },
+            Some(_) => Err("CHRONO_SANDBOX_PROVIDER must be opensandbox, agent-sandbox or none".into()),
+        }
+    }
+}
+
 /// Deployment-owned endpoints and runtime identity validated at startup.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeConfig {
@@ -69,15 +97,9 @@ impl fmt::Debug for RuntimeConfig {
 impl RuntimeConfig {
     pub(super) fn from_lookup(
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+        provider: Provider,
     ) -> Result<Self, String> {
-        let allocate_agent_sandbox = match lookup("CHRONO_SANDBOX_PROVIDER")?
-            .as_deref()
-            .unwrap_or("opensandbox")
-        {
-            "opensandbox" => false,
-            "agent-sandbox" => true,
-            _ => return Err("CHRONO_SANDBOX_PROVIDER must be opensandbox or agent-sandbox".into()),
-        };
+        let allocate_agent_sandbox = provider == Provider::AgentSandbox;
         let retain_opensandbox = match lookup("CHRONO_RETAIN_OPENSANDBOX")?
             .as_deref()
             .unwrap_or("true")

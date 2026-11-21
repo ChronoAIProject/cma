@@ -69,6 +69,7 @@ mod verification_diagnostics;
 mod verification_error;
 mod worker_credentials;
 
+pub(crate) use flow::account_router;
 pub use flow::router;
 pub use middleware::attach_subject;
 pub use records::SignInRecords;
@@ -156,7 +157,7 @@ pub struct AuthState {
     pub(in crate::auth) signup_options_cache: signup_options::SignupOptionsCache,
     pub(super) store: Arc<dyn AuthStore>,
     pub(super) records: Option<SignInRecords>,
-    spend: Option<Arc<dyn layer2_core::budget::PlatformSpendLedger>>,
+    spend: Option<Arc<dyn registration::RegistrationPolicy>>,
     registration_capacity: Option<Arc<dyn registration::RegistrationCapacity>>,
 }
 
