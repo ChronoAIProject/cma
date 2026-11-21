@@ -444,6 +444,7 @@ function ConsoleContent({
                   if (next.kind !== 'usage') onSidebarNavigate();
                   onNavigate(next);
                 }}
+                onRestoreTaskRoute={onNavigate}
                 onAgentIntent={navigationScope === '' ? onAgentIntent : undefined}
                 onAction={actions.select}
               />

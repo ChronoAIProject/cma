@@ -90,8 +90,7 @@ it.each([false, true])(
     const signals = readAgentEvents.mock.calls.map((call) => call[1]?.signal as AbortSignal);
     const initialEvents = readAgentEvents.mock.calls.length;
     const initialReplay = replay.mock.calls.length;
-    fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Manage environments' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Environments' }));
     fireEvent.click(screen.getByRole('button', { name: 'Options for Borealis' }));
     await act(async () => fireEvent.click(screen.getByRole('menuitem', { name: 'Pause' })));
     expect(pauseSandbox).toHaveBeenCalledOnce();
@@ -172,8 +171,7 @@ it('keeps the desktop mounted while its own Sandbox pauses and resumes, includin
   const panel = screen.getByTestId('desktop');
   const message = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(message, { target: { value: 'Keep my draft' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Manage environments' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Environments' }));
   fireEvent.click(screen.getByRole('button', { name: 'Options for Atlas' }));
   await act(async () => fireEvent.click(screen.getByRole('menuitem', { name: 'Pause' })));
   expect(readAgent).toHaveBeenCalledTimes(2);
@@ -230,8 +228,7 @@ it('leaves the existing unavailable state after deleting the current Workspace',
     </CmaClientProvider>,
   );
   await act(() => vi.advanceTimersByTimeAsync(0));
-  fireEvent.click(screen.getByRole('button', { name: 'Filter' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Manage environments' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Environments' }));
   fireEvent.click(screen.getByRole('button', { name: /Options for.*chrono-bot/ }));
   await act(async () => fireEvent.click(screen.getByRole('menuitem', { name: 'Remove' })));
   fireEvent.click(screen.getByRole('checkbox'));
