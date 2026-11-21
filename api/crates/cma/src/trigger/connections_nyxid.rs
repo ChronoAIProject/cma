@@ -258,11 +258,16 @@ impl ServiceConnectionBroker for NyxidServiceConnectionBroker {
         if services.is_empty() {
             return Ok(Vec::new());
         }
-        // The listing, credential fan-out, readiness and their response bodies
-        // all belong to this call. A later leg cannot start a new wait budget.
+        // Credential resolution may be settling an admitted token rotation.
+        // Let it finish and charge that time against the original read budget.
         let deadline = Instant::now() + PROVIDER_HTTP_TIMEOUT;
+        let credential = self.credential(owner).await?;
+        if Instant::now() >= deadline {
+            return Err(unavailable(PROVIDER_UNAVAILABLE));
+        }
+        // The listing, parallel detail and readiness checks, and their bodies
+        // all share the remaining time.
         timeout_at(deadline, async {
-            let credential = self.credential(owner).await?;
             let rows = self.user_services(&credential, Some(deadline)).await?;
             let mut requirements = services
                 .iter()
