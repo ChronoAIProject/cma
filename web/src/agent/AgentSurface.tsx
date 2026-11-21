@@ -248,6 +248,10 @@ export function AgentSurface({
           title={title}
           status={status}
           activityStatus={state.activityStatus}
+          turnId={
+            historyIncomplete || running || accessUncertain ? undefined : conversation.latestTurnId
+          }
+          taskAcceptance={accessUncertain ? undefined : detail.taskAcceptance}
           headingRef={headingRef}
           viewerId={viewerId}
           branch={readOnly ? undefined : detail.worktree.branch}
@@ -349,6 +353,8 @@ export function AgentSurface({
             />
           ) : null}
           <OwnerMessageStream
+            taskAcceptance={accessUncertain ? undefined : detail.taskAcceptance}
+            onTaskDeliveryConfirmed={controller.refreshDetail}
             client={lifecycleClient}
             agentId={agentId}
             viewerId={viewerId}

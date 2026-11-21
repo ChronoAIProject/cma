@@ -26,6 +26,9 @@ pub mod agent_output_index;
 mod agent_preferences;
 mod agent_settings;
 pub mod desktop_creation;
+pub mod task_acceptance;
+#[cfg(test)]
+mod task_acceptance_tests;
 pub mod task_experience;
 pub mod task_template;
 pub use agent_preferences::{AgentInstructionPolicy, AgentPreferences, AgentPreferencesUpdate};

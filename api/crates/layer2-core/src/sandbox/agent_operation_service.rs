@@ -121,6 +121,7 @@ impl AgentOperationService {
         id: &AgentId,
         text: String,
         metadata: std::collections::BTreeMap<String, String>,
+        task_acceptance: Option<&super::task_acceptance::TaskAcceptanceIntent>,
     ) -> Result<AgentMessageOutcome, AgentOperationError> {
         self.require_owner_authority(caller)?;
         self.validate_message(&text)?;
@@ -138,7 +139,9 @@ impl AgentOperationService {
             let (parent, queues) = self.parent_admission(&current).await?;
             // Existing queued records have no metadata field. Do not accept
             // metadata that a retained reader or lifecycle worker would lose.
-            if (queues || current.status == AgentStatus::Paused) && !metadata.is_empty() {
+            if (queues || current.status == AgentStatus::Paused)
+                && (!metadata.is_empty() || task_acceptance.is_some())
+            {
                 return Err(AgentOperationError::InvalidRequest(
                     "queued message metadata is not supported".into(),
                 ));
@@ -152,7 +155,13 @@ impl AgentOperationService {
                     }
                 }
                 AgentStatus::Ready => match self
-                    .fence_message(current, text.clone(), parent, metadata.clone())
+                    .fence_message(
+                        current,
+                        text.clone(),
+                        parent,
+                        metadata.clone(),
+                        task_acceptance,
+                    )
                     .await
                 {
                     Ok(prepared) => {

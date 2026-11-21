@@ -1,3 +1,4 @@
+use super::task_acceptance_shapes::TaskAcceptanceView;
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
 use axum::{
     extract::{Path, Query, State},
@@ -16,7 +17,7 @@ pub(crate) use shapes::*;
 
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(describe, list, read_item, download),
+    paths(describe, list, read_item, download, confirm_task_delivery),
     components(schemas(
         DeliverableResourceView,
         DeliverableReferenceView,
@@ -43,6 +44,10 @@ pub fn answer_deliverables_router(service: Arc<AnswerDeliverableService>) -> Rou
         .route(
             "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
             get(download),
+        )
+        .route(
+            "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation",
+            post(confirm_task_delivery),
         )
         .layer(axum::middleware::from_fn(private_headers))
         .with_state(service)
@@ -208,6 +213,44 @@ fn sequence(answer: &str) -> Result<u64, DeliverableError> {
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|sequence| *sequence > 0 && answer == format!("event:{sequence}"))
         .ok_or(DeliverableError::Invalid)
+}
+
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TaskDeliveryConfirmation {
+    task_id: String,
+}
+
+#[utoipa::path(post, path = "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation", tag = "agents",
+    params(("id" = String, Path), ("answer_id" = String, Path), ("delivery_id" = String, Path),
+        ("X-CMA-Document-Share-Token" = Option<String>, Header)),
+    request_body = TaskDeliveryConfirmation,
+    responses((status = 200, body = TaskAcceptanceView), (status = 401, body = super::ProblemDocument),
+        (status = 404, body = super::ProblemDocument), (status = 422, body = super::ProblemDocument),
+        (status = 503, body = super::ProblemDocument)))]
+pub(crate) async fn confirm_task_delivery(
+    State(service): State<Arc<AnswerDeliverableService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
+    Path((agent, answer, delivery)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    body: Result<Json<TaskDeliveryConfirmation>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<TaskAcceptanceView>, Response> {
+    let Json(body) = body.map_err(|error| super::BodyProblem::from(error).into_response())?;
+    if body.task_id.is_empty() || body.task_id.len() > 80 {
+        return Err(problem(DeliverableError::Invalid));
+    }
+    let task = service
+        .confirm_task_delivery(
+            &access(&caller, &resource, &headers).map_err(IntoResponse::into_response)?,
+            &AgentId(agent),
+            &layer2_core::ids::AgentCommandId(body.task_id),
+            sequence(&answer).map_err(problem)?,
+            &delivery,
+        )
+        .await
+        .map_err(problem)?;
+    Ok(Json(task.into()))
 }
 
 fn problem(error: DeliverableError) -> Response {

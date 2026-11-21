@@ -16,6 +16,7 @@ export function taskGroup(
   taskActivityAt: string | undefined,
   now: Date,
 ): (typeof TASK_GROUPS)[number] {
+  if (status === 'needs_attention') return 'Needs attention';
   if (
     status === 'loading' ||
     status === 'working' ||

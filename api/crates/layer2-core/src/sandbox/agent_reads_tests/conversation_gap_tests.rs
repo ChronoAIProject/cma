@@ -55,6 +55,107 @@ fn answer(content: &str) -> AgentLogKind {
 }
 
 #[tokio::test]
+async fn task_acceptance_is_scoped_to_the_observed_workspace_turn_after_reopen() {
+    use crate::sandbox::task_acceptance::{
+        TaskAcceptance, TaskAcceptanceIntent, TaskAcceptanceVerdict,
+    };
+
+    let intent: TaskAcceptanceIntent = serde_json::from_value(serde_json::json!({
+        "version": 1, "action": {"type": "declare", "requirements": [
+            {"id": "report", "required": true, "evidence": {"kind": "plan_step", "title": "Report"}}
+        ]}
+    }))
+    .unwrap();
+    let failure = TypedFailure {
+        class: "runtime_failure".into(),
+        detail: "Synthetic failure.".into(),
+    };
+    for (terminal, expected) in [
+        (None, AgentTaskStatus::Completed),
+        (
+            Some(AgentLogKind::TurnFailed {
+                turn_sequence: 7,
+                failure,
+            }),
+            AgentTaskStatus::Failed,
+        ),
+        (
+            Some(AgentLogKind::TurnInterrupted { turn_sequence: 7 }),
+            AgentTaskStatus::Stopped,
+        ),
+        (
+            Some(AgentLogKind::TurnCompleted { turn_sequence: 7 }),
+            AgentTaskStatus::Completed,
+        ),
+    ] {
+        for completed_step in [false, true] {
+            let mut task = TaskAcceptance::bind(
+                None,
+                &intent,
+                &crate::ids::AgentCommandId("cmd_report".into()),
+                3,
+            )
+            .unwrap();
+            task.observe_plan(
+                3,
+                &[AgentPlanStep {
+                    title: "Report".into(),
+                    status: if completed_step {
+                        "completed"
+                    } else {
+                        "pending"
+                    }
+                    .into(),
+                }],
+            );
+            task.conclude(3, None);
+            assert_eq!(
+                task.verdict == TaskAcceptanceVerdict::Succeeded,
+                completed_step
+            );
+            let mut kinds = vec![
+                opened(),
+                start(3),
+                owner(),
+                answer("Report"),
+                AgentLogKind::TurnCompleted { turn_sequence: 3 },
+            ];
+            if let Some(terminal) = &terminal {
+                kinds.extend([start(7), owner(), terminal.clone()]);
+            }
+            let (store, mut agent) = gap_history(kinds, None).await;
+            let summary = task.summary();
+            agent.conversation.observations.task_acceptance = Some(task);
+            let revision = agent.revision;
+            agent.revision += 1;
+            store.save_agent(revision, agent.clone()).await.unwrap();
+            let reopened = HierarchyReadService::new(store.clone())
+                .workspace(&caller("owner", true), &agent.workspace_id)
+                .await
+                .unwrap();
+            assert_eq!(reopened.agents[0].task_status, expected);
+            assert_eq!(
+                reopened.agents[0].task_acceptance.as_ref(),
+                terminal.is_none().then_some(&summary)
+            );
+            assert_eq!(
+                store
+                    .get_agent(&agent.id)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .conversation
+                    .observations
+                    .task_acceptance
+                    .unwrap()
+                    .summary(),
+                summary
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn task_navigation_preserves_current_turn_gap_evidence_and_resets_at_the_next_turn() {
     use crate::resource_access::ResourceOwner;
     use crate::sandbox::store::AgentProvenanceInventoryStore;

@@ -10,6 +10,9 @@ use super::*;
 #[path = "command_admission_result_tests.rs"]
 mod admission_results;
 
+#[path = "command_canonical_admission_tests.rs"]
+mod canonical_admission;
+
 #[path = "command_queue_policy_tests.rs"]
 mod queue_policy;
 
@@ -209,135 +212,6 @@ async fn share(store: &InMemorySandboxStore, previous: Option<ResourceShare>) ->
         .await
         .unwrap()
         .share
-}
-
-#[tokio::test]
-async fn admission_assigns_attribution_and_retries_preserve_receipt_after_agent_revision_changes() {
-    let (store, service, authority, agent) = setup(Authority::new()).await;
-    let before_log = store.agent_log(&agent.id, 0, 20).await.unwrap();
-    let owner = context("owner");
-    let mut retry = submission("one");
-    retry.command = AgentCommand::Message {
-        input: AgentInput {
-            content: vec![
-                AgentContent::Text {
-                    text: "private ".into(),
-                },
-                AgentContent::Text {
-                    text: "input".into(),
-                },
-            ],
-        },
-        order: AgentInputOrder::Append,
-        metadata: Default::default(),
-    };
-    let (a, b) = tokio::join!(
-        service.admit(
-            &owner,
-            "selected-credential",
-            CommandSubmissionSource::Api,
-            submission("one")
-        ),
-        service.admit(
-            &owner,
-            "selected-credential",
-            CommandSubmissionSource::UserInterface,
-            retry
-        ),
-    );
-    let a = a.unwrap();
-    assert_eq!(a, b.unwrap());
-    assert_eq!(a.status, AgentResponseStatus::Queued);
-    let record = store
-        .get_command(&a.receipt.command_id)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(record.receipt.envelope.actor, owner.actor);
-    assert_eq!(
-        record.receipt.envelope.owner,
-        AgentOwner::Person {
-            subject: owner.caller.subject.clone()
-        }
-    );
-    assert_eq!(
-        record.receipt.envelope.source.reference,
-        record.receipt.envelope.command_id.to_string()
-    );
-    assert!(!serde_json::to_string(&record)
-        .unwrap()
-        .contains("selected-credential"));
-    let mut changed = agent.clone();
-    changed.revision += 1;
-    changed.title = Some("updated without a new command".into());
-    store.save_agent(agent.revision, changed).await.unwrap();
-    let mut retry = submission("one");
-    retry.expected_agent_revision = Some(agent.revision);
-    assert_eq!(
-        service
-            .admit(
-                &owner,
-                "selected-credential",
-                CommandSubmissionSource::Api,
-                retry
-            )
-            .await
-            .unwrap(),
-        a
-    );
-    let mut stale_new = submission("two");
-    stale_new.expected_agent_revision = Some(agent.revision);
-    assert!(matches!(
-        service
-            .admit(
-                &owner,
-                "selected-credential",
-                CommandSubmissionSource::Api,
-                stale_new
-            )
-            .await,
-        Err(CommandAdmissionError::Ledger(CommandLedgerError::Conflict))
-    ));
-    let mut conflict = submission("one");
-    conflict.command = AgentCommand::message("different input");
-    assert!(matches!(
-        service
-            .admit(
-                &owner,
-                "selected-credential",
-                CommandSubmissionSource::Api,
-                conflict
-            )
-            .await,
-        Err(CommandAdmissionError::Ledger(
-            CommandLedgerError::IdempotencyConflict
-        ))
-    ));
-    assert_eq!(
-        service
-            .response_status(&owner, None, a.receipt.response_id.as_ref().unwrap())
-            .await
-            .unwrap(),
-        a
-    );
-    assert_eq!(
-        service
-            .command_status(&owner, None, &a.receipt.command_id)
-            .await
-            .unwrap(),
-        a
-    );
-    assert_eq!(store.agent_log(&agent.id, 0, 20).await.unwrap(), before_log);
-    assert_eq!(
-        store
-            .command_work_page(&PageRequest::default())
-            .await
-            .unwrap()
-            .items
-            .len(),
-        1
-    );
-    assert!(authority.calls.load(Ordering::SeqCst) >= 2);
 }
 
 #[tokio::test]
