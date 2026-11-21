@@ -180,7 +180,8 @@ def read_database(path):
     return entries
 
 
-def fetch(urls, target, size, digest, attempts=10, delay=5, runner=subprocess.run, sleep=time.sleep, hosts=None):
+def fetch(urls, target, size, digest, attempts=10, delay=5, runner=subprocess.run, sleep=time.sleep, hosts=None,
+          stop=None):
     """Download into target, resuming a partial file only from the URL that wrote it, and fail closed on any mismatch."""
     target = Path(target)
     hosts = hosts or Hosts()
@@ -189,6 +190,8 @@ def fetch(urls, target, size, digest, attempts=10, delay=5, runner=subprocess.ru
     failure = "no attempt"
     for attempt in range(attempts):
         for url in hosts.order(urls):
+            if stop is not None and stop.is_set():
+                raise BundleError(f"{target.name}: stopped because another download failed")
             part = parts[url]
             if part.exists() and part.stat().st_size > size:
                 part.unlink()
@@ -378,12 +381,19 @@ def build(args):
             shutil.copyfile(cached, target)
             continue
         jobs.append(e)
-    hosts = Hosts()
+    hosts, stop = Hosts(), threading.Event()
     with concurrent.futures.ThreadPoolExecutor(args.parallel) as pool:
         futures = [pool.submit(fetch, e["urls"], root / e["path"], e["size"], e["sha256"], args.attempts, args.delay,
-                               hosts=hosts) for e in jobs]
-        for future in concurrent.futures.as_completed(futures):
-            future.result()
+                               hosts=hosts, stop=stop) for e in jobs]
+        try:
+            for future in concurrent.futures.as_completed(futures):
+                future.result()
+        except BaseException:
+            # The first failure fails the build: queued downloads never start,
+            # and running ones stop before their next try.
+            pool.shutdown(wait=False, cancel_futures=True)
+            stop.set()
+            raise
     verify(lock, root)
     digest, size = write_layout(lock, raw, root, args.output, image_tag)
     summary = {"tag": image_tag, "digest": digest, "layers_bytes": size, "files": len(lock["files"]),

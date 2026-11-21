@@ -1,6 +1,7 @@
 """The Omarchy package bundle builder fails closed and writes reproducible bytes."""
 
 import base64
+import contextlib
 import hashlib
 import http.server
 import importlib.util
@@ -205,6 +206,13 @@ class FetchTests(unittest.TestCase):
                          attempts=10, sleep=lambda _: None)
         self.assertEqual(len(server.requests), 10)
 
+    def test_a_stopped_fetch_runs_no_download(self):
+        stop = threading.Event()
+        stop.set()
+        with self.assertRaisesRegex(BUNDLE.BundleError, "another download failed"):
+            BUNDLE.fetch(["https://a.example/file.pkg.tar.zst"], self.target, 1, "0" * 64,
+                         runner=lambda *_, **__: self.fail("curl ran"), stop=stop)
+
     def test_failing_host_is_tried_after_healthy_ones(self):
         hosts = BUNDLE.Hosts()
         urls = ["https://a.example/f", "https://b.example/f"]
@@ -212,6 +220,32 @@ class FetchTests(unittest.TestCase):
         self.assertEqual(hosts.order(urls), urls[::-1])
         hosts.record(urls[0], False)
         self.assertEqual(hosts.order(urls), urls)
+
+
+class BuildTests(unittest.TestCase):
+    def test_the_first_failed_download_stops_the_others(self):
+        """A total outage fails within one download's retries, not after every queued download has run."""
+        calls, waited, guard = [], [], threading.Lock()
+
+        def outage(urls, target, size, digest, attempts, delay, hosts=None, stop=None):
+            with guard:
+                calls.append(target)
+                first = len(calls) == 1
+            if not first:  # hold every other download until the build reacts to the first failure
+                waited.append(stop.wait(30))
+            raise BUNDLE.BundleError(f"{target.name}: outage")
+
+        lock, _ = BUNDLE.load()
+        with tempfile.TemporaryDirectory() as directory, unittest.mock.patch.object(BUNDLE, "fetch", outage), \
+                contextlib.redirect_stderr(io.StringIO()) as errors:
+            code = BUNDLE.main(["build", "--snapshot", lock["snapshot"], "--work", directory + "/work",
+                                "--output", directory + "/layout", "--parallel", "2"])
+            self.assertFalse(Path(directory, "layout").exists())
+        self.assertEqual(code, 1)
+        self.assertIn("outage", errors.getvalue())
+        # Each of the two workers takes at most one further download before the queue is cancelled.
+        self.assertLessEqual(len(calls), 3)
+        self.assertTrue(all(waited))
 
 
 def fake_package(files):
