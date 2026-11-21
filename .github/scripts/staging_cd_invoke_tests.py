@@ -108,7 +108,7 @@ class InvokeTests(unittest.TestCase):
             ("mode", 40), ("checkout", 30), ("policy", 30),
             ("credentials-format", 30), ("budget", 30),
             ("late-budget", 30), ("unexpected-checkout", 40), ("controller", 30),
-            ("controller-reason", 30),
+            ("controller-reason", 30), ("controller-abandoned", 30),
         )
         real_deploy = invoke.deploy
         for stage, code in cases:
@@ -136,13 +136,15 @@ class InvokeTests(unittest.TestCase):
                 elif stage == "late-budget":
                     budget.side_effect = [20, Refusal(marker)]
 
-                elif stage == "controller-reason":
-                    def refuse(script, path, mode, started, child_env):
+                elif stage in ("controller-reason", "controller-abandoned"):
+                    token = "image-version" if stage == "controller-reason" else "apply-abandoned"
+
+                    def refuse(script, path, mode, started, child_env, token=token):
                         from staging_cd_receipts import sha256
 
                         self.assertEqual(child_env["CD_REPORT_REFUSAL"], "1")
                         packet = path.with_name("refusal-code")
-                        packet.write_text(sha256(json.loads(path.read_text())) + " image-version\n")
+                        packet.write_text(sha256(json.loads(path.read_text())) + " " + token + "\n")
                         packet.chmod(0o600)
                         return 30
                     runner.side_effect = refuse
@@ -159,7 +161,8 @@ class InvokeTests(unittest.TestCase):
                         patch.object(invoke, "deploy", side_effect=operation), contextlib.redirect_stdout(output):
                     self.assertEqual(invoke.main(), code)
                 reason = {"late-budget": "budget", "unexpected-checkout": "checkout"}.get(stage, stage)
-                reason = {"controller": "private-unreported", "controller-reason": "private-image-version"}.get(stage, reason)
+                reason = {"controller": "private-unreported", "controller-reason": "private-image-version",
+                          "controller-abandoned": "private-apply-abandoned"}.get(stage, reason)
                 expected = "FAIL precondition=" + reason
                 public = [line for line in output.getvalue().splitlines() if not line.startswith("::add-mask::")]
                 self.assertEqual(legacy("\n".join(public) + "\n").splitlines(), ["FAIL deploy", expected])
@@ -177,6 +180,10 @@ class InvokeTests(unittest.TestCase):
                     self.assertTrue(public[2].startswith(f"::error file=.github/scripts/staging_cd_invoke.py,line={line},"))
                 if stage.startswith("controller"):
                     self.assertIn("What changed: Nothing.", public[2])
+                if stage == "controller-abandoned":
+                    # Only an operator can apply the stored generation; a re-run refuses again.
+                    self.assertTrue(explained.endswith(" cause=operator"), explained)
+                    self.assertIn("/reconcile", public[2])
                 self.assertNotIn(marker, summary.read_text())
                 self.assertEqual(runner.call_count, int(stage.startswith("controller")))
 
@@ -233,6 +240,24 @@ class InvokeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "packet"
             for value, refusal, verification in cases:
+                with self.subTest(value=value):
+                    path.write_bytes(value)
+                    path.chmod(0o600)
+                    self.assertEqual(read(path, request), refusal)
+                    self.assertEqual(read_verification(path, request), verification)
+
+    def test_an_abandoned_apply_is_read_from_both_packets(self):
+        from staging_cd_receipts import sha256
+        from staging_cd_refusal import read, read_verification
+
+        request = {"schema": 1}
+        digest = sha256(request).encode()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "packet"
+            for value, refusal, verification in (
+                    (digest + b" apply-abandoned\n", "apply-abandoned", None),
+                    (digest + b" apply-abandoned unreported\n", None, ("apply-abandoned", "unreported")),
+                    (digest + b" write-timeout apply-abandoned\n", None, ("write-timeout", "apply-abandoned"))):
                 with self.subTest(value=value):
                     path.write_bytes(value)
                     path.chmod(0o600)

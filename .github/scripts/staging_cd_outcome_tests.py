@@ -375,6 +375,30 @@ class RenderTests(unittest.TestCase):
         for code in ("rollout-timeout", "status-pods", "serving", "write-timeout"):
             self.assertTrue(render("deploy-verification", code, subject="deploy")[0].endswith(" cause=operator"))
 
+    def test_an_abandoned_apply_names_the_stored_generation_and_the_operator_fix(self):
+        # chrono-cd stored a generation and never applied it. No rollout is
+        # running, so "re-run after it settles" would send the owner in circles.
+        import staging_cd_refusal as refusal
+        self.assertIn("apply-abandoned", refusal.REASONS)
+        self.assertIn("apply-abandoned", refusal.VERIFICATION_REASONS)
+        route = "POST /api/v1/admin/apps/<owner-slug>/<app>/reconcile"
+        line, annotation, row = render("deploy-private", "apply-abandoned", subject="deploy")
+        self.assertEqual(line, "FAIL precondition=private-apply-abandoned cause=operator")
+        self.assertIn("What changed: Nothing.", annotation)
+        self.assertIn("stored a new generation", annotation)
+        self.assertIn("never applied", annotation)
+        self.assertNotIn("settles", annotation)
+        self.assertIn(route, annotation)
+        self.assertIn(route, row)
+        line, annotation, row = render("deploy-verification", "apply-abandoned", subject="deploy",
+                                       recovery="unreported")
+        self.assertEqual(line, "FAIL verification=apply-abandoned recovery=unreported cause=operator")
+        self.assertIn("never applied", annotation)
+        self.assertIn("Next step: An operator reconciles staging first. Then: ", annotation)
+        self.assertIn(route, row)
+        line, annotation, _ = render("deploy-release", "apply-abandoned", subject="deploy")
+        self.assertEqual(line, "FAIL release=apply-abandoned recovery=verified cause=operator")
+
     def test_values_outside_enums_and_patterns_print_as_unknown(self):
         hostile = PRIVATE + " x::error::y%0A\n|"
         cases = [
