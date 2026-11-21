@@ -142,16 +142,25 @@ class CacheTests(unittest.TestCase):
         from staging_cd_publish import emit_cache_metrics
         for metric, warning in (({"operation": "export", "result": "accepted"}, None),
                                 ({"operation": "export", "result": "accepted", "headroom": "low"}, "above 75% of"),
-                                ({"operation": "export", "result": "withheld", "reason": "oversize-compressed"}, "over"),
-                                ({"operation": "export", "result": "withheld", "reason": "transfer-failed"}, None),
+                                ({"operation": "export", "result": "withheld", "reason": "oversize-compressed"},
+                                 "WITHHELD build-cache reason=oversize-compressed component=am cause=change"),
+                                ({"operation": "export", "result": "withheld", "reason": "transfer-failed"},
+                                 "WITHHELD build-cache reason=transfer-failed component=am cause=transient"),
                                 ({"operation": "restore", "result": "hit"}, None)):
             with self.subTest(metric=metric):
                 stream = io.StringIO()
-                emit_cache_metrics("am", [metric], stream)
+                with patch.dict(os.environ, {}, clear=True):
+                    emit_cache_metrics("am", [metric], stream)
                 lines = stream.getvalue().splitlines()
                 self.assertEqual(json.loads(lines[0]), {"event": "publication-cache", **metric})
                 if warning is None:
                     self.assertEqual(len(lines), 1)
+                elif warning.startswith("WITHHELD "):
+                    # Every withheld export explains its reason and next step.
+                    self.assertEqual(lines[1], warning)
+                    self.assertTrue(lines[2].startswith("::warning title=build-cache%3A "))
+                    self.assertIn("Next step: ", lines[2])
+                    self.assertEqual(len(lines), 3)
                 else:
                     self.assertEqual(lines[1], "::warning title=Cargo cache bound::am Cargo bundle is "
                                      f"{warning} its bound in staging_cd_cargo_artifact.py")
@@ -175,6 +184,35 @@ class CacheTests(unittest.TestCase):
             (cache.accepted / 'target.tar.gz').write_bytes(b'changed')
             self.assertFalse(self.cache().restore())
             self.assertEqual(transfer.call_count, 2)
+
+    def test_yesterdays_bundle_seeds_only_incremental_state_after_midnight(self):
+        import staging_cd_build_cache
+        tool = bridge()
+        yesterday, today = date(2026, 11, 20), date(2026, 11, 21)
+        with patch.object(staging_cd_build_cache, 'identity',
+                          side_effect=lambda root, component: identity(root, component, day=yesterday)):
+            producer = self.cache()
+        self.populate(producer.accepted)
+        tool.seal(producer.accepted, producer.key.prefix, family=producer.key.family)
+        with patch.object(staging_cd_build_cache, 'identity',
+                          side_effect=lambda root, component: identity(root, component, day=today)):
+            cache = self.cache()
+        self.assertEqual(cache.key.family, producer.key.family)
+        self.assertNotEqual(cache.key.prefix, producer.key.prefix)
+        with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
+            self.assertTrue(cache.restore())
+        self.assertEqual(cache.restore_result, "partial")
+        # The registry and every non-incremental target member stay behind.
+        transfer.assert_called_once_with("inject-target", cache.accepted, namespace=cache.namespace,
+                                         timeout=360, max_content=6 * 1024 ** 3)
+        shutil = __import__('shutil')
+        shutil.rmtree(producer.accepted)
+        self.populate(producer.accepted, target_member="release/deps/libsynthetic.rlib")
+        tool.seal(producer.accepted, producer.key.prefix)
+        with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
+            self.assertFalse(cache.restore())
+        transfer.assert_not_called()
+        self.assertEqual(cache.restore_result, "miss")
 
     def test_partial_restore_seeds_current_graph_only_after_qualification(self):
         cache = self.cache()
@@ -345,8 +383,12 @@ class CacheTests(unittest.TestCase):
             target.write_bytes((ROOT / relative).read_bytes())
         base = identity(fake, 'eg')
         day = date(2026, 10, 1)
-        self.assertNotEqual(identity(fake, 'eg', day=day).family,
-                            identity(fake, 'eg', day=date(2026, 10, 2)).family)
+        # Midnight turns over the exact key, so the registry and anything beyond
+        # incremental state refresh, but keeps the family: the next day's first
+        # build is seeded with the previous day's incremental state.
+        before, after = identity(fake, 'eg', day=day), identity(fake, 'eg', day=date(2026, 10, 2))
+        self.assertEqual(before.family, after.family)
+        self.assertNotEqual(before.graph, after.graph)
         dockerfile = fake / 'api/crates/cmaeg/Dockerfile'
         original = dockerfile.read_text()
         consumed = original.replace("FROM rust:1.96.1-alpine AS build", "FROM rust:1.96.1-alpine AS build\n"

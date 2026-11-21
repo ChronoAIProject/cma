@@ -64,6 +64,16 @@ jobs:
         env:
           CD_ADOPTION_SHA: ${{ vars.CMA_CD_ADOPTION_SHA }}
         run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py'
+      # A plan stopped by its budget still succeeds here, so every analysed
+      # revision is saved and the next run continues instead of starting over.
+      - name: Save trusted develop comparisons
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: ${{ steps.selection-cache.outputs.directory }}
+          key: ${{ steps.selection-cache.outputs.key }}
+      - name: Require a complete release plan
+        if: steps.plan.outputs.complete != 'true'
+        run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete'
       - name: Read recent staging controller outcomes
         id: promotions
         if: steps.plan.outputs.changed == 'true'
@@ -71,11 +81,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_STAGING_ENVIRONMENT: chrono-ai-staging
         run: python3 -B .github/scripts/staging_cd_promotion.py
-      - name: Save complete trusted develop comparisons
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
-        with:
-          path: ${{ steps.selection-cache.outputs.directory }}
-          key: ${{ steps.selection-cache.outputs.key }}
   allocate:
     needs: plan
     if: needs.plan.outputs.changed == 'true'
@@ -161,9 +166,15 @@ jobs:
           CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
           CD_INFRA_REF: main
         run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
+      # Release jobs wait for this, so an unreviewed bundle never starts a build.
+      - name: Require the pinned controller to accept this scanner bundle
+        env:
+          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
+          CD_INFRA_REVISION: ${{ steps.private.outputs.revision }}
+        run: python3 -B .github/scripts/staging_cd_scan_review.py
   release_web:
     name: Release web
-    needs: allocate
+    needs: [allocate, infrastructure]
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['web'] != ''
     # Each release_* job runs one release of its component at a time. Newer
     # pushes queue behind the running build, which finishes; a queued job that
@@ -184,7 +195,7 @@ jobs:
       tasks: ${{ fromJSON(needs.allocate.outputs.publications)['web'] }}
   release_am:
     name: Release am
-    needs: allocate
+    needs: [allocate, infrastructure]
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['am'] != ''
     concurrency:
       group: cma-staging-am-release
@@ -201,7 +212,7 @@ jobs:
       tasks: ${{ fromJSON(needs.allocate.outputs.publications)['am'] }}
   release_eg:
     name: Release eg
-    needs: allocate
+    needs: [allocate, infrastructure]
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['eg'] != ''
     concurrency:
       group: cma-staging-eg-release
@@ -218,7 +229,7 @@ jobs:
       tasks: ${{ fromJSON(needs.allocate.outputs.publications)['eg'] }}
   release_runtime:
     name: Release runtime
-    needs: allocate
+    needs: [allocate, infrastructure]
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['runtime'] != ''
     concurrency:
       group: cma-staging-runtime-release
@@ -235,7 +246,7 @@ jobs:
       tasks: ${{ fromJSON(needs.allocate.outputs.publications)['runtime'] }}
   release_runtime_omarchy:
     name: Release runtime-omarchy
-    needs: allocate
+    needs: [allocate, infrastructure]
     if: needs.allocate.outputs.changed == 'true' && fromJSON(needs.allocate.outputs.publications)['runtime-omarchy'] != ''
     concurrency:
       group: cma-staging-runtime-omarchy-release

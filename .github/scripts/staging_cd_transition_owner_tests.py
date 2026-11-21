@@ -178,4 +178,6 @@ class TransitionOwnerTests(unittest.TestCase):
                 rows, verified = summarize(env)
                 self.assertIs(verified, False)
                 for key in skipped:
-                    self.assertIn(f"| {key} | source_already_final | skipped | skipped | unreported |", rows)
+                    # The outcome columns are unchanged; the row then explains the skip.
+                    self.assertIn(f"| {key} | source_already_final | skipped | skipped | unreported | "
+                                  "source_already_final | operator | ", "\n".join(rows))

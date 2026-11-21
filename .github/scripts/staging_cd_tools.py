@@ -162,7 +162,7 @@ def main():
         if command == ["cleanup"]:
             return cleanup(env)
         return False
-    return run_private(operation, None)
+    return run_private(operation, None, subject="deploy-tools")
 
 
 if __name__ == "__main__":

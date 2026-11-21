@@ -237,7 +237,8 @@ def main():
             raise
         return True
 
-    status = run_private(operation, None)
+    # This entry reports its own fixed refusal message below.
+    status = run_private(operation, None, subject="catch-up", explain=False)
     if status:
         print("FAIL catch-up " + outcome.get("failure", "unexpected error"))
         return status

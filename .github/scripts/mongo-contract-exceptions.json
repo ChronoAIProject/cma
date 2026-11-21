@@ -95,6 +95,10 @@
     "kind": "fixture",
     "reason": "Requires authenticated disposable service Mongo fixture."
   },
+  "store::sandbox_mongo_integration_tests::resource_access_tests::history_measurement::observation_budget::observation_one_hundred_observers_on_two_replicas_for_thirty_minutes": {
+    "kind": "fixture",
+    "reason": "Thirty-minute two-replica observation qualification; run explicitly with --observation-budget. Excluded from the listing, ordinary CI partitions and the isolated shard."
+  },
   "store::sandbox_mongo_integration_tests::resource_access_tests::personal_inventory::availability::personal_inventory_constrained_availability_comparison": {
     "kind": "fixture",
     "reason": "Explicit local constrained availability comparison (--availability)."
