@@ -141,6 +141,10 @@ class StagingWorkflowTest < Minitest::Test
     final = workflow('staging-release')['jobs']['finalize']
     assert_equal 'read', image['permissions']['contents']
     assert_equal 'write', image['permissions']['packages']
+    # Publication lists the Actions caches to verify its layer export.
+    assert_equal 'read', image['permissions']['actions']
+    publication = image['steps'].find { |step| step['id'] == 'publication' }
+    assert_equal '${{ github.token }}', publication.dig('env', 'GH_TOKEN')
     assert_equal 'write', final['permissions']['contents']
     refute final['permissions'].key?('packages')
     refute workflow('redeploy-staging').to_s.include?('packages')

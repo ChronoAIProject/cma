@@ -90,6 +90,11 @@ class BuildCache:
             args += ["--build-arg", "BUILDKIT_CACHE_MOUNT_NS=" + self.namespace]
         return args
 
+    def exports_layers(self):
+        # True exactly when build_options() asks BuildKit to write this scope's
+        # layers. Every other build only imports them, so no save is expected.
+        return bool(self.build_environment()) and "--cache-to" in layer_options(self.env, self.component)
+
     def build_environment(self):
         # Buildx's cache client needs these; build steps, registry transport and
         # scanners never receive them as build arguments, secrets or mounts.
