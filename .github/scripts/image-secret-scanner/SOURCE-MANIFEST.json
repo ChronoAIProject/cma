@@ -78,7 +78,7 @@
     {"path": "tests/test_artifacts.py", "sha256": "57a449f0968ff9c8d003c213b6f547a89c88bb8512273439aec4fb3596c74933", "bytes": 8332, "lines": 187, "mode": "0o644"},
     {"path": "tests/test_boundaries.py", "sha256": "2708b4fda4ebb3635a4faa59e3c74bb0b0d48139e5a370f88a89633a17e80261", "bytes": 8320, "lines": 190, "mode": "0o644"},
     {"path": "tests/test_bsd_ar_integrity.py", "sha256": "e01615e9573a74a50dbbea976cb7e7b65b7989d405620825385a38da496f453e", "bytes": 3589, "lines": 75, "mode": "0o644"},
-    {"path": "tests/test_certificate_blocks.py", "sha256": "ba6e1cd70c09a58b95467a1ad7595e0cb2e894c6891a06d455d6892e13c8c40c", "bytes": 10834, "lines": 194, "mode": "0o644"},
+    {"path": "tests/test_certificate_blocks.py", "sha256": "620824bf07ef190822b36a58a66122de506d0d165592b54c1a7331db4bcf9df7", "bytes": 10661, "lines": 193, "mode": "0o644"},
     {"path": "tests/test_container_limits.py", "sha256": "9bccef0548b21e527c8e3aa053c56a0bb61160b37378695d93a0392cf92cdc51", "bytes": 2789, "lines": 60, "mode": "0o644"},
     {"path": "tests/test_credential_url.py", "sha256": "a2b97cff2dde80fbd42c2467b90c842cefd346718dbd64a95824b2b231d1310d", "bytes": 6139, "lines": 107, "mode": "0o644"},
     {"path": "tests/test_debian_control.py", "sha256": "687da90d4d093463b89d72ea7e0a6504fc9566ef980a67e13f843363ea7537f1", "bytes": 9263, "lines": 156, "mode": "0o644"},

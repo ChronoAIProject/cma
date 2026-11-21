@@ -43,12 +43,12 @@ class CertificateBlockTests(unittest.TestCase):
         self.scratch.cleanup()
 
     def certificate(self):
-        # Fix the serial and extension size so DER length fields cannot shift
-        # while the packet visits every offset within one 64-character PEM line.
+        # Fix the serial width so each padding byte advances the packet offset.
+        # A 64-character PEM line decodes to 48 DER bytes.
         for pad in range(48):
             der = openssl("req", "-x509", "-new", "-key", str(self.key), "-subj", "/CN=fixture", "-days", "1",
                           "-set_serial", "1",
-                          "-addext", f"subjectKeyIdentifier={'ab' * pad}{PACKET}{'ab' * (47 - pad)}",
+                          "-addext", f"subjectKeyIdentifier={'ab' * pad}{PACKET}aabbccddeeff00112233445566778899",
                           "-outform", "DER")
             if der.find(bytes.fromhex(PACKET)) % 48 == 0:
                 return der
@@ -75,23 +75,22 @@ class CertificateBlockTests(unittest.TestCase):
         self.assertEqual(reviewed_literals.verify(path, b"metadata", proof), {})
         self.assertEqual(set(reviewed_literals.verify(path, b"metadata", proof, certificates=blocks)), {RULE})
 
-    def test_fixture_alignment_survives_variable_implicit_serial_lengths(self):
-        real_openssl = openssl
+    def test_alignment_does_not_depend_on_automatic_serial_width(self):
+        generate = openssl
 
-        def variable_serial(*args, **kwargs):
+        def varying_serial(*args, **kwargs):
             if args[0] != "req" or "-set_serial" in args:
-                return real_openssl(*args, **kwargs)
-            # Both lengths can be produced by OpenSSL's random serial generator.
-            der = real_openssl(*args, "-set_serial", "0x" + "11" * 20, **kwargs)
-            if der.find(bytes.fromhex(PACKET)) % 48 == 0:
-                der = real_openssl(*args, "-set_serial", "0x" + "11" * 19, **kwargs)
-            return der
+                return generate(*args, **kwargs)
+            # Both widths are valid automatic serials. Select the width that
+            # moves this padding attempt off a PEM line boundary.
+            for serial in (2 ** 144, 2 ** 152):
+                der = generate(*args, "-set_serial", str(serial), **kwargs)
+                if der.find(bytes.fromhex(PACKET)) % 48 != 0:
+                    return der
+            self.fail("fixture serial widths did not move the packet")
 
-        with patch(__name__ + ".openssl", side_effect=variable_serial):
-            path, proof, blocks = self.fixture()
-        self.assertFalse(reviewed_literals.encoded_material_absent(path.read_bytes()))
-        self.assertEqual(reviewed_literals.verify(path, b"metadata", proof), {})
-        self.assertEqual(set(reviewed_literals.verify(path, b"metadata", proof, certificates=blocks)), {RULE})
+        with patch(f"{__name__}.openssl", side_effect=varying_serial):
+            self.test_pinned_certificate_lines_skip_only_the_encoded_guard()
 
     def test_changed_block_bytes_or_coordinates_refuse(self):
         path, proof, blocks = self.fixture()
