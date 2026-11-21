@@ -53,6 +53,8 @@ ATTEMPTS = 5
 SECONDS = 150
 # A re-run for finals alone waits until its head has been settled this long.
 SETTLE_SECONDS = 600
+# Nothing waits on this check, so the controller read may repeat for longer than the planner's.
+CONTROLLER_SECONDS = 30
 TIMESTAMP = r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z"
 # Why a lane is not current. Only the first three re-run its head.
 BEHIND = ("unfinalized-reservation", "unproven-final", "undeployed-final")
@@ -334,7 +336,8 @@ def authorized(env):
 
 
 def controller_reader(env):
-    return lambda: read_snapshot(env.get("GH_TOKEN"), env.get("CD_STAGING_ENVIRONMENT"))
+    return lambda: read_snapshot(env.get("GH_TOKEN"), env.get("CD_STAGING_ENVIRONMENT"),
+                                 seconds=CONTROLLER_SECONDS)
 
 
 def main():
@@ -367,8 +370,9 @@ def main():
     if reason == "rerun":
         print(f"CATCH-UP rerun run={outcome['run']} attempt={outcome['attempt']} lanes={','.join(late)}")
     elif reason == "exhausted":
-        print(f"::warning title=Staging CD catch-up exhausted::{','.join(late)} stay behind after attempt "
-              f"{outcome['attempt']} of run {outcome['run']}; a push or a maintainer re-run retries them")
+        verb, pronoun = ("stays", "it") if len(late) == 1 else ("stay", "them")
+        print(f"::warning title=Staging CD catch-up exhausted::{','.join(late)} {verb} behind after attempt "
+              f"{outcome['attempt']} of run {outcome['run']}; a push or a maintainer re-run retries {pronoun}")
         for component in late:
             print(f"CATCH-UP exhausted lane={component} attempts={outcome['attempt']}")
     elif reason == "cancelled":

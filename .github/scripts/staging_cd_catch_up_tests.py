@@ -521,13 +521,21 @@ class EntryTests(unittest.TestCase):
             "CATCH-UP lane=runtime-omarchy reason=unproven-final version=0.18.12",
             "CATCH-UP lane=web reason=undeployed-final version=0.10.4"], [
             "CATCH-UP exhausted lane=runtime-omarchy attempts=2", "CATCH-UP exhausted lane=web attempts=2"]))
-        self.assertTrue(lines[3].startswith("::warning title=Staging CD catch-up exhausted::runtime-omarchy,web "))
+        self.assertEqual(lines[3], "::warning title=Staging CD catch-up exhausted::runtime-omarchy,web stay behind "
+                                   "after attempt 2 of run 802; a push or a maintainer re-run retries them")
+        status, lines = self.run_main(lambda *_, **__: ("exhausted", run, lanes[1:]), every=True)
+        self.assertEqual(lines[2], "::warning title=Staging CD catch-up exhausted::web stays behind "
+                                   "after attempt 2 of run 802; a push or a maintainer re-run retries it")
 
     def test_the_controller_is_read_from_the_configured_staging_environment(self):
         env = self.environment()
         with patch.object(catch_up, "read_snapshot", return_value="outcome") as read:
             self.assertEqual(catch_up.controller_reader(env)(), "outcome")
-        read.assert_called_once_with("fixture", ENVIRONMENT)
+        read.assert_called_once_with("fixture", ENVIRONMENT, seconds=catch_up.CONTROLLER_SECONDS)
+        # The planner keeps its own shorter budget.
+        with patch("staging_cd_promotion.AllocationIO") as io, patch("staging_cd_promotion.snapshot"):
+            catch_up.read_snapshot("fixture", ENVIRONMENT)
+        io.assert_called_once_with(seconds=10)
 
     def test_refusals_fail_with_their_fixed_message_and_unexpected_errors_stay_private(self):
         def unverified(*_args):

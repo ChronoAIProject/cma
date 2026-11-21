@@ -156,9 +156,9 @@ def snapshot(request, environment):
     return Snapshot(evidence, TARGETS - remaining, running, since)
 
 
-def read_snapshot(token, environment):
+def read_snapshot(token, environment, *, seconds=10):
     # The evidence read has no write permission; it raises UNAVAILABLE errors.
-    io = AllocationIO(seconds=10)
+    io = AllocationIO(seconds=seconds)
     return snapshot(GitHub(token, runner=io.read_once, retry=io.retry).request, environment)
 
 
