@@ -57,6 +57,9 @@ class AllocationIO:
                  rand=random.random, seconds=ALLOCATION_SECONDS):
         self.runner, self.clock, self.sleep, self.rand = runner, clock, sleep, rand
         self.deadline = clock() + seconds
+        # Set just before the reservation push runs. From then on the remote may
+        # hold this run's refs, so no refusal may rerun the allocation.
+        self.push_started = False
 
     @property
     def retry(self):
@@ -97,6 +100,7 @@ class AllocationIO:
         require(available >= PUSH_RESERVE_SECONDS - PUSH_SETTLEMENT_SECONDS if push else available > 0,
                 "Allocation deadline exceeded")
         kwargs["timeout"] = min(PUSH_SECONDS if push else 10, available)
+        self.push_started = self.push_started or push
         try:
             return self.runner(args, **kwargs)
         except (OSError, subprocess.SubprocessError):

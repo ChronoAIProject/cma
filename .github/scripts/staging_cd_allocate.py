@@ -2,7 +2,9 @@
 import json
 import os
 from pathlib import Path
+import random
 import sys
+import time
 
 import ci_retry
 from ci_outcome import error_site, report
@@ -70,6 +72,15 @@ TRANSIENT_CODES = frozenset({
     "RESERVATION_PUSH_FAILED", "RESERVATION_VERIFY_FAILED", "FINAL_SETTLEMENT_UNCERTAIN", "DEADLINE_EXCEEDED",
     "READ_FAILED", "WRITE_UNCERTAIN", "INVENTORY_INCOMPLETE", "RESERVATION_COLLISION", "RESERVATION_NOT_VISIBLE",
 })
+# A transient refusal raised before the reservation push started left nothing
+# on the remote, so the whole allocation runs once more in the same job, with
+# a fresh budget and inventory after a short jittered wait. Two attempts and
+# the wait take at most 260 s of the allocate job's 25 minute timeout.
+ALLOCATION_ATTEMPTS = 2
+RETRY_WAIT_SECONDS = (10, 20)
+# WRITE_UNCERTAIN says a write may have committed. It never reruns
+# allocation, whatever the push flag says.
+RETRIED_CODES = TRANSIENT_CODES - {"WRITE_UNCERTAIN"}
 
 
 def github_read_code(error):
@@ -311,15 +322,33 @@ def main(argv=()):
         queue = json.loads(env["CD_QUEUE"])
         require(isinstance(queue, dict) and matches(r"[0-9a-f]{40}", queue.get("event_source"))
                 and queue["event_source"] == env["GITHUB_SHA"], "Release queue is invalid")
-        io = AllocationIO()
-        matrix = allocate_current(queue, env, io, mark)
-        io.remaining()
+        matrix = allocate_attempts(queue, env, mark, mark.retry)
         mark("all", "complete")
         output(env, "matrix", canonical(matrix))
         output(env, "changed", "true" if matrix["include"] else "false")
         return True
     with allocation_progress() as mark:
         return run_allocation(operation, env)
+
+
+def allocate_attempts(queue, env, mark, retry, *, sleep=time.sleep, rand=random.random):
+    """Allocate, once more after a transient refusal raised before the push started."""
+    for attempt in range(1, ALLOCATION_ATTEMPTS + 1):
+        io = AllocationIO()
+        try:
+            matrix = allocate_current(queue, env, io, mark)
+            io.remaining()
+            return matrix
+        except Refusal as error:
+            code = refusal_code(error)
+            # Once the push has started, the remote may hold this attempt's
+            # refs: settlement and the gate decide, as for every other stop.
+            if attempt == ALLOCATION_ATTEMPTS or io.push_started or code not in RETRIED_CODES:
+                raise
+        low, high = RETRY_WAIT_SECONDS
+        wait = low + (high - low) * rand()
+        retry(code, attempt + 1, ALLOCATION_ATTEMPTS, wait)
+        sleep(wait)
 
 
 def allocate_current(queue, env, io, mark):
