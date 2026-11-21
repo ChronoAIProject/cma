@@ -6,7 +6,7 @@ import { BOOTSTRAP_AGENT, bootstrapSandbox } from '../../test/bootstrap';
 import type { SandboxDetail } from '../../api/types';
 import { useAgentController } from '../controller';
 import { agentTransportJournal } from './journal';
-import { accepted, harness } from './controller.fixture';
+import { accepted, harness, completedInputReceipt } from './controller.fixture';
 
 const starting = {
   ...AGENT_DETAIL,
@@ -135,9 +135,11 @@ it('retains an uncertain Starting request across Ready and reload, then explicit
   await waitFor(() => expect(second.result.current.inputAvailability.allowed).toBe(true));
   expect(second.result.current.pendingMessage).toBe('Exact Starting input');
   expect(h.post).toHaveBeenCalledOnce();
+  h.inputReceipt.mockImplementationOnce(async () => completedInputReceipt());
   await act(() => second.result.current.recoverPending!());
-  expect(h.post).toHaveBeenCalledTimes(2);
-  const [before, after] = h.post.mock.calls.map(([init]) => init!);
+  expect(h.post).toHaveBeenCalledOnce();
+  const before = h.post.mock.lastCall![0]!;
+  const after = h.inputReceipt.mock.lastCall![0]!;
   expect(after!.body).toBe(before!.body);
   expect(new Headers(after!.headers).get('idempotency-key')).toBe(
     new Headers(before!.headers).get('idempotency-key'),
@@ -240,9 +242,11 @@ it('holds uncertain Starting recovery while the parent is paused and preserves t
   expect(agentTransportJournal(sessionStorage, 'alice', 'agt_1').read()).toEqual(saved);
   read.mockResolvedValue(parent);
   await act(() => vi.advanceTimersByTimeAsync(5000));
+  h.inputReceipt.mockImplementationOnce(async () => completedInputReceipt());
   await act(() => view.result.current.recoverPending!());
-  expect(h.post).toHaveBeenCalledTimes(2);
-  const [before, after] = h.post.mock.calls.map(([init]) => init!);
+  expect(h.post).toHaveBeenCalledOnce();
+  const before = h.post.mock.lastCall![0]!;
+  const after = h.inputReceipt.mock.lastCall![0]!;
   expect(after!.body).toBe(before!.body);
   expect(new Headers(after!.headers).get('idempotency-key')).toBe(saved?.key);
   view.unmount();
