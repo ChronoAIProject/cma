@@ -131,6 +131,7 @@ async fn stale_content_saves_preserve_independent_renewal_and_complete_normally(
         .unwrap();
     first
         .commit(SandboxTransaction::SaveWorkspaceAndAppend {
+            repository_runtime: None,
             expected_revision: revision,
             workspace: Box::new(workspace.clone()),
             event_at: at(0),

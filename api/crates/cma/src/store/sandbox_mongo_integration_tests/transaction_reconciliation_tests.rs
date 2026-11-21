@@ -46,6 +46,7 @@ async fn generic_transaction_receipts_reconcile_from_one_commit_time_snapshot() 
             },
         },
         SandboxTransaction::SaveWorkspaceAndAppend {
+            repository_runtime: None,
             expected_revision: 1,
             workspace: Box::new(workspace.clone()),
             event_at: MINUTE.into(),
