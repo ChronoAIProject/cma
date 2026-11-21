@@ -222,6 +222,7 @@ async fn owner_preflight_preserves_head_skills_post_and_observer_release() {
         ("DELETE", "browser"),
         ("GET", "browser/control?operation_id=one"),
         ("PATCH", "preferences"),
+        ("PATCH", "settings"),
     ] {
         authorize(&f, &context("owner"), method, suffix)
             .await
@@ -243,7 +244,8 @@ async fn preferences_require_current_mutation_authority_for_the_exact_route() {
         ("DELETE", "preferences"),
         ("OPTIONS", "preferences"),
         ("PATCH", "preferences/extra"),
-        ("PATCH", "settings"),
+        ("GET", "settings"),
+        ("PATCH", "settings/extra"),
     ] {
         assert!(
             authorize(&f, &context("owner"), method, suffix)
