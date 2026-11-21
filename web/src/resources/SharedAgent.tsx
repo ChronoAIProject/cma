@@ -440,6 +440,7 @@ export function SharedAgent({
                 <SessionSettings
                   usage={conversation?.usage}
                   agentId={agentId}
+                  viewerId={viewerId}
                   active
                   runtimeReady={agentInitialized(status, detail.ready_at)}
                   busy={busy || status !== 'ready'}

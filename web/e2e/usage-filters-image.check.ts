@@ -154,7 +154,7 @@ for (const theme of ['light', 'dark']) {
         'runtime_version',
         'runtime-stable',
       ],
-      ['Usage Sandbox status', 'Search usage sandbox status', 'active', 'statuses', 'active'],
+      ['Usage Sandbox status', 'Search usage sandbox status', 'Live', 'statuses', 'active'],
       ['Usage time range', 'Search usage time range', 'Last 7 days', 'range', '7d'],
     ] as const) {
       await page.getByRole('button', { name: control, exact: true }).click();

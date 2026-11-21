@@ -169,6 +169,35 @@ test('LOCAL corrupt or unavailable storage keeps safe, usable filters', async ({
   noEffects(fixture);
 });
 
+test('LOCAL the runtime update filter persists across Sandbox history and reload', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalSandboxFilters();
+  fixture.ownedAccess = true;
+  await fixture.route(page, baseURL!);
+  await page.goto('/agent-manager');
+  await environments(page);
+  await choose(page, 'Sandbox status filter', 'Updating runtime');
+  const updating = page.getByRole('tree', { name: 'Updating runtime sandboxes' });
+  const selected = updating.getByRole('link', { name: /rotating fixture/ });
+  await selected.click();
+  await expect(page).toHaveURL(/\/sandboxes\/sbx_filter_9$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/agent-manager$/);
+  await expect(updating.getByRole('treeitem')).toHaveCount(1);
+  await page.goForward();
+  await expect(page).toHaveURL(/\/sandboxes\/sbx_filter_9$/);
+  await expect(updating.getByRole('treeitem')).toHaveCount(1);
+  await page.reload();
+  await environments(page);
+  await expect(page.getByRole('button', { name: 'Sandbox status filter' })).toHaveText(
+    'Updating runtime',
+  );
+  await expect(updating.getByRole('treeitem')).toHaveCount(1);
+  noEffects(fixture);
+});
+
 for (const scope of ['Personal', 'Shared', 'Synthetic research (Organization)']) {
   test(`LOCAL ${scope} lifecycle groups keep counts, filters, collapse and keyboard navigation`, async ({
     page,
@@ -205,13 +234,40 @@ for (const scope of ['Personal', 'Shared', 'Synthetic research (Organization)'])
           },
         },
       });
+    fixture.sandboxes.push(
+      {
+        ...failed,
+        id: 'sbx_filter_rotation_in_flight',
+        name: 'runtime update before status publish',
+        status: 'active',
+        lifecycle: {
+          ...failed.lifecycle!,
+          operation: {
+            purpose: 'image_rotation',
+            phase: 'publish_active',
+            started_at: failed.created_at,
+          },
+        },
+      },
+      {
+        ...failed,
+        id: 'sbx_filter_rotation_history',
+        name: 'live with previous outcome',
+        status: 'active',
+        lifecycle: {
+          ...failed.lifecycle!,
+          operation: undefined,
+          result: { state: 'failed', continuing: false, actions: ['observe'] },
+        },
+      },
+    );
     await fixture.route(page, baseURL!);
     await page.goto('/agent-manager');
     await environments(page);
     if (scope !== 'Personal') await choose(page, 'Navigation scope', scope);
     for (const [label, count] of [
-      ['Live', 1],
-      ['Changing', 8],
+      ['Live', 2],
+      ['Changing', 9],
       ['Paused', 1],
       ['Needs attention', 2],
     ] as const) {
@@ -222,6 +278,28 @@ for (const scope of ['Personal', 'Shared', 'Synthetic research (Organization)'])
     const live = page.getByRole('tree', { name: 'Live sandboxes', exact: true });
     await expect(live).not.toContainText('failed');
     await expect(live).not.toContainText('operation fixture');
+    const liveRows = live.locator('[role="treeitem"][aria-level="1"]');
+    await expect(liveRows).toHaveCount(2);
+    const liveNames = await liveRows.allTextContents();
+    await choose(page, 'Sandbox status filter', 'Live');
+    await expect(liveRows).toHaveCount(2);
+    expect(await liveRows.allTextContents()).toEqual(liveNames);
+    await page.getByRole('button', { name: 'Sandbox status filter' }).click();
+    const updateOption = page.getByRole('menuitemradio', { name: 'Updating runtime', exact: true });
+    await expect(updateOption).toHaveCount(1);
+    await updateOption.click();
+    const updating = page.getByRole('region', { name: 'Updating runtime sandboxes', exact: true });
+    await expect(updating.locator('.resource-tree__count')).toHaveText('2');
+    await expect(updating.getByText('runtime update before status publish')).toBeVisible();
+    await expect(updating.getByText('rotating fixture', { exact: true })).toBeVisible();
+    await expect(updating.locator('.tree-row__state')).toHaveText([
+      'Updating runtime',
+      'Updating runtime',
+    ]);
+    await choose(page, 'Sandbox status filter', 'Updating access');
+    await expect(
+      page.getByRole('tree', { name: 'Updating access sandboxes' }).getByRole('treeitem'),
+    ).toContainText('credential_rotating fixture');
     await expect(page.getByText('retired fixture', { exact: true })).toHaveCount(0);
     await page
       .getByText('Deletion progress (1)', { exact: true })
@@ -278,6 +356,31 @@ test('LOCAL observed lifecycle transitions move a focused Sandbox exactly once w
     .getByRole('treeitem')
     .filter({ has: page.getByText('Moving fixture', { exact: true }) });
   await row.focus();
+  const moving = fixture.sandboxes[index]!;
+  fixture.sandboxes[index] = {
+    ...moving,
+    lifecycle: {
+      ...moving.lifecycle!,
+      operation: {
+        purpose: 'image_rotation',
+        phase: 'publish_active',
+        started_at: moving.created_at,
+      },
+    },
+  };
+  await page.clock.runFor(15_100);
+  await expect(
+    page.getByRole('tree', { name: 'Changing sandboxes' }).getByText('Moving fixture'),
+  ).toBeVisible();
+  await expect(row).toContainText('Updating runtime');
+  await expect(row).toHaveCount(1);
+  await expect(row).toBeFocused();
+  fixture.sandboxes[index] = moving;
+  await page.clock.runFor(15_100);
+  await expect(
+    page.getByRole('tree', { name: 'Live sandboxes' }).getByText('Moving fixture'),
+  ).toBeVisible();
+  await expect(row).toHaveCount(1);
   for (const [status, label] of [
     ['pausing', 'Changing'],
     ['paused', 'Paused'],
