@@ -36,8 +36,8 @@ async fn emits_exactly_one_content_free_summary_and_balances_the_active_gauge() 
     relay.send_wait(Direction::Downlink, Duration::from_millis(22));
     relay.forwarded(Direction::Downlink, 7);
     relay.send_wait(Direction::Downlink, Duration::from_secs(10));
-    relay.authorization_check(true, Duration::from_millis(1));
-    relay.authorization_check(false, Duration::from_millis(2));
+    relay.authorization_check(true, Duration::from_millis(1), None);
+    relay.authorization_check(false, Duration::from_millis(2), None);
     tokio::time::advance(Duration::from_secs(12)).await;
     relay.finish(CloseReason::ClientSendTimeout);
 

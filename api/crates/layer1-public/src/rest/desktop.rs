@@ -208,10 +208,7 @@ where
         tokio::select! {
             _ = &mut lifetime => return CloseReason::Lifetime,
             _ = authorization.tick() => {
-                let started = Instant::now();
-                let authorized = runtime.still_authorized().await;
-                observation.authorization_check(authorized, started.elapsed());
-                if !authorized {
+                if !observation.check_authorization(runtime.still_authorized()).await {
                     return CloseReason::AuthorizationRefused;
                 }
             },

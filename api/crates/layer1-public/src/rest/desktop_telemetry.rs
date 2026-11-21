@@ -1,13 +1,28 @@
 //! Fixed process-local desktop relay observations for the private diagnostics.
 use std::{
     fmt::Write as _,
+    future::Future,
     sync::{
         atomic::{AtomicU64, Ordering::Relaxed},
         Mutex, PoisonError,
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::time::Instant;
+
+#[cfg(test)]
+tokio::task_local! {
+    pub(super) static AUTHORIZATION_TEST_CLOCK: (Instant, SystemTime);
+}
+
+fn authorization_wall_time() -> SystemTime {
+    #[cfg(test)]
+    if let Ok(now) = AUTHORIZATION_TEST_CLOCK.try_with(|(started, wall)| *wall + started.elapsed())
+    {
+        return now;
+    }
+    SystemTime::now()
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum CloseReason {
@@ -248,12 +263,45 @@ impl<'a> RelayObservation<'a> {
         self.counters.directions[index].send_wait.record(elapsed);
     }
 
-    pub(super) fn authorization_check(&mut self, authorized: bool, elapsed: Duration) {
+    pub(super) async fn check_authorization(&mut self, check: impl Future<Output = bool>) -> bool {
+        let started_at = tracing::enabled!(
+            target: "cma::desktop::relay_authorization",
+            tracing::Level::DEBUG
+        )
+        .then(authorization_wall_time);
+        let started = Instant::now();
+        let authorized = check.await;
+        self.authorization_check(authorized, started.elapsed(), started_at);
+        authorized
+    }
+
+    fn authorization_check(
+        &mut self,
+        authorized: bool,
+        elapsed: Duration,
+        started_at: Option<SystemTime>,
+    ) {
         self.authorization_checks += 1;
         self.max_authorization_wait = self.max_authorization_wait.max(elapsed);
         let outcome = if authorized { "authorized" } else { "refused" };
         metrics::histogram!("cma_desktop_authorization_seconds", "outcome" => outcome)
             .record(elapsed.as_secs_f64());
+        if let Some(started_at) = started_at {
+            // This check holds the frame pump. Renewal runs independently and
+            // has its own event, so renewal intervals cannot stand in for it.
+            let started_unix_ms = started_at
+                .duration_since(UNIX_EPOCH)
+                .ok()
+                .map(|duration| duration.as_secs_f64() * 1000.0);
+            tracing::debug!(
+                target: "cma::desktop::relay_authorization",
+                parent: None,
+                started_unix_ms,
+                elapsed_ms = elapsed.as_secs_f64() * 1000.0,
+                outcome,
+                "desktop relay authorization check ended"
+            );
+        }
     }
 
     pub(super) fn finish(self, reason: CloseReason) {
