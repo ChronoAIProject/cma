@@ -11,6 +11,7 @@ pub(in crate::store) mod agent_log_source_keys;
 mod agent_owner_index;
 mod binding_indexes;
 mod collection_indexes;
+pub(in crate::store) mod home_backup_catalog;
 mod index_inventory;
 mod index_plan;
 mod index_toolkit;
@@ -55,6 +56,9 @@ pub(crate) async fn run_command_line(arguments: &[String]) {
 }
 
 pub(crate) async fn command(arguments: &[String]) -> Result<Value> {
+    if let Some(result) = home_backup_catalog::command(arguments) {
+        return result;
+    }
     if index_toolkit::is_command(arguments) {
         return index_toolkit::command(arguments).await;
     }

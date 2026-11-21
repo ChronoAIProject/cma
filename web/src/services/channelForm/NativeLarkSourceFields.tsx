@@ -1,12 +1,14 @@
 import { nativeLarkUnavailable, useRelayCapabilities } from '../RelayCapabilities';
-import { AdmissionFields } from './AdmissionFields';
+import { SourceAdmissionFields } from './SourceAdmissionFields';
 import { Choice, Section, TextField, Toggle } from './Fields';
 import { object, optional, type Fields } from './model';
 
 export function NativeLarkSourceFields({
   value,
   onChange,
+  hideAdmission = false,
 }: {
+  hideAdmission?: boolean;
   value: Fields;
   onChange: (value: Fields) => void;
 }) {
@@ -102,12 +104,7 @@ export function NativeLarkSourceFields({
           <p className="channel-field-hint">{unavailable} Saved settings are retained.</p>
         ) : null}
       </Section>
-      <AdmissionFields
-        value={value.admission}
-        onChange={(admission) => onChange({ ...value, admission })}
-        allowBotMessages={false}
-        allowReplyToBot={false}
-      />
+      {!hideAdmission ? <SourceAdmissionFields value={value} onChange={onChange} /> : null}
     </>
   );
 }

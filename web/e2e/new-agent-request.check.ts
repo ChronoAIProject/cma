@@ -31,6 +31,7 @@ for (const status of ['provisioning', 'active'] as const) {
     await expect(page).toHaveURL(/\/agent-manager$/);
     await expect(task).toHaveValue('hello');
     await expect(start).toBeEnabled();
+    await page.clock.resume();
     await newAgent.click();
     await page.goBack();
     await expect(page).toHaveURL(/\/agent-manager$/);
@@ -53,16 +54,37 @@ for (const status of ['provisioning', 'active'] as const) {
       agentId: fixture.agent.id,
       receipt: { id: 'old-operation' },
     });
+    const accepted = page.waitForResponse(
+      (response) =>
+        response.request().method() === 'POST' &&
+        new URL(response.url()).pathname === '/api/agent-manager/v1/agents',
+    );
     await start.click();
+    expect((await accepted).status()).toBe(202);
     await expect.poll(() => creates.length).toBe(1);
     expect(creates[0]!.body).toEqual({ name: 'New task', initial_message: 'hello' });
     expect(creates[0]!.key).toBeTruthy();
     expect(creates[0]!.key).not.toBe('retained-old-request');
+    const retainedCreation = () =>
+      page.evaluate(() => {
+        const key = `cma:agent-creation:${JSON.stringify([location.origin, 'local-owner'])}`;
+        return sessionStorage.getItem(key);
+      });
+    await expect
+      .poll(async () => JSON.parse((await retainedCreation()) ?? 'null')?.intent?.receipt?.id)
+      .toBe('new-operation');
+    const creationBeforeReload = await retainedCreation();
+    expect(JSON.parse(creationBeforeReload!).intent).toMatchObject({
+      key: creates[0]!.key,
+      body: creates[0]!.body,
+      receipt: { id: 'new-operation', status: 'queued' },
+    });
     await expect(page.getByRole('region', { name: 'Submitted task' })).toContainText('hello');
     await page.reload();
     await expect(page.getByRole('region', { name: 'Submitted task' })).toContainText('hello');
     await expect(page).toHaveURL(/\/agent-manager$/);
     expect(creates).toHaveLength(1);
+    expect(await retainedCreation()).toBe(creationBeforeReload);
     const journalAfter = await page.evaluate(() => {
       const key = Object.keys(sessionStorage).find((key) => key.startsWith('cma:agent-recovery:'));
       return key ? sessionStorage.getItem(key) : null;

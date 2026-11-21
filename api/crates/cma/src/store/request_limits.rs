@@ -76,17 +76,20 @@ impl MongoRequestLimits {
             .map_or(clock, |millis| doc! { "$literal": millis });
         let boundary = doc! { "$add": [clock.clone(), tolerance] };
         let eligible = doc! { "$lte": [{ "$ifNull": ["$tat", 0_i64] }, boundary.clone()] };
+        let next_tat = doc! {
+            "$add": [{ "$max": [{ "$ifNull": ["$tat", 0_i64] }, clock] }, increment]
+        };
+        let expires_at = doc! {
+            "$max": [{ "$add": ["$$NOW", 120_000] }, { "$toDate": next_tat.clone() }]
+        };
         for _ in 0..8 {
             let result = self.limits.find_one_and_update(doc! { "_id": key }, vec![doc! {
                 "$set": {
                     "document_schema_version": { "$ifNull": ["$document_schema_version", 1_i32] },
-                    "tat": { "$cond": [eligible.clone(), {
-                        "$add": [{ "$max": [{ "$ifNull": ["$tat", 0_i64] }, clock.clone()] }, increment]
-                    }, "$tat"] },
-                    // The split is intentional: token accounting uses the injected
-                    // clock when set, while TTL uses the real server clock so the
-                    // TTL monitor cannot delete the bucket mid-test.
-                    "expires_at": { "$cond": [eligible.clone(), { "$add": ["$$NOW", 120_000] }, "$expires_at"] },
+                    "tat": { "$cond": [eligible.clone(), next_tat.clone(), "$tat"] },
+                    // Retain idle buckets for two minutes and outstanding debt
+                    // until it clears, even when a rounded interval extends it.
+                    "expires_at": { "$cond": [eligible.clone(), expires_at.clone(), "$expires_at"] },
                 }
             }])
                 .upsert(true)

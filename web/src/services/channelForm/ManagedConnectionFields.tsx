@@ -18,8 +18,10 @@ interface Page {
 export function ManagedConnectionFields({
   value,
   onChange,
+  hideAdmission = false,
   denied,
 }: {
+  hideAdmission?: boolean;
   value: Fields;
   onChange: (value: Fields) => void;
   denied: Denied;
@@ -129,11 +131,13 @@ export function ManagedConnectionFields({
               Load more connections
             </Button>
           ) : null}
-          <AdmissionFields
-            label="Connection admission"
-            value={value.connection_admission}
-            onChange={(connection_admission) => onChange({ ...value, connection_admission })}
-          />
+          {!hideAdmission ? (
+            <AdmissionFields
+              label="Connection admission"
+              value={value.connection_admission}
+              onChange={(connection_admission) => onChange({ ...value, connection_admission })}
+            />
+          ) : null}
         </>
       ) : (
         <p className="channel-field-hint">

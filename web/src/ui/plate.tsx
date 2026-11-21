@@ -67,7 +67,9 @@ export function usePlateFocus(
     // control they opened this from rather than the top of the document.
     const opener = document.activeElement as HTMLElement | null;
     const panel = panelRef.current;
-    const first = panel === null ? undefined : focusable(panel)[0];
+    const reachable = panel === null ? [] : focusable(panel);
+    const first =
+      reachable.find((element) => element.dataset.initialFocus === 'true') ?? reachable[0];
     first?.focus();
 
     const onKeyDown = (event: KeyboardEvent) => {

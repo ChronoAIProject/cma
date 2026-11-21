@@ -128,6 +128,7 @@ pub mod task_activity;
 mod task_status;
 pub use task_status::AgentTaskStatus;
 mod home;
+pub mod home_backup;
 mod home_native;
 pub use home_native::SandboxNativePool;
 mod home_recovery;

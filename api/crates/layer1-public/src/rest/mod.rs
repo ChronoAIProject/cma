@@ -200,6 +200,7 @@ pub use agent_lifecycle::{
     AgentLifecycleOperationReadError, AgentLifecycleOperationReader, AgentLifecycleOperationView,
     AgentLifecyclePermissions, AgentLifecycleProfile, AgentLifecycleProvisioner,
     AgentLifecycleProvisioningError, AgentLifecycleRepository, AgentLifecycleSkill,
+    AgentLifecycleTitleMode,
 };
 pub use agent_source::agent_source_router;
 pub use agents::{agent_router, AgentRoutesState};

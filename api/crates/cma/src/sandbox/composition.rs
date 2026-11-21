@@ -30,6 +30,7 @@ use crate::{shutdown::ShutdownCoordinator, store::MongoSandboxStore};
 
 pub(crate) struct SandboxLifecycleDependencies {
     pub store: Arc<MongoSandboxStore>,
+    pub pending_homes: Arc<crate::store::pending_launch_homes::PendingLaunchHomes>,
     pub adapter: Arc<dyn SandboxAdapter>,
     pub credentials: Arc<dyn SandboxCredentialController>,
     pub registry: Arc<LiveAgentRegistry>,
@@ -146,6 +147,11 @@ impl SandboxLifecycleComposition {
                 ),
             )),
         ));
+        let reconciliation = if dependencies.pending_homes.enabled() {
+            reconciliation.with_pending_homes(dependencies.pending_homes.clone())
+        } else {
+            reconciliation
+        };
         let updates = DurableAgentUpdateRecorder::with_output_policy(
             dependencies.store.clone(),
             dependencies.store.writer_policy.clone(),

@@ -1,0 +1,12 @@
+.task-help-link {
+  color: var(--dsw-alias-label-secondary);
+  font-size: var(--text-note);
+  text-underline-offset: 3px;
+}
+.task-help-link:hover {
+  color: var(--dsw-alias-label-primary);
+}
+.task-help-link:focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+}

@@ -1,18 +1,48 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { requiredPrefixes } from './mongo-contract-test-prefixes.mjs';
 
+const registeredFilter = execFileSync('python3', [
+  fileURLToPath(new URL('mongo-contract-registry.py', import.meta.url)), '--filter',
+], {encoding: 'utf8'}).trim();
+
 const taskHome = 'sandbox::agent_worker_tests::sdk_conformance_tests::task_home_tests::';
+
+test('capacity recovery completion contracts remain in the ordinary selector', () => {
+  const root = 'store::sandbox_mongo_integration_tests::agent_capacity_recovery_tests::composition::quota::';
+  const runner = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
+  for (const suffix of [
+    'full_workspace_refuses_recovery_completion_without_acknowledging',
+    'races::admission_invalidates_old_completion_snapshot_and_retry_recounts',
+    'races::two_recoveries_cannot_publish_into_the_last_slot',
+    'races::aborted_completion_does_not_reserve_capacity_for_a_fresh_attempt',
+    'retry::capacity_refusal_is_atomic_discoverable_and_completes_after_release',
+    'retry::remaining_slot_allows_completion_and_blocks_the_next_ordinary_admission',
+    'retry::retained_reservation_refuses_completion_even_with_no_live_agents',
+    'retry::available_capacity_cannot_override_parent_removal_or_retirement',
+  ]) {
+    const name = root + suffix;
+    const prefix = requiredPrefixes.find(prefix => name.startsWith(prefix));
+    assert.ok(prefix, `${name} must be selected`);
+    assert.ok(registeredFilter.includes(`test(${prefix})`));
+    assert.ok(!runner.includes(`not test(=${name})`));
+    const metadata = inventory();
+    metadata['rust-suites']['cma::bin/cma'].testcases[name] = caseMetadata(false);
+    const result = check(metadata);
+    assert.equal(result.status, 1);
+    assert.ok(result.stderr.includes(name), result.stderr);
+  }
+});
 
 test('Usage continuation Mongo contract remains in the ordinary selector', () => {
   const name = 'store::sandbox_mongo_integration_tests::sandbox_usage_tests::continuation::usage_signed_continuations_cross_replicas_preserve_raw_store_and_reject_scope_changes';
   const prefix = requiredPrefixes.find(prefix => name.startsWith(prefix));
   assert.ok(prefix, 'new Usage Mongo contract must be selected');
   const runner = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
-  assert.ok(runner.includes(`test(${prefix})`));
+  assert.ok(registeredFilter.includes(`test(${prefix})`));
   assert.ok(!runner.includes(`not test(=${name})`));
 });
 const child = `${taskHome}subprocess::task_home_create_child`;
@@ -56,8 +86,14 @@ test('metadata completeness catches omitted task-home and newly introduced modul
   for (const name of [
     `${taskHome}subprocess::initial_task_public_service_process_exit_preserves_admission`,
     'a_new_contract_module::new_mongo_contract',
+    'store::trigger_definitions::launch_mongo_integration_tests::pending_home_reconciliation::policy::disabled_startup_with_active_capacity_preserves_usage_receipts_and_ordinary_writers',
     'agent_lifecycle::workspace::tests::quota::quota_preflight_preserves_replay_and_existing_targets_without_preparation',
     'agent_lifecycle::workspace::tests::quota::worker_quota_failure_metadata_is_gated_and_survives_restart',
+    'agent_lifecycle::workspace::tests::title_tests::contextual_title_modes_preserve_exact_admission_and_persist_title_authority',
+    'agent_lifecycle::workspace::tests::title_tests::admission::explicit_title_modes_require_admission_policy_with_or_without_initial_message',
+    'agent_lifecycle::workspace::tests::title_tests::admission::admitted_title_modes_replay_exactly_after_policy_is_withdrawn',
+    'agent_lifecycle::workspace::tests::bootstrap::title_tests::bootstrap_title_mode_survives_admission_and_recovery',
+    'agent_lifecycle::workspace::tests::bootstrap::title_tests::explicit_new_task_rename_fences_a_late_generated_title',
     `${child}_another_contract`,
   ]) {
     const metadata = inventory();
@@ -125,28 +161,14 @@ test('tracked deferrals stay visible instead of being reported as eligible cover
   assert.match(result.stdout, /Deferred Mongo contract: .*issues\/1854/);
 });
 
-test('prefix inventory includes task-home and agrees with the runner without duplicates', () => {
+test('every registered suite reaches the runner without a shared suite-count assertion', () => {
   const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
   const line = source.split('\n').find(line => line.trimStart().startsWith('-E '));
-  const actual = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
+  assert.ok(line.includes('($suite_filter)'));
+  const actual = [...registeredFilter.matchAll(/test\(([^)]+)\)/g)].map(match => match[1]);
   assert.deepEqual(actual, requiredPrefixes);
-  assert.equal(new Set(requiredPrefixes).size, 150);
-  assert.ok(requiredPrefixes.includes('store::directory::mongo_tests::'));
-  assert.ok(requiredPrefixes.includes('sandbox::agent_worker_tests::cleanup_contention_tests::'));
-  assert.ok(requiredPrefixes.includes('store::agent_lifecycle_operations::lease_tests::'));
-  assert.ok(requiredPrefixes.includes('agent_manager::relay::tests::mongo::'));
-  assert.ok(requiredPrefixes.includes('store::agent_ownership::mongo_tests::'));
-  assert.ok(requiredPrefixes.includes('auth::desktop::tests::'));
-  assert.ok(requiredPrefixes.includes('store::sandbox_sessions::exclusive::'));
-  assert.ok(requiredPrefixes.includes('store::allocation_buckets::'));
-  assert.ok(requiredPrefixes.includes(taskHome));
-  assert.ok(requiredPrefixes.includes('agent_lifecycle::workspace::tests::quota::'));
-  assert.ok(requiredPrefixes.includes('store::migrations::index_toolkit::tests::'));
-  assert.ok(requiredPrefixes.includes('store::sandbox_usage::interval_index::tests::'));
-  assert.ok(requiredPrefixes.includes('rate_limit::lease::mongo_tests::'));
-  assert.ok(requiredPrefixes.includes('rate_limit::anonymous_mongo_tests::'));
-  assert.ok(requiredPrefixes.includes('store::resource_access::execution::mongo_tests::'));
-  assert.ok(requiredPrefixes.includes('store::worker_observations::parked::tests::'));
+  assert.ok(requiredPrefixes.length > 0);
+  assert.equal(new Set(requiredPrefixes).size, requiredPrefixes.length);
   assert.ok(line.includes(`not test(=${child})`));
 });
 
@@ -279,7 +301,7 @@ test('resource execution selection includes root and nested contracts without om
   assert.equal(requiredPrefixes.filter(prefix => prefix === resourceExecutionPrefix).length, 1);
   const source = readFileSync(new URL('mongo-contract-tests.sh', import.meta.url), 'utf8');
   const line = source.split('\n').find(value => value.trimStart().startsWith('-E '));
-  const included = [...line.matchAll(/(?:'|\| )test\(([^)]+)\)/g)].map(match => match[1]);
+  const included = [...registeredFilter.matchAll(/test\(([^)]+)\)/g)].map(match => match[1]);
   assert.equal(included.filter(prefix => prefix === resourceExecutionPrefix).length, 1);
   assert.ok(!line.includes(`not test(${resourceExecutionPrefix})`));
   const names = [

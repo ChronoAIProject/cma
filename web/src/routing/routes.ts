@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { browserHistory } from './browserHistory';
+import { DOCS_PATHS, docsView, type DocsView } from './docsRoutes';
 
 export type ProfileKind = 'agent' | 'workspace' | 'sandbox';
 
@@ -10,7 +11,7 @@ export type AppRoute =
   | { readonly kind: 'document'; readonly documentId: string }
   | { readonly kind: 'event_gateway' }
   | { readonly kind: 'image_manager' }
-  | { readonly kind: 'docs'; readonly view?: 'event_gateway_protocol' }
+  | { readonly kind: 'docs'; readonly view?: DocsView }
   | { readonly kind: 'sandbox'; readonly sandboxId: string }
   | { readonly kind: 'workspace'; readonly workspaceId: string }
   | { readonly kind: 'agent'; readonly agentId: string }
@@ -106,8 +107,10 @@ export function parseRoute(pathname: string): AppRoute {
   if (path.length === 2) {
     const [resource = '', id = ''] = path;
     if (resource === 'settings' && (id === 'general' || id === 'usage')) return { kind: 'usage' };
-    if (resource === 'docs' && id === 'event-gateway')
-      return { kind: 'docs', view: 'event_gateway_protocol' };
+    if (resource === 'docs') {
+      const view = docsView(`/docs/${id}`);
+      if (view) return { kind: 'docs', view };
+    }
     if (resource === 'shared' && id === 'agents') return { kind: 'inventory', shared: true };
     if (resource === 'artifacts' && /^doc_[a-f0-9]{32}$/.test(id))
       return { kind: 'document', documentId: id };
@@ -170,7 +173,7 @@ export function routePath(route: AppRoute): string {
     case 'document':
       return `/artifacts/${segment(route.documentId)}`;
     case 'docs':
-      return route.view === 'event_gateway_protocol' ? '/docs/event-gateway' : '/docs';
+      return route.view ? DOCS_PATHS[route.view] : '/docs';
     case 'sandbox':
       return `/sandboxes/${segment(route.sandboxId)}`;
     case 'workspace':
