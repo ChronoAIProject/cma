@@ -176,6 +176,9 @@ pub(super) async fn finish<T>(
 
 pub(super) fn error(error: TransactionLogError) -> RecoveryError {
     match error {
+        TransactionLogError::Domain(SandboxStoreError::AgentLimitReached { limit, live }) => {
+            RecoveryError::WorkspaceCapacityFull { limit, live }
+        }
         TransactionLogError::Domain(
             SandboxStoreError::Conflict | SandboxStoreError::SequenceConflict,
         ) => RecoveryError::Conflict,
