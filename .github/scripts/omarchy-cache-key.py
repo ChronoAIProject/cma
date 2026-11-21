@@ -1,4 +1,4 @@
-"""Name the native dependency cache by its recipe and every copied input."""
+"""Name the native dependency cache by its recipe, pinned arguments and copied inputs."""
 
 import hashlib
 import json
@@ -19,11 +19,29 @@ def stage_lines(lines, name):
     return lines[start:stop]
 
 
-def track_inputs(root, stage, inputs):
+def global_arguments(lines):
+    # Build arguments declared before the first stage, with their defaults.
+    values = {}
+    for line in lines:
+        if line.startswith("FROM "):
+            break
+        if line.startswith("ARG ") and "=" in line:
+            name, value = line[4:].split("=", 1)
+            values[name] = value
+    return values
+
+
+def track_inputs(root, stage, inputs, arguments, defaults):
     for line in stage[1:]:
         if not line or line.startswith("#"):
             continue
-        if line.startswith("COPY "):
+        if line.startswith("ARG "):
+            # A stage may consume only an argument pinned by a global default.
+            name = line[4:]
+            if name not in defaults:
+                raise ValueError("dependency-stage argument must have a pinned global default")
+            arguments[name] = defaults[name]
+        elif line.startswith("COPY "):
             words = shlex.split(line)
             if len(words) < 3 or any(word.startswith("--") for word in words[1:]):
                 raise ValueError("dependency COPY must name explicit local files")
@@ -40,7 +58,8 @@ def manifest(root):
     root = Path(root).resolve()
     lines = (root / DOCKERFILE).read_text().splitlines()
     dependencies = stage_lines(lines, TARGET)
-    inputs = {}
+    defaults = global_arguments(lines)
+    inputs, arguments = {}, {}
     if dependencies[0].startswith("FROM archlinux:base@sha256:"):
         # Historical builds used the pinned image directly.
         stages = dependencies
@@ -55,13 +74,13 @@ def manifest(root):
             "FROM scratch AS omarchy-base", "COPY --link --from=omarchy-bootstrap /payload/ /",
         ]:
             raise ValueError("Omarchy base must copy only the assembled package root")
-        track_inputs(root, bootstrap, inputs)
+        track_inputs(root, bootstrap, inputs, arguments, defaults)
         stages = bootstrap + base + dependencies
-    track_inputs(root, dependencies, inputs)
+    track_inputs(root, dependencies, inputs, arguments, defaults)
     if not inputs:
         raise ValueError("dependency stage has no source inputs")
     return {"schema": 1, "platform": "linux/amd64", "target": TARGET,
-            "recipe": "\n".join(stages), "inputs": inputs}
+            "recipe": "\n".join(stages), "arguments": arguments, "inputs": inputs}
 
 
 def scope(value):

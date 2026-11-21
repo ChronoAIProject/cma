@@ -104,6 +104,26 @@ class CacheIdentityTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.identity()
 
+    def test_pinned_stage_argument_default_changes_identity(self):
+        pinned = "ARG SNAPSHOT=2026/10/22\nARG UNRELATED=1\n" + self.recipe.replace(
+            "RUN bash /tmp/install.sh", "ARG SNAPSHOT\nRUN bash /tmp/install.sh \"${SNAPSHOT}\"")
+        self.dockerfile.write_text(pinned)
+        original = self.identity()
+        self.assertEqual(CACHE.manifest(self.root)["arguments"], {"SNAPSHOT": "2026/10/22"})
+        self.dockerfile.write_text(pinned.replace("UNRELATED=1", "UNRELATED=2"))
+        self.assertEqual(original, self.identity())
+        self.dockerfile.write_text(pinned.replace("SNAPSHOT=2026/10/22", "SNAPSHOT=2026/10/23"))
+        self.assertNotEqual(original, self.identity())
+
+    def test_stage_argument_without_pinned_global_default_fails_closed(self):
+        for prefix, declaration in (("", "ARG SNAPSHOT"), ("ARG SNAPSHOT\n", "ARG SNAPSHOT"),
+                                    ("ARG SNAPSHOT=1\n", "ARG SNAPSHOT=2")):
+            with self.subTest(prefix=prefix, declaration=declaration):
+                self.dockerfile.write_text(prefix + self.recipe.replace("RUN bash /tmp/seed.sh",
+                                                                        declaration + "\nRUN bash /tmp/seed.sh"))
+                with self.assertRaisesRegex(ValueError, "pinned global default"):
+                    self.identity()
+
     def test_missing_duplicate_or_unpinned_stage_fails_closed(self):
         for changed in (self.recipe.replace(" AS omarchy-dependencies", " AS other"),
                         self.recipe + self.recipe,
