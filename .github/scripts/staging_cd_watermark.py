@@ -44,7 +44,7 @@ def record_withheld(env, original, selected):
 
 def require_current_versions(receipts, *, runner=subprocess.run):
     require_version_refs({key: (r["tag"], r["identity"]["version"]) for key, r in receipts.items()},
-                         runner=runner, missing="Final version is absent from component inventory")
+                         runner=runner, final=True)
 
 
 def advertise(prefixes, *, runner, peeled=False):
@@ -83,7 +83,7 @@ def later_final_sources(receipts, *, runner=subprocess.run):
     return later
 
 
-def require_version_refs(expected, *, runner=subprocess.run, missing="Expected version is absent from component inventory"):
+def require_version_refs(expected, *, runner=subprocess.run, final=False):
     # Every lane finishes a started build, so a successor's pending reservation
     # never withholds a final. Only a higher final in the same advertisement does.
     require(bool(expected) and expected.keys() <= DEPLOYABLES.keys(), "Unknown release component")
@@ -100,6 +100,8 @@ def require_version_refs(expected, *, runner=subprocess.run, missing="Expected v
         component = prefixes[prefix]
         if version > version_tuple(expected[component][1]):
             stale.add(component)
-    require(all("refs/tags/" + tag in found for tag, _ in expected.values()), missing)
+    present = all("refs/tags/" + tag in found for tag, _ in expected.values())
+    require(present or not final, "Final version is absent from component inventory")
+    require(present, "Expected version is absent from component inventory")
     if stale:
         raise SupersededVersions(stale)
