@@ -18,7 +18,7 @@ use tokio::sync::{mpsc, oneshot};
 
 use super::{
     client_types::{
-        ProviderError, ProviderHandle, TurnRequest, TurnStream, MAX_METADATA_KEYS,
+        ProviderError, ProviderHandle, TurnEvents, TurnRequest, TurnStream, MAX_METADATA_KEYS,
         MAX_METADATA_KEY_BYTES, MAX_METADATA_VALUE_BYTES,
     },
     probe::{classify_conformance, AgentCardProbe},
@@ -305,7 +305,7 @@ impl ProviderClient {
         Ok(TurnStream {
             trace: association,
             accepted,
-            events,
+            events: TurnEvents(events),
             request_started,
         })
     }

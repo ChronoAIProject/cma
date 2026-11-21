@@ -73,14 +73,28 @@ fn completed(text: &str) -> TurnOutcome {
     }
 }
 
-async fn terminal_answer(lifecycle: Arc<Lifecycle>, reported_response: &str) -> App {
-    let app = App::observed_with(0, Default::default(), FakeProviderConfig {
-        frames: Some(vec![
-            json!({"type":"response.created","response":{"id":"terminal-response"}}),
-            json!({"type":"response.completed","response":{"id":reported_response,"output":[{"type":"message","content":[{"type":"output_text","text":"terminal answer"}]}]}}),
-        ]),
-        ..Default::default()
-    }, lifecycle).await;
+fn timestamp(value: &str) -> time::OffsetDateTime {
+    time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).unwrap()
+}
+
+async fn terminal_answer(
+    lifecycle: Arc<Lifecycle>,
+    reported_response: &str,
+    preceding_frames: Vec<serde_json::Value>,
+) -> App {
+    let mut frames = vec![json!({"type":"response.created","response":{"id":"terminal-response"}})];
+    frames.extend(preceding_frames);
+    frames.push(json!({"type":"response.completed","response":{"id":reported_response,"output":[{"type":"message","content":[{"type":"output_text","text":"terminal answer"}]}]}}));
+    let app = App::observed_with(
+        0,
+        Default::default(),
+        FakeProviderConfig {
+            frames: Some(frames),
+            ..Default::default()
+        },
+        lifecycle,
+    )
+    .await;
     assert_eq!(app.fixture.send(&Envelope::new()).await.status(), 202);
     assert!(
         app.tracker
@@ -93,7 +107,7 @@ async fn terminal_answer(lifecycle: Arc<Lifecycle>, reported_response: &str) -> 
 #[tokio::test]
 async fn terminal_only_provider_answer_records_produced_before_completion_and_delivery() {
     let lifecycle = Arc::new(Lifecycle::default());
-    let mut app = terminal_answer(lifecycle.clone(), "terminal-response").await;
+    let mut app = terminal_answer(lifecycle.clone(), "terminal-response", vec![]).await;
     app.drain().await;
     assert_eq!(app.fake.texts(), ["terminal answer"]);
     assert_eq!(
@@ -109,8 +123,8 @@ async fn terminal_only_provider_answer_records_produced_before_completion_and_de
     assert_eq!(consumer.consumer_id, "default");
     assert_eq!(consumer.response_id.as_deref(), Some("terminal-response"));
     assert_eq!(consumer.state, ConsumerState::Completed);
-    let produced = consumer.produced_at.as_ref().unwrap();
-    assert!(produced <= consumer.completed_at.as_ref().unwrap());
+    let produced = timestamp(consumer.produced_at.as_deref().unwrap());
+    assert!(produced <= timestamp(consumer.completed_at.as_deref().unwrap()));
     assert_eq!(consumer.deliveries.len(), 1);
     assert_eq!(consumer.deliveries[0].step, "answer");
     assert_eq!(consumer.deliveries[0].outcome, "confirmed");
@@ -118,7 +132,7 @@ async fn terminal_only_provider_answer_records_produced_before_completion_and_de
         consumer.deliveries[0].answer_response_id.as_deref(),
         Some("terminal-response")
     );
-    assert!(produced <= consumer.deliveries[0].confirmed_at.as_ref().unwrap());
+    assert!(produced <= timestamp(consumer.deliveries[0].confirmed_at.as_deref().unwrap()));
     let changes = lifecycle.changes.lock().unwrap();
     let produced_index = changes
         .iter()
@@ -305,7 +319,7 @@ async fn lost_produced_checkpoint_never_retries_the_answer() {
         discard_produced: true,
         ..Default::default()
     });
-    let mut app = terminal_answer(lifecycle.clone(), "terminal-response").await;
+    let mut app = terminal_answer(lifecycle.clone(), "terminal-response", vec![]).await;
     app.outcome(completed("terminal answer")).await;
     app.drain().await;
     assert_eq!(app.fake.texts(), ["terminal answer"]);
@@ -326,7 +340,7 @@ async fn conflicting_provider_identity_does_not_bind_a_confirmed_answer() {
         discard_produced: true,
         ..Default::default()
     });
-    let mut app = terminal_answer(lifecycle.clone(), "different-response").await;
+    let mut app = terminal_answer(lifecycle.clone(), "different-response", vec![]).await;
     app.drain().await;
     assert_eq!(app.fake.texts(), ["terminal answer"]);
     let row = lifecycle.row(&app);
@@ -334,4 +348,46 @@ async fn conflicting_provider_identity_does_not_bind_a_confirmed_answer() {
     assert_eq!(consumer.response_id.as_deref(), Some("terminal-response"));
     assert_eq!(consumer.deliveries[0].outcome, "confirmed");
     assert!(consumer.deliveries[0].answer_response_id.is_none());
+}
+
+#[tokio::test]
+async fn conflicting_wire_output_ids_withhold_answer_proof_without_changing_the_send() {
+    for (frame, expected) in [
+        (
+            json!({"type":"response.output_text.done","item_id":"answer-item","response_id":"terminal-response","text":"terminal answer"}),
+            Some("terminal-response"),
+        ),
+        (
+            json!({"type":"response.output_text.done","item_id":"answer-item","response_id":"different-response","text":"terminal answer"}),
+            None,
+        ),
+        (
+            json!({"type":"response.output_item.done","output_index":0,"response":{"id":"different-response"},"item":{"type":"message","id":"answer-item","content":[{"type":"output_text","text":"terminal answer"}]}}),
+            None,
+        ),
+        (
+            json!({"type":"response.output_text.delta","item_id":"answer-item","response_id":"different-response","delta":"terminal answer"}),
+            None,
+        ),
+    ] {
+        let lifecycle = Arc::new(Lifecycle {
+            discard_produced: true,
+            ..Default::default()
+        });
+        let mut app =
+            terminal_answer(lifecycle.clone(), "terminal-response", vec![frame.clone()]).await;
+        app.drain().await;
+        assert_eq!(app.fake.texts(), ["terminal answer"], "{}", frame["type"]);
+        let row = lifecycle.row(&app);
+        let consumer = &row.consumers[0];
+        assert!(consumer.produced_at.is_none());
+        assert_eq!(consumer.deliveries.len(), 1);
+        assert_eq!(consumer.deliveries[0].outcome, "confirmed");
+        assert_eq!(
+            consumer.deliveries[0].answer_response_id.as_deref(),
+            expected,
+            "{}",
+            frame["type"]
+        );
+    }
 }

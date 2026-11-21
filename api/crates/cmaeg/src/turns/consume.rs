@@ -41,20 +41,10 @@ pub(super) async fn consume(
                 accepted_response = Some(accepted.response_id.clone());
                 send(delivery,&turn,TurnOutcome::Accepted {response_id:accepted.response_id,thread_reply:accepted.thread_reply}, None).await?;
             }
-            event = stream.events.recv() => {
-                let Some(event) = event else {return Err("stream_lost");};
+            observed = stream.events.recv_observed() => {
+                let Some(observed) = observed else {return Err("stream_lost");};
                 adopt_trace(&stream, &turn, &mut trace);
-                let reported_response = match &event {
-                    crate::providers::ResponsesEvent::Created { response_id, .. } => Some(response_id.as_str()),
-                    crate::providers::ResponsesEvent::Completed { response } => {
-                        response.get("id").or_else(|| response.get("response_id")).and_then(serde_json::Value::as_str)
-                    }
-                    _ => None,
-                };
-                if reported_response.zip(accepted_response.as_deref()).is_some_and(|(reported, accepted)| reported != accepted) {
-                    tracing::warn!("provider stream reported conflicting response identity");
-                    accepted_response = None;
-                }
+                let event = observed.event;
                 if let crate::providers::ResponsesEvent::Created {
                     response_id, native_agent_id: Some(agent_id), ..
                 } = &event {
@@ -72,9 +62,12 @@ pub(super) async fn consume(
                     if terminal && acceptance_pending {
                         refuse(admitted,ProblemCode::ProviderUnavailable,"provider stream ended before acceptance");
                     }
-                    let answer_response_id = match &outcome {
-                        TurnOutcome::MessageCommitted { .. } | TurnOutcome::Completed { .. } => accepted_response.clone(),
-                        _ => None,
+                    let answer_response_id = if observed.bound_to_accepted
+                        && matches!(outcome, TurnOutcome::MessageCommitted { .. } | TurnOutcome::Completed { .. })
+                    {
+                        accepted_response.clone()
+                    } else {
+                        None
                     };
                     send(delivery,&turn,outcome, answer_response_id).await?;
                     if terminal {
