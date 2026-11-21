@@ -123,11 +123,17 @@ def cli_cause(text):
     return TransientError() if cli_message(text) == TRANSIENT else None
 
 
+# Header numbers are plain ASCII seconds; int() would accept other scripts' digits.
+DIGITS = re.compile(r"[0-9]{1,10}")
+# An opted-in read waits at most this long for one throttled response.
+RETRY_AFTER_CAP = 60.0
+
+
 def retry_after(headers, now=None):
     """Seconds a throttled response asked to wait: Retry-After, or an exhausted quota's reset."""
     value = header(headers, "retry-after")
     if value is not None:
-        if value.isdigit():
+        if DIGITS.fullmatch(value):
             return min(int(value), 86400)
         try:
             when = email.utils.parsedate_to_datetime(value).timestamp()
@@ -135,7 +141,7 @@ def retry_after(headers, now=None):
             return None
         return max(0.0, min(when - (time.time() if now is None else now), 86400))
     reset = header(headers, "x-ratelimit-reset")
-    if header(headers, "x-ratelimit-remaining") == "0" and reset is not None and reset.isdigit():
+    if header(headers, "x-ratelimit-remaining") == "0" and reset is not None and DIGITS.fullmatch(reset):
         return max(0.0, min(int(reset) - (time.time() if now is None else now), 86400))
     return None
 
@@ -250,7 +256,7 @@ def call(op, *, name, classify, attempts=3, base=1.0, cap=20.0, deadline=None,
     `deadline` is an absolute `clock()` value. A wait that would reach it is
     never started; the last error is raised instead. Permanent failures and the
     final attempt's failure propagate unchanged. With `honour_retry_after`, a
-    wait is at least what a throttled response asked for.
+    wait is at least what a throttled response asked for, up to RETRY_AFTER_CAP.
     """
     if not NAME.fullmatch(name if isinstance(name, str) else ""):
         raise ValueError("Retry operation name must be a fixed lowercase literal")
@@ -265,7 +271,7 @@ def call(op, *, name, classify, attempts=3, base=1.0, cap=20.0, deadline=None,
                 raise
             wait = backoff(attempt, base, cap, rand)
             if honour_retry_after:
-                wait = max(wait, requested_wait(error) or 0)
+                wait = max(wait, min(requested_wait(error) or 0, RETRY_AFTER_CAP))
             if deadline is not None and clock() + wait >= deadline:
                 raise
             attempt += 1

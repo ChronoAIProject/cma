@@ -12,9 +12,6 @@ else:
     from uncertainty import REASONS
 
 SCHEMA = 'cma-selection-cache-v3'
-# The staging planner's last proven window record shares this trusted cache.
-# Retention keeps it; its reader validates it and never trusts it blindly.
-PLAN_RECORD = 'plan-window.json'
 FIELDS = {'base', 'head', 'repo', 'am', 'eg', 'web', 'reasons', 'affected', 'am_packages',
           'eg_packages', 'test_tracks', 'deployables', 'changed_path_count'}
 IMAGES = frozenset(CURRENT)
@@ -187,10 +184,9 @@ class SelectionCache:
         # Keep only the current bounded reconciliation. Unexpected restored
         # paths are rejected rather than followed or republished.
         for path in self.directory.iterdir():
-            if path.is_symlink() or not path.is_file() or not (
-                    path.name == PLAN_RECORD or re.fullmatch(r'(?:inputs-)?[0-9a-f]{40}\.json', path.name)):
+            if path.is_symlink() or not path.is_file() or not re.fullmatch(r'(?:inputs-)?[0-9a-f]{40}\.json', path.name):
                 raise ValueError('invalid selection cache entry')
-            if path.name not in allowed and path.name != PLAN_RECORD:
+            if path.name not in allowed:
                 path.unlink()
 
 

@@ -74,18 +74,6 @@ class SelectionCacheTests(unittest.TestCase):
         self.assertEqual(target.read_text(), 'unchanged')
         self.assertFalse(path.is_symlink())
 
-    def test_retention_keeps_the_plan_window_record_but_never_a_link(self):
-        record = self.cache.directory / 'plan-window.json'
-        record.write_text('{}')
-        self.cache.retain([])
-        self.assertEqual(record.read_text(), '{}')
-        record.unlink()
-        target = self.root / 'target'
-        target.write_text('outside')
-        record.symlink_to(target)
-        with self.assertRaises(ValueError):
-            self.cache.retain([])
-
     def test_unexpected_entries_cannot_be_reexported(self):
         (self.cache.directory / 'unexpected').write_text('fixture')
         with self.assertRaises(ValueError):
