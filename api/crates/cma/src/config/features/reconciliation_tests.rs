@@ -1,15 +1,15 @@
 use super::*;
 
 #[test]
-fn ownership_cleanup_pacing_is_independent_strict_and_default_off() {
+fn ownership_cleanup_pacing_is_independent_strict_and_default_on() {
     const KEY: &str = "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED";
-    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+    for (value, expected) in [(None, true), (Some("false"), false), (Some("true"), true)] {
         let flags = FeatureFlags::from_lookup(&mut |key| {
             Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
         })
         .unwrap();
         assert_eq!(flags.ownership_cleanup_pacing, expected);
-        assert!(!flags.command_reconcile_pacing);
+        assert!(flags.command_reconcile_pacing);
         assert!(!flags.work_retry_policy_enabled);
     }
     for value in ["", "1", "TRUE", " true ", "false "] {
@@ -35,7 +35,7 @@ fn sandbox_reserved_lane_is_strict_independent_and_default_off() {
         .unwrap();
         assert_eq!(flags.sandbox_reconciliation_reserved_lane, expected);
         assert!(!flags.event_driven_reconciliation);
-        assert!(!flags.command_reconcile_pacing);
+        assert!(flags.command_reconcile_pacing);
     }
     for value in ["", "1", "TRUE", " true ", "false "] {
         assert!(FeatureFlags::from_lookup(&mut |key| {
@@ -78,9 +78,9 @@ fn event_driven_reconciliation_requires_an_explicit_boolean_opt_in() {
 }
 
 #[test]
-fn command_reconciliation_pacing_is_independent_strict_and_default_off() {
+fn command_reconciliation_pacing_is_independent_strict_and_default_on() {
     const KEY: &str = "CHRONO_COMMAND_RECONCILE_PACING_ENABLED";
-    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+    for (value, expected) in [(None, true), (Some("false"), false), (Some("true"), true)] {
         let flags = FeatureFlags::from_lookup(&mut |key| {
             Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
         })
@@ -114,7 +114,7 @@ fn agent_validation_reuse_is_strict_independent_and_default_off() {
         .unwrap();
         assert_eq!(flags.agent_connection_observations, expected);
         assert!(!flags.event_driven_reconciliation);
-        assert!(!flags.command_reconcile_pacing);
+        assert!(flags.command_reconcile_pacing);
     }
     for value in ["", "1", "TRUE", " true ", "false "] {
         assert!(
@@ -141,7 +141,7 @@ fn empty_discovery_is_strict_independent_and_default_off() {
         .unwrap();
         assert_eq!(flags.empty_discovery, expected);
         assert!(!flags.agent_connection_observations);
-        assert!(!flags.command_reconcile_pacing);
+        assert!(flags.command_reconcile_pacing);
     }
     for value in ["", "1", "TRUE", " true "] {
         assert!(

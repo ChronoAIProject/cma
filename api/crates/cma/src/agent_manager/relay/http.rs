@@ -25,8 +25,7 @@ pub(super) async fn route(
             next.run(request).await
         };
     };
-    // Durable admissions and reads need no local transport. Only paths that can
-    // invoke a synchronous Agent runtime effect take this one-hop route.
+    // Route operations whose publication or runtime effects require execution-owner authority.
     if !private && proof.is_none() && !needs_owner(request.uri().path(), request.method()) {
         return next.run(request).await;
     }
@@ -225,7 +224,8 @@ fn needs_owner(path: &str, method: &axum::http::Method) -> bool {
             | "attachments"
             | "files"
             | "browser"
-    ) || suffix.starts_with("files/")
+    ) || (method == axum::http::Method::PATCH && suffix == "preferences")
+        || suffix.starts_with("files/")
         || suffix == "browser/control"
 }
 
@@ -349,4 +349,37 @@ pub(super) fn retain(response: Response, permit: capacity::Permit) -> Response {
         },
     );
     Response::from_parts(parts, Body::new(http_body_util::StreamBody::new(stream)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn preferences_owner_route_is_exact_and_patch_only() {
+        use axum::http::Method;
+        for method in [
+            Method::GET,
+            Method::HEAD,
+            Method::POST,
+            Method::PUT,
+            Method::DELETE,
+            Method::OPTIONS,
+            Method::PATCH,
+        ] {
+            assert_eq!(
+                needs_owner("/api/v1/agents/agt-example/preferences", &method),
+                method == Method::PATCH
+            );
+        }
+        for path in [
+            "/api/v1/agents/agt-example/preferences/extra",
+            "/api/v1/agents/agt-example/settings",
+            "/api/v1/agents/agt-example/stop",
+            "/api/v1/agents/agt-example",
+            "/api/v1/sandboxes/sbx-example/preferences",
+        ] {
+            assert!(!needs_owner(path, &Method::PATCH), "{path}");
+        }
+    }
 }

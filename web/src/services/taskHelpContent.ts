@@ -51,6 +51,14 @@ export const TASK_GUIDES: Record<HelpTopic, TaskGuide> = {
           'A fresh capacity observation shows the used slots and limit. An unavailable observation does not confirm that there is space for a new Sandbox.',
       },
       {
+        title: 'Delete a task in a paused Sandbox',
+        state: 'A stopped or failed Agent can be deleted after its Sandbox returns to Active.',
+        action:
+          'From the task menu, choose Open Sandbox to resume. Choose Resume if the Sandbox offers it. After it becomes Active, return to the task and choose Delete.',
+        completion:
+          'Task deletion removes this Agent and its Worktree. The separate Delete action on the Sandbox removes the environment and all its Workspaces and Agents after its own confirmation.',
+      },
+      {
         title: 'Wait for environment deletion',
         state:
           'An environment marked Deleting still occupies a Sandbox slot. Stopping or deleting an Agent does not confirm that its containing Sandbox has been deleted.',

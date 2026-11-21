@@ -110,21 +110,18 @@ pub(super) fn connection_from_lookup(
     Ok(Some(connection))
 }
 
+/// A graduated gate: unset enables it and explicit `false` turns it off.
 fn claim_guard_from_lookup(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
 ) -> Result<bool, String> {
-    match lookup("CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED")?.as_deref() {
-        None | Some("false") => Ok(false),
-        Some("true") => Ok(true),
-        _ => Err("CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED must be true or false".into()),
-    }
+    super::features::flag(lookup, "CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED")
 }
 
 #[cfg(test)]
 mod claim_guard_tests {
     #[test]
-    fn default_off_and_strict_boolean() {
-        for (input, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+    fn default_on_with_explicit_off_switch_and_strict_boolean() {
+        for (input, expected) in [(None, true), (Some("false"), false), (Some("true"), true)] {
             assert_eq!(
                 super::claim_guard_from_lookup(&mut |_| Ok(input.map(str::to_owned))).unwrap(),
                 expected

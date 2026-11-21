@@ -122,9 +122,9 @@
         },
         "scan_refused": {
           "title": "Image scan refused",
-          "meaning": "The layer scan found content or packages that the image policy forbids; the findings stay in the job's retained evidence.",
-          "cause": "change",
-          "next": "Read the SCAN_EVIDENCE line and the retained package decisions of this job, remove the flagged file or package from the image, and push."
+          "meaning": "The layer scan found content or packages the image policy forbids. OS package layers can change without a source change when a build applies the latest upstream security updates.",
+          "cause": "unknown",
+          "next": "Read SCAN_EVIDENCE: findings in OS package layers need the image owner's reviewed classification of the new upstream content; remove findings this change added to the image, then push."
         },
         "registry_read_failed": {
           "title": "Registry read failed",
@@ -223,8 +223,8 @@
         "scan": {
           "title": "Scan image layers",
           "meaning": "scans every layer for secrets and checks packages against the image policy.",
-          "cause": "change",
-          "next": "Remove the flagged content from the image."
+          "cause": "unknown",
+          "next": "Read SCAN_EVIDENCE: get upstream OS package content reviewed by the image owner, or remove content this change added."
         },
         "runtime_smoke": {
           "title": "Runtime smoke test",

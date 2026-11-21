@@ -411,11 +411,15 @@ export function Tree({
                                                       )}
                                                     </>,
                                                   )}
-                                                  actions={agentActions(
-                                                    agent.status,
-                                                    permissions,
-                                                    runtimeAvailable,
-                                                  )}
+                                                  actions={agentActions(agent.status, permissions, {
+                                                    sandbox:
+                                                      agent.sandboxId === sandbox.id
+                                                        ? sandbox
+                                                        : undefined,
+                                                    viewerId,
+                                                    busy: sandboxBusy,
+                                                    stale: !!refreshError,
+                                                  })}
                                                   onNavigate={onNavigate}
                                                   onAction={(kind) =>
                                                     onAction({
