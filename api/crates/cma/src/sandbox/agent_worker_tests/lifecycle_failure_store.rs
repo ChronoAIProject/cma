@@ -6,6 +6,7 @@ use layer2_core::sandbox::{AgentLogEntry, Worktree};
 
 pub(in crate::sandbox::agent_worker_tests) struct Store {
     pub inner: Arc<InMemorySandboxStore>,
+    read_delays: Mutex<BTreeMap<(&'static str, usize), Duration>>,
     pub delayed_observations: Mutex<Vec<AgentId>>,
     pub failures: Mutex<BTreeMap<(&'static str, usize), SandboxStoreError>>,
     pub calls: Mutex<BTreeMap<&'static str, usize>>,
@@ -15,6 +16,7 @@ impl Store {
     pub fn new(inner: Arc<InMemorySandboxStore>) -> Arc<Self> {
         Arc::new(Self {
             inner,
+            read_delays: Mutex::default(),
             delayed_observations: Mutex::default(),
             failures: Mutex::default(),
             calls: Mutex::default(),
@@ -24,13 +26,27 @@ impl Store {
     pub fn fail(&self, method: &'static str, call: usize, error: SandboxStoreError) {
         self.failures.lock().unwrap().insert((method, call), error);
     }
-    fn observe(&self, method: &'static str) -> Result<(), SandboxStoreError> {
+    pub fn delay_read(&self, method: &'static str, call: usize, delay: Duration) {
+        self.read_delays
+            .lock()
+            .unwrap()
+            .insert((method, call), delay);
+    }
+    async fn observe_read(&self, method: &'static str) -> Result<(), SandboxStoreError> {
+        let call = self.observe(method)?;
+        let delay = self.read_delays.lock().unwrap().remove(&(method, call));
+        if let Some(delay) = delay {
+            tokio::time::sleep(delay).await;
+        }
+        Ok(())
+    }
+    fn observe(&self, method: &'static str) -> Result<usize, SandboxStoreError> {
         let mut calls = self.calls.lock().unwrap();
         let count = calls.entry(method).or_default();
         *count += 1;
         match self.failures.lock().unwrap().remove(&(method, *count)) {
             Some(error) => Err(error),
-            None => Ok(()),
+            None => Ok(*count),
         }
     }
 }
@@ -42,7 +58,7 @@ impl SandboxStore for Store {
         self.inner.create_sandbox(sandbox).await
     }
     async fn get_sandbox(&self, id: &SandboxId) -> Result<Option<Sandbox>, SandboxStoreError> {
-        self.observe("get_sandbox")?;
+        self.observe_read("get_sandbox").await?;
         self.inner.get_sandbox(id).await
     }
     async fn save_sandbox(
@@ -131,7 +147,7 @@ impl AgentStore for Store {
         self.inner.create_agent(agent).await
     }
     async fn get_agent(&self, id: &AgentId) -> Result<Option<Agent>, SandboxStoreError> {
-        self.observe("get_agent")?;
+        self.observe_read("get_agent").await?;
         if self.delayed_observations.lock().unwrap().contains(id) {
             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         }

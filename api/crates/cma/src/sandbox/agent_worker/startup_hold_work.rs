@@ -5,7 +5,7 @@ use layer2_core::sandbox::store::{StartupWorkFilter, MAX_PAGE_SIZE};
 use std::collections::BTreeSet;
 use tokio::time::Instant;
 
-const BINDING_REFRESH_TIMEOUT: Duration = Duration::from_millis(150);
+const BINDING_CHECK_TIMEOUT: Duration = Duration::from_millis(150);
 
 impl AgentWorker {
     pub(in crate::sandbox) fn next_startup_probe(&self) -> Option<Instant> {
@@ -43,8 +43,7 @@ impl AgentWorker {
         futures_util::future::join_all(holds.refresh_candidates(Instant::now()).into_iter().map(
             |check| async move {
                 let current =
-                    tokio::time::timeout(BINDING_REFRESH_TIMEOUT, store.get_sandbox(&check.id))
-                        .await;
+                    tokio::time::timeout(BINDING_CHECK_TIMEOUT, store.get_sandbox(&check.id)).await;
                 let binding = match current {
                     Ok(Ok(sandbox)) => sandbox.as_ref().and_then(Binding::current),
                     Ok(Err(_)) | Err(_) => {
@@ -96,10 +95,14 @@ impl AgentWorker {
         let Some(holds) = self.startup_holds.as_ref().filter(|holds| holds.pending()) else {
             return Admission::Proceed;
         };
-        let agent = match self.dependencies.store.get_agent(id).await {
-            Ok(Some(agent)) if StartupWorkFilter::can_hold(&agent) => agent,
-            Ok(_) => return Admission::Proceed,
-            Err(_) => {
+        // These reads only establish the advisory hold. Share one deadline
+        // and leave authority and claim validation to the ordinary path.
+        let deadline = Instant::now() + BINDING_CHECK_TIMEOUT;
+        let store = &self.dependencies.store;
+        let agent = match tokio::time::timeout_at(deadline, store.get_agent(id)).await {
+            Ok(Ok(Some(agent))) if StartupWorkFilter::can_hold(&agent) => agent,
+            Ok(Ok(_)) => return Admission::Proceed,
+            Ok(Err(_)) | Err(_) => {
                 tracing::debug!("Agent startup hold could not validate the current work step");
                 return Admission::Proceed;
             }
@@ -107,15 +110,16 @@ impl AgentWorker {
         if !holds.holds(&agent.sandbox_id) {
             return Admission::Proceed;
         }
-        let binding = match self.dependencies.store.get_sandbox(&agent.sandbox_id).await {
-            Ok(sandbox) => sandbox.as_ref().and_then(Binding::current),
-            Err(_) => {
-                tracing::debug!(
-                    "Agent startup hold could not validate the current runtime binding"
-                );
-                return Admission::Proceed;
-            }
-        };
+        let binding =
+            match tokio::time::timeout_at(deadline, store.get_sandbox(&agent.sandbox_id)).await {
+                Ok(Ok(sandbox)) => sandbox.as_ref().and_then(Binding::current),
+                Ok(Err(_)) | Err(_) => {
+                    tracing::debug!(
+                        "Agent startup hold could not validate the current runtime binding"
+                    );
+                    return Admission::Proceed;
+                }
+            };
         let decision = holds.admit(
             &agent.sandbox_id,
             id,

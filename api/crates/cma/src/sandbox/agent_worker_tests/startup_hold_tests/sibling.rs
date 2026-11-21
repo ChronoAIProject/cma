@@ -192,3 +192,73 @@ async fn startup_sibling_hold_never_filters_a_new_control_or_changes_the_disable
         Some(&1)
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn startup_sibling_hold_times_out_advisory_reads_before_acquisition_and_claim() {
+    let h = Harness::with_upgrade_support(Arc::new(EmptyAgentSkillResolver)).await;
+    let control = h.admit("timed-control", vec![]).await;
+    let sibling = h.admit("verified-closed", vec![]).await;
+    h.store
+        .schedule_agent_stop(AgentStopRequest {
+            target: AgentControlTarget::from(&control),
+            reason: AgentStopReason::Owner,
+            requested_at: rfc3339_at(h.now),
+        })
+        .await
+        .unwrap();
+    let store = fixture::Store::new(h.store.clone());
+    let (owners, owner) = coordinator().await;
+    let worker = runner(&h, store.clone(), Some(owner), true);
+    let _ = record_hold(&h, &worker, Instant::now() + ADAPTER_INTERVAL).await;
+    // Only the advisory reads are delayed. The claim and post-work read use
+    // the healthy store, and the held sibling can still be verified.
+    store.delay_read("get_agent", 1, Duration::from_secs(2));
+    store.delay_read("get_agent", 2, Duration::from_secs(2));
+    let started = Instant::now();
+    assert!(tokio::time::timeout(
+        Duration::from_millis(350),
+        worker.run_one(&control.id, h.now)
+    )
+    .await
+    .expect("both advisory reads must time out before the control loses its slot")
+    .unwrap());
+    assert!(started.elapsed() >= Duration::from_millis(300));
+    assert_ne!(
+        h.stored(&control.id).await.work.step,
+        AgentWorkStep::FenceInteraction
+    );
+    assert_eq!(
+        store.calls.lock().unwrap().get("claim_agent_work"),
+        Some(&1)
+    );
+    assert_eq!(store.calls.lock().unwrap().get("get_agent"), Some(&3));
+    owners.partition(true);
+    assert!(!worker.run_one(&sibling.id, h.now).await.unwrap());
+    assert_eq!(
+        store.calls.lock().unwrap().get("claim_agent_work"),
+        Some(&1)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn startup_sibling_hold_shares_one_deadline_across_agent_and_binding_reads() {
+    let h = Harness::with_upgrade_support(Arc::new(EmptyAgentSkillResolver)).await;
+    let agent = h.admit("shared-advisory-budget", vec![]).await;
+    let store = fixture::Store::new(h.store.clone());
+    let worker = runner(&h, store.clone(), None, true);
+    let _ = record_hold(&h, &worker, Instant::now() + ADAPTER_INTERVAL).await;
+    store.delay_read("get_agent", 1, Duration::from_millis(100));
+    store.delay_read("get_sandbox", 1, Duration::from_millis(100));
+    let started = Instant::now();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(180), worker.run_one(&agent.id, h.now))
+            .await
+            .expect("the first read must consume part of the binding check budget")
+            .unwrap()
+    );
+    assert!(started.elapsed() >= Duration::from_millis(150));
+    assert_eq!(
+        store.calls.lock().unwrap().get("claim_agent_work"),
+        Some(&1)
+    );
+}
