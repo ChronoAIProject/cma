@@ -7,7 +7,8 @@ from staging_cd_receipts import sha256
 REASONS = frozenset({
     "permit", "authentication", "authorization", "clock", "inventory", "compatibility",
     "image-version", "image-identity", "baseline", "readiness", "transport", "acceptance",
-    "schema", "fence", "interrupted", "preflight",
+    "schema", "fence", "configuration", "publication", "internal-error", "interrupted",
+    "preflight",
 })
 
 
@@ -18,6 +19,8 @@ VERIFICATION_REASONS = frozenset({
     "recovery-revision", "phase-budget", "image-identity", "served-identity", "status-shape",
     "pod-evidence", "cohort", "serving", "acceptance", "startup-observation", "startup-schema",
     "namespace-fence", "interrupted", "result", "unreported",
+    # The controller names every other failure with its coarse refusal cause.
+    *(REASONS - {"preflight"}),
 })
 
 
