@@ -10,7 +10,11 @@ use layer2_core::sandbox::store::{
 };
 use layer2_core::sandbox::{Sandbox, SandboxInterruptionCause, SandboxStatus, SandboxWorkStep};
 use layer2_core::{rfc3339_at, seconds_from_rfc3339};
-use layer3_adapter::{AdapterError, SandboxAdapter};
+use layer3_adapter::{AdapterError, RuntimeAdoptionRequest, RuntimeRetirement, SandboxAdapter};
+
+use crate::store::native_retirement_action::{
+    RetirementAction, RetirementPhase, RetirementRecords,
+};
 
 trait RetirementStore:
     SandboxStore + SandboxReconciliationStore + SandboxLifecycleExecutionStore
@@ -33,7 +37,8 @@ pub(crate) struct NativeRetirementFinalizer {
     adapter: Arc<dyn SandboxAdapter>,
     deployment: String,
     clock: Arc<dyn Fn() -> SystemTime + Send + Sync>,
-    failures: Arc<super::retirement_control::RetirementControlFailures>,
+    records: Arc<dyn RetirementRecords>,
+    admit: bool,
 }
 
 impl NativeRetirementFinalizer {
@@ -41,7 +46,8 @@ impl NativeRetirementFinalizer {
         store: Arc<S>,
         adapter: Arc<dyn SandboxAdapter>,
         deployment: String,
-        failures: Arc<super::retirement_control::RetirementControlFailures>,
+        records: Arc<dyn RetirementRecords>,
+        admit: bool,
     ) -> Self
     where
         S: SandboxStore + SandboxReconciliationStore + SandboxLifecycleExecutionStore + 'static,
@@ -50,7 +56,8 @@ impl NativeRetirementFinalizer {
             store,
             adapter,
             deployment,
-            failures,
+            records,
+            admit,
             clock: Arc::new(SystemTime::now),
         }
     }
@@ -75,14 +82,14 @@ impl NativeRetirementFinalizer {
         original: &Sandbox,
         holder: &str,
     ) -> Result<RetirementOutcome, SandboxStoreError> {
-        // Three ordinary retry opportunities let the asynchronous child workers
-        // execute FenceInteraction, CloseProcess and PublishStopped. Retry count
-        // permits an attempt only; it never proves physical absence.
-        if original.work.attempts < 3 {
-            return Ok(RetirementOutcome::GracefulPending);
-        }
         if !Self::applies(original) || !self.current(original, holder).await? {
             return Ok(RetirementOutcome::Superseded);
+        }
+        let mut action = self.records.action(&original.id).await?;
+        // Give the ordinary child workers three opportunities to close cleanly.
+        // Work already in custody continues after the admission switch is off.
+        if action.is_none() && (!self.admit || original.work.attempts < 3) {
+            return Ok(RetirementOutcome::GracefulPending);
         }
         let Some(provider) = self.adapter.runtime_retirement() else {
             return Ok(RetirementOutcome::ProviderPending(
@@ -111,104 +118,38 @@ impl NativeRetirementFinalizer {
                 ))
             }
         };
-        let children =
-            match super::live_agent_stopper::retirement_agents(self.store.as_ref(), original).await
-            {
-                Ok(children) => children,
-                Err(_) => {
-                    return Ok(RetirementOutcome::ProviderPending(
-                        "retirement child authority is incomplete",
-                    ))
-                }
-            };
-        // Only effects confined to this runtime/home are discharged by deletion.
-        // Unknown or future obligations retain their original evidence.
-        if children
-            .iter()
-            .any(|child| !layer2_core::sandbox::store::retirement_debt_is_local(child))
+        let present = match self.present(original, &request).await {
+            Ok(present) => present,
+            Err(reason) => return Ok(RetirementOutcome::ProviderPending(reason)),
+        };
+        if action
+            .as_ref()
+            .is_some_and(|existing| !existing.matches(original))
         {
             return Ok(RetirementOutcome::ProviderPending(
-                "retirement retains unresolved cleanup obligations",
+                "retirement custody identity changed",
             ));
         }
-        let present =
-            match tokio::time::timeout(Duration::from_secs(30), self.adapter.runtime_inventory())
-                .await
-            {
-                Ok(Ok(inventory)) => {
-                    if inventory.iter().any(|item| {
-                        item.sandbox_id == original.id.as_str() && item.handle != request.handle
-                    }) {
-                        return Ok(RetirementOutcome::ProviderPending(
-                            "retirement inventory contains a replacement",
-                        ));
-                    }
-                    inventory.iter().any(|item| item.handle == request.handle)
-                }
-                _ => {
-                    return Ok(RetirementOutcome::ProviderPending(
-                        "retirement inventory is unavailable",
-                    ))
-                }
-            };
-        // A reachable replacement process is an identity conflict. Unreachability
-        // only permits the provider path; it supplies no finality evidence.
-        let mut failed_inspection = false;
         if present {
-            let (inspection, failure) =
-                layer3_adapter::receiver_failure::observe(tokio::time::timeout(
-                    Duration::from_secs(5),
-                    self.adapter.inspect_runtime(&request),
-                ))
-                .await;
-            failed_inspection = failure.is_some();
-            match inspection {
-                Ok(Ok(Some(inspected))) => {
-                    if inspected.observation.handle != request.handle
-                        || inspected.observation.sandbox_id != original.id.as_str()
-                        || inspected.observation.generation != request.generation
-                        || inspected.status.as_ref().is_some_and(|status| {
-                            original.runtime_process_matches(status) != Ok(true)
-                        })
-                    {
-                        return Ok(RetirementOutcome::ProviderPending(
-                            "retirement runtime identity changed",
-                        ));
-                    }
-                }
-                Ok(Ok(None) | Err(AdapterError::Unavailable(_))) | Err(_) => {}
-                Ok(Err(_)) if failed_inspection => {}
-                Ok(Err(_)) => {
-                    return Ok(RetirementOutcome::ProviderPending(
-                        "retirement runtime inspection was refused",
-                    ))
-                }
+            if !self.runtime_identity_unchanged(original, &request).await {
+                return Ok(RetirementOutcome::ProviderPending(
+                    "retirement runtime identity changed or was refused",
+                ));
+            }
+            if action.is_none() {
+                action = self.admit_action(original, provider, &request).await?;
+            }
+            let Some(current) = action.as_mut() else {
+                return Ok(RetirementOutcome::GracefulPending);
+            };
+            if let Some(outcome) = self
+                .dispatch(original, holder, provider, &request, current)
+                .await?
+            {
+                return Ok(outcome);
             }
         }
-        // An already absent original can be proved after a crash/restart without
-        // a receiver. A present runtime requires a fresh actual control failure.
-        if present && !failed_inspection && !self.failures.failed_now(original).await {
-            return Ok(RetirementOutcome::GracefulPending);
-        }
-        if !self.current(original, holder).await? {
-            return Ok(RetirementOutcome::Superseded);
-        }
-        if present
-            && !matches!(
-                tokio::time::timeout(
-                    Duration::from_secs(180),
-                    provider.retire_unreachable(&request)
-                )
-                .await,
-                Ok(Ok(()))
-            )
-        {
-            return Ok(RetirementOutcome::ProviderPending(
-                "native retirement deletion remains unconfirmed",
-            ));
-        }
-        // This boundary precedes all final reads, after the deletion attempt.
-        // It is never advanced to hide a concurrent parent/child publication.
+        // The freshness boundary precedes the complete absence proof.
         let observed_at = (self.clock)();
         if !matches!(
             tokio::time::timeout(Duration::from_secs(150), provider.verify_retired(&request)).await,
@@ -233,18 +174,19 @@ impl NativeRetirementFinalizer {
         if !self.current(original, holder).await? {
             return Ok(RetirementOutcome::Superseded);
         }
-        let outcome = self
-            .store
-            .recover_runtime_loss(SandboxRuntimeLossRequest {
-                sandbox_id: original.id.clone(),
-                expected_revision: original.revision,
-                expected_runtime: original.runtime.clone(),
-                retain_runtime: false,
-                native_retirement_finality: true,
-                interruption_cause: SandboxInterruptionCause::RuntimeUnavailable,
-                observed_at: rfc3339_at(observed_at),
-            })
-            .await?;
+        let settlement = SandboxRuntimeLossRequest {
+            sandbox_id: original.id.clone(),
+            expected_revision: original.revision,
+            expected_runtime: original.runtime.clone(),
+            retain_runtime: false,
+            native_retirement_finality: true,
+            interruption_cause: SandboxInterruptionCause::RuntimeUnavailable,
+            observed_at: rfc3339_at(observed_at),
+        };
+        let outcome = match action {
+            Some(action) => self.records.settle(settlement, &action).await?,
+            None => self.store.recover_runtime_loss(settlement).await?,
+        };
         Ok(match outcome {
             SandboxRuntimeLossOutcome::RecoveryScheduled => RetirementOutcome::Settled,
             SandboxRuntimeLossOutcome::Superseded => RetirementOutcome::Superseded,
@@ -253,6 +195,139 @@ impl NativeRetirementFinalizer {
             }
             SandboxRuntimeLossOutcome::Failed => return Err(SandboxStoreError::Conflict),
         })
+    }
+
+    pub(crate) async fn holds_custody(&self, sandbox: &Sandbox) -> Result<bool, SandboxStoreError> {
+        Ok(Self::applies(sandbox) && self.records.action(&sandbox.id).await?.is_some())
+    }
+
+    pub(crate) fn admission_enabled(&self) -> bool {
+        self.admit
+    }
+
+    async fn runtime_identity_unchanged(
+        &self,
+        sandbox: &Sandbox,
+        request: &RuntimeAdoptionRequest,
+    ) -> bool {
+        let (inspection, unavailable) =
+            layer3_adapter::receiver_failure::observe(tokio::time::timeout(
+                Duration::from_secs(5),
+                self.adapter.inspect_runtime(request),
+            ))
+            .await;
+        // A readable status must still identify the persisted process. Missing
+        // status supplies no authority. The exact ownership probe is required.
+        match inspection {
+            Ok(Ok(Some(inspected))) => {
+                inspected.observation.handle == request.handle
+                    && inspected.observation.sandbox_id == sandbox.id.as_str()
+                    && inspected.observation.generation == request.generation
+                    && inspected
+                        .status
+                        .as_ref()
+                        .is_none_or(|status| sandbox.runtime_process_matches(status) == Ok(true))
+            }
+            Ok(Ok(None) | Err(AdapterError::Unavailable(_))) | Err(_) => true,
+            Ok(Err(_)) => unavailable.is_some(),
+        }
+    }
+
+    async fn present(
+        &self,
+        sandbox: &Sandbox,
+        request: &RuntimeAdoptionRequest,
+    ) -> Result<bool, &'static str> {
+        let inventory =
+            match tokio::time::timeout(Duration::from_secs(30), self.adapter.runtime_inventory())
+                .await
+            {
+                Ok(Ok(inventory)) => inventory,
+                _ => return Err("retirement inventory is unavailable"),
+            };
+        if inventory.iter().any(|item| {
+            (item.sandbox_id == sandbox.id.as_str() || item.handle == request.handle)
+                && (item.sandbox_id != sandbox.id.as_str()
+                    || item.handle != request.handle
+                    || item.generation != request.generation)
+        }) {
+            return Err("retirement inventory contains changed authority");
+        }
+        Ok(inventory.iter().any(|item| item.handle == request.handle))
+    }
+
+    async fn admit_action(
+        &self,
+        sandbox: &Sandbox,
+        provider: &dyn RuntimeRetirement,
+        request: &RuntimeAdoptionRequest,
+    ) -> Result<Option<RetirementAction>, SandboxStoreError> {
+        let Some((observation, fences)) = self
+            .records
+            .observation(&sandbox.id)
+            .await?
+            .filter(|(observation, _)| observation.matches(sandbox))
+        else {
+            return Ok(None);
+        };
+        let children = super::live_agent_stopper::retirement_agents(self.store.as_ref(), sandbox)
+            .await
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        let action = RetirementAction::new(sandbox, observation, &children, fences)?;
+        if probe(provider, request, &action).await != Some(true) {
+            return Ok(None);
+        }
+        self.records.admit(sandbox, &action).await?;
+        Ok(Some(action))
+    }
+
+    async fn dispatch(
+        &self,
+        parent: &Sandbox,
+        holder: &str,
+        provider: &dyn RuntimeRetirement,
+        request: &RuntimeAdoptionRequest,
+        action: &mut RetirementAction,
+    ) -> Result<Option<RetirementOutcome>, SandboxStoreError> {
+        match probe(provider, request, action).await {
+            Some(true) => {}
+            Some(false) if action.phase == RetirementPhase::Admitted => {
+                self.records.transition(parent, action, None).await?;
+                return Ok(Some(RetirementOutcome::GracefulPending));
+            }
+            _ => {
+                return Ok(Some(RetirementOutcome::ProviderPending(
+                    "retirement receiver proof is unavailable",
+                )))
+            }
+        }
+        if action.phase == RetirementPhase::Admitted {
+            let mut dispatched = action.clone();
+            dispatched.phase = RetirementPhase::Dispatched;
+            self.records
+                .transition(parent, action, Some(&dispatched))
+                .await?;
+            *action = dispatched;
+        }
+        if !self.current(parent, holder).await? {
+            return Ok(Some(RetirementOutcome::Superseded));
+        }
+        if self.records.action(&parent.id).await?.as_ref() != Some(action) {
+            return Err(SandboxStoreError::Conflict);
+        }
+        if !matches!(
+            tokio::time::timeout(
+                Duration::from_secs(180),
+                provider.retire_unreachable(request, &action.observation.receiver.pod),
+            )
+            .await,
+            Ok(Ok(())),
+        ) {
+            return Ok(Some(RetirementOutcome::ProviderPending(
+                "native retirement deletion remains unconfirmed",
+            )));
+        }
+        Ok(None)
     }
 
     async fn current(&self, original: &Sandbox, holder: &str) -> Result<bool, SandboxStoreError> {
@@ -275,4 +350,18 @@ impl NativeRetirementFinalizer {
                 if a.holder == holder && a.holder == b.holder && a.fence == b.fence
                     && seconds_from_rfc3339(&a.expires_at).is_some_and(|expires| expires > now)))
     }
+}
+
+async fn probe(
+    provider: &dyn RuntimeRetirement,
+    request: &RuntimeAdoptionRequest,
+    action: &RetirementAction,
+) -> Option<bool> {
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        provider.challenge_retirement_receiver(request, &action.observation.receiver),
+    )
+    .await
+    .ok()?
+    .ok()
 }

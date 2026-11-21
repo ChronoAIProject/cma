@@ -141,6 +141,13 @@ async fn apply_publication_observed(
         None
     };
     let session = scope.release();
+    if super::native_retirement_action::adds_obligation(&current, &mutation.agent)
+        && !super::native_retirement_action::fence_obligation(store, &current.sandbox_id, session)
+            .await
+            .map_err(ApplyError::Driver)?
+    {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
     store
         .fence_agent_effect(&mutation.agent.id, session)
         .await

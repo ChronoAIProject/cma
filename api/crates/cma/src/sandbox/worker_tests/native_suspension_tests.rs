@@ -33,6 +33,12 @@ impl Fixture {
         let harness = Harness::new(vec![], 0, Duration::from_secs(60)).await;
         let homes = home_tests::Homes::new(&harness);
         let backend = NativeBackend::new(harness.backend.clone());
+        backend
+            .retirement_records
+            .store
+            .set(harness.store.clone())
+            .ok()
+            .unwrap();
         Self {
             harness,
             homes,
@@ -87,7 +93,8 @@ impl Fixture {
                 self.harness.store.clone(),
                 adapter.clone(),
                 "test".into(),
-                self.backend.retirement_failures.clone(),
+                self.backend.retirement_records.clone(),
+                true,
             )
             .with_clock(Arc::new(move || now + Duration::from_secs(1))),
         ));

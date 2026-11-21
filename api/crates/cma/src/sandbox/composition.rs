@@ -196,9 +196,6 @@ impl SandboxLifecycleComposition {
             .with_execution(config.execution)
             .with_replicas(config.renewable_work),
         );
-        let retirement_failures = config
-            .native_retirement_finality_enabled
-            .then(|| Arc::new(super::retirement_control::RetirementControlFailures::default()));
         let mut agent_config = AgentWorkerConfig::new(
             format!("{}:agent", config.holder),
             config.deployment_id.clone(),
@@ -213,7 +210,9 @@ impl SandboxLifecycleComposition {
         .with_work_retry_policy(config.work_retry_policy_enabled)
         .with_managed_documents(config.managed_documents_enabled)
         .with_access_transport_migration(config.access_transport_migration);
-        agent_config.retirement_failures = retirement_failures.clone();
+        if config.native_retirement_finality_enabled {
+            agent_config.retirement_reporter = Some(dependencies.store.clone());
+        }
         let agent_worker = AgentWorker::new(
             AgentWorkerDependencies {
                 store: dependencies.store.clone(),
@@ -226,16 +225,15 @@ impl SandboxLifecycleComposition {
             agent_config,
         );
         let funding_renewal = FundingRenewalWorker::new(Arc::clone(&dependencies.funding));
-        let retirement_finalizer = retirement_failures.map(|failures| {
-            Arc::new(
-                super::native_retirement_finalizer::NativeRetirementFinalizer::new(
-                    dependencies.store.clone(),
-                    dependencies.adapter.clone(),
-                    config.deployment_id.clone(),
-                    failures,
-                ),
-            )
-        });
+        let retirement_finalizer = Arc::new(
+            super::native_retirement_finalizer::NativeRetirementFinalizer::new(
+                dependencies.store.clone(),
+                dependencies.adapter.clone(),
+                config.deployment_id.clone(),
+                dependencies.store.clone(),
+                config.native_retirement_finality_enabled,
+            ),
+        );
         let mut sandbox_config = SandboxWorkerConfig::with_policy_source(
             format!("{}:sandbox", config.holder),
             config.deployment_id,
@@ -247,7 +245,7 @@ impl SandboxLifecycleComposition {
         .with_work_retry_policy(config.work_retry_policy_enabled)
         .with_native_create_retry(config.native_create_retry_enabled)
         .with_home_policy(config.home_policy);
-        sandbox_config.retirement_finalizer = retirement_finalizer;
+        sandbox_config.retirement_finalizer = Some(retirement_finalizer);
         let sandbox_worker = SandboxWorker::new_with_funding(
             SandboxWorkerDependencies {
                 store: dependencies.store.clone(),

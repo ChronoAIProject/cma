@@ -127,7 +127,8 @@ async fn retirement_finality_child_write_invalidates_transaction_snapshot() {
             .save_agent(children[1].revision, child.clone())
             .await
             .unwrap();
-        let attempted = transaction::apply_scoped(&store, &finality_loss(&sandbox), scope).await;
+        let attempted =
+            transaction::apply_scoped(&store, &finality_loss(&sandbox), None, scope).await;
         assert!(matches!(attempted, Err(ApplyError::Driver(error)) if is_transient(&error)));
         session.abort_transaction().await.unwrap();
         assert_eq!(

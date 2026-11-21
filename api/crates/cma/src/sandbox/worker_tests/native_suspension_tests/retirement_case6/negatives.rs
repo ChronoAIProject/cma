@@ -10,8 +10,7 @@ pub(super) async fn retirement_case6_negative_boundaries_retain_debt() {
     ] {
         let (f, active, children, mut now) = active_siblings().await;
         let owners = Owners::new().await;
-        let receiver = Receiver::new().await;
-        *f.backend.close_transport.lock().unwrap() = Some(receiver.transport.clone());
+        let receiver = Receiver::new(&f, &active).await;
         admit(&f, &active).await;
         let clock = Arc::new(Mutex::new(now));
         let worker = finalizing_parent_worker(&f, clock.clone());

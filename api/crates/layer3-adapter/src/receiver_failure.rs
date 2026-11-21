@@ -1,14 +1,13 @@
 //! Scoped observations from actual failed receiver negotiations. Never an ACK.
-use std::{
-    future::Future,
-    sync::{Arc, Mutex},
-};
+use std::{future::Future, sync::Mutex};
 
-/// Only the transport can construct a retry of an observed receiver failure.
-/// It repeats the challenge, without confirmation, acquisition or lease renewal.
-#[async_trait::async_trait]
-pub trait ReceiverFailureProbe: Send + Sync {
-    async fn still_unavailable(&self) -> bool;
+/// Reconstructs a challenge without retaining an endpoint or secret.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetirementReceiver {
+    pub runtime: crate::RuntimeHandle,
+    pub pod: crate::RetirementPod,
+    pub owner: crate::owner_protocol::TransportOwner,
 }
 
 tokio::task_local! {
@@ -26,20 +25,20 @@ pub async fn observe<T>(future: impl Future<Output = T>) -> (T, Option<ObservedF
         .await
 }
 
-pub(crate) fn record(probe: impl FnOnce() -> Arc<dyn ReceiverFailureProbe>) {
+pub(crate) fn record(receiver: impl FnOnce() -> Option<RetirementReceiver>) {
     let _ = OBSERVATION.try_with(|slot| {
         *slot.lock().expect("receiver observation") = Some(ObservedFailure {
-            receiver: Some(probe()),
+            receiver: receiver(),
         })
     });
 }
 
 /// A typed failure of the attempted control exchange; it never proves absence.
 pub struct ObservedFailure {
-    receiver: Option<Arc<dyn ReceiverFailureProbe>>,
+    receiver: Option<RetirementReceiver>,
 }
 impl ObservedFailure {
-    pub fn into_receiver(self) -> Option<Arc<dyn ReceiverFailureProbe>> {
+    pub fn into_receiver(self) -> Option<RetirementReceiver> {
         self.receiver
     }
 }

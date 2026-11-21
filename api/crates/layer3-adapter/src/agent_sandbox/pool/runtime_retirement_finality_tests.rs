@@ -41,12 +41,12 @@ async fn verified_retirement_retries_lost_deletion_without_reconstructing_a_rece
                     .lose
                     .push(format!("DELETE {MEMBER}"));
                 assert!(client(&fixture, false)
-                    .retire_verified(&handle, &request, &home)
+                    .retire_verified(&handle, &request, &home, None)
                     .await
                     .is_err());
             }
             client(&fixture, false)
-                .retire_verified(&handle, &request, &home)
+                .retire_verified(&handle, &request, &home, None)
                 .await
                 .unwrap();
             client(&fixture, false)
@@ -55,7 +55,7 @@ async fn verified_retirement_retries_lost_deletion_without_reconstructing_a_rece
                 .unwrap();
             // Restart after deletion, before aggregate settlement: exact proof is repeatable.
             client(&fixture, false)
-                .retire_verified(&handle, &request, &home)
+                .retire_verified(&handle, &request, &home, None)
                 .await
                 .unwrap();
             client(&fixture, false)
@@ -112,7 +112,7 @@ async fn verified_retirement_refuses_changed_authority_without_provider_writes()
             }
             assert!(
                 client(&fixture, false)
-                    .retire_verified(&handle, &request, &home)
+                    .retire_verified(&handle, &request, &home, None)
                     .await
                     .is_err(),
                 "{native}/{change}"
@@ -136,7 +136,7 @@ async fn fresh_finality_waits_for_owned_pods_and_cancellation_never_writes() {
     let (fixture, home, request, handle) = bound(true).await;
     let runtime = client(&fixture, false);
     runtime
-        .retire_verified(&handle, &request, &home)
+        .retire_verified(&handle, &request, &home, None)
         .await
         .unwrap();
     let path = "/api/v1/namespaces/cma-test/pods/retiring-original";
@@ -178,7 +178,7 @@ async fn finality_rejects_replacements_and_incomplete_observations() {
         let original_claim = fixture.state.lock().unwrap().rows[&claim_path].clone();
         let runtime = client(&fixture, false);
         runtime
-            .retire_verified(&handle, &request, &home)
+            .retire_verified(&handle, &request, &home, None)
             .await
             .unwrap();
         {

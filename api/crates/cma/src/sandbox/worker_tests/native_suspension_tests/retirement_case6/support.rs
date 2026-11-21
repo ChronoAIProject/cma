@@ -78,7 +78,8 @@ pub(super) fn finalizing_parent_worker(
         f.harness.store.clone(),
         f.harness.adapter.clone(),
         "test".into(),
-        f.backend.retirement_failures.clone(),
+        f.backend.retirement_records.clone(),
+        true,
     )
     .with_clock(Arc::new(move || *clock.lock().unwrap()));
     parent_worker_inner(f, Some(Arc::new(service)))
@@ -127,7 +128,6 @@ pub(super) fn child_worker(
 ) -> Arc<AgentWorker> {
     let mut config = AgentWorkerConfig::new(name, "test").with_ownership(owner);
     config.retry_delay = Duration::from_secs(5);
-    config.retirement_failures = Some(f.backend.retirement_failures.clone());
     AgentWorker::new(
         AgentWorkerDependencies {
             store: f.harness.store.clone(),
@@ -239,17 +239,23 @@ impl Owners {
     }
 }
 pub(super) struct Receiver {
-    pub transport: Arc<layer3_adapter::hosted::ProviderHostedControlTransport>,
     pub calls: Arc<AtomicUsize>,
+    pub recover_after: Arc<AtomicUsize>,
     pub server: tokio::task::JoinHandle<()>,
 }
 impl Receiver {
-    pub async fn new() -> Self {
+    pub async fn new(f: &Fixture, parent: &Sandbox) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = format!("http://{}", listener.local_addr().unwrap());
         let endpoint = address.clone();
+        let records = f.backend.retirement_records.clone();
+        let owner = parent.owner.clone();
+        let binding = parent.runtime.clone().unwrap();
+        *f.backend.retirement_receiver_url.lock().unwrap() = Some(address.clone());
         let calls = Arc::new(AtomicUsize::new(0));
         let counter = calls.clone();
+        let recover_after = Arc::new(AtomicUsize::new(usize::MAX));
+        let recovery = recover_after.clone();
         let router = axum::Router::new()
             .route(
                 "/v1/sandboxes/{runtime}/endpoints/{port}",
@@ -260,10 +266,46 @@ impl Receiver {
             )
             .route(
                 "/runtime/agents/{agent}/manager-ownership/{action}",
-                axum::routing::post(move || {
-                    counter.fetch_add(1, Ordering::SeqCst);
-                    async { axum::http::StatusCode::NOT_FOUND }
-                }),
+                axum::routing::post(
+                    move |axum::extract::Path((agent, action)): axum::extract::Path<(
+                        String,
+                        String,
+                    )>,
+                          headers: axum::http::HeaderMap,
+                          axum::Json(transport_owner): axum::Json<
+                        layer3_adapter::owner_protocol::TransportOwner,
+                    >| {
+                        assert_eq!(action, "challenge");
+                        assert_eq!(transport_owner.agent_id, agent);
+                        assert_eq!(headers["open-sandbox-api-key"], "local-fixture-only");
+                        transport_owner.validate().unwrap();
+                        let sequence = counter.fetch_add(1, Ordering::SeqCst);
+                        *records.observation.lock().unwrap() = Some(
+                            crate::store::native_retirement_action::RetirementObservation {
+                                owner: owner.clone(),
+                                binding: binding.clone(),
+                                receiver: layer3_adapter::receiver_failure::RetirementReceiver {
+                                    runtime: RuntimeHandle::new(&binding.runtime_id),
+                                    pod: super::records::pod(),
+                                    owner: transport_owner,
+                                },
+                            },
+                        );
+                        let healthy = sequence >= recovery.load(Ordering::SeqCst);
+                        async move {
+                            use axum::response::IntoResponse;
+                            if healthy {
+                                axum::Json(json!({
+                                "protocol": PROTOCOL_VERSION,
+                                "nonce": uuid::Uuid::new_v4(),
+                                "valid_for_ms": layer3_adapter::owner_protocol::RECEIVER_LEASE_MS,
+                            })).into_response()
+                            } else {
+                                axum::http::StatusCode::NOT_FOUND.into_response()
+                            }
+                        }
+                    },
+                ),
             );
         let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         let transport = Arc::new(
@@ -272,9 +314,10 @@ impl Receiver {
             )
             .unwrap(),
         );
+        *f.backend.close_transport.lock().unwrap() = Some(transport);
         Self {
-            transport,
             calls,
+            recover_after,
             server,
         }
     }

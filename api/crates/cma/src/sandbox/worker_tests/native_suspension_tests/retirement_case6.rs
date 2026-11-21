@@ -8,6 +8,7 @@ use layer2_core::sandbox::{Agent, AgentWorkReceipt, AgentWorkStep};
 use serde_json::json;
 mod faults;
 mod negatives;
+pub(super) mod records;
 mod support;
 use support::*;
 
@@ -20,6 +21,8 @@ pub(crate) async fn exercise_native_retirement_finality() {
     faults::retirement_case6_retained_claim_survives_proof_failure_then_settles_without_expiry()
         .await;
     faults::retirement_case6_refuses_external_debt_and_active_parent_control().await;
+    faults::recovery_between_admission_and_dispatch_returns_to_graceful_stop().await;
+    faults::provider_retirement_refuses_a_child_writer_that_wins_admission().await;
 }
 
 async fn retirement_case6_healthy_siblings_complete() {
@@ -82,8 +85,7 @@ async fn retirement_case6_healthy_siblings_complete() {
 async fn retirement_case6_permanent_404_completes_after_native_finality() {
     let (f, active, children, mut now) = active_siblings().await;
     let owners = Owners::new().await;
-    let receiver = Receiver::new().await;
-    *f.backend.close_transport.lock().unwrap() = Some(receiver.transport.clone());
+    let receiver = Receiver::new(&f, &active).await;
     let parent_worker = parent_worker(&f);
     let workers: Vec<_> = owners
         .coordinators

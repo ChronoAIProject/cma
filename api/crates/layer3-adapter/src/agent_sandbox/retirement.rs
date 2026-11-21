@@ -4,11 +4,25 @@ use crate::{provider::ProviderSandboxRequest, HomeVolumeAttachment, Result, Runt
 use kube::ResourceExt;
 
 impl AgentSandboxClient {
+    pub(crate) async fn retirement_receiver(
+        &self,
+        runtime: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<super::PodBinding> {
+        self.validate_request(runtime, request)
+            .await?
+            .ok_or_else(|| unavailable("retirement runtime is absent"))?;
+        self.retirement_home(runtime, home, true).await?;
+        self.pod_binding(runtime).await
+    }
+
     pub(crate) async fn retire_verified(
         &self,
         runtime: &RuntimeHandle,
         request: &ProviderSandboxRequest,
         home: &HomeVolumeAttachment,
+        receiver: Option<&crate::RetirementPod>,
     ) -> Result<()> {
         let identity = crate::hosted::provider_request_identity(request)?;
         home.validate_for(&identity.sandbox_id)?;
@@ -26,6 +40,12 @@ impl AgentSandboxClient {
             // An accepted foreground delete is retried with the original UID.
             actual.metadata.deletion_timestamp = None;
             self.matches(&actual, &desired)?;
+        }
+        if let Some(receiver) = receiver {
+            let binding = self.pod_binding(runtime).await?;
+            if crate::RetirementPod::try_from(&binding)? != *receiver {
+                return Err(rejected("retirement receiver changed before deletion"));
+            }
         }
         // Keep the existing UID/resourceVersion preconditions and foreground waiter.
         // The persisted origin also covers a lost reply after CRD/PVC disappearance.

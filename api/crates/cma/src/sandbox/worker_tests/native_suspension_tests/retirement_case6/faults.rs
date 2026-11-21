@@ -4,8 +4,7 @@ use layer2_core::sandbox::store::AgentWorkerStore;
 async fn failed_close() -> (Fixture, Sandbox, Vec<Agent>, SystemTime, Owners, Receiver) {
     let (f, active, children, mut now) = active_siblings().await;
     let owners = Owners::new().await;
-    let receiver = Receiver::new().await;
-    *f.backend.close_transport.lock().unwrap() = Some(receiver.transport.clone());
+    let receiver = Receiver::new(&f, &active).await;
     admit(&f, &active).await;
     let parent = parent_worker(&f);
     for _ in 0..3 {
@@ -21,6 +20,34 @@ async fn failed_close() -> (Fixture, Sandbox, Vec<Agent>, SystemTime, Owners, Re
     blocked(&f, &active, &children).await;
     assert!(receiver.calls.load(Ordering::SeqCst) > 0);
     (f, active, children, now, owners, receiver)
+}
+
+pub(super) async fn recovery_between_admission_and_dispatch_returns_to_graceful_stop() {
+    use crate::store::native_retirement_action::RetirementRecords;
+    let (f, active, children, mut now, owners, receiver) = failed_close().await;
+    let before = receiver.calls.load(Ordering::SeqCst);
+    receiver.recover_after.store(before + 1, Ordering::SeqCst);
+    now += Duration::from_secs(6);
+    let clock = Arc::new(Mutex::new(now + Duration::from_secs(1)));
+    let worker = finalizing_parent_worker(&f, clock);
+    worker.run_one(&active.id, now).await.unwrap();
+    assert_eq!(receiver.calls.load(Ordering::SeqCst), before + 2);
+    assert_eq!(
+        f.backend
+            .retirement_records
+            .action(&active.id)
+            .await
+            .unwrap(),
+        None
+    );
+    assert!(!f
+        .backend
+        .calls
+        .snapshot()
+        .contains(&"retire-alternative".into()));
+    blocked(&f, &active, &children).await;
+    receiver.server.abort();
+    owners.cleanup().await;
 }
 
 pub(super) async fn retirement_case6_retained_claim_survives_proof_failure_then_settles_without_expiry(
@@ -74,7 +101,8 @@ pub(super) async fn retirement_case6_retained_claim_survives_proof_failure_then_
                 f.harness.store.clone(),
                 f.harness.adapter.clone(),
                 "test".into(),
-                Default::default(),
+                f.backend.retirement_records.clone(),
+                false,
             )
             .with_clock({
                 let clock = clock.clone();
@@ -173,7 +201,8 @@ pub(super) async fn retirement_case6_refuses_external_debt_and_active_parent_con
         f.harness.store.clone(),
         f.harness.adapter.clone(),
         "test".into(),
-        f.backend.retirement_failures.clone(),
+        f.backend.retirement_records.clone(),
+        true,
     );
     let mut ordinary = active.clone();
     ordinary.work.attempts = 10;
@@ -188,4 +217,110 @@ pub(super) async fn retirement_case6_refuses_external_debt_and_active_parent_con
         .contains(&"retire-alternative".into()));
     receiver.server.abort();
     owners.cleanup().await;
+}
+
+pub(super) async fn provider_retirement_refuses_a_child_writer_that_wins_admission() {
+    use crate::sandbox::native_retirement_finalizer::NativeRetirementFinalizer;
+    use crate::store::native_retirement_action::RetirementRecords;
+    use crate::store::sandbox_maintenance::mongo_integration_tests::database;
+
+    for attach in [false, true] {
+        let (f, active, children, _, owners, receiver) = failed_close().await;
+        let (client, database, child_store) = database().await;
+        let parent_store = crate::store::MongoSandboxStore::open(&client, &database)
+            .await
+            .unwrap();
+        let mut parent = f.harness.stored(&active.id).await;
+        parent.work.lease = None;
+        parent.revision = 1;
+        parent.updated_at = rfc3339_at(SystemTime::now());
+        parent.work.ready_at = parent.updated_at.clone();
+        child_store.create_sandbox(parent.clone()).await.unwrap();
+        for mut child in children {
+            child.revision = 1;
+            child.conversation.last_seq = 0;
+            child_store.create_agent(child).await.unwrap();
+        }
+        let observation = f
+            .backend
+            .retirement_records
+            .observation(&parent.id)
+            .await
+            .unwrap()
+            .unwrap()
+            .0;
+        child_store.note(&parent, &observation).await.unwrap();
+        let now = SystemTime::now();
+        let claimed = parent_store
+            .claim_sandbox_work(
+                &parent.id,
+                "acting-replica",
+                rfc3339_at(now),
+                rfc3339_at(now + Duration::from_secs(180)),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(claimed.work.attempts >= 3);
+        assert!(parent_store.action(&parent.id).await.unwrap().is_none());
+
+        let pause = Arc::new(super::super::backend::RetirementProbePause::default());
+        *f.backend.retirement_probe_pause.lock().unwrap() = Some(pause.clone());
+        let parent_store = Arc::new(parent_store);
+        let finalizer = NativeRetirementFinalizer::new(
+            parent_store.clone(),
+            f.harness.adapter.clone(),
+            "test".into(),
+            parent_store.clone(),
+            true,
+        );
+        let pending =
+            tokio::spawn(async move { finalizer.finalize(&claimed, "acting-replica").await });
+        tokio::time::timeout(Duration::from_secs(8), pause.entered.notified())
+            .await
+            .expect("acting replica reached the fresh receiver exchange");
+        let original_id = layer2_core::AgentId(observation.receiver.owner.agent_id);
+        let mut child = child_store.get_agent(&original_id).await.unwrap().unwrap();
+        if attach {
+            child.id = layer2_core::AgentId("agt_late_retirement_child".into());
+            child.worktree_id = layer2_core::WorktreeId("wkt_late_retirement_child".into());
+            child.creation_key = "late-retirement-child".into();
+            child_store.create_agent(child).await.unwrap();
+        } else {
+            let revision = child.revision;
+            child.revision += 1;
+            child
+                .work
+                .cleanup_debt
+                .push(layer2_core::sandbox::AgentCleanupDebt {
+                    step: AgentWorkStep::DispatchFirstMessage,
+                    operation_id: "new-external-obligation".into(),
+                    request_sha256: "c".repeat(64),
+                });
+            child_store.save_agent(revision, child).await.unwrap();
+        }
+
+        pause.release.notify_one();
+        assert!(matches!(
+            pending.await.unwrap(),
+            Err(layer2_core::sandbox::store::SandboxStoreError::Conflict)
+        ));
+        assert_eq!(parent_store.action(&parent.id).await.unwrap(), None);
+        assert!(!f
+            .backend
+            .calls
+            .snapshot()
+            .contains(&"retire-alternative".into()));
+        assert!(f
+            .harness
+            .adapter
+            .runtime_inventory()
+            .await
+            .unwrap()
+            .iter()
+            .any(|runtime| runtime.handle.as_str() == parent.runtime.as_ref().unwrap().runtime_id));
+        client.database(&database).drop().await.unwrap();
+        receiver.server.abort();
+        owners.cleanup().await;
+    }
 }

@@ -6,6 +6,7 @@ use layer3_adapter::hosted::{HostedAgentOpenSettings, HostedBackend};
 use layer3_adapter::provider::ProviderSandboxRequest;
 use layer3_adapter::wire::{AgentOpenReceipt, FencedReceipt, FencedRequest, ResponseFrame};
 use layer3_adapter::{AgentLaunch, ConversationChannel, ConversationUpdate, RuntimeObservation};
+pub(super) use retirement::RetirementProbePause;
 
 #[derive(Clone)]
 struct Row {
@@ -16,7 +17,10 @@ struct Row {
 
 #[derive(Clone, Default)]
 pub(super) struct NativeBackend {
-    pub retirement_failures: Arc<crate::sandbox::retirement_control::RetirementControlFailures>,
+    pub retirement_records: Arc<super::retirement_case6::records::FixtureRecords>,
+    pub retirement_receiver_url: Arc<Mutex<Option<String>>>,
+    pub retirement_incarnation: Arc<AtomicUsize>,
+    pub retirement_probe_pause: Arc<Mutex<Option<Arc<RetirementProbePause>>>>,
     inner: InMemoryHostedBackend,
     pub pools: Option<Arc<super::super::native_pool_tests::Pools>>,
     row: Arc<tokio::sync::Mutex<Option<Row>>>,
@@ -82,6 +86,7 @@ impl NativeBackend {
         // The retained provider object and failed Pod have not been replaced.
     }
     pub async fn restart_process(&self) {
+        self.retirement_incarnation.fetch_add(1, Ordering::SeqCst);
         let rows = self.row.lock().await;
         let pod = rows.as_ref().unwrap().pod.as_ref().unwrap();
         self.inner.restart_persistent_process(pod).await.unwrap();
@@ -417,12 +422,24 @@ impl HostedBackend for NativeBackend {
         });
         Ok((channel, receipt))
     }
+    async fn challenge_retirement_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        _: &layer3_adapter::HomeVolumeAttachment,
+        receiver: &layer3_adapter::receiver_failure::RetirementReceiver,
+    ) -> layer3_adapter::Result<bool> {
+        self.challenge_retirement_fixture(handle, request, receiver)
+            .await
+    }
     async fn retire_unreachable(
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
         home: &layer3_adapter::HomeVolumeAttachment,
+        pod: &layer3_adapter::RetirementPod,
     ) -> layer3_adapter::Result<()> {
+        self.check_retirement_fixture_pod(pod)?;
         self.retire_verified_fixture(handle, request, home).await
     }
     async fn verify_retired(

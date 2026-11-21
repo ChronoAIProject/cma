@@ -31,6 +31,8 @@ mod recovery;
 mod refusal;
 mod retirement;
 mod retirement_commit;
+mod retirement_custody;
+
 mod scoped;
 
 fn loss(sandbox: &Sandbox) -> SandboxRuntimeLossRequest {

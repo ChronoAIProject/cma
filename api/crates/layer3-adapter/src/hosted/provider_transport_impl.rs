@@ -2,6 +2,15 @@ use super::*;
 
 #[async_trait::async_trait]
 impl super::super::HostedControlTransport for super::ProviderHostedControlTransport {
+    async fn challenge_retirement_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        binding: &crate::agent_sandbox::PodBinding,
+        owner: &crate::owner_protocol::TransportOwner,
+    ) -> crate::Result<bool> {
+        self.challenge_native_receiver(handle, binding, owner).await
+    }
+
     fn desktop_ownership(&self) -> Option<&dyn crate::desktop_ownership::DesktopOwnedRuntime> {
         Some(self)
     }

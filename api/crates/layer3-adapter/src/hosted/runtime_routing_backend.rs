@@ -278,15 +278,28 @@ impl HostedBackend for RuntimeBackends {
             .provision_with_home(request, home)
             .await
     }
+    async fn challenge_retirement_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &crate::HomeVolumeAttachment,
+        receiver: &crate::receiver_failure::RetirementReceiver,
+    ) -> Result<bool> {
+        self.verify_retained_home_route(handle, &home.request)?;
+        self.for_handle(handle)?
+            .challenge_retirement_receiver(handle, request, home, receiver)
+            .await
+    }
     async fn retire_unreachable(
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
         home: &crate::HomeVolumeAttachment,
+        receiver: &crate::RetirementPod,
     ) -> Result<()> {
         self.verify_retained_home_route(handle, &home.request)?;
         self.for_handle(handle)?
-            .retire_unreachable(handle, request, home)
+            .retire_unreachable(handle, request, home, receiver)
             .await
     }
     async fn verify_retired(

@@ -5,6 +5,7 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use layer2_core::sandbox::{Sandbox, SandboxEventKind, SandboxStatus, SandboxWorkStep};
 use layer3_adapter::RuntimeHandle;
 
+use super::super::native_retirement_finalizer::{NativeRetirementFinalizer, RetirementOutcome};
 use super::support::{
     adapter_failure, credential_failure, dependency_failure, operation_id, system_time,
     WorkerFailure,
@@ -17,15 +18,24 @@ impl SandboxWorker {
         mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        let finalizer = self
+            .config
+            .retirement_finalizer
+            .as_ref()
+            .filter(|_| NativeRetirementFinalizer::applies(&sandbox));
+        if let Some(finalizer) = finalizer {
+            if finalizer.holds_custody(&sandbox).await? {
+                return self
+                    .finalize_native_retirement(finalizer, sandbox, now)
+                    .await;
+            }
+        }
         if let Some(failure) = self
             .remove_stopped_native_runtime(&mut sandbox, now)
             .await?
         {
             return self.retry_failure(sandbox, failure, now).await;
         }
-        let finalizer = self.config.retirement_finalizer.as_ref().filter(|_| {
-            super::super::native_retirement_finalizer::NativeRetirementFinalizer::applies(&sandbox)
-        });
         let runtime = sandbox
             .runtime
             .as_ref()
@@ -47,33 +57,38 @@ impl SandboxWorker {
                 )
                 .await
             }
-            Err(super::SandboxDependencyError::AgentsStopping) if finalizer.is_some() => {
-                use super::super::native_retirement_finalizer::RetirementOutcome;
-                match finalizer
-                    .expect("selected finalizer")
-                    .finalize(&sandbox, &self.config.holder)
-                    .await?
-                {
-                    RetirementOutcome::Settled | RetirementOutcome::Superseded => Ok(()),
-                    RetirementOutcome::GracefulPending => {
-                        self.retry_failure(
-                            sandbox,
-                            WorkerFailure::waiting("sandbox agents are still stopping"),
-                            now,
-                        )
-                        .await
-                    }
-                    RetirementOutcome::ProviderPending(reason) => {
-                        self.retry_failure(sandbox, WorkerFailure::waiting(reason), now)
-                            .await
-                    }
-                }
+            Err(super::SandboxDependencyError::AgentsStopping)
+                if finalizer.is_some_and(|finalizer| finalizer.admission_enabled()) =>
+            {
+                self.finalize_native_retirement(
+                    finalizer.expect("selected finalizer"),
+                    sandbox,
+                    now,
+                )
+                .await
             }
             Err(error) => {
                 self.retry_failure(sandbox, dependency_failure(error), now)
                     .await
             }
         }
+    }
+
+    async fn finalize_native_retirement(
+        &self,
+        finalizer: &NativeRetirementFinalizer,
+        sandbox: Sandbox,
+        now: SystemTime,
+    ) -> Result<(), SandboxStoreError> {
+        let reason = match finalizer.finalize(&sandbox, &self.config.holder).await {
+            Ok(RetirementOutcome::Settled | RetirementOutcome::Superseded) => return Ok(()),
+            Ok(RetirementOutcome::GracefulPending) => "sandbox agents are still stopping",
+            Ok(RetirementOutcome::ProviderPending(reason)) => reason,
+            Err(SandboxStoreError::Conflict) => "native retirement authority changed",
+            Err(error) => return Err(error),
+        };
+        self.retry_failure(sandbox, WorkerFailure::waiting(reason), now)
+            .await
     }
 
     pub(super) async fn revoke_for_retirement(

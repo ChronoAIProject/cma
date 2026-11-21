@@ -146,13 +146,44 @@ impl HostedBackend for AgentSandboxBackend {
         timing.completed("runtime_binding");
         Ok(handle)
     }
+    async fn challenge_retirement_receiver(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+        receiver: &crate::receiver_failure::RetirementReceiver,
+    ) -> Result<bool> {
+        let binding = self
+            .client
+            .retirement_receiver(handle, request, home)
+            .await?;
+        if RetirementPod::try_from(&binding)? != receiver.pod {
+            return Err(AdapterError::Rejected("retirement receiver changed".into()));
+        }
+        let unavailable = self
+            .transport
+            .challenge_retirement_receiver(handle, &binding, &receiver.owner)
+            .await?;
+        if self
+            .client
+            .retirement_receiver(handle, request, home)
+            .await?
+            != binding
+        {
+            return Err(AdapterError::Rejected("retirement receiver changed".into()));
+        }
+        Ok(unavailable)
+    }
     async fn retire_unreachable(
         &self,
         handle: &RuntimeHandle,
         request: &ProviderSandboxRequest,
         home: &HomeVolumeAttachment,
+        receiver: &RetirementPod,
     ) -> Result<()> {
-        self.client.retire_verified(handle, request, home).await?;
+        self.client
+            .retire_verified(handle, request, home, Some(receiver))
+            .await?;
         self.forget_assignment(handle);
         self.transport.retire(handle).await
     }

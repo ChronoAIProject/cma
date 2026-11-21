@@ -74,7 +74,8 @@ pub(crate) struct AgentWorkerDependencies {
 #[derive(Clone)]
 pub(crate) struct AgentWorkerConfig {
     pub ownership_retry_hints: Option<Arc<dyn super::ownership_retry_hint::OwnershipRetryHints>>,
-    pub retirement_failures: Option<Arc<super::retirement_control::RetirementControlFailures>>,
+    pub retirement_reporter:
+        Option<Arc<dyn crate::store::native_retirement_action::RetirementRecords>>,
     pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub parent_not_ready_pacing_enabled: bool,
     startup_sibling_hold_enabled: bool,
@@ -95,7 +96,7 @@ pub(crate) struct AgentWorkerConfig {
 impl AgentWorkerConfig {
     pub fn new(holder: impl Into<String>, deployment_id: impl Into<String>) -> Self {
         Self {
-            retirement_failures: None,
+            retirement_reporter: None,
             ownership: None,
             ownership_retry_hints: None,
             parent_not_ready_pacing_enabled: false,

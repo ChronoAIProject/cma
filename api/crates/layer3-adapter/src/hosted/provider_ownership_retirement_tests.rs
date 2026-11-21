@@ -5,8 +5,20 @@ async fn retirement_probe_rechecks_failure_without_confirmation_or_owner_renewal
     for first in ["404 Not Found", "409 Conflict", "403 Forbidden"] {
         let listener = listener().await;
         let address = listener.local_addr().unwrap();
+        let handle = RuntimeHandle::new("agent-sandbox:fixture:original");
+        let binding = crate::agent_sandbox::PodBinding {
+            sandbox_name: "fixture".into(),
+            sandbox_uid: "original".into(),
+            pod_name: "fixture-pod".into(),
+            pod_uid: "original-pod".into(),
+            pod_ip: address.ip(),
+            runtime_container_id: Some("containerd://fixture".into()),
+            runtime_restart_count: Some(0),
+        };
         let endpoint =
-            RuntimeEndpoint::parse("http://fixture.invalid", &format!("http://{address}")).unwrap();
+            RuntimeEndpoint::parse("http://fixture.invalid", &format!("http://{address}"))
+                .unwrap()
+                .with_direct_receiver(&handle, &binding);
         let transport = ProviderHostedControlTransport::for_retained_opensandbox(
             SandboxClient::new("http://unused.invalid", "fixture-key"),
         )
@@ -44,10 +56,25 @@ async fn retirement_probe_rechecks_failure_without_confirmation_or_owner_renewal
         .await;
         assert!(result.is_err());
         if first.starts_with("404") {
-            let probe = observed.unwrap().into_receiver().unwrap();
-            assert!(probe.still_unavailable().await);
-            assert!(!probe.still_unavailable().await); // a stale token is not unreachability
-            assert!(!probe.still_unavailable().await); // a recovered receiver is not unreachability
+            let receiver = observed.unwrap().into_receiver().unwrap();
+            assert_eq!(receiver.runtime, handle);
+            assert_eq!(receiver.pod.uid, "original-pod");
+            let acting = ProviderHostedControlTransport::for_retained_opensandbox(
+                SandboxClient::new("http://unused.invalid", "fixture-key"),
+            )
+            .unwrap();
+            assert!(acting
+                .challenge_only(&endpoint, &receiver.owner)
+                .await
+                .unwrap());
+            assert!(acting
+                .challenge_only(&endpoint, &receiver.owner)
+                .await
+                .is_err());
+            assert!(!acting
+                .challenge_only(&endpoint, &receiver.owner)
+                .await
+                .unwrap());
         } else {
             assert!(observed.is_none());
         }
