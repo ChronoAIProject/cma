@@ -113,7 +113,7 @@ async fn continuation_sandbox_fences_once_while_replay_and_child_steps_preserve_
     assert_eq!(expected_audit.len(), 1, "operator stop audit");
     let platform = expected_settings
         .iter_mut()
-        .find(|row| row.get_str("_id") == Ok("platform"))
+        .find(|row| row.get_str("_id").ok() == Some("platform"))
         .unwrap();
     assert_eq!(platform.insert("admission_policy_fence", 1_i64), None);
     let mut sandbox = provisioning_sandbox("sbx_operator_continued");
