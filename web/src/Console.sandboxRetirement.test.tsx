@@ -38,6 +38,31 @@ const readyReport: ConnectionReport = {
   services: [],
 };
 
+const missingReport: ConnectionReport = {
+  ...readyReport,
+  ready: false,
+  services: [
+    {
+      service: 'git-host',
+      display_name: 'Git hosting',
+      kind: 'nyxid',
+      state: 'missing',
+      connection_mode: 'hosted',
+    },
+  ],
+};
+
+function refusedResume(sandbox: SandboxDetail): SandboxDetail {
+  return {
+    ...sandbox,
+    revision: sandbox.revision + 1,
+    lifecycle: {
+      pause: { allowed: false, reason: 'not_active' },
+      revive: { allowed: false, reason: 'work_in_progress' },
+    },
+  };
+}
+
 it('offers an eligible owner Resume before checking connections and verifies them on click', async () => {
   let finish!: (report: ConnectionReport) => void;
   const readiness = new Promise<ConnectionReport>((resolve) => {
@@ -71,19 +96,7 @@ it('offers an eligible owner Resume before checking connections and verifies the
 });
 
 it('lets an owner cancel the Resume connection dialog without navigating or resuming', async () => {
-  const check = vi.spyOn(connectionClient, 'check').mockResolvedValue({
-    ...readyReport,
-    ready: false,
-    services: [
-      {
-        service: 'git-host',
-        display_name: 'Git hosting',
-        kind: 'nyxid',
-        state: 'missing',
-        connection_mode: 'hosted',
-      },
-    ],
-  });
+  const check = vi.spyOn(connectionClient, 'check').mockResolvedValue(missingReport);
   const reviveSandbox = vi.fn();
   const actor = userEvent.setup();
   const onNavigate = renderOwnedSandbox(
@@ -105,6 +118,42 @@ it('lets an owner cancel the Resume connection dialog without navigating or resu
   expect(reviveSandbox).not.toHaveBeenCalled();
 });
 
+it.each(['held check', 'open connection dialog'] as const)(
+  'withdraws Resume when a newer Sandbox record refuses it during a %s',
+  async (pending) => {
+    const check = vi.spyOn(connectionClient, 'check').mockResolvedValue(missingReport);
+    let finish!: (report: ConnectionReport) => void;
+    check.mockReturnValueOnce(new Promise((resolve) => (finish = resolve)));
+    const sandbox = { ...sandboxFixture('paused'), owner: 'owner' };
+    const readSandbox = vi.fn().mockResolvedValue(sandbox);
+    const reviveSandbox = vi.fn();
+    const actor = userEvent.setup();
+    const onNavigate = renderOwnedSandbox(agentClient({ readSandbox, reviveSandbox }));
+    const resume = await screen.findByRole('button', { name: 'Resume' });
+
+    await actor.click(resume);
+    expect(check).toHaveBeenCalledTimes(1);
+    const signal = check.mock.calls[0]![2];
+    if (pending === 'open connection dialog') {
+      await act(async () => finish(missingReport));
+      expect(await screen.findByRole('dialog', { name: 'Connect your accounts' })).toBeVisible();
+      expect(check).toHaveBeenCalledTimes(2);
+    }
+
+    readSandbox.mockResolvedValue(refusedResume(sandbox));
+    await act(async () => fireEvent(document, new Event('visibilitychange')));
+    expect(await screen.findByText(/Sandbox work is in progress/)).toBeVisible();
+    expect(resume).toBeDisabled();
+    if (pending === 'held check') await act(async () => finish(readyReport));
+    expect.soft(reviveSandbox).not.toHaveBeenCalled();
+    expect.soft(screen.queryByText('Connect your accounts')).not.toBeInTheDocument();
+    expect.soft(screen.queryAllByRole('dialog')).toHaveLength(0);
+    expect.soft(check).toHaveBeenCalledTimes(pending === 'held check' ? 1 : 2);
+    expect.soft(signal?.aborted).toBe(true);
+    expect(onNavigate).not.toHaveBeenCalled();
+  },
+);
+
 it('holds an eligible owner Resume after a failed Sandbox refresh', async () => {
   const check = vi.spyOn(connectionClient, 'check').mockResolvedValue(readyReport);
   const reviveSandbox = vi.fn();
@@ -123,14 +172,7 @@ it('holds an eligible owner Resume after a failed Sandbox refresh', async () => 
 it('keeps Resume disabled when the server refuses it for the owner', async () => {
   vi.spyOn(connectionClient, 'check').mockResolvedValue(readyReport);
   const reviveSandbox = vi.fn();
-  const sandbox = {
-    ...sandboxFixture('paused'),
-    owner: 'owner',
-    lifecycle: {
-      pause: { allowed: false, reason: 'not_active' },
-      revive: { allowed: false, reason: 'work_in_progress' },
-    },
-  } satisfies SandboxDetail;
+  const sandbox = refusedResume({ ...sandboxFixture('paused'), owner: 'owner' });
   renderOwnedSandbox(agentClient({ readSandbox: async () => sandbox, reviveSandbox }));
   const resume = await screen.findByRole('button', { name: 'Resume' });
   expect(resume).toBeDisabled();
