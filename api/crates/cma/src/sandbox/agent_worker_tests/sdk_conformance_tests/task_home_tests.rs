@@ -17,6 +17,7 @@ mod environment;
 mod environment_workers;
 mod integrated_tests;
 mod machine_policy;
+mod receipt_output;
 mod recovery;
 mod repository_connection_tests;
 mod restart;
