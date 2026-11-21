@@ -72,10 +72,10 @@ fn cases() -> Vec<(AdapterError, Category)> {
     .collect();
     cases.extend([
         (
-            AdapterError::RuntimeStartupHold(crate::RuntimeStartupFailure {
-                class: crate::RuntimeStartupFailureClass::Terminated,
-                consecutive: 3,
-            }),
+            AdapterError::RuntimeStartupHold(crate::RuntimeStartupFailure::new(
+                crate::RuntimeStartupFailureClass::Terminated,
+                3,
+            )),
             AdapterError::Unavailable as Category,
         ),
         (

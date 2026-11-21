@@ -20,6 +20,7 @@ mod machine_policy;
 mod receipt_output;
 mod recovery;
 mod repository_connection_tests;
+mod repository_marker;
 mod restart;
 mod store_retry;
 mod subprocess;

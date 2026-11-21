@@ -51,7 +51,8 @@ async fn tenant_isolation_warm_sessions_cannot_read_or_write_after_revocation() 
         let service = DocumentService::new(
             rows.clone(),
             Arc::new(memory::MemoryDocumentBlobs::default()),
-        );
+        )
+        .with_directory(memory::recipient_directory(&["foreign"]));
         let owner = Caller::new(
             SubjectId::new("owner"),
             Authorization::new([Capability::UseOwnSandboxes]),
@@ -105,6 +106,7 @@ async fn tenant_isolation_warm_sessions_cannot_read_or_write_after_revocation() 
             "/comments",
             "/revisions",
             "/shares",
+            "/share-recipients?q=foreign",
             "/share-links",
         ] {
             assert_eq!(
@@ -158,6 +160,7 @@ async fn tenant_isolation_warm_sessions_cannot_read_or_write_after_revocation() 
             "/comments",
             "/revisions",
             "/shares",
+            "/share-recipients?q=foreign",
             "/share-links",
         ] {
             let (status, body) = send(

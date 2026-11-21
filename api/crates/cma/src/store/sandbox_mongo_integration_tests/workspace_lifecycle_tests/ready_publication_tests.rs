@@ -17,6 +17,7 @@ fn ready(original: &Workspace) -> Workspace {
 fn publication(original: &Workspace) -> SandboxTransaction {
     let next = ready(original);
     SandboxTransaction::SaveWorkspaceAndAppend {
+        repository_runtime: None,
         expected_revision: original.revision,
         event_at: MINUTE.into(),
         event: SandboxEventKind::WorkspaceReady {
@@ -197,6 +198,7 @@ async fn removal_wins_workspace_revision_and_cleanup_completes_after_parent_reti
             .schedule(WorkspaceWorkStep::None, TWO_MINUTES.into());
         f.store
             .commit(SandboxTransaction::SaveWorkspaceAndAppend {
+                repository_runtime: None,
                 expected_revision: removing.revision,
                 workspace: Box::new(removed.clone()),
                 event_at: TWO_MINUTES.into(),

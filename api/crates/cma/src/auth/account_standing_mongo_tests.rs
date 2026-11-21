@@ -166,7 +166,12 @@ async fn document_grant_transaction_refuses_erasing_recipient() {
         "cma_standing_grant_{}",
         uuid::Uuid::new_v4().simple()
     ));
-    let deletions = MongoAccountDeletionStore::open(&db).await.unwrap();
+    let deletions = Arc::new(MongoAccountDeletionStore::open(&db).await.unwrap());
+    let standing = Arc::new(GrantStanding {
+        store: deletions.clone(),
+        checked: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+    });
     let rows = Arc::new(crate::document_artifacts::MongoDocumentStore::new(
         db.clone(),
     ));
@@ -174,7 +179,9 @@ async fn document_grant_transaction_refuses_erasing_recipient() {
     let service = DocumentService::new(
         rows.clone(),
         Arc::new(memory::MemoryDocumentBlobs::default()),
-    );
+    )
+    .with_account_standing(standing.clone())
+    .with_directory(memory::recipient_directory(&["recipient"]));
     let owner = Caller::new(
         SubjectId::new("owner"),
         Authorization::new([Capability::UseOwnSandboxes]),
@@ -191,37 +198,67 @@ async fn document_grant_transaction_refuses_erasing_recipient() {
         )
         .await
         .unwrap();
-    deletions
-        .request(
-            &SubjectId::new("recipient"),
-            "delete",
-            "2026-11-14T00:00:00Z",
-        )
-        .await
-        .unwrap();
-    assert_eq!(
-        service
-            .grant(
-                &owner,
-                &document.id,
-                "grant",
-                "recipient",
-                GrantDocument {
-                    expected_revision: 1,
-                    permission: DocumentPermission::Read
-                }
-            )
-            .await,
-        Err(DocumentError::ShareRecipientUnavailable)
+    let before = serde_json::to_value(rows.get(&document.id).await.unwrap()).unwrap();
+    let grant = service.grant(
+        &owner,
+        &document.id,
+        "grant",
+        "recipient",
+        GrantDocument {
+            expected_revision: 1,
+            permission: DocumentPermission::Read,
+        },
     );
-    assert!(rows
-        .get(&document.id)
+    let erase = async {
+        standing.checked.notified().await;
+        deletions
+            .request(
+                &SubjectId::new("recipient"),
+                "delete",
+                "2026-11-14T00:00:00Z",
+            )
+            .await
+            .unwrap();
+        standing.release.notify_one();
+    };
+    let (result, ()) = tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(grant, erase)
+    })
+    .await
+    .unwrap();
+    assert_eq!(result, Err(DocumentError::ShareRecipientUnavailable));
+    assert_eq!(
+        serde_json::to_value(rows.get(&document.id).await.unwrap()).unwrap(),
+        before
+    );
+    assert!(service
+        .shares(&owner, &document.id)
         .await
         .unwrap()
-        .unwrap()
-        .shares
         .is_empty());
     db.drop().await.unwrap();
+}
+
+struct GrantStanding {
+    store: Arc<MongoAccountDeletionStore>,
+    checked: tokio::sync::Notify,
+    release: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl layer2_core::account_deletion::AccountStanding for GrantStanding {
+    async fn erasing(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
+        self.store.erasing(subject).await
+    }
+
+    async fn authoritative(&self, subject: &SubjectId) -> Result<bool, AccountDeletionError> {
+        assert_eq!(subject.as_str(), "recipient");
+        assert!(!self.store.erasing(subject).await?);
+        // Hold the successful check until the tombstone commits, before the grant CAS.
+        self.checked.notify_one();
+        self.release.notified().await;
+        Ok(false)
+    }
 }
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]

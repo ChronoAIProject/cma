@@ -283,6 +283,7 @@ impl WorkspaceStore for MongoSandboxStore {
                 )?;
                 return self
                     .commit(SandboxTransaction::SaveWorkspaceAndAppend {
+                        repository_runtime: None,
                         expected_revision,
                         event_at,
                         event: SandboxEventKind::WorkspaceReady {

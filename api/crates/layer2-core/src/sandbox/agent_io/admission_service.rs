@@ -17,6 +17,9 @@ pub(super) const IO_BOUND: Duration = Duration::from_secs(15);
 const QUEUE_LIFETIME: Duration = Duration::from_secs(300);
 const CREATION_ADMISSION_ATTEMPTS: usize = 3;
 
+#[path = "admission_model_credit.rs"]
+mod model_credit;
+
 /// Selected by a trusted interface adapter, separately from client intent.
 #[derive(Debug, Clone, Copy)]
 pub enum CommandSubmissionSource {
@@ -47,11 +50,14 @@ pub enum CommandAdmissionError {
     ModelMismatch,
 }
 
+#[derive(Clone)]
 pub struct AgentCommandService {
     pub(super) store: Arc<dyn AgentCommandStore>,
     pub(super) access: Arc<ResourceAccessService>,
     authority: Arc<dyn AgentCommandAdmissionAuthority>,
     task_experience: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
+    model_credit_required: bool,
+    model_funding: Option<Arc<crate::sandbox::model_credit::AgentTurnFunding>>,
 }
 
 impl AgentCommandService {
@@ -65,18 +71,8 @@ impl AgentCommandService {
             access,
             authority,
             task_experience: Default::default(),
-        })
-    }
-
-    pub fn with_task_experience(
-        self: Arc<Self>,
-        policy: Arc<crate::sandbox::task_experience::TaskExperiencePolicy>,
-    ) -> Arc<Self> {
-        Arc::new(Self {
-            store: self.store.clone(),
-            access: self.access.clone(),
-            authority: self.authority.clone(),
-            task_experience: policy,
+            model_credit_required: false,
+            model_funding: None,
         })
     }
 
@@ -178,15 +174,19 @@ impl AgentCommandService {
             agent_id: request.envelope.agent_id.clone(),
         };
         let capability = command_capability(&request.envelope.command);
-        if AnswerContext::from_command(&request.envelope.command)?.is_some()
+        let requires_funding = self
+            .require_model_credit(&request.envelope.command)
+            .is_err();
+        let policy_refused = AnswerContext::from_command(&request.envelope.command)?.is_some()
             && !self.task_experience.allows(&context.caller.subject,
-                crate::sandbox::task_experience::TaskExperienceCapability::SuggestedFollowupAdmission)
-        {
+                crate::sandbox::task_experience::TaskExperienceCapability::SuggestedFollowupAdmission);
+        if requires_funding || policy_refused {
             let existing = self
                 .with_authority_bound(
                     &authorized,
                     capability,
-                    self.store.get_admitted_command(&request.scope(), &request.key_sha256),
+                    self.store
+                        .get_admitted_command(&request.scope(), &request.key_sha256),
                 )
                 .await;
             self.fence(&authorized, &target, capability).await?;
@@ -196,7 +196,9 @@ impl AgentCommandService {
                 };
                 return Ok(CommandStatusView::from_record(&record));
             }
-            return Err(ResourceAccessError::Access(AccessError::Forbidden).into());
+            if policy_refused {
+                return Err(ResourceAccessError::Access(AccessError::Forbidden).into());
+            }
         }
         let expected = request.clone();
         let lineage = &authorized.snapshot.lineage;
@@ -218,12 +220,8 @@ impl AgentCommandService {
             });
         for attempt in 0..CREATION_ADMISSION_ATTEMPTS {
             let result = self
-                .with_authority_bound(&authorized, capability, self.store.reserve_command(request))
-                .await;
-            // Admission can be durable even if this final fence refuses the reply.
-            // Never refresh past a failed policy fence or an ambiguous result.
-            self.fence(&authorized, &target, capability).await?;
-            let result = result?;
+                .reserve_with_model_credit(&authorized, &target, request, requires_funding)
+                .await?;
             if matches!(result, Err(CommandLedgerError::Conflict))
                 && retry_creation
                 && attempt + 1 < CREATION_ADMISSION_ATTEMPTS
