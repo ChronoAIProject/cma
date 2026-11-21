@@ -89,7 +89,6 @@ pub fn router(auth: Arc<AuthState>) -> Router {
         .route("/auth/signup-options", get(signup_options))
         .route("/auth/logout", get(logout))
         .merge(super::actor_links::routes())
-        .merge(super::service_authorization::routes())
         .with_state(auth)
         .layer(axum::middleware::map_response(
             |mut response: Response| async move {

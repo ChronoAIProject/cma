@@ -9,7 +9,7 @@ use layer2_core::account_deletion::OwnerSessionAuthority;
 
 use super::*;
 
-pub(in crate::auth) fn routes() -> Router<Arc<AuthState>> {
+pub(crate) fn router(auth: Arc<AuthState>) -> Router {
     Router::new()
         .route("/auth/service-authorization", get(account))
         .route(
@@ -23,6 +23,18 @@ pub(in crate::auth) fn routes() -> Router<Arc<AuthState>> {
                 },
             )),
         )
+        .with_state(auth)
+        .layer(axum::middleware::map_response(
+            |mut response: Response| async move {
+                if !response.headers().contains_key(header::CACHE_CONTROL) {
+                    response.headers_mut().insert(
+                        header::CACHE_CONTROL,
+                        header::HeaderValue::from_static("no-store"),
+                    );
+                }
+                response
+            },
+        ))
 }
 
 async fn account(

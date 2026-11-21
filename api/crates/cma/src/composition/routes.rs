@@ -28,6 +28,7 @@ pub(super) fn compose(
     let public = crate::rest_router(resources)
         .merge(crate::connections::router(connections, auth.clone()))
         .merge(crate::auth::router(auth.clone()))
+        .merge(crate::auth::service_authorization::router(auth.clone()))
         .layer(axum::middleware::from_fn_with_state(
             recorder,
             crate::activity::record,

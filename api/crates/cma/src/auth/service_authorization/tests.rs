@@ -140,7 +140,7 @@ fn app(auth: Arc<AuthState>, source: CredentialSource) -> Router {
         profile: Default::default(),
         delegated_credential: None,
     };
-    crate::auth::router(auth.clone())
+    crate::auth::service_authorization::router(auth.clone())
         .merge(crate::connections::router(
             crate::connections::authorization_fixture(),
             auth.clone(),
@@ -306,6 +306,7 @@ async fn an_authoritative_revocation_blocks_success_on_both_replicas() {
     *f.grants.account.lock().await = Some(false);
     for app in [&f.a, &f.b] {
         let response = get(app, &f.cookie, "/auth/service-authorization").await;
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
         let account = body(response).await;
         assert!(account.contains("\"status\":\"revoked\""));
         assert!(account.contains("https://provider.example/settings/consents"));

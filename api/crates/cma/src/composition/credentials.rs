@@ -113,7 +113,6 @@ pub(super) fn authentication(
     .with_oauth_api_resource(config.nyxid_oauth_api_resource.clone())
     .with_resource_request_enabled(config.features.nyxid_resource_request)
     .with_silent_sign_in(config.features.silent_sign_in)
-    .with_service_authorization(config.features.service_authorization)
     .with_browser_session_join(config.browser_session_join_enabled)
     .with_identity_proxy(
         config.features.nyxid_proxy,
@@ -123,6 +122,7 @@ pub(super) fn authentication(
     )?
     .with_binding_store(stores.sandbox_model.clone())
     .with_platform_spend(stores.sandbox_model.clone())
+    .with_service_authorization(config.features.service_authorization)
     .with_registration_capacity(stores.registration_capacity.clone())
     .with_bot_father_username(
         config

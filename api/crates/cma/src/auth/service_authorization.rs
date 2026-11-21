@@ -25,7 +25,7 @@ use super::{
 };
 
 mod routes;
-pub(super) use routes::routes;
+pub(crate) use routes::router;
 pub(crate) const CALLBACK_PATH: &str = "/auth/service-authorization/callback";
 const ATTEMPT_DOMAIN: &str = "service-authorization-attempt";
 const PROVIDER_TIMEOUT: Duration = Duration::from_secs(10);
