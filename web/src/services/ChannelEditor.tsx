@@ -1,4 +1,6 @@
-import { useState } from 'react';
+import { revealInvalidField } from './channelForm/AdvancedFields';
+import { ValidationError } from './channelForm/ValidationError';
+import { useRef, useState } from 'react';
 import { Button } from '../ui/Button';
 import { segment, ServiceError, serviceRequest, type Denied } from './client';
 import { useRelayCapabilities } from './RelayCapabilities';
@@ -98,6 +100,7 @@ export function ChannelEditor({
   readonly onDone: (channel?: Channel) => void;
   readonly denied: Denied;
 }) {
+  const editor = useRef<HTMLDivElement>(null);
   const discovery = useRelayCapabilities();
   const [baseline, setBaseline] = useState(channel);
   const [draft, setDraft] = useState(() => channelDraft(channel, ownerSubject));
@@ -247,10 +250,11 @@ export function ChannelEditor({
         : records(routing.consumers).find((v) => v.id === section.id)
       : undefined;
   return (
-    <div className="channel-node-editor">
+    <div className="channel-node-editor" ref={editor}>
       {!additional ? (
         <form
           className="service-form"
+          onInvalidCapture={(event) => revealInvalidField(event.target as HTMLElement)}
           onSubmit={(e) => {
             e.preventDefault();
             submit('channel');
@@ -335,7 +339,7 @@ export function ChannelEditor({
           ) : null}
         </form>
       ) : null}
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? <ValidationError error={error} canEdit={!pending && !busy} root={editor} /> : null}
       {notice ? (
         <p role="status">{notice}</p>
       ) : baseline?.native_discord_activation ? (
