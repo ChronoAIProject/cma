@@ -1,10 +1,8 @@
-//! Bounded discovery diagnostics; no candidate or driver text is retained.
+//! Bounded discovery metrics independent of caller span formatting.
 use std::time::Instant;
 
 use layer2_core::sandbox::agent_capacity_recovery::ports::RecoveryError;
-use mongodb::error::{
-    Error, ErrorKind, WriteFailure, TRANSIENT_TRANSACTION_ERROR, UNKNOWN_TRANSACTION_COMMIT_RESULT,
-};
+use mongodb::error::{Error, ErrorKind};
 
 const MAX_TIME_MS_EXPIRED: i32 = 50;
 
@@ -31,10 +29,6 @@ pub(in crate::store) struct Observation {
     phase: Phase,
     outcome: &'static str,
     started: Instant,
-    rows: u32,
-    code: Option<i32>,
-    transient: bool,
-    unknown_commit: bool,
 }
 
 impl Observation {
@@ -44,19 +38,11 @@ impl Observation {
             // A polled operation dropped before a result must remain visible.
             outcome: "cancelled",
             started: Instant::now(),
-            rows: 0,
-            code: None,
-            transient: false,
-            unknown_commit: false,
         }
     }
 
     pub(in crate::store) fn phase(&mut self, phase: Phase) {
         self.phase = phase;
-    }
-
-    pub(in crate::store) fn row(&mut self) {
-        self.rows = self.rows.saturating_add(1);
     }
 
     pub(in crate::store) fn complete(&mut self) {
@@ -78,16 +64,10 @@ impl Observation {
     }
 
     pub(in crate::store) fn driver(&mut self, error: &Error) -> RecoveryError {
-        (self.outcome, self.code) = match error.kind.as_ref() {
-            ErrorKind::Command(error) if error.code == MAX_TIME_MS_EXPIRED => {
-                ("deadline", Some(error.code))
-            }
-            ErrorKind::Command(error) => ("driver", Some(error.code)),
-            ErrorKind::Write(WriteFailure::WriteError(error)) => ("driver", Some(error.code)),
-            _ => ("driver", None),
+        self.outcome = match error.kind.as_ref() {
+            ErrorKind::Command(error) if error.code == MAX_TIME_MS_EXPIRED => "deadline",
+            _ => "driver",
         };
-        self.transient = error.contains_label(TRANSIENT_TRANSACTION_ERROR);
-        self.unknown_commit = error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT);
         RecoveryError::Unavailable
     }
 }
@@ -102,26 +82,6 @@ impl Drop for Observation {
         .increment(1);
         metrics::histogram!("cma_capacity_recovery_discovery_seconds", "phase" => phase)
             .record(elapsed.as_secs_f64());
-        if matches!(outcome, "deadline" | "driver" | "invalid_evidence") {
-            tracing::warn!(
-                phase,
-                reason = outcome,
-                driver_code = self.code,
-                transient_transaction = self.transient,
-                unknown_commit = self.unknown_commit,
-                rows_seen = self.rows,
-                elapsed_ms = elapsed.as_millis() as u64,
-                "Accepted capacity recovery discovery failed"
-            );
-        } else {
-            tracing::debug!(
-                phase,
-                outcome,
-                rows_seen = self.rows,
-                elapsed_ms = elapsed.as_millis() as u64,
-                "Accepted capacity recovery discovery observed"
-            );
-        }
     }
 }
 

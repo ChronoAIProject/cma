@@ -87,7 +87,6 @@ pub(super) async fn page(
         else {
             break;
         };
-        observed.row();
         observed.phase(Phase::CandidateValidation);
         if requests.len() == PAGE_SIZE as usize {
             observed.invalid();
