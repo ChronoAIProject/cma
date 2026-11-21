@@ -1,4 +1,5 @@
 use super::*;
+use axum::Router;
 
 pub(super) async fn register(
     config: &Config,

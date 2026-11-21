@@ -34,7 +34,6 @@ use crate::{
     store::{DefaultProfileSpec, MongoStores},
     trigger::{TriggerComposition, TriggerCompositionDependencies},
 };
-use axum::Router;
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
     profiles::authoring::ProfileAuthoringService,
