@@ -11,6 +11,65 @@ import {
 const owner = '00000000-0000-4000-8000-000000000383';
 const createdAt = '2026-11-07T00:30:12.123456789Z';
 
+test('LOCAL a terminal gateway refusal stops automatic session reads until sign-in', async ({
+  page,
+  baseURL,
+}) => {
+  const boundary = new LocalStartup();
+  await boundary.route(page, baseURL!);
+  await page.clock.install();
+  let signedIn = false;
+  let sessionReads = 0;
+  let channelReads = 0;
+  await page.route(`${baseURL}/auth/session`, (route) => route.fulfill({ json: cmaSession }));
+  await page.route(`${baseURL}/auth/login?*`, (route) => {
+    expect(new URL(route.request().url()).searchParams.get('return_to')).toBe('/event-gateway');
+    signedIn = true;
+    return route.fulfill({ status: 302, headers: { location: '/event-gateway' } });
+  });
+  await page.route(`${baseURL}/api/event-gateway/**`, (route) => {
+    expect(route.request().method()).toBe('GET');
+    const { pathname } = new URL(route.request().url());
+    if (pathname.endsWith('/auth/session')) {
+      sessionReads += 1;
+      return signedIn
+        ? route.fulfill({ json: gatewaySession })
+        : route.fulfill({ status: 401, json: { detail: 'Authentication required' } });
+    }
+    expect(signedIn).toBe(true);
+    if (pathname.endsWith('/v1/channels')) {
+      channelReads += 1;
+      return route.fulfill({ json: { items: [teamChannel], next_cursor: null } });
+    }
+    if (pathname.endsWith('/v1/channel-capabilities'))
+      return route.fulfill({ json: channelCapabilities });
+    expect(pathname).toMatch(/\/v1\/connections$/);
+    return route.fulfill({ json: { items: [] } });
+  });
+  await page.goto('/agent-manager');
+  await expect(page.getByRole('button', { name: 'Account menu for Local owner' })).toBeVisible();
+  await page.getByRole('button', { name: 'Service: Agent Manager' }).click();
+  await page.getByRole('menuitemradio', { name: 'Event Gateway' }).click();
+  const signIn = page.getByRole('link', { name: 'Sign in with NyxID' });
+  await expect(signIn).toBeVisible();
+  await page.evaluate(() => {
+    window.dispatchEvent(new Event('focus'));
+    window.dispatchEvent(new Event('focus'));
+  });
+  await page.clock.runFor(135_000);
+  expect(sessionReads).toBe(1);
+  expect(channelReads).toBe(0);
+  await expect(signIn).toBeVisible();
+
+  await signIn.click();
+  await expect(page.getByRole('tree', { name: 'Channels', exact: true })).toBeVisible();
+  await expect.poll(() => channelReads).toBeGreaterThan(0);
+  expect(sessionReads).toBeGreaterThan(1);
+  expect(boundary.unexpected).toEqual([]);
+  expect(boundary.writes).toEqual([]);
+  expect(boundary.errors).toEqual([]);
+});
+
 async function conciseRow(row: Locator, label: string, date: string) {
   await expect(row).toHaveAccessibleName(`${label} , Created ${date}`);
   await expect(row.getByRole('button')).toHaveAccessibleName(`${label} , Created ${date}`);
