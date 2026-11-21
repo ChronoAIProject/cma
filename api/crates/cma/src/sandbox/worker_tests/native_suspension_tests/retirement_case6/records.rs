@@ -11,6 +11,7 @@ use layer2_core::sandbox::store::{
 pub(in super::super) struct FixtureRecords {
     pub observation: Mutex<Option<RetirementObservation>>,
     action: Mutex<Option<RetirementAction>>,
+    pub lose_dispatch_acknowledgement: AtomicBool,
     pub store: std::sync::OnceLock<Arc<layer2_core::sandbox::store::InMemorySandboxStore>>,
 }
 
@@ -61,6 +62,15 @@ impl RetirementRecords for FixtureRecords {
             return Err(SandboxStoreError::Conflict);
         }
         *current = next.cloned();
+        if next.is_some()
+            && self
+                .lose_dispatch_acknowledgement
+                .swap(false, Ordering::SeqCst)
+        {
+            return Err(SandboxStoreError::Unavailable(
+                "synthetic lost dispatch acknowledgement".into(),
+            ));
+        }
         Ok(())
     }
 

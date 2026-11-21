@@ -144,7 +144,13 @@ async fn apply_publication_observed(
     if super::native_retirement_action::adds_obligation(&current, &mutation.agent)
         && !super::native_retirement_action::fence_obligation(store, &current.sandbox_id, session)
             .await
-            .map_err(ApplyError::Driver)?
+            .map_err(|error| {
+                if error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT) {
+                    ApplyError::Domain(SandboxStoreError::Unavailable(error.to_string()))
+                } else {
+                    ApplyError::Driver(error)
+                }
+            })?
     {
         return Err(ApplyError::Domain(SandboxStoreError::Conflict));
     }

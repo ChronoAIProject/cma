@@ -1,8 +1,7 @@
 //! Preserve legacy CAS, joining an owner fence for scoped transport effects.
 use super::super::native_retirement_action;
 use super::super::sandbox_mongo::{
-    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
-    TRANSACTION_ATTEMPTS,
+    commit_transaction, is_duplicate_key, start_transaction, CommitOutcome, TRANSACTION_ATTEMPTS,
 };
 use super::*;
 use layer2_core::SandboxId;
@@ -104,7 +103,7 @@ async fn update(
                     let _ = session.abort_transaction().await;
                     return Err(SandboxStoreError::Conflict);
                 }
-                Err(error) if is_transient(&error) => {
+                Err(error) if native_retirement_action::retryable_body_error(&error) => {
                     let _ = session.abort_transaction().await;
                     continue;
                 }
@@ -118,7 +117,7 @@ async fn update(
             .await
         {
             Ok(result) => result,
-            Err(error) if is_transient(&error) => {
+            Err(error) if native_retirement_action::retryable_body_error(&error) => {
                 let _ = session.abort_transaction().await;
                 continue;
             }

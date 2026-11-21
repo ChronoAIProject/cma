@@ -27,6 +27,7 @@ impl<S: SandboxStore + SandboxReconciliationStore + SandboxLifecycleExecutionSto
 
 pub(crate) enum RetirementOutcome {
     GracefulPending,
+    GracefulWithCustody,
     ProviderPending(&'static str),
     Settled,
     Superseded,
@@ -82,10 +83,35 @@ impl NativeRetirementFinalizer {
         original: &Sandbox,
         holder: &str,
     ) -> Result<RetirementOutcome, SandboxStoreError> {
+        self.finalize_attempt(original, holder, false).await
+    }
+
+    pub(crate) async fn finish_graceful_stop(
+        &self,
+        original: &Sandbox,
+        holder: &str,
+    ) -> Result<RetirementOutcome, SandboxStoreError> {
+        self.finalize_attempt(original, holder, true).await
+    }
+
+    async fn finalize_attempt(
+        &self,
+        original: &Sandbox,
+        holder: &str,
+        after_graceful_stop: bool,
+    ) -> Result<RetirementOutcome, SandboxStoreError> {
         if !Self::applies(original) || !self.current(original, holder).await? {
             return Ok(RetirementOutcome::Superseded);
         }
         let mut action = self.records.action(&original.id).await?;
+        if after_graceful_stop {
+            let Some(action) = &action else {
+                return Ok(RetirementOutcome::Superseded);
+            };
+            if !self.graceful_stop_complete(original, action).await? {
+                return Ok(RetirementOutcome::GracefulWithCustody);
+            }
+        }
         // Give the ordinary child workers three opportunities to close cleanly.
         // Work already in custody continues after the admission switch is off.
         if action.is_none() && (!self.admit || original.work.attempts < 3) {
@@ -143,7 +169,14 @@ impl NativeRetirementFinalizer {
                 return Ok(RetirementOutcome::GracefulPending);
             };
             if let Some(outcome) = self
-                .dispatch(original, holder, provider, &request, current)
+                .dispatch(
+                    original,
+                    holder,
+                    provider,
+                    &request,
+                    current,
+                    after_graceful_stop,
+                )
                 .await?
             {
                 return Ok(outcome);
@@ -203,6 +236,27 @@ impl NativeRetirementFinalizer {
 
     pub(crate) fn admission_enabled(&self) -> bool {
         self.admit
+    }
+
+    async fn graceful_stop_complete(
+        &self,
+        parent: &Sandbox,
+        action: &RetirementAction,
+    ) -> Result<bool, SandboxStoreError> {
+        if action.phase != RetirementPhase::Dispatching
+            || !action.matches(parent)
+            || parent.credential.current.is_some()
+            || parent.credential.pending.is_some()
+            || parent.credential.delivered
+            || !parent.credential.revoke_debt.is_empty()
+        {
+            return Ok(false);
+        }
+        let children = super::live_agent_stopper::retirement_agents(self.store.as_ref(), parent)
+            .await
+            .map_err(|_| SandboxStoreError::Conflict)?;
+        Ok(children.iter().all(|agent| !agent.status.is_live())
+            && action.covers(parent, &children)?)
     }
 
     async fn runtime_identity_unchanged(
@@ -288,17 +342,25 @@ impl NativeRetirementFinalizer {
         provider: &dyn RuntimeRetirement,
         request: &RuntimeAdoptionRequest,
         action: &mut RetirementAction,
+        after_graceful_stop: bool,
     ) -> Result<Option<RetirementOutcome>, SandboxStoreError> {
-        match probe(provider, request, action).await {
-            Some(true) => {}
-            Some(false) if action.phase == RetirementPhase::Admitted => {
-                self.records.transition(parent, action, None).await?;
-                return Ok(Some(RetirementOutcome::GracefulPending));
-            }
-            _ => {
-                return Ok(Some(RetirementOutcome::ProviderPending(
-                    "retirement receiver proof is unavailable",
-                )))
+        if !after_graceful_stop {
+            match probe(provider, request, action).await {
+                Some(true) => {}
+                Some(false) if action.phase == RetirementPhase::Admitted => {
+                    self.records.transition(parent, action, None).await?;
+                    return Ok(Some(RetirementOutcome::GracefulPending));
+                }
+                Some(false) => {
+                    // The previous provider call may still be in flight.
+                    // Resume normal closes while retaining the same custody.
+                    return Ok(Some(RetirementOutcome::GracefulWithCustody));
+                }
+                None => {
+                    return Ok(Some(RetirementOutcome::ProviderPending(
+                        "retirement receiver proof is unavailable",
+                    )))
+                }
             }
         }
         if action.phase == RetirementPhase::Admitted {

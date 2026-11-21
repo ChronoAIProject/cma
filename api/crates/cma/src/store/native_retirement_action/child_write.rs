@@ -30,7 +30,7 @@ pub(in crate::store) async fn insert_child(
             }
             Err(error) => {
                 let _ = session.abort_transaction().await;
-                if is_transient(&error) {
+                if retryable_body_error(&error) {
                     continue;
                 }
                 if is_duplicate_key(&error) {

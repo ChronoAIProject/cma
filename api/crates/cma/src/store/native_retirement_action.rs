@@ -19,6 +19,8 @@ use super::sandboxes::read_sandbox;
 
 pub(super) const FIELD: &str = "native_retirement_action_v1";
 mod child_write;
+mod parent_write;
+pub(super) use parent_write::preserve_custody;
 mod reconciliation;
 pub(super) use child_write::{adds_obligation, fence_obligation, insert_child};
 
@@ -184,7 +186,7 @@ impl RetirementAction {
             && parent.lifecycle.home.as_ref() == Some(&self.home)
     }
 
-    pub(super) fn covers(
+    pub(crate) fn covers(
         &self,
         parent: &Sandbox,
         agents: &[Agent],
@@ -315,23 +317,6 @@ pub(super) fn action_from(row: &Document) -> Result<Option<RetirementAction>, Sa
         .transpose()
 }
 
-pub(super) fn preserve_custody(
-    row: &Document,
-    current: &Sandbox,
-    next: &Sandbox,
-) -> Result<(), SandboxStoreError> {
-    if let Some(action) = action_from(row)? {
-        if !action.matches(current)
-            || !action.matches(next)
-            || current.lifecycle != next.lifecycle
-            || current.credential != next.credential
-        {
-            return Err(SandboxStoreError::Conflict);
-        }
-    }
-    Ok(())
-}
-
 fn observation_from(row: &Document) -> Result<Option<RetirementObservation>, SandboxStoreError> {
     row.get(OBSERVATION)
         .cloned()
@@ -375,7 +360,7 @@ async fn transact(
         let result = transaction(store, parent, previous, next, &mut session).await;
         match result {
             Ok(()) => {}
-            Err(LifecycleLoadError::Driver(error)) if is_transient(&error) => {
+            Err(LifecycleLoadError::Driver(error)) if retryable_body_error(&error) => {
                 let _ = session.abort_transaction().await;
                 continue;
             }
@@ -483,4 +468,8 @@ fn encoded(action: &RetirementAction) -> Result<mongodb::bson::Bson, SandboxStor
 
 fn unavailable(error: mongodb::error::Error) -> SandboxStoreError {
     SandboxStoreError::Unavailable(error.to_string())
+}
+
+pub(super) fn retryable_body_error(error: &mongodb::error::Error) -> bool {
+    !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT) && is_transient(error)
 }

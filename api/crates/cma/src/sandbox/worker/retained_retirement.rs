@@ -48,7 +48,11 @@ impl SandboxWorker {
         &self,
         sandbox: &Sandbox,
     ) -> layer3_adapter::Result<Option<RuntimeBinding>> {
-        let defer_unproved_runtime = self.config.retirement_finalizer.is_some()
+        let defer_unproved_runtime = self
+            .config
+            .retirement_finalizer
+            .as_ref()
+            .is_some_and(|finalizer| finalizer.admission_enabled())
             && super::super::native_retirement_finalizer::NativeRetirementFinalizer::applies(
                 sandbox,
             );

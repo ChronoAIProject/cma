@@ -74,12 +74,19 @@ pub(super) fn finalizing_parent_worker(
     f: &Fixture,
     clock: Arc<Mutex<SystemTime>>,
 ) -> Arc<SandboxWorker> {
+    parent_worker_with_retirement_admission(f, clock, true)
+}
+pub(super) fn parent_worker_with_retirement_admission(
+    f: &Fixture,
+    clock: Arc<Mutex<SystemTime>>,
+    admission_enabled: bool,
+) -> Arc<SandboxWorker> {
     let service = crate::sandbox::native_retirement_finalizer::NativeRetirementFinalizer::new(
         f.harness.store.clone(),
         f.harness.adapter.clone(),
         "test".into(),
         f.backend.retirement_records.clone(),
-        true,
+        admission_enabled,
     )
     .with_clock(Arc::new(move || *clock.lock().unwrap()));
     parent_worker_inner(f, Some(Arc::new(service)))

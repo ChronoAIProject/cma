@@ -23,6 +23,8 @@ pub(crate) async fn exercise_native_retirement_finality() {
     faults::retirement_case6_refuses_external_debt_and_active_parent_control().await;
     faults::recovery_between_admission_and_dispatch_returns_to_graceful_stop().await;
     faults::provider_retirement_refuses_a_child_writer_that_wins_admission().await;
+    faults::disabled_admission_preserves_legacy_absent_runtime_retirement().await;
+    faults::recovered_dispatch_resumes_graceful_stop_with_admission_disabled().await;
 }
 
 async fn retirement_case6_healthy_siblings_complete() {

@@ -36,16 +36,7 @@ impl SandboxWorker {
         {
             return self.retry_failure(sandbox, failure, now).await;
         }
-        let runtime = sandbox
-            .runtime
-            .as_ref()
-            .map(|binding| RuntimeHandle(binding.runtime_id.clone()));
-        match self
-            .dependencies
-            .agents
-            .stop_live_agents(&sandbox, runtime.as_ref(), &operation_id(&sandbox))
-            .await
-        {
+        match self.request_agent_stop(&sandbox).await {
             Ok(()) => {
                 self.advance(
                     sandbox,
@@ -77,17 +68,49 @@ impl SandboxWorker {
     async fn finalize_native_retirement(
         &self,
         finalizer: &NativeRetirementFinalizer,
-        sandbox: Sandbox,
+        mut sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
-        let reason = match finalizer.finalize(&sandbox, &self.config.holder).await {
+        let mut result = finalizer.finalize(&sandbox, &self.config.holder).await;
+        if matches!(result, Ok(RetirementOutcome::GracefulWithCustody)) {
+            if let Err(error) = self.request_agent_stop(&sandbox).await {
+                return self
+                    .retry_failure(sandbox, dependency_failure(error), now)
+                    .await;
+            }
+            let mut cleaned = sandbox.clone();
+            if let Some(failure) = self.prepare_retirement_cleanup(&mut cleaned, now).await? {
+                return self.retry_failure(sandbox, failure, now).await;
+            }
+            sandbox = cleaned;
+            result = finalizer
+                .finish_graceful_stop(&sandbox, &self.config.holder)
+                .await;
+        }
+        let reason = match result {
             Ok(RetirementOutcome::Settled | RetirementOutcome::Superseded) => return Ok(()),
-            Ok(RetirementOutcome::GracefulPending) => "sandbox agents are still stopping",
+            Ok(RetirementOutcome::GracefulPending | RetirementOutcome::GracefulWithCustody) => {
+                "sandbox agents are still stopping"
+            }
             Ok(RetirementOutcome::ProviderPending(reason)) => reason,
             Err(SandboxStoreError::Conflict) => "native retirement authority changed",
             Err(error) => return Err(error),
         };
         self.retry_failure(sandbox, WorkerFailure::waiting(reason), now)
+            .await
+    }
+
+    async fn request_agent_stop(
+        &self,
+        sandbox: &Sandbox,
+    ) -> Result<(), super::SandboxDependencyError> {
+        let runtime = sandbox
+            .runtime
+            .as_ref()
+            .map(|binding| RuntimeHandle(binding.runtime_id.clone()));
+        self.dependencies
+            .agents
+            .stop_live_agents(sandbox, runtime.as_ref(), &operation_id(sandbox))
             .await
     }
 

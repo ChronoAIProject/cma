@@ -229,3 +229,54 @@ async fn retirement_custody_reconciles_admission_and_atomically_releases_dispatc
         client.database(&name).drop().await.unwrap();
     }
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn retirement_custody_does_not_retry_an_uncertain_transaction_body() {
+    let uri = std::env::var("CHRONO_TEST_MONGODB_FAILPOINT_URI").unwrap();
+    let admin = Client::with_uri_str(&uri).await.unwrap();
+    let suffix = uuid::Uuid::new_v4().simple().to_string();
+    let name = format!("retirement_mixed_labels_{suffix}");
+    let app = format!("retirement-mixed-{suffix}");
+    let mut options = ClientOptions::parse(&uri).await.unwrap();
+    options.app_name = Some(app.clone());
+    let client = Client::with_options(options).unwrap();
+    let store = MongoSandboxStore::open(&client, &name).await.unwrap();
+    let (parent, children, action) = candidate(&store, false).await;
+    let new_child = new_child(&parent);
+    let child = &children[1];
+    for operation in ["admit", "attach", "add_obligation"] {
+        admin
+            .database("admin")
+            .run_command(doc! {
+                "configureFailPoint": "failCommand",
+                "mode": {"times": 1_i32},
+                "data": {
+                    "failCommands": ["update"],
+                    "appName": &app,
+                    "errorCode": 112_i32,
+                    "errorLabels": ["UnknownTransactionCommitResult", "TransientTransactionError"],
+                },
+            })
+            .await
+            .unwrap();
+        let result = match operation {
+            "admit" => store.admit(&parent, &action).await,
+            "attach" => store.create_agent(new_child.clone()).await,
+            "add_obligation" => store.save_agent(child.revision, external_debt(child)).await,
+            _ => unreachable!(),
+        };
+        disable_failpoint(&admin).await;
+        assert!(
+            matches!(result, Err(SandboxStoreError::Unavailable(_))),
+            "{operation}: {result:?}"
+        );
+        assert_eq!(store.action(&parent.id).await.unwrap(), None);
+        assert_eq!(store.get_agent(&new_child.id).await.unwrap(), None);
+        assert_eq!(
+            store.get_agent(&child.id).await.unwrap().as_ref(),
+            Some(child)
+        );
+    }
+    client.database(&name).drop().await.unwrap();
+}

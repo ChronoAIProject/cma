@@ -324,3 +324,130 @@ pub(super) async fn provider_retirement_refuses_a_child_writer_that_wins_admissi
         owners.cleanup().await;
     }
 }
+
+pub(super) async fn disabled_admission_preserves_legacy_absent_runtime_retirement() {
+    use crate::store::native_retirement_action::RetirementRecords;
+    let (f, active, _, mut now) = active_siblings().await;
+    admit(&f, &active).await;
+    f.backend.lose_object().await;
+    now += Duration::from_secs(6);
+    let clock = Arc::new(Mutex::new(now + Duration::from_secs(1)));
+    let worker = parent_worker_with_retirement_admission(&f, clock, false);
+    worker.run_one(&active.id, now).await.unwrap();
+    assert!(f
+        .backend
+        .calls
+        .snapshot()
+        .contains(&"delete-retained".into()));
+    assert!(f
+        .backend
+        .retirement_records
+        .action(&active.id)
+        .await
+        .unwrap()
+        .is_none());
+}
+
+pub(super) async fn recovered_dispatch_resumes_graceful_stop_with_admission_disabled() {
+    use crate::store::native_retirement_action::{RetirementPhase, RetirementRecords};
+    let (f, active, children, mut now, owners, receiver) = failed_close().await;
+    let clock = Arc::new(Mutex::new(now + Duration::from_secs(7)));
+    let original = finalizing_parent_worker(&f, clock.clone());
+    f.backend
+        .retirement_records
+        .lose_dispatch_acknowledgement
+        .store(true, Ordering::SeqCst);
+    now += Duration::from_secs(6);
+    assert!(matches!(
+        original.run_one(&active.id, now).await,
+        Err(layer2_core::sandbox::store::SandboxStoreError::Unavailable(
+            _
+        ))
+    ));
+    let action = f
+        .backend
+        .retirement_records
+        .action(&active.id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(action.phase, RetirementPhase::Dispatching);
+    assert!(!f
+        .backend
+        .calls
+        .snapshot()
+        .contains(&"retire-alternative".into()));
+
+    // The next replica cannot infer that the older call was unsent.
+    // It closes the original Agents while the same action stays durable.
+    receiver.recover_after.store(0, Ordering::SeqCst);
+    *f.backend.close_transport.lock().unwrap() = None;
+    *f.backend.gc_credentials.lock().unwrap() = Some(f.harness.credentials.clone());
+    let successor = parent_worker_with_retirement_admission(&f, clock.clone(), false);
+    let child = child_worker(&f, None, "recovered-child");
+    now += Duration::from_secs(1200);
+    *clock.lock().unwrap() = now + Duration::from_secs(1);
+    successor.run_one(&active.id, now).await.unwrap();
+    assert!(!f
+        .backend
+        .calls
+        .snapshot()
+        .contains(&"retire-alternative".into()));
+    assert_eq!(
+        f.backend
+            .retirement_records
+            .action(&active.id)
+            .await
+            .unwrap(),
+        Some(action)
+    );
+
+    for _ in 0..6 {
+        now += Duration::from_secs(6);
+        for agent in &children {
+            child.run_one(&agent.id, now).await.unwrap();
+        }
+    }
+    for agent in &children {
+        let stopped = f.harness.store.get_agent(&agent.id).await.unwrap().unwrap();
+        assert_eq!(stopped.status, AgentStatus::Stopped);
+        assert!(stopped
+            .work
+            .receipts
+            .iter()
+            .any(|receipt| receipt.step == AgentWorkStep::CloseProcess));
+    }
+    assert!(!f
+        .backend
+        .calls
+        .snapshot()
+        .contains(&"retire-alternative".into()));
+    for _ in 0..10 {
+        now += Duration::from_secs(6);
+        *clock.lock().unwrap() = now + Duration::from_secs(1);
+        successor.run_one(&active.id, now).await.unwrap();
+        if f.harness.stored(&active.id).await.status == SandboxStatus::Retired {
+            break;
+        }
+    }
+    let retired = f.harness.stored(&active.id).await;
+    assert_eq!(retired.status, SandboxStatus::Retired);
+    assert!(retired.runtime.is_none());
+    assert!(f
+        .backend
+        .retirement_records
+        .action(&active.id)
+        .await
+        .unwrap()
+        .is_none());
+    let calls = f.backend.calls.snapshot();
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|call| call.as_str() == "retire-alternative")
+            .count(),
+        1
+    );
+    receiver.server.abort();
+    owners.cleanup().await;
+}
