@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ApiError, createClient } from '@cma/client';
+import { commandStatus } from './controls.fixture';
+import { withRequestRecovery } from './requestRecovery';
 import { agentTransportJournal } from './journal';
 import { recoverAgentInput, submitAgentInput } from './submit';
 
@@ -35,11 +37,36 @@ it('retains acceptance and returns before the Agent turn finishes', async () => 
   expect(cancel).toHaveBeenCalledOnce();
 });
 
-it('retries a lost acknowledgement only on explicit recovery with the exact saved request', async () => {
+function retainedReceipt() {
+  const status = commandStatus(receipt.responseId, 1, true);
+  return Response.json({
+    ...status,
+    receipt: { ...status.receipt, agent_id: 'agent-one', command_id: receipt.commandId },
+  });
+}
+
+function duplicateTabStorage() {
+  const retained = new Map<string, string>(Object.entries(sessionStorage));
+  return {
+    get length() {
+      return retained.size;
+    },
+    key: (index: number) => [...retained.keys()][index] ?? null,
+    getItem: (key: string) => retained.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      retained.set(key, value);
+    },
+    removeItem: (key: string) => {
+      retained.delete(key);
+    },
+  };
+}
+
+it('reconciles one lost acknowledgement from a reloaded page and a second tab', async () => {
   const fetch = vi
     .fn<typeof globalThis.fetch>()
     .mockRejectedValueOnce(new TypeError('connection lost'))
-    .mockResolvedValueOnce(acceptedResponse());
+    .mockImplementation(async () => retainedReceipt());
   const sdk = createClient({ fetch });
   const journal = agentTransportJournal(sessionStorage, 'alice', 'agent-one');
   journal.select(true);
@@ -48,17 +75,26 @@ it('retries a lost acknowledgement only on explicit recovery with the exact save
   expect(fetch).toHaveBeenCalledOnce();
   expect(onAccepted).not.toHaveBeenCalled();
   const reloaded = agentTransportJournal(sessionStorage, 'alice', 'agent-one');
+  const otherTab = agentTransportJournal(duplicateTabStorage(), 'alice', 'agent-one');
   expect(reloaded.select(false)).toBe('responses_v2');
+  const onOtherTab = vi.fn();
+  await Promise.all([
+    recoverAgentInput(sdk, reloaded, { onAccepted }),
+    recoverAgentInput(sdk, otherTab, { onAccepted: onOtherTab }),
+  ]);
+  const [first, ...lookups] = fetch.mock.calls;
+  expect(lookups).toHaveLength(2);
+  for (const recovered of lookups) {
+    expect(recovered[0]).toBe(`${first?.[0]}/receipt`);
+    expect(recovered[1]?.body).toBe(first?.[1]?.body);
+    expect(new Headers(recovered[1]?.headers).get('idempotency-key')).toBe(
+      new Headers(first?.[1]?.headers).get('idempotency-key'),
+    );
+  }
+  expect(onAccepted).toHaveBeenCalledExactlyOnceWith(receipt);
+  expect(onOtherTab).toHaveBeenCalledExactlyOnceWith(receipt);
   await recoverAgentInput(sdk, reloaded, { onAccepted });
-  const [first, recovered] = fetch.mock.calls;
-  expect(recovered?.[0]).toBe(first?.[0]);
-  expect(recovered?.[1]?.body).toBe(first?.[1]?.body);
-  expect(new Headers(recovered?.[1]?.headers).get('idempotency-key')).toBe(
-    new Headers(first?.[1]?.headers).get('idempotency-key'),
-  );
-  expect(onAccepted).toHaveBeenCalledOnce();
-  await recoverAgentInput(sdk, reloaded, { onAccepted });
-  expect(fetch).toHaveBeenCalledTimes(2);
+  expect(fetch).toHaveBeenCalledTimes(3);
 });
 
 it('keeps an accepted receipt when a UI callback fails and recovers without a POST', async () => {
@@ -168,25 +204,29 @@ function admissionConflict(code = 'agent_command_admission_conflict') {
   );
 }
 
-it('automatically recovers definite startup contention with one key, body and acknowledgement', async () => {
-  vi.useFakeTimers();
+it('checks a receipt after an ambiguous transport error without submitting again', async () => {
   const fetch = vi
     .fn<typeof globalThis.fetch>()
-    .mockResolvedValueOnce(admissionConflict())
-    .mockResolvedValueOnce(acceptedResponse());
+    .mockRejectedValueOnce(new TypeError('Connection lost'))
+    .mockResolvedValueOnce(retainedReceipt());
   const journal = agentTransportJournal(sessionStorage, 'alice', 'agent-one');
   journal.select(true);
   const authorize = vi.fn(async () => undefined);
   const onAccepted = vi.fn();
-  const submission = submitAgentInput(createClient({ fetch }), journal, 'first\nmessage', {
-    authorize,
-    onAccepted,
-  });
-  await vi.runAllTimersAsync();
-  await submission;
-  expect(fetch).toHaveBeenCalledTimes(2);
+  await withRequestRecovery(undefined, { enabled: true, delay: () => 0 }, (recovery) =>
+    submitAgentInput(createClient({ fetch }), journal, 'first\nmessage', {
+      authorize,
+      onAccepted,
+      recovery,
+      signal: recovery.signal,
+    }),
+  );
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+    '/api/v2/agents/agent-one/responses',
+    '/api/v2/agents/agent-one/responses/receipt',
+  ]);
   expect(authorize).toHaveBeenCalledTimes(2);
-  expect(onAccepted).toHaveBeenCalledOnce();
+  expect(onAccepted).toHaveBeenCalledExactlyOnceWith(receipt);
   expect(journal.read()?.receipt).toEqual(receipt);
   expect(fetch.mock.calls[1]?.[1]?.body).toBe(fetch.mock.calls[0]?.[1]?.body);
   expect(new Headers(fetch.mock.calls[1]?.[1]?.headers).get('idempotency-key')).toBe(
@@ -194,53 +234,31 @@ it('automatically recovers definite startup contention with one key, body and ac
   );
 });
 
-it('bounds contention retries and preserves the unresolved original intent', async () => {
-  vi.useFakeTimers();
+it('retains an unresolved intent across a conflict and repeated receipt misses', async () => {
   const fetch = vi
     .fn<typeof globalThis.fetch>()
-    .mockImplementation(async () => admissionConflict());
+    .mockResolvedValueOnce(admissionConflict())
+    .mockImplementation(async () => Response.json(null));
   const journal = agentTransportJournal(sessionStorage, 'alice', 'agent-one');
   journal.select(true);
+  const sdk = createClient({ fetch });
   const onAccepted = vi.fn();
-  const result = submitAgentInput(createClient({ fetch }), journal, 'retained', {
-    onAccepted,
-  }).catch((error: unknown) => error);
-  await vi.runAllTimersAsync();
-  expect(await result).toBeInstanceOf(ApiError);
-  expect(fetch).toHaveBeenCalledTimes(4);
+  await expect(submitAgentInput(sdk, journal, 'retained', { onAccepted })).rejects.toBeInstanceOf(
+    ApiError,
+  );
+  expect(await recoverAgentInput(sdk, journal, { onAccepted })).toBe(false);
+  expect(await recoverAgentInput(sdk, journal, { onAccepted })).toBe(false);
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual([
+    '/api/v2/agents/agent-one/responses',
+    '/api/v2/agents/agent-one/responses/receipt',
+    '/api/v2/agents/agent-one/responses/receipt',
+  ]);
   expect(onAccepted).not.toHaveBeenCalled();
   expect(journal.read()).toMatchObject({ input: 'retained', state: 'pending' });
   expect(
     new Set(fetch.mock.calls.map(([, init]) => new Headers(init?.headers).get('idempotency-key')))
       .size,
   ).toBe(1);
-});
-
-it('stops a contention retry when navigation aborts or the account changes', async () => {
-  vi.useFakeTimers();
-  for (const change of ['navigation', 'account'] as const) {
-    sessionStorage.clear();
-    const controller = new AbortController();
-    const fetch = vi
-      .fn<typeof globalThis.fetch>()
-      .mockImplementation(async () => admissionConflict());
-    const journal = agentTransportJournal(sessionStorage, 'alice', 'agent-one');
-    journal.select(true);
-    const result = submitAgentInput(createClient({ fetch }), journal, 'retained', {
-      signal: controller.signal,
-      async authorize() {
-        throw new Error('account changed');
-      },
-      onAccepted() {
-        throw new Error('unexpected acceptance');
-      },
-    }).catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(0);
-    if (change === 'navigation') controller.abort();
-    await vi.runAllTimersAsync();
-    expect(await result).toBeInstanceOf(Error);
-    expect(fetch).toHaveBeenCalledOnce();
-  }
 });
 
 it('does not automatically retry a different conflict or a failure after a receipt', async () => {
@@ -262,33 +280,37 @@ it('does not automatically retry a different conflict or a failure after a recei
   }
 });
 
-it('does not retry an intent whose account epoch or retained state changed during backoff', async () => {
-  vi.useFakeTimers();
-  for (const change of ['invalidated', 'accepted', 'replaced'] as const) {
-    sessionStorage.clear();
-    const fetch = vi
-      .fn<typeof globalThis.fetch>()
-      .mockImplementation(async () => admissionConflict());
+it.each(['invalidated', 'accepted', 'replaced'] as const)(
+  'revalidates the original intent when the journal is %s while a receipt is in flight',
+  async (change) => {
     const journal = agentTransportJournal(sessionStorage, 'alice', 'agent-one');
     journal.select(true);
+    const retained = journal.retain('original');
+    let finish!: (value: Response) => void;
+    const fetch = vi.fn<typeof globalThis.fetch>(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve;
+        }),
+    );
     const onAccepted = vi.fn();
-    const result = submitAgentInput(createClient({ fetch }), journal, 'original', {
-      authorize: async () => undefined,
-      onAccepted,
-    }).catch((error: unknown) => error);
-    await vi.advanceTimersByTimeAsync(0);
-    const retained = journal.read()!;
+    const result = recoverAgentInput(createClient({ fetch }), journal, { onAccepted });
+    const outcome = result.catch((error: unknown) => error);
+    await vi.waitFor(() => expect(fetch).toHaveBeenCalledOnce());
     if (change === 'invalidated') journal.invalidate();
     else if (change === 'accepted') journal.accepted(retained.key, receipt);
     else {
       journal.refused(retained.key);
       journal.retain('replacement');
     }
-    await vi.runAllTimersAsync();
-    expect(await result).toBeInstanceOf(Error);
-    expect(fetch).toHaveBeenCalledOnce();
-    expect(onAccepted).not.toHaveBeenCalled();
-    if (change === 'accepted') expect(journal.read()?.receipt).toEqual(receipt);
+    finish(retainedReceipt());
+    if (change === 'accepted') {
+      expect(await outcome).toBe(true);
+      expect(onAccepted).toHaveBeenCalledExactlyOnceWith(receipt);
+    } else {
+      expect(await outcome).toBeInstanceOf(Error);
+      expect(onAccepted).not.toHaveBeenCalled();
+    }
     if (change === 'replaced') expect(journal.read()?.input).toBe('replacement');
-  }
-});
+  },
+);

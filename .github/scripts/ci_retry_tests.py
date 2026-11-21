@@ -138,6 +138,49 @@ class BudgetTests(unittest.TestCase):
 
 
 class ClassifierTests(unittest.TestCase):
+    def test_a_throttled_response_names_its_wait_and_an_opted_in_read_honours_it(self):
+        self.assertEqual(ci_retry.retry_after("Retry-After: 45\n"), 45)
+        self.assertEqual(ci_retry.retry_after({"retry-after": "Wed, 21 Oct 2015 07:28:30 GMT"},
+                                              now=1445412480), 30)
+        self.assertEqual(ci_retry.retry_after({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "1000"}, now=940), 60)
+        for headers in ({}, {"retry-after": "soon"}, {"x-ratelimit-remaining": "1", "x-ratelimit-reset": "9"}):
+            self.assertIsNone(ci_retry.retry_after(headers, now=0))
+        self.assertEqual(ci_retry.status_cause(429, {"retry-after": "12"}).after, 12)
+        self.assertIsNone(ci_retry.status_cause(503).after)
+        self.assertIsNone(ci_retry.status_cause(404, {"retry-after": "12"}))
+
+        def throttled():
+            raise RuntimeError("read failed") from ci_retry.status_cause(429, {"retry-after": "12"})
+        for honour, wait in ((True, 12), (False, 1.0)):
+            with self.subTest(honour=honour):
+                clock = Clock()
+                with self.assertRaises(RuntimeError):
+                    ci_retry.call(throttled, name="fixture-read", classify=ci_retry.classify, attempts=2,
+                                  base=2.0, cap=30.0, clock=clock, sleep=clock.sleep, rand=lambda: 0.5,
+                                  log=lambda _line: None, honour_retry_after=honour)
+                self.assertEqual(clock.waits, [wait])
+        # Only ASCII seconds count; other scripts' digits are no wait and never raise.
+        for value in ("\u00b2", "\u0663", "1" * 11, "-5", "1.5"):
+            self.assertIsNone(ci_retry.retry_after({"retry-after": value}, now=0))
+            self.assertIsNone(ci_retry.status_cause(429, {"retry-after": value}).after)
+        self.assertIsNone(ci_retry.retry_after({"x-ratelimit-remaining": "0", "x-ratelimit-reset": "\u00b2"}, now=0))
+
+        # One requested wait is capped, with or without a deadline.
+        def slow():
+            raise RuntimeError("read failed") from ci_retry.status_cause(429, {"retry-after": "600"})
+        clock = Clock()
+        with self.assertRaises(RuntimeError):
+            ci_retry.call(slow, name="fixture-read", classify=ci_retry.classify, attempts=2, clock=clock,
+                          sleep=clock.sleep, rand=lambda: 0.5, log=lambda _line: None, honour_retry_after=True)
+        self.assertEqual(clock.waits, [ci_retry.RETRY_AFTER_CAP])
+        # A requested wait past the deadline ends the read instead of sleeping.
+        clock = Clock()
+        with self.assertRaises(RuntimeError):
+            ci_retry.call(throttled, name="fixture-read", classify=ci_retry.classify, attempts=3, deadline=10,
+                          clock=clock, sleep=clock.sleep, rand=lambda: 0.5, log=lambda _line: None,
+                          honour_retry_after=True)
+        self.assertEqual(clock.waits, [])
+
     def test_http_statuses(self):
         for code in (408, 425, 429, 500, 502, 503, 504):
             self.assertEqual(ci_retry.http_status(code), TRANSIENT, code)
@@ -333,7 +376,7 @@ class LeafTests(unittest.TestCase):
                  for alias in node.names}
         names |= {node.module.split(".")[0] for node in ast.walk(tree)
                   if isinstance(node, ast.ImportFrom) and node.module}
-        self.assertEqual(names, {"errno", "http", "os", "random", "re", "socket", "ssl", "subprocess",
+        self.assertEqual(names, {"email", "errno", "http", "os", "random", "re", "socket", "ssl", "subprocess",
                                  "sys", "time", "urllib"})
 
 

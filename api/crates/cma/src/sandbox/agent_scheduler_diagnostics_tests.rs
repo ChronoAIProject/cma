@@ -40,9 +40,18 @@ impl Output {
             .with_env_filter(tracing_subscriber::EnvFilter::new(filter))
             .with_writer(self.clone());
         if json {
-            Box::new(builder.json().finish())
+            Box::new(
+                builder
+                    .json()
+                    .event_format(crate::diagnostic_format::json())
+                    .finish(),
+            )
         } else {
-            Box::new(builder.finish())
+            Box::new(
+                builder
+                    .event_format(crate::diagnostic_format::text())
+                    .finish(),
+            )
         }
     }
 }
@@ -108,11 +117,8 @@ async fn terminal_failures_keep_metadata_and_drop_private_error_and_ancestor_fie
                 let event = output.events().pop().unwrap();
                 assert_eq!(event["fields"]["phase"], phase);
                 assert_eq!(event["fields"]["cause_class"], cause);
-                assert_eq!(event["span"], serde_json::json!({"name":"agent_scheduler"}));
-                assert_eq!(
-                    event["spans"],
-                    serde_json::json!([{"name":"agent_scheduler"}])
-                );
+                assert!(event.get("span").is_none());
+                assert!(event.get("spans").is_none());
                 assert!(serde_json::to_vec(&event["fields"]).unwrap().len() <= 2048);
             }
         }
@@ -167,6 +173,10 @@ async fn task_panic_and_cancellation_retain_admission_identity_and_free_capacity
 
 #[test]
 fn selectively_filtered_diagnostic_root_never_inherits_private_current_span() {
+    // A second live dispatcher changes the shared callsite interest even when
+    // no other thread emits. This makes the former parallel-only leak stable.
+    let other_output = Output::default();
+    let other = tracing::Dispatch::new(other_output.subscriber(true, crate::DEFAULT_LOG_FILTER));
     for json in [false, true] {
         for global in [false, true] {
             let output = Output::default();
@@ -182,13 +192,18 @@ fn selectively_filtered_diagnostic_root_never_inherits_private_current_span() {
             let subscriber: Box<dyn tracing::Subscriber + Send + Sync> = match (json, global) {
                 (true, true) => Box::new(
                     tracing_subscriber::registry()
-                        .with(layer.json())
+                        .with(layer.json().event_format(crate::diagnostic_format::json()))
                         .with(filter),
                 ),
                 (false, true) => Box::new(tracing_subscriber::registry().with(layer).with(filter)),
-                (true, false) => {
-                    Box::new(tracing_subscriber::registry().with(layer.json().with_filter(filter)))
-                }
+                (true, false) => Box::new(
+                    tracing_subscriber::registry().with(
+                        layer
+                            .json()
+                            .event_format(crate::diagnostic_format::json())
+                            .with_filter(filter),
+                    ),
+                ),
                 (false, false) => {
                     Box::new(tracing_subscriber::registry().with(layer.with_filter(filter)))
                 }
@@ -208,6 +223,8 @@ fn selectively_filtered_diagnostic_root_never_inherits_private_current_span() {
             }
         }
     }
+    assert!(other_output.text().is_empty());
+    std::hint::black_box(other);
 }
 
 #[test]
@@ -279,11 +296,69 @@ fn emitted_private_payloads_are_suppressed_and_largest_fields_stay_bounded() {
             for event in output.events() {
                 assert!(serde_json::to_vec(&event["fields"]).unwrap().len() <= 2048);
                 assert_eq!(event["fields"]["detail_suppressed"], true);
-                assert_eq!(
-                    event["spans"],
-                    serde_json::json!([{"name":"agent_scheduler"}])
-                );
+                assert!(event.get("span").is_none());
+                assert!(event.get("spans").is_none());
             }
         }
+    }
+}
+
+#[test]
+fn ordinary_events_keep_their_configured_span_context() {
+    for json in [false, true] {
+        let output = Output::default();
+        let _subscriber =
+            tracing::subscriber::set_default(output.subscriber(json, crate::DEFAULT_LOG_FILTER));
+        let caller = tracing::info_span!("ordinary_caller", context = "ordinary-context");
+        let _entered = caller.enter();
+        tracing::error!(target: "ordinary_event", result = "retained", "ordinary event");
+        assert!(output.text().contains("ordinary-context"));
+        assert!(output.text().contains("retained"));
+        if json {
+            let event = output.events().pop().unwrap();
+            assert_eq!(event["span"]["context"], "ordinary-context");
+            assert_eq!(event["spans"][0]["context"], "ordinary-context");
+        }
+    }
+}
+
+#[test]
+fn independently_filtered_layers_do_not_attach_private_caller_context() {
+    use tracing_subscriber::{layer::SubscriberExt, Layer};
+    let filtered = Output::default();
+    let unfiltered = Output::default();
+    let subscriber = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_ansi(false)
+                .event_format(crate::diagnostic_format::json())
+                .with_writer(filtered.clone())
+                .with_filter(tracing_subscriber::filter::filter_fn(|metadata| {
+                    metadata.name() != "agent_scheduler"
+                })),
+        )
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_ansi(false)
+                .event_format(crate::diagnostic_format::json())
+                .with_writer(unfiltered.clone()),
+        );
+    let _subscriber = tracing::subscriber::set_default(subscriber);
+    let caller = tracing::info_span!("caller", identity = "private-ancestor");
+    let _entered = caller.enter();
+    let attempt = LifecycleAttempt::new(Phase::Execution, None);
+    diagnostics::failed(&attempt.terminated(true));
+    for output in [filtered, unfiltered] {
+        assert!(!output.text().contains("private-ancestor"));
+        let events = output.events();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0]["fields"]["attempt_id"],
+            attempt.terminated(true).attempt_id.to_string()
+        );
+        assert!(events[0].get("span").is_none());
+        assert!(events[0].get("spans").is_none());
     }
 }

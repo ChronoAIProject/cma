@@ -159,6 +159,7 @@ test('LOCAL: explicit input recovery after reload keeps its body, key and select
 }) => {
   const fixture = new LocalAgentV2();
   fixture.loseInput = true;
+  fixture.revealInputReceipt = false;
   try {
     await open(page, fixture, baseURL!);
     await message(page).fill('First line\nSecond line 🛰️');
@@ -169,11 +170,15 @@ test('LOCAL: explicit input recovery after reload keeps its body, key and select
     await page.reload();
     await expect(recover(page)).toBeEnabled();
     expect(fixture.writes).toHaveLength(1);
+    fixture.revealInputReceipt = true;
     await recover(page).click();
     await expect(recover(page)).toHaveCount(0);
-    expect(fixture.writes).toHaveLength(2);
+    expect(fixture.writes).toHaveLength(1);
     expect(fixture.writes[0]!.key).toBeTruthy();
-    expect(fixture.writes[1]).toEqual(fixture.writes[0]);
+    expect(fixture.receiptReads.length).toBeGreaterThanOrEqual(2);
+    for (const lookup of fixture.receiptReads) {
+      expect(lookup).toEqual({ ...fixture.writes[0], path: `${fixture.writes[0]!.path}/receipt` });
+    }
     expect(fixture.writes[0]!.body).toEqual({ input: 'First line\nSecond line 🛰️', stream: true });
     await expect.poll(() => fixture.streams.size).toBe(1);
     clean(fixture);
