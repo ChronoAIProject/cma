@@ -15,6 +15,13 @@ import staging_cd_test_failures as failures
 from staging_cd_build_progress import summarize
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt
 
+# Stdout of `node --test` on Node 24.19.0 without a TTY. Each test throws or
+# prints text shaped like reporter output: escapes.log puts \\r, U+2028 and
+# \\f before a fake failure line in error messages; nested.log has a nested
+# suite, a TAP-shaped multi-line error, a timeout and a file that fails to
+# load; forged.log's test prints a fake spec summary with console.log and a
+# fake unittest block with console.error, which Node forwards to stdout.
+CAPTURES = Path(__file__).resolve().parent / "fixtures" / "node24-test-reporter"
 QUALIFICATION = "[runtime-qualification 1/1] RUN --mount=type=bind,source=private-source cp -a /payload/. /"
 STEP = "runtime-qualification 1/1"
 MEDIA_STEP = "[media-self-test 7/7] RUN --network=none <<'MEDIA_SELF_TEST'"
@@ -120,7 +127,8 @@ not ok 7 - private line without a diagnostic block
 1..7
 """
 
-# Python 3.12 unittest, as both recovery scripts run (`unittest.main()`).
+# Python 3.12 unittest, as both recovery scripts run (`unittest.main()`):
+# errors first, then failures, then the totals the block count is checked against.
 UNITTEST = """\
 .FEF
 ======================================================================
@@ -131,6 +139,13 @@ Traceback (most recent call last):
     raise RuntimeError("private detail")
 RuntimeError: private detail
 FAIL: test_private_inside_a_traceback (private.Module)
+
+======================================================================
+ERROR: setUpClass (__main__.DesktopRecovery)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/cma-codex-source/recovery_desktop_test.py", line 30, in setUpClass
+OSError: private
 
 ======================================================================
 FAIL: test_alpha_fails (__main__.Fixture.test_alpha_fails)
@@ -155,13 +170,6 @@ Traceback (most recent call last):
 AssertionError: 'private-c' != 'a'
 
 ======================================================================
-ERROR: setUpClass (__main__.DesktopRecovery)
-----------------------------------------------------------------------
-Traceback (most recent call last):
-  File "/tmp/cma-codex-source/recovery_desktop_test.py", line 30, in setUpClass
-OSError: private
-
-======================================================================
 FAIL: test_older_python (recovery_test.Fixture)
 Docstring line of a private description.
 ----------------------------------------------------------------------
@@ -169,9 +177,9 @@ Traceback (most recent call last):
   File "/tmp/private/helper.py", line 3, in helper
 
 ----------------------------------------------------------------------
-Ran 6 tests in 0.001s
+Ran 7 tests in 0.001s
 
-FAILED (failures=3, errors=2)
+FAILED (failures=4, errors=2)
 """
 
 MEDIA = """\
@@ -179,6 +187,19 @@ media-self-test case=h264_aac.mp4 op=keyframes outcome=ok frames=6 pcm_bytes=0 m
 media-self-test case=voice.ogg op=audio outcome=timeout frames=0 pcm_bytes=0 ms=30000
 media-self-test case=private;fixture op=audio outcome=exit_nonzero frames=0 pcm_bytes=0 ms=1
 """
+
+
+SPEC_NAMES = [
+    {"step": STEP, "file": "sample.test.cjs", "test": "reopens the original conversation after restart"},
+    {"step": STEP, "file": "sample.test.cjs", "test": "nested failure with <angle> quotes"},
+    {"step": STEP, "file": "crash.test.cjs"},
+    {"step": STEP, "file": "timeout.test.cjs", "test": "session open overlap stays bounded"}]
+UNITTEST_NAMES = [
+    {"step": STEP, "file": "recovery_test.py", "test": "Fixture.test_beta_errors"},
+    {"step": STEP, "file": "recovery_desktop_test.py", "test": "DesktopRecovery.setUpClass"},
+    {"step": STEP, "file": "recovery_test.py", "test": "Fixture.test_alpha_fails"},
+    {"step": STEP, "file": "recovery_test.py", "test": "Fixture.test_gamma_sub"},
+    {"step": STEP, "test": "recovery_test.Fixture.test_older_python"}]
 
 
 def digest(number):
@@ -212,11 +233,7 @@ class ExtractionTests(unittest.TestCase):
     def test_node_spec_summary_names_each_failing_test_and_its_file(self):
         result = failed_qualification(stdout=SPEC)
         self.assertEqual(result["failed_steps"], [STEP])
-        self.assertEqual(result["failed_tests"], [
-            {"step": STEP, "file": "sample.test.cjs", "test": "reopens the original conversation after restart"},
-            {"step": STEP, "file": "sample.test.cjs", "test": "nested failure with <angle> quotes"},
-            {"step": STEP, "file": "crash.test.cjs"},
-            {"step": STEP, "file": "timeout.test.cjs", "test": "session open overlap stays bounded"}])
+        self.assertEqual(result["failed_tests"], SPEC_NAMES)
         self.assertNotIn("private", json.dumps(result))
 
     def test_node_tap_names_leaf_failures_and_skips_parents_todos_and_unstructured_lines(self):
@@ -230,19 +247,16 @@ class ExtractionTests(unittest.TestCase):
 
     def test_python_unittest_names_failures_errors_and_their_script(self):
         result = failed_qualification(stderr=UNITTEST)
-        self.assertEqual(result["failed_tests"], [
-            {"step": STEP, "file": "recovery_test.py", "test": "Fixture.test_beta_errors"},
-            {"step": STEP, "file": "recovery_test.py", "test": "Fixture.test_alpha_fails"},
-            {"step": STEP, "file": "recovery_test.py", "test": "Fixture.test_gamma_sub"},
-            {"step": STEP, "file": "recovery_desktop_test.py", "test": "DesktopRecovery.setUpClass"},
-            {"step": STEP, "test": "recovery_test.Fixture.test_older_python"}])
+        self.assertEqual(result["failed_tests"], UNITTEST_NAMES)
         self.assertNotIn("private", json.dumps(result))
 
-    def test_both_streams_of_one_step_are_read_separately(self):
+    def test_each_parser_reads_only_its_own_stream(self):
         result = failed_qualification(stdout=SPEC, stderr=UNITTEST)
-        self.assertEqual(len(result["failed_tests"]), 9)
-        self.assertEqual(result["failed_tests"][0]["file"], "sample.test.cjs")
-        self.assertEqual(result["failed_tests"][-1]["test"], "recovery_test.Fixture.test_older_python")
+        self.assertEqual(result["failed_tests"], (SPEC_NAMES + UNITTEST_NAMES)[:failures.MAX_NAMES])
+        # Node forwards a test's stdout and stderr to stdout: a unittest report
+        # there is not unittest's, and spec or TAP text on stderr is not node's.
+        self.assertNotIn("failed_tests", failed_qualification(stdout=UNITTEST, stderr=SPEC))
+        self.assertNotIn("failed_tests", failed_qualification(stderr=TAP))
 
     def test_media_self_test_names_failed_cases_only_in_its_own_stage(self):
         result = summarize(progress((7, MEDIA_STEP, "private", {1: MEDIA + SPEC})))
@@ -272,14 +286,15 @@ class ExtractionTests(unittest.TestCase):
 
     def test_names_are_de_duplicated_bounded_and_ordered_by_failure(self):
         repeated = "".join(f"not ok {n} - flaky {n % 12}\n  ---\n  ...\n" for n in range(1, 40))
-        result = failed_qualification(stdout=repeated)
-        self.assertEqual([row["test"] for row in result["failed_tests"]], [f"flaky {n}" for n in range(1, 11)])
-        two = summarize(progress((2, "[runtime-qualification 1/1] RUN y", "private", {1: "not ok 1 - second\n  ---\n"}),
+        result = failed_qualification(stdout="TAP version 13\n" + repeated)
+        self.assertEqual([row["test"] for row in result["failed_tests"]],
+                         [f"flaky {n}" for n in range(1, failures.MAX_NAMES + 1)])
+        two = summarize(progress((2, "[runtime-qualification 1/1] RUN y", "private", {1: "TAP version 13\nnot ok 1 - second\n  ---\n"}),
                                  (1, "[media-self-test 7/7] RUN x", "private", {1: MEDIA})))
         self.assertEqual([row["step"] for row in two["failed_tests"]], ["media-self-test 7/7", STEP])
 
     def test_malformed_records_are_ignored(self):
-        good = {"vertex": digest(1), "stream": 1, "data": base64.b64encode(b"not ok 1 - kept\n  ---\n").decode()}
+        good = {"vertex": digest(1), "stream": 1, "data": base64.b64encode(b"TAP version 13\nnot ok 1 - kept\n  ---\n").decode()}
         records = [{"logs": "private"}, {"logs": [None, "private", 7]},
                    {"logs": [dict(good, vertex=["private"])]}, {"logs": [dict(good, vertex=None)]},
                    {"logs": [dict(good, stream=3)]}, {"logs": [dict(good, stream=True)]},
@@ -291,6 +306,62 @@ class ExtractionTests(unittest.TestCase):
         result = summarize(raw)
         self.assertEqual(result["failed_tests"], [{"step": STEP, "test": "kept"}])
         self.assertEqual(summarize(raw.decode())["failed_tests"], result["failed_tests"])
+
+
+    def test_real_node_24_captures_name_only_the_reporters_own_failures(self):
+        cases = {
+            "escapes.log": [("a.test.cjs", "plain literal failure"), ("a.test.cjs", "error with carriage return"),
+                            ("a.test.cjs", "error with line separator"), ("a.test.cjs", "error with form feed")],
+            "nested.log": [("c.test.cjs", "nested literal failure"), ("c.test.cjs", "multi-line error content"),
+                           ("c.test.cjs", "timeout case"), ("d.test.cjs", None)],
+            "forged.log": [("e.test.cjs", "logs diagnostics")],
+        }
+        for name, expected in cases.items():
+            with self.subTest(capture=name):
+                capture = (CAPTURES / name).read_bytes()
+                result = failed_qualification(stdout=capture)
+                self.assertEqual(result["failed_tests"], [
+                    {"step": STEP, "file": file, **({"test": test} if test else {})} for file, test in expected])
+                text = json.dumps(result)
+                for leaked in ("LEAKED", "cr_leak", "TAP-SHAPED", "FORGED", "forged", "Forged"):
+                    self.assertNotIn(leaked, text)
+                # The same bytes on stderr name nothing: node never writes its reporter there.
+                self.assertNotIn("failed_tests", failed_qualification(stderr=capture))
+
+    def test_error_text_split_only_at_newlines_never_reaches_column_zero(self):
+        separators = ["\r", "\f", "\v", "\x1c", "\x1d", "\x1e", "\x85", " ", " "]
+        details = "".join(f"  Error: child said{separator}✖ LEAKED-{index} ({index}ms){separator}"
+                          f"test at x/leak_{index}.test.cjs:1:1\n" for index, separator in enumerate(separators))
+        summary = "\n✖ failing tests:\n\ntest at a.test.cjs:1:1\n✖ real failure (1ms)\n" + details
+        result = failed_qualification(stdout=summary.encode())
+        self.assertEqual(result["failed_tests"], [{"step": STEP, "file": "a.test.cjs", "test": "real failure"}])
+        # CRLF output still parses: one trailing \r is part of the line ending.
+        crlf = summary.replace("\n", "\r\n").encode()
+        self.assertEqual(failed_qualification(stdout=crlf)["failed_tests"], result["failed_tests"])
+
+    def test_text_shaped_like_another_reporter_or_an_earlier_report_is_not_read(self):
+        # Indented TAP-shaped error text inside a spec summary is not TAP.
+        spec = ("✖ failing tests:\n\ntest at a.test.cjs:1:1\n✖ real failure (1ms)\n"
+                "  Error: bridge said:\n  not ok 1 - SPEC-FORGED\n    ---\n    ...\n")
+        self.assertEqual(failed_qualification(stdout=spec)["failed_tests"],
+                         [{"step": STEP, "file": "a.test.cjs", "test": "real failure"}])
+        # A TAP point's YAML block re-indents quoted text to look like a nested point.
+        tap = ("TAP version 13\nnot ok 1 - real tap failure\n  ---\n  error: |-\n    bridge said:\n"
+               "    not ok 1 - YAML-FORGED\n      ---\n      ...\n  ...\nnot ok 2 - later failure\n  ---\n  ...\n")
+        self.assertEqual([row["test"] for row in failed_qualification(stdout=tap)["failed_tests"]],
+                         ["real tap failure", "later failure"])
+        # A test's console.log printed before the real summary imitates one.
+        forged = ("✖ failing tests:\n\ntest at x/forged_file.cjs:1:1\n✖ STDOUT-FORGED (1ms)\n"
+                  "✖ logs diagnostics (2ms)\n\n" + SPEC)
+        self.assertEqual(failed_qualification(stdout=forged)["failed_tests"], SPEC_NAMES)
+        # A test's own stderr can print a unittest block before the real report;
+        # only the last failures + errors blocks before the last totals count.
+        block = "=" * 70 + "\nFAIL: test_forged (stderr.Forged.test_forged)\n" + "-" * 70 + "\n"
+        self.assertEqual(failed_qualification(stderr=block + UNITTEST)["failed_tests"], UNITTEST_NAMES)
+        passed = "\n" + "-" * 70 + "\nRan 3 tests in 0.010s\n\nOK\n"
+        for stderr in (block, block + passed, UNITTEST + block + passed, UNITTEST.replace("FAILED (", "FAILED ((")):
+            with self.subTest(stderr=stderr[-40:]):
+                self.assertNotIn("failed_tests", failed_qualification(stderr=stderr))
 
 
 class SanitizationTests(unittest.TestCase):
@@ -331,7 +402,7 @@ class SanitizationTests(unittest.TestCase):
 
     def test_hostile_log_content_never_reaches_the_summary(self):
         token = "gh" + "p_" + "Ab1Cd2" * 6
-        hostile = "".join(f"not ok {n} - {title}\n  ---\n  location: '{location}:1:1'\n  ...\n" for n, (title, location) in
+        hostile = "TAP version 13\n" + "".join(f"not ok {n} - {title}\n  ---\n  location: '{location}:1:1'\n  ...\n" for n, (title, location) in
                           enumerate([("leaks " + token, "/tmp/x/a.test.cjs"),
                                      ("::error::injected", "/tmp/x/b.test.cjs"),
                                      ("clean title", "/tmp/x/" + token + ".cjs"),
@@ -346,7 +417,7 @@ class SanitizationTests(unittest.TestCase):
         self.assertEqual(result["failed_tests"], [
             {"step": STEP, "file": "a.test.cjs"}, {"step": STEP, "file": "b.test.cjs"},
             {"step": STEP, "test": "clean title"}, {"step": STEP, "file": "c.cjs", "test": "link"},
-            {"step": STEP, "test": "ansi prefixed title"}])
+            {"step": STEP, "file": "d.cjs"}, {"step": STEP, "test": "ansi prefixed title"}])
         text = json.dumps(result)
         for leaked in (token, "injected", "user", "pass@", "\\u001b", "::", "%"):
             self.assertNotIn(leaked, text)
@@ -354,7 +425,7 @@ class SanitizationTests(unittest.TestCase):
     def test_an_oversized_log_keeps_only_its_bounded_head_and_tail(self):
         # At most 1 MiB of one step's output is ever held: 512 KiB per stream.
         self.assertLessEqual(failures.HEAD + failures.TAIL, 512 * 1024)
-        head = "not ok 1 - early failure\n  ---\n  ...\n"
+        head = "TAP version 13\nnot ok 1 - early failure\n  ---\n  ...\n"
         middle = "not ok 2 - middle failure\n  ---\n  ...\n"
         tail = "not ok 3 - late failure\n  ---\n  ...\n"
         filler = ("private filler line\n" * (failures.HEAD // 20 + 1000))

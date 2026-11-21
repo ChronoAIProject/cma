@@ -1,13 +1,15 @@
 """Name the failing tests of allowlisted test stages, and nothing else, from private BuildKit logs.
 
 A Dockerfile step's output stays private: it can quote build arguments,
-mounted files or fixture data. A step in a stage listed here runs only test
-suites, so its failure lines name tests from this public repository's sources,
-and PR CI already prints the same stages' whole output. Only the fields those
-exact failure lines carry (a title, a test id, a file basename) leave this
-module, after a fixed charset, length bound and secret-shape check. Every other
-byte of the log, including error messages, tracebacks and diagnostics, is read
-only to recognise those lines and is never returned.
+mounted files or fixture data. A stage listed here only runs this public
+repository's test suites on public inputs, and PR CI already prints its whole
+output; that is the boundary. Within it, only fields of each reporter's own
+failure report leave this module (a title, a test id, a file basename): node's
+last spec summary on stdout, unittest's final error list on stderr, and fixed
+media-self-test lines. Each field then passes a fixed charset, a length bound
+and secret-shape checks, which are defense in depth rather than a boundary:
+text a test prints in exactly a reporter's failure format, where that report
+is read, can still be taken for a name.
 """
 import base64
 import binascii
@@ -21,6 +23,11 @@ import re
 # media-self-test (cmaeg/Dockerfile): `cmaeg --media-self-test` prints one
 #   fixed-format line per committed fixture: name, op and outcome tokens only.
 STAGES = {"runtime-qualification": ("tap", "spec", "unittest"), "media-self-test": ("media",)}
+# BuildKit records a RUN step's stdout as stream 1 and its stderr as stream 2.
+# node --test writes its reporter to stdout and forwards each test file's own
+# stdout and stderr there; unittest writes only to stderr; the media report is
+# printed with cat. Each parser reads only its own stream.
+STREAM = {"tap": 1, "spec": 1, "unittest": 2, "media": 1}
 # Bytes kept per vertex and stream: the start holds early TAP failures and the
 # end holds spec and unittest summaries. The middle of a larger log is dropped.
 HEAD = TAIL = 256 * 1024
@@ -50,7 +57,8 @@ SECRET_SHAPES = (
 MIXED_RUN = re.compile(r"[A-Za-z0-9+/=_-]{20,}")
 DIGIT_RUN = re.compile(r"[A-Za-z0-9+=]{24,}")
 
-TAP = re.compile(r"( *)not ok [0-9]{1,6} - (.+)")
+TAP_HEADER = "TAP version 13"
+TAP = re.compile(r"( *)(not ok|ok) [0-9]{1,6}(?: - (.*))?")
 DIRECTIVE = re.compile(r"(?<!\\)# (?:TODO|SKIP)\b", re.IGNORECASE)
 LOCATION = re.compile(r"(.+):[0-9]+:[0-9]+")
 SPEC_HEADER = "✖ failing tests:"
@@ -58,6 +66,8 @@ SPEC_AT = re.compile(r"test at (.+):[0-9]+:[0-9]+")
 SPEC_FAIL = re.compile(r"✖ (.+) \([0-9]+(?:\.[0-9]+)?m?s\)")
 UNITTEST = re.compile(r"(?:FAIL|ERROR): ([A-Za-z_][A-Za-z0-9_]{0,127}) \(([A-Za-z_][A-Za-z0-9_.]{0,255})\)(?: .*)?")
 SEPARATOR1, SEPARATOR2 = "=" * 70, "-" * 70
+RAN = re.compile(r"Ran [0-9]+ tests? in [0-9]+\.[0-9]+s")
+TOTALS = re.compile(r"FAILED \(((?:[a-z ]+=[0-9]+)(?:, [a-z ]+=[0-9]+)*)\)")
 FRAME = re.compile(r'  File "(.+)", line [0-9]+, in ([A-Za-z_][A-Za-z0-9_]*)')
 MEDIA = re.compile(r"media-self-test case=([A-Za-z0-9][A-Za-z0-9_.-]{0,63}) op=(keyframes|audio) "
                    r"outcome=([a-z_]{1,32}) frames=[0-9]+ pcm_bytes=[0-9]+ ms=[0-9]+")
@@ -125,18 +135,30 @@ def _split(title, file):
 
 
 def _tap(lines):
-    for index, line in enumerate(lines):
-        match = TAP.fullmatch(line)
-        if not match or index + 1 >= len(lines) or lines[index + 1] != match[1] + "  ---":
+    # Only a TAP stream: indented error text in a spec stream can look like TAP.
+    if not lines or lines[0] != TAP_HEADER:
+        return
+    index = 0
+    while index < len(lines):
+        point = TAP.fullmatch(lines[index])
+        index += 1
+        if not point or index >= len(lines) or lines[index] != point[1] + "  ---":
             continue
-        title = match[2]
-        if DIRECTIVE.search(title):
+        # A test point's YAML block can quote any text, re-indented to look
+        # like a nested test point; only its own terminator ends it.
+        end, block = point[1] + "  ...", []
+        index += 1
+        while index < len(lines) and lines[index] != end:
+            if len(block) < YAML_LINES:
+                block.append(lines[index])
+            index += 1
+        index += 1
+        title = point[3]
+        if point[2] != "not ok" or not title or DIRECTIVE.search(title):
             continue
         fields = {}
-        for detail in lines[index + 2:index + 2 + YAML_LINES]:
-            if detail == match[1] + "  ...":
-                break
-            field = re.fullmatch(re.escape(match[1]) + r"  (location|failureType): '(.*)'", detail)
+        for detail in block:
+            field = re.fullmatch(re.escape(point[1]) + r"  (location|failureType): '(.*)'", detail)
             if field:
                 fields.setdefault(field[1], field[2])
         # A suite whose subtests failed is named by those subtests.
@@ -148,27 +170,40 @@ def _tap(lines):
 
 
 def _spec(lines):
-    active, file = False, None
-    for line in lines:
-        if line == SPEC_HEADER:
-            active, file = True, None
-        elif not active or not line or line.startswith(" "):
+    # Node prints its summary once every test has finished. A test's own output,
+    # forwarded earlier at column 0, can imitate one, so only the last is read.
+    starts = [index for index, line in enumerate(lines) if line == SPEC_HEADER]
+    if not starts:
+        return
+    file = None
+    for line in lines[starts[-1] + 1:]:
+        if not line or line.startswith(" "):
             continue
-        elif at := SPEC_AT.fullmatch(line):
+        if at := SPEC_AT.fullmatch(line):
             file = at[1]
         elif failed := SPEC_FAIL.fullmatch(line):
             yield _split(failed[1], file)
             file = None
         else:
-            active = False
+            return
 
 
 def _unittest(lines):
-    for index, line in enumerate(lines):
-        match = UNITTEST.fullmatch(line)
-        if not match or index == 0 or lines[index - 1] != SEPARATOR1 or SEPARATOR2 not in lines[index + 1:index + 3]:
-            continue
-        method, path = match[1], match[2]
+    # The runner prints one block per failure and error after every test has
+    # run, then its totals. A test's own stderr can imitate a block earlier, so
+    # only the last `failures + errors` blocks before the last totals count.
+    ran = [index for index in range(1, len(lines)) if lines[index - 1] == SEPARATOR2 and RAN.fullmatch(lines[index])]
+    if not ran:
+        return
+    totals = next((match for line in lines[ran[-1] + 1:ran[-1] + 4] if (match := TOTALS.fullmatch(line))), None)
+    if not totals:
+        return
+    counts = dict(item.split("=") for item in totals[1].split(", "))
+    expected = int(counts.get("failures", 0)) + int(counts.get("errors", 0))
+    headers = [index for index in range(1, ran[-1]) if lines[index - 1] == SEPARATOR1
+               and SEPARATOR2 in lines[index + 1:index + 3] and UNITTEST.fullmatch(lines[index])]
+    for index in headers[max(len(headers) - expected, 0):] if expected else ():
+        method, path = UNITTEST.fullmatch(lines[index]).groups()
         start = index + 2 + lines[index + 1:index + 3].index(SEPARATOR2)
         file = None
         for detail in lines[start:start + TRACE_LINES]:
@@ -232,27 +267,29 @@ def failed_tests(raw, failed):
     streams = _collect(raw, wanted)
     names, seen = [], set()
     for digest, (label, parsers) in wanted.items():
+        lines = {}
         for number in STREAMS:
             retained = streams.get((digest, number))
-            if retained is None:
-                continue
-            lines = [ANSI.sub("", line) for line in retained.text().splitlines()]
-            for parser in parsers:
-                for file, test in PARSERS[parser](lines):
-                    entry = {"step": label}
-                    file = clean_file(file) if file is not None else None
-                    test = clean_name(test) if test is not None else None
-                    if file:
-                        entry["file"] = file
-                    if test:
-                        entry["test"] = test
-                    key = (label, file, test)
-                    if len(entry) == 1 or key in seen:
-                        continue
-                    seen.add(key)
-                    names.append(entry)
-                    if len(names) == MAX_NAMES:
-                        return names
+            # Node indents error text only after "\n"; str.splitlines() would
+            # also split at "\r", "\f" or U+2028 and expose that text at column 0.
+            lines[number] = [ANSI.sub("", line.removesuffix("\r")) for line in retained.text().split("\n")] \
+                if retained else []
+        for parser in parsers:
+            for file, test in PARSERS[parser](lines[STREAM[parser]]):
+                entry = {"step": label}
+                file = clean_file(file) if file is not None else None
+                test = clean_name(test) if test is not None else None
+                if file:
+                    entry["file"] = file
+                if test:
+                    entry["test"] = test
+                key = (label, file, test)
+                if len(entry) == 1 or key in seen:
+                    continue
+                seen.add(key)
+                names.append(entry)
+                if len(names) == MAX_NAMES:
+                    return names
     return names
 
 
