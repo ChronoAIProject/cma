@@ -7,6 +7,7 @@ import { IconDownloadOutline16 } from '../ui/icons';
 import './AnswerDeliverables.css';
 import { DeliverablePreviewContext } from './previewSelection';
 import { saveDelivery } from './saveDelivery';
+import { DocsLink } from '../services/DocsLink';
 
 export const statusText: Record<AnswerDeliverable['status'], string> = {
   ready: 'Ready to download',
@@ -255,6 +256,9 @@ export function AnswerDeliverables({
   return (
     <div ref={container} className="answer-deliveries">
       {items?.length ? <h3 className="answer-deliveries__heading">Files from this task</h3> : null}
+      {items?.length || failed === access ? (
+        <DocsLink view="find-your-outputs">Help finding and downloading outputs</DocsLink>
+      ) : null}
       {items ? (
         items.length ? (
           <ul aria-label="Answer deliverables" className="answer-deliveries__list">

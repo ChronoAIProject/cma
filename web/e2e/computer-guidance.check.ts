@@ -115,6 +115,17 @@ for (const width of [390, 1600]) {
       await expect(computer).toBeHidden();
       await expect(composer).toBeFocused();
       await expect(composer).toHaveValue('Keep this unsent conversation draft');
+      await entry.click();
+      await computer.getByRole('tab', { name: 'Screen', exact: true }).click();
+      await help.click();
+      await dialog.getByRole('link', { name: 'Guide to environments and Computer tools' }).click();
+      await expect(
+        page.getByRole('heading', { name: 'Environments and capacity', exact: true }),
+      ).toBeFocused();
+      await expect(page.getByRole('article')).toContainText('Reconnect cannot enable a capability');
+      await page.goBack();
+      await expect(composer).toHaveValue('Keep this unsent conversation draft');
+      await expect(composer).toBeEnabled();
       expect(fixture.writes).toEqual([]);
       expect(fixture.boundary.writes).toEqual([]);
       expect(fixture.boundary.unexpected).toEqual([]);

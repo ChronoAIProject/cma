@@ -1,5 +1,6 @@
 import { useSandboxCapacity } from '../sandbox/useSandboxCapacity';
 import { SandboxCapacityPanel } from '../sandbox/SandboxCapacityPanel';
+import { DocsLink } from '../services/DocsLink';
 import { useEffect, useId, useRef, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { AppRoute } from '../routing/routes';
@@ -165,7 +166,8 @@ function TaskHomeContent({
           </span>
           <h1 id={titleId}>What should your Agent work on?</h1>
           <p className="task-home__intro">
-            Give it a task. Your Agent works through it on a cloud computer.
+            Give it a task. Your Agent works through it on a cloud computer.{' '}
+            <DocsLink view="start-a-task">Help starting a task</DocsLink>
           </p>
         </>
       ) : (
@@ -362,6 +364,9 @@ function TaskHomeContent({
         <section className="task-submitted" aria-label="Submitted task">
           <h2>Submitted task</h2>
           <p className="task-submitted__text">{intent.body.initial_message}</p>
+          {!intent.receipt && !lifecycle.pending ? (
+            <DocsLink view="recover-and-continue">Help recovering this request</DocsLink>
+          ) : null}
           {intent.body.repository ? (
             <>
               <p className="task-submitted__literal">{intent.body.repository.url}</p>
