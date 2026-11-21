@@ -26,6 +26,40 @@ ARG OMARCHY_CMA_BASE=runtime-tools
 #  4. Land it only with an independent review of both catalogs, which sets
 #     APPROVED_PACKAGE_EVIDENCE and APPROVED_OMARCHY_PACKAGE_EVIDENCE.
 ARG DEBIAN_SNAPSHOT=20261121T100000Z
+# The Omarchy stages resolve core, extra and multilib from the Arch Linux
+# Archive's repos/ tree for this one date instead of the live Omarchy stable
+# mirror, so the same source installs the same Arch packages and rebuilds the
+# OpenSSL CLI, wlroots, Aquamarine and Hyprland with the same toolchain.
+# Omarchy's own repository has no dated archive: install.sh pins each file the
+# desktop takes from it, and its detached signature, by sha256. It also pins
+# the indexed file of each package the archive serves with other bytes. pacman
+# still verifies every package signature against the keyrings the build
+# installs.
+# The image keeps Omarchy's stable pacman.conf and mirrorlist for the
+# sandbox's own installs.
+#
+# Arch updates arrive only by bumping this value, deliberately:
+#  1. Choose a date whose following day the archive already lists, so the
+#     chosen day's tree is complete; a published tree does not change.
+#  2. Rebuild linux/amd64. Exact version checks (openssl in
+#     build-arch-openssl-cli.sh, wlroots0.20 and aquamarine in
+#     build-graphics.sh, hyprland in build-hyprland.sh, the pip wheel in
+#     normalize-omarchy.py) fail the build until they move with the date. Diff
+#     /usr/share/cma-omarchy/packages.txt and package-sha256.txt against the
+#     previous build to list what moved. If Omarchy's own packages must move
+#     too, pin the files and signatures its stable repository then serves.
+#     The archive keeps the first upload of each file name, so compare each
+#     resolved package's served size and date with the date's index, and pin
+#     the indexed file of any package re-released under the same name.
+#  3. Rebind this file's sha256 as for DEBIAN_SNAPSHOT, and each Omarchy
+#     catalog row whose package or derived output moved, from the signed
+#     packages.
+#  4. Land it only with an independent review of both catalogs, which sets
+#     APPROVED_PACKAGE_EVIDENCE and APPROVED_OMARCHY_PACKAGE_EVIDENCE.
+# pacman checks key expiry against the build's clock, so a date stops building
+# once any key that signed one of its packages expires. For 2026/10/22 the
+# first is a packager subkey that expires on 2026-12-31; bump before then.
+ARG ARCH_SNAPSHOT=2026/10/22
 # CMA_MODEL_PROXY_PLACEHOLDER is supplied only in managed Agent launch plans,
 # not in the Sandbox environment, so existing runtime identities stay stable.
 # The sandbox provider schedules this image and starts the kernel-neutral Layer
@@ -466,11 +500,13 @@ LABEL org.opencontainers.image.source="https://github.com/ChronoAIProject/cma" \
 COPY --link --from=runtime-application /payload/ /
 FROM ${OMARCHY_CMA_BASE} AS omarchy-cma
 FROM archlinux:base@sha256:e82623936fa1a69700b48e98b058df6eaab18b737c27473a7234a40fdecb9413 AS omarchy-bootstrap
+ARG ARCH_SNAPSHOT
 COPY api/crates/layer4-runtime/image/build-omarchy-base.sh api/crates/layer4-runtime/image/normalize-omarchy.py api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/assert-no-private-keyrings.py api/crates/layer4-runtime/image/build-arch-openssl-cli.sh api/crates/layer4-runtime/image/install-arch-openssl-cli.sh api/crates/layer4-runtime/image/openssl-remove-benchmarks.patch api/crates/layer4-runtime/image/verify-openssl-cli-hardening.sh /tmp/
-RUN bash /tmp/build-omarchy-base.sh /payload
+RUN bash /tmp/build-omarchy-base.sh /payload "${ARCH_SNAPSHOT}"
 FROM scratch AS omarchy-base
 COPY --link --from=omarchy-bootstrap /payload/ /
 FROM omarchy-base AS omarchy-dependencies
+ARG ARCH_SNAPSHOT
 COPY api/crates/layer4-runtime/src/omarchy/install.sh /tmp/install-omarchy.sh
 COPY api/crates/layer4-runtime/image/normalize-omarchy.py /tmp/normalize-omarchy.py
 COPY api/crates/layer4-runtime/image/normalize-machine-id.py api/crates/layer4-runtime/image/install-arch-openssl-cli.sh /tmp/
@@ -479,7 +515,7 @@ COPY api/crates/layer4-runtime/src/omarchy/secure-tools.sh /tmp/secure-omarchy-t
 COPY api/crates/layer4-runtime/src/omarchy/remove-google-account.patch /tmp/remove-google-account.patch
 COPY api/crates/layer4-runtime/src/omarchy/build-graphics.sh api/crates/layer4-runtime/src/omarchy/wlroots-vkms.patch api/crates/layer4-runtime/src/omarchy/aquamarine-fullscreen.patch /tmp/
 COPY api/crates/layer4-runtime/src/omarchy/build-hyprland.sh api/crates/layer4-runtime/src/omarchy/shm-allocator.hpp api/crates/layer4-runtime/src/omarchy/aquamarine-shm.patch api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch /tmp/
-RUN --mount=type=bind,from=omarchy-bootstrap,source=/arch-openssl-cli,target=/run/cma-openssl-cli,readonly bash /tmp/install-omarchy.sh && sh /tmp/install-arch-openssl-cli.sh /run/cma-openssl-cli / && python -B /tmp/normalize-machine-id.py && python -B /tmp/assert-no-private-keyrings.py && rm /tmp/install-arch-openssl-cli.sh /tmp/assert-no-private-keyrings.py /tmp/normalize-machine-id.py /tmp/normalize-omarchy.py /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
+RUN --mount=type=bind,from=omarchy-bootstrap,source=/arch-openssl-cli,target=/run/cma-openssl-cli,readonly bash /tmp/install-omarchy.sh "${ARCH_SNAPSHOT}" && sh /tmp/install-arch-openssl-cli.sh /run/cma-openssl-cli / && python -B /tmp/normalize-machine-id.py && python -B /tmp/assert-no-private-keyrings.py && rm /tmp/install-arch-openssl-cli.sh /tmp/assert-no-private-keyrings.py /tmp/normalize-machine-id.py /tmp/normalize-omarchy.py /tmp/install-omarchy.sh /tmp/secure-omarchy-tools.sh /tmp/build-graphics.sh /tmp/build-hyprland.sh /tmp/shm-allocator.hpp /tmp/wlroots-vkms.patch /tmp/aquamarine-fullscreen.patch /tmp/aquamarine-shm.patch /tmp/hyprland-shm.patch
 FROM omarchy-cma AS omarchy-tool-payload
 USER 0
 RUN mkdir -p /payload/usr/share /payload/usr/local /payload/etc \

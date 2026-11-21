@@ -146,6 +146,7 @@ class CacheIdentityTests(unittest.TestCase):
         self.assertIn("api/crates/layer4-runtime/src/omarchy/build-hyprland.sh", value["inputs"])
         self.assertIn("api/crates/layer4-runtime/src/omarchy/hyprland-shm.patch", value["inputs"])
         self.assertNotIn("api/crates/layer4-runtime/src/omarchy/session.sh", value["inputs"])
+        self.assertRegex(value["arguments"]["ARCH_SNAPSHOT"], r"^[0-9]{4}/[0-9]{2}/[0-9]{2}$")
 
 
 if __name__ == "__main__":

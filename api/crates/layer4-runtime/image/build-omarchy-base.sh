@@ -4,6 +4,8 @@ set -euo pipefail
 ulimit -c 0
 export SOURCE_DATE_EPOCH=1
 payload=$1
+snapshot=$2
+[[ $snapshot =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]]
 inputs=$(mktemp -d)
 trap 'rm -rf "$inputs"' EXIT
 
@@ -21,13 +23,30 @@ verified_download https://pkgs.omarchy.org/stable/x86_64/omarchy-keyring-2025102
     f4bc258879f493462736f9a072c4f4c7f753eb559f6b346f5bdf8ed816f75f66 "$inputs/omarchy-keyring.pkg.tar.zst"
 pacman -U --noconfirm "$inputs/omarchy-keyring.pkg.tar.zst"
 pacman-key --populate omarchy
-# Use the desktop producer's stable package set so the base and desktop share
-# their distribution ABI and signature policy.
+# Use the desktop producer's pacman options and its dated Arch package set so
+# the base and desktop share their distribution ABI and signature policy.
 repo=https://raw.githubusercontent.com/omacom/omarchy/237f1b4071a0bff2296c6d740ba2b9fd695ebfa0/default/pacman
 verified_download "$repo/pacman-stable.conf" \
-    f8a4933a4d58b0935cc660da888cda2b4246c3c0926464d3e2e0e432c9354d70 /etc/pacman.conf
-verified_download "$repo/mirrorlist-stable" \
-    6c4a944bed4bb1c104ed53da8856e5440c22c143511b9989c0e3125697476091 /etc/pacman.d/mirrorlist
+    f8a4933a4d58b0935cc660da888cda2b4246c3c0926464d3e2e0e432c9354d70 "$inputs/pacman-stable.conf"
+# The base takes no package from Omarchy's own repository, which has no dated
+# archive, so only core, extra and multilib remain, all from the archive. Its
+# single server can stall transfers, so curl resumes and retries each download.
+# pacman runs that command as DownloadUser yet writes database downloads to
+# its root-owned sync directory, so build downloads run as root. pacman still
+# verifies every package it installs.
+transfer='/usr/bin/curl -fsSL --connect-timeout 30 --speed-limit 1024 --speed-time 30 --retry 8 -C - -o %o %u'
+{
+    sed -e '/^\[omarchy\]$/,/^$/d' -e '/^DownloadUser = alpm$/d' "$inputs/pacman-stable.conf"
+    printf '\n[options]\nXferCommand = %s\n' "$transfer"
+} > /etc/pacman.conf
+printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' "$snapshot" > /etc/pacman.d/mirrorlist
+test "$(pacman-conf XferCommand)" = "$transfer"
+test -z "$(pacman-conf DownloadUser)"
+test "$(pacman-conf --repo-list | paste -sd ' ')" = 'core extra multilib'
+for repository in core extra multilib; do
+    test "$(pacman-conf --repo="$repository" Server)" = \
+        "https://archive.archlinux.org/repos/$snapshot/$repository/os/x86_64"
+done
 pacman -Syu --disable-sandbox --needed --noconfirm python gcc make patch perl linux-api-headers
 # The Arch container omits files from the installed development headers.
 pacman -S --disable-sandbox --noconfirm glibc
