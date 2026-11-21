@@ -574,6 +574,20 @@ class TimingTests(unittest.TestCase):
         self.assertNotIn('private', json.dumps(result))
         self.assertNotIn('cache_export_error', summary(step, image, export))
 
+    def test_a_failed_test_stage_keeps_its_names_beside_a_failed_cache_export(self):
+        # The export vertex is cache evidence, never a second failed step or a
+        # source of test names; the failed test stage still names its tests.
+        import staging_cd_test_failures_tests as failures
+        raw = failures.progress(
+            (1, failures.QUALIFICATION, 'process did not complete successfully: private', {1: failures.SPEC}),
+            (2, 'exporting to GitHub Actions Cache',
+             'failed to reserve cache: You have reached your configured budget, private', {}))
+        result = summarize(raw, dockerfile=failures.RUNTIME)
+        self.assertEqual(result['failed_steps'], [failures.STEP])
+        self.assertEqual(result['failed_tests'], failures.SPEC_NAMES)
+        self.assertEqual(result['cache_export_error'], 'read-only')
+        self.assertNotIn('private', json.dumps(result))
+
 
 if __name__ == '__main__':
     unittest.main()
