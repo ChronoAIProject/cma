@@ -124,6 +124,31 @@ class CacheIdentityTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "pinned global default"):
                     self.identity()
 
+    def mounted(self, reference="registry.example/packages@sha256:" + "b" * 64, stage=None):
+        stage = stage or "FROM ${PACKAGES} AS packages\n"
+        recipe = self.recipe.replace("FROM archlinux:base@sha256:", stage + "FROM archlinux:base@sha256:", 1).replace(
+            "RUN bash /tmp/install.sh", "RUN --mount=type=bind,from=packages,source=/bundle,target=/run/b,readonly bash /tmp/install.sh")
+        return "ARG PACKAGES=" + reference + "\n" + recipe
+
+    def test_mounted_image_digest_changes_identity(self):
+        self.dockerfile.write_text(self.mounted())
+        original = self.identity()
+        self.assertEqual(CACHE.manifest(self.root)["images"], {"packages": "registry.example/packages@sha256:" + "b" * 64})
+        self.dockerfile.write_text(self.mounted("registry.example/packages@sha256:" + "c" * 64))
+        self.assertNotEqual(original, self.identity())
+
+    def test_mounted_image_must_be_one_digest_pinned_stage(self):
+        for name, recipe in {
+                "tag only": self.mounted("registry.example/packages:latest"),
+                "placeholder": self.mounted("registry.example/packages@sha256:" + "0" * 64),
+                "unpinned argument": self.mounted().replace("ARG PACKAGES=", "ARG OTHER="),
+                "extra instruction": self.mounted(stage="FROM ${PACKAGES} AS packages\nRUN true\n"),
+                "unknown stage": self.mounted().replace("from=packages", "from=elsewhere")}.items():
+            with self.subTest(name):
+                self.dockerfile.write_text(recipe)
+                with self.assertRaises(ValueError):
+                    self.identity()
+
     def test_missing_duplicate_or_unpinned_stage_fails_closed(self):
         for changed in (self.recipe.replace(" AS omarchy-dependencies", " AS other"),
                         self.recipe + self.recipe,
