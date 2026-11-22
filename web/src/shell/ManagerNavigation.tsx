@@ -14,7 +14,7 @@ import { Tree, type TreeAction, type TreePermissions } from './Tree';
 import type { NavigationState } from './navigation';
 import { NavigationFilters, type NavigationView } from './NavigationFilters';
 import { Menu } from '../ui/Menu';
-import { IconSettingsOutline16 } from '../ui/icons';
+import { IconSettingsOutline16, IconComputerOutline16 } from '../ui/icons';
 import { TreeCreationScope } from './treeCreationScope';
 import { useNavigationFilterState } from './navigationFilterState';
 
@@ -218,6 +218,14 @@ function ViewerNavigation({
   );
   return (
     <div ref={root} className="manager-navigation">
+      <Button
+        variant="ghost"
+        placement="manager-navigation__environments"
+        icon={<IconComputerOutline16 />}
+        onClick={() => selectView('sandbox')}
+      >
+        Manage environments
+      </Button>
       {settingsHost
         ? createPortal(
             <Menu

@@ -14,6 +14,82 @@ async fn scoped_no_fault() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn standalone_one_abort() {
+    exercise(Case::Abort, false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn scoped_one_abort() {
+    exercise(Case::Abort, true).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn persistent_initial_abort() {
+    exercise(Case::Exhausted, false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn nontransient_fence_error() {
+    exercise(Case::NonTransient, false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn unknown_only() {
+    exercise(
+        Case::Unknown {
+            transient: false,
+            duplicate: false,
+        },
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn unknown_transient() {
+    exercise(
+        Case::Unknown {
+            transient: true,
+            duplicate: false,
+        },
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn unknown_duplicate() {
+    exercise(
+        Case::Unknown {
+            transient: false,
+            duplicate: true,
+        },
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn unknown_transient_duplicate() {
+    exercise(
+        Case::Unknown {
+            transient: true,
+            duplicate: true,
+        },
+        false,
+    )
+    .await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
 async fn committed_unknown() {
     exercise(Case::Commit { committed: true }, false).await;
 }
@@ -58,4 +134,10 @@ async fn cancelled_authority() {
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
 async fn expired_authority() {
     exercise(Case::Expired, false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn successor_between_attempts() {
+    exercise(Case::Successor, false).await;
 }

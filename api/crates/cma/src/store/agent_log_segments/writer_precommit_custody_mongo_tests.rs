@@ -20,9 +20,6 @@ use support::*;
 #[path = "writer_precommit_custody_mongo_tests/cleanup.rs"]
 mod cleanup;
 
-// Unconstructed variants drive the deferred acceptance contracts for the
-// remaining transaction-safety corrections (#3112).
-#[allow(dead_code)]
 #[derive(Clone, Copy)]
 enum AbortFault {
     None,
@@ -368,6 +365,12 @@ async fn run(fault: AbortFault) {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn closed_precommit_authority_releases_exact_aborted_claim_for_one_successor() {
+    run(AbortFault::None).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
 async fn unacknowledged_precommit_abort_retains_exact_claim_without_commit() {
     run(AbortFault::WriteConcern).await;
 }
@@ -388,4 +391,22 @@ async fn labelled_abort_reply_retains_custody() {
 #[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
 async fn command_error_abort_reply_retains_custody() {
     run(AbortFault::Command).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn failed_exact_cleanup_retains_original_marker() {
+    run(AbortFault::CleanupFailure).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn uncertain_cleanup_never_authorizes_replay() {
+    run(AbortFault::CleanupUncertain).await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_FAILPOINT_URI pointing at a disposable replica set"]
+async fn exact_cleanup_never_deletes_replacement_marker() {
+    run(AbortFault::Replacement).await;
 }

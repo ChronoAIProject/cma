@@ -10,26 +10,37 @@ import {
 } from './taskTemplateModel';
 import './TaskTemplateFields.css';
 
-export function useTaskTemplateSupport(client: CmaWebClient) {
-  const [result, setResult] = useState<{ client: CmaWebClient; supported: boolean }>();
+export type TaskTemplateAvailability = 'checking' | 'supported' | 'unsupported' | 'error';
+
+export function useTaskTemplateAvailability(client: CmaWebClient): TaskTemplateAvailability {
+  const [result, setResult] = useState<{
+    client: CmaWebClient;
+    availability: TaskTemplateAvailability;
+  }>();
   useEffect(() => {
     const abort = new AbortController();
     if (!client.readTaskTemplateSupport) return;
     void client.readTaskTemplateSupport({ signal: abort.signal }).then(
       (value) => {
-        if (!abort.signal.aborted) setResult({ client, supported: value });
+        if (!abort.signal.aborted)
+          setResult({ client, availability: value ? 'supported' : 'unsupported' });
       },
       () => {
-        if (!abort.signal.aborted) setResult({ client, supported: false });
+        if (!abort.signal.aborted) setResult({ client, availability: 'error' });
       },
     );
     return () => abort.abort();
   }, [client]);
   return client.readTaskTemplateSupport
     ? result?.client === client
-      ? result.supported
-      : undefined
-    : false;
+      ? result.availability
+      : 'checking'
+    : 'unsupported';
+}
+
+export function useTaskTemplateSupport(client: CmaWebClient) {
+  const availability = useTaskTemplateAvailability(client);
+  return availability === 'checking' ? undefined : availability === 'supported';
 }
 export function TaskTemplateFields({
   template,
@@ -42,12 +53,12 @@ export function TaskTemplateFields({
   readonly issue?: TemplateIssue;
   readonly errorId: string;
   readonly onChange: (template: TaskTemplate) => void;
-  readonly onClear: () => void;
+  readonly onClear?: () => void;
 }) {
   const definition = templateDefinition(template.id);
   const fields: Readonly<Record<string, string>> = template.fields;
   return (
-    <fieldset className="task-template-fields">
+    <fieldset className="task-template-fields" data-template={template.id}>
       <legend>{definition.name}</legend>
       <p>Fill in every field to preview and start your task.</p>
       {definition.fields.map(({ key, label }) => (
@@ -63,9 +74,11 @@ export function TaskTemplateFields({
           />
         </label>
       ))}
-      <Button variant="outline" onClick={onClear}>
-        Write a task without a template
-      </Button>
+      {onClear ? (
+        <Button variant="outline" onClick={onClear}>
+          Write a task without a template
+        </Button>
+      ) : null}
     </fieldset>
   );
 }
