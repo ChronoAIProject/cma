@@ -131,14 +131,14 @@ impl MongoAgentAccessToolSource {
         )
         .map_err(|_| Error::Refused)?;
         if conversation.is_none() {
-            if let Some(prepared) = super::super::native_prepared::prepared_conversation(
-                &self.store,
-                &snapshot,
-                request,
-                session,
-            )
-            .await
-            .map_err(|_| Error::Refused)?
+            if let Some(prepared) =
+                super::super::native_prepared::prepared_conversation_transaction(
+                    &self.store,
+                    &snapshot,
+                    request,
+                    session,
+                )
+                .await?
             {
                 binding = binding
                     .with_prepared_conversation(&prepared)
@@ -201,14 +201,13 @@ impl MongoAgentAccessToolSource {
             None,
         )
         .map_err(|_| Error::Refused)?;
-        if let Some(prepared) = super::super::native_prepared::prepared_conversation(
+        if let Some(prepared) = super::super::native_prepared::prepared_conversation_transaction(
             &self.store,
             &snapshot,
             &record.request,
             session,
         )
-        .await
-        .map_err(|_| Error::Refused)?
+        .await?
         {
             if conversation != prepared {
                 return Err(Error::Refused);
