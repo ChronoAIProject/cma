@@ -70,14 +70,13 @@ interface ActivityBrowserError {
   phase: string;
 }
 
-async function captureActivityErrors(page: Page, baseURL: string, phase: () => string) {
+async function captureActivityErrors(page: Page, baseURL: string) {
   const errors: ActivityBrowserError[] = [];
   const layoutDiagnostics: ActivityBrowserError[] = [];
   const layoutTelemetry: string[] = [];
   await page.exposeBinding(
     '__recordActivityBrowserError',
-    (_source, error: Omit<ActivityBrowserError, 'phase'>) => {
-      const observed = { ...error, phase: phase() };
+    (_source, observed: ActivityBrowserError) => {
       // Chromium also emits this native diagnostic on the pre-redesign channel map.
       // Qualify only the observed narrow selection; later or repeated errors still fail.
       if (
@@ -98,14 +97,18 @@ async function captureActivityErrors(page: Page, baseURL: string, phase: () => s
     },
   );
   await page.addInitScript(() => {
+    let phase = 'startup';
+    (
+      window as unknown as { __setActivityDiagnosticPhase: (next: string) => void }
+    ).__setActivityDiagnosticPhase = (next) => {
+      phase = next;
+    };
     const record = (error: Omit<ActivityBrowserError, 'phase'>) =>
       (
         window as unknown as {
-          __recordActivityBrowserError: (
-            error: Omit<ActivityBrowserError, 'phase'>,
-          ) => Promise<void>;
+          __recordActivityBrowserError: (error: ActivityBrowserError) => Promise<void>;
         }
-      ).__recordActivityBrowserError(error);
+      ).__recordActivityBrowserError({ ...error, phase });
     window.addEventListener(
       'error',
       (event) => {
@@ -146,7 +149,13 @@ async function captureActivityErrors(page: Page, baseURL: string, phase: () => s
     }
     return route.fallback();
   });
-  return { browserErrors: errors, layoutDiagnostics, layoutTelemetry };
+  const setPhase = (phase: string) =>
+    page.evaluate((next) => {
+      (
+        window as unknown as { __setActivityDiagnosticPhase: (next: string) => void }
+      ).__setActivityDiagnosticPhase(next);
+    }, phase);
+  return { browserErrors: errors, layoutDiagnostics, layoutTelemetry, setPhase };
 }
 
 // Keep each synthetic stream open after its HTTP snapshot, without native reconnect timers.
@@ -196,7 +205,6 @@ async function localStreams(page: Page) {
 }
 
 export async function setupActivity(page: Page, baseURL: string, theme: 'dark' | 'light' = 'dark') {
-  let phase = 'startup';
   await page.clock.install({ time: new Date('2026-11-22T02:26:00Z') });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.addInitScript(
@@ -206,7 +214,7 @@ export async function setupActivity(page: Page, baseURL: string, theme: 'dark' |
   await localStreams(page);
   const boundary = new LocalStartup();
   await boundary.route(page, baseURL);
-  const diagnostics = await captureActivityErrors(page, baseURL, () => phase);
+  const diagnostics = await captureActivityErrors(page, baseURL);
   const state = {
     snapshot: activityPage(),
     reads: [] as string[],
@@ -260,20 +268,32 @@ export async function setupActivity(page: Page, baseURL: string, theme: 'dark' |
   });
   await page.goto('/event-gateway');
   await expect(page.getByRole('region', { name: 'Channel workspace', exact: true })).toBeVisible();
-  phase = 'opening navigation';
+  await diagnostics.setPhase('opening navigation');
   const showNavigation = page.getByRole('button', { name: 'Show navigation', exact: true });
   if (await showNavigation.isVisible()) await showNavigation.click();
-  phase = 'selecting channel';
+  await diagnostics.setPhase('selecting channel');
   await page
     .getByRole('region', { name: 'Channels', exact: true })
     .getByRole('treeitem', { name: /^Example team/ })
     .click();
-  phase = 'opening Activity';
+  await expect(
+    page
+      .getByRole('region', { name: 'Latest channel activity' })
+      .getByText('Live activity', { exact: true }),
+  ).toBeVisible();
+  // Finish the preview's layout delivery before opening another observed surface.
+  await page.evaluate(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+      }),
+  );
+  await diagnostics.setPhase('opening Activity');
   await page
     .getByRole('region', { name: 'Delivery map' })
     .getByRole('button', { name: 'Activity', exact: true })
     .click();
-  phase = 'reading Activity';
+  await diagnostics.setPhase('reading Activity');
   const view = page.getByRole('dialog').locator('.channel-activity');
   await expect(view.getByText('demo-event-01')).toBeVisible();
   await expect(view.getByText('Live activity', { exact: true })).toBeVisible();

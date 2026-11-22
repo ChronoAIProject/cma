@@ -71,6 +71,7 @@ export function registerRedesignChannelCases() {
             JSON.stringify(
               {
                 files: [file, receiptsFile],
+                diagnostics: { browserErrors, layoutDiagnostics, layoutTelemetry },
                 theme,
                 ...size,
                 route: '/event-gateway',
