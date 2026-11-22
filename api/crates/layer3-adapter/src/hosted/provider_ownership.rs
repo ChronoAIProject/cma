@@ -354,9 +354,18 @@ impl crate::owner_protocol::ReceiverRevocation for ReceiverFence {
         let status = Arc::new(NativeHttpObservation::default());
         let operation = async {
             let mut transport = self.template.clone();
-            transport.state = self.state.upgrade().ok_or_else(|| {
-                OwnershipFailure::new(Phase::Revoke, Reason::TransportUnavailable)
-            })?;
+            // A dropped link must not discard custody of a receiver that may
+            // still hold this lease. A native revoke uses independent state
+            // bound to the captured incarnation; its open fences refuse a
+            // replaced Pod or container before anything is sent.
+            transport.state = match self.state.upgrade() {
+                Some(state) => state,
+                None => super::native_pool::revoke_state(&self.endpoint)
+                    .map(|state| Arc::new(Mutex::new(state)))
+                    .ok_or_else(|| {
+                        OwnershipFailure::new(Phase::Revoke, Reason::TransportUnavailable)
+                    })?,
+            };
             let result: Result<(OwnerAcknowledgement, _), _> = transport
                 .owner_exchange(
                     &self.endpoint,
