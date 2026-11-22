@@ -18,9 +18,12 @@ use layer2_core::resource_access::execution::{
 use layer3_adapter::resource_execution_protocol as wire;
 use participants::ParticipantDirectory;
 
+const PARTICIPANT_CONCURRENCY: usize = 16;
+
 pub(crate) struct RevocationWorker {
     store: Arc<dyn ResourceExecutionStore>,
     participants: Arc<dyn ParticipantDirectory>,
+    participant_slots: tokio::sync::Semaphore,
 }
 
 pub(crate) struct PendingPage {
@@ -54,6 +57,7 @@ impl RevocationWorker {
         Self {
             store,
             participants,
+            participant_slots: tokio::sync::Semaphore::new(PARTICIPANT_CONCURRENCY),
         }
     }
 

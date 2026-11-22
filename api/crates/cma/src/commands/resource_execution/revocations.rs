@@ -2,11 +2,9 @@ use super::*;
 use futures_util::{stream, StreamExt};
 use layer2_core::resource_access::execution::{
     unix_millis_now, ExecutionRecordV1, MemberCompletionV1, RevocationOperationV1,
-    MAX_FAMILY_MEMBERS,
 };
 use std::time::Duration;
 
-const MEMBER_CONCURRENCY: usize = MAX_FAMILY_MEMBERS as usize;
 // A control observation deadline supplies no stop evidence. The next turn
 // queries the same receiver/request if a reply or commit was lost.
 const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(2);
@@ -27,6 +25,13 @@ impl RevocationWorker {
         }
         let members = self.cohort(&operation).await?;
         let mut pending = stream::iter(members.into_iter().map(|member| async {
+            // Queueing for local capacity consumes no receiver observation time.
+            // The permit covers both control calls and retained evidence writes.
+            let _slot = self
+                .participant_slots
+                .acquire()
+                .await
+                .map_err(|_| ExecutionError::Unavailable)?;
             tokio::time::timeout(
                 OBSERVATION_TIMEOUT,
                 self.complete_member(&operation, member),
@@ -34,7 +39,7 @@ impl RevocationWorker {
             .await
             .unwrap_or(Err(ExecutionError::Unknown))
         }))
-        .buffer_unordered(MEMBER_CONCURRENCY);
+        .buffer_unordered(PARTICIPANT_CONCURRENCY);
         let mut completed = 0;
         let mut failures = Vec::new();
         while let Some(result) = pending.next().await {

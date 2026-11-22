@@ -3,6 +3,7 @@ use super::*;
 use layer2_core::resource_access::execution::*;
 use std::sync::Mutex;
 
+mod budget;
 mod fixtures;
 mod mongo;
 mod participants;
