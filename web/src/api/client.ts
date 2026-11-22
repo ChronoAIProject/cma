@@ -183,7 +183,8 @@ export interface CmaWebClient {
   readonly deliverables?: Pick<
     Cma['agents'],
     'answerDeliverables' | 'readAnswerDeliverable' | 'downloadAnswerDeliverable'
-  >;
+  > &
+    Partial<Pick<Cma['agents'], 'confirmTaskDelivery'>>;
   readonly readFeedbackDetails?: (
     agentId: string,
     messageId: string,

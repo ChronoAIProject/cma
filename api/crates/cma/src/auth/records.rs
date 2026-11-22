@@ -101,21 +101,6 @@ impl AuthState {
             Some(spend) => Some(spend.admission_snapshot(now_seconds()).await),
             None => None,
         };
-        // Recheck an unknown/inactive marker for unseen subjects. Positive
-        // activation is immutable; known directory owners returned above.
-        let mut activation_error = None;
-        if directory_error.is_none()
-            && matches!(&snapshot, Some(Ok((state, Ok(ceilings))))
-                if !state.closed_for_registration() && ceilings.registrations.is_none())
-        {
-            if let Some(capacity) = self.registration_capacity.as_ref() {
-                match capacity.tracking_active().await {
-                    Ok(false) => return Ok(RegistrationDecision::Admitted),
-                    Ok(true) => {}
-                    Err(error) => activation_error = Some(error),
-                }
-            }
-        }
         // Resolve retained evidence before honoring a closed or unreadable
         // snapshot, including owners whose directory observation once failed.
         if let Some(capacity) = self.registration_capacity.as_ref() {
@@ -123,7 +108,7 @@ impl AuthState {
                 return Ok(RegistrationDecision::Existing);
             }
         }
-        if let Some(error) = directory_error.or(activation_error) {
+        if let Some(error) = directory_error {
             return Err(error);
         }
         let limit = if let Some(snapshot) = snapshot {

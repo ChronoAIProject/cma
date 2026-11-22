@@ -9,6 +9,21 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub async fn start(config: crate::config::RuntimeConfig, token: String) -> Self {
+        Self::with_generation(
+            config,
+            token,
+            DesktopGeneration::legacy("display-test".into()),
+            None,
+        )
+        .await
+    }
+
+    pub async fn with_generation(
+        config: crate::config::RuntimeConfig,
+        token: String,
+        generation: DesktopGeneration,
+        mut held_handshake: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> Self {
         let supervisor =
             Supervisor::new(config, crate::writer_fence::SupervisorBoundary::default()).unwrap();
         let display = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -17,7 +32,12 @@ impl Fixture {
             let mut streams = tokio::task::JoinSet::new();
             loop {
                 let (stream, _) = display.accept().await.unwrap();
+                let held = held_handshake.take();
                 streams.spawn(async move {
+                    if let Some(started) = held {
+                        started.send(()).unwrap();
+                        std::future::pending::<()>().await;
+                    }
                     let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
                     while let Some(Ok(message)) = socket.next().await {
                         if message.is_close() {
@@ -41,7 +61,7 @@ impl Fixture {
                         upgrade(
                             ws,
                             receiver.clone(),
-                            "display-test".into(),
+                            generation.clone(),
                             display_url.clone(),
                             headers,
                         )

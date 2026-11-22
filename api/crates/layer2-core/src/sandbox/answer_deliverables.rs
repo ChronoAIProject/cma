@@ -1,5 +1,6 @@
 mod media;
 mod runtime;
+mod task_receipts;
 mod types;
 pub use types::*;
 
@@ -42,6 +43,7 @@ pub struct AnswerDeliverableService {
     artifacts: Arc<AgentArtifactService>,
     documents: Option<Arc<DocumentService>>,
     files: Option<Arc<AgentFileService>>,
+    task_store: Option<Arc<dyn super::store::AgentStore>>,
 }
 
 struct VerifiedContent {
@@ -57,6 +59,7 @@ impl AnswerDeliverableService {
             artifacts,
             documents: None,
             files: None,
+            task_store: None,
         })
     }
 
@@ -66,6 +69,7 @@ impl AnswerDeliverableService {
             artifacts: self.artifacts.clone(),
             documents: Some(documents),
             files: self.files.clone(),
+            task_store: self.task_store.clone(),
         })
     }
 
@@ -75,6 +79,20 @@ impl AnswerDeliverableService {
             artifacts: self.artifacts.clone(),
             documents: self.documents.clone(),
             files: Some(files),
+            task_store: self.task_store.clone(),
+        })
+    }
+
+    pub fn with_task_store(
+        self: &Arc<Self>,
+        store: Arc<dyn super::store::AgentStore>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            reads: self.reads.clone(),
+            artifacts: self.artifacts.clone(),
+            documents: self.documents.clone(),
+            files: self.files.clone(),
+            task_store: Some(store),
         })
     }
 

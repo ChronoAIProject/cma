@@ -109,6 +109,12 @@ timestamp.
 `dispatched_at` starts an attempt, `accepted_at` records actual provider
 acceptance, `produced_at` records committed response output, and `completed_at`
 records terminal response observation or recovered processing completion.
+When exact production time is unavailable, `produced_by` gives the earliest
+confirmation time for an Answer receipt bound to the consumer's current
+`response_id`. The receipt records that binding as `answer_response_id`.
+`produced_by` is an upper bound on production time. Leave it out of exact
+processing and delivery latency calculations. Older receipts without a verified
+response binding may have neither production time.
 `failed` means a provider reported failure or incomplete output. A completed
 processing checkpoint alone never proves a successful response: recovery retains
 the recorded terminal outcome, or reports `unknown` when that evidence is absent.

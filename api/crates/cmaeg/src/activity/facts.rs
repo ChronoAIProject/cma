@@ -90,6 +90,7 @@ pub fn delivery(
         outcome: if buffered { "buffered" } else { outcome.kind() }.into(),
         observed_at: at.clone(),
         confirmed_at: confirmed.then_some(at),
+        answer_response_id: None,
         platform_message_id,
         recipients,
     });

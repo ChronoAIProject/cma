@@ -42,6 +42,7 @@ def line_of(module, text, offset=0):
 
 def guarded_vocabularies():
     """Codes that reach report() through a variable, by the vocabulary that guards them."""
+    import staging_cd_allocate as allocate
     import staging_cd_build_cache as build_cache
     import staging_cd_component_admission as admission
     import staging_cd_finalize_diagnostics as finalize
@@ -60,6 +61,8 @@ def guarded_vocabularies():
         ("staging_cd_invoke.py", "deploy-precondition"): set(invoke.PRECONDITIONS),
         ("staging_cd_set_report.py", "admission"): set(admission.REASONS),
         ("staging_cd_publish.py", "cache-withheld"): withheld,
+        # The settlement gate reports the transient code its allocation step recorded.
+        ("staging_cd_allocate.py", "allocation"): set(allocate.TRANSIENT_CODES) | {"UNCLASSIFIED_REFUSAL"},
     }
 
 

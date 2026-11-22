@@ -21,7 +21,27 @@ async fn callback_activation_and_new_startup_observations_enable_the_same_reconc
         .await
         .unwrap();
     assert!(!pending.active());
-    assert!(registration.tracking_active().await.unwrap());
+    let settings = client
+        .database(&name)
+        .collection::<Document>("platform_settings");
+    let before = settings
+        .find_one(doc! {"_id": "platform"})
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(registration
+        .admit(&SubjectId::new("callback-after-activation"))
+        .await
+        .unwrap());
+    let after = settings
+        .find_one(doc! {"_id": "platform"})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        after.get_i64("admission_policy_fence").unwrap(),
+        before.get_i64("admission_policy_fence").unwrap() + 1
+    );
     assert!(pending.active());
     prepare_index(&client, &name).await;
     assert_eq!(pending.observe().await.unwrap().drift, 0);

@@ -38,6 +38,7 @@ pub(super) fn parse(
                 | "metadata"
                 | "event_context"
                 | "answer_context"
+                | "task_acceptance"
                 | "model"
                 | "store"
         ) {
@@ -128,6 +129,18 @@ pub(super) fn parse(
         ));
     }
     let mut input = text_input(body.remove("input").unwrap_or(Value::Null))?;
+    if let Some(value) = body.remove("task_acceptance") {
+        let invalid = || {
+            refusal(
+                "task_acceptance",
+                "invalid_response_input",
+                "Supply a versioned task acceptance contract.",
+            )
+        };
+        let intent: layer2_core::sandbox::task_acceptance::TaskAcceptanceIntent =
+            serde_json::from_value(value).map_err(|_| invalid())?;
+        input.task_acceptance = Some(intent.canonical().map_err(|_| invalid())?);
+    }
     if let Some(value) = body.remove("event_context") {
         input.content.push(AgentContent::ExternalEvent {
             context: super::event_context::parse(value)?,
@@ -206,5 +219,10 @@ fn text_input(value: Value) -> Result<AgentInput, Box<Response>> {
         }
         _ => return Err(invalid()),
     };
-    AgentInput { content }.canonical().map_err(|_| invalid())
+    AgentInput {
+        content,
+        task_acceptance: None,
+    }
+    .canonical()
+    .map_err(|_| invalid())
 }

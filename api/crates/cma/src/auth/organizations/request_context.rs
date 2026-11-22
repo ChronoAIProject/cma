@@ -1,8 +1,9 @@
 use layer2_core::resource_access::{CallerContext, CredentialContext, ResourceActor};
 use layer2_core::Caller;
 
-use super::{transport, AuthMode, AuthState, SecretDigest};
+use super::transport;
 use crate::auth::RequestAuth;
+use crate::auth::{persistence::SecretDigest, AuthMode, AuthState};
 
 impl AuthState {
     pub(in crate::auth) fn provider_credential_context(

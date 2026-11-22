@@ -141,6 +141,10 @@ class StagingWorkflowTest < Minitest::Test
     final = workflow('staging-release')['jobs']['finalize']
     assert_equal 'read', image['permissions']['contents']
     assert_equal 'write', image['permissions']['packages']
+    # Publication lists the Actions caches to verify its layer export.
+    assert_equal 'read', image['permissions']['actions']
+    publication = image['steps'].find { |step| step['id'] == 'publication' }
+    assert_equal '${{ github.token }}', publication.dig('env', 'GH_TOKEN')
     assert_equal 'write', final['permissions']['contents']
     refute final['permissions'].key?('packages')
     refute workflow('redeploy-staging').to_s.include?('packages')
@@ -545,6 +549,20 @@ class StagingWorkflowTest < Minitest::Test
                    'CD_STAGING_ENVIRONMENT' => planner.dig('env', 'CD_STAGING_ENVIRONMENT') }, job['steps'].last['env'])
   end
 
+  def test_catch_up_reads_the_plan_job_and_its_transient_gate_by_their_exact_names
+    source = File.read(File.join(__dir__, 'staging_cd_catch_up.py'))
+    job = source.scan(/^PLAN_JOB = "([^"]+)"$/).flatten
+    gate = source.scan(/^PLAN_GATE = "([^"]+)"$/).flatten
+    assert_equal [1, 1], [job.size, gate.size]
+    jobs = workflow('staging-cd')['jobs']
+    matching = jobs.select { |id, value| value.fetch('name', id) == job.first }
+    assert_equal ['plan'], matching.keys
+    gates = matching['plan']['steps'].select { |step| step['name'] == gate.first }
+    assert_equal 1, gates.size
+    # Renaming the gate, or letting a refusal fail at it, would change what catch-up re-runs.
+    assert_includes gates.first['if'], "steps.plan.outputs.transient == 'true'"
+  end
+
   def test_catch_up_reads_the_allocation_job_by_its_exact_display_name
     source = File.read(File.join(__dir__, 'staging_cd_catch_up.py'))
     names = source.scan(/^ALLOCATION_JOB = "([^"]+)"$/).flatten
@@ -557,6 +575,28 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal ['allocate'], matching.keys
     assert_includes matching['allocate']['steps'].map { |step| step['run'] },
                     'python3 -B .github/scripts/staging_cd_allocate.py'
+  end
+
+  def test_catch_up_reads_the_allocation_gate_by_its_exact_name
+    source = File.read(File.join(__dir__, 'staging_cd_catch_up.py'))
+    gate = source.scan(/^ALLOCATION_GATE = "([^"]+)"$/).flatten
+    assert_equal 1, gate.size
+    steps = workflow('staging-cd').dig('jobs', 'allocate', 'steps')
+    allocate = steps.index { |step| step['id'] == 'allocate' }
+    routes = steps.index { |step| step['id'] == 'routes' }
+    gates = steps.each_index.select { |index| steps[index]['name'] == gate.first }
+    assert_equal 1, gates.size
+    # The gate follows allocation directly and precedes routing, which its failure skips.
+    assert_equal [allocate + 1, allocate + 2], [gates.first, routes]
+    step = steps[gates.first]
+    # Renaming the gate, or letting a refusal that needs a person fail at it,
+    # would change what catch-up re-runs.
+    assert_equal "steps.allocate.outputs.transient == 'true'", step['if']
+    assert_equal({ 'CD_ALLOCATION_REFUSED' => '${{ steps.allocate.outputs.refused }}',
+                   'CD_ALLOCATION_SITE' => '${{ steps.allocate.outputs.site }}' }, step['env'])
+    assert_equal 'python3 -B .github/scripts/staging_cd_allocate.py --require-settled', step['run']
+    [steps[allocate], step, steps[routes]].each { |item| refute item.key?('continue-on-error') }
+    refute steps[routes].key?('if'), 'routing must run only after a settled allocation'
   end
 
   def test_package_and_download_tools_repeat_transient_network_failures
@@ -592,6 +632,7 @@ class StagingWorkflowTest < Minitest::Test
     save = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
     select = steps.index { |step| step['id'] == 'plan' }
     gate = steps.index { |step| step['name'] == 'Require a complete release plan' }
+    proof = steps.index { |step| step['name'] == 'Require a provable release plan' }
     promotions = steps.index { |step| step['id'] == 'promotions' }
     assert_operator prepare, :<, restore
     assert_operator restore, :<, select
@@ -600,10 +641,20 @@ class StagingWorkflowTest < Minitest::Test
     # A budget-stopped plan saves its analysed revisions before the job fails,
     # and a later step's failure cannot discard them.
     assert_operator save, :<, gate
-    assert_operator gate, :<, promotions
-    assert_equal "steps.plan.outputs.complete != 'true'", steps[gate]['if']
-    assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete',
-                 steps[gate]['run']
+    assert_operator gate, :<, proof
+    assert_operator proof, :<, promotions
+    # Exactly one gate fails a stopped plan: the first only for a transient
+    # stop, which catch-up may re-run; each names its reason.
+    assert_equal "steps.plan.outputs.complete != 'true' && steps.plan.outputs.transient == 'true'", steps[gate]['if']
+    assert_equal "steps.plan.outputs.complete != 'true' && steps.plan.outputs.transient != 'true'", steps[proof]['if']
+    [gate, proof].each do |index|
+      assert_equal({ 'CD_PLAN_REFUSED' => '${{ steps.plan.outputs.refused }}' }, steps[index]['env'])
+      assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete',
+                   steps[index]['run']
+    end
+    # actions/cache/save already annotates a refused write with its cause, so the
+    # plan waits on no cache verification of its own.
+    refute plan.to_s.include?('staging_cd_cache_save.py'), 'the plan must not poll the Actions cache'
     [steps[restore], steps[save]].each do |step|
       assert_equal '${{ steps.selection-cache.outputs.directory }}', step['with']['path']
       assert_equal '${{ steps.selection-cache.outputs.key }}', step['with']['key']
@@ -611,5 +662,14 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal '${{ steps.selection-cache.outputs.prefix }}', steps[restore]['with']['restore-keys']
     assert_equal 'ubuntu-24.04', plan['runs-on']
     refute plan.to_s.include?('secrets.')
+  end
+
+  def test_planner_reads_final_release_tags_with_only_the_read_only_job_token
+    plan = workflow('staging-cd')['jobs']['plan']
+    step = plan['steps'].find { |candidate| candidate['id'] == 'plan' }
+    assert_equal({ 'CD_ADOPTION_SHA' => '${{ vars.CMA_CD_ADOPTION_SHA }}', 'GH_TOKEN' => '${{ github.token }}' },
+                 step['env'])
+    assert_equal 'read', plan.dig('permissions', 'contents')
+    refute_includes plan['permissions'].values, 'write'
   end
 end

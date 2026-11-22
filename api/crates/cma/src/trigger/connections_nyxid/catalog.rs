@@ -46,11 +46,12 @@ impl NyxidServiceConnectionBroker {
                             .get(self.endpoint(CATALOG_PATH))
                             .bearer_auth(credential.expose()),
                         false,
+                        None,
                     )
                     .await?;
                 decode::<Catalog>(response).await
             },
-            self.user_services(&credential),
+            self.user_services(&credential, None),
         );
         let catalog = catalog?;
         let connections = connections?;

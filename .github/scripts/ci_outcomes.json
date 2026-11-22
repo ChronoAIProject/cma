@@ -1448,9 +1448,45 @@
       "codes": {
         "incomplete": {
           "title": "Selection budget exhausted",
-          "meaning": "The selection cache did not cover develop's history since CMA_CD_ADOPTION_SHA, usually after a selector policy change, and analysing the rest exceeded the plan's budget. Analysed revisions were saved; INCOMPLETE gives the count.",
+          "meaning": "The selection cache did not cover the plan window, usually after a selector policy change, and analysing the rest exceeded the plan's budget. Analysed revisions were saved; INCOMPLETE gives the count.",
           "cause": "transient",
-          "next": "Re-run this workflow or wait for the next develop push; planning continues from the saved revisions. If it repeats, an operator can advance CMA_CD_ADOPTION_SHA to the first merge after the last fully deployed run."
+          "next": "Catch-up re-runs this once from its hourly check, continuing from the saved revisions. To shorten a wide window, set CMA_CD_ADOPTION_SHA to a later develop merge; it raises the start."
+        },
+        "finals-unreadable": {
+          "title": "Lane releases unreadable",
+          "meaning": "The tag listing or a lane's newest final release tag could not be read after repeated attempts within the plan's read budget. Nothing was planned.",
+          "cause": "transient",
+          "next": "Catch-up re-runs this once from its hourly check after the outage settles; the next develop push plans again too."
+        },
+        "finals-untrusted": {
+          "title": "Lane release tag untrusted",
+          "meaning": "A lane's newest final release tag, or the tag listing, failed the checks allocation also applies, or GitHub serves no tag object for it. Nothing was planned.",
+          "cause": "unknown",
+          "next": "Inspect the tags of the lanes the PLAN refused line names; allocation would refuse the same tag."
+        },
+        "floor-required": {
+          "title": "Adoption floor required",
+          "meaning": "A lane's newest final is not on the last 2,000 develop first-parent merges, so its window needs CMA_CD_ADOPTION_SHA on that history.",
+          "cause": "operator",
+          "next": "Set CMA_CD_ADOPTION_SHA to a recent develop merge after which the lanes the PLAN refused line names need nothing older."
+        },
+        "anchor-unselected": {
+          "title": "Contract transition unselected",
+          "meaning": "The selector did not select the AM/runtime group at the older contract transition the window keeps, so the group's coupling cannot be planned.",
+          "cause": "change",
+          "next": "Review the selector change: a contract transition must select its group. The PLAN refused line names the merge."
+        },
+        "finals-denied": {
+          "title": "Lane release read refused",
+          "meaning": "GitHub rejected the plan step's credential (401) while reading a lane's newest final release tag, or the step has no token. Nothing was planned.",
+          "cause": "operator",
+          "next": "Check that the plan step receives GH_TOKEN and that it can read this repository's contents; the PLAN refused line names the lanes."
+        },
+        "manifest-boundary": {
+          "title": "Window crosses a lane addition",
+          "meaning": "The window reaches the merge that added a lane to the deployable manifest. The selector cannot compare across it, because the parent's manifest lacks that lane.",
+          "cause": "operator",
+          "next": "Set CMA_CD_ADOPTION_SHA to a develop merge after the one the PLAN refused line names (at=); nothing before it can be compared."
         }
       }
     },
