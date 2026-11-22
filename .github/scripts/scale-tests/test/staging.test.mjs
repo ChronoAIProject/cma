@@ -141,6 +141,46 @@ test('evidence write failure closes admission but still finalizes previously own
   assert.ok(run.evidenceFailed);
   assert.ok(http.calls.some((c) => c.method === 'DELETE' && c.path.includes('/sandboxes/')));
 });
+for (const kind of ['sandbox', 'workspace', 'agent']) for (const permanent of [false, true])
+  test(`${kind} custody survives ${permanent ? 'permanent' : 'one-shot'} acknowledgement journal failure`, async () => {
+    const { run, http, rows } = fakeRun(wire);
+    const record = run.evidence.record; let failed = false;
+    run.evidence.record = (row) => {
+      if ((!failed && row.scenario === `create_${kind}` && row.status === 'acknowledged') || (permanent && failed)) {
+        failed = true; throw new Error('synthetic acknowledgement fsync failure');
+      }
+      return record(row);
+    };
+    const result = await run.scope(async (driver) => { await driver.create(1); });
+    const fixture = run.fixtures.get(1);
+    assert.ok(failed); assert.ok(run.stopped); assert.ok(run.evidenceFailed);
+    assert.ok(fixture[kind]); assert.ok(fixture.intents.get(`create_${kind}`).verified);
+    assert.equal(fixture.intents.get(`create_${kind}`).state, 'acknowledged');
+    assert.equal(result.logicalCleanup, true); assert.equal(result.cleanup, false);
+    assert.ok(http.calls.some((c) => c.method === 'DELETE' && c.path === '/api/v1/sandboxes/sbx_synthetic'));
+    assert.equal(http.calls.some((c) => c.method === 'DELETE' && c.path === '/api/v1/agents/agt_synthetic'), kind === 'agent');
+    const creates = http.calls.filter((c) => c.method === 'POST' && !c.path.endsWith('/stop'));
+    assert.equal(creates.length, ['sandbox', 'workspace', 'agent'].indexOf(kind) + 1);
+    assert.equal(new Set(creates.map((c) => c.key)).size, creates.length);
+    assert.ok(!JSON.stringify(rows).includes('sbx_synthetic'));
+  });
+for (const kind of ['sandbox', 'workspace', 'agent']) test(`foreign ${kind} receipt never enters cleanup custody`, async () => {
+  const { run, http } = fakeRun(wire);
+  const request = http.request.bind(http);
+  http.request = async (path, options = {}) => {
+    const result = await request(path, options);
+    if (options.method === 'POST' && result.status === 201) {
+      if (kind === 'sandbox' && path === '/api/v1/sandboxes') result.value.owner = 'foreign-owner';
+      if (kind === 'workspace' && path.endsWith('/workspaces/inline')) result.value.sandbox_id = 'sbx_foreign';
+      if (kind === 'agent' && path.endsWith('/agents')) result.value.workspace.id = 'wsp_foreign';
+    }
+    return result;
+  };
+  const result = await run.scope(async (driver) => { await driver.create(1); });
+  assert.equal(run.fixtures.get(1)[kind], undefined); assert.equal(result.logicalCleanup, false);
+  assert.equal(http.calls.some((c) => c.method === 'DELETE' && c.path.includes('/agents/')), false);
+  assert.equal(http.calls.some((c) => c.method === 'DELETE' && c.path.includes('/sandboxes/')), kind !== 'sandbox');
+});
 test('all creation routes share subject quota and no second setup can overlap', async () => {
   const { run, time } = fakeRun(wire);
   const spec = run.config.fixtures[0]; spec.createPerMinute = 5;

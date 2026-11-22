@@ -29,16 +29,31 @@ export class Fixture {
     const intent = { key, body: body === undefined ? undefined : JSON.stringify(body), state: 'issued' };
     this.intents.set(action, intent);
     this.row({ scenario: action, status: 'issued', keyHash: hash(key), requestHash: hash(intent.body ?? '') });
+    let result;
     try {
-      const result = await this.http.request(path, { method, body: intent.body, key,
+      result = await this.http.request(path, { method, body: intent.body, key,
         expected, timeoutMs: this.run.remaining(deadline) });
-      intent.state = 'acknowledged'; intent.receiptHash = hash(JSON.stringify(result));
-      this.row({ scenario: action, status: intent.state, receiptHash: intent.receiptHash });
-      return result.value;
+      this.acquire(action, result.value);
     } catch (error) {
       intent.state = 'uncertain'; this.row({ scenario: action, status: 'uncertain', ...safeFailure(error) });
       throw error;
     }
+    intent.state = 'acknowledged'; intent.receiptHash = hash(JSON.stringify(result));
+    this.row({ scenario: action, status: intent.state, receiptHash: intent.receiptHash });
+    return result.value;
+  }
+  acquire(action, value) {
+    // Validate and retain known ownership synchronously, before logging can fail.
+    if (action === 'create_sandbox') {
+      this.checkSandbox(value); this.sandbox = value.id;
+    } else if (action === 'create_workspace') {
+      check(identity(value?.id) && value.sandbox_id === this.sandbox && value.name === this.name,
+        'workspace_identity_mismatch');
+      this.workspace = value.id;
+    } else if (action === 'create_agent') {
+      this.checkAgent(value); this.agent = value.id;
+    } else return;
+    this.intents.get(action).verified = true;
   }
   checkSandbox(value) {
     check(identity(value?.id) && value.name === this.name && value.owner === this.spec.subject
@@ -64,20 +79,16 @@ export class Fixture {
         && value.content.workspace_profiles.length === 0, 'automatic_children_refused');
     }
     await this.run.admit(this.spec, 'sandbox', deadline);
-    const sandbox = await this.write('create_sandbox', '/api/v1/sandboxes',
+    await this.write('create_sandbox', '/api/v1/sandboxes',
       { sandbox_profile: reference(this.spec.sandboxProfile), name: this.name }, deadline);
-    this.checkSandbox(sandbox); this.sandbox = sandbox.id; this.intents.get('create_sandbox').verified = true;
     this.row({ scenario: 'sandbox_owned', status: 'PASS', resourceHash: hash(this.sandbox) });
     await this.poll(`/api/v1/sandboxes/${this.sandbox}`, deadline, ({ value }) => {
       this.checkSandbox(value); check(!['failed', 'retired'].includes(value.status), 'sandbox_setup_failed');
       return value.status === 'active';
     });
     await this.run.admit(this.spec, 'create', deadline);
-    const workspace = await this.write('create_workspace', `/api/v1/sandboxes/${this.sandbox}/workspaces/inline`,
+    await this.write('create_workspace', `/api/v1/sandboxes/${this.sandbox}/workspaces/inline`,
       { source: { type: 'empty' }, name: this.name }, deadline);
-    check(identity(workspace?.id) && workspace.sandbox_id === this.sandbox && workspace.name === this.name,
-      'workspace_identity_mismatch');
-    this.workspace = workspace.id; this.intents.get('create_workspace').verified = true;
     await this.poll(`/api/v1/workspaces/${this.workspace}`, deadline, ({ value }) => {
       check(value.id === this.workspace && value.sandbox_id === this.sandbox, 'workspace_identity_changed');
       check(!['failed', 'removed'].includes(value.status), 'workspace_setup_failed'); return value.status === 'ready';
@@ -85,7 +96,6 @@ export class Fixture {
     await this.run.admit(this.spec, 'create', deadline);
     const agent = await this.write('create_agent', `/api/v1/workspaces/${this.workspace}/agents`,
       { agent_profile: reference(this.spec.agentProfile), title: this.name }, deadline);
-    this.checkAgent(agent); this.agent = agent.id; this.intents.get('create_agent').verified = true;
     this.row({ scenario: 'agent_owned', status: 'PASS', resourceHash: hash(this.agent) });
     const { value: worktree } = await this.get(`/api/v1/worktrees/${agent.worktree.id}`, deadline);
     check(worktree.id === agent.worktree.id && worktree.workspace_id === this.workspace
