@@ -218,6 +218,42 @@ fn independent_copy_domains_match_root_and_attachment_without_allocation() {
 }
 
 #[test]
+fn reservation_custody_domains_survive_splitting_without_allocation() {
+    let (root, process) = policy(2);
+    let (foreign_root, foreign) = policy(1);
+    let first = process.admit_attachment().unwrap();
+    let second = process.admit_attachment().unwrap();
+    let policies = [&process, first.policy(), second.policy(), &foreign];
+    let plan = AllocationPlan::checked("reservation domain", &[512]).unwrap();
+    let mut storage = policies.map(|policy| policy.admit(IngressClass::Data, plan).unwrap());
+    let available = root.available_bytes();
+    let mut probe = AllocationProbe::new();
+    probe.track(|| {
+        for (source, storage) in storage.iter_mut().enumerate() {
+            let split = storage
+                .split_admitted(AllocationPlan::checked("split domain", &[128]).unwrap())
+                .unwrap();
+            for (target, policy) in policies.iter().enumerate() {
+                assert_eq!(
+                    storage.shares_custody_domain(&policy.root),
+                    source == target
+                );
+                assert_eq!(split.shares_custody_domain(&policy.root), source == target);
+                assert_eq!(
+                    split.belongs_to(&policy.root),
+                    source == target || (target == 0 && matches!(source, 1 | 2))
+                );
+            }
+        }
+    });
+    assert_eq!(probe.allocated(), 0);
+    assert_eq!(root.available_bytes(), available + 3 * 128);
+    drop((storage, first, second));
+    root.assert_idle();
+    foreign_root.assert_idle();
+}
+
+#[test]
 fn concurrent_admission_counts_retained_payloads_after_startup_tokens_drop() {
     let (root, policy) = policy(4);
     let barrier = Arc::new(Barrier::new(17));
