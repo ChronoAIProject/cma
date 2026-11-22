@@ -327,6 +327,39 @@ async fn startup_refuses_an_unusable_default_plan_without_waiting() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn supervisor_fills_the_default_pool_after_a_degraded_start() {
+    let (store, provider) = fixture();
+    provider.refuse_replaced_uid.store(true, Ordering::SeqCst);
+    assert_eq!(
+        await_ready(
+            &store,
+            &provider,
+            &provider.original,
+            Duration::from_secs(120)
+        )
+        .await,
+        Ok(StartupReadiness::Degraded),
+    );
+    {
+        let target = store.target.lock().unwrap();
+        assert!(target.binding.is_some() && target.error.is_some());
+        assert_ne!(target.applied_revision, target.revision);
+    }
+    // Once the cause clears, the supervisor's ordinary reconcile applies the
+    // recorded target on its original binding, and the plan reports ready.
+    provider.refuse_replaced_uid.store(false, Ordering::SeqCst);
+    store.calls.lock().unwrap().clear();
+    assert!(reconcile_one(&store, &provider).await.unwrap());
+    assert_eq!(*store.calls.lock().unwrap(), ["resize:3", "finish:true"]);
+    let target = store.target.lock().unwrap().clone();
+    assert_eq!(target.binding, Some(provider.binding()));
+    assert!(observed_ready(
+        &target,
+        &provider.inventory().await.unwrap()
+    ));
+}
+
+#[tokio::test(start_paused = true)]
 async fn degraded_start_is_noted_once_when_its_plan_first_reports_ready() {
     let (store, mut provider) = fixture();
     let image = crate::warm_pools::deployment_image(provider.original.spec.image.uri.clone());
