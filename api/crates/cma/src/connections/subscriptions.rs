@@ -5,13 +5,16 @@ use std::{
 };
 
 use layer2_core::{trigger_domain::BrokerHandoffState, SubjectId};
+use layer3_adapter::ingress_budget::{AdmittedError, IngressOwnershipPolicy, SharedOwned};
 use tokio::sync::{oneshot, Semaphore};
 
 use crate::auth::persistence::SecretValue;
 
 use super::{
     native_codex::{DeviceLogin, NativeCodex, LOGIN_TIMEOUT},
-    subscription_store::{PendingLogin, RefreshLease, SubscriptionRecord, SubscriptionStore},
+    subscription_store::{
+        PendingLogin, RefreshLease, SubscriptionOperation, SubscriptionRecord, SubscriptionStore,
+    },
     subscription_tokens::SubscriptionTokens,
     SubscriptionError,
 };
@@ -31,6 +34,22 @@ pub(super) struct NativeLogin {
 
 #[async_trait::async_trait]
 pub(super) trait NativeSubscriptionAuth: Send + Sync {
+    /// The producer admits process, pipe, cache and cleanup storage before use.
+    /// The returned cache must retain this policy through its final physical free.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "admitted subscription refresh integration")
+    )]
+    fn refresh_admitted<'a>(
+        &'a self,
+        _cache: &'a SharedOwned<SecretValue>,
+        _policy: &IngressOwnershipPolicy,
+    ) -> Result<SubscriptionOperation<'a, SharedOwned<SecretValue>>, AdmittedError> {
+        Err(AdmittedError::Unsupported(
+            "admitted native subscription refresh",
+        ))
+    }
+
     async fn start(&self) -> Result<NativeLogin, SubscriptionError>;
     async fn refresh(&self, cache: &SecretValue) -> Result<SecretValue, SubscriptionError>;
 }
