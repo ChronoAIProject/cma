@@ -1,3 +1,4 @@
+import { externalCleanupActions, validateExternalAccountCleanup } from './external-account-cleanup.mjs';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -270,7 +271,7 @@ function attest(output) {
   withPhase('attestation_output', () => writeFileSync(output, JSON.stringify({ request, receipt }), { flag: 'wx', mode: 0o600 }));
 }
 
-export function validateCampaign(results, journal) {
+export function validateCampaign(results, journal, cleanupAuthority) {
   withPhase('campaign_results', () => {
     keys(results, ['status', 'cases']);
     assert.equal(results.status, 'passed');
@@ -285,14 +286,16 @@ export function validateCampaign(results, journal) {
   withPhase('cleanup_journal', () => {
     assert.ok(Array.isArray(journal));
     assert.ok(journal.length > 0);
+    validateExternalAccountCleanup(journal, cleanupAuthority);
     assert.ok(journal.some((row) => row.action === 'created'));
-    assert.ok(!journal.some((row) => ['cleanup_refused', 'cleanup_blocked', 'cleanup_read_failed', 'cleanup_failed', 'cleanup_pending', 'stop_pending', 'external_account_cleanup_required'].includes(row.action)));
+    assert.ok(!journal.some((row) => ['cleanup_refused', 'cleanup_blocked', 'cleanup_read_failed', 'cleanup_failed', 'cleanup_pending', 'stop_pending'].includes(row.action)));
     const identity = (row) => JSON.stringify([row.run, row.kind, row.id, row.subject]);
     const owned = new Set();
     for (const row of journal) {
       assert.ok(row && typeof row === 'object' && !Array.isArray(row));
       assert.match(row.run, /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$/);
       assert.ok(Number.isFinite(Date.parse(row.at)));
+      if (externalCleanupActions.includes(row.action)) continue;
       assert.ok(['created', 'cancel_requested', 'launch_observed', 'lifecycle_observed', 'already_absent', 'stop_requested', 'cleanup_accepted', 'cleanup_complete'].includes(row.action));
       assert.ok(['agent-lifecycle', 'launches', 'sandboxes', 'workspaces', 'agents', 'agent-profiles', 'workspace-profiles', 'sandbox-profiles', 'triggers'].includes(row.kind));
       for (const key of ['id', 'subject']) assert.match(row[key], /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/);
@@ -358,6 +361,16 @@ function inventory() {
   });
 }
 
+export function loadCleanupAuthority(origin, env = process.env) {
+  const path = env.CMA_E2E_CLEANUP_TRUST_FILE;
+  const expectedHash = env.CMA_E2E_CLEANUP_TRUST_SHA256;
+  if (path === undefined && expectedHash === undefined) return undefined;
+  assert.match(expectedHash, /^[0-9a-f]{64}$/);
+  const bytes = privateFile(path, expectedHash);
+  assert.ok(bytes.length <= 65536);
+  return { origin, trust: JSON.parse(bytes) };
+}
+
 function audit(directory, beforePath, afterPath) {
   const before = withPhase('attestation_files', () => JSON.parse(privateFile(beforePath)));
   const after = withPhase('attestation_files', () => JSON.parse(privateFile(afterPath)));
@@ -368,7 +381,8 @@ function audit(directory, beforePath, afterPath) {
   });
   const results = withPhase('campaign_results', () => JSON.parse(readFileSync(join(directory, 'results.json'), 'utf8')));
   const journal = withPhase('cleanup_journal', () => readFileSync(join(directory, 'cleanup.ndjson'), 'utf8').trim().split('\n').map((line) => JSON.parse(line)));
-  validateCampaign(results, journal);
+  const cleanupAuthority = withPhase('cleanup_journal', () => loadCleanupAuthority(after.request.expected.origin));
+  validateCampaign(results, journal, cleanupAuthority);
   withPhase('audit_output', () => {
     writeFileSync(join(directory, 'attestation.json'), JSON.stringify({ before: before.receipt, after: after.receipt, scope: 'independent-deployment-identity-not-model-proof' }), { flag: 'wx', mode: 0o600 });
     appendFileSync(process.env.GITHUB_OUTPUT, 'publishable=true\n');

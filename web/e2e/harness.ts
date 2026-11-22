@@ -142,10 +142,11 @@ export class Harness {
           )
             throw new Error('J0 returned an existing fixture identity');
           account.subject = identity.subject;
-          this.journal.record({
-            action: 'external_account_cleanup_required',
-            subject: account.subject,
-          });
+          this.journal.requireExternalAccountCleanup(
+            this.config.baseURL,
+            this.fixture.fixtureOwner,
+            account.subject,
+          );
         }
         this.journal.observe(
           url.pathname,
@@ -299,15 +300,16 @@ export class Harness {
     for (const { context, role } of this.contexts.reverse()) {
       try {
         const subject = this.fixture.accounts[role].subject;
+        if (role === 'signup' && subject)
+          this.journal.requireExternalAccountCleanup(
+            this.config.baseURL,
+            this.fixture.fixtureOwner,
+            subject,
+          );
         if (!cleaned.has(subject)) {
           await this.journal.cleanup(context.request, this.config.baseURL, subject);
           cleaned.add(subject);
         }
-        if (role === 'signup')
-          this.journal.record({
-            action: 'external_account_cleanup_required',
-            subject: this.fixture.accounts.signup.subject,
-          });
       } catch (error) {
         failures.push(error);
       } finally {

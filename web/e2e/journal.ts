@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto';
 import { appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { APIRequestContext } from '@playwright/test';
@@ -35,6 +36,7 @@ export function launchIsQuiescent(row: Record<string, unknown>): boolean {
 export class Journal {
   readonly resources: OwnedResource[] = [];
   private readonly seen = new Set<string>();
+  private readonly externalRequests = new Map<string, string>();
   constructor(
     private readonly output: string,
     readonly run: string,
@@ -45,6 +47,23 @@ export class Journal {
       `${JSON.stringify({ run: this.run, at: new Date().toISOString(), ...row })}\n`,
       { mode: 0o600 },
     );
+  }
+  requireExternalAccountCleanup(origin: string, fixtureOwner: string, subject: string) {
+    identifier(fixtureOwner, 'external cleanup fixture owner');
+    identifier(subject, 'external cleanup subject');
+    const originHash = createHash('sha256').update(origin).digest('hex');
+    const scope = JSON.stringify([originHash, fixtureOwner, subject]);
+    const requestId = this.externalRequests.get(scope) ?? randomUUID();
+    this.externalRequests.set(scope, requestId);
+    this.record({
+      action: 'external_account_cleanup_required',
+      schema: 'cma-external-cleanup-request-v1',
+      requestId,
+      fixtureOwner,
+      subject,
+      originHash,
+    });
+    return requestId;
   }
   own(kind: ResourceKind, id: unknown, subject: string) {
     const resource = { kind, id: identifier(id, 'created resource ID'), subject };
