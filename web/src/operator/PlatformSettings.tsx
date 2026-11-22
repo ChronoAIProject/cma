@@ -10,6 +10,7 @@ import { usageSettingsChanged } from '../usage/metrics/useMeasuredUsage';
 import { reviewSettingsDraft } from './settingsDraft';
 import { IdleThresholdFields, NumberField } from './SettingsFields';
 import { SpendControls } from './SpendControls';
+import { SpendStatus } from './SpendStatus';
 import { budgetChanged, spendBudget, spendListConflict } from './spendBudget';
 import { validateSpendBudget, type SpendErrors } from './spendValidation';
 import { SettingsAudit } from './SettingsAudit';
@@ -241,6 +242,7 @@ function SettingsEditor({
           setSpendErrors({});
         }}
       />
+      <SpendStatus client={client} disabled={disabled} key={`spend-${revision}`} />
       {!writesAvailable ||
       availability.model_request_budget_writes_available !== true ||
       availability.platform_spend_writes_available !== true ? (
