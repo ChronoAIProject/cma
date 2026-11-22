@@ -11,6 +11,8 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+mod wire;
+
 pub(super) struct NyxIdUsageTransport {
     http: reqwest::Client,
     base: reqwest::Url,
@@ -148,6 +150,12 @@ impl NyxIdUsageTransport {
                 error: String,
             }
             let code = serde_json::from_slice::<ErrorCode>(&bytes).ok();
+            if method == reqwest::Method::GET
+                && path.first() == Some(&"usage-cursors")
+                && code.as_ref().is_some_and(|value| value.error == "conflict")
+            {
+                return Err(TransportError::CursorChanged);
+            }
             return Err(
                 if code.is_some_and(|v| {
                     matches!(v.error.as_str(), "stream_not_open" | "predecessor_missing")
@@ -184,8 +192,7 @@ impl UsageTransport for NyxIdUsageTransport {
             )
             .await?
             .ok_or(TransportError::Invalid)?;
-        let receipt: Receipt =
-            serde_json::from_slice(&bytes).map_err(|_| TransportError::Invalid)?;
+        let receipt = wire::receipt(&bytes)?;
         receipt.validate(event)?;
         Ok(receipt)
     }
@@ -197,7 +204,7 @@ impl UsageTransport for NyxIdUsageTransport {
             &[],
         )
         .await?
-        .map(|bytes| serde_json::from_slice(&bytes).map_err(|_| TransportError::Invalid))
+        .map(|bytes| wire::receipt(&bytes))
         .transpose()
     }
     async fn cursor(&self, stream_id: &str) -> Result<Option<Cursor>, TransportError> {
@@ -212,11 +219,9 @@ impl UsageTransport for NyxIdUsageTransport {
         else {
             return Ok(None);
         };
-        let mut combined: Cursor =
-            serde_json::from_slice(&bytes).map_err(|_| TransportError::Invalid)?;
-        combined.validate(stream_id)?;
+        let (mut combined, mut next_page) = wire::cursor(&bytes, stream_id)?;
         let mut seen = std::collections::HashSet::new();
-        while let Some(next) = combined.next_cursor.take() {
+        while let Some(next) = next_page.take() {
             if seen.len() >= 8 || !seen.insert(next.clone()) {
                 return Err(TransportError::Invalid);
             }
@@ -225,23 +230,21 @@ impl UsageTransport for NyxIdUsageTransport {
                     reqwest::Method::GET,
                     &["usage-cursors", stream_id],
                     None,
-                    &[("snapshot", &combined.snapshot), ("cursor", &next)],
+                    &[("page", &next)],
                 )
                 .await?
-                .ok_or(TransportError::Prerequisite)?;
-            let page: Cursor =
-                serde_json::from_slice(&bytes).map_err(|_| TransportError::Invalid)?;
-            page.validate(stream_id)?;
-            if page.snapshot != combined.snapshot
-                || page.contiguous_sequence != combined.contiguous_sequence
+                .ok_or(TransportError::CursorChanged)?;
+            let (page, next) = wire::cursor(&bytes, stream_id)?;
+            if page.contiguous_sequence != combined.contiguous_sequence
                 || page.validated_sequence != combined.validated_sequence
                 || page.highest_sequence != combined.highest_sequence
                 || page.head_digest != combined.head_digest
+                || page.validated_head_digest != combined.validated_head_digest
             {
-                return Err(TransportError::Prerequisite);
+                return Err(TransportError::CursorChanged);
             }
             combined.missing_ranges.extend(page.missing_ranges);
-            combined.next_cursor = page.next_cursor;
+            next_page = next;
             combined.validate(stream_id)?;
         }
         Ok(Some(combined))

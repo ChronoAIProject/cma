@@ -49,8 +49,13 @@ pub(crate) struct Cursor {
     pub validated_sequence: String,
     pub highest_sequence: String,
     pub head_digest: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub validated_head_digest: Option<String>,
     pub missing_ranges: Vec<MissingRange>,
-    pub snapshot: String,
+    // Earlier delivery observations retained the provisional pagination fields.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
 }
 
@@ -64,19 +69,27 @@ pub(crate) struct MissingRange {
 impl Cursor {
     pub(crate) fn validate(&self, stream: &str) -> Result<u64, TransportError> {
         let contiguous = integer(&self.contiguous_sequence)?;
+        let validated = integer(&self.validated_sequence)?;
         let high = integer(&self.highest_sequence)?;
         if self.stream_id != stream
             || !id(stream)
-            || integer(&self.validated_sequence)? > contiguous
+            || validated > contiguous
             || contiguous > high
             || (contiguous == 0) != self.head_digest.is_none()
             || self
                 .head_digest
                 .as_ref()
                 .is_some_and(|value| !digest(value))
+            || self.validated_head_digest.as_ref().is_some_and(|value| {
+                validated == 0
+                    || !digest(value)
+                    || (validated == contiguous && Some(value) != self.head_digest.as_ref())
+            })
             || self.missing_ranges.len() > 512
-            || self.snapshot.is_empty()
-            || self.snapshot.len() > 4096
+            || self
+                .snapshot
+                .as_ref()
+                .is_some_and(|v| v.is_empty() || v.len() > 4096)
             || self
                 .next_cursor
                 .as_ref()

@@ -119,6 +119,7 @@ impl UsageExporter {
                 Err(error) => {
                     let (reason, delay) = match error {
                         TransportError::Unauthorized => ("producer_unauthorized", None),
+                        TransportError::CursorChanged => ("cursor_changed", None),
                         TransportError::Prerequisite => ("prerequisite_missing", None),
                         TransportError::RateLimited(seconds) => ("rate_limited", Some(seconds)),
                         _ => ("outcome_unknown", None),

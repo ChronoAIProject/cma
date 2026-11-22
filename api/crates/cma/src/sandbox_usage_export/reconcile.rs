@@ -7,12 +7,19 @@ pub(super) async fn inspect_cursor(
     cursor: &Cursor,
 ) -> Result<(), TransportError> {
     let sequence = cursor.validate(&event.stream_id)?;
-    if sequence > 0 {
+    for (sequence, digest) in [
+        (sequence, cursor.head_digest.as_ref()),
+        (
+            contract::integer(&cursor.validated_sequence)?,
+            cursor.validated_head_digest.as_ref(),
+        ),
+    ] {
+        let Some(digest) = digest else { continue };
         let local = store
             .event_digest(&event.stream_id, sequence)
             .await
             .map_err(|_| TransportError::Unavailable)?;
-        if local.as_ref() != cursor.head_digest.as_ref() {
+        if local.as_ref() != Some(digest) {
             return Err(TransportError::Conflict);
         }
     }

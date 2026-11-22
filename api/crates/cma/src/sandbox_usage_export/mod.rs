@@ -22,6 +22,7 @@ pub(crate) enum TransportError {
     RateLimited(u64),
     Unauthorized,
     Forbidden,
+    CursorChanged,
     Prerequisite,
     Conflict,
     Invalid,
