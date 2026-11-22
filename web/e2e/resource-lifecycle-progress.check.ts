@@ -30,6 +30,7 @@ test('LOCAL a Launch refused by the Sandbox cutoff stays terminal through refres
     reads++;
     return route.fulfill({ json: record });
   });
+  await page.clock.install();
   await page.goto(`/launches/${record.id}`);
   const check = page.getByRole('button', { name: 'Check again', exact: true });
   await expect(check).toBeVisible();
@@ -47,8 +48,8 @@ test('LOCAL a Launch refused by the Sandbox cutoff stays terminal through refres
   await page.getByRole('button', { name: 'Copy support code', exact: true }).click();
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(record.id);
   const settledReads = reads;
-  await page.clock.install();
   await page.clock.runFor(30_000);
+  await page.waitForLoadState('networkidle');
   expect(reads).toBe(settledReads);
   await expect(page).toHaveURL(`/launches/${record.id}`);
   noEffects(boundary);
