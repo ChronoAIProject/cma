@@ -41,6 +41,8 @@ mod session_routes_tests;
 #[path = "cookie_authorization_tests/tenant_isolation_tests.rs"]
 mod tenant_isolation_tests;
 
+#[path = "cookie_authorization_tests/cause_diagnostic_tests.rs"]
+mod cause_diagnostic_tests;
 #[path = "cookie_authorization_tests/diagnostic_tests.rs"]
 mod diagnostic_tests;
 #[path = "cookie_authorization_tests/provider_diagnostic_tests.rs"]
