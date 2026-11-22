@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { pendingRevocation } from '@cma/client';
+import { ApiError, pendingRevocation } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import type { ShareTarget } from './sharing';
 import { sharingDeadline } from './sharing';
@@ -73,6 +73,7 @@ export function useShareChangeRecovery(
     setError(undefined);
     setNotice(undefined);
     let retained: RetainedShareChange | undefined;
+    let sending = false;
     const timer = setTimeout(() => {
       request.abort();
       if (active.current === request) {
@@ -93,7 +94,9 @@ export function useShareChangeRecovery(
       });
       sharingDeadline(access, started);
       request.signal.throwIfAborted();
+      sending = true;
       const receipt = await sendShareChange(client, target, retained, request.signal);
+      sending = false;
       request.signal.throwIfAborted();
       if (active.current !== request) return;
       if (!matchesShareChange(receipt, target, retained))
@@ -116,6 +119,27 @@ export function useShareChangeRecovery(
             'The share change is pending. Its original request is saved; status recovery could not be saved. Keep this tab open.',
           );
         }
+      } else if (
+        sending &&
+        !request.signal.aborted &&
+        retained &&
+        cause instanceof ApiError &&
+        cause.status === 409 &&
+        cause.code === 'resource_access_changed'
+      ) {
+        try {
+          forgetShareChange(owner, target, retained);
+          setChanges((rows) => rows.filter((row) => row.shareId !== retained!.shareId));
+        } catch {
+          setError(
+            'The share change was rejected, but the saved request could not be cleared. Restore session storage before another change.',
+          );
+          return;
+        }
+        setError(
+          'The share change was rejected because sharing changed. Review current access before making a new change.',
+        );
+        refresh();
       } else
         setError(
           cause instanceof Error

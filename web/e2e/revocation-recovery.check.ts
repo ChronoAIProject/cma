@@ -1,6 +1,109 @@
 import { test, expect } from '@playwright/test';
 import { LocalStartup, localTime } from './agent-startup-fixtures';
 
+test('LOCAL Sandbox revision refusal allows an explicit fresh revoke after reload', async ({
+  page,
+  baseURL,
+}) => {
+  const boundary = new LocalStartup();
+  await boundary.route(page, baseURL!);
+  const sandboxId = boundary.sandbox.id;
+  const actor = { kind: 'human', subject: 'local-owner' };
+  const original = {
+    id: 'sandbox-share',
+    owner: { kind: 'person', subject: 'local-owner' },
+    selector: { kind: 'sandbox', sandbox_id: sandboxId },
+    target_org_id: 'research',
+    mode: 'org_roles',
+    issuer_actor: actor,
+    created_at: localTime,
+    revoked_at: null,
+    revision: 1,
+  };
+  let revision = 1;
+  let revoked = false;
+  let grantReads = 0;
+  const writes: { method: string; key?: string; revision: number }[] = [];
+  await page.route('**/api/v1/organizations', (route) =>
+    route.fulfill({
+      json: { items: [{ id: 'research', display_name: 'Research team', role: 'admin' }] },
+    }),
+  );
+  await page.route('**/api/v1/resource-access/**', (route) =>
+    route.fulfill({
+      json: {
+        capabilities: ['view_details', 'manage_sharing'],
+        revalidate_at: null,
+        policy_revision: revision,
+      },
+    }),
+  );
+  await page.route('**/api/v1/resource-shares/**', (route) => {
+    const request = route.request();
+    if (request.method() === 'GET') {
+      grantReads++;
+      return route.fulfill({ json: { items: revoked ? [] : [{ ...original, revision }] } });
+    }
+    writes.push({
+      method: request.method(),
+      key: request.headers()['idempotency-key'],
+      revision:
+        request.method() === 'PATCH'
+          ? (request.postDataJSON() as { expected_revision: number }).expected_revision
+          : Number(new URL(request.url()).searchParams.get('expected_revision')),
+    });
+    if (request.method() === 'PATCH') {
+      revision = 2;
+      return route.fulfill({
+        status: 409,
+        json: { code: 'resource_access_changed', detail: 'Read the current revision.' },
+      });
+    }
+    expect(request.method()).toBe('DELETE');
+    expect(writes.at(-1)!.revision).toBe(2);
+    revision = 3;
+    revoked = true;
+    return route.fulfill({
+      json: {
+        operation_id: 'c'.repeat(64),
+        actor,
+        at: localTime,
+        policy_revision: revision,
+        share: { ...original, revision, revoked_at: localTime },
+      },
+    });
+  });
+  const open = async () => {
+    await page.getByRole('button', { name: 'More actions', exact: true }).click();
+    await page.getByRole('menuitem', { name: 'Sharing', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Current grants' })).toBeVisible();
+  };
+  await page.goto(`/sandboxes/${sandboxId}`);
+  await open();
+  const previousReads = grantReads;
+  await page.getByRole('button', { name: 'Access for Research team', exact: true }).click();
+  await page.getByRole('menuitemradio', { name: 'View only', exact: true }).click();
+  await page.getByRole('button', { name: 'Save access', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('share change was rejected');
+  await expect(page.getByRole('button', { name: 'Revoke', exact: true })).toBeEnabled();
+  expect(grantReads).toBeGreaterThan(previousReads);
+  expect(writes).toHaveLength(1);
+  await page.reload();
+  await open();
+  await expect(page.getByRole('button', { name: 'Revoke', exact: true })).toBeEnabled();
+  await expect(page.getByLabel('Saved share change')).toHaveCount(0);
+  expect(writes).toHaveLength(1);
+  await page.getByRole('button', { name: 'Revoke', exact: true }).click();
+  await page.getByRole('button', { name: 'Revoke grant', exact: true }).click();
+  await expect(page.getByText('Access revoked.', { exact: true })).toBeVisible();
+  expect(writes).toHaveLength(2);
+  expect(writes[0]!.revision).toBe(1);
+  expect(writes[1]!.key).toBeTruthy();
+  expect(writes[1]!.key).not.toBe(writes[0]!.key);
+  expect(boundary.errors).toEqual([]);
+  expect(boundary.unexpected).toEqual([]);
+});
+
 // Synthetic HTTP boundaries exercise the real browser; they do not qualify a runtime.
 test('LOCAL revocation preserves the original request through lost reply and reload', async ({
   page,
