@@ -1,5 +1,5 @@
 import { Presence, usePresenceExiting } from '../ui/Presence';
-import { useEffect, useRef, useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { ApiError, type Launch, type TriggerPreview } from '@cma/client';
 import { Button } from '../ui/Button';
 import {
@@ -52,7 +52,7 @@ export function ReviewCard({
 }) {
   const exiting = usePresenceExiting();
   const lifetime = useRef<AbortController | undefined>(undefined);
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (exiting) return;
     const controller = new AbortController();
     lifetime.current = controller;

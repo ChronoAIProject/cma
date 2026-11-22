@@ -1,4 +1,4 @@
-import { StrictMode } from 'react';
+import { StrictMode, useLayoutEffect } from 'react';
 import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -63,7 +63,12 @@ function fixture(strict = false) {
     signIn: vi.fn(),
     signOut: vi.fn(),
   };
-  const element = (owner = PUBLIC_USER.id, id = PUBLIC_TRUST.id, open = true) => {
+  const element = (
+    owner = PUBLIC_USER.id,
+    id = PUBLIC_TRUST.id,
+    open = true,
+    onCommit?: () => void,
+  ) => {
     const content = (
       <AuthContextProvider provider={provider}>
         <Presence>
@@ -77,11 +82,17 @@ function fixture(strict = false) {
             />
           ) : null}
         </Presence>
+        <CommitProbe onCommit={onCommit} />
       </AuthContextProvider>
     );
     return strict ? <StrictMode>{content}</StrictMode> : content;
   };
   return { client, completed, preflight, writes, element };
+}
+
+function CommitProbe({ onCommit }: { readonly onCommit?: () => void }) {
+  useLayoutEffect(() => onCommit?.(), [onCommit]);
+  return null;
 }
 
 async function allowRetry(actor: ReturnType<typeof userEvent.setup>) {
@@ -132,6 +143,29 @@ for (const ending of ['unmount', 'owner change', 'Launch change', 'exit frame'] 
     },
   );
 }
+
+it('invalidates the old preflight during the owner-change commit', async () => {
+  const test = fixture();
+  const actor = userEvent.setup();
+  const view = render(test.element());
+  await allowRetry(actor);
+  const held = deferred<void>();
+  test.preflight.mockReturnValueOnce(held.promise);
+  await actor.click(screen.getByRole('button', { name: 'Try again' }));
+  const signal = test.preflight.mock.calls[0]?.[1];
+  let abortedAtCommit: boolean | undefined;
+  view.rerender(
+    test.element('different-owner', PUBLIC_TRUST.id, true, () => {
+      abortedAtCommit = signal?.aborted;
+      held.resolve();
+    }),
+  );
+  await act(async () => {
+    await held.promise;
+  });
+  expect(abortedAtCommit).toBe(true);
+  expect(test.client.requests.start).not.toHaveBeenCalled();
+});
 
 it('permits the original explicit retry after StrictMode effect replay', async () => {
   const test = fixture(true);
