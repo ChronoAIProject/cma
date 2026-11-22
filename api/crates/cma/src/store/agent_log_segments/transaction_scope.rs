@@ -81,6 +81,16 @@ impl<'session> TransactionScope<'session> {
         .await
     }
 
+    pub(in crate::store) async fn settle_runtime_loss_budget(
+        &mut self,
+        store: &crate::store::MongoSandboxStore,
+        current: &layer2_core::sandbox::Agent,
+        change: &layer2_core::sandbox::store::SandboxRuntimeLossAgentMutation,
+        at: &str,
+    ) -> Result<(), TransactionLogError> {
+        crate::store::budget::settle_runtime_loss(store, current, change, at, self.session).await
+    }
+
     /// Release consumes the scope. The caller may commit/abort and do normal
     /// outcome reconciliation; a later transaction requires a new scope/stamp.
     pub(in crate::store) fn release(self) -> &'session mut ClientSession {
