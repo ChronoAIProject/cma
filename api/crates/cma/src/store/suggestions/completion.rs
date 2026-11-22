@@ -70,7 +70,10 @@ async fn apply(
     if work.status != SuggestionStatus::Running || work != *claim {
         return Ok(false);
     }
-    let current = context::current_transaction(store, &work, session, false).await?;
+    let parent = context::current_parent(store, &work, session, false).await?;
+    if let Some(parent) = &parent {
+        parent::fence(store, &work, parent, &mut *session).await?;
+    }
     store
         .agents
         .update_one(
@@ -81,7 +84,7 @@ async fn apply(
         .await
         .map_err(ContextError::Driver)?;
     work.complete(
-        current,
+        parent.is_some(),
         SuggestionCompletion {
             status: completion.status,
             set: completion.set.clone(),
