@@ -12,6 +12,7 @@ struct DelayedStore {
     inner: Arc<MemoryOwnershipStore>,
     delay: Duration,
     heartbeat_delay_ms: AtomicUsize,
+    unavailable_heartbeats: AtomicUsize,
     calls: Mutex<BTreeMap<String, Vec<Instant>>>,
 }
 
@@ -21,6 +22,7 @@ impl DelayedStore {
             inner: Arc::new(MemoryOwnershipStore::default()),
             delay,
             heartbeat_delay_ms: AtomicUsize::new(20),
+            unavailable_heartbeats: AtomicUsize::new(0),
             calls: Mutex::default(),
         })
     }
@@ -46,6 +48,16 @@ impl OwnershipStore for DelayedStore {
         ))
         .await;
         self.record("membership");
+        // Fail before the member row changes, as a refused store call would.
+        if self
+            .unavailable_heartbeats
+            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+        {
+            return Err(OwnershipError::Unavailable("heartbeat refused".into()));
+        }
         self.inner.heartbeat(id, draining).await
     }
     async fn membership(&self) -> Result<Membership, OwnershipError> {
@@ -239,6 +251,44 @@ async fn receiver_failure_retains_its_phase_and_original_error() {
         "{logs}"
     );
     assert!(logs.contains("during_drain=false"), "{logs}");
+}
+
+#[tokio::test(start_paused = true)]
+async fn transient_member_heartbeat_outage_keeps_owners_until_membership_ends() {
+    // Ticks at 3, 6, 9 and 12 s precede the 15 s established membership.
+    for unavailable in [3, 4] {
+        let store = DelayedStore::new(Duration::from_millis(25));
+        store
+            .unavailable_heartbeats
+            .store(unavailable, Ordering::SeqCst);
+        let coordinator = coordinator(store.clone()).await;
+        let owner = coordinator
+            .acquire(&AgentId("agent".into()))
+            .await
+            .unwrap()
+            .unwrap();
+        let started = Instant::now();
+        let running = tokio::spawn(run(coordinator.clone(), |_| std::future::pending()));
+        if unavailable == 3 {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            assert!(coordinator.is_ready());
+            assert!(!*coordinator.failure_signal().borrow());
+            assert!(owner.is_current());
+            owner.run(store.check(&owner.token)).await.unwrap().unwrap();
+            assert!(!running.is_finished());
+            coordinator.stop_admission();
+            running.await.unwrap().unwrap();
+        } else {
+            let failure = running.await.unwrap().unwrap_err();
+            assert_eq!(started.elapsed(), Duration::from_secs(15));
+            assert_eq!(failure.phase, "ownership_maintenance");
+            assert_eq!(failure.error, OwnershipError::Stale);
+            assert!(*coordinator.failure_signal().borrow());
+            assert!(!coordinator.is_ready());
+            assert!(!owner.is_current());
+        }
+        assert_eq!(store.unavailable_heartbeats.load(Ordering::SeqCst), 0);
+    }
 }
 
 #[tokio::test(start_paused = true)]
