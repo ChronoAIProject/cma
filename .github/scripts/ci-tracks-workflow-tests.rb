@@ -324,9 +324,8 @@ ARTIFACT_READER = {'contents' => 'read', 'actions' => 'read'}.freeze
 COMPOSITE_KEYS = {'run' => %w[name id if run env continue-on-error working-directory shell],
                   'uses' => %w[name id if uses with env continue-on-error]}.freeze
 DOWNLOAD_MINUTES = 1..10
-# Production publication is owned separately. Its two single unbounded
-# downloads are the follow-up for this rule; the count may only shrink.
-UNBOUNDED_DOWNLOADS = {'publish' => 2}.freeze
+# Every artifact download is bounded; the follow-up count stays empty.
+UNBOUNDED_DOWNLOADS = {}.freeze
 
 def check_artifact_downloads(workflows, actions)
   actions.each do |reference, action|
@@ -463,7 +462,13 @@ run_rule = "staging-deploy/report: gh run download must be bounded by its step's
  [count_rule, ->(w, _) { report_steps.call(w) << {'uses' => pinned, 'with' => {'name' => 'evidence'}} }],
  [count_rule, ->(w, _) { report_steps.call(w) << {'uses' => third_party, 'with' => {'name' => 'evidence'}} }],
  [count_rule, ->(w, _) { w['publish']['jobs']['release']['steps'] << {'uses' => pinned, 'with' => {'name' => 'evidence'}} }],
- [count_rule, ->(w, _) { w['publish']['jobs'].each_value { |job| job.fetch('steps', []).reject! { |s| s.fetch('uses', '').match?(DOWNLOAD_ACTION) } } }],
+ [count_rule, ->(w, _) {
+   steps = w['publish']['jobs']['release']['steps']
+   steps.reject! { |s| s['id'] == 'notes-download-retry' || s['name'] == 'Explain the unavailable release notes artifact' }
+   steps.find { |s| s['id'] == 'notes-download' }.tap { |s| s.delete('timeout-minutes'); s.delete('continue-on-error') }
+ }],
+ ['publish/release: the download repeat must be identical, bounded and able to fail the job',
+  ->(w, _) { w['publish']['jobs']['release']['steps'].find { |s| s['id'] == 'notes-download-retry' }['with']['name'] = 'other' }],
  [run_rule, ->(w, _) { report_steps.call(w) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n evidence'} }],
  [run_rule, ->(w, _) { report_steps.call(w) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n evidence', 'timeout-minutes' => 60} }],
  ['bounded download regressions must run in Repository checks',
