@@ -17,6 +17,7 @@ from staging_cd_common import Refusal
 from staging_cd_github import GitHub
 from staging_cd_history import DevelopHistory
 from staging_cd_outcome_tests import legacy
+from staging_cd_reservations import claim_ref, next_reservation, pending_name
 
 OUTAGE = "fatal: unable to access 'https://github.com/ChronoAIProject/cma.git/': The requested URL returned error: 502\n"
 
@@ -155,6 +156,31 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertEqual(len(server.refs), 4)
 
+    def test_a_listing_torn_by_a_concurrent_push_is_read_again_and_succeeds(self):
+        # git ls-remote is not an atomic snapshot. While another job's atomic
+        # push lands, one listing can show its claim but not its reservation.
+        torn = []
+
+        def command(server, args, kwargs, _advance):
+            if args[1] == "ls-remote" and not torn:
+                rival = next_reservation("am", server.history().head, "e" * 40, 1, "patch", 50, 1, [], [])
+                oid = server.object(rival)
+                torn.append(rival)
+                server.refs[claim_ref(rival).removeprefix("refs/tags/")] = oid
+                listed = server.command(args, **kwargs)
+                server.refs[pending_name(rival)] = oid  # The rest of the push lands after the listing.
+                return listed
+            return server.command(args, **kwargs)
+        status, server, first, output, events, _ = self.execute(command=command)
+        self.assertEqual(status, 0)
+        self.assertEqual(events, ["readback", "readback", "matrix", "changed"])
+        self.assertEqual(retries(output), ["RETRY allocation reason=INVENTORY_CLAIM_ORPHANED attempt=2/2 wait=0.0s"])
+        self.assertFalse(first.loaded)
+        # The rival's version stays burned; this run reserves the next one.
+        planned = {item["component"]: item["previous"] for item in self.stores[1].planned}
+        self.assertEqual(planned["am"], torn[0]["version"])
+        self.assertEqual(len(server.refs), 6)
+
     def test_a_second_transient_refusal_stops_at_the_gate_as_before(self):
         def command(server, args, kwargs, _advance):
             if args[1] == "ls-remote":
@@ -266,8 +292,10 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertEqual(allocation.RETRIED_CODES, allocation.TRANSIENT_CODES - {"WRITE_UNCERTAIN"})
         # Durable causes are no longer catalogued as transient.
         for code in ("GITHUB_READ_DENIED", "RESERVATION_PUSH_REJECTED", "INVENTORY_CLAIM_CONFLICT",
-                     "INVENTORY_CLAIM_ORPHANED", "INVENTORY_TOO_LARGE"):
+                     "INVENTORY_TOO_LARGE"):
             self.assertEqual(codes[code]["cause"], "operator", code)
+        # One listing can show a concurrent push's claim before its reservation.
+        self.assertIn("INVENTORY_CLAIM_ORPHANED", allocation.RETRIED_CODES)
         self.assertEqual(codes["RESERVATION_PLAN_INVALID"]["cause"], "unknown")
 
     def test_one_rerun_waits_ten_to_twenty_seconds_and_fits_the_job_timeout(self):

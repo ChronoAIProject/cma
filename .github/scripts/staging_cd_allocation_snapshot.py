@@ -83,6 +83,9 @@ class AllocationSnapshot(Reservations):
                 verify_final_owner(item, tag)
         # A claim may outlive its pending tag, but its burned version must
         # remain visible as either the matching reservation or its final.
+        # One listing is not an atomic snapshot: it can show another job's
+        # claim before that push's reservation, so an unbacked claim is a
+        # transient refusal that a fresh listing settles.
         backed = {claim_ref(tag["receipt"]["identity"]) for tag in self.finals}
         for item in self.pending:
             ref = claim_ref(item)

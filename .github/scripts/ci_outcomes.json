@@ -690,10 +690,10 @@
           "next": "An operator must compare the cma-allocation claim with the pending tag of that version and restore the pair one run wrote."
         },
         "INVENTORY_CLAIM_ORPHANED": {
-          "title": "Claim without a version",
-          "meaning": "A version claim has neither its pending reservation nor its final tag, so a burned version is no longer visible and every read repeats it.",
-          "cause": "operator",
-          "next": "An operator must restore the deleted pending or final tag for that claim before allocation can continue."
+          "title": "Claim listed without a version",
+          "meaning": "A version claim was listed without its pending reservation or its final tag. One listing is not an atomic snapshot, so another job's push or finalization can show this for a moment; allocation reads the inventory again once in the job.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs. If it persists after the re-run, a pending or final tag was deleted, and an operator must restore it for that claim."
         },
         "INVENTORY_TOO_LARGE": {
           "title": "Tag inventory too large",

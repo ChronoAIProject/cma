@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
-from staging_cd_allocate import allocate_queue, refusal_code
+from staging_cd_allocate import TRANSIENT_CODES, allocate_queue, refusal_code
 from staging_cd_allocation_fixture import AllocationServer
 from staging_cd_allocation_io import (ALLOCATION_SECONDS, PUSH_RESERVE_SECONDS, PUSH_SECONDS, SETTLE_WAITS,
                                       VERIFY_RESERVE_SECONDS, AllocationIO)
@@ -440,12 +440,15 @@ class AllocationSnapshotTests(unittest.TestCase):
         server.refs[claim] = "e" * 40
         with self.assertRaisesRegex(Refusal, "claim owner differs") as raised:
             AllocationSnapshot(server, "fixture", Path.cwd(), store.io).load()
-        # One advertisement shows both refs, so a re-read finds the same damage.
+        # Both refs are create-only and one push writes them with one object,
+        # so even a torn listing never shows two objects: lasting damage.
         self.assertEqual(refusal_code(raised.exception), "INVENTORY_CLAIM_CONFLICT")
         server.refs = {claim: oid}
         with self.assertRaisesRegex(Refusal, "claim has no durable version") as raised:
             AllocationSnapshot(server, "fixture", Path.cwd(), store.io).load()
+        # A claim alone is also what a listing torn by a concurrent push shows.
         self.assertEqual(refusal_code(raised.exception), "INVENTORY_CLAIM_ORPHANED")
+        self.assertIn("INVENTORY_CLAIM_ORPHANED", TRANSIENT_CODES)
 
     def test_noop_never_pushes_and_snapshot_is_not_usable_before_load(self):
         server, store = self.fixture()
