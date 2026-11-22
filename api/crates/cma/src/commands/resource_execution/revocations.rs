@@ -8,22 +8,17 @@ use std::time::Duration;
 // A control observation deadline supplies no stop evidence. The next turn
 // queries the same receiver/request if a reply or commit was lost.
 const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(2);
+const CAPTURE_TIMEOUT: Duration = Duration::from_secs(5);
+const FINALIZATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl RevocationWorker {
     pub(crate) async fn reconcile(&self, id: &wire::Digest) -> ExecutionResult<Progress> {
-        let operation = self
-            .store
-            .revocation(id)
-            .await?
-            .ok_or(ExecutionError::Corrupt)?;
-        operation.validate()?;
-        if &operation.key.operation_id != id {
-            return Err(ExecutionError::EvidenceMismatch);
-        }
+        let (operation, members) = tokio::time::timeout(CAPTURE_TIMEOUT, self.capture(id))
+            .await
+            .unwrap_or(Err(ExecutionError::Unavailable))?;
         if matches!(operation.phase, RevocationPhaseV1::Effective { .. }) {
             return Ok(Progress::Effective);
         }
-        let members = self.cohort(&operation).await?;
         let mut pending = stream::iter(members.into_iter().map(|member| async {
             // Queueing for local capacity consumes no receiver observation time.
             // The permit covers both control calls and retained evidence writes.
@@ -50,7 +45,12 @@ impl RevocationWorker {
         }
         if failures.is_empty() {
             // R1 rechecks all frozen rows and lineage in the final transaction.
-            let finalized = self.store.finish_revocation(id).await?;
+            // A dropped commit observation may already have committed. The next
+            // attempt must reread this operation before doing participant work.
+            let finalized =
+                tokio::time::timeout(FINALIZATION_TIMEOUT, self.store.finish_revocation(id))
+                    .await
+                    .unwrap_or(Err(ExecutionError::Unknown))?;
             finalized.validate()?;
             if finalized.key != operation.key
                 || finalized.epoch != operation.epoch
@@ -70,6 +70,27 @@ impl RevocationWorker {
             deadline_exceeded: operation.deadline_exceeded_at(unix_millis_now()?)?,
             failures,
         })
+    }
+
+    async fn capture(
+        &self,
+        id: &wire::Digest,
+    ) -> ExecutionResult<(RevocationOperationV1, Vec<ExecutionRecordV1>)> {
+        let operation = self
+            .store
+            .revocation(id)
+            .await?
+            .ok_or(ExecutionError::Corrupt)?;
+        operation.validate()?;
+        if &operation.key.operation_id != id {
+            return Err(ExecutionError::EvidenceMismatch);
+        }
+        let members = if matches!(operation.phase, RevocationPhaseV1::Effective { .. }) {
+            Vec::new()
+        } else {
+            self.cohort(&operation).await?
+        };
+        Ok((operation, members))
     }
 
     async fn cohort(

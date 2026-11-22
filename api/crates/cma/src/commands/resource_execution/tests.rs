@@ -5,6 +5,7 @@ use std::sync::Mutex;
 
 mod budget;
 mod fixtures;
+mod io_budget;
 mod mongo;
 mod participants;
 mod process_child;

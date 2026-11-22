@@ -24,6 +24,10 @@ pub(super) struct State {
     pub record_reads: usize,
     pub record_gate: Option<Arc<tokio::sync::Semaphore>>,
     pub effect_page_gate: Option<(u32, Arc<tokio::sync::Semaphore>)>,
+    pub operation_gate: Option<Arc<tokio::sync::Semaphore>>,
+    pub cohort_page_gate: Option<(u32, Arc<tokio::sync::Semaphore>)>,
+    pub finalize_before_gate: Option<Arc<tokio::sync::Semaphore>>,
+    pub finalize_reply_gate: Option<Arc<tokio::sync::Semaphore>>,
 }
 
 pub(super) struct Store(pub Mutex<State>);
@@ -46,6 +50,10 @@ impl Store {
             record_reads: 0,
             record_gate: None,
             effect_page_gate: None,
+            operation_gate: None,
+            cohort_page_gate: None,
+            finalize_before_gate: None,
+            finalize_reply_gate: None,
         })))
     }
     pub fn id(&self) -> wire::Digest {
@@ -73,9 +81,18 @@ impl ResourceExecutionStore for Store {
         &self,
         id: &wire::Digest,
     ) -> ExecutionResult<Option<RevocationOperationV1>> {
-        let mut state = self.0.lock().unwrap();
-        state.events.push("read_operation");
-        Ok((&state.operation.key.operation_id == id).then(|| state.operation.clone()))
+        let (operation, gate) = {
+            let mut state = self.0.lock().unwrap();
+            state.events.push("read_operation");
+            (
+                (&state.operation.key.operation_id == id).then(|| state.operation.clone()),
+                state.operation_gate.clone(),
+            )
+        };
+        if let Some(gate) = gate {
+            gate.acquire().await.unwrap().forget();
+        }
+        Ok(operation)
     }
     async fn pending_revocations(
         &self,
@@ -103,20 +120,33 @@ impl ResourceExecutionStore for Store {
         after: u32,
         limit: u32,
     ) -> ExecutionResult<Vec<ExecutionRecordV1>> {
-        let mut state = self.0.lock().unwrap();
-        assert_eq!(id, &state.operation.key.operation_id);
-        assert_eq!(limit, MAX_PAGE_MEMBERS);
-        state.pages.push(after);
-        if state.missing_page {
-            return Ok(Vec::new());
+        let (rows, gate) = {
+            let mut state = self.0.lock().unwrap();
+            assert_eq!(id, &state.operation.key.operation_id);
+            assert_eq!(limit, MAX_PAGE_MEMBERS);
+            state.pages.push(after);
+            if state.missing_page {
+                return Ok(Vec::new());
+            }
+            (
+                state
+                    .members
+                    .iter()
+                    .skip(after as usize)
+                    .take(state.page_size.min(limit as usize))
+                    .cloned()
+                    .collect(),
+                state
+                    .cohort_page_gate
+                    .as_ref()
+                    .filter(|(page, _)| *page == after)
+                    .map(|(_, gate)| gate.clone()),
+            )
+        };
+        if let Some(gate) = gate {
+            gate.acquire().await.unwrap().forget();
         }
-        Ok(state
-            .members
-            .iter()
-            .skip(after as usize)
-            .take(state.page_size.min(limit as usize))
-            .cloned()
-            .collect())
+        Ok(rows)
     }
     async fn record(
         &self,
@@ -164,19 +194,29 @@ impl ResourceExecutionStore for Store {
         ambiguous(&mut state, WriteFault::Completion)
     }
     async fn finish_revocation(&self, id: &wire::Digest) -> ExecutionResult<RevocationOperationV1> {
-        let mut state = self.0.lock().unwrap();
-        assert_eq!(id, &state.operation.key.operation_id);
-        state.finalizations += 1;
-        state.operation.validate_cohort(&state.members)?;
-        if matches!(state.operation.phase, RevocationPhaseV1::Pending) {
-            state.operation.phase = RevocationPhaseV1::Effective {
-                receipt: Box::new(final_receipt(&state.operation)),
-            };
+        let gate = self.0.lock().unwrap().finalize_before_gate.clone();
+        if let Some(gate) = gate {
+            gate.acquire().await.unwrap().forget();
         }
-        state.operation.validate()?;
-        state.events.push("finalize");
-        ambiguous(&mut state, WriteFault::Finalize)?;
-        Ok(state.operation.clone())
+        let (operation, gate) = {
+            let mut state = self.0.lock().unwrap();
+            assert_eq!(id, &state.operation.key.operation_id);
+            state.finalizations += 1;
+            state.operation.validate_cohort(&state.members)?;
+            if matches!(state.operation.phase, RevocationPhaseV1::Pending) {
+                state.operation.phase = RevocationPhaseV1::Effective {
+                    receipt: Box::new(final_receipt(&state.operation)),
+                };
+            }
+            state.operation.validate()?;
+            state.events.push("finalize");
+            ambiguous(&mut state, WriteFault::Finalize)?;
+            (state.operation.clone(), state.finalize_reply_gate.clone())
+        };
+        if let Some(gate) = gate {
+            gate.acquire().await.unwrap().forget();
+        }
+        Ok(operation)
     }
     async fn grant(&self, _: &wire::Digest) -> ExecutionResult<Option<GrantControlV1>> {
         panic!("revocation worker cannot acquire authority")
