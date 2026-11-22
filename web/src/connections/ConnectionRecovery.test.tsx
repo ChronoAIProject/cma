@@ -288,3 +288,37 @@ it.each([undefined, 'false', 'TRUE'])('preserves the legacy path with flag %s', 
     Object.keys(sessionStorage).some((key) => key.startsWith('cma.connection-recovery.')),
   ).toBe(false);
 });
+
+it('refuses malformed saved display data before restoring a handoff', async () => {
+  const f = fixture();
+  const ready = vi.fn();
+  sessionStorage.setItem(
+    `cma.connection-recovery.v1.${JSON.stringify(target)}:false`,
+    JSON.stringify({
+      owner: 'owner',
+      needsResume: false,
+      pending: {
+        service_id: 'code',
+        intent_id: 'retained-intent',
+        force: false,
+        started: {
+          owner: 'owner',
+          service_id: 'code',
+          intent_id: 'retained-intent',
+          hosted_url: 'https://identity.example.test/connect',
+          expires_at: new Date(Date.now() + 60000).toISOString(),
+          user_code: { invalid: true },
+        },
+      },
+    }),
+  );
+  render(<ConnectionWizard target={target} client={f.client} onReady={ready} />);
+  await flush();
+  await poll();
+  expect(f.client.start).not.toHaveBeenCalled();
+  expect(vi.mocked(f.client.check).mock.calls.every((call) => call[1] === undefined)).toBe(true);
+  f.connect();
+  await poll();
+  expect(ready).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Continue' })).toBeInTheDocument();
+});

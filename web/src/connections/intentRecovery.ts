@@ -35,6 +35,8 @@ function validRecord(value: unknown): value is RecoveryRecord {
         (pending.started === undefined ||
           (pending.started !== null &&
             typeof pending.started === 'object' &&
+            (pending.started.user_code === undefined ||
+              typeof pending.started.user_code === 'string') &&
             pending.started.owner === record.owner &&
             pending.started.intent_id === pending.intent_id &&
             pending.started.service_id === pending.service_id &&
@@ -104,7 +106,9 @@ export class ConnectionIntentRecovery {
 
   acknowledge(started: StartedConnection) {
     if (this.record === undefined || this.pending === undefined) return;
-    this.update({ ...this.record, pending: { ...this.pending, started } });
+    const record = { ...this.record, pending: { ...this.pending, started } };
+    if (!validRecord(record)) throw new Error('The sign-in link is unavailable. Please try again.');
+    this.update(record);
   }
 
   interrupt(clearPending: boolean) {
