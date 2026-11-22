@@ -340,3 +340,102 @@ async fn projection_operation_refuses_before_queries_and_retains_original_driver
     drop((session, admin));
     fixture.finish().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn publication_read_pins_snapshot_and_admits_each_actual_replacement() {
+    use super::fixture::{receipt_fixture, Fixture};
+    use crate::store::agent_log_segments::publication::Publication;
+    use mongodb::bson::serialize_to_document as document;
+    let fixture = Fixture::new("receipt_snapshot").await;
+    let store = &fixture.store;
+    let rows = &store.segment_logs.publications;
+    let small = receipt_fixture(&fixture.agent, 1);
+    let grown = receipt_fixture(&fixture.agent, 2);
+    rows.insert_one(document(&small).unwrap()).await.unwrap();
+    let (root, policy) = super::policy();
+    let idle = root.available_bytes();
+    let read = Publication::read_at_admitted;
+    let mut snapshot = store.client.start_session().snapshot(true).await.unwrap();
+    let first = read(
+        store,
+        &small.id,
+        &mut snapshot,
+        true,
+        &policy,
+        super::gate_plan(),
+    )
+    .unwrap()
+    .await
+    .unwrap()
+    .transpose()
+    .unwrap();
+    assert_eq!(**first.as_ref().unwrap(), small);
+    let timestamp = snapshot.snapshot_time();
+    assert!(timestamp.is_some());
+    let charge = policy.bounds().data_bytes() - policy.budget(IngressClass::Data).available_bytes();
+    drop(first);
+    let pressure = policy
+        .admit(
+            IngressClass::Data,
+            AllocationPlan::checked(
+                "receipt small allowance",
+                &[policy.bounds().data_bytes() - charge],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let held = root.available_bytes();
+    rows.replace_one(doc! {"_id":&small.id}, document(&grown).unwrap())
+        .await
+        .unwrap();
+    let pinned = read(
+        store,
+        &small.id,
+        &mut snapshot,
+        true,
+        &policy,
+        super::gate_plan(),
+    )
+    .unwrap()
+    .await
+    .unwrap()
+    .transpose()
+    .unwrap();
+    assert_eq!(**pinned.as_ref().unwrap(), small);
+    assert_eq!(snapshot.snapshot_time(), timestamp);
+    drop(pinned);
+    let mut later = store.client.start_session().await.unwrap();
+    assert!(matches!(
+        read(
+            store,
+            &small.id,
+            &mut later,
+            false,
+            &policy,
+            super::gate_plan()
+        )
+        .unwrap()
+        .await,
+        Err(AdmittedError::Refused(_))
+    ));
+    assert_eq!(root.available_bytes(), held);
+    drop(pressure);
+    let changed = read(
+        store,
+        &small.id,
+        &mut later,
+        false,
+        &policy,
+        super::gate_plan(),
+    )
+    .unwrap()
+    .await
+    .unwrap()
+    .transpose()
+    .unwrap();
+    assert_eq!(**changed.as_ref().unwrap(), grown);
+    drop((changed, snapshot, later));
+    assert_eq!(root.available_bytes(), idle);
+    fixture.finish().await;
+}

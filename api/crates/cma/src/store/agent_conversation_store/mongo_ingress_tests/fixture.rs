@@ -265,3 +265,113 @@ impl Fixture {
         }
     }
 }
+
+pub(super) fn receipt_fixture(
+    agent: &Agent,
+    version: i64,
+) -> crate::store::agent_log_segments::publication::Publication {
+    use crate::store::agent_log_segments::{
+        incarnation,
+        publication::{self, Publication},
+    };
+    let incarnation = incarnation(agent);
+    let binary = |bytes| mongodb::bson::Binary {
+        subtype: mongodb::bson::spec::BinarySubtype::Generic,
+        bytes,
+    };
+    let key = "synthetic-publication".to_owned();
+    Publication {
+        id: publication::identity(agent.id.as_str(), &incarnation, &key),
+        format_version: version,
+        agent_digest: (version == 2).then(|| binary(vec![5; 32])),
+        agent_id: agent.id.0.clone(),
+        incarnation,
+        publication_key: key,
+        fingerprint: binary(vec![7; 32]),
+        appended_at: "2026-11-11T00:00:00Z".into(),
+        expected_revision: 8,
+        expected_seq: 10_000,
+        first_seq: 10_001,
+        last_seq: 10_002,
+        result_revision: 9,
+        head_revision: 3,
+        active_ordinal: i64::from(version == 2),
+        previous_seal: (version == 2).then(|| binary(vec![9; 32])),
+        result_digest: binary(vec![11; 32]),
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn publication_read_refuses_before_query_and_drops_unpolled_work() {
+    use crate::store::agent_log_segments::publication::Publication;
+    use layer2_core::sandbox::ingress_ownership::{AdmittedError, AllocationPlan, IngressClass};
+    use mongodb::{
+        event::{command::CommandEvent, EventHandler},
+        options::ClientOptions,
+    };
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        if let CommandEvent::Started(event) = event {
+            if event.command_name == "find"
+                && event.command.get_str("find").ok() == Some("agent_log_publications")
+            {
+                observed.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }));
+    let fixture =
+        Fixture::with_client(Client::with_options(options).unwrap(), "receipt_refusal").await;
+    let store = &fixture.store;
+    let (root, policy) = super::policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    let read = Publication::read_at_admitted;
+    let full = AllocationPlan::checked(
+        "receipt full work",
+        &[policy.bounds().transformation_bytes()],
+    )
+    .unwrap();
+    let occupied = policy.admit(IngressClass::Transformation, full).unwrap();
+    assert!(matches!(
+        read(
+            store,
+            "synthetic",
+            &mut session,
+            false,
+            &policy,
+            super::gate_plan()
+        ),
+        Err(AdmittedError::Refused(_))
+    ));
+    drop(occupied);
+    drop(
+        read(
+            store,
+            "synthetic",
+            &mut session,
+            false,
+            &policy,
+            super::gate_plan(),
+        )
+        .unwrap(),
+    );
+    assert!(matches!(
+        read(store, "synthetic", &mut session, false, &policy, full)
+            .unwrap()
+            .await,
+        Err(AdmittedError::Refused(_))
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(root.available_bytes(), idle);
+    drop(session);
+    fixture.finish().await;
+}

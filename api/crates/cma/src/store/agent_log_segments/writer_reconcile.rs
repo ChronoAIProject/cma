@@ -268,3 +268,88 @@ fn error(error: TransactionLogError) -> SandboxStoreError {
 fn driver(_: mongodb::error::Error) -> SandboxStoreError {
     SandboxStoreError::Unavailable("Agent log publication outcome remains unresolved".into())
 }
+
+use crate::store::ingress_reads::{
+    error::{self as read_error, ReadFailure},
+    layout::{BsonLayout, LayoutError},
+    row::{self, ConversionPlan, RowSchema},
+};
+use layer2_core::sandbox::ingress_ownership::{
+    sizing::shared_owner_bytes, AdmittedError, AdmittedOperation, AllocationPlan, IngressClass,
+    IngressOwnershipPolicy, SharedOwned,
+};
+use mongodb::bson::{Document, RawDocumentBuf};
+
+type ReceiptRead<'a> = AdmittedOperation<'a, Result<Option<SharedOwned<Publication>>, ReadFailure>>;
+
+impl Publication {
+    /// Receipt ownership does not establish the request/result, current head or
+    /// retained-range proofs required by reconciliation. Driver custody remains
+    /// a separate qualification of the caller's read allowance.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "enabled recording awaits driver resource custody")
+    )]
+    pub(in crate::store) fn read_at_admitted<'a>(
+        store: &'a MongoSandboxStore,
+        id: &'a str,
+        session: &'a mut ClientSession,
+        snapshot: bool,
+        policy: &'a IngressOwnershipPolicy,
+        read_plan: AllocationPlan,
+    ) -> Result<ReceiptRead<'a>, AdmittedError> {
+        AdmittedOperation::from_owned(
+            policy,
+            IngressClass::Transformation,
+            AllocationPlan::checked(
+                "publication receipt result",
+                &[shared_owner_bytes::<ReadFailure>()],
+            )?,
+            move |scope| async move {
+                let result =
+                    row::load_with_error::<ReceiptSchema, _, _>(policy, read_plan, || async {
+                        let receipts =
+                            collection(store, PUBLICATIONS).clone_with_type::<RawDocumentBuf>();
+                        let query = receipts.find_one(doc! {"_id": id});
+                        let query = if snapshot {
+                            query.read_concern(ReadConcern::snapshot())
+                        } else {
+                            query
+                        };
+                        query.session(session).await
+                    })
+                    .await;
+                read_error::finish(result, &scope)
+            },
+        )
+    }
+}
+
+struct ReceiptSchema;
+
+impl RowSchema for ReceiptSchema {
+    type Value = Publication;
+    const INVALID_RAW: &'static str = "invalid raw publication receipt";
+
+    fn plan(layout: BsonLayout) -> Result<ConversionPlan, LayoutError> {
+        // Publication retains Strings and binary buffers, with no domain
+        // containers. Count malformed row containers in conversion scratch.
+        let retained = layout.domain_bytes(0, shared_owner_bytes::<Publication>())?;
+        // Include overlapping BSON/serde copies and the identity formatting
+        // performed by the unchanged receipt validator.
+        let temporary = layout
+            .bson_bytes()?
+            .checked_mul(3)
+            .and_then(|bytes| retained.checked_mul(2)?.checked_add(bytes))
+            .and_then(|bytes| bytes.checked_add(8192))
+            .ok_or(LayoutError::Structure)?;
+        Ok(ConversionPlan {
+            temporary_bytes: temporary,
+            retained_bytes: retained,
+        })
+    }
+
+    fn decode(row: Document) -> Result<Publication, SandboxStoreError> {
+        Publication::read(row)
+    }
+}

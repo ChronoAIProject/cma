@@ -208,3 +208,162 @@ async fn snapshot_operation_keeps_genuine_domain_corruption_owned() {
     }
     fixture.finish().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn publication_read_keeps_absence_corruption_and_preflight_refusal_distinct() {
+    use super::fixture::receipt_fixture;
+    use crate::store::{
+        agent_log_segments::publication::Publication, ingress_reads::error::ReadFailure,
+    };
+    let fixture = Fixture::new("receipt_errors").await;
+    let store = &fixture.store;
+    let rows = &store.segment_logs.publications;
+    let receipt = receipt_fixture(&fixture.agent, 1);
+    let original = mongodb::bson::serialize_to_document(&receipt).unwrap();
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    for fault in [
+        "missing",
+        "width",
+        "version",
+        "nullable",
+        "v1_witness",
+        "identity",
+        "digest",
+        "unknown",
+        "deep",
+    ] {
+        rows.delete_one(doc! {"_id":&receipt.id}).await.unwrap();
+        let mut row = original.clone();
+        match fault {
+            "width" => {
+                row.insert("head_revision", 3_i32);
+            }
+            "version" => {
+                row.insert("format_version", 99_i64);
+            }
+            "nullable" => {
+                row.remove("previous_seal");
+            }
+            "v1_witness" => {
+                row.insert("agent_digest", Bson::Null);
+            }
+            "identity" => {
+                row.insert("publication_key", "other-key");
+            }
+            "digest" => {
+                row.insert(
+                    "fingerprint",
+                    mongodb::bson::Binary {
+                        subtype: mongodb::bson::spec::BinarySubtype::Generic,
+                        bytes: vec![1; 65536],
+                    },
+                );
+            }
+            "unknown" => {
+                row.insert("unexpected", "x".repeat(65536));
+            }
+            "deep" => {
+                row.insert("unexpected", ignored_sidecars()[0].clone());
+            }
+            _ => {}
+        }
+        if fault != "missing" {
+            rows.insert_one(row.clone()).await.unwrap();
+        }
+        let result = Publication::read_at_admitted(
+            store,
+            &receipt.id,
+            &mut session,
+            false,
+            &policy,
+            super::gate_plan(),
+        )
+        .unwrap()
+        .await;
+        if fault == "deep" {
+            assert!(matches!(result, Err(AdmittedError::Unsupported(_))));
+        } else if fault == "missing" {
+            assert!(result.unwrap().transpose().unwrap().is_none());
+        } else {
+            assert!(Publication::read(row.clone()).is_err());
+            let error = result.unwrap().transpose().unwrap_err();
+            assert!(
+                matches!(&*error, ReadFailure::Domain(SandboxStoreError::Corrupt(_))),
+                "{fault}"
+            );
+            assert!(error.belongs_to(&policy));
+            drop(error);
+        }
+        assert_eq!(root.available_bytes(), idle);
+        if fault != "missing" {
+            assert_eq!(
+                rows.find_one(doc! {"_id":&receipt.id}).await.unwrap(),
+                Some(row)
+            );
+        }
+    }
+    drop(session);
+    fixture.finish().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn publication_read_keeps_original_driver_error_and_transient_label() {
+    use crate::store::{
+        agent_log_segments::publication::Publication, ingress_reads::error::ReadFailure,
+        sandbox_mongo::start_transaction,
+    };
+    let app = "cma-ingress-receipt-error";
+    let mut options =
+        mongodb::options::ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+    options.app_name = Some(app.into());
+    let fixture = Fixture::with_client(
+        mongodb::Client::with_options(options).unwrap(),
+        "receipt_driver",
+    )
+    .await;
+    let store = &fixture.store;
+    let admin = store.client.database("admin");
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    start_transaction(&mut session).await.unwrap();
+    admin.run_command(doc! {"configureFailPoint":"failCommand","mode":{"times":1},"data":{"failCommands":["find"],"appName":app,"errorCode":112,"errorLabels":["TransientTransactionError"]}}).await.unwrap();
+    let result = Publication::read_at_admitted(
+        store,
+        "synthetic-missing",
+        &mut session,
+        false,
+        &policy,
+        super::gate_plan(),
+    )
+    .unwrap()
+    .await;
+    admin
+        .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
+        .await
+        .unwrap();
+    let error = result.unwrap().transpose().unwrap_err();
+    let ReadFailure::Driver(driver) = &*error else {
+        panic!("expected driver error")
+    };
+    assert!(driver.contains_label("TransientTransactionError"));
+    let address = std::ptr::from_ref(driver.kind.as_ref());
+    let error = error.map(|error| match error {
+        ReadFailure::Driver(driver) => driver,
+        _ => unreachable!(),
+    });
+    assert_eq!(std::ptr::from_ref(error.kind.as_ref()), address);
+    assert!(error.belongs_to(&policy));
+    assert!(root.available_bytes() < idle);
+    drop(error);
+    assert_eq!(root.available_bytes(), idle);
+    let _ = session.abort_transaction().await;
+    drop((session, admin));
+    fixture.finish().await;
+}

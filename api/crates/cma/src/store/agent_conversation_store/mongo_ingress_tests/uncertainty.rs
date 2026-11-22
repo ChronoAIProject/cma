@@ -311,3 +311,76 @@ async fn cancelled_readback(unavailable_read: bool) {
     );
     assert_eq!(child_scope, Some(WORK_BYTES));
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn publication_read_retains_exact_transaction_versions_without_proving_recorded() {
+    use super::{fixture::receipt_fixture, gate_plan};
+    use crate::store::agent_log_segments::publication::{Publication, PublicationIdentity};
+    use crate::store::sandbox_mongo::start_transaction;
+    use mongodb::bson::serialize_to_document as document;
+    let fixture = Fixture::new("receipt_transaction").await;
+    let store = &fixture.store;
+    let rows = &store.segment_logs.publications;
+    let small = receipt_fixture(&fixture.agent, 1);
+    let grown = receipt_fixture(&fixture.agent, 2);
+    rows.insert_one(document(&small).unwrap()).await.unwrap();
+    let (root, policy) = super::policy();
+    let idle = root.available_bytes();
+    let read = Publication::read_at_admitted;
+    let mut session = store.client.start_session().await.unwrap();
+    start_transaction(&mut session).await.unwrap();
+    let value = read(store, &small.id, &mut session, false, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    let retained = value.as_ref().unwrap().clone();
+    drop(value);
+    assert_eq!(*retained, small);
+    let available = policy.budget(IngressClass::Data).available_bytes();
+    rows.replace_one(doc! {"_id":&small.id}, document(&grown).unwrap())
+        .session(&mut session)
+        .await
+        .unwrap();
+    let changed = read(store, &small.id, &mut session, false, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(**changed.as_ref().unwrap(), grown);
+    assert_eq!(*retained, small);
+    assert!(policy.budget(IngressClass::Data).available_bytes() < available);
+    let wrong = PublicationIdentity {
+        key: grown.publication_key.clone(),
+        fingerprint: grown.fingerprint.clone(),
+        appended_at: "2026-11-12T00:00:00Z".into(),
+    };
+    assert!(changed
+        .as_ref()
+        .unwrap()
+        .matches_request(&fixture.agent, &wrong)
+        .is_err());
+    drop(changed);
+    assert_eq!(
+        policy.budget(IngressClass::Data).available_bytes(),
+        available
+    );
+    session.abort_transaction().await.unwrap();
+    start_transaction(&mut session).await.unwrap();
+    let restored = read(store, &small.id, &mut session, false, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(**restored.as_ref().unwrap(), small);
+    assert!(retained.belongs_to(&policy));
+    drop((restored, retained));
+    assert_eq!(root.available_bytes(), idle);
+    session.abort_transaction().await.unwrap();
+    drop(session);
+    fixture.finish().await;
+}
