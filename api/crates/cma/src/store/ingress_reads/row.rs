@@ -77,6 +77,22 @@ where
     S: RowSchema,
     F: std::future::Future<Output = Result<Option<RawDocumentBuf>, E>>,
 {
+    let Some(raw) = load_raw_with_error(policy, read_plan, initialize).await? else {
+        return Ok(None);
+    };
+    decode::<S>(&raw, policy).map(Some).map_err(ReadError::Row)
+}
+
+/// Raw response storage stays in Transformation until its consumer finishes.
+/// This preserves bytes and ownership only; it does not validate a domain proof.
+pub(crate) async fn load_raw_with_error<F, E>(
+    policy: &IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+    initialize: impl FnOnce() -> F,
+) -> Result<Option<SharedOwned<RawDocumentBuf>>, ReadError<E>>
+where
+    F: std::future::Future<Output = Result<Option<RawDocumentBuf>, E>>,
+{
     let mut read_storage = policy
         .admit(IngressClass::Transformation, read_plan)
         .map_err(|_| LayoutError::Capacity)?;
@@ -106,7 +122,7 @@ where
     let raw = RawDocumentBuf::from_bytes(bytes).map_err(|_| LayoutError::Structure)?;
     let raw = raw_storage.initialize(|| raw);
     drop(read_storage);
-    decode::<S>(&raw, policy).map(Some).map_err(ReadError::Row)
+    Ok(Some(raw))
 }
 
 pub(crate) fn decode<S: RowSchema>(

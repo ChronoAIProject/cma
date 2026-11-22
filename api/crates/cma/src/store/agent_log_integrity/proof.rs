@@ -224,6 +224,18 @@ pub(super) async fn point_read(
     session: &mut mongodb::ClientSession,
     snapshot: bool,
 ) -> Result<Option<RawDocumentBuf>, TransactionLogError> {
+    point_read_raw(store, filter, id_only, session, snapshot)
+        .await
+        .map_err(TransactionLogError::Driver)
+}
+
+async fn point_read_raw(
+    store: &MongoSandboxStore,
+    filter: Document,
+    id_only: bool,
+    session: &mut mongodb::ClientSession,
+    snapshot: bool,
+) -> Result<Option<RawDocumentBuf>, mongodb::error::Error> {
     let mut observation = crate::store::mongo_read_telemetry::Read::find(store.agent_log.name());
     let collection = store.agent_log.clone_with_type::<RawDocumentBuf>();
     let find = collection.find_one(filter);
@@ -237,10 +249,7 @@ pub(super) async fn point_read(
     } else {
         find
     };
-    let raw = find
-        .session(session)
-        .await
-        .map_err(TransactionLogError::Driver)?;
+    let raw = find.session(session).await?;
     if let Some(raw) = &raw {
         observation.document(raw.as_bytes().len());
     }
