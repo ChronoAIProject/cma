@@ -73,22 +73,30 @@ impl FrozenMeasuredMinute {
 
     /// Explicit retained-proof verification; delivery reads frozen event bytes.
     pub fn verify_replay(&self) -> Result<(), MeasuredError> {
+        if self.recompute_retained()? != *self {
+            return Err(MeasuredError::Invalid);
+        }
+        Ok(())
+    }
+
+    /// Explicit operator repair may recalculate retained inputs after a bug fix.
+    /// Transport retries continue to use the original frozen event bytes.
+    pub fn recompute_retained(&self) -> Result<Self, MeasuredError> {
+        if self.version != 1 || self.algorithm != "binding-integral-half-even-v1" {
+            return Err(MeasuredError::Invalid);
+        }
         let bindings = self
             .bindings
             .iter()
             .map(FrozenBinding::restore)
             .collect::<Result<Vec<_>, _>>()?;
         let series = self.series.iter().map(FrozenSeries::restore).collect();
-        let replay = super::freeze_measured(
+        super::freeze_measured(
             self.expected.clone(),
             bindings,
             series,
             self.source_complete,
-        )?;
-        if replay != *self {
-            return Err(MeasuredError::Invalid);
-        }
-        Ok(())
+        )
     }
 }
 

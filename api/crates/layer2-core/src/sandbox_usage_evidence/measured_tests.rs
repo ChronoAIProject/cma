@@ -305,3 +305,18 @@ fn observed_residual_compute_remains_measured_when_lifecycle_compute_is_off() {
     assert_eq!(value.fact().metrics[0].expected_binding_ms, "60000");
     value.verify_replay().unwrap();
 }
+
+#[test]
+fn explicit_repair_recomputes_original_inputs_without_mutating_original_results() {
+    let value = freeze(vec![series(
+        SourceMetric::CpuCounter,
+        &[(0.0, 1.0), (60.0, 61.0)],
+    )]);
+    let mut old = serde_json::to_value(&value).unwrap();
+    old["fact"]["metrics"][0]["quantity"] = "1".into();
+    let retained: FrozenMeasuredMinute = serde_json::from_value(old).unwrap();
+    let bytes = serde_json::to_vec(&retained).unwrap();
+    assert!(retained.verify_replay().is_err());
+    assert_eq!(retained.recompute_retained().unwrap(), value);
+    assert_eq!(serde_json::to_vec(&retained).unwrap(), bytes);
+}

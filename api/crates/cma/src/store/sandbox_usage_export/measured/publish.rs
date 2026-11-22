@@ -9,22 +9,51 @@ impl CaptureStore {
         lease: &MeasuredLease,
         publication: &MeasuredPublication,
     ) -> Result<bool, SandboxStoreError> {
-        transaction::run(self,(self,lease,publication), |&(store,lease,publication),session| Box::pin(async move {
-            use TransactionEventError::{Domain,Driver};
-            let input = &publication.manifest.input;
-            if input.stream != lease.stream { return Err(Domain(corrupt())); }
-            store.fence_measured(session,lease).await?;
-            let matched = store.collection(usage_reports::CONTROL).update_one(doc! {"_id":"observer","revision":input.mapping_revision},
-                doc! {"$inc":{"control_write_fence":1_i64}}).session(&mut *session).await.map_err(Driver)?.matched_count;
-            if matched != 1 { return Err(Domain(SandboxStoreError::Conflict)); }
-            for binding in &input.bindings {
-                let matched = store.collection(sandbox_metric_bindings::COLLECTION).update_one(
-                    doc! {"_id":&binding.id,"revision":number(binding.revision).map_err(Domain)?,"record":encode(binding).map_err(Domain)?},
-                    doc! {"$inc":{"measured_write_fence":1_i64}}).session(&mut *session).await.map_err(Driver)?.matched_count;
-                if matched != 1 { return Err(Domain(SandboxStoreError::Conflict)); }
+        transaction::run(
+            self,
+            (self, lease, publication),
+            |&(store, lease, publication), session| {
+                Box::pin(store.publish_measured_in(session, lease, publication))
+            },
+        )
+        .await
+    }
+
+    pub(super) async fn publish_measured_in(
+        &self,
+        session: &mut ClientSession,
+        lease: &MeasuredLease,
+        publication: &MeasuredPublication,
+    ) -> Result<bool, TransactionEventError> {
+        use TransactionEventError::{Domain, Driver};
+        let input = &publication.manifest.input;
+        if input.stream != lease.stream {
+            return Err(Domain(corrupt()));
+        }
+        self.fence_measured(session, lease).await?;
+        let matched = self
+            .collection(usage_reports::CONTROL)
+            .update_one(
+                doc! {"_id":"observer","revision":input.mapping_revision},
+                doc! {"$inc":{"control_write_fence":1_i64}},
+            )
+            .session(&mut *session)
+            .await
+            .map_err(Driver)?
+            .matched_count;
+        if matched != 1 {
+            return Err(Domain(SandboxStoreError::Conflict));
+        }
+        for binding in &input.bindings {
+            let matched=self.collection(sandbox_metric_bindings::COLLECTION).update_one(
+                doc! {"_id":&binding.id,"revision":number(binding.revision).map_err(Domain)?,"record":encode(binding).map_err(Domain)?},
+                doc! {"$inc":{"measured_write_fence":1_i64}}).session(&mut *session).await.map_err(Driver)?.matched_count;
+            if matched != 1 {
+                return Err(Domain(SandboxStoreError::Conflict));
             }
-            store.publish_fenced(session,lease,publication,"late_sample",true).await
-        })).await
+        }
+        self.publish_fenced(session, lease, publication, "late_sample", true)
+            .await
     }
 
     pub(super) async fn publish_fenced(
@@ -56,7 +85,7 @@ impl CaptureStore {
             .as_ref()
             .is_some_and(|h| Some(&h.input_digest) == publication.result_digest.as_ref());
         let held = publication.manifest.hold.is_some();
-        if !unchanged || held {
+        if !unchanged || held || !advance {
             self.retain_manifest(session, publication).await?;
         }
         if held {

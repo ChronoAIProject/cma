@@ -110,5 +110,21 @@ async fn automatic_replay_excludes_old_minutes_and_explicit_retained_repair_admi
     };
     assert!(f.store.repair_measured(&request, true).await.unwrap());
     assert_eq!(f.events().await.len(), 2);
+    let job = f
+        .store
+        .collection(INVENTORY)
+        .find_one(keys::page(&keys::prefix("repair", "fixture"), None).unwrap())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        f.store
+            .collection(EVIDENCE)
+            .find_one(doc! {"source_digest":job.get_str("result_manifest").unwrap()})
+            .await
+            .unwrap()
+            .is_some(),
+        "completed repair retains its proof even without a changed fact"
+    );
     f.db.drop().await.unwrap();
 }

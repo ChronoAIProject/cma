@@ -123,7 +123,7 @@ impl CaptureStore {
             return Err(corrupt());
         }
         let frozen = retained.frozen.as_ref().ok_or_else(corrupt)?;
-        frozen.verify_replay().map_err(|_| corrupt())?;
+        let recomputed = frozen.recompute_retained().map_err(|_| corrupt())?;
         let head: FactHead = decode(
             &self
                 .collection(INVENTORY)
@@ -136,6 +136,7 @@ impl CaptureStore {
             return Err(SandboxStoreError::Conflict);
         }
         let mut manifest = retained;
+        manifest.frozen = Some(recomputed);
         manifest.retained_from = Some(request.evidence_digest.clone());
         manifest.input.stream = stream.clone();
         manifest.input.predecessor = Some(head.clone());
