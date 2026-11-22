@@ -78,7 +78,7 @@ impl MongoSandboxStore {
     }
 }
 
-struct TailSchema;
+pub(in crate::store::agent_log_integrity) struct TailSchema;
 
 impl RowSchema for TailSchema {
     type Value = AgentLogEntry;

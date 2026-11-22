@@ -10,6 +10,8 @@ use std::future::IntoFuture;
 
 #[path = "scan_ingress.rs"]
 pub(super) mod ingress;
+#[path = "scan_rows_ingress.rs"]
+pub(super) mod rows;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::store) enum IntegrityFailurePolicy {
@@ -319,15 +321,7 @@ where
         mode.options.cooperation,
         mode.options.clock,
     );
-    if last_seq > PHYSICAL_AGENT_LOG_ENTRIES {
-        tracing::warn!(
-            limit_kind = "physical_entries",
-            existing_entries = last_seq,
-            max_entries = PHYSICAL_AGENT_LOG_ENTRIES,
-            "Agent log capacity rejected"
-        );
-        return Err(capacity_error().into());
-    }
+    rows::require_head(last_seq).map_err(TransactionLogError::Domain)?;
     let mut read = crate::store::mongo_read_telemetry::Read::find(collection.name());
     let raw_log = collection.clone_with_type::<RawDocumentBuf>();
     let find = raw_log
@@ -339,9 +333,7 @@ where
     } else {
         find
     };
-    let mut entry_count = 0_u64;
-    let mut encoded_bytes = 0_usize;
-    let mut head_hash = [0_u8; HASH_BYTES];
+    let mut state = rows::ScanState::default();
     // Keep row validation independent of cursor delivery so every path retains
     // the same sequence, capacity, hash and visitor failure boundaries.
     let mut consume = |raw: &mongodb::bson::RawDocument,
@@ -354,30 +346,11 @@ where
             TransactionLogError::Domain(SandboxStoreError::Corrupt(error.to_string()))
         })?;
         let entry = read_entry(&document).map_err(TransactionLogError::Domain)?;
-        let expected = entry_count.checked_add(1);
-        if expected != Some(entry.seq) || entry.seq > last_seq {
-            return Err(TransactionLogError::Domain(
-                SandboxStoreError::SequenceConflict,
-            ));
-        }
-        encoded_bytes = encoded_bytes
-            .checked_add(document_bytes)
-            .filter(|total| *total <= PHYSICAL_AGENT_LOG_BYTES)
-            .ok_or_else(|| {
-                tracing::warn!(
-                    limit_kind = "physical_bytes",
-                    scanned_entries = entry_count,
-                    scanned_bytes = encoded_bytes,
-                    document_bytes,
-                    max_bytes = PHYSICAL_AGENT_LOG_BYTES,
-                    "Agent log capacity rejected"
-                );
-                capacity_error()
-            })
+        let expected = state
+            .prepare(entry.seq, last_seq, document_bytes)
             .map_err(TransactionLogError::Domain)?;
         visit(entry).map_err(TransactionLogError::Domain)?;
-        head_hash = hash_raw(raw.as_bytes());
-        entry_count = expected.unwrap_or_default();
+        state.advance(expected, raw);
         Ok(())
     };
     // Both paths observe initial-find suspension, but only cursor advancement
@@ -414,23 +387,16 @@ where
             observation.checkpoint().await;
         }
     }
-    if entry_count != last_seq {
-        return Err(TransactionLogError::Domain(
-            SandboxStoreError::SequenceConflict,
-        ));
-    }
+    let summary = state
+        .finish(last_seq)
+        .map_err(TransactionLogError::Domain)?;
     // A known hash/identity conflict stays a failed complete validation even
     // when the structural traversal alone accepts the changed payload.
     if !mode.known_corrupt {
         observation.complete();
     }
     read.complete();
-    Ok(LogSummary {
-        entry_count,
-        encoded_bytes,
-        head_hash,
-        semantic: None,
-    })
+    Ok(summary)
 }
 
 fn batch_document(
