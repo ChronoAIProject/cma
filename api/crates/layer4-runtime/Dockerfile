@@ -64,9 +64,7 @@ ARG DEBIAN_SNAPSHOT=20261121T100000Z
 #     APPROVED_PACKAGE_EVIDENCE and APPROVED_OMARCHY_PACKAGE_EVIDENCE.
 ARG ARCH_SNAPSHOT=2026/10/22
 # The bundle omarchy-package-bundle.yml built from that lock for ARCH_SNAPSHOT.
-# PLACEHOLDER: replace the all-zero digest with the digest the bundle workflow
-# prints; until then omarchy-cache-key.py refuses the recipe.
-ARG OMARCHY_PACKAGES_IMAGE=ghcr.io/chronoaiproject/cma-omarchy-packages@sha256:0000000000000000000000000000000000000000000000000000000000000000
+ARG OMARCHY_PACKAGES_IMAGE=ghcr.io/chronoaiproject/cma-omarchy-packages@sha256:7bb92b39ed0b56a97f9a071e854b90cb1327ab1cacde931edc3fb907ceb550e6
 # CMA_MODEL_PROXY_PLACEHOLDER is supplied only in managed Agent launch plans,
 # not in the Sandbox environment, so existing runtime identities stay stable.
 # The sandbox provider schedules this image and starts the kernel-neutral Layer
