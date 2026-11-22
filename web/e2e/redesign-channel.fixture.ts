@@ -58,6 +58,48 @@ export function activityPage(consumers = [responseConsumer]): ActivityPage {
   };
 }
 
+interface ActivityBrowserError {
+  type: string;
+  message: string;
+  filename?: string;
+  lineno?: number;
+  colno?: number;
+  stack?: string;
+}
+
+async function captureActivityErrors(page: Page) {
+  const errors: ActivityBrowserError[] = [];
+  await page.exposeBinding('__recordActivityBrowserError', (_source, error: ActivityBrowserError) => {
+    errors.push(error);
+  });
+  await page.addInitScript(() => {
+    const record = (error: ActivityBrowserError) =>
+      (
+        window as unknown as {
+          __recordActivityBrowserError: (error: ActivityBrowserError) => Promise<void>;
+        }
+      ).__recordActivityBrowserError(error);
+    window.addEventListener('error', (event) => {
+      void record({
+        type: event.type,
+        message: event.message,
+        filename: event.filename,
+        lineno: event.lineno,
+        colno: event.colno,
+        stack: event.error instanceof Error ? event.error.stack : undefined,
+      });
+    });
+    window.addEventListener('unhandledrejection', (event) => {
+      void record({
+        type: event.type,
+        message: event.reason instanceof Error ? event.reason.message : String(event.reason),
+        stack: event.reason instanceof Error ? event.reason.stack : undefined,
+      });
+    });
+  });
+  return errors;
+}
+
 // Keep each synthetic stream open after its HTTP snapshot, without native reconnect timers.
 // The app still owns subscription, refresh, snapshot parsing and scope cleanup.
 async function localStreams(page: Page) {
@@ -105,6 +147,7 @@ async function localStreams(page: Page) {
 }
 
 export async function setupActivity(page: Page, baseURL: string, theme: 'dark' | 'light' = 'dark') {
+  const browserErrors = await captureActivityErrors(page);
   await page.clock.install({ time: new Date('2026-11-22T02:26:00Z') });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.addInitScript(
@@ -180,5 +223,5 @@ export async function setupActivity(page: Page, baseURL: string, theme: 'dark' |
   const view = page.getByRole('dialog').locator('.channel-activity');
   await expect(view.getByText('demo-event-01')).toBeVisible();
   await expect(view.getByText('Live activity', { exact: true })).toBeVisible();
-  return { state, boundary, view };
+  return { state, boundary, view, browserErrors };
 }

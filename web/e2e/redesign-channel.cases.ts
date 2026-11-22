@@ -18,7 +18,7 @@ export function registerRedesignChannelCases() {
           page,
           baseURL,
         }, info) => {
-          const { state, view, boundary } = await setupActivity(page, baseURL!, theme);
+          const { state, view, boundary, browserErrors } = await setupActivity(page, baseURL!, theme);
           await expect(view.getByText('Agent response produced')).toBeVisible();
           await expect(view.getByText('Delivery not confirmed')).toBeVisible();
           await expect(view.getByText(/This doesn’t mean the reply wasn’t sent/)).toBeVisible();
@@ -56,6 +56,7 @@ export function registerRedesignChannelCases() {
               .getByRole('button', { name: 'Activity', exact: true }),
           ).toBeFocused();
           expect(state.writes).toEqual([]);
+          expect(browserErrors).toEqual([]);
           expect(boundary.errors).toEqual([]);
           expect(boundary.unexpected).toEqual([]);
           writeFileSync(
