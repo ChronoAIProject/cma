@@ -1,13 +1,31 @@
-//! Close deletion admission until the compatible access reader floor is deployed.
+//! Refuse activation until durable erasure and independent completion exist.
 
 pub(super) fn enabled(
     lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
 ) -> Result<bool, String> {
-    match lookup("CHRONO_ACCOUNT_DELETION_ENABLED")?.as_deref() {
+    let admission = flag(lookup, "CHRONO_ACCOUNT_DELETION_ENABLED")?;
+    let worker = flag(lookup, "CHRONO_ACCOUNT_DELETION_WORKER_ENABLED")?;
+    let verifier = flag(lookup, "CHRONO_ACCOUNT_DELETION_VERIFY_ENABLED")?;
+    require_execution(admission || worker || verifier)?;
+    Ok(admission)
+}
+
+fn flag(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+    name: &str,
+) -> Result<bool, String> {
+    match lookup(name)?.as_deref() {
         None | Some("false") => Ok(false),
         Some("true") => Ok(true),
-        _ => Err("CHRONO_ACCOUNT_DELETION_ENABLED must be true or false".into()),
+        _ => Err(format!("{name} must be true or false")),
     }
+}
+
+pub(crate) fn require_execution(requested: bool) -> Result<(), String> {
+    if requested {
+        return Err("account deletion execution is unavailable: the durable worker and independent verifier are not implemented".into());
+    }
+    Ok(())
 }
 
 pub(super) fn transaction_drain(

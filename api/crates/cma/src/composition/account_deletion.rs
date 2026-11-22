@@ -8,6 +8,7 @@ pub(super) async fn compose(
     config: &Config,
     stores: &MongoStores,
 ) -> Result<(Arc<AccountDeletionService>, Arc<dyn AccountStanding>), String> {
+    crate::config::require_account_deletion_execution(config.account_deletion_enabled)?;
     if config.account_deletion_enabled {
         stores
             .account_deletions

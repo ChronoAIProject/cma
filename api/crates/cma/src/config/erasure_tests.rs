@@ -2,6 +2,55 @@ use super::configured;
 use crate::store::account_erasure::Options;
 
 #[test]
+fn deletion_activation_requires_an_implemented_worker_and_independent_verifier() {
+    let flags = [
+        "CHRONO_ACCOUNT_DELETION_ENABLED",
+        "CHRONO_ACCOUNT_DELETION_WORKER_ENABLED",
+        "CHRONO_ACCOUNT_DELETION_VERIFY_ENABLED",
+    ];
+    assert!(!configured(&[]).unwrap().account_deletion_enabled);
+    for enabled in 0..8 {
+        let values = flags
+            .iter()
+            .enumerate()
+            .map(|(index, name)| {
+                (
+                    *name,
+                    if enabled & (1 << index) == 0 {
+                        "false"
+                    } else {
+                        "true"
+                    },
+                )
+            })
+            .collect::<Vec<_>>();
+        let result = configured(&values);
+        if enabled == 0 {
+            assert!(!result.unwrap().account_deletion_enabled);
+        } else {
+            assert!(result
+                .unwrap_err()
+                .contains("account deletion execution is unavailable"));
+        }
+    }
+}
+
+#[test]
+fn deletion_execution_switches_reject_noncanonical_booleans() {
+    for name in [
+        "CHRONO_ACCOUNT_DELETION_WORKER_ENABLED",
+        "CHRONO_ACCOUNT_DELETION_VERIFY_ENABLED",
+    ] {
+        for value in ["", "TRUE", "1", "yes", "false ", " true"] {
+            assert_eq!(
+                configured(&[(name, value)]).unwrap_err(),
+                format!("{name} must be true or false")
+            );
+        }
+    }
+}
+
+#[test]
 fn record_erasure_uses_the_configured_delivery_and_optional_store_modes() {
     let mut config = configured(&[]).unwrap();
     let options = Options::from_config(&config);

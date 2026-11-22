@@ -18,6 +18,7 @@ mod lifecycle_failure;
 mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
 mod account_deletion;
+pub(crate) use account_deletion::require_execution as require_account_deletion_execution;
 mod admission_log;
 mod anonymous_public;
 mod auth_mode;

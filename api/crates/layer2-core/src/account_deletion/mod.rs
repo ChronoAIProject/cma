@@ -1,9 +1,12 @@
 //! Ordered, durable erasure of a personal account.
+mod effect;
 mod memory;
 mod model;
 mod service;
 mod standing;
 mod types;
+pub mod verification;
+pub use effect::{ErasureDigest, ErasureEffectCheckpoint};
 pub use memory::MemoryAccountDeletionStore;
 pub use model::AccountDeletion;
 pub use service::{AccountDeletionService, AccountDeletionStore, AccountErasureEffects};
