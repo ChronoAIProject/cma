@@ -59,10 +59,14 @@ jobs:
           path: ${{ steps.selection-cache.outputs.directory }}
           key: ${{ steps.selection-cache.outputs.key }}
           restore-keys: ${{ steps.selection-cache.outputs.prefix }}
+      # The plan starts at the oldest revision a current lane can still need,
+      # from each lane's newest final release tag. The read-only token reads
+      # those tag objects; the selector processes never receive it.
       - name: Reconcile first-parent merges with the shared selector
         id: plan
         env:
           CD_ADOPTION_SHA: ${{ vars.CMA_CD_ADOPTION_SHA }}
+          GH_TOKEN: ${{ github.token }}
         run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py'
       # A plan stopped by its budget still succeeds here, so every analysed
       # revision is saved and the next run continues instead of starting over.
@@ -71,8 +75,18 @@ jobs:
         with:
           path: ${{ steps.selection-cache.outputs.directory }}
           key: ${{ steps.selection-cache.outputs.key }}
+      # A transient stop (a spent budget, or tags that could not be read) fails
+      # here; catch-up re-runs a head run stopped at this step, once. A plan
+      # that needs a person fails at the next step instead and is not re-run.
       - name: Require a complete release plan
-        if: steps.plan.outputs.complete != 'true'
+        if: steps.plan.outputs.complete != 'true' && steps.plan.outputs.transient == 'true'
+        env:
+          CD_PLAN_REFUSED: ${{ steps.plan.outputs.refused }}
+        run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete'
+      - name: Require a provable release plan
+        if: steps.plan.outputs.complete != 'true' && steps.plan.outputs.transient != 'true'
+        env:
+          CD_PLAN_REFUSED: ${{ steps.plan.outputs.refused }}
         run: '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete'
       - name: Read recent staging controller outcomes
         id: promotions
@@ -107,6 +121,15 @@ jobs:
           CD_QUEUE: ${{ needs.plan.outputs.queue }}
           CD_CONTROLLER_PROOFS: ${{ needs.plan.outputs.controller_proofs }}
         run: python3 -B .github/scripts/staging_cd_allocate.py
+      # A transient refusal (a read, a write that may have committed, or the
+      # budget) fails here; catch-up re-runs a head run stopped at this step,
+      # once. A refusal that needs a person fails the step above instead.
+      - name: Require a settled allocation
+        if: steps.allocate.outputs.transient == 'true'
+        env:
+          CD_ALLOCATION_REFUSED: ${{ steps.allocate.outputs.refused }}
+          CD_ALLOCATION_SITE: ${{ steps.allocate.outputs.site }}
+        run: python3 -B .github/scripts/staging_cd_allocate.py --require-settled
       - name: Route finalized components by contract
         id: routes
         env:

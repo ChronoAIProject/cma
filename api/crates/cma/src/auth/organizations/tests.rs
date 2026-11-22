@@ -16,6 +16,7 @@ use serde_json::{json, Value};
 use tokio::sync::{RwLock, Semaphore};
 
 use super::*;
+use crate::auth::AuthMode;
 
 struct Control {
     subject: RwLock<String>,
@@ -130,6 +131,7 @@ impl Fixture {
     }
 }
 
+mod principal_failures;
 mod verification;
 fn caller() -> Caller {
     Caller::new(

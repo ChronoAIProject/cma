@@ -2,15 +2,16 @@
 
 use std::sync::Arc;
 
+use crate::agent_manager::relay::{ChargedQueuedCancellation, DeferQueuedCancellationActivity};
 use axum::{
     extract::{MatchedPath, Request, State},
     http::{Method, StatusCode},
     middleware::Next,
     response::Response,
 };
-use layer1_public::AuthenticatedSubject;
+use layer1_public::{responses::v2::QueuedCancellationNeedsOwner, AuthenticatedSubject};
 use layer2_core::{
-    ActivityAction, ActivityOutcome, ActivityRecord, ActivityService, ActivityTarget,
+    ActivityAction, ActivityOutcome, ActivityRecord, ActivityService, ActivityTarget, SubjectId,
 };
 
 mod policy;
@@ -48,12 +49,58 @@ impl ActivityRecorder {
     }
 }
 
+/// A routed cancellation can finish on another manager. Keep the original
+/// request's audit metadata with the ingress manager until a final status exists.
+#[derive(Clone)]
+pub(crate) struct PendingActivity {
+    recorder: Arc<ActivityRecorder>,
+    method: Method,
+    matched_route: Option<String>,
+    path: String,
+    actor: Option<SubjectId>,
+}
+
+impl PendingActivity {
+    pub(crate) async fn record(self, status: StatusCode) {
+        let action = classify(&self.method, &self.path);
+        let mut activity =
+            ActivityRecord::new(action, outcome(status)).on(ActivityTarget::Resource(self.path));
+        activity.actor = self.actor;
+        if !self.recorder.policy.retain(
+            &self.method,
+            self.matched_route.as_deref(),
+            status,
+            &activity,
+        ) {
+            return;
+        }
+        if let Some(sink) = &self.recorder.sink {
+            sink.try_enqueue(activity);
+            return;
+        }
+        if let Err(error) = self.recorder.activity.record(&activity).await {
+            tracing::warn!(error = %error, "could not persist request activity");
+        }
+    }
+}
+
 /// Record admitted requests without retaining headers, credentials, or bodies.
 pub async fn record(
     State(recorder): State<Arc<ActivityRecorder>>,
     request: Request,
     next: Next,
 ) -> Response {
+    if request
+        .extensions()
+        .get::<ChargedQueuedCancellation>()
+        .is_some()
+    {
+        return next.run(request).await;
+    }
+    let defer = request
+        .extensions()
+        .get::<DeferQueuedCancellationActivity>()
+        .is_some();
     let method = request.method().clone();
     let matched_route = request
         .extensions()
@@ -72,25 +119,23 @@ pub async fn record(
         .extensions()
         .get::<AuthenticatedSubject>()
         .map(|subject| subject.0.clone());
-    let action = classify(request.method(), &path);
-    let response = next.run(request).await;
-    let mut activity =
-        ActivityRecord::new(action, outcome(response.status())).on(ActivityTarget::Resource(path));
-    activity.actor = actor;
-    if !recorder.policy.retain(
-        &method,
-        matched_route.as_deref(),
-        response.status(),
-        &activity,
-    ) {
-        return response;
-    }
-    if let Some(sink) = &recorder.sink {
-        sink.try_enqueue(activity);
-        return response;
-    }
-    if let Err(error) = recorder.activity.record(&activity).await {
-        tracing::warn!(error = %error, "could not persist request activity");
+    let pending = PendingActivity {
+        recorder,
+        method,
+        matched_route,
+        path,
+        actor,
+    };
+    let mut response = next.run(request).await;
+    if defer
+        && response
+            .extensions()
+            .get::<QueuedCancellationNeedsOwner>()
+            .is_some()
+    {
+        response.extensions_mut().insert(pending);
+    } else {
+        pending.record(response.status()).await;
     }
     response
 }

@@ -14,6 +14,7 @@ use super::service_trust::{
 };
 use super::store::{
     SandboxAdmission, SandboxAdmissionName, SandboxAdmissionReplay, SandboxAdmissionResult,
+    SandboxLimitClass,
 };
 use super::{
     Sandbox, SandboxCredentialState, SandboxLimits, SandboxOrigin, SandboxSignInState,
@@ -78,6 +79,7 @@ impl SandboxService {
             request,
             profile,
             policy.max_sandboxes_per_owner,
+            SandboxLimitClass::Owner,
             policy,
         )
         .await
@@ -104,6 +106,7 @@ impl SandboxService {
             request,
             profile,
             policy.max_sandboxes_per_owner,
+            SandboxLimitClass::Owner,
             policy,
         )
         .await
@@ -136,12 +139,15 @@ impl SandboxService {
             .await
             .map_err(policy_error)?;
         let profile = self.read_profile(&caller.subject, &request, true).await?;
-        let limit = match authority {
-            Capability::CreateSandbox => policy.max_sandboxes_per_owner,
-            Capability::LaunchTriggers => policy.max_sandboxes_per_visitor,
+        let (limit, limit_class) = match authority {
+            Capability::CreateSandbox => (policy.max_sandboxes_per_owner, SandboxLimitClass::Owner),
+            Capability::LaunchTriggers => {
+                (policy.max_sandboxes_per_visitor, SandboxLimitClass::Visitor)
+            }
             _ => unreachable!("launch authority was validated"),
         };
-        self.admit(caller, request, profile, limit, policy).await
+        self.admit(caller, request, profile, limit, limit_class, policy)
+            .await
     }
 
     async fn read_profile(
@@ -255,6 +261,7 @@ impl SandboxService {
         request: CreateSandbox,
         profile: ResolvedProfile,
         limit: u16,
+        limit_class: SandboxLimitClass,
         policy: SandboxPolicy,
     ) -> Result<Sandbox, SandboxServiceError> {
         let name = requested_name(request.name, &profile.name)?;
@@ -310,11 +317,12 @@ impl SandboxService {
         sandbox
             .validate()
             .map_err(|error| SandboxServiceError::Corrupt(error.to_string()))?;
+        let mut admission =
+            SandboxAdmission::new(sandbox, name, limit, now).map_err(store_error)?;
+        admission.limit_class = limit_class;
         let result = self
             .store
-            .admit_catalogue_sandbox(
-                SandboxAdmission::new(sandbox, name, limit, now).map_err(store_error)?,
-            )
+            .admit_catalogue_sandbox(admission)
             .await
             .map_err(store_error)?;
         match result {

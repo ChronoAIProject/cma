@@ -16,7 +16,8 @@ export interface AnswerDeliveryAccess {
   readonly client: Pick<
     Cma['agents'],
     'answerDeliverables' | 'readAnswerDeliverable' | 'downloadAnswerDeliverable'
-  >;
+  > &
+    Partial<Pick<Cma['agents'], 'confirmTaskDelivery'>>;
   readonly authority?: unknown;
 }
 

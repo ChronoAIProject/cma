@@ -16,6 +16,12 @@ pub(super) fn append_pre_write_rollback(
                 && current.conversation.active_turn == Some(prepared.turn_sequence) =>
         {
             next.conversation.active_turn = None;
+            if let Some(task) = next.conversation.observations.task_acceptance.as_mut() {
+                task.conclude(
+                    prepared.turn_sequence,
+                    Some(super::super::task_acceptance::TaskAcceptanceReason::ExecutionFailed),
+                );
+            }
             next.transition(AgentStatus::Ready, at.to_owned(), None)
                 .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
             logs.push(AgentLogKind::TurnFailed {

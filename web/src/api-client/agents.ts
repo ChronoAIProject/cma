@@ -40,7 +40,6 @@ import {
   type ApproveAgentAccessRequest,
   type UpdateAgentServiceAccessRequest,
 } from './agents/access-requests.js';
-import type { ResolvedConfig } from './config.js';
 import { readSuggestions } from './agents/suggestions.js';
 import { requestVoid, type OperationOptions } from './http.js';
 import { ProtocolError } from './errors.js';
@@ -97,16 +96,7 @@ import {
   downloadAgentArtifact,
   type PublishAgentArtifactRequest,
 } from './agents/artifacts.js';
-import {
-  listAnswerDeliverables,
-  readAnswerDeliverable,
-  downloadAnswerDeliverable,
-  describeDeliverable,
-  type AnswerDeliverable,
-  type DeliverableReadOptions,
-  type DeliverableResource,
-} from './agents/deliverables.js';
-import type { DocumentAccessOptions } from './documents.js';
+import { AgentDeliverables } from './agents/deliverables.js';
 export interface AgentListOptions extends PageOptions {
   readonly sandbox?: string;
   readonly workspace?: string;
@@ -128,8 +118,7 @@ export interface AgentProvenanceInventoryOptions extends AccessibleAgentListOpti
   readonly channelHistory?: boolean;
 }
 /** Public Agent REST commands and durable read projections. */
-export class Agents {
-  constructor(private readonly config: ResolvedConfig) {}
+export class Agents extends AgentDeliverables {
   /** Discover and page retained partial text without changing the original failed outcome. */
   retainedOutput(id: string, options: RetainedOutputOptions = {}) {
     return readRetainedOutput(
@@ -280,33 +269,6 @@ export class Agents {
   /** Download selected artifact bytes with current authorization; does not execute or render them. */
   downloadArtifact(id: string, artifactId: string, options: OperationOptions = {}) {
     return downloadAgentArtifact(this.config, id, artifactId, options);
-  }
-
-  answerDeliverables(id: string, answerId: string, options: DocumentAccessOptions = {}) {
-    return listAnswerDeliverables(this.config, id, answerId, options);
-  }
-  describeDeliverable(
-    id: string,
-    selected: DeliverableResource,
-    options: DocumentAccessOptions = {},
-  ) {
-    return describeDeliverable(this.config, id, selected, options);
-  }
-  readAnswerDeliverable(
-    id: string,
-    answerId: string,
-    deliveryId: string,
-    options: DeliverableReadOptions = {},
-  ) {
-    return readAnswerDeliverable(this.config, id, answerId, deliveryId, options);
-  }
-  downloadAnswerDeliverable(
-    id: string,
-    answerId: string,
-    expected: AnswerDeliverable,
-    options: DocumentAccessOptions = {},
-  ) {
-    return downloadAnswerDeliverable(this.config, id, answerId, expected, options);
   }
 
   /** Safe creation inventory. Omit organization and shared for personal scope. */

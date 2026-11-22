@@ -10,6 +10,9 @@ from unittest.mock import Mock, patch
 
 import prod_cd_select as select
 from staging_cd_common import Refusal
+from staging_cd_policy import selected, switches
+from staging_cd_targets import RUNTIME_TARGETS, TARGETS
+from staging_cd_versions import DEPLOYABLES
 
 MERGE, RELEASED, PREVIOUS = "m" * 0 + "1" * 40, "2" * 40, "3" * 40
 WEB = "ghcr.io/chronoaiproject/cma-web@sha256:" + "4" * 64
@@ -74,13 +77,41 @@ class ReleaseCommitTests(unittest.TestCase):
 
 
 class SelectionTests(unittest.TestCase):
-    def test_runtime_images_follow_the_agent_manager_switch(self):
+    def test_production_selects_enabled_applications_without_runtime_images(self):
         policy = {"am": False, "eg": False, "web": True}
-        targets, runtimes = {"am", "eg", "web", "runtime", "runtime-omarchy"}, {"runtime", "runtime-omarchy"}
-        self.assertEqual(select.enabled_components(policy, targets, runtimes), ["web"])
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS), ["web"])
         policy["am"] = True
-        self.assertEqual(select.enabled_components(policy, targets, runtimes),
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS), ["am", "web"])
+        policy["eg"] = True
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS), ["am", "eg", "web"])
+        policy["runtime"] = False
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS), ["am", "eg", "web"])
+
+    def test_only_an_explicit_runtime_switch_promotes_runtime_images_and_only_with_am(self):
+        policy = {"am": True, "eg": False, "web": True, "runtime": True}
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS),
                          ["am", "runtime", "runtime-omarchy", "web"])
+        # Runtime images are Agent Manager settings: the switch alone promotes nothing.
+        policy["am"] = False
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS), ["web"])
+        # Only a literal true is an explicit switch.
+        policy.update(am=True, runtime="enabled")
+        self.assertEqual(select.enabled_components(policy, TARGETS, RUNTIME_TARGETS), ["am", "web"])
+
+    def test_staging_still_deploys_runtime_images_with_am_from_the_same_switches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "chrono-cd/scripts/deploy_set.py"
+            script.parent.mkdir(parents=True)
+            config = script.parent.parent / "config.yaml"
+            config.write_text("apps:\n  am: {deploy: enabled}\n  eg: {deploy: enabled}\n  web: {deploy: enabled}\n")
+            self.assertEqual(select.enabled_components(switches(script), TARGETS, RUNTIME_TARGETS),
+                             ["am", "eg", "web"])
+            self.assertEqual(selected(script, sorted(TARGETS), automatic=True, mode="release"),
+                             ["am", "eg", "runtime", "runtime-omarchy", "web"])
+            # A private config cannot carry a runtime switch without a reviewed policy change.
+            config.write_text(config.read_text() + "  runtime: {deploy: enabled}\n")
+            with self.assertRaisesRegex(Refusal, "target set differs"):
+                switches(script)
 
     def test_newest_version_at_or_before_the_release_commit_is_chosen(self):
         newer, older = "5" * 40, "6" * 40
@@ -114,36 +145,68 @@ class EvidenceTests(unittest.TestCase):
                     run_view(7, event="pull_request"), dict(run_view(7), id=8)):
             self.assertFalse(select.trusted_run(Mock(return_value=bad), 7))
 
-    def test_verified_image_is_found_and_forged_or_stale_evidence_is_ignored(self):
-        listing = {"artifacts": [
-            artifact(1, 10, name="unrelated"),
-            artifact(2, 11, expired=True),
-            artifact(3, 12, branch="pr-branch"),
-            artifact(4, 13),   # untrusted workflow path
-            artifact(5, 14),   # trusted, wrong image
-            artifact(6, 15),   # trusted, verified
-        ]}
-        runs = {13: run_view(13, path=".github/workflows/ci.yml"), 14: run_view(14), 15: run_view(15)}
-
+    def staging_runs(self, runs, artifacts, workflow="staging-cd.yml"):
+        """A request stub: workflow run listings, then each run's own artifacts."""
         def request(path):
-            if path.startswith("actions/artifacts"):
-                return listing
-            return runs[int(path.rsplit("/", 1)[1])]
+            if path.startswith(f"actions/workflows/{workflow}/runs"):
+                page = int(path.rsplit("page=", 1)[1])
+                return {"workflow_runs": runs[(page - 1) * 100:page * 100]}
+            if path.startswith("actions/workflows/"):
+                return {"workflow_runs": []}
+            if path.startswith("actions/runs/") and "/artifacts" in path:
+                return {"artifacts": artifacts.get(int(path.split("/")[2]), [])}
+            raise AssertionError(path)
+        return request
 
-        archives = {5: evidence({"web": {"state": "controller-verified", "image": WEB.replace("4", "9")}}),
-                    6: evidence({"web": {"state": "controller-verified", "image": WEB}})}
+    def test_verified_image_is_found_through_staging_runs_and_forged_evidence_is_ignored(self):
+        runs = [run_view(13, path=".github/workflows/ci.yml"), run_view(12, branch="feature"),
+                run_view(14), run_view(15)]
+        artifacts = {
+            13: [artifact(1, 13)],                                    # untrusted workflow path
+            12: [artifact(2, 12)],                                    # not develop
+            14: [artifact(3, 14, name="staging-deployment-99-1"),     # names another run
+                 artifact(4, 14, expired=True),
+                 artifact(5, 14, name="unrelated"),
+                 artifact(6, 14)],                                    # trusted, wrong image
+            15: [artifact(7, 15, name="staging-deployment-15-2-web")],  # trusted, verified
+        }
+        archives = {6: evidence({"web": {"state": "controller-verified", "image": WEB.replace("4", "9")}}),
+                    7: evidence({"web": {"state": "controller-verified", "image": WEB}})}
         download = Mock(side_effect=lambda item: archives[item["id"]])
+        request = self.staging_runs(runs, artifacts)
         self.assertEqual(select.staging_verified({"web": WEB}, request, download), {"web"})
-        self.assertEqual([c.args[0]["id"] for c in download.call_args_list], [5, 6])
-        archives[6] = evidence({"web": {"state": "rolled-back", "image": WEB}})
+        self.assertEqual([c.args[0]["id"] for c in download.call_args_list], [6, 7])
+        archives[7] = evidence({"web": {"state": "rolled-back", "image": WEB}})
         self.assertEqual(select.staging_verified({"web": WEB}, request, download), set())
 
+    def test_old_evidence_beyond_newer_runs_is_still_found(self):
+        # Hundreds of newer artifacts elsewhere must not hide an older lane's evidence.
+        runs = [run_view(1000 - i) for i in range(150)]
+        artifacts = {1000 - i: [artifact(i, 1000 - i, name=f"staging-deployment-{1000 - i}-1-am")]
+                     for i in range(149)}
+        artifacts[851] = [artifact(9001, 851, name="staging-deployment-851-1-web")]
+        download = Mock(return_value=evidence({"web": {"state": "controller-verified", "image": WEB}}))
+        self.assertEqual(select.staging_verified({"web": WEB}, self.staging_runs(runs, artifacts), download),
+                         {"web"})
+        self.assertEqual([c.args[0]["id"] for c in download.call_args_list], [9001])
+
+    def test_contract_and_unsuffixed_evidence_is_always_read(self):
+        runs = [run_view(20)]
+        artifacts = {20: [artifact(1, 20, name="staging-deployment-20-1-contract"),
+                          artifact(2, 20, name="staging-deployment-20-1"),
+                          artifact(3, 20, name="staging-deployment-20-01-web")]}
+        download = Mock(return_value=evidence({}))
+        select.staging_verified({"web": WEB}, self.staging_runs(runs, artifacts), download)
+        self.assertEqual([c.args[0]["id"] for c in download.call_args_list], [1, 2])
+
     def test_evidence_search_is_bounded(self):
-        listing = {"artifacts": [artifact(i, 100 + i) for i in range(select.MAX_DOWNLOADS + 1)]}
-        request = Mock(side_effect=lambda path: listing if path.startswith("actions/artifacts")
-                       else run_view(int(path.rsplit("/", 1)[1])))
+        runs = [run_view(5000 - i) for i in range(select.MAX_RUN_LISTINGS + 1)]
         with self.assertRaises(Refusal):
-            select.staging_verified({"web": WEB}, request, Mock(return_value=evidence({})))
+            select.staging_verified({"web": WEB}, self.staging_runs(runs, {}), Mock(return_value=evidence({})))
+        runs = [run_view(10)]
+        artifacts = {10: [artifact(i, 10, name=f"staging-deployment-10-{i + 1}") for i in range(select.MAX_DOWNLOADS + 1)]}
+        with self.assertRaises(Refusal):
+            select.staging_verified({"web": WEB}, self.staging_runs(runs, artifacts), Mock(return_value=evidence({})))
 
 
 class PlanTests(unittest.TestCase):
@@ -233,13 +296,16 @@ class EntryTests(unittest.TestCase):
         env = {"CD_PRIVATE_CONTROLLER": "/private/prod/chrono-cd", "GH_TOKEN": "token", "CD_TARGET": "production"}
         value = {"schema": "cma-deployment-set-v1", "receipts": {}}
         with patch.dict(select.os.environ, env, clear=True), \
-                patch("staging_cd_runtime.run_private", side_effect=lambda operation, _: 0 if operation(None) else 1), \
+                patch("staging_cd_runtime.run_private", autospec=True,
+                      side_effect=lambda operation, _, **_kw: 0 if operation(None) else 1) as boundary, \
                 patch("staging_cd_resolve.output", side_effect=lambda _env, name, v: outputs.__setitem__(name, v)), \
                 patch("staging_cd_github.GitHub"), patch("staging_cd_registry.Registry"), \
                 patch("staging_cd_policy.switches", return_value={"web": True}) as switches, \
                 patch("staging_cd_clock.timestamp", return_value="2026-11-20T00:00:00Z"):
             with patch.object(select, "plan", return_value=(value, RELEASED)) as planner:
                 self.assertEqual(select.main(), 0)
+                # autospec holds the call to the real boundary signature.
+                self.assertEqual(boundary.call_args.kwargs["subject"], "production-release")
                 self.assertEqual(switches.call_args.args[0], Path("/private/prod/chrono-cd/scripts/deploy_set.py"))
                 self.assertEqual(planner.call_args.args[3], {"web": True})
                 self.assertEqual((outputs["released"], outputs["mode"]), (RELEASED, "release"))
@@ -253,10 +319,14 @@ class EntryTests(unittest.TestCase):
                 # After approval the components come from the approved set, not the private config.
                 switches.assert_not_called()
                 self.assertEqual(planner.call_args.args[3], {"am": False, "eg": False, "web": False})
-                select.os.environ["CD_RELEASE_SET"] = json.dumps({"schema": "x", "receipts": {"web": {}, "runtime": {}}})
-                with self.assertRaises(Refusal):
-                    select.main()
-                self.assertEqual(planner.call_args.args[3], {"am": True, "eg": False, "web": True})
+                # An approved runtime image is refused before any re-selection, never dropped.
+                planner.reset_mock()
+                for runtime in sorted(RUNTIME_TARGETS):
+                    select.os.environ["CD_RELEASE_SET"] = json.dumps(
+                        dict(value, receipts={"am": {}, "eg": {}, "web": {}, runtime: {}}))
+                    with self.assertRaisesRegex(Refusal, "must not hold a runtime image"):
+                        select.main()
+                planner.assert_not_called()
                 select.os.environ["CD_RELEASE_SET"] = json.dumps(dict(value, receipts={"web": {}}))
                 with self.assertRaisesRegex(Refusal, "no longer matches"):
                     select.main()
@@ -265,6 +335,40 @@ class EntryTests(unittest.TestCase):
             with patch.object(select, "plan", return_value=(None, RELEASED)):
                 self.assertEqual(select.main(), 0)
             self.assertEqual(outputs, {"released": RELEASED, "release_set": ""})
+
+    def test_an_enabled_am_release_selects_and_reproduces_applications_without_runtimes(self):
+        outputs, plan, runner = {}, select.plan, git_runner([MERGE, PREVIOUS, RELEASED])
+        api = Mock(tags=lambda c: [{"name": DEPLOYABLES[c] + "/v1.2.3", "target": RELEASED}],
+                   history=Mock(return_value=History([RELEASED])))
+
+        def dispatch(inputs, _api, _registry):
+            return "release", {"schema": "cma-deployment-set-v1", "receipts": {
+                c: {"repository": "ghcr.io/chronoaiproject/" + DEPLOYABLES[c], "digest": "sha256:" + "4" * 64}
+                for c in inputs["deployables"].split(",")}}
+
+        with tempfile.TemporaryDirectory() as directory:
+            env = dict(PlanTests().environment(Path(directory)), GH_TOKEN="token",
+                       CD_PRIVATE_CONTROLLER="/private/prod/chrono-cd")
+            with patch.dict(select.os.environ, env, clear=True), \
+                    patch("staging_cd_runtime.run_private", autospec=True,
+                          side_effect=lambda operation, _, **_kw: 0 if operation(None) else 1), \
+                    patch("staging_cd_resolve.output", side_effect=lambda _env, name, v: outputs.__setitem__(name, v)), \
+                    patch("staging_cd_github.GitHub", return_value=api), patch("staging_cd_registry.Registry"), \
+                    patch("staging_cd_policy.switches", return_value={"am": True, "eg": True, "web": True}), \
+                    patch("staging_cd_clock.timestamp", return_value="2026-11-20T00:00:00Z"), \
+                    patch("staging_cd_set.dispatch_set", side_effect=dispatch) as dispatcher, \
+                    patch.object(select, "staging_verified", side_effect=lambda images, *_: set(images)), \
+                    patch.object(select, "plan", side_effect=lambda *a, **k: plan(*a, runner=runner, **k)):
+                self.assertEqual(select.main(), 0)
+                planned = dispatcher.call_args.args[0]
+                self.assertEqual((planned["deployables"], sorted(json.loads(planned["versions"]))),
+                                 ("am,eg,web", ["am", "eg", "web"]))
+                self.assertEqual(sorted(json.loads(outputs["release_set"])["receipts"]), ["am", "eg", "web"])
+                # The deploy job re-derives the policy from the approved set and reproduces it exactly.
+                select.os.environ["CD_RELEASE_SET"] = outputs["release_set"]
+                self.assertEqual(select.main(), 0)
+                self.assertEqual(dispatcher.call_args.args[0], planned)
+                self.assertEqual(outputs["started_at"], "2026-11-20T00:00:00Z")
 
 if __name__ == "__main__":
     unittest.main()

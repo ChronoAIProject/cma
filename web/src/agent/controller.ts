@@ -27,7 +27,7 @@ import { useAgentActions } from './actions';
 import { IdentityChangedError, isIdentityChanged } from './transport/identity';
 import { useControlStatus } from './transport/controlStatus';
 import { useQueuedInputs } from './transport/queuedInputsStatus';
-import { usePresentedAgent, presentRetainedInputs } from './presentation';
+import { usePresentedAgent, usePresentedRetainedInputs } from './presentation';
 import { useAgentSummary } from './useAgentSummary';
 import type { AgentCommand, AgentController, AgentControllerOptions } from './controllerTypes';
 export type { AgentCommand, AgentController } from './controllerTypes';
@@ -422,7 +422,11 @@ export function useAgentController(
     options,
   });
   const presented = usePresentedAgent(state, summary);
-  const legacy = client.agentTransport?.legacySession(agentId, options.viewerId);
+  const legacy = client.agentTransport?.legacySession(
+    suspended ? undefined : agentId,
+    options.viewerId,
+  );
+  const retainedInputs = usePresentedRetainedInputs(v2, legacy, pending, onIdentityChange);
   const controlNotice = useControlStatus(v2, onIdentityChange);
   const queuedInputs = useQueuedInputs(
     v2,
@@ -439,7 +443,7 @@ export function useAgentController(
       strict,
     );
   return {
-    ...presentRetainedInputs(v2, legacy),
+    ...retainedInputs,
     queuedInputs: v2 === undefined ? undefined : queuedInputs,
     controlNotice,
     controlBaselineReady: controlReady,

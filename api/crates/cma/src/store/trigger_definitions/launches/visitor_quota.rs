@@ -2,7 +2,7 @@
 use super::{admission::AttemptError, LaunchCollections};
 use layer2_core::{
     trigger_domain::{visitor_launch_day, Launch, LaunchAuthorityClass, LaunchStoreError},
-    PlatformSettings, StoreError, SubjectId,
+    StoreError, SubjectId,
 };
 use mongodb::{
     bson::{doc, DateTime, Document},
@@ -53,37 +53,51 @@ pub(super) struct Charge {
     exists: bool,
 }
 
-pub(super) async fn prepare(
+/// A refusal-only optimization; a successful precheck is never a charge.
+pub(super) async fn precheck(
     data: &LaunchCollections,
     launch: &Launch,
+    initial: crate::store::settings_defaults::InitialSettings,
+    session: &mut ClientSession,
+) -> Result<(), AttemptError> {
+    use AttemptError::{Domain, Driver};
+    if launch.authority != LaunchAuthorityClass::Visitor {
+        return Ok(());
+    }
+    let settings = data
+        .settings
+        .find_one(doc! {"_id": "platform"})
+        .session(&mut *session)
+        .await
+        .map_err(Driver)?;
+    let settings = match settings {
+        Some(document) => {
+            crate::store::settings::read_settings(document)
+                .map_err(|error| Domain(LaunchStoreError::Corrupt(error.to_string())))?
+                .settings
+        }
+        None => initial.platform(),
+    };
+    prepare_with_limit(
+        data,
+        launch,
+        settings.limits.visitor_max_launches_per_day,
+        session,
+    )
+    .await?;
+    Ok(())
+}
+
+pub(super) async fn prepare_with_limit(
+    data: &LaunchCollections,
+    launch: &Launch,
+    limit: u32,
     session: &mut ClientSession,
 ) -> Result<Option<Charge>, AttemptError> {
     use AttemptError::{Domain, Driver};
     if launch.authority != LaunchAuthorityClass::Visitor {
         return Ok(None);
     }
-    let settings = data
-        .settings
-        .find_one(doc! { "_id": "platform" })
-        .session(&mut *session)
-        .await
-        .map_err(Driver)?;
-    let settings: PlatformSettings = match settings {
-        Some(document) => {
-            crate::store::sandbox_mongo::require_version(&document)
-                .map_err(|error| Domain(LaunchStoreError::Corrupt(error)))?;
-            mongodb::bson::deserialize_from_bson(document.get("settings").cloned().ok_or_else(
-                || {
-                    Domain(LaunchStoreError::Corrupt(
-                        "missing platform settings".into(),
-                    ))
-                },
-            )?)
-            .map_err(|error| Domain(LaunchStoreError::Corrupt(error.to_string())))?
-        }
-        None => PlatformSettings::default(),
-    };
-    let limit = settings.limits.visitor_max_launches_per_day;
     let timestamp = layer2_core::seconds_from_rfc3339(&launch.created_at)
         .ok_or_else(|| Domain(LaunchStoreError::Corrupt("invalid Launch time".into())))?;
     let (day, reset_at) = visitor_launch_day(timestamp);

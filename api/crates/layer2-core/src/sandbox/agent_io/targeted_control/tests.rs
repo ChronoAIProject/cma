@@ -73,6 +73,7 @@ fn targeted_steer_uses_the_existing_canonical_content_rules() {
     };
     let split = AgentCommand::Steer {
         input: AgentInput {
+            task_acceptance: None,
             content: vec![
                 AgentContent::Text {
                     text: "hello ".into(),

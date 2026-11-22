@@ -101,6 +101,9 @@ impl AgentCommand {
                 }
             }
             Self::Steer { input } => {
+                if input.task_acceptance.is_some() {
+                    return Err(invalid("task acceptance requires a new turn"));
+                }
                 if input.external_event().is_some() {
                     return Err(invalid("external events require a message"));
                 }
@@ -118,6 +121,15 @@ impl AgentCommand {
                 self.clone()
             }
         })
+    }
+
+    pub(crate) fn task_acceptance(
+        &self,
+    ) -> Option<&crate::sandbox::task_acceptance::TaskAcceptanceIntent> {
+        match self {
+            Self::Message { input, .. } => input.task_acceptance.as_ref(),
+            _ => None,
+        }
     }
 
     /// Stable across object-key order and equivalent adjacent text partitions.

@@ -1,4 +1,5 @@
 //! Neutral delivery intents; the transport engine owns external sends.
+mod activity_observation;
 mod complete;
 #[cfg(test)]
 pub(crate) mod complete_tests;

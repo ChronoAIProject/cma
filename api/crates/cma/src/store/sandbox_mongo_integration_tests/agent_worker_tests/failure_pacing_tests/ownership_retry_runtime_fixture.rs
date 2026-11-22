@@ -1,8 +1,8 @@
 //! Synthetic provider API and receiving-runtime bytes; production ownership transport is unchanged.
 use futures_util::{SinkExt, StreamExt};
 use l3::hosted::{
-    HostedBackend, HostedControlTransport, InMemoryHostedBackend, NativeRuntimeTransport,
-    ProviderHostedControlTransport,
+    HostedBackend, HostedControlTransport, InMemoryHostedBackend, LegacyReceiverImage,
+    NativeRuntimeTransport, ProviderHostedControlTransport,
 };
 use layer3_adapter as l3;
 use serde_json::{json, Value};
@@ -76,6 +76,8 @@ pub(super) struct Counts {
     acp: AtomicUsize,
     revoke: AtomicUsize,
     pub(super) cleanup: AtomicBool,
+    restarted: AtomicBool,
+    pub(super) replace_after_revocation: AtomicBool,
 }
 
 pub(super) struct Runtime {
@@ -91,6 +93,13 @@ impl Drop for Runtime {
 
 impl Runtime {
     pub(super) async fn start(failure: &'static str) -> Self {
+        Self::start_with_legacy_compatibility(failure, false).await
+    }
+
+    pub(super) async fn start_with_legacy_compatibility(
+        failure: &'static str,
+        enabled: bool,
+    ) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let mut config = kube::Config::new(format!("http://{address}").parse().unwrap());
@@ -112,12 +121,21 @@ impl Runtime {
             "fixture",
         )
         .unwrap();
+        let legacy_image = enabled.then(|| {
+            LegacyReceiverImage::from_reviewed_mapping(
+                format!("ghcr.io/fixture/runtime@sha256:{}", "1".repeat(64)),
+                legacy_config_digest(),
+                "bc8cd8bf0f585446a37d3bd50a8e3df2d6d06e6e",
+            )
+            .unwrap()
+        });
         let transport = Arc::new(
             ProviderHostedControlTransport::for_agent_sandbox_with_transport(
                 client,
                 NativeRuntimeTransport::KubernetesExec,
             )
-            .unwrap(),
+            .unwrap()
+            .with_legacy_receiver_image(legacy_image),
         );
         let counts = Arc::new(Counts::default());
         let observed = counts.clone();
@@ -143,6 +161,9 @@ impl Runtime {
     pub(super) fn assert_counts(&self, probes: usize) {
         self.assert_counts_with_confirmation(probes, 0);
     }
+    pub(super) fn revocations(&self) -> usize {
+        self.counts.revoke.load(Ordering::SeqCst)
+    }
     pub(super) fn assert_counts_with_confirmation(&self, probes: usize, confirmations: usize) {
         assert!(!self.server.is_finished(), "runtime fixture failed");
         assert_eq!(self.counts.challenge.load(Ordering::SeqCst), probes);
@@ -150,6 +171,10 @@ impl Runtime {
         assert_eq!(self.counts.control.load(Ordering::SeqCst), 0);
         assert_eq!(self.counts.acp.load(Ordering::SeqCst), 0);
     }
+}
+
+fn legacy_config_digest() -> String {
+    format!("sha256:{}", "2".repeat(64))
 }
 
 async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: &str) {
@@ -173,14 +198,22 @@ async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: 
         } else {
             assert!(header.lines().next().unwrap().contains("/pods?"));
             let hash = "claimed".bytes().fold(2_166_136_261u32, |h, b| (h ^ u32::from(b)).wrapping_mul(16_777_619));
+            let restarted = counts.restarted.load(Ordering::SeqCst);
+            let image = match failure {
+                "receiverless" | "receiverless_confirm_ambiguous" => legacy_config_digest(),
+                _ => "sha256:runtime".into(),
+            };
             json!({"apiVersion":"v1", "kind":"PodList", "metadata":{"resourceVersion":"8"}, "items":[{
                 "metadata":{"name":"claimed-pod", "namespace":"fixture", "uid":"original-pod",
                     "labels":{"cma/control-plane":"fixture", "agents.x-k8s.io/sandbox-name-hash":format!("{hash:08x}")},
                     "ownerReferences":[{"apiVersion":"agents.x-k8s.io/v1beta1", "kind":"Sandbox",
                         "name":"claimed", "uid":"sandbox-uid", "controller":true}]},
+                "spec":{"containers":[{"name":"runtime"}]},
                 "status":{"phase":"Running", "podIP":"10.0.0.1", "conditions":[{"type":"Ready", "status":"True"}],
-                    "containerStatuses":[{"name":"runtime", "image":"runtime", "imageID":"sha256:runtime",
-                        "ready":true, "restartCount":0, "containerID":"containerd://original", "state":{"running":{}}}]}}]})
+                    "containerStatuses":[{"name":"runtime", "image":"runtime", "imageID":image,
+                        "ready":true, "restartCount":usize::from(restarted),
+                        "containerID":if restarted {"containerd://replacement"} else {"containerd://original"},
+                        "state":{"running":{"startedAt":"2000-01-01T00:00:00Z"}}}]}}]})
         }.to_string();
         socket
             .write_all(response(200, &body).as_bytes())
@@ -233,7 +266,9 @@ async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: 
     let (code, reply) = if path.contains("/challenge ") {
         counts.challenge.fetch_add(1, Ordering::SeqCst);
         match failure {
-            "capability_missing" => (404, json!({})),
+            "capability_missing" | "receiverless" | "receiverless_unknown_image" => {
+                (404, json!({}))
+            }
             "challenge_protocol_mismatch" => (
                 200,
                 json!({"protocol":2, "nonce":uuid::Uuid::new_v4(), "valid_for_ms":10000}),
@@ -247,7 +282,7 @@ async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: 
                 json!({"protocol":2, "nonce":"malformed", "valid_for_ms":10000}),
             ),
             "auth" => (403, json!({})),
-            "confirm_ambiguous" => (
+            "confirm_ambiguous" | "receiverless_confirm_ambiguous" => (
                 200,
                 json!({"protocol":1, "nonce":uuid::Uuid::new_v4(), "valid_for_ms":10000}),
             ),
@@ -259,8 +294,13 @@ async fn serve(mut socket: tokio::net::TcpStream, counts: Arc<Counts>, failure: 
         }
     } else if path.contains("/revoke ") {
         counts.revoke.fetch_add(1, Ordering::SeqCst);
+        if counts.replace_after_revocation.load(Ordering::SeqCst) {
+            counts.restarted.store(true, Ordering::SeqCst);
+        }
         (
-            if counts.cleanup.load(Ordering::SeqCst) {
+            if failure.starts_with("receiverless") {
+                404
+            } else if counts.cleanup.load(Ordering::SeqCst) {
                 200
             } else {
                 403

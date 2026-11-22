@@ -63,6 +63,78 @@ for (const source of ['header', 'task row'] as const) {
   });
 }
 
+test('LOCAL owner Resume checks the paused Sandbox before one keyed request', async ({
+  page,
+  baseURL,
+}) => {
+  const boundary = new LocalStartup();
+  boundary.sandbox = {
+    ...boundary.sandbox,
+    status: 'paused',
+    lifecycle: {
+      pause: { allowed: false, reason: 'not_active' },
+      revive: { allowed: true },
+    },
+  };
+  boundary.agent = {
+    ...boundary.agent,
+    status: 'stopped',
+    sandbox: { ...boundary.agent.sandbox, status: 'paused' },
+  };
+  await boundary.route(page, baseURL!);
+  let release!: () => void;
+  const connection = new Promise<void>((complete) => (release = complete));
+  const reviveKeys: string[] = [];
+  let checks = 0;
+  await page.route('**/auth/connections/check', async (route) => {
+    const { target } = route.request().postDataJSON() as { target: { type: string; id?: string } };
+    if (target.type !== 'sandbox') return route.fallback();
+    expect(target.id).toBe(boundary.sandbox.id);
+    checks += 1;
+    await connection;
+    return route.fulfill({
+      json: { owner: 'local-owner', ready: true, checked_at: '2026-11-21T00:00:00Z', services: [] },
+    });
+  });
+  await page.route(`**/api/v1/sandboxes/${boundary.sandbox.id}/revive`, async (route) => {
+    expect(route.request().method()).toBe('POST');
+    const key = route.request().headers()['idempotency-key'];
+    expect(key).toBeTruthy();
+    reviveKeys.push(key!);
+    boundary.sandbox = {
+      ...boundary.sandbox,
+      status: 'active',
+      lifecycle: { pause: { allowed: true }, revive: { allowed: false, reason: 'not_paused' } },
+    };
+    boundary.agent = {
+      ...boundary.agent,
+      sandbox: { ...boundary.agent.sandbox, status: 'active' },
+    };
+    return route.fulfill({ status: 202, json: boundary.sandbox });
+  });
+  await page.goto(`/sandboxes/${boundary.sandbox.id}`);
+  const resume = page.getByRole('button', { name: 'Resume', exact: true });
+  await expect(resume).toBeEnabled();
+  expect(checks).toBe(0);
+  noEffects(boundary);
+  await resume.click();
+  await expect.poll(() => checks).toBe(1);
+  await expect(resume).toBeDisabled();
+  expect(reviveKeys).toEqual([]);
+  release();
+  await expect(page.getByText('Sandbox resumed.')).toBeVisible();
+  expect(reviveKeys).toHaveLength(1);
+  await expect(page.getByRole('button', { name: 'Pause', exact: true })).toBeEnabled();
+
+  await page.goto(`/agents/${boundary.agent.id}`);
+  await page.getByRole('button', { name: 'More Agent actions', exact: true }).click();
+  const remove = page.getByRole('menuitem', { name: /^Delete task\b/ });
+  await expect(remove).toBeEnabled();
+  await remove.click();
+  await expect(page.getByRole('dialog', { name: 'Delete Agent', exact: true })).toBeVisible();
+  noEffects(boundary);
+});
+
 for (const uncertain of [false, true]) {
   test(`LOCAL header Stop then separate Delete with uncertain stop=${uncertain}`, async ({
     page,

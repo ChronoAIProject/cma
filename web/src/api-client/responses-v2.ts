@@ -16,7 +16,7 @@ import * as queuedCancellation from './responses-v2/queued-cancellation.js';
 import * as queuedInput from './responses-v2/queued-input.js';
 import type { V2QueuedInputRequest } from './responses-v2/queued-input-types.js';
 import type { V2QueuedCancellationRequest } from './responses-v2/queued-cancellation-types.js';
-import type { V2ResponseControlRequest } from './responses-v2/controls-types.js';
+import { v2CommandStatus, type V2ResponseControlRequest } from './responses-v2/controls-types.js';
 import type { CommandOptions } from './resources.js';
 import {
   v2Capabilities,
@@ -199,6 +199,25 @@ export class ResponsesV2 {
   ): Promise<V2ResponseObject> {
     return this.submit(`/api/v2/agents/${segment(id)}/responses`, body, options, id);
   }
+  /** Look up the exact admitted input without submitting it. A miss is indeterminate. */
+  findAgentInputReceipt(id: string, body: CreateV2AgentResponseRequest, options: CommandOptions) {
+    input((value) => v2Request(value, id), body);
+    const headers = responseKeyHeaders(options.idempotencyKey);
+    if (headers === undefined) throw new ValidationError('Supply the original idempotency key');
+    return read(
+      this.config,
+      `/api/v2/agents/${segment(id)}/responses/receipt`,
+      (value) => {
+        if (value === null) return null;
+        const status = v2CommandStatus(value);
+        if (status.receipt.agent_id !== id || status.receipt.response_id === null) {
+          throw new ProtocolError('input receipt does not match the selected Agent');
+        }
+        return status;
+      },
+      { ...options, headers, body, method: 'POST', cache: 'no-store' },
+    );
+  }
   /** Reconnect only on explicit caller request; never resubmit input on disconnect. */
   async replay(id: string, options: V2ReplayOptions): Promise<void> {
     if (
@@ -229,19 +248,7 @@ export class ResponsesV2 {
     agent?: string,
   ): Promise<V2ResponseObject> {
     input((value) => v2Request(value, agent), body);
-    const key = options.idempotencyKey;
-    if (
-      key !== undefined &&
-      (!key.length ||
-        new TextEncoder().encode(key).length > 256 ||
-        [...key].some(
-          (char) =>
-            char.charCodeAt(0) < 32 || (char.charCodeAt(0) >= 127 && char.charCodeAt(0) <= 159),
-        ))
-    )
-      throw new ValidationError(
-        'idempotencyKey must contain 1 to 256 bytes without control characters',
-      );
+    const headers = responseKeyHeaders(options.idempotencyKey);
     const conversation = agent ?? conversationId(body.conversation);
     const stream = eventStream(
       this.config,
@@ -254,7 +261,7 @@ export class ResponsesV2 {
         }),
       'Responses v2',
       body,
-      key === undefined ? undefined : { 'Idempotency-Key': key },
+      headers,
     );
     let outcome: V2ResponseObject | undefined;
     for await (const event of stream) {
@@ -270,6 +277,23 @@ export class ResponsesV2 {
     return outcome;
   }
 }
+
+function responseKeyHeaders(key: string | undefined) {
+  if (key === undefined) return undefined;
+  if (
+    !key.length ||
+    new TextEncoder().encode(key).length > 256 ||
+    [...key].some(
+      (char) => char.charCodeAt(0) < 32 || (char.charCodeAt(0) >= 127 && char.charCodeAt(0) <= 159),
+    )
+  ) {
+    throw new ValidationError(
+      'idempotencyKey must contain 1 to 256 bytes without control characters',
+    );
+  }
+  return { 'Idempotency-Key': key };
+}
+
 async function acknowledge(options: V2ReplayOptions, event: V2ResponseEvent) {
   try {
     await options.onEvent(event);

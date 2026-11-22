@@ -43,6 +43,8 @@ pub enum DeliveryCommand {
     StreamOutcome {
         turn: Arc<LaunchRequest>,
         outcome: TurnOutcome,
+        /// Identity from this provider stream, independent of Activity's current response.
+        answer_response_id: Option<String>,
     },
 }
 impl DeliveryCommand {

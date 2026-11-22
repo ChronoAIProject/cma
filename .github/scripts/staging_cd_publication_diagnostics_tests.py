@@ -165,6 +165,60 @@ class PublicationDiagnosticTests(unittest.TestCase):
                 if mode == 'timeout':
                     publish.assert_not_called()
 
+    def test_build_step_annotation_only_when_publication_stopped_in_build(self):
+        identity = fixture_identity()
+        reservation = {k: v for k, v in identity.items() if k != 'build'}
+        reservation['schema'] = 'cma-version-reservation-v1'
+        summary = {'complete': True, 'vertices': 9, 'cached_vertices': 2, 'failed_steps': ['other']}
+        stopped = {'complete': True, 'vertices': 9, 'cached_vertices': 2,
+                   'failed_steps': ['runtime-qualification 1/1']}
+        # mode -> (build progress, build raises, publish raises, annotation expected)
+        cases = {'success-with-nonfatal-vertex': (summary, False, False, None),
+                 'stopped-in-build': (stopped, True, False, 'runtime-qualification 1/1'),
+                 'failed-after-build': (summary, False, True, None)}
+        for mode, (progress_value, build_fails, publish_fails, expected) in cases.items():
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                env = {'GITHUB_EVENT_NAME': 'push', 'GITHUB_RUN_ID': '100', 'GITHUB_RUN_ATTEMPT': '1',
+                       'RUNNER_TEMP': directory, 'CD_COMPONENT': 'web',
+                       'CD_RECEIPTS_PATH': str(Path(directory) / 'receipts.json'),
+                       'CD_TASKS': json.dumps([{'component': 'web', 'mode': 'publish', 'reservation': reservation}])}
+
+                def fake_build(*_args, progress, **_kwargs):
+                    progress.update(progress_value)
+                    if build_fails:
+                        raise subprocess.CalledProcessError(1, 'private build')
+                    return Path(directory) / 'image.tar', identity
+
+                def fake_publish(*_args, diagnostics, **_kwargs):
+                    if publish_fails:
+                        diagnostics.mark('scan')  # as the real publish() does before scanning
+                        raise OSError('private')
+                    return fixture_receipt()
+
+                output = io.StringIO()
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(patch.dict(os.environ, env, clear=True))
+                    for name in ('event_identity', 'Registry', 'GitHub', 'Reservations', 'snapshot'):
+                        stack.enter_context(patch.object(publication, name))
+                    stack.enter_context(patch.object(publication, 'identity', return_value=(identity, {}, {})))
+                    stack.enter_context(patch.object(publication, 'try_reuse', return_value=None))
+                    stack.enter_context(patch.object(publication, 'build', side_effect=fake_build))
+                    stack.enter_context(patch.object(publication, 'publish', side_effect=fake_publish))
+                    stack.enter_context(contextlib.redirect_stdout(output))
+                    status = publication.main()
+                text = output.getvalue()
+                self.assertEqual(status, 1 if (build_fails or publish_fails) else 0)
+                builds = [json.loads(line) for line in text.splitlines()
+                          if line.startswith('{') and '"publication-build"' in line]
+                self.assertEqual(builds, [{'event': 'publication-build', **progress_value}])
+                annotations = [line for line in text.splitlines() if 'Image build step failed' in line]
+                if expected is None:
+                    self.assertEqual(annotations, [], mode)
+                else:
+                    self.assertEqual(len(annotations), 1)
+                    self.assertIn(f'web stopped at Dockerfile step {expected};', annotations[0])
+                self.assertNotIn('private', text)
+
     def test_closed_fallbacks_and_success(self):
         cases = [(Refusal('private\n::warning::injected'), 'validation_refused'),
                  (OSError('private'), 'io_failed'), (ValueError('private'), 'unexpected_error'),
