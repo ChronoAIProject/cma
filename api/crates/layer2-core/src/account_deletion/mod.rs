@@ -6,6 +6,11 @@ mod service;
 mod standing;
 mod types;
 pub mod verification;
+pub mod worker;
+#[cfg(test)]
+mod worker_tests;
+mod worker_types;
+mod worker_validation;
 pub use effect::{ErasureDigest, ErasureEffectCheckpoint};
 pub use memory::MemoryAccountDeletionStore;
 pub use model::AccountDeletion;

@@ -1,12 +1,14 @@
 //! The explicit manifest registry is also the migrator's reader floor.
 use super::{
-    activity_indexes, activity_page_index, agent_log_segments, agent_log_source_keys,
-    agent_owner_index, binding_indexes, collection_indexes, opening_index, Result,
+    account_erasure_work, activity_indexes, activity_page_index, agent_log_segments,
+    agent_log_source_keys, agent_owner_index, binding_indexes, collection_indexes, opening_index,
+    Result,
 };
 use mongodb::bson::{doc, Document};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Step {
+    AccountErasureWork,
     Activity,
     ActivityPage,
     LedgerCollection,
@@ -18,7 +20,8 @@ pub(super) enum Step {
 }
 
 impl Step {
-    pub(super) const ALL: [Self; 8] = [
+    pub(super) const ALL: [Self; 9] = [
+        Self::AccountErasureWork,
         Self::Activity,
         Self::ActivityPage,
         Self::LedgerCollection,
@@ -36,6 +39,7 @@ impl Step {
     }
     pub(super) fn id(self) -> &'static str {
         match self {
+            Self::AccountErasureWork => account_erasure_work::ID,
             Self::BindingIndexes => binding_indexes::ID,
             Self::Activity => activity_indexes::ID,
             Self::ActivityPage => activity_page_index::ID,
@@ -48,6 +52,7 @@ impl Step {
     }
     pub(super) fn checksum(self) -> String {
         match self {
+            Self::AccountErasureWork => account_erasure_work::checksum(),
             Self::BindingIndexes => binding_indexes::checksum(),
             Self::Activity => activity_indexes::checksum(),
             Self::ActivityPage => activity_page_index::checksum(),
@@ -63,6 +68,7 @@ impl Step {
     }
     pub(super) fn max_changes(self) -> i64 {
         match self {
+            Self::AccountErasureWork => 4,
             Self::BindingIndexes => 11,
             Self::Activity => 2,
             Self::ActivityPage => 1,
@@ -73,6 +79,7 @@ impl Step {
     }
     pub(super) fn collections(self) -> &'static [&'static str] {
         match self {
+            Self::AccountErasureWork => crate::store::account_deletions::worker_schema::COLLECTIONS,
             Self::BindingIndexes => crate::store::bindings::schema::COLLECTIONS,
             Self::Activity | Self::ActivityPage => &["activity"],
             Self::LedgerCollection => &collection_indexes::COLLECTIONS,
@@ -84,7 +91,7 @@ impl Step {
     }
     pub(super) fn effect_field(self) -> &'static str {
         match self {
-            Self::AgentLogSegments => "applied_schema_steps",
+            Self::AgentLogSegments | Self::AccountErasureWork => "applied_schema_steps",
             Self::Activity
             | Self::ActivityPage
             | Self::LedgerCollection
@@ -99,6 +106,7 @@ impl Step {
         database: &mongodb::Database,
     ) -> Result<Vec<(&'static str, Document)>> {
         match self {
+            Self::AccountErasureWork => account_erasure_work::inspect(database).await,
             Self::BindingIndexes => binding_indexes::inspect(database).await,
             Self::Activity => Ok(activity_indexes::inspect(database)
                 .await?
@@ -132,6 +140,9 @@ impl Step {
         index: Document,
     ) -> Result<bool> {
         match self {
+            Self::AccountErasureWork => {
+                account_erasure_work::create(database, collection, index).await
+            }
             Self::BindingIndexes => binding_indexes::create(database, collection, index).await,
             Self::Activity if collection == "activity" => {
                 activity_indexes::create(database, index).await

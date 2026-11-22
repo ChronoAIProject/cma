@@ -4,6 +4,7 @@ use std::time::Duration;
 use mongodb::{bson::doc, options::ClientOptions, Client};
 use serde_json::{json, Value};
 
+pub(in crate::store) mod account_erasure_work;
 mod activity_indexes;
 mod activity_page_index;
 mod agent_log_segments;
@@ -119,6 +120,14 @@ async fn execute(arguments: &[String]) -> Result<Value> {
         return match identity {
             Some(identity) => agent_log_segments::apply(&ledger, &database, &identity).await,
             None => agent_log_segments::inspect(&database).await,
+        };
+    }
+    if step == Step::AccountErasureWork {
+        return match identity {
+            Some(identity) => account_erasure_work::apply(&ledger, &database, &identity).await,
+            None => Ok(
+                json!({"migration": step.id(), "checksum": step.checksum(), "pending_steps": step.inspect(&database).await?.len(), "writes": false, "activation": "refused"}),
+            ),
         };
     }
     let indexes = step.inspect(&database).await?;

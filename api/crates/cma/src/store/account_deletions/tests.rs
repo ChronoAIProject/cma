@@ -36,3 +36,13 @@ mod queries;
 mod receipts;
 mod startup;
 mod worker_claims;
+
+#[path = "tests/worker_schema.rs"]
+mod journal_schema;
+mod worker_authority;
+mod worker_boundaries;
+mod worker_commit_errors;
+mod worker_compatibility;
+mod worker_fixture;
+mod worker_journal;
+mod worker_recovery;

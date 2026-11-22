@@ -1,4 +1,5 @@
 use super::*;
+mod journal;
 mod timing;
 
 async fn snapshot(store: &MongoAccountDeletionStore) -> (Vec<Document>, Vec<Document>) {

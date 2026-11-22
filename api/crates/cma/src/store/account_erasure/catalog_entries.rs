@@ -60,6 +60,8 @@ macro_rules! entry {
 pub(crate) const ERASURE: &[Entry] = &[
     entry!("account_deletions", Retained("deletion-receipt") => true),
     entry!("account_deletion_events", Retained("deletion-receipt") => true),
+    entry!("account_erasure_work_v1", Retained("deletion-operational-evidence") => true),
+    entry!("account_erasure_effects_v1", Retained("deletion-operational-evidence") => true),
     entry!("model_budget_reservations", Owner(&["record.owner"]) => false, OwnerKey(SubjectPrefix("owner:")) => true, LinkedKey(Agents, "request-turn:") => true),
     entry!("sandbox_metric_bindings", Linked(Sandboxes, &["sandbox_id"]) => true),
     entry!("sandbox_metric_rollups", Linked(Sandboxes, &["sandbox_id"]) => true),

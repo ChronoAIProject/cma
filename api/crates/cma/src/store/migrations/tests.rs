@@ -2,6 +2,7 @@ use super::*;
 use cma_service_auth::mongodb_authority::MongoAuthorityMode;
 use mongodb::bson::{DateTime, Document};
 
+mod account_erasure_work;
 mod activity_page;
 mod collection;
 mod failpoints;

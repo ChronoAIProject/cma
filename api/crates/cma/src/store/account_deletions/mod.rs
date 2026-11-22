@@ -22,6 +22,12 @@ mod standing;
 #[cfg(test)]
 mod tests;
 pub(in crate::store) mod trigger_erasure;
+mod worker;
+mod worker_guard;
+mod worker_journal;
+mod worker_records;
+mod worker_recovery;
+pub(in crate::store) mod worker_schema;
 mod writes;
 
 pub(crate) const RECORDS: &str = "account_deletions";
@@ -34,6 +40,7 @@ pub(crate) struct MongoAccountDeletionStore {
     database: Database,
     records: Collection<Document>,
     events: Collection<Document>,
+    journal: worker::MongoErasureJournal,
     #[cfg(test)]
     commit_pause: Option<std::sync::Arc<commit_pause::Pause>>,
 }
@@ -43,6 +50,7 @@ impl MongoAccountDeletionStore {
             database: database.clone(),
             records: super::durability::majority_collection(database, RECORDS),
             events: super::durability::majority_collection(database, EVENTS),
+            journal: worker::MongoErasureJournal::from_database(database),
             #[cfg(test)]
             commit_pause: None,
         }

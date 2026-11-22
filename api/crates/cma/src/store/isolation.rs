@@ -166,9 +166,14 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "workspaces",
     "worktrees",
 ];
+// Journal authority is retained independently of Sandbox archive and restore.
+pub(crate) const JOURNAL_COLLECTIONS: &[&str] =
+    super::account_deletions::worker_schema::COLLECTIONS;
 // These derived stores are activated separately. Existing credentials must
 // still start while the feature is disabled; partial grants remain invalid.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
+    "account_erasure_work_v1",
+    "account_erasure_effects_v1",
     super::home_backups::SCHEDULES_COLLECTION,
     super::home_backups::BACKUPS_COLLECTION,
     super::allocation_buckets::COLLECTION,
@@ -190,6 +195,13 @@ const ACTIONS: &[&str] = &[
 ];
 // The Activity operation roles add metadata reads and, for build mode, ledger
 // writes. Ordinary startup keeps the original runtime role below.
+fn collection_actions(name: &str) -> &'static [&'static str] {
+    if super::account_deletions::worker_schema::COLLECTIONS.contains(&name) {
+        &["find", "insert", "update", "listIndexes"]
+    } else {
+        ACTIONS
+    }
+}
 const ACTIVITY_INSPECTION_ACTIONS: &[&str] = &["collStats"];
 pub(crate) fn role(database: &str) -> Document {
     role_with_index_operation(database, &[], false, true)
@@ -213,9 +225,10 @@ fn role_with_index_operation(
 ) -> Document {
     let mut grants: Vec<_> = COLLECTIONS
         .iter()
+        .chain(JOURNAL_COLLECTIONS)
         .filter(|name| include_optional || !OPTIONAL_COLLECTIONS.contains(name))
         .map(|name| {
-            let mut actions = ACTIONS.to_vec();
+            let mut actions = collection_actions(name).to_vec();
             if *name == "binding_conversations" {
                 actions.push("dropIndex");
             }
@@ -285,8 +298,9 @@ fn validate_index_role(
             || resource.get_str("db").ok() != Some(database)
             || (!collection.is_empty()
                 && !COLLECTIONS.contains(&collection)
+                && !JOURNAL_COLLECTIONS.contains(&collection)
                 && !replicas::COLLECTIONS.contains(&collection)
-                && (!migration_ledger || collection != MIGRATION_COLLECTION)
+                && collection != MIGRATION_COLLECTION
                 && collection != super::provenance_progress::COLLECTION)
         {
             return Err(denied());
@@ -297,14 +311,18 @@ fn validate_index_role(
                 action == "listCollections"
             } else if collection == super::provenance_progress::COLLECTION {
                 super::provenance_progress::ACTIONS.contains(&action)
-            } else if migration_ledger && collection == MIGRATION_COLLECTION {
-                MIGRATION_ACTIONS.contains(&action)
+            } else if collection == MIGRATION_COLLECTION {
+                if migration_ledger {
+                    MIGRATION_ACTIONS.contains(&action)
+                } else {
+                    action == "find"
+                }
             } else if metadata_collections.contains(&collection)
                 && (ACTIONS.contains(&action) || ACTIVITY_INSPECTION_ACTIONS.contains(&action))
             {
                 true
             } else {
-                ACTIONS.contains(&action)
+                collection_actions(collection).contains(&action)
                     || (collection == "binding_conversations" && action == "dropIndex")
             }) {
                 return Err(denied());
@@ -325,9 +343,9 @@ fn validate_index_role(
     {
         return Err(denied());
     }
-    if !COLLECTIONS.iter().all(|name| {
+    if !COLLECTIONS.iter().chain(JOURNAL_COLLECTIONS).all(|name| {
         (OPTIONAL_COLLECTIONS.contains(name) && !grants.contains_key(*name))
-            || ACTIONS
+            || collection_actions(name)
                 .iter()
                 .all(|action| grants.get(*name).is_some_and(|s| s.contains(*action)))
     }) || !metadata_collections.iter().all(|collection| {

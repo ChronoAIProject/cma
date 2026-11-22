@@ -129,6 +129,15 @@ async fn once(
         .map_err(AttemptError::Driver)?
         .ok_or(AttemptError::Domain(AccountDeletionError::NotFound))?;
     let old = read_record(row.clone()).map_err(AttemptError::Domain)?;
+    if store
+        .journal
+        .enrolled(&deletion.id, session)
+        .await
+        .map_err(AttemptError::Driver)?
+    {
+        return Err(AttemptError::Domain(AccountDeletionError::StaleFence));
+    }
+
     super::completion_guard::preserve_acceptance(&old, deletion).map_err(AttemptError::Domain)?;
     let claimed = claim_at.is_some();
     let expected_next = old
