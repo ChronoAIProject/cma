@@ -129,6 +129,46 @@ impl AgentWorker {
             }
             Ok(channel)
         };
+        if recovered_prompt.is_some() {
+            runtime_capabilities(self.dependencies.adapter.capabilities())
+                .require(agent.capabilities.iter())
+                .map_err(|capability| {
+                    WorkerFailure::terminal(
+                        "agent_capability_grant_unavailable",
+                        format!("replacement runtime does not provide {capability:?}"),
+                    )
+                })?;
+            let mut recovery = self
+                .dependencies
+                .registry
+                .begin_recovery(
+                    target,
+                    connection_fence,
+                    agent.capabilities.clone(),
+                    receiver,
+                    self.dependencies.updates.clone(),
+                )
+                .map_err(registry_failure)?;
+            let restoring = tokio::time::timeout(self.config.open_timeout, restoring);
+            tokio::pin!(restoring);
+            let channel = tokio::select! {
+                biased;
+                result = &mut restoring => result.map_err(|_| WorkerFailure::retryable(
+                    "agent_conversation_open_timeout", "active conversation recovery timed out",
+                ))??,
+                _ = recovery.stopped() => return Err(WorkerFailure::retryable(
+                    "agent_connection_output_unavailable", "active recovery output stopped",
+                )),
+            };
+            let conversation_id = valid_conversation_id(channel.conversation_id)?;
+            if conversation_id != target.conversation_id {
+                return Err(WorkerFailure::terminal(
+                    "agent_conversation_identity_mismatch",
+                    "runtime replay returned another conversation",
+                ));
+            }
+            return recovery.finish(channel.input).map_err(registry_failure);
+        }
         let channel = if quiet {
             self.drain_connection_output(agent, restoring, &mut receiver)
                 .await?
