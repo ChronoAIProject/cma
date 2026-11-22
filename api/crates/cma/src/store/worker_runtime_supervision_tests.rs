@@ -68,6 +68,7 @@ async fn stop_task(task: &mut Option<tokio::task::JoinHandle<()>>) -> bool {
 
 async fn recover(stall: bool) {
     use futures_util::FutureExt;
+    let deadline = Instant::now() + Duration::from_secs(240);
     let client = mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
@@ -76,8 +77,8 @@ async fn recover(stall: bool) {
     let result_path =
         std::path::Path::new(native.manifest["root"].as_str().unwrap()).join("result.json");
     let mut tasks = Tasks::default();
-    let assertions = std::panic::AssertUnwindSafe(tokio::time::timeout(
-        Duration::from_secs(240),
+    let assertions = std::panic::AssertUnwindSafe(tokio::time::timeout_at(
+        deadline,
         recover_inner(stall, &mut native, &client, &database_name, &mut tasks),
     ))
     .catch_unwind()
