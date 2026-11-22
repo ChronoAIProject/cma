@@ -25,7 +25,10 @@ export async function flowFixture(
     });
   }
   if (target === 'first-visit')
-    await page.route('**/api/v1/sandboxes', (route) => route.fulfill({ json: { items: [] } }));
+    await page.route(
+      (url) => url.pathname === '/api/v1/sandboxes',
+      (route) => route.fulfill({ json: { items: [] } }),
+    );
   await page.route('**/api/v2/ui/task-experience', (route) =>
     route.fulfill({
       json: {
@@ -80,7 +83,10 @@ export async function protectedFlowFixture(
     }, boundary.sandbox.id);
   }
   if (target === 'channel') {
-    await page.route('**/api/v1/sandboxes', (route) => route.fulfill({ json: { items: [] } }));
+    await page.route(
+      (url) => url.pathname === '/api/v1/sandboxes',
+      (route) => route.fulfill({ json: { items: [] } }),
+    );
     await page.route('**/api/v1/agents/agt_contract', (route) =>
       route.fulfill({
         json: {
