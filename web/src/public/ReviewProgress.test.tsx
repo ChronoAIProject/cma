@@ -9,12 +9,84 @@ import { readIntent } from './intent';
 import { connectionClient } from '../connections/client';
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.useRealTimers();
   vi.restoreAllMocks();
   sessionStorage.clear();
 });
 
 describe('minimal review', () => {
+  it.each(['local deadline', 'expired', 'cancelled', 'failed'] as const)(
+    'keeps the original Draft unstarted after %s until a new user action',
+    async (ending) => {
+      vi.stubEnv('VITE_CONNECTION_INTENT_RECOVERY_ENABLED', 'true');
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-11-22T00:00:00.000Z'));
+      vi.spyOn(window, 'open').mockReturnValue(null);
+      const client = publicClient();
+      const record: Launch = {
+        ...PUBLIC_RECORD,
+        state: 'draft',
+        review: { can_start_now: false, needs: [{ type: 'connection', service: 'code' }] },
+      };
+      const changed = vi.fn();
+      let connected = false;
+      let activeState: 'expired' | 'cancelled' | 'failed' | undefined;
+      vi.spyOn(connectionClient, 'check').mockImplementation(async () => ({
+        owner: 'owner',
+        ready: connected,
+        checked_at: new Date().toISOString(),
+        active_state: activeState,
+        services: [
+          {
+            service: 'code',
+            display_name: 'Code host',
+            kind: 'nyxid',
+            state: connected ? 'satisfied' : 'missing',
+            connection_mode: 'hosted',
+          },
+        ],
+      }));
+      vi.spyOn(connectionClient, 'start').mockImplementation(async (_target, active) => ({
+        ...active,
+        owner: 'owner',
+        hosted_url: 'https://identity.example.test/connect',
+        expires_at: new Date(
+          Date.now() + (ending === 'local deadline' ? 1000 : 600000),
+        ).toISOString(),
+      }));
+      render(<ReviewCard client={client} record={record} onChanged={changed} onClose={vi.fn()} />);
+      await act(async () => undefined);
+      fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
+      await act(async () => undefined);
+      expect(connectionClient.start).toHaveBeenCalledOnce();
+      if (ending !== 'local deadline') activeState = ending;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(screen.getByRole('alert')).toHaveTextContent('This sign-in did not finish.');
+      expect(client.requests.start).not.toHaveBeenCalled();
+      connected = true;
+      activeState = undefined;
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(client.requests.start).not.toHaveBeenCalled();
+      expect(client.requests.createOrResume).not.toHaveBeenCalled();
+      expect(changed).not.toHaveBeenCalled();
+      fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(4000);
+      });
+      expect(client.requests.start).toHaveBeenCalledOnce();
+      expect(client.requests.start).toHaveBeenCalledWith(
+        record.id,
+        expect.anything(),
+        expect.anything(),
+      );
+      expect(client.requests.createOrResume).not.toHaveBeenCalled();
+    },
+  );
   it('continues the same Draft through Start once a hosted connection is satisfied', async () => {
     vi.useFakeTimers();
     vi.spyOn(window, 'open').mockReturnValue(null);
