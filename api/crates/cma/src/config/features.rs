@@ -77,6 +77,8 @@ pub(crate) struct FeatureFlags {
     pub trigger_command_admission: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
+    /// Gated writer for the stable proxy replay principal (reader floor landed first).
+    pub nyxid_proxy_replay_principal: bool,
     pub service_authorization: bool,
     pub silent_sign_in: bool,
     pub document_revocation_reserve: bool,
@@ -269,6 +271,10 @@ impl FeatureFlags {
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
             nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
+            nyxid_proxy_replay_principal: flag(
+                lookup,
+                "CHRONO_NYXID_PROXY_REPLAY_PRINCIPAL_ENABLED",
+            )?,
             service_authorization: flag(lookup, "CHRONO_SERVICE_AUTHORIZATION_ENABLED")?,
             silent_sign_in: flag(lookup, "CHRONO_SILENT_SIGN_IN_ENABLED")?,
             document_revocation_reserve: flag(
