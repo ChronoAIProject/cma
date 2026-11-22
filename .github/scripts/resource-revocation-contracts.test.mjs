@@ -22,6 +22,7 @@ const schedules = releaseSchedules();
 // These are fabricated observer reports for checker tests, not candidate runs.
 function observation(schedule, origin = 'synthetic') {
   let shared = 0;
+  const chunks = [0, 0];
   let closed = false;
   const registered = schedule.actions.indexOf('register_body_attempt') < schedule.actions.indexOf('freeze_commit');
   const authorized = registered && schedule.actions.indexOf('final_check_attempt') < schedule.actions.indexOf('freeze_commit');
@@ -31,10 +32,14 @@ function observation(schedule, origin = 'synthetic') {
     identity: Object.fromEntries(['operation', 'grant', 'release', 'api_boot'].map(key => [key, hash(key + schedule.id)])),
     events: [...schedule.actions, 'observation_complete'].map((action, index) => {
       if (action === 'close_body' || action === 'close_release_gate') closed = true;
-      if (action.includes('handoff_attempt') && authorized && !closed) shared += 8;
+      if (action.includes('handoff_attempt') && authorized && !closed) {
+        chunks[action === 'chunk_0_handoff_attempt' ? 0 : 1] += 8;
+        shared += 8;
+      }
       return {
         action, sequence: index + 1, elapsed_ms: index * 10,
         private_bytes_total: shared,
+        private_bytes_by_chunk: [...chunks],
         owner_bytes_total: action === 'observation_complete' ? 12 : 0,
         buffered_private_bytes: 0,
         ...(action === 'read_source_attempt' ? { source_private_bytes: registered ? 16 : 0 } : {}),
@@ -168,7 +173,7 @@ test('remaining buffered private data at durable acknowledgment fails', () => {
 
 test('a passing denial without the promised shared positive stays blocked', () => {
   const row = observation(schedules[0]);
-  row.events.forEach(event => { event.private_bytes_total = 0; });
+  row.events.forEach(event => { event.private_bytes_total = 0; event.private_bytes_by_chunk = [0, 0]; });
   assert.deepEqual(evaluateReleaseTrace(schedules[0], row, binding).reasons, ['missing_shared_release_positive']);
 });
 
@@ -192,7 +197,7 @@ test('denial-only attempts cannot stand in for a body paused between private chu
     const actions = schedules[index].actions;
     if (actions.indexOf('chunk_0_handoff_attempt') < actions.indexOf('effective_commit') &&
         actions.indexOf('effective_commit') < actions.indexOf('chunk_1_handoff_attempt'))
-      rows[index].events.forEach(event => { event.private_bytes_total = 0; });
+      rows[index].events.forEach(event => { event.private_bytes_total = 0; event.private_bytes_by_chunk = [0, 0]; });
   }
   const report = checkReleaseCampaign(binding, rows);
   assert.equal(report.status, 'blocked');
@@ -209,6 +214,119 @@ test('a refused final check cannot stand in for a body paused before its first c
   const report = checkReleaseCampaign(binding, rows);
   assert.equal(report.status, 'blocked');
   assert(report.errors.includes('missing_pause_before_first_chunk'));
+});
+
+const between = actions => actions.indexOf('chunk_0_handoff_attempt') < actions.indexOf('effective_commit') &&
+  actions.indexOf('effective_commit') < actions.indexOf('chunk_1_handoff_attempt');
+function moveBytesToSource(row) {
+  const total = row.events.at(-1).private_bytes_total;
+  const source = row.events.findIndex(event => event.action === 'read_source_attempt');
+  row.events.forEach((event, index) => {
+    event.private_bytes_total = index < source ? 0 : total;
+    event.private_bytes_by_chunk = [event.private_bytes_total, 0];
+  });
+}
+const firstChunkDelta = row => {
+  const index = row.events.findIndex(event => event.action === 'chunk_0_handoff_attempt');
+  return row.events[index].private_bytes_total - row.events[index - 1].private_bytes_total;
+};
+
+test('source-read bytes before final authority and the first handoff cannot pass', () => {
+  const schedule = schedules.find(row => between(row.actions) && observation(row).events.at(-1).private_bytes_total > 0);
+  const valid = observation(schedule, 'candidate');
+  assert.equal(evaluateReleaseTrace(schedule, valid, binding).status, 'pass');
+  assert.equal(firstChunkDelta(valid), 8);
+  const invalid = structuredClone(valid);
+  moveBytesToSource(invalid);
+  assert.equal(invalid.events.find(event => event.action === 'read_source_attempt').private_bytes_total, 8);
+  assert.equal(firstChunkDelta(invalid), 0);
+  assert.notEqual(evaluateReleaseTrace(schedule, invalid, binding).status, 'pass');
+});
+
+test('a campaign with source-read bytes replacing every first-chunk positive cannot pass', () => {
+  const rows = schedules.map(schedule => observation(schedule, 'candidate'));
+  let changed = 0;
+  for (let index = 0; index < rows.length; index++) {
+    if (between(schedules[index].actions) && rows[index].events.at(-1).private_bytes_total > 0) {
+      moveBytesToSource(rows[index]);
+      changed++;
+    }
+  }
+  assert.equal(changed, 39);
+  assert(rows.every((row, index) => !between(schedules[index].actions) || firstChunkDelta(row) === 0));
+  const report = checkReleaseCampaign(binding, rows);
+  assert.notEqual(report.status, 'pass');
+  assert(report.errors.includes('missing_pause_between_chunks'));
+  assert.equal(report.qualification, 'not_assessed');
+  assert.equal(report.activation_authorized, false);
+});
+
+test('first-chunk handoff sampled at a later non-chunk action still supplies coverage', () => {
+  const schedule = schedules.find(row => between(row.actions) &&
+    row.actions[row.actions.indexOf('chunk_0_handoff_attempt') + 1] === 'revoke_request');
+  const row = observation(schedule, 'candidate');
+  const chunk = row.events.find(event => event.action === 'chunk_0_handoff_attempt');
+  chunk.private_bytes_total = 0;
+  chunk.private_bytes_by_chunk = [0, 0];
+  const later = row.events.find(event => event.action === 'revoke_request');
+  assert.equal(later.private_bytes_by_chunk[0], 8);
+  assert.equal(firstChunkDelta(row), 0);
+  const result = evaluateReleaseTrace(schedule, row, binding);
+  assert.equal(result.status, 'pass');
+  assert.equal(result.counters.first_chunk_bytes_before_effective, 8);
+  const rows = schedules.map(item => {
+    if (item.id === schedule.id) return row;
+    const input = observation(item, 'candidate');
+    if (between(item.actions)) input.events.forEach(event => {
+      event.private_bytes_total = 0;
+      event.private_bytes_by_chunk = [0, 0];
+    });
+    return input;
+  });
+  const report = checkReleaseCampaign(binding, rows);
+  assert.equal(report.status, 'pass');
+  assert(!report.errors.includes('missing_pause_between_chunks'));
+});
+
+test('a later chunk cannot supply bytes before its own handoff attempt', () => {
+  const schedule = schedules.find(row => between(row.actions) && observation(row).events.at(-1).private_bytes_total > 0);
+  const row = observation(schedule);
+  row.events.forEach(event => { event.private_bytes_by_chunk = [0, event.private_bytes_total]; });
+  const result = evaluateReleaseTrace(schedule, row, binding);
+  assert.equal(result.status, 'fail');
+  assert(result.reasons.includes('private_bytes_before_chunk_handoff'));
+});
+
+test('bytes sampled at final authorization cannot count as a later handoff', () => {
+  const row = observation(schedules[0]);
+  row.events.find(event => event.action === 'final_check_attempt').private_bytes_total = 8;
+  row.events.find(event => event.action === 'final_check_attempt').private_bytes_by_chunk = [8, 0];
+  const result = evaluateReleaseTrace(schedules[0], row, binding);
+  assert.equal(result.status, 'fail');
+  assert(result.reasons.includes('private_bytes_before_first_handoff'));
+});
+
+test('aggregate-only reports stay blocked without chunk attribution', () => {
+  const row = observation(schedules[0]);
+  row.events.forEach(event => { delete event.private_bytes_by_chunk; });
+  assert.deepEqual(evaluateReleaseTrace(schedules[0], row, binding).reasons, ['missing_or_invalid_chunk_counters']);
+});
+
+test('chunk counters must be bounded, complete and equal the observed aggregate', () => {
+  for (const counts of [null, [], [0], [0, 0, 0], ['0', 0], [-1, 0], [Number.MAX_SAFE_INTEGER + 1, 0]]) {
+    const row = observation(schedules[0]);
+    row.events[0].private_bytes_by_chunk = counts;
+    assert.deepEqual(evaluateReleaseTrace(schedules[0], row, binding).reasons, ['missing_or_invalid_chunk_counters']);
+  }
+  const row = observation(schedules[0]);
+  row.events.at(-1).private_bytes_by_chunk = [8, 7];
+  assert.deepEqual(evaluateReleaseTrace(schedules[0], row, binding).reasons, ['chunk_byte_total_mismatch']);
+});
+
+test('chunk counters cannot reset or move earlier bytes into another chunk', () => {
+  const row = observation(schedules[0]);
+  row.events.at(-1).private_bytes_by_chunk = [0, 16];
+  assert.deepEqual(evaluateReleaseTrace(schedules[0], row, binding).reasons, ['nonmonotonic_chunk_observation']);
 });
 
 test('counter reset cannot hide an earlier late handoff', () => {

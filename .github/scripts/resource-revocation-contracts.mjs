@@ -90,6 +90,7 @@ export function evaluateReleaseTrace(schedule, observation, binding) {
     return blocked('missing_zero_counter_baseline');
   const at = action => events.findIndex(event => event.action === action);
   const effective = at('effective_commit');
+  const chunks = [at('chunk_0_handoff_attempt'), at('chunk_1_handoff_attempt')];
   const sourceBytes = events[at('read_source_attempt')].source_private_bytes;
   const authorized = events[at('final_check_attempt')].authorized;
   if (!integer(sourceBytes) || typeof authorized !== 'boolean')
@@ -100,6 +101,7 @@ export function evaluateReleaseTrace(schedule, observation, binding) {
   for (let index = 0; index < events.length; index++) {
     const event = events[index];
     const delta = event.private_bytes_total - (events[index - 1]?.private_bytes_total ?? 0);
+    if (index < chunks[0] && delta > 0) failures.add('private_bytes_before_first_handoff');
     if (index > effective && delta > 0) failures.add('private_bytes_after_effective');
     if (index > gate && delta > 0) failures.add('private_bytes_after_local_close');
     if (registrationRefused && event.private_bytes_total > 0)
@@ -118,6 +120,21 @@ export function evaluateReleaseTrace(schedule, observation, binding) {
     source_private_bytes: sourceBytes,
   };
   if (failures.size) return { ...result, status: 'fail', reasons: [...failures] };
+  // Each sample includes counters attributed at the actual transport handoff.
+  // Async sends may become visible at later action samples, not just chunk steps.
+  // Aggregate bytes alone cannot establish which chunk was handed off.
+  for (let index = 0; index < events.length; index++) {
+    const counts = events[index].private_bytes_by_chunk;
+    if (!Array.isArray(counts) || counts.length !== 2 || !counts.every(integer))
+      return blocked('missing_or_invalid_chunk_counters');
+    if (counts[0] + counts[1] !== events[index].private_bytes_total)
+      return blocked('chunk_byte_total_mismatch');
+    if (index && counts.some((count, chunk) => count < events[index - 1].private_bytes_by_chunk[chunk]))
+      return blocked('nonmonotonic_chunk_observation');
+    if (counts.some((count, chunk) => count > 0 && index < chunks[chunk]))
+      return { ...result, status: 'fail', reasons: ['private_bytes_before_chunk_handoff'] };
+  }
+  result.counters.first_chunk_bytes_before_effective = events[effective - 1].private_bytes_by_chunk[0];
   if (last.private_bytes_total > 0 && sourceBytes === 0) return blocked('missing_private_source_positive');
   if (result.counters.owner_bytes_after_effective === 0) return blocked('missing_independent_owner_positive');
   const beforeRevoke = at('chunk_1_handoff_attempt') < at('revoke_request');
@@ -172,7 +189,7 @@ export function checkReleaseCampaign(binding, observations) {
     errors.push('missing_pause_before_first_chunk');
   if (!covers((actions, row) => actions.indexOf('chunk_0_handoff_attempt') < actions.indexOf('effective_commit') &&
       actions.indexOf('effective_commit') < actions.indexOf('chunk_1_handoff_attempt') &&
-      row.counters.private_bytes_total > 0))
+      row.counters.first_chunk_bytes_before_effective > 0))
     errors.push('missing_pause_between_chunks');
   const failed = attempts.filter(row => row.status === 'fail').length;
   const blocked = attempts.filter(row => row.status === 'blocked').length;
