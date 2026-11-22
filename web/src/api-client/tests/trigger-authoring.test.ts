@@ -180,7 +180,7 @@ describe('Trigger authoring', () => {
             system_prompt: 'Inspect the project.',
             services: [],
           },
-          workspace: { repository: { url: 'https://github.com/example/repo', reference: 'main' } },
+          workspace: { repository: { url: 'https://github.com/example/repo', ref: 'main' } },
         },
       },
     };

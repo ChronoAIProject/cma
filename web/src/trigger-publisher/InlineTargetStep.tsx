@@ -66,7 +66,7 @@ export function InlineTargetStep({
     updateTarget({ ...target, agent: { ...target.agent, ...patch } });
   const workspace = target.workspace ?? {};
   const repository = workspace.repository;
-  const setRepository = (next: { url: string; reference?: string } | undefined) =>
+  const setRepository = (next: { url: string; ref?: string } | undefined) =>
     updateTarget({
       ...target,
       workspace: next === undefined ? undefined : { repository: next },
@@ -228,19 +228,19 @@ export function InlineTargetStep({
           aria-invalid={errors['target.inline.workspace.repository'] !== undefined}
           onChange={(event) => {
             const url = event.target.value;
-            setRepository(url === '' ? undefined : { url, reference: repository?.reference });
+            setRepository(url === '' ? undefined : { url, ref: repository?.ref });
           }}
         />
         <Input
           aria-label="GitHub repository ref"
-          value={repository?.reference ?? ''}
+          value={repository?.ref ?? ''}
           disabled={disabled || repository === undefined}
           placeholder="main (optional)"
           onChange={(event) =>
             setRepository(
               repository === undefined
                 ? undefined
-                : { url: repository.url, reference: event.target.value || undefined },
+                : { url: repository.url, ref: event.target.value || undefined },
             )
           }
         />
