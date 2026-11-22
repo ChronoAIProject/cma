@@ -1,4 +1,7 @@
-use super::super::super::proof::summary_tests::{metadata, policy};
+use super::super::super::proof::{
+    ingress::assert_open_transaction,
+    summary_tests::{metadata, policy},
+};
 use super::*;
 use crate::store::agents::agent_document;
 use crate::store::sandbox_maintenance::mongo_integration_tests::{database, fixture};
@@ -260,12 +263,7 @@ async fn legacy_context_keeps_metadata_only_semantics_and_the_callers_transactio
                 ),
                 other => panic!("legacy context changed for {case}: {other:?}"),
             }
-            super::super::super::proof::ingress::assert_open_transaction(
-                &store,
-                &mut session,
-                "context-marker",
-            )
-            .await;
+            assert_open_transaction(&store, &mut session, "context-marker").await;
             session.abort_transaction().await.unwrap();
             assert_eq!(root.available_bytes(), idle);
         }
@@ -409,12 +407,7 @@ async fn proof_refusal_cancellation_and_driver_failures_keep_original_ownership(
             Err(error) => assert!(matches!(error, AdmittedError::Refused(_))),
         }
         drop(pressure);
-        super::super::super::proof::ingress::assert_open_transaction(
-            &store,
-            &mut session,
-            "proof-refusal-marker",
-        )
-        .await;
+        assert_open_transaction(&store, &mut session, "proof-refusal-marker").await;
     }
     let mut nested = doc! {"leaf":true};
     for _ in 0..66 {
@@ -435,12 +428,7 @@ async fn proof_refusal_cancellation_and_driver_failures_keep_original_ownership(
         .await,
         Err(AdmittedError::Unsupported(_))
     ));
-    super::super::super::proof::ingress::assert_open_transaction(
-        &store,
-        &mut session,
-        "proof-refusal-marker",
-    )
-    .await;
+    assert_open_transaction(&store, &mut session, "proof-refusal-marker").await;
     session.abort_transaction().await.unwrap();
     let mut options =
         mongodb::options::ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
