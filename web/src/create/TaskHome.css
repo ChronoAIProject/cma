@@ -176,6 +176,20 @@
   color: var(--dsw-alias-label-secondary);
   font-size: var(--text-note);
 }
+.task-home__first-mascot {
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  width: min(100%, 560px);
+  height: 104px;
+  overflow: hidden;
+}
+.task-home__decoration {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
 .task-home[data-first-visit] {
   max-width: 900px;
   padding-top: var(--space-8);
