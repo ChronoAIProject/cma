@@ -39,12 +39,7 @@ pub(super) async fn read_only_summary(
     session: &mut mongodb::ClientSession,
     snapshot: bool,
 ) -> Result<Option<LogSummary>, TransactionLogError> {
-    if row.contains_key(QUARANTINE_FIELD) {
-        return Err(TransactionLogError::Domain(SandboxStoreError::Corrupt(
-            "Agent log integrity is quarantined".into(),
-        )));
-    }
-    let parsed = parse_integrity(row)?;
+    let parsed = parse_summary_metadata(row)?;
     let Some(integrity) = parsed else {
         if agent.conversation.last_seq == 0
             && point_read(
@@ -64,29 +59,7 @@ pub(super) async fn read_only_summary(
         }
         return Ok(None);
     };
-    if integrity.head_seq > agent.conversation.last_seq
-        || integrity.bound_agent_revision > agent.revision
-    {
-        return Err(SandboxStoreError::Corrupt(
-            "Agent log integrity is ahead of the Agent head or revision".into(),
-        )
-        .into());
-    }
-    let stale = integrity.head_seq < agent.conversation.last_seq
-        || integrity.bound_agent_revision != agent.revision;
-    if integrity.history_identity != history_identity(agent)
-        || integrity.entry_count != integrity.head_seq
-        || integrity.entry_count > PHYSICAL_AGENT_LOG_ENTRIES
-        || integrity.encoded_bytes > PHYSICAL_AGENT_LOG_BYTES
-        || (integrity.head_seq == 0
-            && (integrity.encoded_bytes != 0 || integrity.head_hash != [0_u8; HASH_BYTES]))
-        || integrity.semantic.through_seq != integrity.head_seq
-        || (!stale && integrity.semantic.valid && !integrity.semantic.matches_agent(agent))
-    {
-        return Err(
-            SandboxStoreError::Corrupt("Agent log integrity metadata is corrupt".into()).into(),
-        );
-    }
+    let stale = validate_metadata(agent, &integrity)?;
     if integrity.head_seq > 0 {
         let raw = point_read(
             store,
@@ -137,6 +110,44 @@ pub(super) async fn read_only_summary(
         head_hash: integrity.head_hash,
         semantic: Some(integrity.semantic),
     }))
+}
+
+fn parse_summary_metadata(row: &Document) -> Result<Option<LogIntegrity>, SandboxStoreError> {
+    if row.contains_key(QUARANTINE_FIELD) {
+        return Err(SandboxStoreError::Corrupt(
+            "Agent log integrity is quarantined".into(),
+        ));
+    }
+    parse_integrity(row)
+}
+
+pub(super) fn validate_metadata(
+    agent: &Agent,
+    integrity: &LogIntegrity,
+) -> Result<bool, SandboxStoreError> {
+    if integrity.head_seq > agent.conversation.last_seq
+        || integrity.bound_agent_revision > agent.revision
+    {
+        return Err(SandboxStoreError::Corrupt(
+            "Agent log integrity is ahead of the Agent head or revision".into(),
+        ));
+    }
+    let stale = integrity.head_seq < agent.conversation.last_seq
+        || integrity.bound_agent_revision != agent.revision;
+    if integrity.history_identity != history_identity(agent)
+        || integrity.entry_count != integrity.head_seq
+        || integrity.entry_count > PHYSICAL_AGENT_LOG_ENTRIES
+        || integrity.encoded_bytes > PHYSICAL_AGENT_LOG_BYTES
+        || (integrity.head_seq == 0
+            && (integrity.encoded_bytes != 0 || integrity.head_hash != [0_u8; HASH_BYTES]))
+        || integrity.semantic.through_seq != integrity.head_seq
+        || (!stale && integrity.semantic.valid && !integrity.semantic.matches_agent(agent))
+    {
+        return Err(SandboxStoreError::Corrupt(
+            "Agent log integrity metadata is corrupt".into(),
+        ));
+    }
+    Ok(stale)
 }
 
 fn validate_tail(
