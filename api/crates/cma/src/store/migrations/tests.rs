@@ -11,6 +11,7 @@ mod segments;
 mod segments_runtime;
 mod source_keys;
 pub(super) mod startup_ddl;
+mod usage_capture;
 
 fn identity() -> ledger::Identity {
     ledger::Identity::new(

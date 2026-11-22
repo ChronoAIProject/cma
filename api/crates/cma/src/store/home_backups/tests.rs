@@ -1,4 +1,8 @@
 use super::*;
+#[path = "evidence_export_snapshot_tests.rs"]
+mod evidence_export_snapshot_tests;
+#[path = "evidence_export_tests.rs"]
+mod evidence_export_tests;
 
 #[path = "expiry_worker_tests.rs"]
 mod expiry_worker;
