@@ -129,3 +129,5 @@ pub(in crate::store) async fn legacy_proof_for_context(
     let trusted = proof.is_some() && store.bounded_log_enabled(agent_id);
     Ok(trusted)
 }
+
+pub(in crate::store) use super::proof::ingress::ExpectedTail;

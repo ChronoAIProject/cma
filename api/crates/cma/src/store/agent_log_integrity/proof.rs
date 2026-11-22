@@ -290,10 +290,6 @@ impl MongoSandboxStore {
     /// Preserve the original point read, including id-only probes and telemetry.
     /// Query/driver work requires the caller's separately qualified read plan.
     /// The raw owner is not a decoded tail or a trusted-prefix proof.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "enabled recording awaits driver resource custody")
-    )]
     pub(in crate::store) fn integrity_point_read_admitted<'a, I>(
         &'a self,
         session: &'a mut mongodb::ClientSession,
@@ -320,3 +316,6 @@ impl MongoSandboxStore {
         )
     }
 }
+
+#[path = "proof_ingress.rs"]
+pub(super) mod ingress;
