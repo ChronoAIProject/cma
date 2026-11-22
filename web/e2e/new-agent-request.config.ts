@@ -24,6 +24,7 @@ export default defineConfig({
     'new-agent-request.check.ts',
     'task-draft-ownership.check.ts',
     'task-templates.check.ts',
+    'public-journeys.check.ts',
   ],
   workers: 1,
   retries: 0,

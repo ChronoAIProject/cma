@@ -20,6 +20,7 @@ mod period_storage;
 mod requests;
 mod source;
 mod spend_ledger;
+pub(super) use spend_ledger::RegistrationReader;
 mod stop_authority;
 mod transitions;
 pub(super) use cancellation::release_unexecuted;

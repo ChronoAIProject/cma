@@ -188,6 +188,30 @@ fn target() -> ConnectionTarget {
         id: layer2_core::AgentId("agent".into()),
     }
 }
+
+pub(crate) fn authorization_fixture() -> Arc<BrowserConnections> {
+    struct OwnerTargets;
+
+    #[async_trait::async_trait]
+    impl ConnectionTargets for OwnerTargets {
+        async fn services(
+            &self,
+            caller: &Caller,
+            selected: &ConnectionTarget,
+        ) -> Result<Vec<ServiceId>, ConnectionError> {
+            if caller.subject.as_str() != "owner" || *selected != target() {
+                return Err(ConnectionError::NotFound);
+            }
+            Ok(["api-drive", "api-github", CODEX_SUBSCRIPTION_CONNECTION]
+                .map(ServiceId::new)
+                .to_vec())
+        }
+    }
+
+    let (mut connections, _, _, _) = fixture();
+    connections.targets = Arc::new(OwnerTargets);
+    Arc::new(connections)
+}
 fn active() -> ActiveConnection {
     ActiveConnection {
         service_id: ServiceId::new(CODEX_SUBSCRIPTION_CONNECTION),

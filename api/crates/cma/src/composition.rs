@@ -4,6 +4,7 @@ mod account_deletion;
 pub(crate) mod activity;
 mod adapter;
 mod agent_manager;
+pub(crate) mod backend_free;
 mod bindings;
 mod bots;
 mod capacity_recovery;
@@ -33,7 +34,6 @@ use crate::{
     store::{DefaultProfileSpec, MongoStores},
     trigger::{TriggerComposition, TriggerCompositionDependencies},
 };
-use axum::Router;
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
     profiles::authoring::ProfileAuthoringService,

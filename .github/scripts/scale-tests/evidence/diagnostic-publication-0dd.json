@@ -3,7 +3,7 @@
   "application_source": "aadd212c2810fb12d443998e3cf75bab2fd670cf",
   "source_binding_sha256": "5ae8cc8af6291fd2f216221e324085e22aee29159b5948a067fc0caeedfb24b2",
   "original_result": {
-    "path": "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/integration-aadd212/stages-0dd/mongo-process-results.json",
+    "path": "tech-lead.staff/developer-17/evidence/integration-aadd212/stages-0dd/mongo-process-results.json",
     "sha256": "99f2033c552ea9a8613288b7d74d6f19ad4a13d0168f1a48f3bc7676ea72bf8d"
   },
   "published_result": {
@@ -21,7 +21,7 @@
     "cleanup-0dd.json": "f5b7b9ccb4d1d741aa6773e3927f5e1e8b93475fd521e0ee8b8d7d6a26b176a1"
   },
   "retained_invocation_log": {
-    "path": "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/integration-aadd212/stages-0dd/invocation.log",
+    "path": "tech-lead.staff/developer-17/evidence/integration-aadd212/stages-0dd/invocation.log",
     "sha256": "5ccfe85585c00e6491198b7ef6f757a4cc9bb25bf4c670c4b17df93e91e1c97c",
     "kind": "sanitized runner output and normal-slot resource gate"
   },

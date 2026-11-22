@@ -26,9 +26,12 @@
 
 /*
  * A drag writes widths at pointer cadence. Easing them would leave the column
- * trailing the handle, which reads as lag rather than as smoothness.
+ * trailing the handle, which reads as lag rather than as smoothness. A frame
+ * still resolving its first measured width has no earlier layout to ease from:
+ * animating its placeholder slid every control under the pointer on arrival.
  */
-.frame[data-dragging] {
+.frame[data-dragging],
+.frame[data-measuring] {
   transition: none;
 }
 
@@ -194,7 +197,8 @@
   transition: left var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
-.frame[data-dragging] .frame__handle {
+.frame[data-dragging] .frame__handle,
+.frame[data-measuring] .frame__handle {
   transition: none;
 }
 

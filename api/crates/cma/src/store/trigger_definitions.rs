@@ -21,6 +21,7 @@ use super::schema::initialize_collections;
 
 pub(in crate::store) use launches::decode_launch_aggregate;
 pub(in crate::store) use launches::input_protocol::require_document as require_input_protocol_document;
+pub(super) use launches::LAUNCHES;
 
 pub(in crate::store) use launches::due_filter;
 mod admission;

@@ -58,6 +58,7 @@ pub enum HttpProblem {
     PublicStreamCapacityExhausted,
     RuntimeRequestCapacityExhausted,
     RuntimeStreamCapacityExhausted,
+    SandboxBackendUnavailable,
     RelayObserverCapacityExhausted,
     RelayCapacityExhausted,
     BufferedReadCapacityExhausted,
@@ -110,6 +111,12 @@ impl IntoResponse for HttpProblem {
                 "request-budget-unavailable",
                 "Request capacity is temporarily unavailable.",
                 "request_budget_unavailable",
+            ),
+            Self::SandboxBackendUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "sandbox-backend-unavailable",
+                "Sandbox execution is unavailable in this deployment.",
+                "sandbox_backend_unavailable",
             ),
             Self::RequestTooLarge => (
                 StatusCode::PAYLOAD_TOO_LARGE,
