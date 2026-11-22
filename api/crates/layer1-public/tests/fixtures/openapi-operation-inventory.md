@@ -649,6 +649,7 @@ volume; CMA does not expose a Sandbox snapshot archive endpoint.
 | `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables` | - | - | 200 AnswerDeliverablesView |
 | `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}` | - | `verify` (default false) | 200 AnswerDeliverableReadingView |
 | `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download` | - | - | 200 opaque attachment; 409 changed bytes |
+| `POST /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation` | TaskDeliveryConfirmation | - | 200 TaskAcceptanceView |
 
 Selectors are `{kind:"agent_artifact",id}`, `{kind:"document",id,revision}` or
 `{kind:"live_file",path}`. The descriptor validates the resource's own access and

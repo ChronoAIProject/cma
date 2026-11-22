@@ -23,6 +23,11 @@ mod shapes;
 mod tests;
 use shapes::{V2QueuedCancellation, V2QueuedCancellationObservation, V2QueuedCancellationRequest};
 
+/// Internal routing signal after the authorized local handler identifies a
+/// queued Trigger projection that needs a different Agent Manager.
+#[derive(Clone)]
+pub struct QueuedCancellationNeedsOwner;
+
 type Auth = Result<AuthenticatedResourceCaller, crate::auth::NotAuthenticated>;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]

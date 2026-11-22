@@ -11,6 +11,8 @@ REASONS = frozenset({
     "preflight",
     # chrono-cd stored a generation but never applied it; an operator must apply it.
     "apply-abandoned",
+    # Production: Agent Manager runs more replicas than its release budget covers.
+    "am-replicas",
 })
 
 

@@ -1,6 +1,7 @@
-import { useId, useState } from 'react';
+import { useId } from 'react';
 import type { ReactNode } from 'react';
 import { Picker } from '../ui/Picker';
+import { Button } from '../ui/Button';
 import { IconPersonalizationOutline16 } from '../ui/icons';
 import { navigationStatuses, type NavigationView } from './navigationStatuses';
 export { navigationStatuses, type NavigationView } from './navigationStatuses';
@@ -10,10 +11,12 @@ export function NavigationFilters({
   scopeSummary,
   scopeActive = false,
   view,
+  onView,
+  open,
+  onOpenChange,
   status,
   onStatus,
   onClear,
-  onManageEnvironments,
 }: {
   readonly scope?: ReactNode;
   /** The chosen scope in words, for the summary line when it is not the default. */
@@ -21,12 +24,13 @@ export function NavigationFilters({
   /** Whether the scope differs from the default, Personal. */
   readonly scopeActive?: boolean;
   readonly view: NavigationView;
+  readonly onView: (view: NavigationView) => void;
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
   readonly status: string;
   readonly onStatus: (status: string) => void;
   readonly onClear?: () => void;
-  readonly onManageEnvironments?: () => void;
 }) {
-  const [open, setOpen] = useState(false);
   const panelId = useId();
   const summaryId = useId();
   const filtered = scopeActive || status !== 'all';
@@ -42,9 +46,20 @@ export function NavigationFilters({
   return (
     <div className="navigation-filters">
       <div className="navigation-filters__bar">
-        <span className="navigation-filters__heading">
-          {view === 'agent' ? 'Tasks' : 'Environments'}
-        </span>
+        <div className="navigation-filters__views" role="group" aria-label="Navigation view">
+          {(['agent', 'sandbox'] as const).map((option) => (
+            <Button
+              key={option}
+              size="sm"
+              variant={view === option ? 'toolbar' : 'ghost'}
+              aria-pressed={view === option}
+              data-navigation-mode={option}
+              onClick={() => onView(option)}
+            >
+              {option === 'agent' ? 'Tasks' : 'Environments'}
+            </Button>
+          ))}
+        </div>
         <button
           type="button"
           className="navigation-filters__toggle"
@@ -53,7 +68,7 @@ export function NavigationFilters({
           aria-expanded={open}
           aria-controls={panelId}
           aria-describedby={described ? summaryId : undefined}
-          onClick={() => setOpen((wasOpen) => !wasOpen)}
+          onClick={() => onOpenChange(!open)}
         >
           <IconPersonalizationOutline16 />
           {filtered ? <span className="navigation-filters__dot" aria-hidden="true" /> : null}
@@ -96,20 +111,6 @@ export function NavigationFilters({
             Clear filters
           </button>
         )}
-        {view === 'agent' && onManageEnvironments ? (
-          <div className="navigation-filters__actions">
-            <button
-              type="button"
-              className="navigation-filters__manage"
-              onClick={() => {
-                setOpen(false);
-                onManageEnvironments();
-              }}
-            >
-              Manage environments
-            </button>
-          </div>
-        ) : null}
       </div>
     </div>
   );

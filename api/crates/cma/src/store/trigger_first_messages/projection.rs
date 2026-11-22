@@ -42,6 +42,7 @@ pub(in crate::store) async fn project_terminal(
     if first.state != FirstMessageDelivery::Queued {
         return Ok(());
     }
+    store.fence_agent_effect(&agent.id, session).await?;
     let at = command
         .work
         .failure

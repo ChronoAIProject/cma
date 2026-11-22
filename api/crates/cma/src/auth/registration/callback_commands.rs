@@ -50,7 +50,7 @@ impl ActivityStore for Directory {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
-async fn unactivated_unlimited_callback_checks_activation_once_without_writes() {
+async fn unactivated_unlimited_callback_fences_settings_without_cohort_writes() {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let trace = Arc::new(Mutex::new(Vec::new()));
     let observed = trace.clone();
@@ -105,13 +105,26 @@ async fn unactivated_unlimited_callback_checks_activation_once_without_writes() 
                 .unwrap(),
             RegistrationDecision::Admitted
         );
+        let commands = trace.lock().unwrap().clone();
         assert_eq!(
-            *trace.lock().unwrap(),
-            vec![
-                ("find".into(), "users".into()),
-                ("find".into(), "platform_settings".into()),
-                ("find".into(), "sandbox_admissions".into())
-            ]
+            commands
+                .iter()
+                .filter(|(command, collection)| command == "update"
+                    && collection == "platform_settings")
+                .count(),
+            1
+        );
+        assert!(!commands
+            .iter()
+            .any(|(command, collection)| collection == "sandbox_admissions" && command != "find"));
+        assert_eq!(
+            client
+                .database(&name)
+                .collection::<Document>("sandbox_admissions")
+                .count_documents(doc! {})
+                .await
+                .unwrap(),
+            0
         );
     }
     client

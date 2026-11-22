@@ -37,7 +37,12 @@ async fn route_request(
     }
     let private = request.uri().path().starts_with(PREFIX);
     let proof = request.headers().get(PROOF).cloned();
-    let Some(id) = agent_path(request.uri().path(), private) else {
+    let cancellation = queued_cancellation::agent_id(&request);
+    let is_cancellation = cancellation.is_some();
+    if let Some(id) = cancellation.as_ref().filter(|_| proof.is_none()) {
+        return queued_cancellation::try_local(&relay, id, request, next).await;
+    }
+    let Some(id) = cancellation.or_else(|| agent_path(request.uri().path(), private)) else {
         return if private || proof.is_some() {
             StatusCode::FORBIDDEN.into_response()
         } else {
@@ -96,7 +101,7 @@ async fn route_request(
         _ => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
     };
     let mut request = Request::from_parts(parts, Body::from(bytes.clone()));
-    if !private {
+    if !private && !is_cancellation {
         let Some(access) = relay.public_access.get() else {
             return unavailable_with(environment.as_ref(), Refusal::AuthorizationUnavailable);
         };
@@ -198,6 +203,11 @@ async fn route_request(
         }
         request.headers_mut().remove(PROOF);
         request.extensions_mut().insert(VerifiedPeer);
+        if is_cancellation {
+            request
+                .extensions_mut()
+                .insert(queued_cancellation::Charged);
+        }
         destination
     } else {
         if private {
@@ -298,7 +308,7 @@ fn body_limit(path: &str) -> usize {
     }
 }
 
-async fn forward(
+pub(super) async fn forward(
     relay: &Relay,
     destination: Destination,
     request: Request,
@@ -428,69 +438,5 @@ pub(super) fn retain(response: Response, permit: capacity::Permit) -> Response {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn preferences_owner_route_is_exact_and_patch_only() {
-        use axum::http::Method;
-        for method in [
-            Method::GET,
-            Method::HEAD,
-            Method::POST,
-            Method::PUT,
-            Method::DELETE,
-            Method::OPTIONS,
-            Method::PATCH,
-        ] {
-            assert_eq!(
-                needs_owner("/api/v1/agents/agt-example/preferences", &method),
-                method == Method::PATCH
-            );
-        }
-        for path in [
-            "/api/v1/agents/agt-example/preferences/extra",
-            "/api/v1/agents/agt-example/stop",
-            "/api/v1/agents/agt-example",
-            "/api/v1/sandboxes/sbx-example/preferences",
-        ] {
-            assert!(!needs_owner(path, &Method::PATCH), "{path}");
-        }
-    }
-
-    #[test]
-    fn settings_owner_route_is_exact_and_patch_only() {
-        use axum::http::Method;
-        let path = "/api/v1/agents/agt-example/settings";
-        for method in [
-            Method::GET,
-            Method::HEAD,
-            Method::POST,
-            Method::PUT,
-            Method::DELETE,
-            Method::OPTIONS,
-            Method::PATCH,
-        ] {
-            assert_eq!(settings_patch(path, &method), method == Method::PATCH);
-            assert!(
-                !needs_owner(path, &method),
-                "existing routes include {method} {path}"
-            );
-        }
-        for (method, path) in [
-            (Method::PATCH, "/api/v1/agents/agt-example/settings/extra"),
-            (Method::PATCH, "/api/v1/agents//settings"),
-            (Method::PATCH, "/api/v2/agents/agt-example/settings"),
-            (Method::POST, "/api/v1/agents/agt-example/stop"),
-            (Method::DELETE, "/api/v1/agents/agt-example"),
-            (Method::POST, "/api/v1/agents/agt-example/input"),
-            (Method::POST, "/api/v1/agents/agt-example/steer"),
-            (Method::POST, "/api/v1/agui/run"),
-            (Method::GET, "/api/v2/agents/agt-example/queued-inputs"),
-            (Method::POST, "/api/v2/agents/agt-example/responses"),
-        ] {
-            assert!(!settings_patch(path, &method), "{method} {path}");
-            assert!(!needs_owner(path, &method), "{method} {path}");
-        }
-    }
-}
+#[path = "http_tests.rs"]
+mod tests;

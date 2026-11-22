@@ -166,6 +166,7 @@ pub(super) async fn router(f: &Fixture) -> (axum::Router, Arc<CountedStore>) {
         ring::hmac::Key::new(ring::hmac::HMAC_SHA256, b"public-policy-test"),
     )
     .unwrap();
+    relay.enable_settings_owner_routing();
     relay.install_public_access(f.policy.clone()).unwrap();
     let router = relay.routes(axum::Router::new().route(
         "/api/v1/agents/{agent}/{*operation}",

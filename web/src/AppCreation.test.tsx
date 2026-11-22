@@ -1,4 +1,3 @@
-import { expandNavigationFilters } from './test/select';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -97,11 +96,10 @@ it('creates the Agent in the Workspace whose row opened New agent', async () => 
     </AuthContextProvider>,
   );
   const actor = userEvent.setup();
-  await expandNavigationFilters(actor);
   await actor.click(
-    within(screen.getByRole('complementary', { name: 'Application navigation' })).getByRole(
+    within(await screen.findByRole('complementary', { name: 'Application navigation' })).getByRole(
       'button',
-      { name: 'Manage environments' },
+      { name: 'Environments' },
     ),
   );
   await actor.click(

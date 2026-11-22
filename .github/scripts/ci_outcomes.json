@@ -601,9 +601,21 @@
         },
         "GITHUB_READ_FAILED": {
           "title": "GitHub read failed",
-          "meaning": "A GitHub API read failed.",
+          "meaning": "A GitHub API read failed without a transient or permission cause: another HTTP status, an oversized response, or a gh failure whose diagnostic names no network fault.",
           "cause": "unknown",
-          "next": "Re-run the failed jobs; if it repeats, check GitHub's status and the workflow token's permissions."
+          "next": "Open the reported line; if it repeats, compare the read with the GitHub API and the workflow token's permissions."
+        },
+        "GITHUB_READ_TRANSIENT": {
+          "title": "GitHub read unavailable",
+          "meaning": "GitHub API reads kept failing transiently: a 5xx, 408 or 429 response, a rate-limited 403, or no response at all.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs; if it repeats, check GitHub's status."
+        },
+        "GITHUB_READ_DENIED": {
+          "title": "GitHub read denied",
+          "meaning": "GitHub answered an API read with 401, or 403 without rate-limit headers. The workflow fixes the token's permissions, so a 403 that comes and goes is usually a secondary rate limit, not a permission change.",
+          "cause": "operator",
+          "next": "If this read passed in recent runs, re-run the failed jobs. Otherwise an operator must check the allocate job's token permissions (contents, pull-requests, actions) and the Actions settings."
         },
         "GITHUB_RESPONSE_INVALID": {
           "title": "GitHub response invalid",
@@ -622,6 +634,12 @@
           "meaning": "Pushing the reservation tag failed without a collision.",
           "cause": "transient",
           "next": "Re-run the failed jobs."
+        },
+        "RESERVATION_PUSH_REJECTED": {
+          "title": "Reservation push rejected",
+          "meaning": "GitHub declined the atomic reservation push and none of its refs exist: the token may not write tags, or a tag ruleset or hook refused them.",
+          "cause": "operator",
+          "next": "An operator must check the allocate job's contents permission and the rulesets and hooks that cover cma- tags, then re-run the failed jobs."
         },
         "RESERVATION_VERIFY_FAILED": {
           "title": "Reservation not verified",
@@ -643,7 +661,7 @@
         },
         "DEADLINE_EXCEEDED": {
           "title": "Allocation deadline exceeded",
-          "meaning": "Allocation exceeded its 120 second budget.",
+          "meaning": "An allocation attempt, or a GitHub read within it, ran out of its 120 second budget.",
           "cause": "transient",
           "next": "Re-run the failed jobs."
         },
@@ -661,15 +679,39 @@
         },
         "INVENTORY_INCOMPLETE": {
           "title": "Tag inventory incomplete",
-          "meaning": "The version tag inventory was incomplete, or a claim had no durable version.",
+          "meaning": "The version tag inventory could not be read completely.",
           "cause": "transient",
           "next": "Re-run the failed jobs."
+        },
+        "INVENTORY_CLAIM_CONFLICT": {
+          "title": "Claim and reservation differ",
+          "meaning": "A version claim and the pending reservation of its version name different objects in one tag advertisement, so the inventory is damaged and every read repeats it.",
+          "cause": "operator",
+          "next": "An operator must compare the cma-allocation claim with the pending tag of that version and restore the pair one run wrote."
+        },
+        "INVENTORY_CLAIM_ORPHANED": {
+          "title": "Claim listed without a version",
+          "meaning": "A version claim was listed without its pending reservation or its final tag. One listing is not an atomic snapshot, so another job's push or finalization can show this for a moment; allocation reads the inventory again once in the job.",
+          "cause": "transient",
+          "next": "Re-run the failed jobs. If it persists after the re-run, a pending or final tag was deleted, and an operator must restore it for that claim."
+        },
+        "INVENTORY_TOO_LARGE": {
+          "title": "Tag inventory too large",
+          "meaning": "The repository's tag advertisement exceeds the 16 MiB that allocation reads, and grows with every release.",
+          "cause": "operator",
+          "next": "An operator must prune obsolete tags, or raise the bound in staging_cd_allocation_snapshot.py in its own change."
         },
         "RESERVATION_COLLISION": {
           "title": "Reservation collision",
           "meaning": "Another run claimed the planned version slot first.",
           "cause": "transient",
           "next": "Re-run the failed jobs; the next allocation plans a new version."
+        },
+        "RESERVATION_PLAN_INVALID": {
+          "title": "Reservation plan invalid",
+          "meaning": "Planning produced a reservation for a retired component, or for a version the inventory or this plan already holds; an allocator defect, not a race.",
+          "cause": "unknown",
+          "next": "Reproduce allocation from the reported line, fix the planner and add a test; a re-run plans the same reservation."
         },
         "RESERVATION_NOT_VISIBLE": {
           "title": "Reservation not yet visible",
@@ -914,6 +956,12 @@
           "meaning": "The controller reported a refusal reason that this repository does not know; the token is withheld.",
           "cause": "operator",
           "next": "Add the controller's new reason to REASONS in staging_cd_refusal.py and to this catalogue."
+        },
+        "am-replicas": {
+          "title": "Agent Manager scaled beyond the release budget",
+          "meaning": "Agent Manager runs more replicas than the production release budget is sized for (2). A rollout at that count could outlast the deployment window, so the controller refused before any write.",
+          "cause": "operator",
+          "next": "Wait until Agent Manager scales back to its steady-state count, then re-run the deployment. Nothing was changed."
         }
       }
     },
@@ -1202,6 +1250,12 @@
           "meaning": "The controller reported a reason that this repository does not know; the token is withheld.",
           "cause": "operator",
           "next": "Add the controller's new reason to VERIFICATION_REASONS in staging_cd_refusal.py and to this catalogue."
+        },
+        "am-replicas": {
+          "title": "Agent Manager scaled beyond the release budget",
+          "meaning": "Agent Manager ran more replicas than the production release budget is sized for (2), so the rollout could not be proven inside its window.",
+          "cause": "operator",
+          "next": "An operator confirms the deployment state, waits until Agent Manager scales back to its steady-state count, then re-runs the deployment."
         }
       },
       "cause": "operator",

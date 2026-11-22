@@ -57,6 +57,9 @@ class AllocationIO:
                  rand=random.random, seconds=ALLOCATION_SECONDS):
         self.runner, self.clock, self.sleep, self.rand = runner, clock, sleep, rand
         self.deadline = clock() + seconds
+        # Set just before the reservation push runs. From then on the remote may
+        # hold this run's refs, so no refusal may rerun the allocation.
+        self.push_started = False
 
     @property
     def retry(self):
@@ -79,7 +82,10 @@ class AllocationIO:
         status = result.stdout.partition("\n")[0]
         code = status.partition(" ")[2].partition(" ")[0] if status.startswith("HTTP/") else ""
         if result.returncode == 1 and (not code or code == "429" or code.startswith("5")):
-            raise TransientRead("Allocation read failed")
+            # Keep the wait a throttled response asked for, for the caller.
+            head = result.stdout.replace("\r\n", "\n").partition("\n\n")[0]
+            raise TransientRead("Allocation read failed") from (
+                ci_retry.status_cause(int(code), head) if code.isdigit() else None)
         # Git exits 128 for every fatal error. Only its diagnostic tells an
         # outage (an HTTP 502, a reset connection) from a refusal that persists.
         if (args[:1] == ["git"] and result.returncode == 128
@@ -97,6 +103,7 @@ class AllocationIO:
         require(available >= PUSH_RESERVE_SECONDS - PUSH_SETTLEMENT_SECONDS if push else available > 0,
                 "Allocation deadline exceeded")
         kwargs["timeout"] = min(PUSH_SECONDS if push else 10, available)
+        self.push_started = self.push_started or push
         try:
             return self.runner(args, **kwargs)
         except (OSError, subprocess.SubprocessError):

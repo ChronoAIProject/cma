@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """Run one private coordinator with a private release file and bounded lifetime."""
 from contextlib import contextmanager
+from functools import partial
 import os
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
-from cd_target import PRODUCTION, controller
+from cd_target import PRODUCTION, STAGING, controller, name as target_name
 from prod_cd_select import release_bounds
 from ci_outcome import error_site, report
 from staging_cd_admission import event_identity
@@ -100,10 +101,11 @@ def private_script(env, run_command=subprocess.run):
 
 
 
-def execute(script, release_file, mode, started, env, *, timeout=None):
+def execute(script, release_file, mode, started, env, *, timeout=None, target=STAGING):
     # Reserve the same absolute clock for the child. Older controllers ignore
-    # this timing input and retain their shorter deadline.
-    limit = controller_seconds(mode)
+    # this timing input and retain their shorter deadline. Only a production
+    # release reserves the production total; staging's budgets are unchanged.
+    limit = controller_seconds(mode, target)
     child_env = {**env, CONTROLLER_TOTAL_ENV: str(limit)}
     left = remaining(started, limit)
     wait = min(left, timeout) if timeout is not None else left
@@ -214,7 +216,7 @@ def controller_receipts(receipts, transition, script, directory, started, env, c
     return qualified, 0
 
 
-def deploy(env, masker, script_reader=private_script, runner=execute,
+def deploy(env, masker, script_reader=private_script, runner=None,
            tool_reader=tool_environment, policy_reader=deploy_selection, on_disabled=lambda: None,
            on_private_refusal=None, on_unverified=None, on_rolled_back=None, on_overtaken=lambda _keys: None):
     event_identity(env)
@@ -226,7 +228,11 @@ def deploy(env, masker, script_reader=private_script, runner=execute,
                 "Deployment mode is invalid")
         require(mode != "bootstrap" or set(value["receipts"]) == {"am", "eg", "web"},
                 "Bootstrap requires all components")
-    limit = controller_seconds(mode)
+    target = target_name(env)
+    limit = controller_seconds(mode, target)
+    if runner is None:
+        # The launcher's watchdog enforces the same target budget as this caller.
+        runner = partial(execute, target=target)
     credentials = {key: env.get(key) for key in ("CD_NYXID_CLIENT_ID", "CD_NYXID_CLIENT_SECRET")}
     for credential in credentials.values():
         masker(credential)

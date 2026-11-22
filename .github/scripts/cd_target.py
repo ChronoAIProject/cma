@@ -24,10 +24,15 @@ TARGETS = {
 }
 
 
+def name(env):
+    """The selected target's name; absent means staging."""
+    value = env.get("CD_TARGET", STAGING)
+    require(value in TARGETS, "Deployment target is unknown")
+    return value
+
+
 def current(env):
-    name = env.get("CD_TARGET", STAGING)
-    require(name in TARGETS, "Deployment target is unknown")
-    return TARGETS[name]
+    return TARGETS[name(env)]
 
 
 def branch(env):

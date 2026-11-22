@@ -84,21 +84,42 @@ impl Supervisor {
             } else {
                 DEFAULT_DESKTOP_STARTUP_BUDGET
             };
-            let ready = async {
-                while !connect().await {
-                    tokio::time::sleep(DESKTOP_PROBE_INTERVAL).await;
+            let started = tokio::time::Instant::now();
+            let ready = match &supervisor.desktop_process {
+                #[cfg(target_os = "linux")]
+                Some(crate::desktop_process::DesktopSession::Supervised(desktop)) => {
+                    desktop.ready(budget).await
+                }
+                _ => {
+                    let ready = async {
+                        while !connect().await {
+                            tokio::time::sleep(DESKTOP_PROBE_INTERVAL).await;
+                        }
+                    };
+                    tokio::select! {
+                        biased;
+                        _ = tokio::time::sleep(budget) => false,
+                        _ = ready => true,
+                    }
                 }
             };
-            tokio::select! {
-                biased;
-                _ = tokio::time::sleep(budget) => {
-                    return Err(RuntimeError::unavailable(
-                        "desktop_start_failed",
-                        "desktop did not become ready",
-                    ));
+            if !ready {
+                tracing::error!(
+                    elapsed_ms = started.elapsed().as_millis(),
+                    "initial desktop did not become ready"
+                );
+                if let Some(desktop) = &supervisor.desktop_process {
+                    desktop.shutdown().await;
                 }
-                _ = ready => {}
+                return Err(RuntimeError::unavailable(
+                    "desktop_start_failed",
+                    "desktop did not become ready",
+                ));
             }
+            tracing::info!(
+                elapsed_ms = started.elapsed().as_millis(),
+                "initial desktop ready"
+            );
         }
         supervisor.recover_journals().await?;
         Ok(supervisor)
@@ -152,7 +173,7 @@ impl Supervisor {
         };
         let checkpoint = CheckpointStore::new(&config);
         let desktop_process = if config.machine_included {
-            Some(crate::desktop_process::DesktopProcess::start(&config)?)
+            Some(crate::desktop_process::DesktopSession::start(&config)?)
         } else {
             None
         };

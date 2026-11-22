@@ -45,6 +45,7 @@ pub(crate) mod tests;
 
 pub use output::{ActivityItem, V2OutputItem};
 pub use projection::{ResponseConversation, V2ResponseObject, V2ResponseStatus};
+pub use queued_cancellation::QueuedCancellationNeedsOwner;
 
 #[derive(Clone)]
 pub struct ResponsesV2State {

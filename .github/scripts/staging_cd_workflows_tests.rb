@@ -298,6 +298,9 @@ class StagingWorkflowTest < Minitest::Test
     deploy = workflow('prod-deploy')
     job = deploy['jobs']['deploy']
     assert_equal 'production', job.dig('env', 'CD_TARGET')
+    assert_equal 'release', job.dig('env', 'CD_DEPLOY_MODE')
+    # Outlives the 3600 s production release total and its 15 s grace, which start after selection.
+    assert_equal 75, job['timeout-minutes']
     # Reproducing the approved set never hands over; only the coordinator can.
     assert_equal '${{ steps.coordinate.outputs.disposition }}', job.dig('outputs', 'disposition')
     trigger = deploy['on'] || deploy.fetch(true)
