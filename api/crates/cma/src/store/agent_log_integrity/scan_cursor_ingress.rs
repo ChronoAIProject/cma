@@ -93,6 +93,22 @@ pub(in crate::store::agent_log_integrity) fn scan_collection_admitted<'a, F, C>(
     options: ScanOptions<C>,
     policy: &'a IngressOwnershipPolicy,
     read_plan: AllocationPlan,
+    visit: F,
+) -> Result<ScanRead<'a>, AdmittedError>
+where
+    C: Clock + 'a,
+    F: FnMut(SharedOwned<AgentLogEntry>) -> Result<(), OwnedWork<SandboxStoreError>> + Send + 'a,
+{
+    scan_rows_admitted(caller, input, session, options, policy, read_plan, visit)
+}
+
+fn scan_rows_admitted<'a, F, C>(
+    caller: ScanCaller,
+    input: ScanInput<'a>,
+    session: &'a mut mongodb::ClientSession,
+    options: ScanOptions<C>,
+    policy: &'a IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
     mut visit: F,
 ) -> Result<ScanRead<'a>, AdmittedError>
 where
