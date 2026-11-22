@@ -77,6 +77,7 @@ pub(crate) async fn warm_fixture(
         store,
         source: None,
         native: None,
+        measured: None,
         cluster: "fixture".into(),
         enabled: false,
     };

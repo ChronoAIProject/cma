@@ -1,6 +1,8 @@
 //! Retained source custody and bounded projection, independent of transport.
 mod capture;
 mod inventory;
+mod measured;
+pub(crate) use measured::{repair_command, retain_binding_bridge};
 mod payload;
 mod project;
 mod records;

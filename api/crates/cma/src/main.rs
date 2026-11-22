@@ -102,6 +102,19 @@ fn main() {
 #[tokio::main]
 async fn run() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if arguments
+        .first()
+        .is_some_and(|a| a == "--repair-measured-usage")
+    {
+        match store::sandbox_usage_export::repair_command(&arguments).await {
+            Ok(result) => println!("{result}"),
+            Err(error) => {
+                eprintln!("{error}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if retirement_archive::is_command(&arguments) {
         match retirement_archive::command(&arguments).await {
             Ok(summary) => println!("{summary}"),

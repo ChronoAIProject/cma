@@ -47,7 +47,7 @@ pub(super) const DB_DEADLINE: Duration = Duration::from_secs(2);
 #[derive(Clone)]
 pub(crate) struct ReportingStore {
     pub(crate) budgets: crate::config::sandbox_metrics::MetricsBudgets,
-    pub(super) client: Client,
+    pub(crate) client: Client,
     pub(super) db: Database,
     pub(super) signer: Arc<layer2_core::sandbox_metrics::cursor::CursorSigner>,
     pub(super) circuit: Arc<std::sync::atomic::AtomicU64>,
