@@ -95,6 +95,19 @@ impl HttpFixture {
     }
 
     pub async fn server(&self, lose_first_reply: bool, joined: bool) -> Server {
+        self.configured_server(lose_first_reply, joined, true).await
+    }
+
+    pub async fn without_revocations(&self, joined: bool) -> Server {
+        self.configured_server(false, joined, false).await
+    }
+
+    async fn configured_server(
+        &self,
+        lose_first_reply: bool,
+        joined: bool,
+        revocations: bool,
+    ) -> Server {
         let auth = AuthState::with_store(
             self.provider.mode(),
             None,
@@ -102,22 +115,28 @@ impl HttpFixture {
         )
         .with_browser_session_join(joined);
         let access = ResourceAccessService::new(Arc::new(self.data.sandbox.clone()), auth.clone());
-        let service = ResourceRevocationService::new(access.clone(), self.data.reopened().await)
-            .await
-            .unwrap();
-        let app = layer1_public::rest::resource_access_router_with_revocations(
-            Arc::new(access),
-            Arc::new(service),
-        )
-        .merge(crate::auth::router(auth.clone()))
-        .layer(axum::middleware::from_fn_with_state(
-            auth,
-            crate::auth::attach_subject,
-        ))
-        .layer(axum::middleware::from_fn_with_state(
-            Arc::new(AtomicBool::new(lose_first_reply)),
-            lose_reply,
-        ));
+        let app = if revocations {
+            let service =
+                ResourceRevocationService::new(access.clone(), self.data.reopened().await)
+                    .await
+                    .unwrap();
+            layer1_public::rest::resource_access_router_with_revocations(
+                Arc::new(access),
+                Arc::new(service),
+            )
+        } else {
+            layer1_public::rest::resource_access_router(Arc::new(access))
+        };
+        let app = app
+            .merge(crate::auth::router(auth.clone()))
+            .layer(axum::middleware::from_fn_with_state(
+                auth,
+                crate::auth::attach_subject,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                Arc::new(AtomicBool::new(lose_first_reply)),
+                lose_reply,
+            ));
         Server::start(app).await
     }
 

@@ -4,6 +4,7 @@ use reqwest::{Method, StatusCode};
 use serde_json::{json, Value};
 
 mod fixture;
+mod legacy;
 mod oauth;
 mod provider;
 mod server;
