@@ -28,7 +28,7 @@ mod observation;
 pub(super) mod records;
 mod sandbox_inventory;
 mod snapshot;
-mod snapshot_lineage;
+pub(super) mod snapshot_lineage;
 mod snapshot_session;
 
 pub(super) async fn read_execution_snapshot(
