@@ -134,6 +134,19 @@ it('rejects a response for another account without leaving the draft', async () 
   expect(sessionStorage.getItem(draftKey)).toBe('Review the repository');
 });
 
+it('uses ordinary sign-in after a confirmed 401 without submitting or discarding the draft', async () => {
+  const { submit, popup } = setup(async () => new Response(null, { status: 401 }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Authorize required services' }));
+  await waitFor(() =>
+    expect(navigateToServiceAuthorization).toHaveBeenCalledWith(
+      popup,
+      new URL('/auth/login?return_to=%2F', window.location.origin).href,
+    ),
+  );
+  expect(submit).not.toHaveBeenCalled();
+  expect(sessionStorage.getItem(draftKey)).toBe('Review the repository');
+});
+
 it.each(['provider outage', 'blocked window'] as const)(
   'requires a fresh submission after a %s even when the next check is ready',
   async (failure) => {

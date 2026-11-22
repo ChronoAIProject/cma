@@ -82,4 +82,4 @@ pub(in crate::store) fn classify_log_insert(error: mongodb::error::Error) -> App
 
 #[cfg(test)]
 #[path = "agent_admission_mongo_integration_tests.rs"]
-mod mongo_integration_tests;
+pub(in crate::store) mod mongo_integration_tests;

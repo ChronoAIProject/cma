@@ -17,15 +17,18 @@ function key(launchId: string) {
 
 export function readDraftRecovery(launchId: string): DraftCredentialRecovery | undefined {
   try {
-    const value: unknown = JSON.parse(sessionStorage.getItem(key(launchId)) ?? 'null');
-    if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined;
+    const raw = sessionStorage.getItem(key(launchId));
+    if (raw === null) return undefined;
+    const value: unknown = JSON.parse(raw);
+    if (value === null || typeof value !== 'object' || Array.isArray(value))
+      throw new Error('Invalid saved request');
     const row = value as Partial<DraftCredentialRecovery>;
     if (
       typeof row.owner !== 'string' ||
       row.owner === '' ||
       (row.confirmedDigest !== undefined && typeof row.confirmedDigest !== 'string')
     )
-      return undefined;
+      throw new Error('Invalid saved request');
     const command = row.command;
     if (
       command !== undefined &&
@@ -42,23 +45,14 @@ export function readDraftRecovery(launchId: string): DraftCredentialRecovery | u
           (!Array.isArray(command.body.acknowledgements) ||
             !command.body.acknowledgements.every((item) => typeof item === 'string'))))
     )
-      return undefined;
+      throw new Error('Invalid saved request');
     return {
       owner: row.owner,
       confirmedDigest: row.confirmedDigest,
-      command:
-        command === undefined
-          ? undefined
-          : {
-              key: command.key,
-              body: {
-                trust_confirmed_digest: command.body.trust_confirmed_digest,
-                acknowledgements: command.body.acknowledgements,
-              },
-            },
+      command,
     };
   } catch {
-    return undefined;
+    throw new Error('Saved request could not be read');
   }
 }
 

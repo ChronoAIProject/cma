@@ -71,12 +71,16 @@ pub async fn capabilities(State(service): State<ConnectionService>, _creator: Cr
                 features
             },
             relay_authoring: Some(super::relay_capabilities::view(&service.management)),
-            platforms: vec![PlatformCapability {
-                id: "telegram".into(),
-                label: "Telegram".into(),
-                connection_methods: vec!["existing_credential".into(), "managed_create".into()],
-                optional_capabilities: vec!["manage_bots".into()],
-            }],
+            platforms: if service.management.managed_telegram_setup_enabled {
+                vec![PlatformCapability {
+                    id: "telegram".into(),
+                    label: "Telegram".into(),
+                    connection_methods: vec!["existing_credential".into(), "managed_create".into()],
+                    optional_capabilities: vec!["manage_bots".into()],
+                }]
+            } else {
+                Vec::new()
+            },
         })
         .into_response(),
     )

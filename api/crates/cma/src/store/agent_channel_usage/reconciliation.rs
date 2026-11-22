@@ -49,3 +49,7 @@ pub(super) async fn verify(
     .await
     .map_err(SandboxStoreError::Unavailable)?
 }
+
+#[cfg(test)]
+#[path = "proof_tests.rs"]
+mod proof_tests;

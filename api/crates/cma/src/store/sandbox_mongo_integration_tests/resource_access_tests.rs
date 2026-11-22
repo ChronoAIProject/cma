@@ -413,3 +413,6 @@ async fn lost_commit_acknowledgment_recovers_the_original_share_and_audit_exactl
     assert_eq!(after.fence().policy_revision, 1);
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "resource_access_tests/mutation_contention.rs"]
+mod mutation_contention;
