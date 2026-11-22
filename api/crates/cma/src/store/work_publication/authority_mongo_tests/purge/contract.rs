@@ -17,9 +17,6 @@ mod observations;
 mod refusals;
 use fixture::{PurgeFixture, State};
 
-// Unconstructed variants drive the deferred acceptance contracts for the
-// remaining transaction-safety corrections (#3112).
-#[allow(dead_code)]
 #[derive(Clone, Copy)]
 enum Case {
     Clean,

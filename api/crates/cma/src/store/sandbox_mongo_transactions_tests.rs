@@ -1,6 +1,44 @@
 use super::*;
 use std::collections::VecDeque;
 
+#[test]
+fn uncertain_driver_labels_never_authorize_a_fresh_transaction() {
+    for labels in [
+        vec![],
+        vec![TRANSIENT_TRANSACTION_ERROR],
+        vec![UNKNOWN_TRANSACTION_COMMIT_RESULT],
+        vec![
+            TRANSIENT_TRANSACTION_ERROR,
+            UNKNOWN_TRANSACTION_COMMIT_RESULT,
+        ],
+    ] {
+        let concern: mongodb::error::WriteConcernError =
+            mongodb::bson::deserialize_from_document(mongodb::bson::doc! {
+                "code": 112, "codeName": "WriteConflict", "errmsg": "synthetic abort",
+                "errorLabels": &labels,
+            })
+            .unwrap();
+        let mut error = Error::from(ErrorKind::Write(WriteFailure::WriteConcernError(concern)));
+        assert_eq!(
+            is_transient(&error),
+            labels.contains(&TRANSIENT_TRANSACTION_ERROR)
+                && !labels.contains(&UNKNOWN_TRANSACTION_COMMIT_RESULT),
+        );
+        // A duplicate code does not change the uncertainty classification.
+        let duplicate = mongodb::bson::deserialize_from_document(mongodb::bson::doc! {
+            "code": DUPLICATE_KEY, "codeName": "DuplicateKey", "errmsg": "synthetic duplicate",
+        })
+        .unwrap();
+        *error.kind = ErrorKind::Command(duplicate);
+        assert!(is_duplicate_key(&error));
+        assert_eq!(
+            is_transient(&error),
+            labels.contains(&TRANSIENT_TRANSACTION_ERROR)
+                && !labels.contains(&UNKNOWN_TRANSACTION_COMMIT_RESULT),
+        );
+    }
+}
+
 struct Sequence {
     outcomes: VecDeque<Result<(), CommitFailure<&'static str>>>,
     attempts: usize,
