@@ -1,5 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { setup } from './channel-setup.fixture';
+import { registerRedesignChannelCases } from './redesign-channel.cases';
+
+registerRedesignChannelCases();
 
 async function completeRequiredFields(page: Page) {
   await page.getByLabel('Channel name', { exact: true }).fill('Validation draft');
