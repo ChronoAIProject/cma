@@ -461,3 +461,25 @@ async fn raw_buffer_spare_capacity_remains_charged_through_conversion_admission(
         root.capacity_bytes() - root.metadata_bytes()
     );
 }
+
+#[tokio::test]
+async fn raw_response_retains_spare_capacity_without_domain_conversion() {
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let value = super::row::load_raw_with_error(&policy, read_plan(), || async {
+        let mut bytes = raw(32).into_bytes();
+        bytes.reserve_exact(64 * 1024);
+        Ok::<_, SandboxStoreError>(Some(RawDocumentBuf::from_bytes(bytes).unwrap()))
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(value.requested_bytes() >= 64 * 1024 + shared_owner_bytes::<RawDocumentBuf>());
+    let retained = root.available_bytes();
+    let shared = value.clone();
+    drop(value);
+    assert_eq!(root.available_bytes(), retained);
+    assert!(shared.belongs_to(&policy));
+    drop(shared);
+    assert_eq!(root.available_bytes(), idle);
+}

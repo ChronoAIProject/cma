@@ -375,3 +375,101 @@ async fn publication_read_refuses_before_query_and_drops_unpolled_work() {
     drop(session);
     fixture.finish().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn integrity_point_rows_retain_transaction_replacements_and_id_only_projection() {
+    use crate::store::sandbox_mongo::start_transaction;
+    use mongodb::bson::{doc, Document};
+    let fixture = Fixture::new("point_rows").await;
+    let store = &fixture.store;
+    let (root, policy) = super::policy();
+    let idle = root.available_bytes();
+    let original = doc! {"_id":"point-owned", "payload":"a".repeat(64)};
+    store.agent_log.insert_one(original.clone()).await.unwrap();
+    let mut session = store.client.start_session().await.unwrap();
+    start_transaction(&mut session).await.unwrap();
+    let result = store
+        .integrity_point_read_admitted(
+            &mut session,
+            false,
+            false,
+            &policy,
+            super::gate_plan(),
+            || doc! {"_id":"point-owned"},
+        )
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    let first = result.as_ref().unwrap().clone();
+    drop(result);
+    assert_eq!(Document::try_from(first.as_ref()).unwrap(), original);
+    store
+        .agent_log
+        .update_one(
+            doc! {"_id":"point-owned"},
+            doc! {"$set":{"payload":"b".repeat(128 * 1024)}},
+        )
+        .session(&mut session)
+        .await
+        .unwrap();
+    let result = store
+        .integrity_point_read_admitted(
+            &mut session,
+            false,
+            false,
+            &policy,
+            super::gate_plan(),
+            || doc! {"_id":"point-owned"},
+        )
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    let second = result.as_ref().unwrap().clone();
+    drop(result);
+    assert!(second.requested_bytes() > first.requested_bytes() + 120 * 1024);
+    let selected = store
+        .integrity_point_read_admitted(
+            &mut session,
+            false,
+            true,
+            &policy,
+            super::gate_plan(),
+            || doc! {"_id":"point-owned"},
+        )
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(
+        Document::try_from(selected.as_ref().unwrap().as_ref()).unwrap(),
+        doc! {"_id":"point-owned"}
+    );
+    session.abort_transaction().await.unwrap();
+    drop((selected, session));
+    assert_eq!(
+        store
+            .agent_log
+            .find_one(doc! {"_id":"point-owned"})
+            .await
+            .unwrap(),
+        Some(original.clone())
+    );
+    let retained = root.available_bytes();
+    drop(second);
+    assert!(root.available_bytes() > retained);
+    assert_eq!(Document::try_from(first.as_ref()).unwrap(), original);
+    assert!(first.belongs_to(&policy));
+    assert_eq!(
+        policy.budget(super::IngressClass::Data).available_bytes(),
+        policy.bounds().data_bytes()
+    );
+    drop(first);
+    assert_eq!(root.available_bytes(), idle);
+    fixture.finish().await;
+}

@@ -384,3 +384,95 @@ async fn publication_read_retains_exact_transaction_versions_without_proving_rec
     drop(session);
     fixture.finish().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn integrity_point_preserves_pinned_snapshot_and_counts_consumed_raw_bytes() {
+    use crate::store::mongo_read_telemetry::{isolated_test, snapshot};
+    use mongodb::bson::Document;
+    let fixture = Fixture::new("point_snapshot").await;
+    let store = &fixture.store;
+    let (root, policy) = super::policy();
+    let idle = root.available_bytes();
+    let original = doc! {"_id":"point-snapshot", "payload":"short"};
+    store.agent_log.insert_one(original.clone()).await.unwrap();
+    let mut session = store.client.start_session().snapshot(true).await.unwrap();
+    isolated_test(async {
+        let first = store
+            .integrity_point_read_admitted(
+                &mut session,
+                true,
+                false,
+                &policy,
+                super::gate_plan(),
+                || doc! {"_id":"point-snapshot"},
+            )
+            .unwrap()
+            .await
+            .unwrap()
+            .transpose()
+            .unwrap();
+        let bytes = first.as_ref().unwrap().as_bytes().len();
+        let timestamp = session.snapshot_time().expect("server snapshot timestamp");
+        store
+            .agent_log
+            .update_one(
+                doc! {"_id":"point-snapshot"},
+                doc! {"$set":{"payload":"large".repeat(32768)}},
+            )
+            .await
+            .unwrap();
+        let second = store
+            .integrity_point_read_admitted(
+                &mut session,
+                true,
+                false,
+                &policy,
+                super::gate_plan(),
+                || doc! {"_id":"point-snapshot"},
+            )
+            .unwrap()
+            .await
+            .unwrap()
+            .transpose()
+            .unwrap();
+        assert_eq!(
+            Document::try_from(second.as_ref().unwrap().as_ref()).unwrap(),
+            original
+        );
+        assert_eq!(session.snapshot_time(), Some(timestamp));
+        assert_eq!(
+            snapshot(store.agent_log.name()),
+            [2, 0, 2, 2 * bytes as u64]
+        );
+        let mut current = store.client.start_session().snapshot(true).await.unwrap();
+        let next = store
+            .integrity_point_read_admitted(
+                &mut current,
+                true,
+                false,
+                &policy,
+                super::gate_plan(),
+                || doc! {"_id":"point-snapshot"},
+            )
+            .unwrap()
+            .await
+            .unwrap()
+            .transpose()
+            .unwrap();
+        assert!(
+            next.as_ref().unwrap().requested_bytes()
+                > first.as_ref().unwrap().requested_bytes() + 128 * 1024
+        );
+        let next_bytes = next.as_ref().unwrap().as_bytes().len();
+        assert_eq!(
+            snapshot(store.agent_log.name()),
+            [3, 0, 3, (2 * bytes + next_bytes) as u64]
+        );
+        drop((first, second, next, current));
+    })
+    .await;
+    drop(session);
+    assert_eq!(root.available_bytes(), idle);
+    fixture.finish().await;
+}

@@ -367,3 +367,82 @@ async fn publication_read_keeps_original_driver_error_and_transient_label() {
     drop((session, admin));
     fixture.finish().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn integrity_point_refuses_before_filter_or_query_and_cancels_unpolled() {
+    use crate::store::mongo_read_telemetry::{isolated_test, snapshot};
+    use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
+    let fixture = Fixture::new("point_refusal").await;
+    let store = &fixture.store;
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    let calls = AtomicUsize::new(0);
+    let filter = || {
+        calls.fetch_add(1, SeqCst);
+        doc! {"_id":"point-missing"}
+    };
+    isolated_test(async {
+        let full =
+            AllocationPlan::checked("point pressure", &[policy.bounds().transformation_bytes()])
+                .unwrap();
+        let pressure = policy.admit(IngressClass::Transformation, full).unwrap();
+        assert!(matches!(
+            store.integrity_point_read_admitted(
+                &mut session,
+                false,
+                false,
+                &policy,
+                super::gate_plan(),
+                filter
+            ),
+            Err(AdmittedError::Refused(_))
+        ));
+        drop(pressure);
+        drop(
+            store
+                .integrity_point_read_admitted(
+                    &mut session,
+                    false,
+                    false,
+                    &policy,
+                    super::gate_plan(),
+                    filter,
+                )
+                .unwrap(),
+        );
+        assert!(matches!(
+            store
+                .integrity_point_read_admitted(&mut session, false, false, &policy, full, filter)
+                .unwrap()
+                .await,
+            Err(AdmittedError::Refused(_))
+        ));
+        assert_eq!(calls.load(SeqCst), 0);
+        assert_eq!(snapshot(store.agent_log.name()), [0; 4]);
+        assert_eq!(root.available_bytes(), idle);
+        let missing = store
+            .integrity_point_read_admitted(
+                &mut session,
+                false,
+                false,
+                &policy,
+                super::gate_plan(),
+                filter,
+            )
+            .unwrap()
+            .await
+            .unwrap()
+            .transpose()
+            .unwrap();
+        assert!(missing.is_none());
+        drop(missing);
+        assert_eq!(calls.load(SeqCst), 1);
+        assert_eq!(snapshot(store.agent_log.name()), [1, 0, 0, 0]);
+    })
+    .await;
+    drop(session);
+    assert_eq!(root.available_bytes(), idle);
+    fixture.finish().await;
+}

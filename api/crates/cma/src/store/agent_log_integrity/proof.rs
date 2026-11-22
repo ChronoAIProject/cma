@@ -256,3 +256,50 @@ async fn point_read_raw(
     observation.complete();
     Ok(raw)
 }
+
+use crate::store::ingress_reads::{
+    error::{self, ReadFailure},
+    row as ingress_row,
+};
+use layer2_core::sandbox::ingress_ownership::{
+    AdmittedError, AdmittedOperation, AllocationPlan, IngressClass, IngressOwnershipPolicy,
+    SharedOwned,
+};
+
+type PointRead<'a> =
+    AdmittedOperation<'a, Result<Option<SharedOwned<RawDocumentBuf>>, ReadFailure>>;
+
+impl MongoSandboxStore {
+    /// Preserve the original point read, including id-only probes and telemetry.
+    /// Query/driver work requires the caller's separately qualified read plan.
+    /// The raw owner is not a decoded tail or a trusted-prefix proof.
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "enabled recording awaits driver resource custody")
+    )]
+    pub(in crate::store) fn integrity_point_read_admitted<'a, I>(
+        &'a self,
+        session: &'a mut mongodb::ClientSession,
+        snapshot: bool,
+        id_only: bool,
+        policy: &'a IngressOwnershipPolicy,
+        read_plan: AllocationPlan,
+        initialize: I,
+    ) -> Result<PointRead<'a>, AdmittedError>
+    where
+        I: FnOnce() -> Document + Send + 'a,
+    {
+        AdmittedOperation::from_owned(
+            policy,
+            IngressClass::Transformation,
+            AllocationPlan::checked("integrity point read operation", &[])?,
+            move |scope| async move {
+                let result = ingress_row::load_raw_with_error(policy, read_plan, || {
+                    point_read_raw(self, initialize(), id_only, session, snapshot)
+                })
+                .await;
+                error::finish(result, &scope)
+            },
+        )
+    }
+}

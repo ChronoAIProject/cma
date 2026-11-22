@@ -407,3 +407,60 @@ async fn parent_read_keeps_original_driver_error_and_transaction_label() {
     drop((session, admin));
     fixture.finish().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn integrity_point_keeps_original_driver_error_and_transient_label() {
+    use crate::store::{ingress_reads::error::ReadFailure, sandbox_mongo::start_transaction};
+    let app = "cma-ingress-point-error";
+    let mut options =
+        mongodb::options::ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+    options.app_name = Some(app.into());
+    let fixture = fixture::Fixture::with_client(
+        mongodb::Client::with_options(options).unwrap(),
+        "point_driver",
+    )
+    .await;
+    let store = &fixture.store;
+    let admin = store.client.database("admin");
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    start_transaction(&mut session).await.unwrap();
+    admin.run_command(doc! {"configureFailPoint":"failCommand","mode":{"times":1},"data":{"failCommands":["find"],"appName":app,"errorCode":112,"errorLabels":["TransientTransactionError"]}}).await.unwrap();
+    let result = store
+        .integrity_point_read_admitted(
+            &mut session,
+            false,
+            false,
+            &policy,
+            super::gate_plan(),
+            || doc! {"_id":"point-missing"},
+        )
+        .unwrap()
+        .await;
+    admin
+        .run_command(doc! {"configureFailPoint":"failCommand","mode":"off"})
+        .await
+        .unwrap();
+    let error = result.unwrap().transpose().unwrap_err();
+    let ReadFailure::Driver(driver) = &*error else {
+        panic!("expected driver error")
+    };
+    assert!(driver.contains_label("TransientTransactionError"));
+    let address = std::ptr::from_ref(driver.kind.as_ref());
+    let error = error.map(|error| match error {
+        ReadFailure::Driver(driver) => driver,
+        _ => unreachable!(),
+    });
+    assert_eq!(std::ptr::from_ref(error.kind.as_ref()), address);
+    assert!(error.belongs_to(&policy));
+    assert!(root.available_bytes() < idle);
+    drop(error);
+    assert_eq!(root.available_bytes(), idle);
+    let _ = session.abort_transaction().await;
+    drop((session, admin));
+    fixture.finish().await;
+}
