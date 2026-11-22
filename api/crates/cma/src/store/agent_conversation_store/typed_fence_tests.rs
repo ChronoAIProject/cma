@@ -88,11 +88,25 @@ async fn exercise(root: Root, failures: usize, labels: &[&str], stale: bool) {
         assert_eq!(hits, if stale { 1 } else { attempts });
     }
 }
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires disposable failpoint Mongo"]
+async fn typed_fence_conversation_known_abort() {
+    exercise(Root::Conversation, 1, &["TransientTransactionError"], false).await;
+}
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "requires disposable failpoint Mongo"]
+async fn typed_fence_checkpoint_known_abort() {
+    exercise(Root::Checkpoint, 1, &["TransientTransactionError"], false).await;
+}
 async fn typed_fence_conversation_exhaustion_unknown_and_both_labels_case(
     root: Root,
     labels: Vec<&'static str>,
 ) {
     exercise(root, 5, &labels, false).await;
 }
+async fn typed_fence_conversation_recheck_stale_token_case(root: Root) {
+    exercise(root, 1, &["TransientTransactionError"], true).await;
+}
+
 #[path = "typed_fence_tests_cases.rs"]
 mod cases;
