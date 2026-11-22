@@ -14,21 +14,14 @@ import {
   assertFreshConnectionReport,
   connectionCheckPath,
   connectionStartPath,
-  parseConnectionJourneyFixtures,
   readConnectionIntent,
   type ConnectionIntent,
   type ConnectionMode,
   type ConnectionObservationInput,
 } from './connection-journey-contract';
 
-interface ConnectionIntegration {
-  observeConnection: (input: ConnectionObservationInput) => Promise<unknown>;
-  proveConnection: (proof: Record<string, unknown>) => void;
-}
-
 export class ConnectionJourney {
   private readonly service;
-  private readonly integration: ConnectionIntegration;
   private launch?: Launch;
   private before?: ProviderObservation;
   private intent?: ConnectionIntent;
@@ -36,19 +29,7 @@ export class ConnectionJourney {
     private readonly h: Harness,
     readonly mode: ConnectionMode,
   ) {
-    const fixtures = parseConnectionJourneyFixtures(
-      object(h.fixture).connectionJourneys,
-      h.fixture.provenance.nyxidCommit,
-    );
-    this.service = fixtures.services[mode];
-    const observe = object(h.operators).observeConnection;
-    const prove = object(h).proveConnection;
-    if (typeof observe !== 'function' || typeof prove !== 'function')
-      throw new Error('Required E2E J4 observation and proof integration is unavailable');
-    this.integration = {
-      observeConnection: (input) => observe.call(h.operators, input),
-      proveConnection: (proof) => prove.call(h, proof),
-    };
+    this.service = h.fixture.connectionJourneys.services[mode];
   }
   get wizardName() {
     return 'Required connections';
@@ -123,7 +104,7 @@ export class ConnectionJourney {
       serviceId: this.service.serviceId,
       ...(phase === 'after' ? { intentId: this.intent!.intent_id } : {}),
     };
-    return assertProviderObservation(await this.integration.observeConnection(input), {
+    return assertProviderObservation(await this.h.operators.observeConnection(input), {
       run: input.run,
       caseId: input.caseId,
       phase,
@@ -191,6 +172,6 @@ export class ConnectionJourney {
         providerRevision: this.service.providerRevision,
       },
     );
-    this.integration.proveConnection({ ...proof });
+    this.h.proveConnection(proof);
   }
 }
