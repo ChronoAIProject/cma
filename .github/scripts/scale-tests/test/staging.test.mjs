@@ -99,8 +99,12 @@ test('one primary observation body stays open across successive turns and closes
     await fixture.turn('first');
     assert.equal(http.http.streamOpened, 1); assert.equal(http.http.streamClosed, 0);
     await fixture.turn('second');
+    await fixture.turn('third');
   });
-  assert.equal(result.completed, 2);
+  assert.equal(result.completed, 3);
+  const pages = http.calls.filter((c) => c.path.includes('/transcript'));
+  assert.equal(pages.length, 6);
+  assert.ok(pages.some((c) => c.path.includes('turn=10&after=9&through=12&limit=32')));
   assert.equal(http.http.streamOpened, 1); assert.equal(http.http.streamClosed, 1);
 });
 test('stop forbids offers while cleanup remains authorized', async () => {

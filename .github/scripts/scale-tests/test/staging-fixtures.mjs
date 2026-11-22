@@ -2,6 +2,7 @@ import { hash } from '../lib/checks.mjs';
 import { StagingRun } from '../staging/run.mjs';
 import { fixtureName } from '../staging/authority.mjs';
 import { safeRow } from '../staging/evidence.mjs';
+import { transcriptPage } from './staging-transcript-fixture.mjs';
 
 export const incarnation = hash('synthetic-incarnation');
 export const profiles = {
@@ -89,10 +90,13 @@ export class FakeHttp {
       agent_id: this.agent.id, incarnation, through_cursor: `ag1.${incarnation}.0`, active_turn: null });
     if (path.includes('/transcript')) {
       if (!this.prompt || this.options.mode === 'echo_only') return result({ agent_id: this.agent.id, turns: [], through_seq: 0 });
-      return result({ agent_id: this.agent.id, through_seq: this.prompts.length * 4, turns: this.prompts.map((prompt, i) => ({
-        turn_sequence: i * 4 + 2, owner_message: prompt,
-        agent_messages: [this.options.badDurable ? 'bad answer' : prompt.slice('Only reply '.length).split('. Do not')[0]],
-        outcome: { type: 'completed', at: 'synthetic-time' } })) });
+      return result(transcriptPage(path, this.prompts.map((prompt, i) => ({
+        turn_sequence: i * 4 + 2, started_at: '2026-01-01T00:00:00Z', owner_message: prompt,
+        messages: [{ sequence: i * 4 + 1, role: 'user', content: prompt },
+          { sequence: i * 4 + 3, role: 'assistant', content: this.options.badDurable ? 'bad answer'
+            : prompt.slice('Only reply '.length).split('. Do not')[0] }],
+        outcome: { type: 'completed', at: '2026-01-01T00:00:01Z' },
+      })), this.prompts.length * 4));
     }
     if (path.startsWith('/api/v2/commands/')) {
       const offset = Number(path.split('_').at(-1));

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { check, hash, safeFailure } from '../lib/checks.mjs';
 import { TURN_MS, SETTLE_MS, FIRST_VISIBLE_MS } from './authority.mjs';
+import { readTurn } from './transcript.mjs';
 
 export class Turn {
   constructor(fixture, offer) {
@@ -51,13 +52,8 @@ export class Turn {
   }
   async durable(deadline) {
     const f = this.fixture;
-    const { value } = await f.get(`/api/v1/agents/${f.agent}/transcript?limit=32`, deadline);
-    check(value.agent_id === f.agent && Array.isArray(value.turns) && !value.next,
-      'bounded_transcript_incomplete');
-    const matches = value.turns.filter((t) => t.owner_message === this.prompt);
-    if (!matches.length) return false;
-    check(matches.length === 1, 'duplicate_durable_input');
-    const turn = matches[0];
+    const { turn, evidenceHash } = await readTurn(f, this.prompt, deadline);
+    if (!turn) return false;
     if (turn.outcome?.type === 'active') return false;
     check(turn.outcome?.type === 'completed' && Array.isArray(turn.agent_messages)
       && turn.agent_messages.length === 1 && turn.agent_messages[0].trim() === this.answer,
@@ -70,7 +66,7 @@ export class Turn {
       'command_receipt_mismatch');
       this.record({ status: 'terminal', commandHash: hash(this.binding.command_id), receiptHash: hash(JSON.stringify(command)) });
     }
-    this.settled = true; this.record({ status: 'terminal', settled: true, evidenceHash: hash(JSON.stringify(value)) });
+    this.settled = true; this.record({ status: 'terminal', settled: true, evidenceHash });
     return true;
   }
   async execute() {

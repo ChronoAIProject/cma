@@ -78,7 +78,7 @@ export class BrowserTransport {
         } finally { await reader?.cancel(); }
       }, { origin: this.origin, path, method, body, key, timeoutMs, maxBytes: BODY_BYTES });
       check(expected.includes(result.status), 'unexpected_http_status');
-      return { status: result.status, value: result.text ? JSON.parse(result.text) : null };
+      return { status: result.status, value: result.text ? JSON.parse(result.text) : null, bytes: Buffer.byteLength(result.text) };
     } finally { this.permits.delete(permit); }
   }
   async stream(path, signal) {
