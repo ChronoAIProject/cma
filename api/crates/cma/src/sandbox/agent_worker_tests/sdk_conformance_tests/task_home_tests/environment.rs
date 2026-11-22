@@ -86,6 +86,7 @@ pub(super) async fn initial_task_environment(
     source_failure: Option<RepositoryRefusal>,
     desktop: bool,
 ) {
+    let retry_unavailable = store_retry::StoreRetry::new(desktop);
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
     let marker = source_failure
         .filter(|failure| failure.before_marker)
@@ -270,6 +271,7 @@ pub(super) async fn initial_task_environment(
                 &harness,
                 &sandbox_worker,
                 refusal.code,
+                &retry_unavailable,
             )
             .await;
         sandbox_config.holder = "task-cleanup-before-marker-restarted".into();
@@ -279,7 +281,7 @@ pub(super) async fn initial_task_environment(
             &sandbox,
             None,
             &resumed,
-            &store_retry::StoreRetry::default(),
+            &retry_unavailable,
         )
         .await;
         provider_task.abort();
@@ -306,7 +308,6 @@ pub(super) async fn initial_task_environment(
     assert_eq!(admitted["first_message"]["purpose"], "task");
     let sandbox_id = SandboxId(admitted["sandbox"]["id"].as_str().unwrap().into());
     assert_ne!(sandbox_id, harness.workspace.sandbox_id);
-    let retry_unavailable = store_retry::StoreRetry::default();
     let transcript_path = format!("{agent_path}/transcript");
     if let Some(refusal) = source_failure {
         let code = refusal.code;
@@ -411,9 +412,7 @@ pub(super) async fn initial_task_environment(
         .await;
         phase = String::from("waiting for the first task to be delivered");
         loop {
-            if retry_unavailable
-                .should_retry(harness.worker.run_one(&agent_id, SystemTime::now()).await)
-            {
+            if retry_unavailable.agent(&harness, &agent_id).await.is_none() {
                 tokio::time::sleep(Duration::from_millis(20)).await;
                 continue;
             }
