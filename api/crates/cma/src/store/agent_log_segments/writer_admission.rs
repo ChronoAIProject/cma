@@ -139,19 +139,28 @@ pub(in crate::store) async fn read(
         .map_err(TransactionLogError::Driver)?;
     let value = row.map(Admission::read).transpose()?;
     if let Some(value) = &value {
-        if value.agent_id != agent.id.as_str()
-            || value.incarnation != incarnation
-            || value.owner != agent.owner.as_str()
-            || value.publication_key != operation.key
-        {
-            return Err(corrupt().into());
-        }
-        if value.fingerprint != operation.fingerprint || value.appended_at != operation.appended_at
-        {
-            return Err(SandboxStoreError::Conflict.into());
-        }
+        validate_read(value, agent, operation, &incarnation)?;
     }
     Ok(value)
+}
+
+fn validate_read(
+    value: &Admission,
+    agent: &Agent,
+    operation: &PublicationIdentity,
+    incarnation: &str,
+) -> Result<(), SandboxStoreError> {
+    if value.agent_id != agent.id.as_str()
+        || value.incarnation != incarnation
+        || value.owner != agent.owner.as_str()
+        || value.publication_key != operation.key
+    {
+        return Err(corrupt());
+    }
+    if value.fingerprint != operation.fingerprint || value.appended_at != operation.appended_at {
+        return Err(SandboxStoreError::Conflict);
+    }
+    Ok(())
 }
 
 /// Run before the publication transaction, using the same stable request key,
