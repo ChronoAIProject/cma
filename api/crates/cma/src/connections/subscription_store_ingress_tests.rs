@@ -208,6 +208,36 @@ fn foreign_root_and_sibling_attachment_refuse_even_an_absent_cache() {
 }
 
 #[test]
+fn record_copy_refuses_attachment_downgrade_to_process_policy() {
+    copy_refuses_attachment_downgrade(false);
+}
+
+#[test]
+fn cache_copy_refuses_attachment_downgrade_even_without_cache() {
+    copy_refuses_attachment_downgrade(true);
+}
+
+fn copy_refuses_attachment_downgrade(cache_only: bool) {
+    let root = IngressBudget::new(128 * 1024 * 1024);
+    let bounds =
+        IngressOwnershipPolicy::conversation_bounds(root.capacity_bytes(), 1, plan(1), plan(1))
+            .unwrap();
+    let parent = IngressOwnershipPolicy::new(root.clone(), bounds).unwrap();
+    let attachment = parent.admit_attachment().unwrap();
+    for cache in [true, false] {
+        let source = own(&record(cache, false, false), attachment.policy());
+        let before = root.available_bytes();
+        let result = if cache_only {
+            SubscriptionRecord::cache_admitted(&source, &parent).map(|_| ())
+        } else {
+            SubscriptionRecord::copy_admitted(&source, &parent).map(|_| ())
+        };
+        assert!(matches!(result, Err(AdmissionRefusal::InvalidPlan { .. })));
+        assert_eq!(root.available_bytes(), before);
+    }
+}
+
+#[test]
 fn copied_secret_keeps_original_attachment_after_record_release() {
     let root = IngressBudget::new(128 * 1024 * 1024);
     let bounds =

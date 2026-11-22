@@ -167,6 +167,18 @@ impl<T: ?Sized> SharedOwned<T> {
         self.storage.belongs_to(&policy.root)
     }
 
+    /// Independent copies must retain the same root and optional attachment.
+    /// A process policy cannot replace an attached source's lifetime owner.
+    pub fn shares_custody_domain(&self, policy: &super::IngressOwnershipPolicy) -> bool {
+        let reservation = &self.storage.reservation;
+        Arc::ptr_eq(reservation.root.semaphore(), &policy.root.0)
+            && match (&reservation.attachment, &policy.root.3) {
+                (None, None) => true,
+                (Some(actual), Some(expected)) => SharedCustody::ptr_eq(actual, expected),
+                _ => false,
+            }
+    }
+
     pub fn requested_bytes(&self) -> usize {
         self.storage.requested_bytes()
     }

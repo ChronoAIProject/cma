@@ -241,6 +241,52 @@ fn record_holder_and_replacement_cache_require_the_same_root_and_attachment() {
 }
 
 #[test]
+fn candidates_refuse_attachment_downgrade_in_each_input() {
+    let root = IngressBudget::new(128 * 1024 * 1024);
+    let bounds =
+        IngressOwnershipPolicy::conversation_bounds(root.capacity_bytes(), 1, plan(1), plan(1))
+            .unwrap();
+    let parent = IngressOwnershipPolicy::new(root.clone(), bounds).unwrap();
+    let attachment = parent.admit_attachment().unwrap();
+    let process_source = own(&record(true), &parent);
+    let process_holder = holder(&parent);
+    let process_cache = secret(&parent);
+    let attached_source = own(&record(true), attachment.policy());
+    let attached_holder = holder(attachment.policy());
+    let attached_cache = secret(attachment.policy());
+    let before = root.available_bytes();
+    for (source, holder) in [
+        (&attached_source, &process_holder),
+        (&process_source, &attached_holder),
+        (&attached_source, &attached_holder),
+    ] {
+        assert!(matches!(
+            SubscriptionRecord::claim_admitted(source, holder, Duration::from_secs(30), &parent),
+            Err(AdmissionRefusal::InvalidPlan { .. })
+        ));
+    }
+    for action in [
+        CacheUpdate::Keep,
+        CacheUpdate::Clear,
+        CacheUpdate::Replace(&process_cache),
+    ] {
+        assert!(matches!(
+            SubscriptionRecord::finish_admitted(&attached_source, action, &parent),
+            Err(AdmissionRefusal::InvalidPlan { .. })
+        ));
+    }
+    assert!(matches!(
+        SubscriptionRecord::finish_admitted(
+            &process_source,
+            CacheUpdate::Replace(&attached_cache),
+            &parent
+        ),
+        Err(AdmissionRefusal::InvalidPlan { .. })
+    ));
+    assert_eq!(root.available_bytes(), before);
+}
+
+#[test]
 fn candidates_keep_their_attachment_after_sources_and_intermediate_clones_drop() {
     for claiming in [false, true] {
         let root = IngressBudget::new(128 * 1024 * 1024);

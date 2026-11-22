@@ -57,7 +57,7 @@ fn require_owner(
     source: &SharedOwned<SubscriptionRecord>,
     policy: &IngressOwnershipPolicy,
 ) -> Result<(), AdmissionRefusal> {
-    if source.belongs_to(policy) {
+    if source.shares_custody_domain(policy) {
         Ok(())
     } else {
         Err(AdmissionRefusal::InvalidPlan {

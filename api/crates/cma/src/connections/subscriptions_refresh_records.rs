@@ -118,7 +118,7 @@ fn require_owner<T>(
     value: &SharedOwned<T>,
     policy: &IngressOwnershipPolicy,
 ) -> Result<(), AdmissionRefusal> {
-    if value.belongs_to(policy) {
+    if value.shares_custody_domain(policy) {
         Ok(())
     } else {
         Err(AdmissionRefusal::InvalidPlan {
