@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 mod connection_channels;
 mod consumer_fixture;
 mod effect_deadline;
+mod effect_deadline_http;
 mod fixture;
 mod key_expiry;
 mod lifecycle;

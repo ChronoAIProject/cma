@@ -14,6 +14,9 @@ use crate::{
 use layer2_core::{bots::*, sandbox::binding::ProvidedCredential, SubjectId};
 use std::{sync::Arc, time::Duration};
 
+mod effect_admission;
+use effect_admission::EffectAdmission;
+
 pub(crate) struct GatewayBots {
     auth: Arc<dyn OwnerTokens>,
     gateway: client::GatewayClient,
@@ -178,6 +181,7 @@ impl BotExternal for GatewayBots {
         .await
     }
     async fn mint(&self, bot: &Bot, role: BotKeyRole) -> Result<BotKey, BotError> {
+        let admission = EffectAdmission::from_bot(bot)?;
         bounded_effect(bot, async {
             let token = self.auth.bot_authority_token(bot).await?;
             let services = if role == BotKeyRole::Agent {
@@ -186,14 +190,22 @@ impl BotExternal for GatewayBots {
                 vec![]
             };
             let pending = format!("{}/v1/callbacks/pending", self.public);
+            if let Some(admission) = admission.as_ref() {
+                admission.check(bot)?;
+            }
             let key = self
                 .issuer
-                .mint_bot(
+                .mint_bot_admitted(
                     &keys::name(bot, role),
                     token.expose(),
                     &services,
                     (role == BotKeyRole::Route).then_some(pending.as_str()),
                     &bot.resource_owner(),
+                    || {
+                        admission
+                            .as_ref()
+                            .is_none_or(|admission| admission.check(bot).is_ok())
+                    },
                 )
                 .await
                 .map_err(|_| BotError::Unavailable)?;
@@ -222,9 +234,12 @@ impl BotExternal for GatewayBots {
         .await
     }
     async fn revoke(&self, bot: &Bot, id: &str) -> Result<(), BotError> {
+        let admission = EffectAdmission::from_bot(bot)?;
         bounded_effect(bot, async {
             let token = self.auth.bot_authority_token(bot).await?;
-            self.nyxid.revoke_key(token.expose(), bot, id).await
+            self.nyxid
+                .revoke_key(token.expose(), bot, id, admission.as_ref())
+                .await
         })
         .await
     }
@@ -233,19 +248,20 @@ impl BotExternal for GatewayBots {
         bot: &Bot,
         secrets: &BotSecrets,
     ) -> Result<BotChannelObservation, BotError> {
+        let admission = EffectAdmission::from_bot(bot)?;
         bounded_effect(bot, async {
             let token = self.auth.bot_authority_token(bot).await?;
             if bot.request.connection_ref.is_some() {
                 return self
                     .gateway
-                    .create(token.expose(), bot, secrets, None)
+                    .create_with_admission(token.expose(), bot, secrets, None, admission.as_ref())
                     .await;
             }
             let external = self.nyxid.bot(token.expose(), bot).await?;
             let username = (!external.platform_bot_username.is_empty())
                 .then_some(external.platform_bot_username);
             self.gateway
-                .create(token.expose(), bot, secrets, username)
+                .create_with_admission(token.expose(), bot, secrets, username, admission.as_ref())
                 .await
         })
         .await
@@ -265,10 +281,19 @@ impl BotExternal for GatewayBots {
         secrets: Option<&BotSecrets>,
         enabled: bool,
     ) -> Result<BotChannelObservation, BotError> {
+        let admission = EffectAdmission::from_bot(bot)?;
         bounded_effect(bot, async {
             let token = self.auth.bot_authority_token(bot).await?;
             self.gateway
-                .configure(token.expose(), bot, current, keys, secrets, enabled)
+                .configure_with_admission(
+                    token.expose(),
+                    bot,
+                    current,
+                    keys,
+                    secrets,
+                    enabled,
+                    admission.as_ref(),
+                )
                 .await
         })
         .await
@@ -278,15 +303,17 @@ impl BotExternal for GatewayBots {
         bot: &Bot,
         current: &BotChannelObservation,
     ) -> Result<(), BotError> {
+        let admission = EffectAdmission::from_bot(bot)?;
         bounded_effect(bot, async {
             let token = self.auth.bot_authority_token(bot).await?;
             self.gateway
-                .delete_with_bot(token.expose(), Some(bot), current)
+                .delete_with_bot_admitted(token.expose(), Some(bot), current, admission.as_ref())
                 .await
         })
         .await
     }
     async fn set_callback(&self, bot: &Bot, key_id: &str, url: &str) -> Result<(), BotError> {
+        let admission = EffectAdmission::from_bot(bot)?;
         bounded_effect(bot, async {
             let token = self.auth.bot_authority_token(bot).await?;
             if bot.resources.channel.as_ref().is_none_or(|c| {
@@ -294,19 +321,25 @@ impl BotExternal for GatewayBots {
             }) {
                 return Err(BotError::Forbidden);
             }
-            self.nyxid.callback(token.expose(), bot, key_id, url).await
+            self.nyxid
+                .callback(token.expose(), bot, key_id, url, admission.as_ref())
+                .await
         })
         .await
     }
     async fn create_route(&self, bot: &Bot, key_id: &str) -> Result<String, BotError> {
+        let admission = EffectAdmission::from_bot(bot)?;
         bounded_effect(bot, async {
             let token = self.auth.bot_authority_token(bot).await?;
             self.nyxid.owned_key(token.expose(), bot, key_id).await?;
-            self.nyxid.create_route(token.expose(), bot, key_id).await
+            self.nyxid
+                .create_route(token.expose(), bot, key_id, admission.as_ref())
+                .await
         })
         .await
     }
     async fn set_route_key(&self, bot: &Bot, route: &str, key: &str) -> Result<(), BotError> {
+        let admission = EffectAdmission::from_bot(bot)?;
         bounded_effect(bot, async {
             let token = self.auth.bot_authority_token(bot).await?;
             let owned: Vec<_> = self
@@ -321,7 +354,7 @@ impl BotExternal for GatewayBots {
                 return Err(BotError::Forbidden);
             }
             self.nyxid
-                .set_route_key(token.expose(), bot, route, key, &owned)
+                .set_route_key(token.expose(), bot, route, key, &owned, admission.as_ref())
                 .await
         })
         .await
@@ -344,9 +377,12 @@ impl BotExternal for GatewayBots {
         .await
     }
     async fn delete_routes(&self, bot: &Bot, key_ids: &[String]) -> Result<(), BotError> {
+        let admission = EffectAdmission::from_bot(bot)?;
         bounded_effect(bot, async {
             let token = self.auth.bot_authority_token(bot).await?;
-            self.nyxid.delete_routes(token.expose(), bot, key_ids).await
+            self.nyxid
+                .delete_routes(token.expose(), bot, key_ids, admission.as_ref())
+                .await
         })
         .await
     }
