@@ -34,10 +34,47 @@ class QueueTests(unittest.TestCase):
         for updates in ({}, {"status": "completed", "conclusion": "success"}):
             api.request.side_effect = [reference, {"workflow_runs": [dict(run, **updates)]}]
             self.assertTrue(recheck(SECOND, api))
-        for runs in ([], [dict(run, status="completed", conclusion="failure")], [dict(run, head_sha=FIRST)]):
-            api.request.side_effect = [reference, {"workflow_runs": runs}]
+        # A run that exists but failed is refused at once, without waiting.
+        api.request.side_effect = [reference, {"workflow_runs": [dict(run, status="completed", conclusion="failure")]}]
+        sleep = Mock()
+        with self.assertRaises(Refusal):
+            recheck(SECOND, api, sleep=sleep)
+        sleep.assert_not_called()
+        # No visible run, even after every bounded wait, is refused.
+        for runs in ([], [dict(run, head_sha=FIRST)]):
+            polls = len(staging_cd_recheck.RUN_WAITS) + 1
+            api.request.side_effect = [reference, {"workflow_runs": runs}] * polls
+            sleep = Mock()
             with self.assertRaises(Refusal):
-                recheck(SECOND, api)
+                recheck(SECOND, api, sleep=sleep)
+            self.assertEqual([call.args[0] for call in sleep.call_args_list], list(staging_cd_recheck.RUN_WAITS))
+
+    def test_recheck_waits_for_a_just_pushed_head_to_get_its_run(self):
+        # Run 44965203978: the head moved at 00:09:33Z and its run, created the
+        # same second, was not yet listed when the recheck read it.
+        api = Mock()
+        reference = {"ref": "refs/heads/develop", "object": {"type": "commit", "sha": THIRD}}
+        run = {"head_sha": THIRD, "event": "push", "head_branch": "develop",
+               "path": ".github/workflows/staging-cd.yml", "status": "queued"}
+        api.request.side_effect = [reference, {"workflow_runs": []}, reference, {"workflow_runs": []},
+                                   reference, {"workflow_runs": [run]}]
+        sleep = Mock()
+        self.assertTrue(recheck(SECOND, api, sleep=sleep))
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], list(staging_cd_recheck.RUN_WAITS[:2]))
+
+    def test_recheck_follows_develop_when_it_moves_again_while_waiting(self):
+        api = Mock()
+        third = {"ref": "refs/heads/develop", "object": {"type": "commit", "sha": THIRD}}
+        fourth = {"ref": "refs/heads/develop", "object": {"type": "commit", "sha": "9" * 40}}
+        run = {"head_sha": "9" * 40, "event": "push", "head_branch": "develop",
+               "path": ".github/workflows/staging-cd.yml", "status": "in_progress"}
+        api.request.side_effect = [third, {"workflow_runs": []}, fourth, {"workflow_runs": [run]}]
+        self.assertTrue(recheck(SECOND, api, sleep=Mock()))
+
+    def test_recheck_waits_fit_inside_its_budget(self):
+        # Reads are bounded separately by the client deadline; the waits alone
+        # must leave most of the budget for those reads.
+        self.assertLessEqual(sum(staging_cd_recheck.RUN_WAITS), staging_cd_recheck.RECHECK_SECONDS / 2)
 
     def test_recheck_reads_refuse_before_the_job_timeout(self):
         jobs = yaml.safe_load((Path(__file__).resolve().parents[1] / "workflows/staging-cd.yml").read_text())["jobs"]
