@@ -145,6 +145,7 @@ pub struct AuthState {
     #[cfg(test)]
     preference_clock: fn() -> SystemTime,
     identity_proxy: Option<nyxid_proxy::jwt::Verifier>,
+    proxy_replay_principal_enabled: bool,
     bindings: Option<Arc<layer2_core::sandbox::binding::BindingAccessService>>,
     pub(super) mode: AuthMode,
     /// Browser-facing NyxID origin used for registration handoffs.
@@ -227,6 +228,7 @@ impl AuthState {
             #[cfg(test)]
             preference_clock: SystemTime::now,
             identity_proxy: None,
+            proxy_replay_principal_enabled: false,
             mode,
             nyxid_public_url,
             browser_origins,

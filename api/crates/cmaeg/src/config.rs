@@ -33,7 +33,7 @@ pub use cache::*;
 pub use console::*;
 pub use delivery::*;
 pub use ingress::*;
-pub(crate) use management::channel_mutation_custody_enabled;
+pub(crate) use management::{channel_mutation_custody_enabled, cma_record_origin_aliases};
 pub use media::{
     MediaConfig, MediaToolProviders, CMAEG_MEDIA_CACHE_BYTES, CMAEG_MEDIA_DOWNLOAD_BYTES_PER_HOUR,
     CMAEG_MEDIA_ENABLED, CMAEG_MEDIA_INFLIGHT_BYTES, CMAEG_MEDIA_LINK_TTL_SECONDS,
@@ -63,6 +63,7 @@ pub const CMAEG_ADVERTISE_PUBLIC_API_URL: &str = "CMAEG_ADVERTISE_PUBLIC_API_URL
 pub const CMAEG_MASTER_KEYS: &str = "CMAEG_MASTER_KEYS";
 pub const CMAEG_MASTER_KEYS_FILE: &str = "CMAEG_MASTER_KEYS_FILE";
 pub const CMAEG_CMA_BASE_URL: &str = "CMAEG_CMA_BASE_URL";
+pub const CMAEG_CMA_RECORD_ORIGIN_ALIASES: &str = "CMAEG_CMA_RECORD_ORIGIN_ALIASES";
 pub const CMAEG_CMA_SERVICE_TOKEN: &str = "CMAEG_CMA_SERVICE_TOKEN";
 pub const CMAEG_CMA_SERVICE_TOKEN_FILE: &str = "CMAEG_CMA_SERVICE_TOKEN_FILE";
 pub const CMAEG_NYXID_BASE_URL: &str = "CMAEG_NYXID_BASE_URL";

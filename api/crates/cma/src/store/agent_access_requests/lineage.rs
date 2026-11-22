@@ -7,15 +7,24 @@ pub(in crate::store) async fn validate_lineage(
     session: &mut ClientSession,
     require_runtime: bool,
 ) -> Result<AgentProvenanceSnapshot, AgentAccessError> {
+    validate_lineage_transaction(store, identity, session, require_runtime)
+        .await
+        .map_err(|error| match error {
+            Error::Domain(error) => error,
+            Error::Driver(_) => AgentAccessError::Unavailable,
+        })
+}
+
+pub(super) async fn validate_lineage_transaction(
+    store: &MongoSandboxStore,
+    identity: &AgentAccessRequester,
+    session: &mut ClientSession,
+    require_runtime: bool,
+) -> TxResult<AgentProvenanceSnapshot> {
     let snapshot =
         crate::store::agent_provenance::read_snapshot(store, &identity.agent_id, session)
             .await
-            .map_err(|error| match error {
-                crate::store::resource_access::ReadError::Driver(_) => {
-                    AgentAccessError::Unavailable
-                }
-                _ => AgentAccessError::NotFound,
-            })?;
+            .map_err(provenance_error)?;
     let lineage = &snapshot.resource.lineage;
     let agent = lineage.agent.as_ref().ok_or(AgentAccessError::NotFound)?;
     let creation = snapshot
@@ -35,7 +44,7 @@ pub(in crate::store) async fn validate_lineage(
                 || agent.conversation.runtime_generation != identity.runtime.provision_generation
                 || lineage.sandbox.status != SandboxStatus::Active))
     {
-        return Err(AgentAccessError::NotFound);
+        return Err(AgentAccessError::NotFound.into());
     }
     Ok(snapshot)
 }

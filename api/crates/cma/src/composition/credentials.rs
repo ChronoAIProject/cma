@@ -118,6 +118,7 @@ pub(super) fn authentication(
         config.features.service_authorization,
         config.service_authorization.as_ref(),
     )
+    .with_proxy_replay_principal(config.features.nyxid_proxy_replay_principal)
     .with_registration_capacity(stores.registration_capacity.clone())
     .with_bot_father_username(
         config
