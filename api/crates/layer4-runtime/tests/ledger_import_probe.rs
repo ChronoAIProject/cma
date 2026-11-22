@@ -73,6 +73,54 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn evidence_export_requires_a_readonly_source_before_recovery() {
+    let fixture = Fixture::new();
+    let result = fixture.run(&["--export-ledger-v1-evidence"], true);
+    assert_eq!(result.status.code(), Some(2));
+    assert!(result.stdout.is_empty());
+    let message = String::from_utf8(result.stderr).unwrap();
+    assert!(
+        message.contains("ledger_evidence_readonly_required"),
+        "{message}"
+    );
+    assert!(!message.contains(fixture.0.to_str().unwrap()));
+    assert_eq!(
+        std::fs::read(fixture.0.join("state/mutation-authority/.authority-1.tmp")).unwrap(),
+        b"unpublished authority"
+    );
+    assert_eq!(
+        std::fs::read(fixture.0.join("home/wanted-file")).unwrap(),
+        b"preserved home bytes"
+    );
+    assert!(!fixture
+        .0
+        .join("state/mutation-ledger-v2.current.json")
+        .exists());
+}
+
+#[test]
+fn evidence_export_invalid_configuration_and_arguments_produce_no_artifact() {
+    let fixture = Fixture::new();
+    for (arguments, expected) in [
+        (
+            vec!["--export-ledger-v1-evidence"],
+            "ledger_evidence_configuration_invalid",
+        ),
+        (
+            vec!["--export-ledger-v1-evidence", "unexpected"],
+            "unknown runtime command",
+        ),
+    ] {
+        let result = fixture.run(&arguments, false);
+        assert_eq!(result.status.code(), Some(2));
+        assert!(result.stdout.is_empty());
+        let message = String::from_utf8(result.stderr).unwrap();
+        assert!(message.contains(expected), "{message}");
+        assert!(!message.contains(fixture.0.to_str().unwrap()));
+    }
+}
+
+#[test]
 fn retirement_archive_cli_builds_only_a_detached_pending_copy() {
     use sha2::{Digest, Sha256};
     let fixture = Fixture::new();

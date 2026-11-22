@@ -111,6 +111,9 @@ async fn run() -> Result<(), String> {
     if arguments.len() == 1 && arguments[0] == "--validate-ledger-v1" {
         return ledger_import::validate_command().await;
     }
+    if arguments.len() == 1 && arguments[0] == "--export-ledger-v1-evidence" {
+        return ledger_import::evidence::command().await;
+    }
     if arguments.len() == 3 && arguments[0] == "--preview-ledger-retirement" {
         let digest = arguments[2]
             .to_str()
