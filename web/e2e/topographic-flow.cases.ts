@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { captureFlow, flowFixture } from './topographic-flow.fixture';
+import { captureFlow, flowFixture, protectedFlowFixture } from './topographic-flow.fixture';
 import { flowProbe, installFlowProbe } from './topographic-flow.probes';
 import { expectReadableText } from './themeContrast';
 
@@ -311,22 +311,37 @@ export function registerTopographicFlowCases() {
     expect((await flowProbe(page)).contextReleases).toBe(1);
   });
 
-  test('LOCAL topographic ordinary Home and retained work never request the renderer', async ({
-    page,
-    baseURL,
-  }) => {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    await installFlowProbe(page);
-    const fixture = await flowFixture(page, baseURL!, 'ordinary');
-    for (const path of ['/', '/agents/agt_contract']) {
-      await page.goto(path);
-      await expect(page.locator('.frame__center')).toBeVisible();
-      await page.waitForTimeout(200);
-      expect(fixture.chunks).toEqual([]);
-      await expect(page.locator('.topographic-backdrop')).toHaveCount(0);
+  for (const target of ['ordinary', 'running', 'deletion', 'usage', 'channel'] as const)
+    for (const theme of ['light', 'dark'] as const) {
+      test(`LOCAL topographic protects ${target} ${theme} without renderer work`, async ({
+        page,
+        baseURL,
+      }, info) => {
+        await page.setViewportSize({ width: 1440, height: 900 });
+        await page.emulateMedia({ reducedMotion: 'no-preference', colorScheme: theme });
+        await page.addInitScript((value) => localStorage.setItem('cma:appearance', value), theme);
+        await installFlowProbe(page);
+        const fixture = await protectedFlowFixture(page, baseURL!, target);
+        try {
+          await fixture.open();
+          await expect(fixture.surface).toBeVisible();
+          await page.waitForTimeout(200);
+          expect(fixture.chunks).toEqual([]);
+          await expect(page.locator('.topographic-backdrop')).toHaveCount(0);
+          const probe = await flowProbe(page);
+          expect(probe.contexts).toBe(0);
+          expect(probe.draws).toEqual([]);
+          expect(probe.canvas2d).toBe(0);
+          expect(probe.fatal).toEqual([]);
+          expect(probe.errors).toEqual([]);
+          expect(fixture.boundary.writes).toEqual([]);
+          expect(fixture.taskWrites).toEqual([]);
+          await captureFlow(page, info, `${target}-${theme}-protected`);
+        } finally {
+          await fixture.close();
+        }
+      });
     }
-    expect(fixture.boundary.writes).toEqual([]);
-  });
   test('LOCAL topographic landing theme and resize storms share the actual submission budget', async ({
     page,
     baseURL,
