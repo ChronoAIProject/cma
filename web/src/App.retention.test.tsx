@@ -184,14 +184,28 @@ it('mounts the Gateway once its owner is known, so resolving sign-in keeps an op
   expect(editor).toHaveValue('kept draft');
 });
 
-it('keeps a Gateway editor through an identity outage and discards it for another owner', async () => {
-  window.history.replaceState({}, '', '/event-gateway');
+/** The Gateway's own session, answered for whoever the browser session names. */
+function gatewaySessions(subject: string) {
+  const gateway = { subject, checks: 0 };
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (url: string) =>
-      url.endsWith('/auth/session') ? Response.json(session) : Response.json({ items: [] }),
-    ),
+    vi.fn(async (url: string) => {
+      if (!url.endsWith('/auth/session')) return Response.json({ items: [] });
+      gateway.checks += 1;
+      return Response.json({ ...session, subject: gateway.subject });
+    }),
   );
+  /** Waits until the Gateway has checked its session again and the answer has landed. */
+  const rechecked = async (after: number) => {
+    await waitFor(() => expect(gateway.checks).toBeGreaterThan(after));
+    await act(async () => {});
+  };
+  return { gateway, rechecked };
+}
+
+it('keeps a Gateway editor through an identity outage and discards it for another owner', async () => {
+  window.history.replaceState({}, '', '/event-gateway');
+  const { gateway, rechecked } = gatewaySessions('mock-subject');
   const identity = scriptedIdentity();
   render(
     <AuthContextProvider provider={identity.provider}>
@@ -203,15 +217,43 @@ it('keeps a Gateway editor through an identity outage and discards it for anothe
   await identity.answer({ status: 'error', message: 'identity response was not readable' });
   const editor = await openChannelDraft('outage draft');
 
-  // The first known owner adopts what was opened while the identity was unknown.
+  // The first known owner adopts what was opened while the identity was unknown,
+  // once the Gateway confirms its own session belongs to the same account.
+  const before = gateway.checks;
   identity.recheck();
   await identity.answer(identity.owner('mock-subject'));
+  await rechecked(before);
   expect(screen.getByRole('textbox', { name: 'Channel name' })).toBe(editor);
   expect(editor).toHaveValue('outage draft');
 
   // A different known owner does not inherit it.
   identity.recheck();
   await identity.answer(identity.owner('another-subject'));
+  await waitFor(() => expect(editor).not.toBeInTheDocument());
+});
+
+it('does not show a draft from an identity outage to another account signed in elsewhere', async () => {
+  window.history.replaceState({}, '', '/event-gateway');
+  const { gateway } = gatewaySessions('first-subject');
+  const identity = scriptedIdentity();
+  render(
+    <AuthContextProvider provider={identity.provider}>
+      <CmaClientProvider client={agentClient()}>
+        <App />
+      </CmaClientProvider>
+    </AuthContextProvider>,
+  );
+  await identity.answer({ status: 'error', message: 'identity response was not readable' });
+  const editor = await openChannelDraft('first account draft');
+
+  // Another tab signs in as someone else, replacing the shared browser session.
+  // This tab learns of it from a reconnect, which re-checks only the CMA identity.
+  gateway.subject = 'second-subject';
+  act(() => {
+    window.dispatchEvent(new Event('online'));
+  });
+  await identity.answer(identity.owner('second-subject'));
+
   await waitFor(() => expect(editor).not.toBeInTheDocument());
 });
 

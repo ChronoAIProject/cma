@@ -12,10 +12,17 @@ export function ServicePage({
   service,
   children,
   renderStatus,
+  viewer,
 }: {
   readonly service: Service;
   readonly children: (session: ServiceSession, denied: Denied, notice?: ReactNode) => ReactNode;
   readonly renderStatus?: (content: ReactNode) => ReactNode;
+  /**
+   * Who the shell is signed in as. A change re-checks the service session, so
+   * a session that changed with it, such as another tab signing in as someone
+   * else, replaces the work this page retained instead of showing it to them.
+   */
+  readonly viewer?: string;
 }) {
   const [state, setState] = useState<{
     session?: ServiceSession;
@@ -82,7 +89,7 @@ export function ServicePage({
       window.clearInterval(interval);
       window.removeEventListener('focus', focused);
     };
-  }, [service, revision, signedOutOfGateway]);
+  }, [service, revision, signedOutOfGateway, viewer]);
   const notice = state.error ? (
     <Alert
       tone="error"
