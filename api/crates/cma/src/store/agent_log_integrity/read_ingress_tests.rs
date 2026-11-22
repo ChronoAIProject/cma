@@ -495,3 +495,6 @@ async fn proof_refusal_cancellation_and_driver_failures_keep_original_ownership(
 
 #[path = "read_assessment_ingress_tests.rs"]
 mod assessment;
+
+#[path = "proof_validation_ingress_tests.rs"]
+mod validation;

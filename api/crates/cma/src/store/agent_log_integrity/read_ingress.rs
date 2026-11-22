@@ -128,6 +128,72 @@ type ProvenRead<'a> =
 type LegacyRead<'a> = AdmittedOperation<'a, Result<bool, ReadFailure>>;
 type CompleteRead<'a> = AdmittedOperation<'a, Result<LogSummary, ReadFailure>>;
 
+pub(in crate::store) struct ProofInput<'a> {
+    pub(in crate::store) agent: &'a Agent,
+    pub(in crate::store) raw: &'a mongodb::bson::RawDocument,
+}
+
+/// Retain the primary proof result while attempting known-corruption diagnostics.
+/// Secondary failures never replace that result. The caller retains input/session
+/// provenance and owns any transaction abort or quarantine decision.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "enabled recording awaits complete ingress composition"
+    )
+)]
+pub(in crate::store) fn validate_summary_admitted<'a>(
+    store: &'a MongoSandboxStore,
+    input: ProofInput<'a>,
+    caller: ScanCaller,
+    session: &'a mut mongodb::ClientSession,
+    snapshot: bool,
+    policy: &'a IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+) -> Result<SummaryRead<'a>, AdmittedError> {
+    AdmittedOperation::from_owned(
+        policy,
+        IngressClass::Transformation,
+        AllocationPlan::checked("integrity proof diagnostics", &[])?,
+        move |_scope| async move {
+            let result = read_only_summary_admitted(
+                store,
+                input.agent,
+                input.raw,
+                session,
+                snapshot,
+                policy,
+                read_plan,
+            )?
+            .await?;
+            // The proof's outer success has already preflighted the immutable
+            // raw BSON. Check key presence, including a false quarantine value.
+            if matches!(
+                &*result,
+                Err(ReadFailure::Domain(SandboxStoreError::Corrupt(_)))
+            ) && matches!(input.raw.get(QUARANTINE_FIELD), Ok(None))
+            {
+                if let Ok(scan) = scan::cursor::scan_corruption_admitted(
+                    caller,
+                    scan::cursor::ScanInput {
+                        collection: &store.agent_log,
+                        agent_id: &input.agent.id,
+                        last_seq: input.agent.conversation.last_seq,
+                    },
+                    session,
+                    ScanOptions::new(snapshot, store.scan_cooperation),
+                    policy,
+                    read_plan,
+                ) {
+                    let _ = scan.await;
+                }
+            }
+            Ok(result)
+        },
+    )
+}
+
 /// Recheck the caller's Agent and proof in the supplied transaction, then scan
 /// every row and validate creation lineage. Borrowed input/session provenance
 /// and the source plan remain caller obligations; this grants no write authority.

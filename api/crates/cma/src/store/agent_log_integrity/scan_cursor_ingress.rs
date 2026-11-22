@@ -99,14 +99,47 @@ where
     C: Clock + 'a,
     F: FnMut(SharedOwned<AgentLogEntry>) -> Result<(), OwnedWork<SandboxStoreError>> + Send + 'a,
 {
-    scan_rows_admitted(caller, input, session, options, policy, read_plan, visit)
+    scan_rows_admitted(
+        caller,
+        input,
+        session,
+        ScanMode {
+            options,
+            known_corrupt: false,
+        },
+        policy,
+        read_plan,
+        visit,
+    )
+}
+
+pub(in crate::store::agent_log_integrity) fn scan_corruption_admitted<'a>(
+    caller: ScanCaller,
+    input: ScanInput<'a>,
+    session: &'a mut mongodb::ClientSession,
+    options: ScanOptions,
+    policy: &'a IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+) -> Result<ScanRead<'a>, AdmittedError> {
+    scan_rows_admitted(
+        caller,
+        input,
+        session,
+        ScanMode {
+            options,
+            known_corrupt: true,
+        },
+        policy,
+        read_plan,
+        |_| Ok(()),
+    )
 }
 
 fn scan_rows_admitted<'a, F, C>(
     caller: ScanCaller,
     input: ScanInput<'a>,
     session: &'a mut mongodb::ClientSession,
-    options: ScanOptions<C>,
+    mode: ScanMode<C>,
     policy: &'a IngressOwnershipPolicy,
     read_plan: AllocationPlan,
     mut visit: F,
@@ -115,6 +148,10 @@ where
     C: Clock + 'a,
     F: FnMut(SharedOwned<AgentLogEntry>) -> Result<(), OwnedWork<SandboxStoreError>> + Send + 'a,
 {
+    let ScanMode {
+        options,
+        known_corrupt,
+    } = mode;
     AdmittedOperation::from_owned(
         policy,
         IngressClass::Transformation,
@@ -170,7 +207,9 @@ where
             let result = scope
                 .initialize_owned(|| Ok(summary))
                 .retain_admitted(retained)?;
-            observation.complete();
+            if !known_corrupt {
+                observation.complete();
+            }
             read.complete();
             Ok(result)
         },
