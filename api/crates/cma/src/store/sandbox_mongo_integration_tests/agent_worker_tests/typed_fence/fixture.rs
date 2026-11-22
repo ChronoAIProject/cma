@@ -1,7 +1,9 @@
 //! App-scoped faults are armed at the exact durable member write, not at an
 //! unrelated earlier Agent CAS. Every test owns its database and drops it.
 use crate::store::{agent_ownership::MongoAgentOwnership, sandbox_mongo::MongoSandboxStore};
-use layer2_core::agent_ownership::{Authority, Member, OwnershipCoordinator, PROTOCOL_VERSION};
+use layer2_core::agent_ownership::{
+    Authority, Member, OwnershipCoordinator, OwnershipStore, PROTOCOL_VERSION,
+};
 use layer2_core::AgentId;
 use mongodb::{
     bson::{doc, Document},
@@ -98,6 +100,31 @@ impl Fixture {
             .await
             .unwrap();
         *self.prior_hits.lock().unwrap() = count(&result);
+    }
+    pub async fn takeover(&self, old: &Authority) {
+        let prior = *self.prior_hits.lock().unwrap();
+        self.admin
+            .database("admin")
+            .run_command(doc! {
+                "waitForFailPoint": "failCommand", "timesEntered": prior + 1,
+                "maxTimeMS": 5000_i32,
+            })
+            .await
+            .expect("the real server must reach the blocked ownership update");
+        // failCommand blocks before executing the first member update. Complete
+        // takeover during that known-aborted attempt; the next snapshot must
+        // reject the old epoch even though its process-local token is current.
+        self.owners.heartbeat("m3-original", true).await.unwrap();
+        self.owners.release(&old.token).await.unwrap();
+        self.owners.register(member("m3-successor")).await.unwrap();
+        let next = self
+            .owners
+            .acquire(&old.token.agent_id, "m3-successor")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(next.token.epoch > old.token.epoch);
+        assert!(old.is_current());
     }
     pub async fn clear(&self) -> (usize, Vec<Document>) {
         let result = self
