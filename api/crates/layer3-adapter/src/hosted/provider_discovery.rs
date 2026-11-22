@@ -77,6 +77,7 @@ impl ProviderHostedControlTransport {
             bounded_raw_output: false,
             shared_runtime_output: false,
             native_transport: NativeRuntimeTransport::Direct,
+            legacy_receiver_image: None,
             #[cfg(test)]
             native_http_budget: runtime_capacity.requests.clone(),
             runtime_capacity,

@@ -54,6 +54,8 @@ mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
+#[cfg(test)]
+pub(crate) use agent_worker_transaction::skill_result_test_support;
 mod agent_worktree_recovery;
 mod agent_worktree_recovery_records;
 mod agent_write_coordination;
@@ -172,6 +174,7 @@ mod sandbox_sessions;
 mod sandbox_transactions;
 mod sandbox_unpublished_recovery;
 pub(crate) mod sandbox_usage;
+pub(crate) mod sandbox_usage_export;
 mod sandbox_worker_store;
 mod sandboxes;
 #[cfg(test)]
@@ -181,6 +184,7 @@ mod schema;
 mod schema_mongo_integration_tests;
 pub(crate) mod segment_operations;
 pub mod settings;
+mod settings_barrier;
 pub(crate) mod settings_defaults;
 mod shared_child_capacity;
 mod suggestions;

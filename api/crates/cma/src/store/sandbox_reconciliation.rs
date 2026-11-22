@@ -21,6 +21,7 @@ use super::{
 use transaction::{apply, ApplyError, RecoveryApplication};
 
 mod agents;
+pub(super) use agents::settle_reopen_agents;
 #[cfg(test)]
 mod mongo_integration_tests;
 mod reconciliation;

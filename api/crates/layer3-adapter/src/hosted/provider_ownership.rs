@@ -1,11 +1,12 @@
 //! Receiving leases are renewed only after an unpredictable receiver challenge.
 use super::native_transport::NativeHttpObservation;
 use super::*;
+use crate::agent_sandbox::ReceiverIncarnation;
 use crate::owner_protocol::{
     current_authority, OwnerAcknowledgement, OwnerChallenge, OwnerConfirmation,
     OwnershipExchangeFailure, OwnershipFailure, OwnershipFailureReason as Reason,
-    OwnershipPhase as Phase, TransportAuthority, TransportOwner, OWNER_PROTOCOL_VERSION,
-    RECEIVER_LEASE_MS,
+    OwnershipPhase as Phase, ReceiverCleanup, ReceiverConfirmationCustody, TransportAuthority,
+    TransportOwner, OWNER_PROTOCOL_VERSION, RECEIVER_LEASE_MS,
 };
 use serde::{de::DeserializeOwned, Serialize};
 
@@ -34,6 +35,18 @@ impl ProviderHostedControlTransport {
         let mut template = self.clone();
         template.state = Arc::new(Mutex::new(TransportState::default()));
         let identity = format!("{}:{:?}", endpoint.control()?, endpoint.native_binding());
+        let legacy_incarnation = match tokio::time::timeout(
+            NEGOTIATION_DEADLINE,
+            self.legacy_receiver_incarnation(endpoint),
+        )
+        .await
+        {
+            Ok(Ok(incarnation)) => incarnation,
+            _ => {
+                tracing::debug!("Native receiver image evidence could not be captured");
+                None
+            }
+        };
         authority.register_receiver(Arc::new(ReceiverFence {
             identity: identity.clone(),
             template,
@@ -41,8 +54,9 @@ impl ProviderHostedControlTransport {
             endpoint: endpoint.clone(),
             owner: authority.owner(),
             authority: Arc::downgrade(&authority),
+            legacy_incarnation,
         }))?;
-        self.renew_receiver(endpoint, &authority).await?;
+        self.renew_receiver(endpoint, &authority, &identity).await?;
         authority.receiver_confirmed(&identity);
         // A live link owns this task; the task must not own the link's state.
         let state = Arc::downgrade(&self.state);
@@ -58,7 +72,11 @@ impl ProviderHostedControlTransport {
                 let Some(state) = state.upgrade() else { return };
                 let mut current = transport.clone();
                 current.state = state;
-                if current.renew_receiver(&endpoint, &authority).await.is_err() {
+                if current
+                    .renew_receiver(&endpoint, &authority, &identity)
+                    .await
+                    .is_err()
+                {
                     return;
                 }
             }
@@ -69,6 +87,7 @@ impl ProviderHostedControlTransport {
         &self,
         endpoint: &RuntimeEndpoint,
         authority: &Arc<dyn TransportAuthority>,
+        identity: &str,
     ) -> crate::Result<()> {
         let phase = std::sync::Mutex::new(Phase::Challenge);
         let evidence = authority.retry_evidence();
@@ -94,6 +113,7 @@ impl ProviderHostedControlTransport {
             let (challenge, challenge_status): (OwnerChallenge, _) = self
                 .owner_exchange(endpoint, &owner, Phase::Challenge, &owner, &status)
                 .await?;
+            authority.receiver_observed(identity);
             challenge_valid.store(
                 uuid::Uuid::parse_str(&challenge.nonce).is_ok(),
                 std::sync::atomic::Ordering::Release,
@@ -128,6 +148,11 @@ impl ProviderHostedControlTransport {
                 nonce: challenge.nonce,
             };
             *phase.lock().unwrap() = Phase::Confirm;
+            authority
+                .begin_receiver_confirmation(identity)
+                .map_err(|error| {
+                    OwnershipFailure::new(Phase::Confirm, Reason::AuthorityLost).with_error(error)
+                })?;
             if let Some(evidence) = &evidence {
                 evidence.confirmation(receiver.as_ref(), false);
             }
@@ -150,6 +175,14 @@ impl ProviderHostedControlTransport {
             result = tokio::time::timeout(NEGOTIATION_DEADLINE, operation) => result.unwrap_or_else(|_| Err(interrupted(Reason::Deadline))),
         };
         if let Err(failure) = result {
+            if failure.observation.phase == Phase::Challenge
+                && failure
+                    .observation
+                    .http_status
+                    .is_some_and(|status| (200..300).contains(&status))
+            {
+                authority.receiver_observed(identity);
+            }
             if let Some(evidence) = &evidence {
                 evidence.record(
                     authority.owner(),
@@ -304,6 +337,7 @@ struct ReceiverFence {
     endpoint: RuntimeEndpoint,
     owner: TransportOwner,
     authority: std::sync::Weak<dyn TransportAuthority>,
+    legacy_incarnation: Option<ReceiverIncarnation>,
 }
 
 #[async_trait::async_trait]
@@ -313,13 +347,19 @@ impl crate::owner_protocol::ReceiverRevocation for ReceiverFence {
     }
 
     async fn revoke(&self) -> crate::Result<()> {
+        self.settle(ReceiverConfirmationCustody::PossiblyDelivered)
+            .await?;
+        Ok(())
+    }
+
+    async fn settle(&self, custody: ReceiverConfirmationCustody) -> crate::Result<ReceiverCleanup> {
         let status = Arc::new(NativeHttpObservation::default());
         let operation = async {
             let mut transport = self.template.clone();
             transport.state = self.state.upgrade().ok_or_else(|| {
                 OwnershipFailure::new(Phase::Revoke, Reason::TransportUnavailable)
             })?;
-            let (reply, status): (OwnerAcknowledgement, _) = transport
+            let result: Result<(OwnerAcknowledgement, _), _> = transport
                 .owner_exchange(
                     &self.endpoint,
                     &self.owner,
@@ -327,9 +367,35 @@ impl crate::owner_protocol::ReceiverRevocation for ReceiverFence {
                     &self.owner,
                     &status,
                 )
-                .await?;
-            validate_acknowledgement(&reply, &self.owner, Phase::Revoke, status)
-                .map_err(OwnershipExchangeFailure::from)
+                .await;
+            match result {
+                Ok((reply, status)) => {
+                    validate_acknowledgement(&reply, &self.owner, Phase::Revoke, status)?;
+                    Ok(ReceiverCleanup::Acknowledged)
+                }
+                Err(failure) => {
+                    if custody == ReceiverConfirmationCustody::NeverSent
+                        && failure.observation.reason == Reason::MissingRoute
+                        && failure.observation.http_status == Some(404)
+                        && self.legacy_incarnation.is_some()
+                        && matches!(
+                            transport.legacy_receiver_incarnation(&self.endpoint).await,
+                            Ok(current) if current == self.legacy_incarnation
+                        )
+                    {
+                        use sha2::{Digest, Sha256};
+                        tracing::info!(
+                            stage = "revoke",
+                            http_status = 404_u16,
+                            outcome = "no_receiver_known_incompatible",
+                            receiver_sha256 = %format!("{:x}", Sha256::digest(self.identity.as_bytes())),
+                            "Native receiver cleanup obligation settled"
+                        );
+                        return Ok(ReceiverCleanup::NoReceiver);
+                    }
+                    Err(failure)
+                }
+            }
         };
         let result = tokio::time::timeout(NEGOTIATION_DEADLINE, operation)
             .await
@@ -338,13 +404,15 @@ impl crate::owner_protocol::ReceiverRevocation for ReceiverFence {
                 failure.http_status = status.status();
                 Err(failure.into())
             });
-        if let Err(failure) = result {
-            if let Some(authority) = self.authority.upgrade() {
-                authority.record_failure(failure.observation).await;
+        match result {
+            Ok(outcome) => Ok(outcome),
+            Err(failure) => {
+                if let Some(authority) = self.authority.upgrade() {
+                    authority.record_failure(failure.observation).await;
+                }
+                Err(failure.error)
             }
-            return Err(failure.error);
         }
-        Ok(())
     }
 }
 

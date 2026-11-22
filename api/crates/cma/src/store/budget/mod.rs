@@ -20,11 +20,11 @@ mod period_storage;
 mod requests;
 mod source;
 mod spend_ledger;
+pub(super) use spend_ledger::RegistrationReader;
 mod stop_authority;
 mod transitions;
 pub(super) use cancellation::release_unexecuted;
-pub(super) use period::require_open_with_ceilings;
-pub(super) use period::require_open_with_collections_and_ceilings;
+pub(super) use period::require_open_protected;
 pub(super) use period::{now_seconds, require_open};
 #[cfg(test)]
 pub(super) use period::{period_key, require_open_with};

@@ -5,7 +5,14 @@ import { connectionClient } from '../connections/client';
 import { accessRequests } from './accessRequests';
 import { AgentSurface } from './AgentSurface';
 import { useAgentController } from './controller';
-import { accepted, harness, item, json, page } from './transport/controller.fixture';
+import {
+  accepted,
+  harness,
+  item,
+  json,
+  page,
+  completedInputReceipt,
+} from './transport/controller.fixture';
 import type { SuggestedReplySet } from './suggestions';
 import userEvent from '@testing-library/user-event';
 
@@ -162,13 +169,15 @@ it('recovers a double-clicked suggestion with its original request while retaini
     stream: true,
     answer_context: { turn_sequence: 1, answer_sequence: 3 },
   });
-  fixture.post.mockResolvedValueOnce(accepted());
-  fireEvent.click(screen.getByRole('button', { name: 'Recover pending request' }));
+  const recover = await screen.findByRole('button', { name: 'Recover pending request' });
+  fixture.inputReceipt.mockImplementationOnce(async () => completedInputReceipt());
+  fireEvent.click(recover);
   await waitFor(() =>
     expect(screen.queryByRole('region', { name: 'Next you can ask' })).not.toBeInTheDocument(),
   );
-  expect(fixture.post.mock.calls[1]![0]!.body).toBe(original.body);
-  expect(new Headers(fixture.post.mock.calls[1]![0]!.headers).get('Idempotency-Key')).toBe(
+  expect(fixture.post).toHaveBeenCalledOnce();
+  expect(fixture.inputReceipt.mock.lastCall![0]!.body).toBe(original.body);
+  expect(new Headers(fixture.inputReceipt.mock.lastCall![0]!.headers).get('Idempotency-Key')).toBe(
     new Headers(original.headers).get('Idempotency-Key'),
   );
   await act(async () => {
@@ -294,21 +303,14 @@ it('recovers an AG-UI suggestion using the same key, scope and visible text', as
   await screen.findByText('Awaiting confirmation');
   const recovery = await screen.findByRole('button', { name: 'Recover pending request' });
   const original = fixture.post.mock.calls[0]![0]!;
-  fixture.post.mockResolvedValueOnce(
-    new Response(
-      [
-        { type: 'RUN_STARTED', threadId: 'agt_1', runId: '5' },
-        { type: 'RUN_FINISHED', threadId: 'agt_1', runId: '5' },
-      ]
-        .map((event) => `data: ${JSON.stringify(event)}\n\n`)
-        .join(''),
-      { headers: { 'content-type': 'text/event-stream' } },
-    ),
+  fixture.inputReceipt.mockImplementationOnce(async () =>
+    json({ threadId: 'agt_1', runId: '5', status: 'completed' }),
   );
   fireEvent.click(recovery);
-  await waitFor(() => expect(fixture.post).toHaveBeenCalledTimes(2));
-  expect(fixture.post.mock.calls[1]![0]!.body).toBe(original.body);
-  expect(new Headers(fixture.post.mock.calls[1]![0]!.headers).get('Idempotency-Key')).toBe(
+  await waitFor(() => expect(fixture.inputReceipt).toHaveBeenCalledTimes(2));
+  expect(fixture.post).toHaveBeenCalledOnce();
+  expect(fixture.inputReceipt.mock.lastCall![0]!.body).toBe(original.body);
+  expect(new Headers(fixture.inputReceipt.mock.lastCall![0]!.headers).get('Idempotency-Key')).toBe(
     new Headers(original.headers).get('Idempotency-Key'),
   );
   expect(JSON.parse(String(original.body)).forwardedProps).toEqual({

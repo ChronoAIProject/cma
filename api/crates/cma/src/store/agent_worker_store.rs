@@ -97,6 +97,14 @@ impl AgentWorkerStore for MongoSandboxStore {
         super::agent_failure_pacing::record(self, &mutation, &observed).await
     }
 
+    async fn try_publish_agent_work(
+        &self,
+        mutation: AgentWorkMutation,
+        parents: layer2_core::sandbox::store::AgentWorkPublicationParents,
+    ) -> Result<layer2_core::sandbox::store::AgentWorkPublication, SandboxStoreError> {
+        super::agent_worker_transaction::try_publish_agent_work(self, mutation, parents).await
+    }
+
     async fn commit_agent_work_repeated_failure(
         &self,
         retry: layer2_core::sandbox::store::AgentRepeatedFailure,
@@ -388,6 +396,14 @@ impl AgentWorkerStore for MongoSandboxStore {
             }
         }
         Err(SandboxStoreError::Conflict)
+    }
+
+    async fn commit_agent_skill_result(
+        &self,
+        mutation: AgentWorkMutation,
+        guard: layer2_core::sandbox::store::AgentSkillResultGuard,
+    ) -> Result<(), SandboxStoreError> {
+        super::agent_worker_transaction::commit_agent_skill_result(self, mutation, &guard).await
     }
 
     async fn commit_agent_work(

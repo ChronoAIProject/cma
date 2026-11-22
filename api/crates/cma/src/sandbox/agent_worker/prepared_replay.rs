@@ -162,7 +162,8 @@ impl AgentWorker {
             Ok(receipt) if valid_worktree_receipt(context, &worktree, &receipt) => {}
             Ok(_) => {
                 return self
-                    .handle_failure(
+                    .handle_context_failure(
+                        context,
                         agent,
                         WorkerFailure::terminal(
                             "agent_runtime_receipt_invalid",
@@ -175,7 +176,12 @@ impl AgentWorker {
             }
             Err(error) => {
                 return self
-                    .handle_failure(agent, adapter_failure(error), now + started.elapsed())
+                    .handle_context_failure(
+                        context,
+                        agent,
+                        adapter_failure(error),
+                        now + started.elapsed(),
+                    )
                     .await
                     .map(|()| None)
             }
@@ -201,7 +207,12 @@ impl AgentWorker {
                 .await
             {
                 return self
-                    .handle_failure(agent, adapter_failure(error), now + started.elapsed())
+                    .handle_context_failure(
+                        context,
+                        agent,
+                        adapter_failure(error),
+                        now + started.elapsed(),
+                    )
                     .await
                     .map(|()| None);
             }

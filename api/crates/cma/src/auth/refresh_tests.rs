@@ -1,9 +1,13 @@
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
-use axum::{http::StatusCode, routing::post, Json, Router};
+use axum::{
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    routing::{get, post},
+    Json, Router,
+};
 use layer2_core::{Authorization, Capability, SubjectId};
 use serde_json::{json, Value};
 use tokio::sync::Semaphore;
@@ -17,6 +21,7 @@ struct Fixture {
     first: Arc<AuthState>,
     second: Arc<AuthState>,
     calls: Arc<AtomicUsize>,
+    requirements_reads: Arc<Mutex<Vec<Option<HeaderValue>>>>,
     started: Vec<Arc<Semaphore>>,
     release: Vec<Arc<Semaphore>>,
     server: tokio::task::JoinHandle<()>,
@@ -66,7 +71,14 @@ fn success(refresh: Option<&str>) -> (StatusCode, Value) {
 
 impl Fixture {
     async fn new(replies: Vec<(StatusCode, Value)>) -> Self {
+        let store = MemoryAuthStore::default();
+        store.put_subject(initial()).await.unwrap();
+        Self::with_store(replies, store).await
+    }
+
+    async fn with_store(replies: Vec<(StatusCode, Value)>, store: MemoryAuthStore) -> Self {
         let calls = Arc::new(AtomicUsize::new(0));
+        let requirements_reads = Arc::new(Mutex::new(Vec::new()));
         let started: Vec<_> = replies
             .iter()
             .map(|_| Arc::new(Semaphore::new(0)))
@@ -75,29 +87,42 @@ impl Fixture {
             .iter()
             .map(|_| Arc::new(Semaphore::new(0)))
             .collect();
-        let app = Router::new().route(
-            "/token",
-            post({
-                let calls = calls.clone();
-                let started = started.clone();
-                let release = release.clone();
-                move || {
-                    let index = calls.fetch_add(1, Ordering::SeqCst);
-                    let reply = replies[index].clone();
-                    let started = started[index].clone();
-                    let release = release[index].clone();
-                    async move {
-                        started.add_permits(1);
-                        release.acquire().await.unwrap().forget();
-                        (reply.0, Json(reply.1))
+        let app = Router::new()
+            .route(
+                "/token",
+                post({
+                    let calls = calls.clone();
+                    let started = started.clone();
+                    let release = release.clone();
+                    move || {
+                        let index = calls.fetch_add(1, Ordering::SeqCst);
+                        let reply = replies[index].clone();
+                        let started = started[index].clone();
+                        let release = release[index].clone();
+                        async move {
+                            started.add_permits(1);
+                            release.acquire().await.unwrap().forget();
+                            (reply.0, Json(reply.1))
+                        }
                     }
-                }
-            }),
-        );
+                }),
+            )
+            .route(
+                "/api/v1/user-services",
+                get({
+                    let reads = requirements_reads.clone();
+                    move |headers: HeaderMap| {
+                        reads
+                            .lock()
+                            .unwrap()
+                            .push(headers.get(header::AUTHORIZATION).cloned());
+                        async { Json(json!({"services": []})) }
+                    }
+                }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let store = Arc::new(MemoryAuthStore::default());
-        store.put_subject(initial()).await.unwrap();
+        let store = Arc::new(store);
         let mode = AuthMode::Provider {
             base_url: base.clone(),
             client_id: "fixture-client".into(),
@@ -122,6 +147,7 @@ impl Fixture {
             first,
             second,
             calls,
+            requirements_reads,
             started,
             release,
             server,
@@ -156,6 +182,87 @@ impl Fixture {
             .await
             .unwrap());
     }
+}
+
+#[tokio::test]
+async fn requirements_deadline_allows_admitted_refresh_to_settle_before_refusing_reads() {
+    use crate::trigger::CmaServiceConnectionBroker;
+    use layer2_core::trigger_domain::{
+        ServiceConnectionBroker, ServiceConnectionError, ServiceRequirementState,
+    };
+    use layer2_core::ServiceId;
+
+    let observed = initial();
+    let entered = Arc::new(Semaphore::new(0));
+    let release = Arc::new(Semaphore::new(0));
+    let store = MemoryAuthStore::default().with_refresh_completion_gate(
+        observed.token_generation + 1,
+        entered.clone(),
+        release.clone(),
+    );
+    store.put_subject(observed.clone()).await.unwrap();
+    let fixture = Fixture::with_store(vec![success(Some("fixture-rotated"))], store).await;
+    let broker = Arc::new(
+        CmaServiceConnectionBroker::from_auth_config(
+            &fixture.first.mode,
+            Some("https://nyxid.example.test"),
+            fixture.first.clone(),
+        )
+        .unwrap(),
+    );
+    let services = [ServiceId::new("fixture-service")];
+    let mut call = tokio::spawn({
+        let broker = broker.clone();
+        let owner = observed.subject.clone();
+        let services = services.clone();
+        async move { broker.requirements(&owner, &services).await }
+    });
+    fixture.started(0).await;
+    fixture.release[0].add_permits(1);
+    tokio::time::timeout(Duration::from_secs(2), entered.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    let pending = fixture.state().await;
+    assert_eq!(pending.token_generation, observed.token_generation);
+    assert!(pending.refresh_lease.is_some());
+
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_secs(16)).await;
+    tokio::task::yield_now().await;
+    assert!(futures_util::poll!(&mut call).is_pending());
+    assert!(fixture.requirements_reads.lock().unwrap().is_empty());
+    release.add_permits(1);
+    let result = tokio::time::timeout(Duration::from_secs(2), call)
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::resume();
+    assert!(matches!(
+        result,
+        Err(ServiceConnectionError::Unavailable(_))
+    ));
+    assert!(fixture.requirements_reads.lock().unwrap().is_empty());
+
+    let settled = fixture.state().await;
+    assert_eq!(settled.token_generation, observed.token_generation + 1);
+    assert!(settled.refresh_lease.is_none());
+    let tokens = settled.tokens.unwrap();
+    assert_eq!(tokens.access_token.expose(), "fixture-renewed-access");
+    assert_eq!(tokens.refresh_token.unwrap().expose(), "fixture-rotated");
+    let requirements = broker
+        .requirements(&observed.subject, &services)
+        .await
+        .unwrap();
+    assert_eq!(requirements[0].state, ServiceRequirementState::Missing);
+    assert_eq!(fixture.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        fixture.requirements_reads.lock().unwrap().as_slice(),
+        &[Some(HeaderValue::from_static(
+            "Bearer fixture-renewed-access"
+        ))]
+    );
 }
 
 fn run(

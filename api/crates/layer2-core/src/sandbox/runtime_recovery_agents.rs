@@ -72,7 +72,11 @@ pub(super) fn recover_agent(
     let mut next = current.clone();
     let mut logs = Vec::new();
     if let Some(turn_sequence) = next.conversation.active_turn.take() {
-        logs.push(AgentLogKind::TurnInterrupted { turn_sequence });
+        let terminal = AgentLogKind::TurnInterrupted { turn_sequence };
+        if let Some(task) = next.conversation.observations.task_acceptance.as_mut() {
+            task.observe_execution(Some(turn_sequence), std::slice::from_ref(&terminal));
+        }
+        logs.push(terminal);
     }
     if let Some(operation) = next.conversation.operation.as_mut() {
         if operation.blocks_dispatch() {

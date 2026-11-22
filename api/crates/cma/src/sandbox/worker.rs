@@ -297,6 +297,8 @@ impl SandboxWorker {
         let Some(sandbox) = granted else {
             return Ok(false);
         };
+        #[cfg(test)]
+        diagnostics::executing();
         if self.config.renewable_work || sandbox.work.authority_protocol.is_some() {
             return Box::pin(self.run_renewable(sandbox, now, claiming)).await;
         }
@@ -433,3 +435,6 @@ impl SandboxWorker {
         Box::pin(self.execute(sandbox, now)).await
     }
 }
+
+#[cfg(test)]
+mod diagnostics;

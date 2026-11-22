@@ -27,6 +27,10 @@ pub(crate) struct Instance {
     address: String,
     server: JoinHandle<()>,
 }
+
+pub(crate) fn public_routes(relay: &Arc<Relay>, router: Router) -> Router {
+    relay.routes(router)
+}
 impl Drop for Instance {
     fn drop(&mut self) {
         self.server.abort();

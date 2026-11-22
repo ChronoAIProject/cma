@@ -2,6 +2,8 @@
 mod access_snapshot_session;
 #[path = "resource_access_tests/artifacts.rs"]
 mod artifacts;
+#[path = "resource_access_tests/backend_free.rs"]
+mod backend_free;
 #[path = "resource_access_tests/hierarchy.rs"]
 mod hierarchy;
 #[path = "resource_access_tests/history_measurement.rs"]

@@ -265,7 +265,12 @@ pub(crate) async fn enforce(
     request: Request,
     next: Next,
 ) -> Response {
-    if is_cors_preflight(&request) {
+    if is_cors_preflight(&request)
+        || request
+            .extensions()
+            .get::<crate::agent_manager::relay::ChargedQueuedCancellation>()
+            .is_some()
+    {
         return next.run(request).await;
     }
     let tier = request_tier(

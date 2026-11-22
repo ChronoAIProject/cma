@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { CmaWebClient } from '../api/client';
 import { agentClient } from '../test/agent';
 import { SandboxRetainedRecovery } from './SandboxRetainedRecovery';
-import { saveRecoveryIntent } from './retainedRecoveryStorage';
+import { loadRecoveryIntent, saveRecoveryIntent } from './retainedRecoveryStorage';
 
 beforeEach(() => sessionStorage.clear());
 afterEach(() => {
@@ -44,28 +44,41 @@ function setup(overrides: Parameters<typeof agentClient>[0] = {}, failed = true)
   };
 }
 
-it('only inspects on request and requires explicit confirmation before recovery', async () => {
-  const f = setup();
-  expect(f.inspectSandboxRecovery).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Recover on the same image' }));
-  await screen.findByRole('dialog', { name: 'Recover on the same image' });
-  expect(f.recoverSandboxRetained).not.toHaveBeenCalled();
-  fireEvent.click(screen.getByRole('button', { name: 'Recover my Sandbox' }));
-  await screen.findByText(/Recovery accepted/);
-  expect(f.recoverSandboxRetained).toHaveBeenCalledExactlyOnceWith(
-    'sbx_recovery',
-    7,
-    expect.objectContaining({ idempotencyKey: expect.any(String) }),
-  );
-  expect(f.accepted).toHaveBeenCalledOnce();
-});
+it.each(['exact_boot_replacement', 'exact_suspended_runtime'] as const)(
+  'requires explicit consent for %s and sends the stored key once',
+  async (disposition) => {
+    const inspect = vi.fn(async () => ({ disposition, admission_enabled: true }));
+    const f = setup({ inspectSandboxRecovery: inspect });
+    expect(inspect).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Recover on the same image' }));
+    await screen.findByRole('dialog', { name: 'Recover on the same image' });
+    expect(f.recoverSandboxRetained).not.toHaveBeenCalled();
+    expect(sessionStorage.length).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(f.recoverSandboxRetained).not.toHaveBeenCalled();
+    expect(sessionStorage.length).toBe(0);
+    fireEvent.click(screen.getByRole('button', { name: 'Recover on the same image' }));
+    await screen.findByRole('dialog', { name: 'Recover on the same image' });
+    fireEvent.click(screen.getByRole('button', { name: 'Recover my Sandbox' }));
+    await screen.findByText(/Recovery accepted/);
+    const intent = loadRecoveryIntent('owner', 'sbx_recovery').intent;
+    expect(intent?.key).toBeTruthy();
+    expect(f.recoverSandboxRetained).toHaveBeenCalledExactlyOnceWith(
+      'sbx_recovery',
+      7,
+      expect.objectContaining({ idempotencyKey: intent?.key }),
+    );
+    expect(f.accepted).toHaveBeenCalledOnce();
+  },
+);
 
-it.each(['disabled', 'unproved'])('never admits a %s assessment', async (reason) => {
+it.each([
+  { disposition: 'exact_boot_replacement', admission_enabled: false },
+  { disposition: 'exact_suspended_runtime', admission_enabled: false },
+  { disposition: 'child_activity', admission_enabled: true },
+] as const)('never admits an ineligible $disposition assessment', async (assessment) => {
   const f = setup({
-    inspectSandboxRecovery: async () => ({
-      disposition: reason === 'unproved' ? 'child_activity' : 'exact_boot_replacement',
-      admission_enabled: reason !== 'disabled',
-    }),
+    inspectSandboxRecovery: async () => assessment,
   });
   fireEvent.click(screen.getByRole('button', { name: 'Recover on the same image' }));
   await screen.findByText(/Recovery is not available/);
@@ -73,14 +86,22 @@ it.each(['disabled', 'unproved'])('never admits a %s assessment', async (reason)
   expect(f.recoverSandboxRetained).not.toHaveBeenCalled();
 });
 
-it('does not submit stale consent after the parent revision changes', async () => {
-  const f = setup();
-  fireEvent.click(screen.getByRole('button', { name: 'Recover on the same image' }));
-  await screen.findByRole('dialog');
-  f.rerender(<SandboxRetainedRecovery {...f.props} revision={9} />);
-  expect(screen.getByRole('button', { name: 'Recover my Sandbox' })).toBeDisabled();
-  expect(f.recoverSandboxRetained).not.toHaveBeenCalled();
-});
+it.each(['exact_boot_replacement', 'exact_suspended_runtime'] as const)(
+  'does not submit stale %s consent after the parent revision changes',
+  async (disposition) => {
+    const f = setup({
+      inspectSandboxRecovery: async () => ({ disposition, admission_enabled: true }),
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Recover on the same image' }));
+    await screen.findByRole('dialog');
+    f.rerender(<SandboxRetainedRecovery {...f.props} revision={9} />);
+    const confirmation = screen.getByRole('button', { name: 'Recover my Sandbox' });
+    expect(confirmation).toBeDisabled();
+    fireEvent.click(confirmation);
+    expect(f.recoverSandboxRetained).not.toHaveBeenCalled();
+    expect(sessionStorage.length).toBe(0);
+  },
+);
 
 it('keeps the same request key through a lost reply, client recreation and lifecycle progress', async () => {
   const first = vi.fn<NonNullable<CmaWebClient['recoverSandboxRetained']>>(async () => {

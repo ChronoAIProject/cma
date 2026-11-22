@@ -7,6 +7,15 @@ from git_comparison import check_sha
 # GitHub names each merge-queue entry's branch after its base branch and PR.
 # Only the develop queue is supported; main still merges reviewed release PRs.
 QUEUE_REF = re.compile(r'refs/heads/gh-readonly-queue/develop/pr-([1-9][0-9]*)-[0-9a-f]{40}')
+# A release is proposed from develop itself or from a release branch cut from
+# one develop commit, so its tested head stops moving while develop does. The
+# release gate proves a release branch's head is on develop's first-parent
+# history; this only admits the name.
+RELEASE_BRANCH = re.compile(r'release/[0-9A-Za-z][0-9A-Za-z._-]{0,62}')
+
+
+def release_head(ref):
+    return ref == 'develop' or (isinstance(ref, str) and RELEASE_BRANCH.fullmatch(ref) is not None)
 
 
 def repository_name(value):
@@ -64,7 +73,7 @@ def full_ci_required(event, event_name, repository):
         raise ValueError('PR target repository differs')
     if pull['base']['ref'] == 'develop':
         return False
-    if (pull['base']['ref'] == 'main' and pull['head']['ref'] == 'develop'
+    if (pull['base']['ref'] == 'main' and release_head(pull['head']['ref'])
             and pull['head']['repo']['full_name'] == repository):
         return True
-    raise ValueError('CI PR must target develop or release develop to main')
+    raise ValueError('CI PR must target develop or release develop or a release branch to main')

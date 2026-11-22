@@ -248,6 +248,7 @@ fn bypasses_ambient_auth(path: &str) -> bool {
         "/auth/signup-options"
             | "/auth/login"
             | "/auth/callback"
+            | super::service_authorization::CALLBACK_PATH
             | "/auth/logout"
             | "/.well-known/agent-card.json"
     ) {

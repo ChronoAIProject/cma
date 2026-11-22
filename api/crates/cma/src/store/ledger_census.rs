@@ -1,5 +1,5 @@
 //! Explicit read-only cohort census; no service startup, writes or effect authority.
-mod files;
+pub(in crate::store) mod files;
 mod observation;
 mod report;
 #[cfg(test)]

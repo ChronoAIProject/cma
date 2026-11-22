@@ -6,8 +6,12 @@ const editable =
   'input:not(:disabled):not([readonly]), textarea:not(:disabled):not([readonly]), button:not(:disabled)';
 
 function errorField(root: HTMLElement, error: string) {
-  const pointer = /^(\/[^\s:]*):/.exec(error)?.[1];
-  if (!pointer) return undefined;
+  const reported = /^(\/[^\s:]*):/.exec(error)?.[1];
+  if (!reported) return undefined;
+  // Managed connection admission is validated after expansion into producer 0.
+  const pointer = root.querySelector('[data-validation-path="/connection_admission"]')
+    ? reported.replace(/^\/sources\/0\/admission(?=\/|$)/, '/connection_admission')
+    : reported;
   const candidates = [...root.querySelectorAll<HTMLElement>('[data-validation-path]')]
     .filter((element) => {
       const path = element.dataset.validationPath!;
@@ -53,6 +57,12 @@ export function ValidationError({
       {canEdit ? (
         <Button
           onClick={() => {
+            const field = root.current && errorField(root.current, error);
+            if (field) {
+              revealInvalidField(field);
+              field.focus();
+              return;
+            }
             root.current?.querySelectorAll('details').forEach((details) => {
               details.open = true;
             });

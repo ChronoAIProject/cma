@@ -1,6 +1,7 @@
 use super::*;
 use crate::agent_lifecycle::ImageResolver;
 use crate::auth::AuthMode;
+use axum::Router;
 use layer1_public::rest::{AgentLifecycleImageReference, AgentLifecycleProvisioningError};
 use layer2_core::bots::BotError;
 use layer2_core::bots::{BotControl, BotService, BotWorker};

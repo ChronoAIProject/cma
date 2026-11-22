@@ -113,6 +113,7 @@ impl IngressState {
             outcome: status.kind.as_str().into(),
             observed_at: crate::activity::now(),
             confirmed_at: Some(occurred),
+            answer_response_id: None,
             platform_message_id: Some(status.message_id.clone()),
             recipients,
         });

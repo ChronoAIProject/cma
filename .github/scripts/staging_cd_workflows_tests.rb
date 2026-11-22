@@ -141,6 +141,10 @@ class StagingWorkflowTest < Minitest::Test
     final = workflow('staging-release')['jobs']['finalize']
     assert_equal 'read', image['permissions']['contents']
     assert_equal 'write', image['permissions']['packages']
+    # Publication lists the Actions caches to verify its layer export.
+    assert_equal 'read', image['permissions']['actions']
+    publication = image['steps'].find { |step| step['id'] == 'publication' }
+    assert_equal '${{ github.token }}', publication.dig('env', 'GH_TOKEN')
     assert_equal 'write', final['permissions']['contents']
     refute final['permissions'].key?('packages')
     refute workflow('redeploy-staging').to_s.include?('packages')
@@ -294,6 +298,9 @@ class StagingWorkflowTest < Minitest::Test
     deploy = workflow('prod-deploy')
     job = deploy['jobs']['deploy']
     assert_equal 'production', job.dig('env', 'CD_TARGET')
+    assert_equal 'release', job.dig('env', 'CD_DEPLOY_MODE')
+    # Outlives the 3600 s production release total and its 15 s grace, which start after selection.
+    assert_equal 75, job['timeout-minutes']
     # Reproducing the approved set never hands over; only the coordinator can.
     assert_equal '${{ steps.coordinate.outputs.disposition }}', job.dig('outputs', 'disposition')
     trigger = deploy['on'] || deploy.fetch(true)
@@ -334,6 +341,62 @@ class StagingWorkflowTest < Minitest::Test
       job['uses'] = './.github/workflows/staging-promote.yml'
       assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(inputs) }
       job['uses'] = original
+    end
+  end
+
+  def test_package_bundle_writes_only_on_a_develop_dispatch_with_pinned_actions
+    require_relative 'ci-contract'
+    inputs = CIContract.load_inputs
+    CIContract.staging_package_authority(inputs)
+    [->(w) { w[true]['push'] = { 'branches' => ['develop'] } },
+     ->(w) { w['permissions'] = { 'packages' => 'write' } },
+     ->(w) { w['jobs']['bundle']['permissions']['contents'] = 'write' },
+     ->(w) { w['jobs']['bundle']['if'] = "github.repository == 'ChronoAIProject/cma'" },
+     ->(w) { w['jobs']['bundle']['runs-on'] = 'ubuntu-latest-16-cores' },
+     ->(w) { w['jobs']['bundle']['env']['REPOSITORY'] = 'chronoaiproject/cma-runtime' },
+     ->(w) { w['jobs']['bundle']['steps'].find { |s| s['uses'].to_s.start_with?('docker/login-action') }['uses'] = 'docker/login-action@v3' },
+     ->(w) { w['jobs']['bundle']['steps'].reject! { |s| s['name'] == 'Refuse an existing tag before building' } },
+     ->(w) { w['jobs']['bundle']['steps'].find { |s| s['name'] == 'Publish the exact verified layout' }['run'].sub!('--preserve-digests ', '') },
+     ->(w) { w['jobs']['extra'] = { 'permissions' => { 'contents' => 'read' }, 'runs-on' => 'ubuntu-24.04', 'steps' => [] } }].each do |mutate|
+      copy = Marshal.load(Marshal.dump(inputs))
+      mutate.call(copy['omarchy-package-bundle'])
+      assert_raises(CIContract::Refusal) { CIContract.staging_package_authority(copy) }
+    end
+  end
+
+  def test_package_bundle_proves_its_tag_absent_immediately_before_its_only_push
+    require_relative 'ci-contract'
+    inputs = CIContract.load_inputs
+    CIContract.staging_package_authority(inputs)
+    step = ->(w, name) { w['jobs']['bundle']['steps'].find { |s| s['name'] == name } }
+    refuse = ->(w) { step.call(w, 'Refuse an existing tag before building') }
+    publish = ->(w) { step.call(w, 'Publish the exact verified layout') }
+    {
+      'step-level REPOSITORY on the push' => ->(w) { publish.call(w)['env']['REPOSITORY'] = 'chronoaiproject/cma-runtime' },
+      'REPOSITORY reassigned in the push script' =>
+        ->(w) { publish.call(w)['run'].sub!("set -euo pipefail\n", "set -euo pipefail\nREPOSITORY=chronoaiproject/cma-runtime\n") },
+      'second absence check after the push' => lambda do |w|
+        lines = publish.call(w)['run'].lines
+        check = lines.delete_at(lines.index { |line| line.include?('omarchy-package-bundle.py absent') })
+        lines.insert(lines.index { |line| line.include?('"docker://ghcr.io/$REPOSITORY:$TAG"') } + 1, check)
+        publish.call(w)['run'] = lines.join
+      end,
+      'second absence check allowed to fail' => ->(w) { publish.call(w)['run'].sub!(%(--tag "$TAG"\n), %(--tag "$TAG" || true\n)) },
+      'first absence check after the build' => lambda do |w|
+        steps = w['jobs']['bundle']['steps']
+        moved = steps.delete(refuse.call(w))
+        steps.insert(steps.index { |s| s['name'] == 'Download, verify and lay out the bundle' } + 1, moved)
+      end,
+      'hard-coded push destination' =>
+        ->(w) { publish.call(w)['run'].sub!('"docker://ghcr.io/$REPOSITORY:$TAG"', '"docker://ghcr.io/chronoaiproject/cma-runtime:latest"') },
+      'optional first absence check' => ->(w) { refuse.call(w)['continue-on-error'] = true },
+      'skipped first absence check' => ->(w) { refuse.call(w)['if'] = 'false' },
+      'optional bundle job' => ->(w) { w['jobs']['bundle']['continue-on-error'] = true },
+    }.each do |label, mutate|
+      copy = Marshal.load(Marshal.dump(inputs))
+      mutate.call(copy['omarchy-package-bundle'])
+      refute_equal inputs['omarchy-package-bundle'], copy['omarchy-package-bundle'], label
+      assert_raises(CIContract::Refusal, label) { CIContract.staging_package_authority(copy) }
     end
   end
 
@@ -393,16 +456,40 @@ class StagingWorkflowTest < Minitest::Test
 
   def test_exact_artifact_download_layout_matches_the_finalizer
     steps = workflow('staging-release')['jobs']['finalize']['steps']
-    download = steps.find { |step| step['uses'].to_s.start_with?('actions/download-artifact@') }
+    downloads = steps.select { |step| step['uses'].to_s.start_with?('actions/download-artifact@') }
     finalizer = steps.find { |step| step['run'].to_s.include?('staging_cd_finalize.py') }
-    assert_equal '${{ needs.publish.outputs.artifact }}', download.dig('with', 'artifact-ids')
-    refute download['with'].key?('pattern')
-    refute download['with'].key?('name')
-    config = {action: download['uses'], inputs: download['with'],
-              receiptPath: finalizer.dig('env', 'CD_RECEIPTS_PATH')}
-    output, status = Open3.capture2e('node', File.join(__dir__, 'staging_cd_download_layout_tests.cjs'),
-                                    stdin_data: JSON.generate(config))
-    assert status.success?, output
+    assert_equal %w[receipts-download receipts-download-retry], downloads.map { |step| step['id'] }
+    # Both attempts execute the same pinned selection and destination logic.
+    downloads.each do |download|
+      assert_equal '${{ needs.publish.outputs.artifact }}', download.dig('with', 'artifact-ids')
+      refute download['with'].key?('pattern')
+      refute download['with'].key?('name')
+      config = {action: download['uses'], inputs: download['with'],
+                receiptPath: finalizer.dig('env', 'CD_RECEIPTS_PATH')}
+      output, status = Open3.capture2e('node', File.join(__dir__, 'staging_cd_download_layout_tests.cjs'),
+                                      stdin_data: JSON.generate(config))
+      assert status.success?, output
+    end
+  end
+
+  def test_receipt_download_attempts_are_bounded_inside_the_finalize_budget
+    job = workflow('staging-release')['jobs']['finalize']
+    steps = job['steps']
+    first, repeat = %w[receipts-download receipts-download-retry].map { |id| steps.find { |step| step['id'] == id } }
+    assert_equal [2, 2], [first['timeout-minutes'], repeat['timeout-minutes']]
+    explain = steps[steps.index(repeat) + 1]
+    assert_equal "failure() && steps.receipts-download-retry.outcome == 'failure'", explain['if']
+    assert_equal({ 'RECEIPT_ARTIFACT' => '${{ needs.publish.outputs.artifact }}' }, explain['env'])
+    assert_includes explain['run'], '[[ "$artifact" =~ ^[0-9]{1,20}$ ]] || artifact=\'?\''
+    assert_includes explain['run'], 'Receipt artifact $artifact was not downloaded: both attempts failed.'
+    assert_includes explain['run'], 'finalize/artifact_unavailable'
+    assert_equal 'exit 1', explain['run'].strip.lines.last
+    assert_operator steps.index(explain), :<, steps.index { |step| step['id'] == 'finalize' }
+    # A slow repeat that succeeds must still leave the finalizer its whole read budget.
+    budget = File.read(File.join(__dir__, 'staging_cd_finalize.py'))[/^FINALIZE_READ_SECONDS = (\d+)$/, 1].to_i
+    assert_operator budget, :>, 0
+    attempts = [first, repeat].sum { |step| step['timeout-minutes'] * 60 }
+    assert_operator attempts + budget, :<, job['timeout-minutes'] * 60
   end
 
   def test_runtime_canary_interpreter_runs_only_in_changed_runtime_publication
@@ -522,7 +609,8 @@ class StagingWorkflowTest < Minitest::Test
     refute check.key?('concurrency')
     assert_equal ['catch_up'], check['jobs'].keys
     job = check['jobs']['catch_up']
-    assert_equal({ 'contents' => 'read', 'actions' => 'write' }, job['permissions'])
+    # Re-running staging needs actions: write; controller outcomes only deployment reads.
+    assert_equal({ 'contents' => 'read', 'actions' => 'write', 'deployments' => 'read' }, job['permissions'])
     # At most one check runs and one waits; each decides from fresh state.
     assert_equal({ 'group' => 'cma-staging-cd-catch-up', 'cancel-in-progress' => false }, job['concurrency'])
     %w[github.repository\ ==\ 'ChronoAIProject/cma' github.ref\ ==\ 'refs/heads/develop'
@@ -538,7 +626,24 @@ class StagingWorkflowTest < Minitest::Test
     end
     assert_equal false, job['steps'].first.dig('with', 'persist-credentials')
     assert_equal ['python3 -B .github/scripts/staging_cd_catch_up.py'], job['steps'].map { |step| step['run'] }.compact
-    assert_equal({ 'GH_TOKEN' => '${{ github.token }}' }, job['steps'].last['env'])
+    # The check judges finals by the same controller outcomes the planner reads.
+    planner = staging.dig('jobs', 'plan', 'steps').find { |step| step['id'] == 'promotions' }
+    assert_equal({ 'GH_TOKEN' => '${{ github.token }}',
+                   'CD_STAGING_ENVIRONMENT' => planner.dig('env', 'CD_STAGING_ENVIRONMENT') }, job['steps'].last['env'])
+  end
+
+  def test_catch_up_reads_the_plan_job_and_its_transient_gate_by_their_exact_names
+    source = File.read(File.join(__dir__, 'staging_cd_catch_up.py'))
+    job = source.scan(/^PLAN_JOB = "([^"]+)"$/).flatten
+    gate = source.scan(/^PLAN_GATE = "([^"]+)"$/).flatten
+    assert_equal [1, 1], [job.size, gate.size]
+    jobs = workflow('staging-cd')['jobs']
+    matching = jobs.select { |id, value| value.fetch('name', id) == job.first }
+    assert_equal ['plan'], matching.keys
+    gates = matching['plan']['steps'].select { |step| step['name'] == gate.first }
+    assert_equal 1, gates.size
+    # Renaming the gate, or letting a refusal fail at it, would change what catch-up re-runs.
+    assert_includes gates.first['if'], "steps.plan.outputs.transient == 'true'"
   end
 
   def test_catch_up_reads_the_allocation_job_by_its_exact_display_name
@@ -553,6 +658,28 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal ['allocate'], matching.keys
     assert_includes matching['allocate']['steps'].map { |step| step['run'] },
                     'python3 -B .github/scripts/staging_cd_allocate.py'
+  end
+
+  def test_catch_up_reads_the_allocation_gate_by_its_exact_name
+    source = File.read(File.join(__dir__, 'staging_cd_catch_up.py'))
+    gate = source.scan(/^ALLOCATION_GATE = "([^"]+)"$/).flatten
+    assert_equal 1, gate.size
+    steps = workflow('staging-cd').dig('jobs', 'allocate', 'steps')
+    allocate = steps.index { |step| step['id'] == 'allocate' }
+    routes = steps.index { |step| step['id'] == 'routes' }
+    gates = steps.each_index.select { |index| steps[index]['name'] == gate.first }
+    assert_equal 1, gates.size
+    # The gate follows allocation directly and precedes routing, which its failure skips.
+    assert_equal [allocate + 1, allocate + 2], [gates.first, routes]
+    step = steps[gates.first]
+    # Renaming the gate, or letting a refusal that needs a person fail at it,
+    # would change what catch-up re-runs.
+    assert_equal "steps.allocate.outputs.transient == 'true'", step['if']
+    assert_equal({ 'CD_ALLOCATION_REFUSED' => '${{ steps.allocate.outputs.refused }}',
+                   'CD_ALLOCATION_SITE' => '${{ steps.allocate.outputs.site }}' }, step['env'])
+    assert_equal 'python3 -B .github/scripts/staging_cd_allocate.py --require-settled', step['run']
+    [steps[allocate], step, steps[routes]].each { |item| refute item.key?('continue-on-error') }
+    refute steps[routes].key?('if'), 'routing must run only after a settled allocation'
   end
 
   def test_package_and_download_tools_repeat_transient_network_failures
@@ -588,6 +715,7 @@ class StagingWorkflowTest < Minitest::Test
     save = steps.index { |step| step['uses'].to_s.start_with?('actions/cache/save@') }
     select = steps.index { |step| step['id'] == 'plan' }
     gate = steps.index { |step| step['name'] == 'Require a complete release plan' }
+    proof = steps.index { |step| step['name'] == 'Require a provable release plan' }
     promotions = steps.index { |step| step['id'] == 'promotions' }
     assert_operator prepare, :<, restore
     assert_operator restore, :<, select
@@ -596,10 +724,20 @@ class StagingWorkflowTest < Minitest::Test
     # A budget-stopped plan saves its analysed revisions before the job fails,
     # and a later step's failure cannot discard them.
     assert_operator save, :<, gate
-    assert_operator gate, :<, promotions
-    assert_equal "steps.plan.outputs.complete != 'true'", steps[gate]['if']
-    assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete',
-                 steps[gate]['run']
+    assert_operator gate, :<, proof
+    assert_operator proof, :<, promotions
+    # Exactly one gate fails a stopped plan: the first only for a transient
+    # stop, which catch-up may re-run; each names its reason.
+    assert_equal "steps.plan.outputs.complete != 'true' && steps.plan.outputs.transient == 'true'", steps[gate]['if']
+    assert_equal "steps.plan.outputs.complete != 'true' && steps.plan.outputs.transient != 'true'", steps[proof]['if']
+    [gate, proof].each do |index|
+      assert_equal({ 'CD_PLAN_REFUSED' => '${{ steps.plan.outputs.refused }}' }, steps[index]['env'])
+      assert_equal '"$RUNNER_TEMP/selector-venv/bin/python" -B .github/scripts/staging_cd_queue.py --require-complete',
+                   steps[index]['run']
+    end
+    # actions/cache/save already annotates a refused write with its cause, so the
+    # plan waits on no cache verification of its own.
+    refute plan.to_s.include?('staging_cd_cache_save.py'), 'the plan must not poll the Actions cache'
     [steps[restore], steps[save]].each do |step|
       assert_equal '${{ steps.selection-cache.outputs.directory }}', step['with']['path']
       assert_equal '${{ steps.selection-cache.outputs.key }}', step['with']['key']
@@ -607,5 +745,14 @@ class StagingWorkflowTest < Minitest::Test
     assert_equal '${{ steps.selection-cache.outputs.prefix }}', steps[restore]['with']['restore-keys']
     assert_equal 'ubuntu-24.04', plan['runs-on']
     refute plan.to_s.include?('secrets.')
+  end
+
+  def test_planner_reads_final_release_tags_with_only_the_read_only_job_token
+    plan = workflow('staging-cd')['jobs']['plan']
+    step = plan['steps'].find { |candidate| candidate['id'] == 'plan' }
+    assert_equal({ 'CD_ADOPTION_SHA' => '${{ vars.CMA_CD_ADOPTION_SHA }}', 'GH_TOKEN' => '${{ github.token }}' },
+                 step['env'])
+    assert_equal 'read', plan.dig('permissions', 'contents')
+    refute_includes plan['permissions'].values, 'write'
   end
 end

@@ -4,9 +4,15 @@ set -euo pipefail
 ulimit -c 0
 # Stable build metadata; package security/signature verification stays active.
 export SOURCE_DATE_EPOCH=0
+snapshot=$1
+[[ $snapshot =~ ^[0-9]{4}/[0-9]{2}/[0-9]{2}$ ]]
+# Every Arch and Omarchy package comes from the digest-pinned package bundle,
+# mounted read-only. No package server is contacted.
+bundle=/run/cma-omarchy-packages
+test "$(cat "$bundle/SNAPSHOT")" = "$snapshot"
 pacman-key --init
 pacman-key --populate archlinux
-curl -fsSL https://pkgs.omarchy.org/stable/x86_64/omarchy-keyring-20251027-1-any.pkg.tar.zst -o /tmp/omarchy-keyring.pkg.tar.zst
+cp "$bundle/omarchy/x86_64/omarchy-keyring-20251027-1-any.pkg.tar.zst" /tmp/omarchy-keyring.pkg.tar.zst
 echo 'f4bc258879f493462736f9a072c4f4c7f753eb559f6b346f5bdf8ed816f75f66  /tmp/omarchy-keyring.pkg.tar.zst' | sha256sum -c -
 # libalpm omits INSTALLDATE at epoch zero. Use a fixed nonzero package date;
 # normalization below still writes zero after validating every installed record.
@@ -19,8 +25,33 @@ mkdir -p /usr/share/omarchy /usr/share/cma-omarchy
 # out of the installed tree and remove its menu and refresh hooks below.
 tar -xzf /tmp/omarchy.tar.gz -C /usr/share/omarchy --strip-components=1 \
     --exclude='*/bin/omarchy-install-chromium-google-account'
-cp /usr/share/omarchy/default/pacman/pacman-stable.conf /etc/pacman.conf
-cp /usr/share/omarchy/default/pacman/mirrorlist-stable /etc/pacman.d/mirrorlist
+# Install from Omarchy's repository configuration with every package taken
+# from the bundle. core, extra and multilib are the bundle's copies of the
+# dated Arch Linux Archive, including the indexed aml that the archive itself
+# serves with older bytes. Omarchy's own repository has no dated archive, so a
+# local copy holds exactly the bundle's packages this desktop takes from it,
+# each checked by sha256 beside its detached signature. pacman still verifies
+# every signature against the keyrings.
+omarchy_packages=/tmp/cma-omarchy-packages
+mkdir -m 0755 "$omarchy_packages"
+while read -r file package_sha256 signature_sha256; do
+    cp "$bundle/omarchy/x86_64/$file" "$bundle/omarchy/x86_64/$file.sig" "$omarchy_packages/"
+    printf '%s  %s\n' "$package_sha256" "$omarchy_packages/$file" \
+        "$signature_sha256" "$omarchy_packages/$file.sig" | sha256sum -c -
+done <<'PACKAGES'
+quickshell-0.3.2.r7.g2b4501a-1-x86_64.pkg.tar.zst f9f813213597d1ee25e16860ed326e810857810460c09ee87d06bc3b655c2da1 1fba2e10aa1c48209588a5dcd875cb83b91bc27b938d16ccd5a6a7700833b936
+ttf-jetbrains-mono-nerd-basic-3.5.1-2-any.pkg.tar.zst c574e6266139fd24f668301d39d9faab386d7041ad3952b3012a2480e09cff0c 525d05434bdb3db29e60323b4398ba605d43020c626d7382095d093d48f383e8
+yaru-icon-theme-26.10.3-3-any.pkg.tar.zst 3efc53db41713dd7a660a6ecb0ff5fc130ff9b88feb1251b7bcc35aa54288b0a 934fc4fe04993bdf458f70b40a765b0bd246c93783e455ec585d41a24eced5a5
+PACKAGES
+repo-add -q "$omarchy_packages/omarchy.db.tar.gz" "$omarchy_packages"/*.pkg.tar.zst
+sed "s|^Server = https://pkgs.omarchy.org/stable/\$arch\$|Server = file://$omarchy_packages|" \
+    /usr/share/omarchy/default/pacman/pacman-stable.conf > /etc/pacman.conf
+printf 'Server = file://%s/$repo/os/$arch\n' "$bundle" > /etc/pacman.d/mirrorlist
+test "$(pacman-conf --repo-list | paste -sd ' ')" = 'omarchy core extra multilib'
+test "$(pacman-conf --repo=omarchy Server)" = "file://$omarchy_packages"
+for repository in core extra multilib; do
+    test "$(pacman-conf --repo="$repository" Server)" = "file://$bundle/$repository/os/x86_64"
+done
 # Docker build already isolates this step; its seccomp profile denies Landlock.
 # This flag affects only the build-time downloader, not package signatures.
 SOURCE_DATE_EPOCH=1 pacman -Syu --disable-sandbox --noconfirm --needed \
@@ -47,6 +78,10 @@ pacman -Rns --noconfirm python-pip
 websockify --help >/dev/null
 bash /tmp/secure-omarchy-tools.sh
 bash /tmp/build-graphics.sh
+# The sandbox's own installs use Omarchy's stable repositories.
+cp /usr/share/omarchy/default/pacman/pacman-stable.conf /etc/pacman.conf
+cp /usr/share/omarchy/default/pacman/mirrorlist-stable /etc/pacman.d/mirrorlist
+rm -rf "$omarchy_packages"
 pacman -Q > /usr/share/cma-omarchy/packages.txt
 find /var/cache/pacman/pkg -type f -name '*.pkg.tar.*' ! -name '*.sig' -exec sha256sum {} + | sort -k2 > /usr/share/cma-omarchy/package-sha256.txt
 pacman -Q hyprland aquamarine > /usr/share/cma-omarchy/hyprland-version.txt

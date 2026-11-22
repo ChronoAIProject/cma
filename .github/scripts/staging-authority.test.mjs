@@ -1,3 +1,4 @@
+import { campaignFixture } from './public-journey-evidence.fixture.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
@@ -140,9 +141,9 @@ for (const outcome of ['success', 'child failure', 'invalid JSON', 'invalid rece
 }
 
 test('full campaign evidence refuses discovery, skips, owner-only runs and any unsettled cleanup', () => {
-  const results = { status: 'passed', cases: requiredCases.map((name) => ({ case: name, status: 'passed', durationMs: 1 })) };
+  const { results, journal: proofJournal } = campaignFixture(requiredCases);
   const identity = { run: 'run-test', at: new Date().toISOString(), kind: 'sandboxes', id: 'sbx_test', subject: 'owner' };
-  const journal = [{ ...identity, action: 'created' }, { ...identity, action: 'cleanup_complete' }];
+  const journal = [{ ...identity, action: 'created' }, { ...identity, action: 'cleanup_complete' }, ...proofJournal];
   validateCampaign(results, journal);
   assert.throws(() => validateCampaign({ status: 'passed', cases: [] }, journal));
   assert.throws(() => validateCampaign({ status: 'passed', cases: [{ case: 'OWNER partial', status: 'passed' }] }, journal));
@@ -156,6 +157,27 @@ test('full campaign evidence refuses discovery, skips, owner-only runs and any u
   assert.throws(() => validateCampaign(results, [journal[0], journal[0], journal[1]]));
   assert.throws(() => validateCampaign(results, [journal[0], { ...journal[1], subject: 'other' }]));
   for (const action of ['cleanup_failed', 'cleanup_pending', 'cleanup_blocked', 'external_account_cleanup_required']) assert.throws(() => validateCampaign(results, [...journal, { action }]));
+});
+
+test('task cleanup requires an owned terminal operation and its discovered Agent cleanup', () => {
+  const { results, journal: proofJournal } = campaignFixture(requiredCases);
+  const operation = { run: 'run-test', at: new Date().toISOString(), kind: 'agent-lifecycle', id: 'operation-test', subject: 'owner' };
+  const agent = { ...operation, kind: 'agents', id: 'agent-test' };
+  const journal = [
+    { ...operation, action: 'created' },
+    { ...agent, action: 'created' },
+    { ...operation, action: 'lifecycle_observed', state: 'succeeded', agent_id: agent.id },
+    { ...agent, action: 'cleanup_complete' },
+    ...proofJournal,
+  ];
+  validateCampaign(results, journal);
+  for (const state of ['queued', 'running', 'waiting_for_connection'])
+    assert.throws(() => validateCampaign(results, journal.map((row, index) => index === 2 ? { ...row, state } : row)));
+  assert.throws(() => validateCampaign(results, journal.filter((_, index) => index !== 2)));
+  assert.throws(() => validateCampaign(results, journal.filter((_, index) => index !== 3)));
+  assert.throws(() => validateCampaign(results, journal.map((row, index) => index === 2 ? { ...row, agent_id: 'other-agent' } : row)));
+  assert.throws(() => validateCampaign(results, journal.map((row, index) => index === 2 ? { ...row, subject: 'other-owner' } : row)));
+  validateCampaign(results, [journal[0], { ...operation, action: 'lifecycle_observed', state: 'failed' }, ...proofJournal]);
 });
 
 test('both attestations are validated with a bounded three-hour campaign window', () => {
@@ -192,9 +214,9 @@ function harness(t) {
   const before = fixtures(), after = fixtures();
   after.request.nonce = after.receipt.nonce = '00000000-0000-4000-8000-000000000002';
   write('before.json', before); write('after.json', after); write('output', '');
-  const results = { status: 'passed', cases: requiredCases.map((title) => ({ case: title, status: 'passed', durationMs: 1 })) };
+  const { results, journal: proofJournal } = campaignFixture(requiredCases);
   const identity = { run: 'test-run', at: new Date().toISOString(), kind: 'sandboxes', id: 'test-sandbox', subject: 'test-owner' };
-  const journal = [{ ...identity, action: 'created' }, { ...identity, action: 'cleanup_complete' }];
+  const journal = [{ ...identity, action: 'created' }, { ...identity, action: 'cleanup_complete' }, ...proofJournal];
   write('results.json', results); write('cleanup.ndjson', journal.map((row) => JSON.stringify(row)).join('\n'));
   const fixture = { origin: before.request.expected.origin, fixtureOwner: 'test-owner', provenance: {
     commit: before.request.expected.commit, nyxidCommit: before.request.expected.nyxidCommit,
