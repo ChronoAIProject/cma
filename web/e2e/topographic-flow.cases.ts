@@ -153,7 +153,9 @@ export function registerTopographicFlowCases() {
       });
       const fixture = await flowFixture(page, baseURL!, 'landing');
       if (fault === 'chunk')
-        await page.route('**/src/decoration/vendor/**', (route) => route.abort('failed'));
+        await page.route('**/src/decoration/vendor/**/topographic-surface*', (route) =>
+          route.abort('failed'),
+        );
       await page.goto('/');
       if (fault === 'context') {
         await expect.poll(async () => (await flowProbe(page)).draws.length).toBeGreaterThan(1);
@@ -168,6 +170,7 @@ export function registerTopographicFlowCases() {
       if (fault === 'context') await page.evaluate(() => window.__flowRestore());
       await page.waitForTimeout(300);
       expect((await flowProbe(page)).draws).toEqual(stopped.draws);
+      if (fault === 'chunk') expect(fixture.chunks).toHaveLength(1);
       await page.getByRole('button', { name: 'Open Event Gateway', exact: true }).click();
       await expect.poll(() => fixture.signIns).toEqual(['/event-gateway']);
     });
