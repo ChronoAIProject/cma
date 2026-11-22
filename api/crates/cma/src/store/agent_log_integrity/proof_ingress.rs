@@ -20,10 +20,6 @@ type TailRead<'a> = AdmittedOperation<'a, Result<SharedOwned<AgentLogEntry>, Rea
 impl MongoSandboxStore {
     /// Read and decode the exact tail in the original session. Driver allocation,
     /// cleanup, and the complete summary still require separate qualification.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "enabled recording awaits driver resource custody")
-    )]
     pub(in crate::store) fn integrity_tail_admitted<'a>(
         &'a self,
         expected: crate::store::agent_log_integrity::read::ExpectedTail<'a>,
@@ -112,6 +108,64 @@ impl RowSchema for TailSchema {
     fn decode(row: Document) -> Result<AgentLogEntry, SandboxStoreError> {
         read_entry(&row)
     }
+}
+
+pub(in crate::store::agent_log_integrity) fn summary_validation_plan(
+    agent: &Agent,
+) -> Result<AllocationPlan, AdmittedError> {
+    // matches_agent hashes queued contents into fresh 64-byte strings and grows
+    // a comparison Vec. Count this Agent independently of the metadata row.
+    let bytes = agent
+        .conversation
+        .queued_messages
+        .len()
+        .checked_mul(4 * size_of::<SemanticCheckpoint>() + 256)
+        .ok_or(AdmittedError::Unsupported(
+            "integrity comparison layout overflow",
+        ))?;
+    Ok(AllocationPlan::checked(
+        "integrity Agent comparison",
+        &[bytes, 4096, shared_owner_bytes::<ReadFailure>()],
+    )?)
+}
+
+pub(in crate::store::agent_log_integrity) fn copy_summary(
+    metadata: &SharedOwned<Option<LogIntegrity>>,
+    policy: &IngressOwnershipPolicy,
+) -> Result<SharedOwned<LogSummary>, AdmittedError> {
+    let integrity = metadata
+        .as_ref()
+        .ok_or(AdmittedError::Unsupported("absent integrity summary"))?;
+    // The actual row's allowance covers the same checkpoint clone and a smaller
+    // LogSummary owner. Keep both Data reservations until the original drops.
+    let storage = policy.admit(
+        IngressClass::Data,
+        AllocationPlan::checked("retained integrity summary", &[metadata.requested_bytes()])?,
+    )?;
+    Ok(storage.initialize(|| LogSummary {
+        entry_count: integrity.entry_count,
+        encoded_bytes: integrity.encoded_bytes,
+        head_hash: integrity.head_hash,
+        semantic: Some(integrity.semantic.clone()),
+    }))
+}
+
+#[cfg(test)]
+pub(in crate::store::agent_log_integrity) async fn assert_open_transaction(
+    store: &MongoSandboxStore,
+    session: &mut mongodb::ClientSession,
+    marker: &str,
+) {
+    let filter = doc! {"_id":marker};
+    let local = store
+        .agent_log
+        .find_one(filter.clone())
+        .session(session)
+        .await
+        .unwrap();
+    let external = store.agent_log.find_one(filter).await.unwrap();
+    assert!(local.is_some());
+    assert!(external.is_none());
 }
 
 #[cfg(test)]
