@@ -174,6 +174,7 @@ mod sandbox_sessions;
 mod sandbox_transactions;
 mod sandbox_unpublished_recovery;
 pub(crate) mod sandbox_usage;
+pub(crate) mod sandbox_usage_export;
 mod sandbox_worker_store;
 mod sandboxes;
 #[cfg(test)]
