@@ -238,6 +238,53 @@ fn private_publication_uses_the_same_cumulative_budget_through_final_scan() {
 }
 
 #[test]
+fn projection_cannot_reset_the_aggregate_real_input_allowance() {
+    let fixture = semantic::fixture();
+    let before = source(&fixture);
+    let bytes = std::fs::metadata(fixture.config.state_root.join("home-binding/binding.json"))
+        .unwrap()
+        .len();
+    // Initial scan, validation, projection, and both final scans each read
+    // this real binding once, even though every individual read fits alone.
+    let limits = Limits {
+        bytes: bytes * 5,
+        ..Limits::default()
+    };
+    let mut exact = Budget::new(limits);
+    evidence::create(
+        &fixture.config,
+        &fixture.root.join("exact"),
+        &mut exact,
+        16 * 1024 * 1024,
+        mount,
+        |_| Ok(()),
+    )
+    .unwrap();
+    let destination = fixture.root.join("one-byte-short");
+    let error = match evidence::create(
+        &fixture.config,
+        &destination,
+        &mut Budget::new(Limits {
+            bytes: limits.bytes - 1,
+            ..limits
+        }),
+        16 * 1024 * 1024,
+        mount,
+        |_| Ok(()),
+    ) {
+        Ok(_) => panic!("aggregate input allowance admitted an over-budget artifact"),
+        Err(error) => error,
+    };
+    assert_eq!(error.code, "mutation_ledger_migration_capacity");
+    assert!(error
+        .detail
+        .contains(&format!("requested_read_bytes_at_least={}", bytes * 5)));
+    assert_eq!(exact.bytes, bytes * 5);
+    assert!(!destination.join("sealed.json").exists());
+    assert_eq!(source(&fixture), before);
+}
+
+#[test]
 fn protected_or_replaced_output_is_never_accepted() {
     let fixture = semantic::fixture();
     let before = source(&fixture);
