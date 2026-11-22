@@ -19,7 +19,8 @@ use super::{durability::majority_collection, schema::initialize_collections};
 #[path = "sandbox_mongo_transactions.rs"]
 mod transactions;
 pub(super) use transactions::{
-    commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
+    commit_transaction, is_confirmed_body_retry, is_duplicate_key, is_transient, start_transaction,
+    CommitOutcome,
 };
 
 pub use super::profile_mongo::MongoProfileStore;
