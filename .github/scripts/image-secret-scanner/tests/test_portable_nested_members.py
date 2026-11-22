@@ -34,14 +34,14 @@ URL = ("fixture/Url.txt", literals.URL)
 MARKER = ("fixture/Marker.txt", literals.MARKER)
 
 
-def container(members):
+def container(members, compression=zipfile.ZIP_DEFLATED):
     output = io.BytesIO()
-    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+    with zipfile.ZipFile(output, "w", compression=compression) as archive:
         for name, data in members:
             member = zipfile.ZipInfo(name, (2026, 1, 2, 3, 4, 6))
             member.create_system = 3
             member.external_attr = 0o100644 << 16
-            member.compress_type = zipfile.ZIP_DEFLATED
+            member.compress_type = compression
             archive.writestr(member, data)
     return output.getvalue()
 
@@ -64,6 +64,11 @@ class PortableNestedMemberTests(unittest.TestCase):
     detector_scan = packages.PackageTests.detector_scan
     policy = staticmethod(packages.PackageTests.policy)
     publish = derived_tests.DerivedPayloadTests.publish
+
+    def assert_blockers(self, findings, required):
+        blocked = {(row.get("member"), row["rule"]) for row in findings}
+        self.assertLessEqual(required, blocked)
+        return blocked
 
     def image(self, name, layers):
         archive = self.root / f"{name}.tar"
@@ -155,12 +160,48 @@ class PortableNestedMemberTests(unittest.TestCase):
                                                                 (CONTAINER, payload)])])
                 refused = self.publish(archive, manifest, name, blocks=True)
                 self.assertEqual({row["member"] for row in refused["package_evidence"]["entries"]}, approved)
-                blocked = {(row["member"], row["rule"]) for row in refused["blocking_findings"]}
                 if name == "sibling-key":
-                    self.assertIn(("3", literals.MARKER_RULE), blocked)
+                    required = {("3", literals.MARKER_RULE)}
                 else:
-                    self.assertIn(("2", literals.MARKER_RULE), blocked)
-                    self.assertIn(("2", "content.binary-private-key"), blocked)
+                    required = {("2", literals.MARKER_RULE), ("2", "content.binary-private-key")}
+                self.assert_blockers(refused["blocking_findings"], required)
+
+    def test_stored_container_preserves_outer_and_member_blockers(self):
+        key = subprocess.run(["openssl", "genpkey", "-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:prime256v1",
+                              "-outform", "DER"], capture_output=True, check=True, timeout=10).stdout
+        members = [PUBLIC, URL, (MARKER[0], MARKER[1] + key)]
+        manifest, payload = self.catalog(members, container(members, zipfile.ZIP_STORED))
+        archive = self.image("stored-mixed", [fixtures.tar_bytes([*IDENTITY, *installed(mtree(payload)),
+                                                                 (CONTAINER, payload)])])
+        refused = self.publish(archive, manifest, "stored-mixed", blocks=True)
+        self.assertEqual({row["member"] for row in refused["package_evidence"]["entries"]}, {"0", "1"})
+        self.assert_blockers(refused["blocking_findings"], {
+            (None, "content.binary-private-key"), ("2", "content.binary-private-key"),
+            ("2", literals.MARKER_RULE),
+        })
+
+    def test_optional_outer_location_never_replaces_required_member_rules(self):
+        marker, key = literals.MARKER_RULE, "content.binary-private-key"
+        required = {("2", marker), ("2", key)}
+        valid = [{"member": "2", "rule": marker}, {"member": "2", "rule": key}]
+        for extra in ([{"rule": key}], [{"rule": "synthetic.unknown-outer"}],
+                      [{"member": "2", "rule": "synthetic.extra-member"}]):
+            rows = valid + extra
+            before = copy.deepcopy(rows)
+            blocked = self.assert_blockers(rows, required)
+            self.assertEqual(rows, before)
+            self.assertEqual(len(blocked), 3)
+            self.assertIn((extra[0].get("member"), extra[0]["rule"]), blocked)
+        for name, rows in (
+            ("outer-only", [{"rule": marker}, {"rule": key}]),
+            ("missing-marker", valid[1:]),
+            ("missing-key", valid[:1]),
+            ("outer-key", [valid[0], {"rule": key}]),
+            ("wrong-member", [valid[0], {"member": "3", "rule": key}]),
+            ("missing-rule", [valid[0], {"member": "2"}]),
+        ):
+            with self.subTest(name=name), self.assertRaises((AssertionError, KeyError)):
+                self.assert_blockers(rows, required)
 
     def test_member_rows_load_only_with_supported_container_proofs(self):
         manifest, _ = self.catalog([PUBLIC, URL, MARKER])
