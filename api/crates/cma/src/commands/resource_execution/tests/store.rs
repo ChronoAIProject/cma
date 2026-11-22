@@ -5,6 +5,7 @@ pub(super) enum WriteFault {
     Barrier,
     Completion,
     Finalize,
+    Effect,
 }
 
 pub(super) struct State {
@@ -18,6 +19,8 @@ pub(super) struct State {
     pub missing_page: bool,
     pub duplicate_discovery: bool,
     pub extra_discovery: Vec<RevocationOperationV1>,
+    pub effects: Option<Vec<EffectRecordV1>>,
+    pub effect_pages: Vec<u32>,
 }
 
 pub(super) struct Store(pub Mutex<State>);
@@ -35,6 +38,8 @@ impl Store {
             missing_page: false,
             duplicate_discovery: false,
             extra_discovery: Vec::new(),
+            effects: None,
+            effect_pages: Vec::new(),
         })))
     }
     pub fn id(&self) -> wire::Digest {
@@ -205,15 +210,37 @@ impl ResourceExecutionStore for Store {
     ) -> ExecutionResult<wire::EffectPermissionV1> {
         panic!("revocation worker cannot prepare effects")
     }
-    async fn observe_effect(&self, _: &wire::EffectObservationV1) -> ExecutionResult<()> {
-        panic!("stop evidence must not invent an effect outcome")
+    async fn observe_effect(&self, observation: &wire::EffectObservationV1) -> ExecutionResult<()> {
+        let mut state = self.0.lock().unwrap();
+        state
+            .effects
+            .as_mut()
+            .expect("stop worker cannot invent effect outcomes")
+            .iter_mut()
+            .find(|effect| effect.permission.permission_id == observation.permission_id)
+            .ok_or(ExecutionError::EvidenceMismatch)?
+            .observe(observation)?;
+        state.events.push("persist_effect");
+        ambiguous(&mut state, WriteFault::Effect)
     }
     async fn effects_for(
         &self,
-        _: &wire::Digest,
-        _: u32,
-        _: u32,
+        registration: &wire::Digest,
+        after: u32,
+        limit: u32,
     ) -> ExecutionResult<Vec<EffectRecordV1>> {
-        panic!("effect reconciliation has a separate provider status contract")
+        let mut state = self.0.lock().unwrap();
+        assert_eq!(registration, &state.members[0].registration);
+        assert!(limit > 0 && limit <= MAX_PAGE_MEMBERS);
+        state.effect_pages.push(after);
+        Ok(state
+            .effects
+            .as_ref()
+            .expect("effect reconciliation requires a status provider")
+            .iter()
+            .skip(after as usize)
+            .take(limit as usize)
+            .cloned()
+            .collect())
     }
 }

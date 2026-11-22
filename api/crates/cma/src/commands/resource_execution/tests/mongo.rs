@@ -1,6 +1,7 @@
 use super::*;
 use layer2_core::resource_access::{ResourceAccessStore, ResourceCapability};
 
+mod effects;
 mod fixture;
 use fixture::Fixture;
 

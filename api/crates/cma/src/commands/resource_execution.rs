@@ -2,6 +2,7 @@
 //! composition requires qualified receiver and transport audience producers.
 
 mod participants;
+mod reconciliation;
 mod revocations;
 
 use std::sync::Arc;

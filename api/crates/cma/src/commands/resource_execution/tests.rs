@@ -6,6 +6,7 @@ use std::sync::Mutex;
 mod fixtures;
 mod mongo;
 mod participants;
+mod reconciliation;
 mod store;
 use fixtures::*;
 use participants::{Directory, Endpoint};
