@@ -16,6 +16,8 @@ use std::{
 };
 use tokio::sync::RwLock;
 
+mod oauth;
+
 #[derive(Clone)]
 struct Identity {
     subject: String,
@@ -25,6 +27,8 @@ struct Identity {
 
 struct StateData {
     identities: RwLock<HashMap<String, Identity>>,
+    grants: RwLock<HashMap<String, oauth::Grant>>,
+    exchanges: AtomicUsize,
     client_secret: String,
     calls: AtomicUsize,
 }
@@ -46,6 +50,8 @@ impl Provider {
         });
         let state = Arc::new(StateData {
             identities: RwLock::new(HashMap::new()),
+            grants: RwLock::new(HashMap::new()),
+            exchanges: AtomicUsize::new(0),
             client_secret: uuid::Uuid::new_v4().to_string(),
             calls: AtomicUsize::new(0),
         });
@@ -54,6 +60,8 @@ impl Provider {
                 "/.well-known/openid-configuration",
                 get(move || async move { Json(discovery) }),
             )
+            .route("/authorize", get(oauth::authorize))
+            .route("/token", post(oauth::token))
             .route("/userinfo", get(userinfo))
             .route("/introspect", post(introspect))
             .with_state(state.clone());
@@ -96,6 +104,10 @@ impl Provider {
 
     pub fn calls(&self) -> usize {
         self.state.calls.load(Ordering::SeqCst)
+    }
+
+    pub fn exchanges(&self) -> usize {
+        self.state.exchanges.load(Ordering::SeqCst)
     }
 }
 

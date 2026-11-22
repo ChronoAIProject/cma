@@ -29,6 +29,29 @@ pub(super) struct HttpFixture {
 
 impl HttpFixture {
     pub async fn new() -> Self {
+        let mut fixture = Self::unseeded().await;
+        for subject in ["owner", "other-owner"] {
+            assert!(fixture
+                .custody
+                .insert_subject(SubjectAuthState::new(
+                    SubjectId::new(subject),
+                    Authorization::none(),
+                    Profile::default(),
+                    Some(DurableSubjectTokens {
+                        access_token: SecretValue::new(fixture.provider.register(subject).await),
+                        refresh_token: None,
+                        expires_at: SystemTime::now() + Duration::from_secs(3600),
+                    }),
+                ))
+                .await
+                .unwrap());
+        }
+        fixture.owner = fixture.cookie("owner", false).await;
+        fixture.other = fixture.cookie("other-owner", false).await;
+        fixture
+    }
+
+    pub async fn unseeded() -> Self {
         let data = Fixture::new().await;
         let mut bytes = [0; 32];
         ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes).unwrap();
@@ -38,22 +61,7 @@ impl HttpFixture {
         .unwrap();
         let custody = data.auth_store(&key).await;
         let provider = Provider::new().await;
-        for subject in ["owner", "other-owner"] {
-            assert!(custody
-                .insert_subject(SubjectAuthState::new(
-                    SubjectId::new(subject),
-                    Authorization::none(),
-                    Profile::default(),
-                    Some(DurableSubjectTokens {
-                        access_token: SecretValue::new(provider.register(subject).await),
-                        refresh_token: None,
-                        expires_at: SystemTime::now() + Duration::from_secs(3600),
-                    }),
-                ))
-                .await
-                .unwrap());
-        }
-        let mut fixture = Self {
+        Self {
             data,
             provider,
             custody,
@@ -62,13 +70,11 @@ impl HttpFixture {
             other: String::new(),
             client: reqwest::Client::builder()
                 .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
                 .timeout(Duration::from_secs(5))
                 .build()
                 .unwrap(),
-        };
-        fixture.owner = fixture.cookie("owner", false).await;
-        fixture.other = fixture.cookie("other-owner", false).await;
-        fixture
+        }
     }
 
     pub async fn cookie(&self, subject: &str, expired: bool) -> String {
@@ -103,6 +109,7 @@ impl HttpFixture {
             Arc::new(access),
             Arc::new(service),
         )
+        .merge(crate::auth::router(auth.clone()))
         .layer(axum::middleware::from_fn_with_state(
             auth,
             crate::auth::attach_subject,
@@ -123,7 +130,8 @@ impl HttpFixture {
     ) -> reqwest::RequestBuilder {
         let request = self
             .client
-            .request(method, format!("{}{path}", server.base));
+            .request(method, format!("{}{path}", server.base))
+            .header(reqwest::header::HOST, "cma.example.test");
         match cookie {
             Some(cookie) => request.header(
                 reqwest::header::COOKIE,
