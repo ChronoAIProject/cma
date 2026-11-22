@@ -145,12 +145,30 @@ async fn runtime_loss_preserves_cleanup_hold_until_a_later_terminal_recovery() {
             retiring
                 .begin_retirement(layer2_core::now_rfc3339())
                 .unwrap();
+            // Model the later replacement binding before observing its loss.
+            // The retained turn still belongs to the original generation.
+            let generation = store
+                .get_agent(&agent.id)
+                .await
+                .unwrap()
+                .unwrap()
+                .conversation
+                .runtime_generation
+                .unwrap();
+            let mut replacement = *retiring.lifecycle.suspended_runtime.take().unwrap();
+            replacement.provision_generation = Some(generation);
+            replacement.bound_at = layer2_core::now_rfc3339();
+            retiring.runtime = Some(replacement);
+            retiring.lifecycle.runtime_generation_high_water = generation;
             store
                 .save_sandbox(revision, retiring.clone())
                 .await
                 .unwrap();
             let request = loss(&retiring);
-            store.recover_runtime_loss(request.clone()).await.unwrap();
+            assert_eq!(
+                store.recover_runtime_loss(request.clone()).await.unwrap(),
+                store::SandboxRuntimeLossOutcome::RecoveryScheduled
+            );
             settled(&store, &agent, &obligation).await;
             let after = ledger(&store).await;
             store.recover_runtime_loss(request).await.unwrap();
