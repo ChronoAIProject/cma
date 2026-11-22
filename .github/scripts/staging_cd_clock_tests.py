@@ -1,9 +1,12 @@
 """Dispatch queue time, cold setup and retries all consume the original clock."""
 import unittest
+from pathlib import Path
 from unittest.mock import Mock, patch
 
-from staging_cd_clock import (PRODUCTION_WATCHDOG_SECONDS, WATCHDOG_SECONDS, controller_seconds, dispatch_started,
-                              elapsed, remaining, timestamp)
+import yaml
+
+from staging_cd_clock import (ADMISSION_SECONDS, PRODUCTION_WATCHDOG_SECONDS, WATCHDOG_SECONDS, controller_seconds,
+                              dispatch_started, elapsed, remaining, timestamp)
 from staging_cd_common import Refusal
 
 
@@ -56,6 +59,15 @@ class ClockTests(unittest.TestCase):
                     dispatch_started(env, Mock(return_value=dict(run, **{key: value})))
         with patch("staging_cd_clock.time.time", return_value=1125), self.assertRaises(Refusal):
             dispatch_started(env, api)
+
+    def test_each_deploy_job_outlives_its_release_watchdog(self):
+        # Setup before the clock starts and cleanup after it need at least one
+        # admission window beyond the watchdog, so a total cannot outgrow its job.
+        workflows = Path(__file__).resolve().parent.parent / "workflows"
+        for name, watchdog in (("staging-deploy", WATCHDOG_SECONDS), ("prod-deploy", PRODUCTION_WATCHDOG_SECONDS)):
+            with self.subTest(workflow=name):
+                job = yaml.safe_load((workflows / f"{name}.yml").read_text(encoding="utf-8"))["jobs"]["deploy"]
+                self.assertGreater(job["timeout-minutes"] * 60, watchdog + ADMISSION_SECONDS)
 
 
 if __name__ == "__main__":
