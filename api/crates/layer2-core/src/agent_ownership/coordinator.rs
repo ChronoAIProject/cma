@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering},
     Arc,
 };
 use std::time::Duration;
@@ -33,6 +33,7 @@ pub struct OwnershipCoordinator {
     acquisition: Mutex<()>,
     cancelled_cursor: AtomicUsize,
     member_deadline: std::sync::Mutex<Instant>,
+    skipped_heartbeats: AtomicU32,
     draining: AtomicBool,
     failed: watch::Sender<bool>,
     pub(super) cleanup_pacing: super::cleanup_pacing::CleanupPacing,
@@ -68,6 +69,7 @@ impl OwnershipCoordinator {
             acquisition: Mutex::new(()),
             cancelled_cursor: AtomicUsize::new(0),
             member_deadline: std::sync::Mutex::new(deadline),
+            skipped_heartbeats: AtomicU32::new(0),
             draining: AtomicBool::new(false),
             failed: watch::channel(false).0,
             cleanup_pacing: super::cleanup_pacing::CleanupPacing::new(enabled, capacity),
