@@ -32,11 +32,14 @@ impl RuntimeServices {
             ),
         );
         Self {
-            reopen: Arc::new(layer2_core::sandbox::RetainedReopenService::new(
-                stores.sandbox_model.clone(),
-                inspector.clone(),
-                config.features.retained_reopen_enabled,
-            )),
+            reopen: Arc::new(
+                layer2_core::sandbox::RetainedReopenService::new(
+                    stores.sandbox_model.clone(),
+                    inspector.clone(),
+                    config.features.retained_reopen_enabled,
+                )
+                .with_suspended_admission(config.features.retained_suspended_reopen_enabled),
+            ),
             recovery: Arc::new(layer2_core::sandbox::RetainedRecoveryService::new(
                 stores.sandbox_model.clone(),
                 inspector,

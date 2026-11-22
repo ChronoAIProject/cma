@@ -1,6 +1,6 @@
 //! A failed custody read after real policy work is unavailable, not revoked.
 use super::*;
-use crate::auth::persistence::{AuthStore, MemoryAuthStore};
+use crate::auth::persistence::{AuthStore, MemoryAuthStore, SecretValue};
 use axum::{body::Body, http::Request};
 use layer2_core::resource_access::*;
 use layer2_core::sandbox::{store::InMemorySandboxStore, AgentListQuery, OwnerSandboxQuery};
@@ -8,11 +8,19 @@ use layer2_core::SubjectId;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use tower::ServiceExt;
 
+#[derive(Clone, Copy)]
+enum CustodyChange {
+    Outage,
+    Revoke,
+    Replace,
+    Expire,
+}
+
 struct PolicyStore {
     inner: Arc<InMemorySandboxStore>,
     auth: Arc<MemoryAuthStore>,
     reads: AtomicUsize,
-    revoke: bool,
+    change: CustodyChange,
 }
 
 #[async_trait::async_trait]
@@ -25,14 +33,25 @@ impl ResourceAccessStore for PolicyStore {
         // The serving policy performs an admission snapshot and its final
         // current-snapshot check before RelayCaller::current reads custody.
         if self.reads.fetch_add(1, Ordering::SeqCst) == 1 {
-            if self.revoke {
+            if !matches!(self.change, CustodyChange::Outage) {
                 let mut state = self
                     .auth
                     .subject(&SubjectId::new("owner"))
                     .await
                     .unwrap()
                     .unwrap();
-                state.tokens = None;
+                match self.change {
+                    CustodyChange::Revoke => state.tokens = None,
+                    CustodyChange::Replace => {
+                        state.tokens.as_mut().unwrap().access_token =
+                            SecretValue::new("replacement".into())
+                    }
+                    CustodyChange::Expire => {
+                        state.tokens.as_mut().unwrap().expires_at =
+                            SystemTime::now() - std::time::Duration::from_secs(1)
+                    }
+                    CustodyChange::Outage => unreachable!(),
+                }
                 self.auth.put_subject(state).await.unwrap();
             } else {
                 self.auth.set_unavailable(true);
@@ -89,23 +108,35 @@ impl ResourceShareStore for PolicyStore {
 
 #[tokio::test]
 async fn post_policy_custody_outage_is_503_without_ownership_or_effects() {
-    custody_change("GET", "environment", false).await;
+    custody_change("GET", "environment", CustodyChange::Outage).await;
 }
 
 #[tokio::test]
 async fn preferences_policy_io_cannot_outlive_credential_custody() {
-    custody_change("PATCH", "preferences", false).await;
-    custody_change("PATCH", "preferences", true).await;
+    custody_change("PATCH", "preferences", CustodyChange::Outage).await;
+    custody_change("PATCH", "preferences", CustodyChange::Revoke).await;
 }
 
-async fn custody_change(method: &str, suffix: &str, revoke: bool) {
+#[tokio::test]
+async fn settings_policy_io_cannot_outlive_credential_custody() {
+    for change in [
+        CustodyChange::Outage,
+        CustodyChange::Revoke,
+        CustodyChange::Replace,
+        CustodyChange::Expire,
+    ] {
+        custody_change("PATCH", "settings", change).await;
+    }
+}
+
+async fn custody_change(method: &str, suffix: &str, change: CustodyChange) {
     let browser = crate::auth::relay::tests::Fixture::new(true).await;
     let mut f = fixture::fixture(browser.auth.clone(), "agt-public", "owner").await;
     let policy_store = Arc::new(PolicyStore {
         inner: f.store.clone(),
         auth: browser.store.clone(),
         reads: AtomicUsize::new(0),
-        revoke,
+        change,
     });
     let access = Arc::new(ResourceAccessService::new(
         policy_store.clone(),
@@ -139,7 +170,7 @@ async fn custody_change(method: &str, suffix: &str, revoke: bool) {
     let response = router.oneshot(request).await.unwrap();
     assert_eq!(
         response.status(),
-        if revoke {
+        if !matches!(change, CustodyChange::Outage) {
             StatusCode::UNAUTHORIZED
         } else {
             StatusCode::SERVICE_UNAVAILABLE
@@ -155,7 +186,7 @@ async fn custody_change(method: &str, suffix: &str, revoke: bool) {
         .unwrap();
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&body).unwrap()["code"],
-        if revoke {
+        if !matches!(change, CustodyChange::Outage) {
             "authentication_required"
         } else {
             "resource_access_unavailable"

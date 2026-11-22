@@ -7,7 +7,7 @@ use std::sync::{
 use tokio::sync::watch;
 use tokio::time::Instant;
 
-use super::{OwnershipError, OwnershipStore, OwnershipToken};
+use super::{transport::RegisteredReceiver, OwnershipError, OwnershipStore, OwnershipToken};
 
 tokio::task_local! {
     static EXECUTION_AUTHORITY: Arc<Authority>;
@@ -47,13 +47,9 @@ pub struct Authority {
     pub(super) receiver_failure_recording: std::sync::OnceLock<watch::Receiver<bool>>,
     pub(super) handoff_complete: tokio::sync::Mutex<bool>,
     deadline: watch::Sender<Option<Instant>>,
+    active_work: watch::Sender<usize>,
     pub(super) store: Option<Arc<dyn OwnershipStore>>,
-    pub(super) receivers: std::sync::Mutex<
-        std::collections::BTreeMap<
-            String,
-            Arc<dyn layer3_adapter::owner_protocol::ReceiverRevocation>,
-        >,
-    >,
+    pub(super) receivers: std::sync::Mutex<std::collections::BTreeMap<String, RegisteredReceiver>>,
     pub(super) confirmed_receivers: std::sync::Mutex<std::collections::BTreeSet<String>>,
 }
 
@@ -69,6 +65,7 @@ impl Authority {
             receiver_failure_recording: Default::default(),
             handoff_complete: tokio::sync::Mutex::new(false),
             deadline,
+            active_work: watch::channel(0).0,
             store: None,
             receivers: Default::default(),
             confirmed_receivers: Default::default(),
@@ -90,6 +87,7 @@ impl Authority {
             receiver_failure_recording: Default::default(),
             handoff_complete: tokio::sync::Mutex::new(false),
             deadline,
+            active_work: watch::channel(0).0,
             store: Some(store),
             receivers: Default::default(),
             confirmed_receivers: Default::default(),
@@ -194,6 +192,7 @@ impl Authority {
         self: &Arc<Self>,
         operation: F,
     ) -> Result<F::Output, OwnershipError> {
+        let _work = self.admit_work()?;
         tokio::select! {
             biased;
             _ = self.revoked() => Err(OwnershipError::Stale),
@@ -201,6 +200,39 @@ impl Authority {
                 if self.is_current() { Ok(result) } else { Err(OwnershipError::Stale) }
             }
         }
+    }
+
+    pub(super) fn admit_work(&self) -> Result<ActiveWork<'_>, OwnershipError> {
+        let admitted = self.active_work.send_if_modified(|count| {
+            if self.is_current() {
+                *count += 1;
+                true
+            } else {
+                false
+            }
+        });
+        admitted
+            .then(|| ActiveWork(&self.active_work))
+            .ok_or(OwnershipError::Stale)
+    }
+
+    pub(super) async fn join_local_work(&self) -> Result<(), OwnershipError> {
+        // Revocation closes admission before examining this count. Use the
+        // admission lock to include any racing work that passed is_current.
+        self.active_work
+            .subscribe()
+            .wait_for(|count| *count == 0)
+            .await
+            .map(|_| ())
+            .map_err(|_| OwnershipError::Unavailable("local ownership join ended".into()))
+    }
+}
+
+pub(super) struct ActiveWork<'a>(&'a watch::Sender<usize>);
+
+impl Drop for ActiveWork<'_> {
+    fn drop(&mut self) {
+        self.0.send_modify(|count| *count -= 1);
     }
 }
 

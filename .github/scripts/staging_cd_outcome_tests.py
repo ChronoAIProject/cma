@@ -42,6 +42,7 @@ def line_of(module, text, offset=0):
 
 def guarded_vocabularies():
     """Codes that reach report() through a variable, by the vocabulary that guards them."""
+    import staging_cd_allocate as allocate
     import staging_cd_build_cache as build_cache
     import staging_cd_component_admission as admission
     import staging_cd_finalize_diagnostics as finalize
@@ -60,6 +61,8 @@ def guarded_vocabularies():
         ("staging_cd_invoke.py", "deploy-precondition"): set(invoke.PRECONDITIONS),
         ("staging_cd_set_report.py", "admission"): set(admission.REASONS),
         ("staging_cd_publish.py", "cache-withheld"): withheld,
+        # The settlement gate reports the transient code its allocation step recorded.
+        ("staging_cd_allocate.py", "allocation"): set(allocate.TRANSIENT_CODES) | {"UNCLASSIFIED_REFUSAL"},
     }
 
 
@@ -374,6 +377,46 @@ class RenderTests(unittest.TestCase):
         self.assertTrue(render("deploy-precondition", "mode", subject="deploy")[0].endswith(" cause=operator"))
         for code in ("rollout-timeout", "status-pods", "serving", "write-timeout"):
             self.assertTrue(render("deploy-verification", code, subject="deploy")[0].endswith(" cause=operator"))
+
+    def test_an_abandoned_apply_names_the_stored_generation_and_the_operator_fix(self):
+        # chrono-cd stored a generation and never applied it. No rollout is
+        # running, so "re-run after it settles" would send the owner in circles.
+        import staging_cd_refusal as refusal
+        self.assertIn("apply-abandoned", refusal.REASONS)
+        self.assertIn("apply-abandoned", refusal.VERIFICATION_REASONS)
+        fix = "the deployment service's admin reconcile for"
+        pointer = "(see the cma-infra staging README)"
+        line, annotation, row = render("deploy-private", "apply-abandoned", subject="deploy")
+        self.assertEqual(line, "FAIL precondition=private-apply-abandoned cause=operator")
+        self.assertIn("What changed: Nothing.", annotation)
+        # The stuck app can be a dependency the release does not deploy.
+        self.assertIn("one of the staging apps this release depends on or deploys", annotation)
+        self.assertIn("never applied", annotation)
+        self.assertNotIn("settles", annotation)
+        for text in (annotation, row):
+            self.assertIn(fix, text)
+            self.assertIn(pointer, text)
+            # A re-submit stores a new generation; it cannot re-send the old one.
+            self.assertIn("re-submits the same spec", text)
+        line, annotation, row = render("deploy-verification", "apply-abandoned", subject="deploy",
+                                       recovery="unreported")
+        self.assertEqual(line, "FAIL verification=apply-abandoned recovery=unreported cause=operator")
+        self.assertIn("never applied", annotation)
+        self.assertIn("Next step: An operator reconciles staging first. Then: ", annotation)
+        for text in (annotation, row):
+            self.assertIn(fix, text)
+            self.assertIn(pointer, text)
+            self.assertIn("re-submit the same spec", text)
+            # The reconcile applies this run's unverified write; only a re-run verifies it.
+            self.assertIn("re-run this deployment so it is verified", text)
+        line, annotation, _ = render("deploy-release", "apply-abandoned", subject="deploy")
+        self.assertEqual(line, "FAIL release=apply-abandoned recovery=verified cause=operator")
+
+    def test_the_catalogue_publishes_no_deployment_service_route(self):
+        # The exact admin route stays in the private deployment README.
+        text = CATALOGUE_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("/api/", text)
+        self.assertNotRegex(text, r"\b(?:POST|PUT|PATCH|DELETE) /")
 
     def test_values_outside_enums_and_patterns_print_as_unknown(self):
         hostile = PRIVATE + " x::error::y%0A\n|"

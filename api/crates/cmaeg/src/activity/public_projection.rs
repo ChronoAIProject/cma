@@ -14,6 +14,7 @@ pub(crate) fn public_activity(activity: &ChannelActivity) -> ChannelActivity {
         .into(),
     );
     for consumer in &mut public.consumers {
+        consumer.produced_by = consumer.answer_production_bound();
         if !consumer.execution_attributions.is_empty() {
             consumer.execution_reference = consumer
                 .provider

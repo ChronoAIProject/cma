@@ -112,6 +112,7 @@ for (let sample = 1; sample <= samples; sample += 1) {
     }, info) => {
       const fixture = new ReplicaFixture();
       fixture.lose = action;
+      if (action === 'send') fixture.revealInputReceipt = enabled;
       if (action === 'cancel') fixture.append({ type: 'turn_started', turn_sequence: 1 }, binding);
       try {
         await fixture.route(page, baseURL!);
@@ -130,15 +131,20 @@ for (let sample = 1; sample <= samples; sample += 1) {
         if (!enabled) {
           await expect(recover(page)).toBeEnabled();
           expect(fixture.writes).toHaveLength(1);
+          fixture.revealInputReceipt = true;
           await recover(page).click();
         }
-        await expect.poll(() => fixture.writes.length).toBe(2);
+        await expect
+          .poll(() => (action === 'send' ? fixture.receiptReads.length : fixture.writes.length))
+          .toBeGreaterThanOrEqual(action === 'send' ? 1 : 2);
         await expect(recover(page)).toHaveCount(0);
         const recoveredAt = performance.now();
         expect(recoveredAt - fixture.faultAt).toBeLessThan(10_000);
-        const [first, second] = fixture.writes;
-        expect(second).toMatchObject({
-          path: first!.path,
+        const [first] = fixture.writes;
+        const recovered = action === 'send' ? fixture.receiptReads.at(-1) : fixture.writes[1];
+        expect(fixture.writes).toHaveLength(action === 'send' ? 1 : 2);
+        expect(recovered).toMatchObject({
+          path: action === 'send' ? `${first!.path}/receipt` : first!.path,
           key: first!.key,
           body: first!.body,
           ingress: 1,
@@ -169,8 +175,9 @@ for (let sample = 1; sample <= samples; sample += 1) {
               recoveryMs: recoveredAt - fixture.faultAt,
               automatic: enabled,
               posts: fixture.writes.length,
+              receiptReads: fixture.receiptReads.length,
               effects: fixture.effects.size,
-              exactIntent: second!.key === first!.key && second!.body === first!.body,
+              exactIntent: recovered?.key === first!.key && recovered?.body === first!.body,
               durableTerminalConfirmed: true,
             },
             null,

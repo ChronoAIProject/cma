@@ -21,6 +21,40 @@ use super::transaction::ApplyError;
 
 pub(super) mod scoped;
 
+pub(in crate::store) async fn settle_reopen_agents<'session>(
+    store: &MongoSandboxStore,
+    agents: &[Agent],
+    changes: &[SandboxRuntimeLossAgentMutation],
+    request: &SandboxRuntimeLossRequest,
+    mut scope: crate::store::agent_log_segments::transaction_scope::TransactionScope<'session>,
+) -> Result<&'session mut ClientSession, crate::store::agent_log_integrity::TransactionLogError> {
+    use crate::store::agent_capacity_recovery::source::capture_segmented_scoped;
+    use crate::store::agent_log_integrity::TransactionLogError;
+    let error = |error| match error {
+        ApplyError::Domain(error) => TransactionLogError::Domain(error),
+        ApplyError::Driver(error) => TransactionLogError::Driver(error),
+    };
+    let mut legacy = Vec::new();
+    for current in agents {
+        if let Some(source) = capture_segmented_scoped(store, current, &mut scope).await? {
+            let change = changes.iter().find(|change| change.agent.id == current.id);
+            scoped::publish_agent(store, current, &source, change, request, &mut scope)
+                .await
+                .map_err(error)?;
+        } else {
+            legacy.push(current.clone());
+        }
+    }
+    let session = scope.release();
+    let legacy = validate_agents(store, legacy, session)
+        .await
+        .map_err(error)?;
+    publish_agents(store, legacy, changes, request, session)
+        .await
+        .map_err(error)?;
+    Ok(session)
+}
+
 pub(super) enum Source {
     Legacy(Box<LogSummary>),
     Segmented(Box<CapturedLog>),

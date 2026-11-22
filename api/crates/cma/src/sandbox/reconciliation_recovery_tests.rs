@@ -360,3 +360,52 @@ async fn incomplete_discovery_never_releases_holds_or_authorizes_orphan_cleanup(
     assert_eq!(store.keys("authority"), ["start", "sbx_001", "sbx_001"]);
     assert!(reconciler.binding_holds.contains(held.id.as_str()));
 }
+
+#[tokio::test(start_paused = true)]
+async fn the_independent_recovery_lock_consumes_the_reserved_binding_deadline() {
+    use super::opportunity_tests::{bindings, reserve};
+
+    let (store, reconciler) = setup(1, Duration::ZERO).await;
+    let verifier = Arc::new(Verify {
+        calls: Mutex::default(),
+        refuse: None,
+    });
+    let service = Arc::new(
+        SandboxRuntimeUpdateService::new(store.clone(), "fixture-image".into())
+            .with_unpublished_recovery(verifier.clone()),
+    );
+    let reconciler = reconciler
+        .with_failed_runtime_recovery(service)
+        .with_runtime_loss_bounded_proof(true);
+    reserve(&reconciler, 0, "deadline").await;
+    bindings(&reconciler, 1).await;
+    let guard = reconciler.recovery_schedule.lock().await;
+    let release = async {
+        tokio::time::sleep(Duration::from_secs(25)).await;
+        drop(guard);
+    };
+    let started = Instant::now();
+    let (_, result) = tokio::join!(release, reconciler.run_due(SystemTime::now()));
+    assert!(!result.unwrap());
+    assert_eq!(started.elapsed(), Duration::from_secs(25));
+    assert!(store.keys("get").is_empty());
+    assert!(store.keys("pause").is_empty());
+    assert!(reconciler.binding_holds.contains("sbx_000"));
+    assert!(reconciler
+        .progress
+        .lock()
+        .await
+        .as_ref()
+        .unwrap()
+        .sweep
+        .binding_cursor
+        .is_none());
+
+    // The independent turn keeps its existing priority. The following binding
+    // opportunity sees the original held item exactly once.
+    assert!(!reconciler.run_due(SystemTime::now()).await.unwrap());
+    assert!(store.keys("get").is_empty());
+    assert!(!reconciler.run_due(SystemTime::now()).await.unwrap());
+    assert_eq!(store.keys("get"), ["sbx_000"]);
+    assert!(verifier.calls.lock().unwrap().is_empty());
+}

@@ -1,5 +1,8 @@
 use super::*;
 
+#[path = "receipt_tests/legacy_reuse_body.rs"]
+mod legacy_reuse_body;
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn admission_replays_reject_an_incomplete_log() {

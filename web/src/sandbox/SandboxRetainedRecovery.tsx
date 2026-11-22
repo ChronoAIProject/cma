@@ -22,7 +22,11 @@ export function SandboxRetainedRecovery({
   readonly onAccepted: () => void;
 }) {
   const command = useRetainedRecovery(client, sandboxId, ownerId, !disabled, onAccepted);
-  const [confirmation, setConfirmation] = useState<number>();
+  const [confirmation, setConfirmation] = useState<{
+    sandboxId: string;
+    ownerId: string;
+    revision: number;
+  }>();
   const [message, setMessage] = useState<string>();
   const [checking, setChecking] = useState(false);
   const inspection = useRef<AbortController | undefined>(undefined);
@@ -45,9 +49,11 @@ export function SandboxRetainedRecovery({
       request.signal.throwIfAborted();
       if (
         assessment.admission_enabled &&
-        ['recorded_boot_present', 'exact_boot_replacement'].includes(assessment.disposition)
+        ['recorded_boot_present', 'exact_boot_replacement', 'exact_suspended_runtime'].includes(
+          assessment.disposition,
+        )
       ) {
-        setConfirmation(revision);
+        setConfirmation({ sandboxId, ownerId, revision });
       } else {
         setMessage(
           'Recovery is not available for this Sandbox right now. Your saved environment and conversations are retained.',
@@ -74,6 +80,10 @@ export function SandboxRetainedRecovery({
     checking ||
     command.busy ||
     !client.recoverSandboxRetained;
+  const consentIsCurrent =
+    confirmation?.sandboxId === sandboxId &&
+    confirmation.ownerId === ownerId &&
+    confirmation.revision === revision;
   if (!failed && !command.intent) return null;
   return (
     <section className="sandbox-page__band" aria-label="Retained recovery">
@@ -119,10 +129,10 @@ export function SandboxRetainedRecovery({
             <Button onClick={() => setConfirmation(undefined)}>Cancel</Button>
             <Button
               variant="primary"
-              disabled={unavailable || confirmation !== revision}
+              disabled={unavailable || !consentIsCurrent}
               onClick={() => {
-                if (confirmation === undefined) return;
-                command.start(confirmation);
+                if (unavailable || !consentIsCurrent) return;
+                command.start(confirmation.revision);
                 setConfirmation(undefined);
               }}
             >
@@ -135,7 +145,7 @@ export function SandboxRetainedRecovery({
           This request reopens your existing conversations only when the saved environment can be
           verified. Uncertain work will not be replayed.
         </p>
-        {confirmation !== undefined && confirmation !== revision ? (
+        {confirmation !== undefined && !consentIsCurrent ? (
           <p>The Sandbox changed. Close this dialog and check recovery again.</p>
         ) : null}
       </Modal>

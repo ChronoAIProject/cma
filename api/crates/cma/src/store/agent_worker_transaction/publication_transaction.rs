@@ -1,12 +1,66 @@
 //! Commit or abort one publication snapshot, including prepared eligibility.
 use super::*;
 
+use layer2_core::sandbox::store::{AgentWorkPublication, AgentWorkPublicationParents};
+
+enum Completion {
+    Published,
+    PreparedIneligible,
+    KnownAborted,
+}
+
+#[derive(Clone, Copy)]
+enum Attempts {
+    KeepProposal,
+    Rebuild(AgentWorkPublicationParents),
+}
+
 pub(super) async fn commit(
     store: &MongoSandboxStore,
     mutation: AgentWorkMutation,
     observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
     repeated_marker: Option<&AgentLogEntry>,
 ) -> Result<bool, SandboxStoreError> {
+    match run(
+        store,
+        mutation,
+        observed,
+        repeated_marker,
+        Attempts::KeepProposal,
+    )
+    .await?
+    {
+        Completion::Published => Ok(true),
+        Completion::PreparedIneligible => Ok(false),
+        Completion::KnownAborted => Err(SandboxStoreError::Conflict),
+    }
+}
+
+pub(super) async fn try_publish(
+    store: &MongoSandboxStore,
+    mutation: AgentWorkMutation,
+    parents: AgentWorkPublicationParents,
+) -> Result<AgentWorkPublication, SandboxStoreError> {
+    match run(store, mutation, None, None, Attempts::Rebuild(parents)).await? {
+        Completion::Published => Ok(AgentWorkPublication::Published),
+        Completion::KnownAborted => Ok(AgentWorkPublication::KnownAborted),
+        Completion::PreparedIneligible => Err(SandboxStoreError::InvalidTransaction(
+            "ordinary work publication cannot require prepared admission",
+        )),
+    }
+}
+
+async fn run(
+    store: &MongoSandboxStore,
+    mutation: AgentWorkMutation,
+    observed: Option<&layer2_core::sandbox::store::PreparedAgentOpenContext>,
+    repeated_marker: Option<&AgentLogEntry>,
+    attempts: Attempts,
+) -> Result<Completion, SandboxStoreError> {
+    let (limit, parents) = match attempts {
+        Attempts::KeepProposal => (TRANSACTION_ATTEMPTS, None),
+        Attempts::Rebuild(parents) => (1, Some(parents)),
+    };
     ensure_append_batch_size(mutation.agent_logs.len())?;
     let mut timing = contention::PublicationTiming::new(&mutation);
     let _writer = store.agent_writes.lock(&mutation.agent.id).await;
@@ -14,12 +68,12 @@ pub(super) async fn commit(
     let mut history_cache = publication_history::AttemptHistory::default();
     let mut last_transient = None;
     let jitter = uuid::Uuid::new_v4().as_u128() as u64;
-    for attempt in 0..TRANSACTION_ATTEMPTS {
+    for attempt in 0..limit {
         timing.attempt();
         contention::backoff(attempt, jitter).await;
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
-            Err(error) if is_transient(&error) => {
+            Err(error) if positively_aborted(&error) => {
                 last_transient = Some(error);
                 continue;
             }
@@ -28,7 +82,7 @@ pub(super) async fn commit(
         let scope = match TransactionScope::start(&mut session).await {
             Ok(scope) => scope,
             Err(error) => {
-                if is_transient(&error) {
+                if positively_aborted(&error) {
                     last_transient = Some(error);
                     continue;
                 }
@@ -41,6 +95,7 @@ pub(super) async fn commit(
             observed,
             repeated_marker,
             &mut history_cache,
+            parents.as_ref(),
             scope,
         ))
         .await;
@@ -48,13 +103,17 @@ pub(super) async fn commit(
             Ok(receipt) => receipt,
             Err(ApplyError::PreparedIneligible) => {
                 let _ = session.abort_transaction().await;
-                return Ok(false);
+                return Ok(Completion::PreparedIneligible);
+            }
+            Err(ApplyError::StaleProposal) => {
+                let _ = session.abort_transaction().await;
+                return Ok(Completion::KnownAborted);
             }
             Err(ApplyError::Domain(error)) => {
                 let _ = session.abort_transaction().await;
                 return Err(error);
             }
-            Err(ApplyError::Driver(error)) if is_transient(&error) => {
+            Err(ApplyError::Driver(error)) if positively_aborted(&error) => {
                 let _ = session.abort_transaction().await;
                 last_transient = Some(error);
                 continue;
@@ -69,7 +128,7 @@ pub(super) async fn commit(
                 history_cache.committed(store);
                 timing.committed();
                 crate::telemetry::work::published(&receipt.logs, "committed");
-                return Ok(true);
+                return Ok(Completion::Published);
             }
             CommitOutcome::Retry(error) => last_transient = Some(error),
             CommitOutcome::Unknown(error) => {
@@ -92,7 +151,7 @@ pub(super) async fn commit(
                     .await?
                     {
                         crate::telemetry::work::published(&receipt.logs, "reconciled");
-                        Ok(true)
+                        Ok(Completion::Published)
                     } else {
                         Err(SandboxStoreError::Unavailable(format!(
                             "agent work publication commit remained unknown: {unresolved_error}"
@@ -111,5 +170,12 @@ pub(super) async fn commit(
             }
         }
     }
-    Err(contention::exhausted(&mutation, last_transient.as_ref()))
+    match attempts {
+        Attempts::KeepProposal => Err(contention::exhausted(&mutation, last_transient.as_ref())),
+        Attempts::Rebuild(_) => Ok(Completion::KnownAborted),
+    }
+}
+
+fn positively_aborted(error: &mongodb::error::Error) -> bool {
+    is_transient(error) && !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
 }

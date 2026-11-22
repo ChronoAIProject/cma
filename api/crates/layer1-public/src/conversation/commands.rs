@@ -2,7 +2,7 @@
 use std::time::Duration;
 
 use axum::{
-    http::HeaderMap,
+    http::{header, HeaderMap, HeaderValue},
     response::{IntoResponse, Response},
 };
 use layer2_core::{ids::AgentCommandId, sandbox::agent_io::*, AgentId};
@@ -13,6 +13,14 @@ use crate::{
 
 mod errors;
 pub(crate) use errors::{admission_failure, receipt_headers};
+
+pub(crate) async fn no_store_receipt(mut response: Response) -> Response {
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static("private, no-store"),
+    );
+    response
+}
 
 pub(crate) struct BoundCommand {
     pub receipt: CommandReceiptView,
@@ -46,6 +54,44 @@ pub(crate) fn submission(
     })
 }
 
+fn submission_source(actor: &AgentActor) -> Result<CommandSubmissionSource, Box<Response>> {
+    match actor {
+        AgentActor::Human { .. } => Ok(CommandSubmissionSource::UserInterface),
+        AgentActor::Api {
+            delegation_id: None,
+            ..
+        } => Ok(CommandSubmissionSource::Api),
+        _ => Err(Box::new(InstanceProblem::Forbidden.into_response())),
+    }
+}
+
+pub(crate) async fn lookup_admitted(
+    state: &AgentConversationState,
+    resource: Option<AuthenticatedResourceCaller>,
+    submission: CommandSubmission,
+) -> Result<Option<CommandStatusView>, Box<Response>> {
+    let resource =
+        resource.ok_or_else(|| Box::new(crate::auth::NotAuthenticated.into_response()))?;
+    let credential = resource.credential.as_ref().ok_or_else(|| {
+        Box::new(admission_failure(CommandAdmissionError::Authority(
+            CommandAuthorizationError::Revoked,
+        )))
+    })?;
+    let service = state
+        .commands
+        .as_ref()
+        .ok_or_else(|| Box::new(InstanceProblem::Unavailable.into_response()))?;
+    service
+        .lookup_admitted(
+            &resource.context,
+            credential.value(),
+            submission_source(&resource.context.actor)?,
+            submission,
+        )
+        .await
+        .map_err(|error| Box::new(admission_failure(error)))
+}
+
 pub(crate) async fn admit_and_wait(
     state: &AgentConversationState,
     resource: Option<AuthenticatedResourceCaller>,
@@ -62,14 +108,7 @@ pub(crate) async fn admit_and_wait(
         .commands
         .clone()
         .ok_or_else(|| Box::new(InstanceProblem::Unavailable.into_response()))?;
-    let source = match &resource.context.actor {
-        AgentActor::Human { .. } => CommandSubmissionSource::UserInterface,
-        AgentActor::Api {
-            delegation_id: None,
-            ..
-        } => CommandSubmissionSource::Api,
-        _ => return Err(Box::new(InstanceProblem::Forbidden.into_response())),
-    };
+    let source = submission_source(&resource.context.actor)?;
     let command = submission.command.clone();
     let task_service = service.clone();
     let task_context = resource.context.clone();
