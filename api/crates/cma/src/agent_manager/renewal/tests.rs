@@ -256,6 +256,8 @@ async fn receiver_failure_retains_its_phase_and_original_error() {
 #[tokio::test(start_paused = true)]
 async fn transient_member_heartbeat_outage_keeps_owners_until_membership_ends() {
     // Ticks at 3, 6, 9 and 12 s precede the 15 s established membership.
+    // Three skips are survived when the 12 s heartbeat succeeds; after a
+    // fourth, the next tick falls at the lease end and always fails.
     for unavailable in [3, 4] {
         let store = DelayedStore::new(Duration::from_millis(25));
         store
