@@ -114,6 +114,33 @@ fn assert_transient(response: (StatusCode, HeaderMap, Value), delay: u64) {
     assert_eq!(body["status"], 503);
 }
 
+async fn request_with_counted_provider_calls(
+    fixture: &Fixture,
+    app: &Router,
+    credentials: &HeaderMap,
+    path: &str,
+) -> (StatusCode, HeaderMap, Value) {
+    let userinfo = Arc::new(Gate::default());
+    let introspection = Arc::new(Gate::default());
+    fixture.control.userinfo.write().await.gate = Some(userinfo.clone());
+    fixture.control.introspection.write().await.gate = Some(introspection.clone());
+    let (response, ()) = tokio::join!(request(app, credentials, Method::GET, path), async {
+        // A refusal can cancel the sibling client future after it sent its request.
+        // Count both arrivals before either reply can end this measurement interval.
+        tokio::time::timeout(Duration::from_secs(2), async {
+            tokio::join!(
+                userinfo.reached.notified(),
+                introspection.reached.notified()
+            );
+        })
+        .await
+        .expect("both provider requests must be counted before releasing the refusal");
+        userinfo.release.notify_one();
+        introspection.release.notify_one();
+    });
+    response
+}
+
 #[tokio::test]
 async fn protected_reads_preserve_classified_timeouts_and_upstream_outages_then_reverify() {
     for cookie in [false, true] {
@@ -205,12 +232,20 @@ async fn malformed_partial_and_unknown_failures_never_gain_retry_permission() {
             }
             for path in READS {
                 let before = fixture.control.requests.load(Ordering::SeqCst);
-                let (status, headers, body) = request(&app, &credentials, Method::GET, path).await;
+                let (status, headers, body) = if fault == "store" {
+                    request(&app, &credentials, Method::GET, path).await
+                } else {
+                    request_with_counted_provider_calls(&fixture, &app, &credentials, path).await
+                };
                 assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{fault} {path}");
                 assert_eq!(body["code"], "store_failed");
                 assert_eq!(body["retryable"], false);
                 assert!(!headers.contains_key(header::RETRY_AFTER));
-                assert!(fixture.control.requests.load(Ordering::SeqCst) - before <= 2);
+                assert_eq!(
+                    fixture.control.requests.load(Ordering::SeqCst) - before,
+                    if fault == "store" { 0 } else { 2 },
+                    "no provider retry: cookie={cookie} {fault} {path}"
+                );
                 assert_eq!(calls.load(Ordering::SeqCst), 0);
             }
         }
