@@ -2,7 +2,7 @@ use super::freeze::Manifest;
 use super::*;
 use layer2_core::{
     sandbox_metrics::{Binding, BindingKind, ProofStatus, Range},
-    sandbox_usage_evidence::{FrozenMeasuredMinute, MeasuredMinute},
+    sandbox_usage_evidence::{FrozenMeasuredMinute, MeasuredMinute, ObservedSupport},
 };
 
 #[derive(Clone, Debug)]
@@ -10,6 +10,7 @@ pub(super) struct PreviousEvidence {
     fact: MeasuredMinute,
     bindings: Vec<Binding>,
     support: Vec<(String, Binding)>,
+    observations: Vec<ObservedSupport>,
 }
 
 impl CaptureStore {
@@ -55,6 +56,7 @@ impl CaptureStore {
             fact: frozen.fact().clone(),
             bindings: original.bindings.clone(),
             support: original.binding_segments(),
+            observations: frozen.observed_support().map_err(|_| corrupt())?,
         })
     }
 }
@@ -72,7 +74,9 @@ impl MeasuredInput {
         if !complete {
             return Ok(Some("refresh_source_unavailable".into()));
         }
-        let current = frozen.ok_or_else(corrupt)?.fact();
+        let frozen = frozen.ok_or_else(corrupt)?;
+        let observations = frozen.observed_support().map_err(|_| corrupt())?;
+        let current = frozen.fact();
         let current_support = self.binding_segments();
         for (index, (old, new)) in previous
             .fact
@@ -86,7 +90,8 @@ impl MeasuredInput {
             if (new_coverage < old_coverage
                 || (old.quantity.is_some()
                     && (new.quantity.is_none()
-                        || !self.retains_support(previous, &current_support, index))))
+                        || !self.retains_support(previous, &current_support, index)
+                        || !retains_samples(previous, &current_support, &observations, index))))
                 && !self.invalidates_bindings(previous, index)
             {
                 return Ok(Some("refresh_evidence_incomplete".into()));
@@ -173,6 +178,51 @@ impl MeasuredInput {
                 })
             })
     }
+}
+
+fn retains_samples(
+    previous: &PreviousEvidence,
+    current: &[(String, Binding)],
+    observations: &[ObservedSupport],
+    metric: usize,
+) -> bool {
+    previous
+        .observations
+        .iter()
+        .filter(|old| old.metric.index() == metric)
+        .all(|old| {
+            let Some((id, binding)) = previous
+                .support
+                .iter()
+                .find(|(_, binding)| binding.id == old.binding_id)
+            else {
+                return false;
+            };
+            let mut intervals: Vec<_> = observations
+                .iter()
+                .filter(|new| {
+                    new.metric == old.metric
+                        && current.iter().any(|(new_id, new_binding)| {
+                            new_binding.id == new.binding_id
+                                && new_id == id
+                                && new_binding.revision >= binding.revision
+                                && same_assignment(binding, new_binding)
+                        })
+                })
+                .flat_map(|new| new.intervals.iter().copied())
+                .collect();
+            intervals.sort_by(|a, b| a.0.total_cmp(&b.0));
+            old.intervals.iter().all(|&(from, to)| {
+                let mut covered_to = from;
+                for &(start, end) in &intervals {
+                    if start > covered_to {
+                        break;
+                    }
+                    covered_to = covered_to.max(end);
+                }
+                covered_to >= to
+            })
+        })
 }
 
 fn same_assignment(old: &Binding, new: &Binding) -> bool {

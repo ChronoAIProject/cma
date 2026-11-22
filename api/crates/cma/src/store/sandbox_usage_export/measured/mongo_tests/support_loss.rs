@@ -38,7 +38,7 @@ fn series(f: &Fixture, binding: &Binding, from: u64, to: u64, delta: f64) -> Phy
     series
 }
 
-async fn publish(
+pub(super) async fn publish(
     f: &Fixture,
     samples: Vec<PhysicalSeries>,
 ) -> (bool, super::super::freeze::MeasuredPublication) {

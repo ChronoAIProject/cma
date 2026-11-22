@@ -3,6 +3,8 @@ use crate::sandbox_metrics::{Binding, BindingKind, ProofStatus, Range};
 use layer3_adapter::sandbox_metrics::{PhysicalSeries, Sample, SourceMetric};
 use std::collections::BTreeMap;
 
+mod support;
+
 fn expected() -> ExpectedMinute {
     ExpectedMinute {
         sandbox_id: "sandbox-fixture".into(),

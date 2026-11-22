@@ -17,6 +17,7 @@ mod publication;
 mod refresh;
 mod refresh_source;
 mod retention;
+mod sample_loss;
 mod support_loss;
 
 struct Fixture {

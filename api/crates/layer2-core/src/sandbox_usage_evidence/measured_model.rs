@@ -168,7 +168,7 @@ impl FrozenBinding {
         })
     }
 
-    fn restore(&self) -> Result<Binding, MeasuredError> {
+    pub(super) fn restore(&self) -> Result<Binding, MeasuredError> {
         if Self::new(self.binding.clone())?.limit_bits != self.limit_bits {
             return Err(MeasuredError::Invalid);
         }
@@ -199,7 +199,7 @@ impl FrozenSeries {
         })
     }
 
-    fn restore(&self) -> PhysicalSeries {
+    pub(super) fn restore(&self) -> PhysicalSeries {
         PhysicalSeries {
             metric: self.metric,
             name: self.name.clone(),
