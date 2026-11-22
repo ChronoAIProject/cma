@@ -183,11 +183,24 @@ async fn native_home_pending_observation_propagates_dependency_errors_immediatel
     let adopting = tokio::spawn(async move { client.adopt_home(&original).await });
     observed_pending(&fixture, floor).await;
     fixture.state.lock().unwrap().rows.remove(MEMBER);
+    let removed = tokio::time::Instant::now();
     let error = tokio::time::timeout(HANG_GUARD, adopting)
         .await
         .unwrap()
         .unwrap()
         .unwrap_err();
+    // The hang guard is loose, so these assertions carry "immediately": a
+    // dependency error that adoption swallowed until its readiness deadline
+    // would surface as a typed not-ready refusal, after that deadline.
+    assert!(
+        !matches!(error, crate::AdapterError::NativeClaimNotReady(_)),
+        "{error:?}"
+    );
+    assert!(
+        removed.elapsed() < Duration::from_secs(5),
+        "dependency error took {:?}",
+        removed.elapsed()
+    );
     assert!(!error
         .to_string()
         .contains("initialization is still pending"));
