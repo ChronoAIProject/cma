@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, onTestFailed, vi } from 'vitest';
 import { App } from './App';
 import { bot, botClient } from './bots/fixtures.test-support';
 import { CmaClientProvider } from './api/context';
@@ -32,6 +32,20 @@ afterEach(() => {
 it('retains the exact Agent draft, Gateway editor and uncertain request across portal switches', async () => {
   window.history.replaceState({}, '', '/agents/agt_1');
   const writes: RequestInit[] = [];
+  const started = performance.now();
+  const checkpoints: { phase: string; elapsedMs: number }[] = [];
+  const checkpoint = (phase: string) =>
+    checkpoints.push({ phase, elapsedMs: Math.round(performance.now() - started) });
+  onTestFailed(() => {
+    console.error(
+      'Portal retention failure',
+      JSON.stringify({
+        checkpoints,
+        elapsedMs: Math.round(performance.now() - started),
+        writeAttempts: writes.length,
+      }),
+    );
+  });
   let rejectWrite!: (error: Error) => void;
   const pending = new Promise<Response>((_, reject) => {
     rejectWrite = reject;
@@ -54,19 +68,24 @@ it('retains the exact Agent draft, Gateway editor and uncertain request across p
     const menu = within(screen.getByRole('menu', { name: 'CMA services' }));
     return menu.getByRole('menuitemradio', { name });
   };
+  checkpoint('mount Agent Manager');
   // Settle the fixture reads before querying the shell. Polling the retained
   // portals during mocked responses repeats accessibility work on busy workers.
   await act(async () => {
     show();
   });
+  checkpoint('enter Agent draft');
   const composer = screen.getByRole('textbox', { name: 'Message' });
   fireEvent.change(composer, { target: { value: 'Retain this Agent draft' } });
+  checkpoint('open Event Gateway');
   const gateway = portalOption('Event Gateway');
   await act(async () => {
     fireEvent.click(gateway);
   });
+  checkpoint('open channel editor');
   const workspace = within(screen.getByRole('region', { name: 'Channel workspace' }));
   fireEvent.click(workspace.getByRole('button', { name: 'New channel' }));
+  checkpoint('fill channel fields');
   const editor = screen.getByLabelText('Channel name');
   const form = within(editor.closest('form')!);
   fireEvent.change(editor, { target: { value: 'Retained channel' } });
@@ -78,23 +97,29 @@ it('retains the exact Agent draft, Gateway editor and uncertain request across p
   });
   fireEvent.change(form.getByLabelText('Signing key ID'), { target: { value: 'fixture-key' } });
   fireEvent.change(form.getByLabelText('Route IDs 1'), { target: { value: 'fixture-route' } });
+  checkpoint('submit pending channel request');
   const submit = form.getByRole('button', { name: 'Create channel' });
   expect(submit).toBeEnabled();
   fireEvent.click(submit);
   expect(writes).toHaveLength(1);
+  checkpoint('verify retained Agent');
   fireEvent.click(portalOption('Agent Manager'));
   expect(window.location.pathname).toBe('/agents/agt_1');
   expect(screen.getByRole('textbox', { name: 'Message' })).toBe(composer);
   expect(composer).toHaveValue('Retain this Agent draft');
+  checkpoint('reject pending channel request');
   await act(async () => rejectWrite(new TypeError('Gateway response interrupted')));
+  checkpoint('verify retained channel editor');
   fireEvent.click(portalOption('Event Gateway'));
   expect(screen.getByRole('textbox', { name: 'Channel name' })).toBe(editor);
   expect(editor).toHaveValue('Retained channel');
+  checkpoint('retry interrupted request');
   const retry = screen.getByRole('button', { name: 'Retry same request' });
   expect(retry).toBeEnabled();
   await act(async () => {
     fireEvent.click(retry);
   });
+  checkpoint('verify exact retry request');
   expect(writes).toHaveLength(2);
   expect(writes[1]?.body).toBe(writes[0]?.body);
   expect(writes[1]?.headers).toEqual(writes[0]?.headers);
