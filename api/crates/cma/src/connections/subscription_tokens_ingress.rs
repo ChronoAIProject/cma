@@ -25,7 +25,7 @@ impl SubscriptionTokens {
         cache: &SharedOwned<SecretValue>,
         policy: &IngressOwnershipPolicy,
     ) -> Result<SharedOwned<Self>, CacheDecodeError> {
-        if !cache.belongs_to(policy) {
+        if !cache.shares_custody_domain(policy) {
             return Err(AdmissionRefusal::InvalidPlan {
                 phase: "subscription cache ownership",
             }

@@ -291,6 +291,31 @@ fn admitted_cache_enforces_attachment_identity_and_final_slot_lifetime() {
 }
 
 #[test]
+fn admitted_cache_refuses_attachment_downgrade_before_parsing_or_admission() {
+    let root = IngressBudget::new(128 * 1024 * 1024);
+    let bounds =
+        IngressOwnershipPolicy::conversation_bounds(root.capacity_bytes(), 1, plan(1), plan(1))
+            .unwrap();
+    let parent = IngressOwnershipPolicy::new(root.clone(), bounds).unwrap();
+    let attachment = parent.admit_attachment().unwrap();
+    for raw in [
+        cache("one", "one", 1000),
+        SecretValue::new("{".into()),
+        SecretValue::new(" ".repeat(MAX_CACHE_BYTES + 1)),
+    ] {
+        let input = own(&raw, attachment.policy());
+        let before = root.available_bytes();
+        assert_eq!(
+            SubscriptionTokens::from_native_cache_admitted(&input, &parent).unwrap_err(),
+            CacheDecodeError::Refused(AdmissionRefusal::InvalidPlan {
+                phase: "subscription cache ownership"
+            })
+        );
+        assert_eq!(root.available_bytes(), before);
+    }
+}
+
+#[test]
 fn admitted_cache_layout_refuses_overflow() {
     for bytes in [usize::MAX, usize::MAX / 10, u32::MAX as usize] {
         assert!(matches!(
