@@ -32,6 +32,7 @@ pub(crate) struct FeatureFlags {
     pub agent_shared_observation: bool,
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
+    pub native_retirement_finality_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub ownership_cleanup_pacing: bool,
     pub coordinated_ingress: bool,
@@ -161,6 +162,10 @@ impl FeatureFlags {
             runtime_loss_bounded_proof_enabled: flag(
                 lookup,
                 "CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED",
+            )?,
+            native_retirement_finality_enabled: flag(
+                lookup,
+                "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
             )?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
             ownership_cleanup_pacing: flag(lookup, "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED")?,

@@ -371,6 +371,7 @@ pub(super) async fn lock_sandbox(
                 "_id": sandbox_id,
                 "document_schema_version": DOCUMENT_SCHEMA_VERSION,
                 "channel_reuse_cleanup_execution": { "$exists": false },
+                super::native_retirement_action::FIELD: { "$exists": false },
             }),
             doc! { "$inc": { "workspace_admission_fence": 1_i64 } },
         )

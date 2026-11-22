@@ -60,8 +60,21 @@ async fn receiver_check_cancellation_preserves_healthy_owners_and_unacknowledged
         0
     );
     // Containment must not turn real membership/store loss into availability.
+    // A transient partition only skips ticks; it extends nothing, so the
+    // established membership and healthy owner still end on schedule.
     fixture.store.inner.partition(true);
-    assert!(fixture.manager.maintain().await.is_err());
+    let mut ticks = 0;
+    let failure = loop {
+        tokio::time::advance(Duration::from_millis(HEARTBEAT_INTERVAL_MS)).await;
+        ticks += 1;
+        fixture.peer.maintain().await.unwrap();
+        match fixture.manager.maintain().await {
+            Ok(handoffs) => assert!(handoffs.is_empty()),
+            Err(error) => break error,
+        }
+        assert!(ticks <= DEFAULT_LEASE_MS / HEARTBEAT_INTERVAL_MS);
+    };
+    assert_eq!(failure, OwnershipError::Stale);
     assert!(!fixture.manager.is_ready());
     assert!(!fixture.healthy.is_current());
     fixture.peer.maintain().await.unwrap();

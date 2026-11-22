@@ -8,6 +8,7 @@ pub(super) fn recover_agent(
     sandbox: &Sandbox,
     current: &Agent,
     at: &str,
+    native_retirement_finality: bool,
 ) -> Result<(Agent, Vec<AgentLogKind>), SandboxModelError> {
     current.validate_conversation()?;
     let retiring = sandbox.status == SandboxStatus::Retiring;
@@ -105,9 +106,9 @@ pub(super) fn recover_agent(
         .queued_messages
         .retain(|message| message.state == QueuedMessageState::Queued);
     if retiring {
-        // No message may be replayed into an environment the owner deleted.
-        // Existing owner logs and conversation identity remain available.
-        next.conversation.queued_messages.clear();
+        if !native_retirement_finality {
+            next.conversation.queued_messages.clear();
+        }
         if let Some(previous_generation) = current.conversation.runtime_generation {
             let runtime_generation = previous_generation
                 .checked_add(1)

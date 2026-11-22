@@ -58,12 +58,22 @@ fn writes_once(fixture: &Fixture, floor: usize, claim: &NativePoolClaim) {
 async fn native_home_readiness_deadline_has_typed_timeout_without_replaying_effects() {
     let (fixture, claim, floor) = pending_fixture().await;
     let error = fixture.client.adopt_home(&claim).await.unwrap_err();
-    assert!(matches!(
-        error,
-        crate::AdapterError::NativeClaimNotReady(
-            crate::agent_sandbox::NativeClaimGuardReason::Pending
-        )
-    ));
+    // The wall-clock deadline can land between polls (Pending, after a
+    // validated pending read) or during an outstanding fixture read
+    // (TimedOut); a loaded runner makes the second likelier. That exact
+    // classification is proven deterministically with a paused clock in
+    // claim_guard/tests.rs. Here the contract is a typed not-ready refusal
+    // that never replays adoption writes.
+    assert!(
+        matches!(
+            error,
+            crate::AdapterError::NativeClaimNotReady(
+                crate::agent_sandbox::NativeClaimGuardReason::Pending
+                    | crate::agent_sandbox::NativeClaimGuardReason::TimedOut
+            )
+        ),
+        "{error:?}"
+    );
     writes_once(&fixture, floor, &claim);
 }
 

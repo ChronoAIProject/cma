@@ -68,16 +68,15 @@ async fn apply(
         .await
         .map_err(Driver)?
         .ok_or(Domain(SandboxStoreError::NotFound))?;
-    crate::store::sandboxes::read_sandbox(&current)
-        .map_err(Domain)?
+    let parent = crate::store::sandboxes::read_sandbox(&current).map_err(Domain)?;
+    crate::store::native_retirement_action::preserve_custody(&current, &parent, sandbox)
+        .map_err(Domain)?;
+    parent
         .validate_retirement_archive_successor(sandbox)
         .map_err(|_| Domain(SandboxStoreError::Conflict))?;
     if acquisition.is_some() {
         crate::store::sandbox_credentials::issuance::legacy::preserve(
-            store,
-            &crate::store::sandboxes::read_sandbox(&current).map_err(Domain)?,
-            sandbox,
-            session,
+            store, &parent, sandbox, session,
         )
         .await
         .map_err(Driver)?;
