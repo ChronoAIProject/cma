@@ -107,6 +107,9 @@ pub trait SandboxAdapter: Send + Sync {
     async fn teardown_retained_runtime(&self, _handle: &RuntimeHandle) -> Result<()> {
         Err(unsupported("retained runtime deletion is unavailable"))
     }
+    fn runtime_retirement(&self) -> Option<&dyn crate::RuntimeRetirement> {
+        None
+    }
     /// Resume the same provider object with a reserved generation and admitted service scope.
     async fn resume_runtime(
         &self,

@@ -210,3 +210,76 @@ async fn native_ownership_oversized_bodies_are_malformed_with_the_received_statu
         }
     }
 }
+
+#[tokio::test]
+async fn acting_replica_repeats_exact_retirement_challenge_without_confirming() {
+    for mode in [
+        NativeRuntimeTransport::KubernetesExec,
+        NativeRuntimeTransport::KubernetesPortforward,
+    ] {
+        let f = Fixture::start(Mode::Persistent, mode).await;
+        let endpoint = f.endpoint().await;
+        let (_, binding) = endpoint.native_binding().unwrap();
+        let authority = TestAuthority::new(3);
+        f.state.fault.store(1404, Ordering::SeqCst);
+        let (result, observation) = crate::receiver_failure::observe(scope(
+            authority.clone(),
+            f.transport.receiver_lease(&endpoint),
+        ))
+        .await;
+        assert!(result.is_err());
+        let captured = observation.unwrap().into_receiver().unwrap();
+        assert_eq!(captured.runtime, handle());
+        assert_eq!(
+            captured.pod,
+            crate::RetirementPod::try_from(binding).unwrap()
+        );
+        assert_eq!(captured.owner, authority.owner());
+
+        let RuntimeDiscovery::AgentSandbox(client) = &f.transport.client else {
+            unreachable!()
+        };
+        let acting = ProviderHostedControlTransport::for_agent_sandbox_with_transport(
+            (**client).clone(),
+            mode,
+        )
+        .unwrap();
+        for (fault, expected) in [
+            (1404, Some(true)),
+            (1403, None),
+            (2, None),
+            (0, Some(false)),
+        ] {
+            f.state.fault.store(fault, Ordering::SeqCst);
+            assert_eq!(
+                acting
+                    .challenge_native_receiver(&handle(), binding, &captured.owner)
+                    .await
+                    .ok(),
+                expected,
+            );
+        }
+        f.state.restarted.store(true, Ordering::SeqCst);
+        let before = f.state.requests.lock().unwrap().len();
+        assert!(acting
+            .challenge_native_receiver(&handle(), binding, &captured.owner)
+            .await
+            .is_err());
+        let requests = f.state.requests.lock().unwrap();
+        assert_eq!(requests.len(), before);
+        for request in requests.iter() {
+            let (headers, body) = request.split_once("\r\n\r\n").unwrap();
+            assert!(headers
+                .lines()
+                .next()
+                .unwrap()
+                .contains("/manager-ownership/challenge "));
+            assert_eq!(
+                serde_json::from_str::<crate::owner_protocol::TransportOwner>(body).unwrap(),
+                captured.owner,
+            );
+        }
+        assert_eq!(authority.renewals.load(Ordering::SeqCst), 0);
+        assert_eq!(f.state.ownership_confirmations.load(Ordering::SeqCst), 0);
+    }
+}
