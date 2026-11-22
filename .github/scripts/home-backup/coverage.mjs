@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { requireThat, timestamp, nonempty } from "./evidence.mjs";
+import { loadCatalogExport } from "./catalog-export.mjs";
 
 const hash = (s) => createHash("sha256").update(s).digest("hex");
 const states = new Set(["requested", "creating", "ready", "failed", "expiring", "deleted"]);
@@ -27,16 +28,24 @@ function validateLease(lease, nextFence) {
 }
 
 export function coverage(input) {
+  const exported = input.catalog_export ? loadCatalogExport(input.catalog_export) : null;
+  if (exported) {
+    requireThat(!["sandboxes", "home_backups", "home_backup_schedules"].some((name) => Object.hasOwn(input, name)), "catalog_export_inventory_override");
+    input = { ...input, ...exported };
+  }
   const { sandboxes, home_backups: backups, cloud, dependencies: deps } = input;
   requireThat(["fixture", "cloud"].includes(input.mode) && cloud?.mode === input.mode, "mode_mismatch");
   const now = timestamp(input.now);
+  if (exported) requireThat(timestamp(exported.observed_end) <= now &&
+    now - timestamp(exported.observed_end) <= 300_000 && now - exported.snapshot_time * 1000 <= 300_000,
+    "catalog_export_stale_or_future");
   requireThat(timestamp(cloud.observed_at) <= now && now - timestamp(cloud.observed_at) <= 300_000, "cloud_observation_stale_or_future");
   unique(sandboxes, "_id"); unique(backups, "_id"); unique(cloud.snapshots, "handle");
   requireThat(deps?.atlas && Array.isArray(deps.available_key_ids) && deps.objects, "dependencies_missing");
   const mongoStart = timestamp(deps.atlas.earliest_at), mongoEnd = timestamp(deps.atlas.latest_at);
   requireThat(mongoStart <= mongoEnd && mongoEnd <= now, "invalid_pitr_window");
   const retained = sandboxes.filter((row) => {
-    requireThat(row.record?.lifecycle && nonempty(row.owner), "invalid_sandbox_projection");
+    requireThat(row.record?.lifecycle && (exported ? nonempty(row.owner_sha256) : nonempty(row.owner)), "invalid_sandbox_projection");
     const home = row.record.lifecycle.home;
     if (home == null) return false;
     requireThat(typeof home.released === "boolean", "invalid_home_projection");
@@ -65,9 +74,9 @@ export function coverage(input) {
     timestamp(b.retention?.expires_at);
     requireThat(Number.isSafeInteger(b.restore_pins) && b.restore_pins >= 0 &&
       Number.isSafeInteger(b.next_fence) && b.next_fence > 0 &&
-      Number.isSafeInteger(b.revision) && b.revision > 0 && (b.lease === null || typeof b.lease === "object"),
+      Number.isSafeInteger(b.revision) && b.revision > 0 && (exported || b.lease === null || typeof b.lease === "object"),
       "invalid_authority_projection");
-    validateLease(b.lease, b.next_fence);
+    if (!exported) validateLease(b.lease, b.next_fence);
     if (b.failure != null) requireThat(failures.has(b.failure), "invalid_failure");
     if (b.erasure != null) requireThat(nonempty(b.erasure.receipt) && timestamp(b.erasure.erased_at), "invalid_erasure");
     if (b.state === "failed") requireThat(b.failure != null, "failed_without_reason");
@@ -92,8 +101,24 @@ export function coverage(input) {
     const candidates = sandboxCandidates.filter(matchesCurrentHome);
     const latestOverall = sandboxCandidates[0];
     const latest = candidates[0];
-    const result = { sandbox_sha256: hash(row._id), owner_sha256: hash(row.owner), reasons,
+    const result = { sandbox_sha256: hash(row._id), owner_sha256: exported ? row.owner_sha256 : hash(row.owner), reasons,
       capture_gap_seconds: null, completion_upper_bound_seconds: null };
+    if (exported) {
+      const schedule = input.home_backup_schedules.find((s) => s.id === row._id);
+      result.schedule_status = "MATCHING";
+      if (!schedule) { result.schedule_status = "MISSING"; reasons.push("schedule_missing"); }
+      else if (schedule.home.home_source_id !== receipt.storage_generation ||
+        schedule.home.home_identity !== receipt.home_identity || schedule.home.source_reference !== receipt.storage_reference) {
+        result.schedule_status = "MISMATCHED"; reasons.push("schedule_home_mismatch");
+      } else {
+        const references = [schedule.last_ready_backup_id, schedule.in_flight?.backup_id].filter(nonempty);
+        if (references.some((id) => !backups.some((b) => b.id === id && b.sandbox_id === row._id &&
+          matchesCurrentHome(b) && (id !== schedule.last_ready_backup_id ||
+            b.cut.ready_at === schedule.last_ready_at)))) {
+          result.schedule_status = "CATALOG_MISMATCHED"; reasons.push("schedule_catalog_mismatch");
+        }
+      }
+    }
     if (!latest) {
       if (latestOverall) {
         result.backup_sha256 = hash(latestOverall._id);
@@ -154,7 +179,10 @@ export function coverage(input) {
   const excluded = unmatched.filter((s) => attributed(s, ["seed", "unrelated"]));
   const unknown = unmatched.filter((s) => !attributed(s, ["cma-home-backup", "seed", "unrelated"])).map((s) => hash(s.handle));
   return { mode: input.mode, status: !homes.length ? "NOT_RUN" : backed === homes.length ? "PASS" : "FAIL",
-    catalog_export_status: "BLOCKED", capture_cadence_scope: "latest_current_home_pair",
+    catalog_export_status: exported ? "AVAILABLE" : "BLOCKED",
+    catalog_provenance_status: exported?.provenance_status ?? "NOT_RUN",
+    catalog_artifact_sha256: exported?.artifact_sha256 ?? null,
+    capture_cadence_scope: "latest_current_home_pair",
     historical_cadence_status: "NOT_RUN", home_restore_status: "NOT_RUN", full_dr_status: "NOT_RUN",
     restore_status: "NOT_RUN", qualification_status: "NOT_RUN", failure_domain_status: "NOT_RUN",
     cmek_recovery_status: "NOT_RUN", retained_homes: homes.length, backed_homes: backed,

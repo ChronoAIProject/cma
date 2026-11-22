@@ -244,6 +244,9 @@ impl ArchiveStore {
         mut next: Sandbox,
         mut fields: Document,
     ) -> Result<()> {
+        if current.contains_key("usage_capture_fence_v1") {
+            return Err(REFUSED);
+        }
         let revision = next.revision;
         next.revision = revision.checked_add(1).ok_or(REFUSED)?;
         next.updated_at = layer2_core::now_rfc3339();
@@ -280,6 +283,7 @@ impl ArchiveStore {
             super::sandbox_usage::UsageObservation::Lifecycle,
         )
         .await
+        .map(|_| ())
         .map_err(|_| REFUSED)
     }
     async fn commit_or_reconcile(

@@ -9,6 +9,12 @@ mod legacy;
 mod pre_backup;
 #[path = "pre_backup_account_census.rs"]
 mod pre_backup_accounts;
+#[path = "pre_usage_capture_census.rs"]
+mod pre_capture;
+#[path = "pre_usage_capture_account_census.rs"]
+mod pre_capture_accounts;
+#[path = "pre_usage_capture_backup_census.rs"]
+mod pre_capture_backups;
 
 #[cfg(test)]
 pub(super) const PRE_BACKUP_COLLECTIONS: &[&str] = pre_backup::COLLECTIONS;
@@ -38,6 +44,12 @@ pub(crate) fn schema_sha256() -> String {
 fn collections(schema: &str) -> Result<&'static [&'static str]> {
     if schema == schema_sha256() {
         Ok(super::super::isolation::COLLECTIONS)
+    } else if schema == pre_capture::SHA256 {
+        Ok(pre_capture::COLLECTIONS)
+    } else if schema == pre_capture_accounts::SHA256 {
+        Ok(pre_capture_accounts::COLLECTIONS)
+    } else if schema == pre_capture_backups::SHA256 {
+        Ok(pre_capture_backups::COLLECTIONS)
     } else if schema == pre_backup::SHA256 {
         Ok(pre_backup::COLLECTIONS)
     } else if schema == pre_backup_accounts::SHA256 {
