@@ -26,7 +26,7 @@ IMAGE_REMOVE_SECONDS = 120
 # Fixed vocabularies for the public cleanup receipt; never helper or daemon text.
 SMOKE_STATES = ("not_run", "interrupted", "failed", "passed")
 CLEANUP_STEPS = ("quiesce", "container_list", "container_remove", "volume_list", "volume_remove",
-                 "verify_empty", "image_remove", "interrupted")
+                 "verify_empty", "image_remove", "interrupted", "unknown")
 CLEANUP_FAILURES = ("helpers_unquiesced", "timeout", "command_failed", "incomplete", "identity_refused",
                     "interrupted", "error")
 
@@ -81,7 +81,14 @@ def _reconcile_once(runner, campaign, local):
                           ["docker", "volume", "ls", "--quiet", "--filter", "label=" + label], LIST_SECONDS).strip())
     if remaining:
         raise ReconcileFailure("verify_empty", "incomplete")
-    _call(runner, "image_remove", ["docker", "image", "rm", local], IMAGE_REMOVE_SECONDS)
+    try:
+        _call(runner, "image_remove", ["docker", "image", "rm", local], IMAGE_REMOVE_SECONDS)
+    except ReconcileFailure as failure:
+        # The tag is unique to this attempt, so its absence proves an earlier
+        # pass's removal completed after its command outlasted the bound.
+        if failure.failure != "command_failed" or _call(
+                runner, "image_remove", ["docker", "image", "ls", "--quiet", local], LIST_SECONDS).strip():
+            raise
 
 
 def reconcile(runner, campaign, local, *, attempts=CLEANUP_ATTEMPTS, sleep=None):
@@ -98,7 +105,7 @@ def reconcile(runner, campaign, local, *, attempts=CLEANUP_ATTEMPTS, sleep=None)
                 failure.attempts = attempt
                 raise
         except Exception:
-            failure = ReconcileFailure("verify_empty", "error")
+            failure = ReconcileFailure("unknown", "error")
             if attempt == attempts:
                 failure.attempts = attempt
                 raise failure from None

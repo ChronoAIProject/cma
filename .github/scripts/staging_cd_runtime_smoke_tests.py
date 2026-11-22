@@ -140,6 +140,45 @@ class RuntimeSmokeTests(unittest.TestCase):
         self.assertEqual(removals, [120, 120])
         sleep.assert_called_once_with(5)
 
+    def test_image_removed_late_by_the_daemon_counts_as_removed_on_the_next_pass(self):
+        # Pass 1's removal outlasts its bound but the daemon finishes it; pass 2's
+        # removal then finds no such image, which must not lose the release.
+        import subprocess
+        with tempfile.TemporaryDirectory() as directory, patch("staging_cd_runtime_smoke.time.sleep") as sleep:
+            root, archive, calls, run = self.fixture(directory)
+            state = {"removals": 0, "present": True}
+            def late(args, **kwargs):
+                if args[:3] == ["docker", "image", "rm"]:
+                    state["removals"] += 1
+                    if state["removals"] == 1:
+                        state["present"] = False
+                        raise subprocess.TimeoutExpired(args, kwargs["timeout"])
+                    raise Refusal("Image operation failed; captured output is private")
+                if args[:3] == ["docker", "image", "ls"]:
+                    return b"0123456789ab\n" if state["present"] else b""
+                return run(args, **kwargs)
+            proof = qualify(archive, fixture_identity(component="runtime-omarchy"), "sha256:" + "d" * 64,
+                            "e" * 64, root, late, source=root)
+        self.assertTrue(proof["passed"])
+        self.assertEqual(state["removals"], 2)
+        sleep.assert_called_once_with(5)
+
+    def test_a_present_image_that_cannot_be_removed_still_fails(self):
+        with tempfile.TemporaryDirectory() as directory, patch("staging_cd_runtime_smoke.time.sleep"):
+            root, archive, calls, run = self.fixture(directory)
+            def stuck(args, **kwargs):
+                if args[:3] == ["docker", "image", "rm"]:
+                    raise Refusal("Image operation failed; captured output is private")
+                if args[:3] == ["docker", "image", "ls"]:
+                    return b"0123456789ab\n"
+                return run(args, **kwargs)
+            with self.assertRaises(CleanupIncomplete) as raised:
+                qualify(archive, fixture_identity(component="runtime"), "sha256:" + "d" * 64,
+                        "e" * 64, root, stuck)
+        receipt = raised.exception.receipt
+        self.assertEqual((receipt["failed_step"], receipt["failure"], receipt["attempts"]),
+                         ("image_remove", "command_failed", 2))
+
     def test_repeated_cleanup_failure_names_the_smoke_result_and_failed_step(self):
         import subprocess
         with tempfile.TemporaryDirectory() as directory, patch("staging_cd_runtime_smoke.time.sleep") as sleep:
@@ -192,7 +231,8 @@ class RuntimeSmokeTests(unittest.TestCase):
                 qualify(archive, fixture_identity(component="runtime"), "sha256:" + "d" * 64,
                         "e" * 64, root, broken)
         receipt = raised.exception.receipt
-        self.assertEqual((receipt["smoke"], receipt["failure"]), ("interrupted", "error"))
+        self.assertEqual((receipt["smoke"], receipt["failed_step"], receipt["failure"]),
+                         ("interrupted", "unknown", "error"))
         self.assertNotIn("private-daemon-value", json.dumps(receipt))
 
     def test_cleanup_receipt_survives_publisher_temporary_directory(self):
