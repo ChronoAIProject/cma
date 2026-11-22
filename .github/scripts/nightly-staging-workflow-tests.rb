@@ -36,6 +36,9 @@ def validate(workflow, repo)
   checks = structure.fetch('steps').select { |s| s['name'] == 'Nightly smoke workflow regressions' }
   require_check(checks.size == 1 && checks.first['run'] == 'ruby .github/scripts/nightly-staging-workflow-tests.rb' &&
     (checks.first.keys & %w[if continue-on-error shell]).empty?, 'nightly workflow contract must run in Repository CI')
+  evidence = structure.fetch('steps').select { |s| s['name'] == 'Synthetic smoke evidence regressions' }
+  require_check(evidence.size == 1 && evidence.first['run'] == 'node --test .github/scripts/smoke-evidence/*.test.mjs' &&
+    (evidence.first.keys & %w[if continue-on-error shell working-directory]).empty?, 'smoke evidence regressions must run in Repository CI')
 end
 
 root = File.expand_path('../..', __dir__)
@@ -52,6 +55,7 @@ mutations = [
   ->(w, _) { w['jobs']['smoke']['env']['CMA_E2E_MODE'] = 'mutation' },
   ->(w, _) { w['jobs']['smoke']['defaults']['run']['shell'] = 'bash {0} || true' },
   ->(_, r) { r['jobs']['structure']['steps'].reject! { |s| s['name'] == 'Nightly smoke workflow regressions' } },
+  ->(_, r) { r['jobs']['structure']['steps'].reject! { |s| s['name'] == 'Synthetic smoke evidence regressions' } },
   ->(_, r) { r['jobs']['structure']['if'] = 'false' },
 ]
 install_index = workflow['jobs']['smoke']['steps'].index { |s| s['name'] == 'Install pinned browser' }
@@ -63,6 +67,7 @@ end
 [{'if' => 'false'}, {'continue-on-error' => true}, {'shell' => 'bash {0} || true'}].each do |bypass|
   mutations << ->(w, _) { w['jobs']['smoke']['steps'][install_index].merge!(bypass) }
   mutations << ->(_, r) { r['jobs']['structure']['steps'].find { |s| s['name'] == 'Nightly smoke workflow regressions' }.merge!(bypass) }
+  mutations << ->(_, r) { r['jobs']['structure']['steps'].find { |s| s['name'] == 'Synthetic smoke evidence regressions' }.merge!(bypass) }
 end
 mutations.each do |mutation|
   changed_workflow, changed_repo = Marshal.load(Marshal.dump([workflow, repo]))
