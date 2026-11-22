@@ -11,6 +11,8 @@ use super::{
     SubscriptionTokens, CAS_ATTEMPTS, REFRESH_LEASE,
 };
 
+#[path = "subscriptions_refresh_admitted.rs"]
+pub(super) mod admitted;
 #[path = "subscriptions_refresh_legacy.rs"]
 mod legacy;
 #[path = "subscriptions_refresh_records.rs"]

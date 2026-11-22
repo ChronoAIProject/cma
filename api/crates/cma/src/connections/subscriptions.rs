@@ -39,10 +39,6 @@ pub(super) struct NativeLogin {
 pub(super) trait NativeSubscriptionAuth: Send + Sync {
     /// The producer admits process, pipe, cache and cleanup storage before use.
     /// The returned cache must retain this policy through its final physical free.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "admitted subscription refresh integration")
-    )]
     fn refresh_admitted<'a>(
         &'a self,
         _cache: &'a SharedOwned<SecretValue>,
@@ -100,6 +96,20 @@ pub(crate) struct CodexSubscriptions {
 }
 
 impl CodexSubscriptions {
+    #[cfg_attr(
+        not(test),
+        expect(dead_code, reason = "admitted source qualification pending")
+    )]
+    pub(crate) fn tokens_admitted<'a>(
+        &'a self,
+        owner: &'a SharedOwned<SubjectId>,
+        force: bool,
+        previous_account: Option<&'a SharedOwned<String>>,
+        policy: &IngressOwnershipPolicy,
+    ) -> Result<SubscriptionOperation<'a, SharedOwned<SubscriptionTokens>>, AdmittedError> {
+        refresh::admitted::tokens(self, owner, force, previous_account, policy)
+    }
+
     pub(crate) fn new(store: Arc<dyn SubscriptionStore>) -> Arc<Self> {
         Arc::new(Self {
             store,

@@ -24,10 +24,6 @@ impl SubscriptionRecord {
 
     /// The decoder receives a separately retained secret without extracting or
     /// prematurely releasing the record's cache. SecretValue keeps zeroization.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "admitted subscription refresh integration")
-    )]
     pub(in crate::connections) fn cache_admitted(
         source: &SharedOwned<Self>,
         policy: &IngressOwnershipPolicy,

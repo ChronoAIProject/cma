@@ -14,13 +14,6 @@ impl From<AdmissionRefusal> for CacheDecodeError {
 impl SubscriptionTokens {
     /// The cache reader must own the plaintext before passing it here.
     /// Parsing and returned credential copies have separate allocation custody.
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "admitted refresh integration is supplied separately"
-        )
-    )]
     pub(crate) fn from_native_cache_admitted(
         cache: &SharedOwned<SecretValue>,
         policy: &IngressOwnershipPolicy,

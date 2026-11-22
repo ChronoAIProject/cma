@@ -58,10 +58,6 @@ impl SubscriptionRecord {
 pub(crate) trait SubscriptionStore: Send + Sync {
     /// Implementations admit query, decode and retained storage before allocation.
     /// Both the operation and returned record must belong to the input policy.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "admitted subscription refresh integration")
-    )]
     fn get_admitted<'a>(
         &'a self,
         _owner: &'a SharedOwned<SubjectId>,
@@ -73,10 +69,6 @@ pub(crate) trait SubscriptionStore: Send + Sync {
 
     /// Expected and next records keep their original custody throughout the CAS.
     /// Admission grants no write authority and does not classify uncertain writes.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "admitted subscription refresh integration")
-    )]
     fn replace_admitted<'a>(
         &'a self,
         _expected: &'a SharedOwned<SubscriptionRecord>,

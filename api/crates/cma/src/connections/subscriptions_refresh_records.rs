@@ -60,10 +60,6 @@ impl RecordChange<'_> {
 impl SubscriptionRecord {
     /// The caller owns unique holder generation; this admits only its new copy
     /// and candidate record. A candidate cannot authorize its own CAS write.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "admitted refresh source integration")
-    )]
     pub(in crate::connections) fn claim_admitted(
         source: &SharedOwned<Self>,
         holder: &SharedOwned<String>,
@@ -81,10 +77,6 @@ impl SubscriptionRecord {
 
     /// The shared engine selects cache replacement, clearing or preservation
     /// only after its existing incarnation and holder checks.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "admitted refresh source integration")
-    )]
     pub(in crate::connections) fn finish_admitted(
         source: &SharedOwned<Self>,
         cache: CacheUpdate<'_, SharedOwned<SecretValue>>,
