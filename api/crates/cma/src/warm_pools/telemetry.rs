@@ -29,6 +29,7 @@ impl NativeWarmPools {
                         .inventory()
                         .await
                         .map_err(|_| WarmPoolError::Unavailable)?;
+                    self.note_default_recovery(&targets, &inventory);
                     let mut current = Vec::new();
                     for target in &targets {
                         if !target.retiring && !target.retired && self.current_plan(target)? {

@@ -201,6 +201,7 @@ pub(crate) struct NativeWarmPools {
     default_target: u32,
     machine: Option<(RuntimeImage, u32)>,
     target_fencing: bool,
+    degraded_start: Arc<std::sync::Mutex<Option<startup::DegradedStart>>>,
 }
 
 impl NativeWarmPools {
@@ -222,6 +223,7 @@ impl NativeWarmPools {
             default_target,
             machine: machine.map(|(image, target)| (deployment_image(image), target)),
             target_fencing: false,
+            degraded_start: Arc::default(),
         })
         .with_target_fencing(false)
     }

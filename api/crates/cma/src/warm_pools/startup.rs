@@ -35,6 +35,33 @@ pub(crate) enum StartupReadiness {
     Degraded,
 }
 
+/// The plan whose startup wait elapsed, until it first reports ready capacity.
+pub(super) struct DegradedStart {
+    pub(super) config_sha256: String,
+    pub(super) at: tokio::time::Instant,
+}
+
+/// The default target as the latest readiness step found it. A replaced pool
+/// UID or a sticky reconcile error shows here, not as missing capacity.
+#[derive(Clone, Copy, Debug, Default)]
+struct TargetState {
+    recorded: bool,
+    bound: bool,
+    applied: bool,
+    errored: bool,
+}
+
+impl TargetState {
+    fn of(target: Option<&PoolTarget>) -> Self {
+        target.map_or_else(Self::default, |target| Self {
+            recorded: true,
+            bound: target.binding.is_some(),
+            applied: target.applied_revision == target.revision,
+            errored: target.error.is_some(),
+        })
+    }
+}
+
 impl NativeWarmPools {
     /// Wait, bounded, for the exact default runtime plan to report ready
     /// capacity. During a rolling update the previous Agent Manager keeps
@@ -106,14 +133,53 @@ impl NativeWarmPools {
                 home: self.home.clone().ok_or(WarmPoolError::Unavailable)?,
             })
             .map_err(|_| WarmPoolError::Unavailable)?;
-        await_ready_with_fencing(
+        let readiness = await_ready_with_fencing(
             self.store.as_ref(),
             provider,
             &plan,
             STARTUP_WARMUP_LIMIT,
             self.target_fencing,
         )
-        .await
+        .await?;
+        if readiness == StartupReadiness::Degraded {
+            *self.degraded_slot() = Some(DegradedStart {
+                config_sha256: plan.config_sha256,
+                at: tokio::time::Instant::now(),
+            });
+        }
+        Ok(readiness)
+    }
+
+    /// Log once when the plan that missed the startup bound first reports
+    /// ready capacity, using the observation sampler's existing inventory.
+    pub(super) fn note_default_recovery(
+        &self,
+        targets: &[PoolTarget],
+        inventory: &[NativePoolStatus],
+    ) {
+        let mut degraded = self.degraded_slot();
+        let Some(start) = degraded.as_ref() else {
+            return;
+        };
+        let ready = targets.iter().any(|target| {
+            !target.machine
+                && target.plan.config_sha256 == start.config_sha256
+                && observed_ready(target, inventory)
+        });
+        if ready {
+            tracing::info!(
+                config_sha256 = %start.config_sha256,
+                elapsed_ms = start.at.elapsed().as_millis(),
+                "default native pool became ready after a degraded start"
+            );
+            *degraded = None;
+        }
+    }
+
+    fn degraded_slot(&self) -> std::sync::MutexGuard<'_, Option<DegradedStart>> {
+        self.degraded_start
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -135,9 +201,10 @@ async fn await_ready_with_fencing(
     target_fencing: bool,
 ) -> Result<StartupReadiness, WarmPoolError> {
     let started = tokio::time::Instant::now();
+    let mut seen = TargetState::default();
     let waited = tokio::time::timeout(limit, async {
         loop {
-            match step(store, provider, plan, target_fencing).await {
+            match step(store, provider, plan, target_fencing, &mut seen).await {
                 Ok(true) => return Ok(StartupReadiness::Ready),
                 Ok(false) => {}
                 Err(WarmPoolError::Conflict) => return Err(WarmPoolError::Conflict),
@@ -154,6 +221,10 @@ async fn await_ready_with_fencing(
             config_sha256 = %plan.config_sha256,
             image = %plan.spec.image.uri,
             elapsed_ms = started.elapsed().as_millis(),
+            target_recorded = seen.recorded,
+            target_bound = seen.bound,
+            revision_applied = seen.applied,
+            target_error = seen.errored,
             "default native pool not ready within startup limit; serving while the supervisor fills it"
         );
         Ok(StartupReadiness::Degraded)
@@ -165,13 +236,15 @@ async fn step(
     provider: &dyn NativePoolControl,
     plan: &NativePoolConfiguration,
     target_fencing: bool,
+    seen: &mut TargetState,
 ) -> Result<bool, WarmPoolError> {
     let target = store
         .list()
         .await?
         .into_iter()
-        .find(|target| &target.plan == plan)
-        .ok_or(WarmPoolError::Unavailable)?;
+        .find(|target| &target.plan == plan);
+    *seen = TargetState::of(target.as_ref());
+    let target = target.ok_or(WarmPoolError::Unavailable)?;
     if target.retiring || target.retired {
         return Err(WarmPoolError::Conflict);
     }

@@ -1,5 +1,24 @@
 use super::super::startup::{await_ready, observed_ready};
 use super::*;
+use std::io::Write;
+
+#[derive(Clone, Default)]
+struct Output(Arc<Mutex<Vec<u8>>>);
+impl Write for Output {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Output {
+    type Writer = Self;
+    fn make_writer(&'a self) -> Self {
+        self.clone()
+    }
+}
 
 fn fixture() -> (Memory, Provider) {
     let calls = Arc::new(Mutex::new(vec![]));
@@ -84,18 +103,41 @@ async fn startup_respects_durable_zero_target_without_provider_mutation_or_inven
 async fn startup_degrades_at_deadline_when_target_cannot_be_warmed() {
     let (store, provider) = fixture();
     provider.refuse_replaced_uid.store(true, Ordering::SeqCst);
+    let output = Output::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .without_time()
+        .with_writer(output.clone())
+        .finish();
     let began = tokio::time::Instant::now();
-    assert_eq!(
+    let readiness = {
+        let _default = tracing::subscriber::set_default(subscriber);
         await_ready(
             &store,
             &provider,
             &provider.original,
-            Duration::from_secs(120)
+            Duration::from_secs(120),
         )
-        .await,
-        Ok(StartupReadiness::Degraded),
-    );
+        .await
+    };
+    assert_eq!(readiness, Ok(StartupReadiness::Degraded));
     assert_eq!(began.elapsed(), Duration::from_secs(120));
+    // The warning separates a refused, unapplied target from slow capacity.
+    let text = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+    let warning = text
+        .lines()
+        .find(|row| row.contains("not ready within startup limit"))
+        .unwrap_or_else(|| panic!("{text}"));
+    for field in [
+        format!("config_sha256={}", provider.original.config_sha256),
+        "elapsed_ms=120000".into(),
+        "target_recorded=true".into(),
+        "target_bound=true".into(),
+        "revision_applied=false".into(),
+        "target_error=true".into(),
+    ] {
+        assert!(warning.contains(&field), "{field} missing from {warning}");
+    }
     // Degrading leaves the durable target for the supervisor to keep filling.
     assert_eq!(store.target.lock().unwrap().applied_revision, 0);
     assert_eq!(store.target.lock().unwrap().target_replicas, 3);
@@ -282,4 +324,53 @@ async fn startup_refuses_an_unusable_default_plan_without_waiting() {
     );
     assert_eq!(began.elapsed(), Duration::ZERO);
     assert!(store.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
+async fn degraded_start_is_noted_once_when_its_plan_first_reports_ready() {
+    let (store, mut provider) = fixture();
+    let image = crate::warm_pools::deployment_image(provider.original.spec.image.uri.clone());
+    provider.original.spec.image = image.clone();
+    store.target.lock().unwrap().plan.spec.image = image;
+    provider.refuse_replaced_uid.store(true, Ordering::SeqCst);
+    let inventory = [NativePoolStatus {
+        binding: provider.binding(),
+        desired_replicas: 3,
+        ready_replicas: 1,
+        observed: true,
+    }];
+    let store = Arc::new(store);
+    let home = provider.original.spec.home.clone();
+    let capacity = layer3_adapter::SandboxCapacity {
+        cpu_millis: provider.original.spec.cpu_millis,
+        memory_mib: provider.original.spec.memory_mib,
+    };
+    let uri = provider.original.spec.image.uri.clone();
+    let adapter = layer3_adapter::codex::CodexAdapter::with_backend(
+        resize::PoolBackend(provider),
+        layer3_adapter::codex::CodexSandboxSpec::default(),
+    );
+    let service = NativeWarmPools::new(
+        store.clone(),
+        Arc::new(adapter),
+        uri,
+        Some(home),
+        capacity,
+        1,
+        None,
+    );
+    assert_eq!(
+        service.await_default_ready().await,
+        Ok(StartupReadiness::Degraded)
+    );
+    assert!(service.degraded_start.lock().unwrap().is_some());
+    // An erroring, unapplied target is not ready even with a ready member.
+    let failing = store.target.lock().unwrap().clone();
+    service.note_default_recovery(std::slice::from_ref(&failing), &inventory);
+    assert!(service.degraded_start.lock().unwrap().is_some());
+    let mut ready = failing;
+    ready.error = None;
+    ready.applied_revision = ready.revision;
+    service.note_default_recovery(std::slice::from_ref(&ready), &inventory);
+    assert!(service.degraded_start.lock().unwrap().is_none());
 }
