@@ -1,4 +1,5 @@
 import { currentJourneyCases } from './public-journey-evidence.mjs';
+import { connectionCampaignFixture } from './connection-campaign.fixture.mjs';
 
 // Synthetic receipts exercise the auditor; they are never remote journey evidence.
 export function journeyEvidenceFixture() {
@@ -61,5 +62,13 @@ export function journeyEvidenceFixture() {
 
 export function campaignFixture(cases) {
   const { proofs, journal } = journeyEvidenceFixture();
-  return { results: { status: 'passed', cases: cases.map((title) => ({ case: title, status: 'passed', durationMs: 1, ...(proofs[title] ? { proof: proofs[title] } : {}) })) }, journal };
+  const connections = connectionCampaignFixture();
+  return {
+    results: { status: 'passed', cases: cases.map((title) => ({
+      case: title, status: 'passed', durationMs: 1,
+      ...(proofs[title] ? { proof: proofs[title] } : {}),
+      ...(connections.proofs[title] ? { connectionProof: connections.proofs[title] } : {}),
+    })) },
+    journal: [...journal, ...connections.journal], connectionFixture: connections.fixture,
+  };
 }
