@@ -844,10 +844,10 @@
           "next": "An operator must grant the deployment client its required permission."
         },
         "clock": {
-          "title": "Controller clock refused",
-          "meaning": "The controller's timing check refused the admission time.",
+          "title": "Controller time budget refused",
+          "meaning": "The controller stopped before any change because a time budget ran out: the admission was too old when it started, or a pre-change check (preflight) used its whole budget.",
           "cause": "transient",
-          "next": "Re-run the deployment."
+          "next": "Re-run the deployment. If it repeats, check whether a component it depends on, such as the Agent Manager, was restarting or unready at the time."
         },
         "inventory": {
           "title": "Deployment inventory unreadable",
@@ -1013,9 +1013,9 @@
         },
         "pod-restarts": {
           "title": "Pods restarted",
-          "meaning": "Pods of the new release restarted during verification, usually from a crash or a failing liveness probe.",
+          "meaning": "New release pods restarted during verification, usually from a crash or failing liveness probe. A runtime or runtime-omarchy release only reconfigures the Agent Manager, so its restarted pods are Agent Manager pods.",
           "cause": "change",
-          "next": "Check the released components' staging pod logs for the crash; if this change caused it, fix it and push."
+          "next": "Check the restarted pods' logs (Agent Manager's for a runtime release). \"native warm pool startup readiness failed\" means the new runtime's warm pool was not ready in time, not a broken image; if this change caused it, fix it."
         },
         "rollout-ownership": {
           "title": "Rollout ownership unproven",
