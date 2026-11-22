@@ -3,10 +3,6 @@ use super::*;
 
 /// Borrowed inputs retain their caller's custody and snapshot provenance. This
 /// read-only proof never starts an audit, quarantine, commit, or abort.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "enabled recording awaits driver resource custody")
-)]
 pub(in crate::store) fn read_only_summary_admitted<'a>(
     store: &'a MongoSandboxStore,
     agent: &'a Agent,
@@ -120,3 +116,196 @@ pub(in crate::store) fn read_only_summary_admitted<'a>(
         },
     )
 }
+
+use crate::store::ingress_reads::{
+    layout::{BsonLayout, LayoutError},
+    row::{ConversionPlan, RowSchema},
+};
+use layer2_core::sandbox::ingress_ownership::OwnedWork;
+
+type ProvenRead<'a> =
+    AdmittedOperation<'a, Result<Option<(SharedOwned<Agent>, bool)>, ReadFailure>>;
+type LegacyRead<'a> = AdmittedOperation<'a, Result<bool, ReadFailure>>;
+
+/// The returned Agent keeps its Data owner. The boolean has the legacy reader's
+/// meaning and does not replace complete fallback or transaction provenance.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "enabled recording awaits complete ingress composition"
+    )
+)]
+pub(in crate::store) fn read_proven_agent_admitted<'a>(
+    store: &'a MongoSandboxStore,
+    id: &'a AgentId,
+    session: &'a mut mongodb::ClientSession,
+    policy: &'a IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+) -> Result<ProvenRead<'a>, AdmittedError> {
+    AdmittedOperation::from_owned(
+        policy,
+        IngressClass::Transformation,
+        AllocationPlan::checked(
+            "integrity proven Agent result",
+            &[128, shared_owner_bytes::<ReadFailure>()],
+        )?,
+        move |scope| async move {
+            let input = match store
+                .integrity_agent_read_admitted(id, session, true, policy, read_plan)?
+                .await?
+                .transpose()
+            {
+                Ok(input) => input,
+                Err(error) => return Ok(error.map(Err)),
+            };
+            let Some(input) = input.as_ref() else {
+                return Ok(scope.initialize_owned(|| Ok(None)));
+            };
+            let flags = match row::decode::<ReaderFlagsSchema<true>>(&input.raw, policy) {
+                Ok(flags) => flags,
+                Err(error) => return error::finish(Err(ReadError::Row(error)), &scope),
+            };
+            if flags.segmented {
+                return Ok(scope.initialize_owned(|| {
+                    Err(ReadFailure::Domain(SandboxStoreError::Unavailable(
+                        "segmented history requires a bounded reader".into(),
+                    )))
+                }));
+            }
+            let trusted = match prove_legacy(
+                store,
+                LegacyInput {
+                    agent: &input.agent,
+                    raw: &input.raw,
+                    quarantined: flags.quarantined,
+                },
+                session,
+                true,
+                policy,
+                read_plan,
+            )
+            .await?
+            .transpose()
+            {
+                Ok(trusted) => *trusted,
+                Err(error) => return Ok(error.map(Err)),
+            };
+            Ok(scope.initialize_owned(|| Ok(Some((input.agent.clone(), trusted)))))
+        },
+    )
+}
+
+/// Borrowed inputs keep their caller's custody and snapshot/transaction identity.
+/// Missing format fields remain valid for this metadata-only legacy contract.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "enabled recording awaits complete ingress composition"
+    )
+)]
+pub(in crate::store) fn legacy_proof_for_context_admitted<'a>(
+    store: &'a MongoSandboxStore,
+    agent: &'a Agent,
+    raw: &'a mongodb::bson::RawDocument,
+    session: &'a mut mongodb::ClientSession,
+    snapshot: bool,
+    policy: &'a IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+) -> Result<LegacyRead<'a>, AdmittedError> {
+    AdmittedOperation::from_owned(
+        policy,
+        IngressClass::Transformation,
+        AllocationPlan::checked("legacy integrity proof operation", &[])?,
+        move |scope| async move {
+            let flags = match row::decode::<ReaderFlagsSchema<false>>(raw, policy) {
+                Ok(flags) => flags,
+                Err(error) => return error::finish(Err(ReadError::Row(error)), &scope),
+            };
+            prove_legacy(
+                store,
+                LegacyInput {
+                    agent,
+                    raw,
+                    quarantined: flags.quarantined,
+                },
+                session,
+                snapshot,
+                policy,
+                read_plan,
+            )
+            .await
+        },
+    )
+}
+
+struct LegacyInput<'a> {
+    agent: &'a Agent,
+    raw: &'a mongodb::bson::RawDocument,
+    quarantined: bool,
+}
+
+async fn prove_legacy(
+    store: &MongoSandboxStore,
+    input: LegacyInput<'_>,
+    session: &mut mongodb::ClientSession,
+    snapshot: bool,
+    policy: &IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+) -> Result<OwnedWork<Result<bool, ReadFailure>>, AdmittedError> {
+    if store.bounded_log_enabled(&input.agent.id) && input.quarantined {
+        fleet::telemetry::record(fleet::telemetry::Event::Quarantined);
+    }
+    let result = super::read_only_summary_admitted(
+        store,
+        input.agent,
+        input.raw,
+        session,
+        snapshot,
+        policy,
+        read_plan,
+    )?
+    .await?;
+    Ok(result.map(|result| {
+        result.map(|proof| proof.is_some() && store.bounded_log_enabled(&input.agent.id))
+    }))
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ReaderFlags {
+    segmented: bool,
+    quarantined: bool,
+}
+
+struct ReaderFlagsSchema<const CHECK_FORMAT: bool>;
+
+impl<const CHECK_FORMAT: bool> RowSchema for ReaderFlagsSchema<CHECK_FORMAT> {
+    type Value = ReaderFlags;
+    const INVALID_RAW: &'static str = "invalid raw integrity reader flags";
+
+    fn plan(layout: BsonLayout) -> Result<ConversionPlan, LayoutError> {
+        // Materialized BSON and fixed original envelope-validation errors.
+        let temporary_bytes = layout
+            .bson_bytes()?
+            .checked_mul(2)
+            .and_then(|bytes| bytes.checked_add(1024))
+            .ok_or(LayoutError::Structure)?;
+        Ok(ConversionPlan {
+            temporary_bytes,
+            retained_bytes: shared_owner_bytes::<ReaderFlags>(),
+        })
+    }
+
+    fn decode(row: Document) -> Result<ReaderFlags, SandboxStoreError> {
+        Ok(ReaderFlags {
+            segmented: CHECK_FORMAT
+                && crate::store::agent_log_segments::read_format(&row)?.is_some(),
+            quarantined: row.contains_key(QUARANTINE_FIELD),
+        })
+    }
+}
+
+#[cfg(test)]
+#[path = "read_ingress_tests.rs"]
+mod tests;

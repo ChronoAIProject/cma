@@ -13,13 +13,6 @@ use layer2_core::sandbox::ingress_ownership::{
 /// Both values come from one find. This is retained input, not an integrity
 /// proof, format-aware route selection, or transaction authority.
 #[derive(Debug)]
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "fresh Agent consumers await complete ingress composition"
-    )
-)]
 pub(in crate::store) struct IntegrityAgent {
     pub(in crate::store) agent: SharedOwned<Agent>,
     pub(in crate::store) raw: SharedOwned<RawDocumentBuf>,
@@ -33,10 +26,6 @@ type AgentRead<'a> = AdmittedOperation<
 impl MongoSandboxStore {
     /// Preserve the fresh Agent predicate/session/concern used by proof readers
     /// and scanners. The supplied read plan still needs driver qualification.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "enabled recording awaits driver resource custody")
-    )]
     pub(in crate::store) fn integrity_agent_read_admitted<'a>(
         &'a self,
         id: &'a AgentId,
