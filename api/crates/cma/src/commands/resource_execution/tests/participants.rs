@@ -20,9 +20,16 @@ pub(super) struct Endpoint {
     pub retained: Mutex<Option<MemberCompletionV1>>,
     pub calls: Mutex<Vec<&'static str>>,
     pub query_gate: Mutex<Option<Arc<tokio::sync::Barrier>>>,
+    pub stop_gate: Mutex<Option<Arc<tokio::sync::Semaphore>>>,
 }
 
 impl Endpoint {
+    async fn before_stop(&self) {
+        let gate = self.stop_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            gate.acquire().await.unwrap().forget();
+        }
+    }
     pub fn barrier(&self, request: &wire::BarrierRequestV1) -> wire::BarrierReceiptV1 {
         wire::BarrierReceiptV1 {
             protocol: 1,
@@ -132,6 +139,7 @@ impl wire::RuntimeExecutionControl for Endpoint {
         &self,
         request: &wire::BarrierRequestV1,
     ) -> wire::ProtocolResult<wire::StopReceiptV1> {
+        self.before_stop().await;
         match self
             .stop(request)
             .map_err(|_| wire::ProtocolError::Unknown)?
@@ -164,6 +172,7 @@ impl ResourceReleaseGate for Endpoint {
         &self,
         request: &wire::BarrierRequestV1,
     ) -> ExecutionResult<wire::ReleaseReceiptV1> {
+        self.before_stop().await;
         match self.stop(request)? {
             MemberCompletionV1::Release { receipt } => Ok(receipt),
             _ => panic!(),
@@ -185,6 +194,7 @@ impl Directory {
                             retained: Mutex::new(None),
                             calls: Mutex::new(Vec::new()),
                             query_gate: Mutex::new(None),
+                            stop_gate: Mutex::new(None),
                         }),
                     )
                 })

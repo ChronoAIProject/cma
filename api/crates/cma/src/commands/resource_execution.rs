@@ -4,6 +4,11 @@
 mod participants;
 mod reconciliation;
 mod revocations;
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "R3 sweep awaits qualified production composition")
+)]
+mod sweep;
 
 use std::sync::Arc;
 
@@ -18,13 +23,6 @@ pub(crate) struct RevocationWorker {
     participants: Arc<dyn ParticipantDirectory>,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "R3 scheduler wiring awaits qualified audience producers"
-    )
-)]
 pub(crate) struct PendingPage {
     pub operations: Vec<wire::Digest>,
     pub next: Option<wire::Digest>,
@@ -59,13 +57,6 @@ impl RevocationWorker {
         }
     }
 
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "R3 production audience providers are not yet qualified"
-        )
-    )]
     pub(crate) async fn discover(
         &self,
         after: Option<&wire::Digest>,

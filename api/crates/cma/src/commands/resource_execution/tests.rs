@@ -8,6 +8,7 @@ mod mongo;
 mod participants;
 mod reconciliation;
 mod store;
+mod sweep;
 use fixtures::*;
 use participants::{Directory, Endpoint};
 use store::{Store, WriteFault};

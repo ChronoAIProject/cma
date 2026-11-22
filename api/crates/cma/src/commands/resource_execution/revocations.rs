@@ -12,13 +12,6 @@ const MEMBER_CONCURRENCY: usize = MAX_FAMILY_MEMBERS as usize;
 const OBSERVATION_TIMEOUT: Duration = Duration::from_secs(2);
 
 impl RevocationWorker {
-    #[cfg_attr(
-        not(test),
-        expect(
-            dead_code,
-            reason = "R3 production audience providers are not yet qualified"
-        )
-    )]
     pub(crate) async fn reconcile(&self, id: &wire::Digest) -> ExecutionResult<Progress> {
         let operation = self
             .store

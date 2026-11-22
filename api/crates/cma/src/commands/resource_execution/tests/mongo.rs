@@ -4,6 +4,7 @@ use layer2_core::resource_access::{ResourceAccessStore, ResourceCapability};
 mod effects;
 mod fixture;
 mod public_status;
+mod sweep;
 use fixture::Fixture;
 
 fn incomplete(progress: Progress, completed: u32, total: u32) {
