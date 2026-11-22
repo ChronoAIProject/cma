@@ -130,7 +130,7 @@ pub(in crate::store) async fn legacy_proof_for_context(
     Ok(trusted)
 }
 
-pub(in crate::store) use super::proof::ingress::ExpectedTail;
+pub(in crate::store) use super::{proof::ingress::ExpectedTail, scan::ingress::IntegrityAgent};
 
 use crate::store::ingress_reads::{
     error::{self, ReadFailure},

@@ -35,6 +35,7 @@ mod cleanup_admission;
 mod implementation;
 mod ingress;
 mod ingress_snapshot;
+pub(in crate::store) use ingress::agent_conversion_plan;
 #[cfg(test)]
 mod mongo_ingress_tests;
 pub(in crate::store) mod publication;

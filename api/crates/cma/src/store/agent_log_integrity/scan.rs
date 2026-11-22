@@ -8,6 +8,9 @@ use futures_util::TryStreamExt;
 use mongodb::options::ReadConcern;
 use std::future::IntoFuture;
 
+#[path = "scan_ingress.rs"]
+pub(super) mod ingress;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(in crate::store) enum IntegrityFailurePolicy {
     Quarantine,
