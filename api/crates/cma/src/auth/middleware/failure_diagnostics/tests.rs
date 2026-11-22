@@ -46,6 +46,7 @@ fn typed_classes_are_private_even_with_selective_span_filters() {
                     expected: 123456,
                     actual: 654321,
                 },
+                StoreError::ReferenceUnavailable("must-not-leak-reference".into()),
             ] {
                 context.sync_scope(|| {
                     record(
@@ -65,11 +66,13 @@ fn typed_classes_are_private_even_with_selective_span_filters() {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
-        assert_eq!(events.len(), 3);
-        for (event, class) in events
-            .iter()
-            .zip(["unavailable", "malformed", "revision_conflict"])
-        {
+        assert_eq!(events.len(), 4);
+        for (event, class) in events.iter().zip([
+            "unavailable",
+            "malformed",
+            "revision_conflict",
+            "reference_unavailable",
+        ]) {
             assert_eq!(event["fields"]["error_class"], class);
             assert_eq!(event["fields"]["request_hash"], "a".repeat(64));
             assert_eq!(event["fields"]["auth_stage"], "request_resolution");
@@ -154,6 +157,7 @@ fn emit_private_classes() {
             expected: 123456,
             actual: 654321,
         },
+        StoreError::ReferenceUnavailable("must-not-leak-reference".into()),
     ] {
         context.sync_scope(|| {
             record(
@@ -176,11 +180,13 @@ fn assert_private_output_with_root(text: &str, json: bool, suppressed: bool, roo
         assert!(text.is_empty(), "filtered root emitted: {text}");
         return;
     }
-    assert_eq!(text.lines().count(), 3, "{text}");
-    for (line, class) in text
-        .lines()
-        .zip(["unavailable", "malformed", "revision_conflict"])
-    {
+    assert_eq!(text.lines().count(), 4, "{text}");
+    for (line, class) in text.lines().zip([
+        "unavailable",
+        "malformed",
+        "revision_conflict",
+        "reference_unavailable",
+    ]) {
         if json {
             let event: Value = serde_json::from_str(line).unwrap();
             assert_eq!(

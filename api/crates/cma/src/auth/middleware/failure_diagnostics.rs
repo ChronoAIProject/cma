@@ -8,6 +8,7 @@ pub(super) fn record(error: &StoreError, failure: Failure) {
         StoreError::Unavailable(_) => "unavailable",
         StoreError::Malformed(_) => "malformed",
         StoreError::RevisionConflict { .. } => "revision_conflict",
+        StoreError::ReferenceUnavailable(_) => "reference_unavailable",
     };
     // Emit in the final consumer's context: a shared verification leader's
     // provider event cannot attribute failure to each admitted caller.

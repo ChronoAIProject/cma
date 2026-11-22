@@ -96,7 +96,10 @@ fn independent_output_layers_keep_all_typed_fields_private() {
         for dynamic in [true, false] {
             for reverse in [true, false] {
                 let (filtered, accepting) = capture(json, dynamic, reverse, true);
-                assert_private_output_with_root(&filtered, json, false, false);
+                // Like the other registered auth roots, an event whose root
+                // this writer filters out is omitted rather than emitted
+                // without its content-free scope.
+                assert_private_output_with_root(&filtered, json, true, false);
                 assert_private_output(&accepting, json, false);
             }
         }
@@ -139,7 +142,7 @@ fn dynamic_dispatch_does_not_override_static_root_exclusion() {
 fn stock_json_counterexample_requires_the_diagnostic_formatter() {
     for reverse in [true, false] {
         let (filtered, accepting) = capture(true, true, reverse, false);
-        assert_eq!(filtered.lines().count(), 3);
+        assert_eq!(filtered.lines().count(), 4);
         for line in filtered.lines() {
             let event: Value = serde_json::from_str(line).unwrap();
             assert_eq!(
