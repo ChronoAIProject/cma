@@ -148,9 +148,7 @@ test('FAULT-popup-blocked connection falls back to the same tab without duplicat
     expect(page.context().pages()).toHaveLength(tabs);
     await h.operators.completeConnection(page, 'oauth');
   });
-  const verification = journey.verification(page);
-  await page.goto(`${h.config.baseURL}/launches/${launch.id}`);
-  await verification;
+  await journey.returnFromSameTab(page);
   await journey.finish(page, 'popup_blocked');
   expect(page.context().pages()).toHaveLength(tabs);
 });
