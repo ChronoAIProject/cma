@@ -102,13 +102,7 @@ impl RowSchema for SnapshotSchema {
     const INVALID_RAW: &'static str = "invalid raw conversation snapshot";
 
     fn plan(layout: BsonLayout) -> Result<ConversionPlan, LayoutError> {
-        let layout = ingress::SnapshotLayout::from_raw(layout);
-        Ok(ConversionPlan {
-            temporary_bytes: layout.decode_bytes().map_err(|_| LayoutError::Structure)?,
-            retained_bytes: layout
-                .retained_bytes()
-                .map_err(|_| LayoutError::Structure)?,
-        })
+        ingress::agent_conversion_plan(layout)
     }
 
     fn decode(row: Document) -> Result<Self::Value, SandboxStoreError> {

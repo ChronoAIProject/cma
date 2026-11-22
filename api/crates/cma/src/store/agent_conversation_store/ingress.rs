@@ -1,6 +1,7 @@
 //! Borrowed BSON preflight; wire length and requested allocation are distinct.
 
 use crate::store::ingress_reads::layout::{BsonLayout, LayoutError};
+use crate::store::ingress_reads::row::ConversionPlan;
 #[cfg(test)]
 use layer2_core::sandbox::ingress_ownership::IngressOwnershipPolicy;
 use layer2_core::sandbox::ingress_ownership::{
@@ -104,6 +105,20 @@ impl SnapshotLayout {
             mul(self.retained_bytes()?, 2)?,
         )
     }
+}
+
+/// The complete Agent/checkpoint shape also bounds an Agent-only conversion.
+/// Each caller supplies the layout of its own returned row.
+pub(in crate::store) fn agent_conversion_plan(
+    layout: BsonLayout,
+) -> Result<ConversionPlan, LayoutError> {
+    let layout = SnapshotLayout::from_raw(layout);
+    Ok(ConversionPlan {
+        temporary_bytes: layout.decode_bytes().map_err(|_| LayoutError::Structure)?,
+        retained_bytes: layout
+            .retained_bytes()
+            .map_err(|_| LayoutError::Structure)?,
+    })
 }
 
 pub(super) fn read_plan(id_bytes: usize) -> Result<AllocationPlan, SnapshotRefusal> {
