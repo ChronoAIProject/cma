@@ -87,7 +87,28 @@ export function App() {
     : usageOpen
       ? { ...browserRouter, route: browserRouter.backgroundRoute ?? AUTHENTICATED_HOME_ROUTE }
       : browserRouter;
-  const identityKey = identity.status === 'authenticated' ? identity.user.id : identity.status;
+  /*
+   * Retained portal work belongs to one known identity: a signed-in owner or a
+   * signed-out visitor. The portal is not mounted while that identity is being
+   * established, and an outage that hides it does not replace the instance: the
+   * first known identity adopts what was mounted. Only a change from one known
+   * identity to another discards what the portal retained. Keying on the
+   * unresolved state remounted the portal when sign-in resolved, discarding a
+   * channel editor the owner had already opened.
+   */
+  const knownIdentity =
+    identity.status === 'authenticated'
+      ? `user:${identity.user.id}`
+      : identity.status === 'anonymous'
+        ? 'anonymous'
+        : undefined;
+  const [portalOwner, setPortalOwner] = useState({ identity: knownIdentity, generation: 0 });
+  if (knownIdentity !== undefined && knownIdentity !== portalOwner.identity)
+    setPortalOwner({
+      identity: knownIdentity,
+      generation:
+        portalOwner.identity === undefined ? portalOwner.generation : portalOwner.generation + 1,
+    });
   const service =
     router.route.kind === 'event_gateway' || isBotRoute(router.route) ? 'event-gateway' : undefined;
   const [lastGatewayRoute, setLastGatewayRoute] = useState<AppRoute>(
@@ -148,13 +169,19 @@ export function App() {
         </ServiceBody>
       ) : null}
       {visitedGateway ? (
-        <EventGatewayPortal
-          key={`event-gateway:${identityKey}`}
-          visible={service === 'event-gateway'}
-          route={service ? router.route : lastGatewayRoute}
-          onNavigate={navigateService}
-          {...sidebar}
-        />
+        identity.status === 'checking' ? (
+          <ServiceBody visible={service === 'event-gateway'}>
+            <ShellLoading label="Signing you in" />
+          </ServiceBody>
+        ) : (
+          <EventGatewayPortal
+            key={`event-gateway:${portalOwner.generation}`}
+            visible={service === 'event-gateway'}
+            route={service ? router.route : lastGatewayRoute}
+            onNavigate={navigateService}
+            {...sidebar}
+          />
+        )
       ) : null}
     </div>
   );

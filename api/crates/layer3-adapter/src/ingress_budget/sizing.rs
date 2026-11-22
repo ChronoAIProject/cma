@@ -1,6 +1,7 @@
 //! Checked requested-capacity manifests, separate from wire bytes and RSS.
 
 use crate::{AdapterError, Result};
+use std::alloc::{Layout, LayoutError};
 use std::num::NonZeroUsize;
 
 pub const SIZING_VERSION: u32 = 1;
@@ -173,15 +174,37 @@ pub fn shared_owner_bytes<T>() -> usize {
 }
 
 pub(crate) fn shared_allocation_bytes<T>() -> usize {
-    // Rust 1.96.1 ArcInner is repr(C, align(2)): two atomic reference counts
-    // followed by T. sizeof includes the actual inter-field and trailing padding.
-    #[repr(C, align(2))]
-    struct Allocation<T> {
-        _strong: std::sync::atomic::AtomicUsize,
-        _weak: std::sync::atomic::AtomicUsize,
-        _value: T,
-    }
-    size_of::<Allocation<T>>()
+    shared_allocation_layout(Layout::new::<T>())
+        .expect("supported shared allocation layout")
+        .size()
+}
+
+fn shared_allocation_layout(payload: Layout) -> std::result::Result<Layout, LayoutError> {
+    // Rust 1.96.1 ArcInner is repr(C, align(2)). Layout arithmetic avoids
+    // instantiating an oversized wrapper type when only its size is requested.
+    let header = Layout::new::<[std::sync::atomic::AtomicUsize; 2]>().align_to(2)?;
+    let (combined, _) = header.extend(payload)?;
+    Ok(combined.pad_to_align())
+}
+
+/// Fixed payload and component-custody Arc layouts, including headers/padding.
+/// Dynamic payload buffers and initialization scratch must be added separately.
+pub fn component_shared_owner_bytes<T>() -> std::result::Result<usize, super::AdmissionRefusal> {
+    let invalid = |_| super::AdmissionRefusal::InvalidPlan {
+        phase: "component shared owner layout",
+    };
+    AllocationPlan::checked(
+        "component shared owner layout",
+        &[
+            shared_allocation_layout(Layout::new::<T>())
+                .map_err(invalid)?
+                .size(),
+            shared_allocation_layout(Layout::new::<super::IngressReservation>())
+                .map_err(invalid)?
+                .size(),
+        ],
+    )
+    .map(AllocationPlan::requested_bytes)
 }
 
 /// Fallible initialization constructs exactly one returned owner. Its plan must
