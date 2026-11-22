@@ -64,10 +64,14 @@ impl Fixture {
     }
     pub async fn seed(&self, key: &str, tat: mongodb::bson::Bson) {
         self.left.limits.delete_one(doc! {"_id":key}).await.unwrap();
+        // Retained preimages must survive TTL cleanup until the command under test.
+        let expires_at = mongodb::bson::DateTime::from_millis(
+            mongodb::bson::DateTime::now().timestamp_millis() + 86_400_000,
+        );
         // Missing schema marker and Int32 values are retained legacy formats.
         self.left
             .limits
-            .insert_one(doc! {"_id":key,"tat":tat,"expires_at":mongodb::bson::DateTime::now()})
+            .insert_one(doc! {"_id":key,"tat":tat,"expires_at":expires_at})
             .await
             .unwrap();
     }
