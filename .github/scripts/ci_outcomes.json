@@ -173,6 +173,12 @@
           "meaning": "The copy to the registry failed in transport and its tag could not be read back to settle the outcome.",
           "cause": "unknown",
           "next": "Read the reserved tag in the registry: if it holds the scanned digest the copy landed; otherwise push again for a new version."
+        },
+        "runtime_cleanup_incomplete": {
+          "title": "Runtime canary cleanup incomplete",
+          "meaning": "The runtime canary's Docker containers, volume or local image could not be proven removed after two cleanup passes; nothing was published.",
+          "cause": "transient",
+          "next": "Re-run the release. runtime-cleanup.json names the smoke result and the cleanup step that failed; if the same step fails again, check the runner's Docker daemon."
         }
       }
     },
