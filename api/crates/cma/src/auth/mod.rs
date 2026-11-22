@@ -42,6 +42,7 @@ mod middleware;
 #[cfg(test)]
 pub(super) mod nyxid_contract_tests;
 pub(crate) mod nyxid_proxy;
+pub(crate) mod nyxid_services;
 mod oauth_commands;
 pub mod organizations;
 mod permissions;

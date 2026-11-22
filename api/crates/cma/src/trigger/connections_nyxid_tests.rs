@@ -20,6 +20,7 @@ use crate::auth::persistence::SecretValue;
 
 #[path = "connections_nyxid_tests/deadline.rs"]
 mod deadline;
+mod selection;
 
 const VISITOR_TOKEN: &str = "visitor-access-secret";
 const PROVIDER_EXPIRES_AT: &str = "2026-09-05T12:15:00.731Z";

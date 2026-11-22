@@ -12,6 +12,7 @@ use layer2_core::{ServiceId, StoreError};
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
+use super::nyxid_services::{selected_service, UserServiceCredentialSource, UserServiceRow};
 use super::persistence::SecretValue;
 pub(crate) use identifiers::valid_provider_key_id;
 use identifiers::{credential_of, key_name, validate_credential_id};
@@ -121,6 +122,8 @@ struct ServiceRow {
     description: Option<String>,
     #[serde(default)]
     is_active: Option<bool>,
+    #[serde(default)]
+    credential_source: Option<UserServiceCredentialSource>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -350,16 +353,21 @@ impl KeyIssuer {
         if wanted.is_empty() {
             return Err(KeyIssuerError::EmptyGrant);
         }
-        let rows = self.service_rows(USER_SERVICES_PATH, owner_token).await?;
+        let rows = self
+            .service_rows(USER_SERVICES_PATH, owner_token)
+            .await?
+            .into_iter()
+            .map(|row| UserServiceRow {
+                slug: row.slug.unwrap_or_else(|| row.id.clone()),
+                id: row.id,
+                is_active: row.is_active,
+                credential_source: row.credential_source,
+            })
+            .collect::<Vec<_>>();
         let mut resolved = Vec::with_capacity(wanted.len());
         for wanted_service in wanted {
-            let row = rows
-                .iter()
-                .find(|row| {
-                    row.id == wanted_service.0
-                        || row.slug.as_deref() == Some(wanted_service.0.as_str())
-                })
-                .filter(|row| row.is_active == Some(true))
+            let row = selected_service(wanted_service, &rows)
+                .filter(|row| row.is_usable())
                 .ok_or_else(|| KeyIssuerError::ServiceNotGranted(wanted_service.clone()))?;
             if !resolved.contains(&row.id) {
                 resolved.push(row.id.clone());

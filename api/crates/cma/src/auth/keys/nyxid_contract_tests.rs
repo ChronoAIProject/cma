@@ -5,6 +5,8 @@ use axum::http::{header, Method};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+mod selection;
+
 fn issuer(origin: &str) -> Arc<KeyIssuer> {
     let auth = super::super::nyxid_contract_tests::auth(origin);
     Arc::new(KeyIssuer::new(auth.http.clone(), origin, "contract"))
