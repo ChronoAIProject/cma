@@ -226,7 +226,7 @@ fn runtime_update_failure_retries_same_exact_phase_and_old_pinned_target() {
     value
         .park_failed_runtime_update(failure.clone(), HOLDER, fence, NOW.into())
         .unwrap();
-    let mutation = SandboxLifecycleMutation {
+    let mut mutation = SandboxLifecycleMutation {
         guard: SandboxMutationGuard::capture(&before),
         sandbox: value.clone(),
         agents: vec![],
@@ -234,10 +234,13 @@ fn runtime_update_failure_retries_same_exact_phase_and_old_pinned_target() {
         appended_at: NOW.into(),
         events: vec![SandboxEventKind::WorkStepFailed {
             step: SandboxWorkStep::RunLifecycleOperation,
-            failure,
+            failure: failure.clone(),
         }],
     };
     validate_lifecycle_mutation(&before, &[], &mutation).unwrap();
+    assert_eq!(value.status, SandboxStatus::Rotating);
+    mutation.events = vec![SandboxEventKind::Failed { failure }];
+    assert!(validate_lifecycle_mutation(&before, &[], &mutation).is_err());
     assert_eq!(value.work.step, SandboxWorkStep::None);
     assert_eq!(value.lifecycle.operation, operation);
     assert!(value
@@ -268,6 +271,44 @@ fn runtime_update_process_loss_retains_same_home_and_explicit_target() {
         .unwrap()
         .completed_at
         .is_none());
+}
+
+#[test]
+fn parked_runtime_update_can_retire_without_retrying_or_releasing_home() {
+    let mut value = native();
+    admit(&mut value);
+    let fence = value.work.claim(HOLDER.into(), NOW, END.into()).unwrap();
+    value
+        .park_failed_runtime_update(
+            TypedFailure {
+                class: "runtime_update_failed".into(),
+                detail: "Fixture failure".into(),
+            },
+            HOLDER,
+            fence,
+            NOW.into(),
+        )
+        .unwrap();
+    assert_eq!(value.work.step, SandboxWorkStep::None);
+    assert!(value.lifecycle.operation.is_some());
+    let parked = value.clone();
+    value.begin_retirement(NOW.into()).unwrap();
+    value.validate().unwrap();
+    assert_eq!(value.status, SandboxStatus::Retiring);
+    assert_eq!(value.work.step, SandboxWorkStep::StopAgents);
+    assert!(value.work.lease.is_none());
+    assert!(value.lifecycle.operation.is_none());
+    assert_eq!(value.lifecycle.home, parked.lifecycle.home);
+    assert_eq!(value.runtime, parked.runtime);
+    assert_eq!(
+        value.lifecycle.suspended_runtime,
+        parked.lifecycle.suspended_runtime
+    );
+    assert_eq!(
+        value.runtime_update_request(),
+        parked.runtime_update_request()
+    );
+    assert_eq!(value.revision, parked.revision + 1);
 }
 
 #[test]

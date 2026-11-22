@@ -40,7 +40,9 @@ describe('ToolCallRow', () => {
       expect(row).not.toHaveTextContent('execute');
       expect(row).not.toHaveTextContent('Completed');
       if (status === 'failed') expect(row).toHaveTextContent('The operation failed.');
-      expect(row.querySelector('.tool-call__duration')).toBeNull();
+      if (['completed', 'failed', 'cancelled'].includes(status))
+        expect(row.querySelector('.tool-call__duration')).toHaveTextContent('Duration unavailable');
+      else expect(row.querySelector('.tool-call__duration')).toBeNull();
     },
   );
 
@@ -55,7 +57,7 @@ describe('ToolCallRow', () => {
         })}
       />,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Edited app.js' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Edited app.js Duration unavailable' }));
     fireEvent.click(within(screen.getByRole('article')).getByRole('button', { name: /app.js/ }));
     expect(screen.getByText('/home/cma/game/app.js')).toBeVisible();
     expect(screen.getByText('-old')).toHaveClass('tool-call__removed');
@@ -63,7 +65,7 @@ describe('ToolCallRow', () => {
     expect(screen.getByText('Output truncated')).toBeVisible();
   });
 
-  it('jumps to Terminal without expanding or collapsing the command', () => {
+  it('jumps to Operations without expanding or collapsing the command', () => {
     const open = vi.fn();
     const computer = new AgentComputerObservation({ client: {}, subject: 'owner' }, open);
     render(
@@ -71,14 +73,14 @@ describe('ToolCallRow', () => {
         <ToolCallRow tool={call('a', 'completed')} />
       </ComputerContext>,
     );
-    fireEvent.click(screen.getByRole('button', { name: 'Ran 1 command' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Ran 1 command Duration unavailable' }));
     const command = screen.getByRole('button', { name: /Call a/ });
-    fireEvent.click(screen.getByRole('button', { name: 'View in Terminal' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View in Operations' }));
     expect(command).toHaveAttribute('aria-expanded', 'false');
     expect(computer.terminalSnapshot()?.id).toBe('a');
     expect(open).toHaveBeenCalledOnce();
     fireEvent.click(command);
-    fireEvent.click(screen.getByRole('button', { name: 'View in Terminal' }));
+    fireEvent.click(screen.getByRole('button', { name: 'View in Operations' }));
     expect(command).toHaveAttribute('aria-expanded', 'true');
   });
 });
@@ -88,7 +90,7 @@ describe('ToolCallGroup', () => {
     const { rerender } = render(
       <ToolCallGroup group={group([call('a', 'completed'), call('b', 'completed')])} />,
     );
-    const toggle = screen.getByRole('button', { name: 'Ran 2 commands' });
+    const toggle = screen.getByRole('button', { name: 'Ran 2 commands Duration unavailable' });
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
     expect(screen.queryByRole('article')).not.toBeInTheDocument();
     rerender(
@@ -98,7 +100,7 @@ describe('ToolCallGroup', () => {
       />,
     );
     expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    expect(toggle).toHaveAccessibleName('Ran 2 commands · 1 failed');
+    expect(toggle).toHaveAccessibleName('Ran 2 commands Duration unavailable · 1 failed');
     fireEvent.click(toggle);
     const rows = document.getElementById(toggle.getAttribute('aria-controls')!)!;
     expect(within(rows).getAllByRole('article')).toHaveLength(2);
@@ -121,12 +123,12 @@ describe('ToolCallGroup', () => {
       toolGroupSummary([
         call('1', 'completed', { startedAt: 'invalid', finishedAt: timed.finishedAt }),
       ]),
-    ).toBe('Ran 1 command');
+    ).toBe('Ran 1 command  Duration unavailable');
     expect(
       toolGroupSummary([
         call('1', 'completed', { startedAt: timed.finishedAt, finishedAt: timed.startedAt }),
       ]),
-    ).toBe('Ran 1 command');
+    ).toBe('Ran 1 command  Duration unavailable');
     expect(
       toolGroupSummary([
         call('edit', 'completed', {
@@ -138,7 +140,7 @@ describe('ToolCallGroup', () => {
           },
         }),
       ]),
-    ).toBe('Edited app.js +2 −1');
+    ).toBe('Edited app.js +2 −1  Duration unavailable');
   });
 });
 

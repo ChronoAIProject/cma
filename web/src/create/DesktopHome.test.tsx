@@ -1,3 +1,4 @@
+import { AVAILABLE_CAPACITY } from '../test/capacity';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { useState } from 'react';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -8,6 +9,7 @@ import { WIRE_AGENT, WIRE_SANDBOX_DETAIL } from '../test/rest';
 import { ArtifactPublicationScope } from '../resources/artifactRecovery';
 import { AgentSidePanel } from '../agent/AgentSidePanel';
 import { TaskHome } from './TaskHome';
+import { taskDraftStorageKey } from './taskDraft';
 import { taskExperience } from '../test/taskExperience';
 
 afterEach(() => {
@@ -44,6 +46,7 @@ it('drops a legacy desktop draft choice without changing its task or blocking su
   vi.stubGlobal('fetch', transport);
   const client = {
     ...createRestWebClient(createClient({ fetch: transport })),
+    readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     taskExperience: taskExperience('owner'),
   };
   render(<TaskHome client={client} viewerId="owner" canCreateSandbox onCreated={() => {}} />);
@@ -58,9 +61,7 @@ it('drops a legacy desktop draft choice without changing its task or blocking su
     "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
   );
   expect(writes).toEqual([{ name: 'New task', initial_message: 'Retain my draft' }]);
-  const saved = sessionStorage.getItem(
-    `cma:task-draft:${JSON.stringify([location.origin, 'owner', null, null])}`,
-  );
+  const saved = sessionStorage.getItem(taskDraftStorageKey('owner'));
   expect(JSON.parse(saved!)).not.toHaveProperty('desktop');
 });
 
@@ -160,6 +161,7 @@ it('recovers a lost desktop creation receipt after reload into the same task Age
   vi.stubGlobal('fetch', transport);
   const client = {
     ...createRestWebClient(createClient({ fetch: transport })),
+    readSandboxCapacity: async () => AVAILABLE_CAPACITY,
     taskExperience: taskExperience('owner'),
   };
   const opened = vi.fn();

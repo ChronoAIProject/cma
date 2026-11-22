@@ -122,6 +122,17 @@ pub trait TriggerStore: Send + Sync {
         digest: &str,
     ) -> Result<Option<TriggerRevision>, TriggerStoreError>;
 
+    /// Proves publisher erasure for this exact admitted identity. Missing
+    /// definitions or revisions alone never establish erasure.
+    async fn trigger_publisher_erased(
+        &self,
+        _id: &TriggerId,
+        _digest: &str,
+        _public_id: &PublicTriggerId,
+    ) -> Result<bool, TriggerStoreError> {
+        Ok(false)
+    }
+
     async fn save_draft(
         &self,
         id: &TriggerId,

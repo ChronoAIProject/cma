@@ -17,6 +17,8 @@ pub(super) struct NativeBackend {
     inner: InMemoryHostedBackend,
     pub pools: Option<Arc<super::super::native_pool_tests::Pools>>,
     row: Arc<tokio::sync::Mutex<Option<Row>>>,
+    pub gc_credentials: Arc<Mutex<Option<Arc<MemoryCredentials>>>>,
+    pub home_destroyed: Arc<AtomicBool>,
     pub lose_suspend: Arc<AtomicBool>,
     pub lose_resume: Arc<AtomicBool>,
     pub lose_delete: Arc<AtomicBool>,
@@ -74,6 +76,16 @@ impl NativeBackend {
     }
     pub async fn lose_object(&self) {
         self.row.lock().await.take();
+    }
+    pub async fn set_lifecycle(&self, state: &str) {
+        self.row
+            .lock()
+            .await
+            .as_mut()
+            .unwrap()
+            .observation
+            .lifecycle
+            .state = state.into();
     }
     async fn pod(&self, handle: &RuntimeHandle) -> layer3_adapter::Result<RuntimeHandle> {
         let rows = self.row.lock().await;
@@ -435,6 +447,18 @@ impl HostedBackend for NativeBackend {
         let mut rows = self.row.lock().await;
         if let Some(row) = rows.take() {
             self.calls.push("delete-effective");
+            if let Some(credentials) = self.gc_credentials.lock().unwrap().as_ref() {
+                assert!(
+                    credentials.live_keys.lock().unwrap().is_empty(),
+                    "physical GC with a live key"
+                );
+                assert!(
+                    credentials.materials.lock().unwrap().is_empty(),
+                    "physical GC with custody debt"
+                );
+                // Provider GC occurs during deletion, independently of release_home and its ACK.
+                self.home_destroyed.store(true, Ordering::SeqCst);
+            }
             assert_eq!(row.observation.handle, *handle);
             if let Some(pod) = row.pod {
                 self.inner.teardown(&pod).await?

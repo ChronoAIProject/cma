@@ -191,7 +191,9 @@ export function worktree(value: Wire.Worktree): Worktree {
 function agentSummary(value: Wire.HierarchyAgentSummary): AgentSummary {
   return {
     taskStatus: value.task_status,
+    taskAcceptance: value.task_acceptance,
     taskStartedAt: value.task_started_at,
+    taskActivityAt: value.task_activity_at,
     id: value.id,
     workspaceId: value.workspace_id,
     worktreeId: value.worktree_id,
@@ -223,6 +225,7 @@ export function workspaceDetail(value: Wire.WorkspaceDetail): WorkspaceDetail {
 
 export function agentDetail(value: Wire.Agent): AgentDetail {
   return {
+    taskAcceptance: value.task_acceptance,
     id: value.id,
     status: value.status,
     bootstrap:

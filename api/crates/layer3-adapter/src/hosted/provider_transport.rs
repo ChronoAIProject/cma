@@ -43,6 +43,7 @@ pub struct ProviderHostedControlTransport {
     state: Arc<Mutex<TransportState>>,
     subscriptions: Option<Arc<dyn super::HostedSubscriptionSource>>,
     native_transport: NativeRuntimeTransport,
+    legacy_receiver_image: Option<LegacyReceiverImage>,
     runtime_capacity: Arc<RuntimeCapacityAuthority>,
     #[cfg(test)]
     native_http_budget: Arc<tokio::sync::Semaphore>,
@@ -62,6 +63,7 @@ enum RuntimeDiscovery {
 
 #[derive(Default)]
 struct TransportState {
+    native_http_telemetry: Option<Arc<native_pool::telemetry::Pool>>,
     desktop_challenges: BTreeMap<String, desktop::Pending>,
     next_link_id: u64,
     runtime_epochs: BTreeMap<RuntimeHandle, u64>,
@@ -442,12 +444,15 @@ impl ProviderHostedControlTransport {
 
 #[path = "provider_control.rs"]
 mod control;
+#[path = "provider_ownership_legacy.rs"]
+mod legacy_receiver;
 #[path = "native_http_pool.rs"]
 mod native_pool;
 #[path = "provider_open.rs"]
 mod open;
 #[path = "provider_ownership.rs"]
 mod ownership;
+pub use legacy_receiver::LegacyReceiverImage;
 
 #[path = "native_status.rs"]
 mod native_status;

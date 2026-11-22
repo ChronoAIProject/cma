@@ -16,6 +16,7 @@ import re
 from deployable_manifest import CURRENT, validate_names
 from docker_inputs import ignored, matches, stage_sources
 from policy import closure
+from publication_inputs import contract_images
 from uncertainty import SelectionIntegrityError
 
 MANIFEST = '.github/scripts/deployables.json'
@@ -150,6 +151,7 @@ def changed_input_maps(paths, summaries):
     selected = {name for inputs, _ in summaries for name, files in inputs.items() if changed & files}
     before, after = summaries[0][1], summaries[-1][1]
     selected.update(name for name in NAMES if before[name] != after[name])
-    # Workflow scheduling and runtime-generated matrices are not image inputs.
-    # Build recipe changes belong in the per-deployable manifest above.
+    # A lane is selected only by its own inputs. A publisher repair no longer
+    # rebuilds current lanes; allocation retries any lane left behind.
+    selected.update(contract_images(changed))
     return sorted(selected)

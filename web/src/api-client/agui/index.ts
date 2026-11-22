@@ -8,13 +8,14 @@ import {
   ValidationError,
 } from '../errors.js';
 import { raceWithAbortSignal, type OperationOptions } from '../http.js';
-import { read, segment } from '../resources.js';
+import { read, segment, type CommandOptions } from '../resources.js';
 import { streamLaunchEvents, type LaunchStreamOptions } from '../launch/stream.js';
 import { agentSandboxSnapshot, aguiCapabilities } from './companions.js';
 import { connection } from './transport.js';
 import { commandStreamInput } from '../command-stream-input.js';
 import { answerContext } from '../answer-context.js';
-import { record } from '../schema.js';
+import { nullable, object, record, text } from '../schema.js';
+import { v2ResponseStatus } from '../responses-v2/types.js';
 import type {
   AgentConversationEvent,
   AgentReplayOptions,
@@ -31,6 +32,8 @@ export type {
   AgentStreamOptions,
 } from './types.js';
 export type { AgentSandboxSnapshot, AguiCapabilities } from './companions.js';
+
+const inputReceipt = object({ threadId: text, runId: nullable(text), status: v2ResponseStatus });
 
 /** Agent conversation streaming through the public AG-UI projection. */
 export class AgentConversations {
@@ -56,6 +59,34 @@ export class AgentConversations {
 
   streamLaunchEvents(launchId: string, options: LaunchStreamOptions) {
     return streamLaunchEvents(this.config, launchId, options);
+  }
+
+  /** Read the exact admitted input without running or reattaching a command. */
+  findInputReceipt(request: AgentRunRequest, options: CommandOptions) {
+    const captured = commandStreamInput(request, options.idempotencyKey);
+    validateThread(captured.body?.threadId);
+    return read(
+      this.config,
+      '/api/v1/agui/run/receipt',
+      (value) => {
+        if (value === null) return null;
+        const receipt = inputReceipt(value);
+        if (
+          receipt.threadId !== captured.body.threadId ||
+          (receipt.runId !== null && !/^[1-9]\d*$/.test(receipt.runId))
+        ) {
+          throw new ProtocolError('AG-UI receipt belongs to another Agent or run');
+        }
+        return receipt;
+      },
+      {
+        ...options,
+        headers: captured.headers,
+        body: captured.body,
+        method: 'POST',
+        cache: 'no-store',
+      },
+    );
   }
 
   /** A run is submitted exactly once. A disconnect never resubmits its input. */
@@ -175,6 +206,7 @@ async function* completeProjections(
 ): AsyncGenerator<readonly AgentConversationEvent[]> {
   let pending: AgentConversationEvent[] = [];
   let bytes = 0;
+  let units = 0;
   for await (const event of stream) {
     if (
       event['cma:live'] === true ||
@@ -184,13 +216,26 @@ async function* completeProjections(
       continue;
     }
     bytes += new TextEncoder().encode(JSON.stringify(event)).byteLength;
-    if (pending.length >= 32 || bytes > 4 * 1024 * 1024)
+    const previous = pending.at(-1);
+    const continuedText =
+      previous?.type === 'TEXT_MESSAGE_CONTENT' &&
+      event.type === 'TEXT_MESSAGE_CONTENT' &&
+      typeof event.messageId === 'string' &&
+      event.messageId === previous.messageId &&
+      event.runId === previous.runId &&
+      typeof event.delta === 'string' &&
+      event.cursor === undefined;
+    if (!continuedText) units += 1;
+    // One committed text record may span many bounded CONTENT frames. Keep
+    // every frame for ordered callbacks; unrelated events still cost a unit.
+    if (units > 32 || pending.length >= 512 || bytes > 4 * 1024 * 1024)
       throw new ProtocolError('AG-UI durable projection exceeds its boundary');
     pending.push(event);
     if (event.cursor !== undefined) {
       yield pending;
       pending = [];
       bytes = 0;
+      units = 0;
     }
   }
   if (pending.length > 0)

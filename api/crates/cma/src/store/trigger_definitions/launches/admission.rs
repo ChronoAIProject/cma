@@ -1,7 +1,9 @@
 use layer2_core::trigger_domain::{
-    Launch, LaunchAdmission, LaunchAdmissionResult, LaunchEvent, LaunchState, LaunchStoreError,
+    Launch, LaunchAdmission, LaunchAdmissionPolicy, LaunchAdmissionResult, LaunchEvent,
+    LaunchState, LaunchStoreError,
 };
 use mongodb::ClientSession;
+use std::time::Duration;
 
 use crate::store::sandbox_mongo::{
     commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
@@ -14,6 +16,8 @@ use super::queries::{self, ReadError};
 use super::transactions;
 use super::validation;
 use super::{unavailable, MongoTriggerDefinitionStore, TRANSACTION_ATTEMPTS};
+
+const ADMISSION_ATTEMPTS: usize = 16;
 
 #[derive(Clone)]
 struct AdmissionReceipt {
@@ -42,10 +46,20 @@ pub(super) async fn admit(
     let events = validation::append_events(&mut launch, admission.events, event_at)?;
     launch.validate()?;
 
+    let enhanced = store.launch_admission_policy == LaunchAdmissionPolicy::VisitorAllowance;
+    let attempts = if enhanced {
+        ADMISSION_ATTEMPTS
+    } else {
+        TRANSACTION_ATTEMPTS
+    };
     let mut last_transient = None;
-    for attempt in 0..TRANSACTION_ATTEMPTS {
+    for attempt in 0..attempts {
         if attempt > 0 {
-            tokio::task::yield_now().await;
+            if enhanced {
+                tokio::time::sleep(launch_admission_retry_delay(attempt)).await;
+            } else {
+                tokio::task::yield_now().await;
+            }
         }
         let mut session = match store.client.start_session().await {
             Ok(session) => session,
@@ -62,43 +76,54 @@ pub(super) async fn admit(
             }
             return Err(unavailable(error));
         }
-        let receipt =
-            match admit_once(store, &admission.trigger, &launch, &events, &mut session).await {
-                Ok(Attempt::Existing(existing)) => {
-                    let _ = session.abort_transaction().await;
-                    return replay(*existing, &launch);
-                }
-                Ok(Attempt::Created(receipt)) => *receipt,
-                Err(AttemptError::Retry(reason)) => {
-                    let _ = session.abort_transaction().await;
-                    last_transient = Some(reason.into());
-                    continue;
-                }
-                Err(AttemptError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
-                    return Err(error);
-                }
-                Err(AttemptError::Driver(error))
-                    if is_transient(&error) || is_duplicate_key(&error) =>
-                {
-                    let duplicate = is_duplicate_key(&error);
-                    let _ = session.abort_transaction().await;
-                    if duplicate {
-                        if let Some(result) = classify_duplicate(store, &launch).await? {
-                            return result;
-                        }
+        let receipt = match admit_once(
+            store,
+            &admission.trigger,
+            &launch,
+            &events,
+            attempt > 0,
+            &mut session,
+        )
+        .await
+        {
+            Ok(Attempt::Existing(existing)) => {
+                let _ = session.abort_transaction().await;
+                return retried_result(attempt, replay(*existing, &launch));
+            }
+            Ok(Attempt::Created(receipt)) => *receipt,
+            Err(AttemptError::Retry(reason)) => {
+                let _ = session.abort_transaction().await;
+                last_transient = Some(reason.into());
+                continue;
+            }
+            Err(AttemptError::Domain(error)) => {
+                let _ = session.abort_transaction().await;
+                return Err(error);
+            }
+            Err(AttemptError::Driver(error))
+                if is_transient(&error) || is_duplicate_key(&error) =>
+            {
+                let duplicate = is_duplicate_key(&error);
+                let _ = session.abort_transaction().await;
+                if duplicate {
+                    if let Some(result) = classify_duplicate(store, &launch).await? {
+                        return retried_result(attempt, result);
                     }
-                    last_transient = Some(error.to_string());
-                    continue;
                 }
-                Err(AttemptError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
-                    return Err(unavailable(error));
-                }
-            };
+                last_transient = Some(error.to_string());
+                continue;
+            }
+            Err(AttemptError::Driver(error)) => {
+                let _ = session.abort_transaction().await;
+                return Err(unavailable(error));
+            }
+        };
         match commit_transaction(&mut session).await {
             CommitOutcome::Committed => {
-                return Ok(LaunchAdmissionResult::Created(receipt.launch.launch));
+                return retried_result(
+                    attempt,
+                    Ok(LaunchAdmissionResult::Created(receipt.launch.launch)),
+                );
             }
             CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
             CommitOutcome::Unknown(error) => {
@@ -106,18 +131,37 @@ pub(super) async fn admit(
                     transactions::no_operation_time("Launch admission commit", error.clone())
                 })?;
                 let store = store.clone();
-                return transactions::reconcile("Launch admission commit", error, async move {
-                    reconcile(&store, &receipt, at).await
-                })
-                .await;
+                let result =
+                    transactions::reconcile("Launch admission commit", error, async move {
+                        reconcile(&store, &receipt, at).await
+                    })
+                    .await;
+                return retried_result(attempt, result);
             }
             CommitOutcome::Failed(error) => return Err(unavailable(error)),
         }
     }
+    tracing::warn!(attempts, "launch admission retries exhausted");
     Err(LaunchStoreError::Unavailable(format!(
         "Launch admission exhausted its retry budget: {}",
         last_transient.unwrap_or_else(|| "no driver result".into())
     )))
+}
+
+fn launch_admission_retry_delay(attempt: usize) -> Duration {
+    let base = 1_u64 << attempt.saturating_sub(1).min(5);
+    let jitter = u64::from(uuid::Uuid::new_v4().as_bytes()[0]) % (attempt as u64 + 1);
+    Duration::from_millis(base + jitter)
+}
+
+fn retried_result(
+    attempt: usize,
+    result: Result<LaunchAdmissionResult, LaunchStoreError>,
+) -> Result<LaunchAdmissionResult, LaunchStoreError> {
+    if attempt > 0 && result.is_ok() {
+        tracing::info!(attempts = attempt + 1, "launch admission retried");
+    }
+    result
 }
 
 async fn admit_once(
@@ -125,6 +169,7 @@ async fn admit_once(
     trigger: &layer2_core::trigger_domain::PublicTrigger,
     launch: &Launch,
     events: &[LaunchEvent],
+    retrying: bool,
     session: &mut ClientSession,
 ) -> Result<Attempt, AttemptError> {
     if let Some(existing) = queries::command_in_session(
@@ -154,8 +199,74 @@ async fn admit_once(
             "new Launch ID already has orphan event rows",
         )));
     }
-    super::visitor_quota::admit(&store.launch_data, launch, session).await?;
-    let ceilings = platform_open(store, session).await?;
+    let enhanced = store.launch_admission_policy == LaunchAdmissionPolicy::VisitorAllowance;
+    // Exhausted visitors need no fence write. Charging still follows deletion checks
+    // in this transaction, so a concurrent deletion cannot admit new work.
+    if enhanced {
+        super::visitor_quota::precheck(&store.launch_data, launch, store.initial_settings, session)
+            .await?;
+    }
+    let database = store.client.database(&store.definitions.namespace().db);
+    // Only visitor-owned resources serialize with the visitor's deletion.
+    if crate::store::account_deletions::fence_subject_in_session(&database, &launch.owner, session)
+        .await
+        .map_err(AttemptError::Driver)?
+    {
+        return Err(AttemptError::Domain(
+            LaunchStoreError::AccountDeletionInProgress,
+        ));
+    }
+    // Publisher counters are erased later; do not serialize visitors through
+    // the publisher's Sandbox admission fence. Self-launches were checked above.
+    if trigger.owner != launch.owner
+        && crate::store::account_deletions::erasing_in_session(&database, &trigger.owner, session)
+            .await
+            .map_err(AttemptError::Driver)?
+    {
+        return Err(AttemptError::Domain(LaunchStoreError::TriggerRetired));
+    }
+    if retrying
+        && !matches!(
+            launch.resolution.sandbox,
+            layer2_core::trigger_domain::ResolvedResource::Reused(_)
+        )
+        && crate::store::launch_home_capacity::precheck_fresh_home(
+            &store.launch_data.settings,
+            &store.launch_data.admissions,
+            &store.launch_data.sandboxes,
+            store.global_sandbox_limit,
+            &launch.owner,
+            session,
+        )
+        .await
+        .map_err(AttemptError::Driver)?
+        .is_some()
+    {
+        return Err(AttemptError::Domain(
+            LaunchStoreError::GlobalCapacityReached,
+        ));
+    }
+    let protected = crate::store::settings_barrier::acquire(
+        &store.launch_data.settings,
+        store.initial_settings,
+        session,
+    )
+    .await
+    .map_err(|error| match error {
+        crate::store::settings_barrier::Error::Driver(error) => AttemptError::Driver(error),
+        crate::store::settings_barrier::Error::Unreadable => AttemptError::Domain(
+            LaunchStoreError::Corrupt("unreadable admission settings".into()),
+        ),
+    })?;
+    let charge = super::visitor_quota::prepare_with_limit(
+        &store.launch_data,
+        launch,
+        protected.settings().limits.visitor_max_launches_per_day,
+        session,
+    )
+    .await?;
+    let ceilings = platform_open(store, &protected, session).await?;
+    super::visitor_quota::charge(&store.launch_data, charge, session).await?;
     let home_capacity_admission = crate::store::launch_home_capacity::reserve(
         &store.launch_data.admissions,
         &store.launch_data.sandboxes,
@@ -257,20 +368,22 @@ fn replay(existing: Launch, intended: &Launch) -> Result<LaunchAdmissionResult, 
     }
 }
 
-/// A Launch carries no model liability: read the platform admission state in
-/// this transaction without the settings fence (contract §4.1).
+/// Launch day charges and new home reservations use one protected policy.
 async fn platform_open(
     store: &MongoTriggerDefinitionStore,
+    protected: &crate::store::settings_barrier::ProtectedSettings,
     session: &mut ClientSession,
 ) -> Result<Result<layer2_core::admission::AdmissionCeilings, ()>, AttemptError> {
     use crate::store::agent_conversation_store::ApplyError;
     let data = &store.launch_data;
     let now = crate::store::budget::now_seconds();
-    crate::store::budget::require_open_with_collections_and_ceilings(
+    crate::store::budget::require_open_protected(
         &data.settings,
         &data.model_budget,
+        protected,
         now,
         layer2_core::admission::AdmissionCause::Fresh,
+        false,
         session,
     )
     .await
@@ -323,6 +436,22 @@ impl From<crate::store::launch_home_capacity::Error> for AttemptError {
         match error {
             crate::store::launch_home_capacity::Error::Domain(error) => Self::Domain(error),
             crate::store::launch_home_capacity::Error::Driver(error) => Self::Driver(error),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    #[test]
+    fn retry_delay_grows_and_is_capped() {
+        for _ in 0..100 {
+            assert!((Duration::from_millis(1)..=Duration::from_millis(2))
+                .contains(&launch_admission_retry_delay(1)));
+            assert!((Duration::from_millis(32)..=Duration::from_millis(42))
+                .contains(&launch_admission_retry_delay(10)));
         }
     }
 }

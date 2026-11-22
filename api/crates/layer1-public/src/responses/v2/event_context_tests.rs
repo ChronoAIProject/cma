@@ -7,6 +7,9 @@ use layer2_core::sandbox::agent_io::AgentCommandStore;
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
+#[path = "event_context_observation_tests.rs"]
+mod observations;
+
 fn context() -> Value {
     let mut context = json!({"schema_version":1,"channel_id":"channel-independent-of-binding","conversation_id":"conversation-external",
         "activity":{"schema_version":1,"event_id":"event-1","kind":{"type":"message","text":"Hello","attachments":[],"mentions_bot":true},"actor":{"id":"sender"},"conversation":{"id":"raw-chat","kind":"private"},"occurred_at":"2026-09-22T00:00:00Z","source":"telegram", "retained_extra":"x".repeat(300_000)},
@@ -274,135 +277,157 @@ async fn binding_missing_agent_is_an_explicit_permanent_refusal() {
 
 #[tokio::test]
 async fn buffered_retained_context_path_preserves_success_and_concealment() {
-    let (app, _, _, principal) = super::binding_tests::fixture_for_owner_with_router_and_context(
-        layer2_core::sandbox::binding::BindingConversationState::Ready,
-        false,
-        "human",
-        None,
-        true,
-    )
-    .await;
-    let expected = context();
-    let body = json!({
-        "conversation":"conversation-external",
-        "stream":true,
-        "input":"Hello",
-        "event_context":expected
-    });
-    let response = app
-        .clone()
-        .oneshot(request("/api/v2/responses", &principal, body))
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    for enabled in [false, true] {
+        observations::scope(enabled, async {
+            let (app, _, _, principal) =
+                super::binding_tests::fixture_for_owner_with_router_and_context(
+                    layer2_core::sandbox::binding::BindingConversationState::Ready,
+                    false,
+                    "human",
+                    None,
+                    true,
+                )
+                .await;
+            let expected = context();
+            let body = json!({
+                "conversation":"conversation-external",
+                "stream":true,
+                "input":"Hello",
+                "event_context":expected
+            });
+            let response = app
+                .clone()
+                .oneshot(request("/api/v2/responses", &principal, body))
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
 
-    for (binding, event, status) in [
-        ("binding-responses", "event-1", StatusCode::OK),
-        ("foreign-binding", "event-1", StatusCode::NOT_FOUND),
-        ("binding-responses", "event-missing", StatusCode::NOT_FOUND),
-    ] {
-        let path = format!(
+            for (binding, event, status) in [
+                ("binding-responses", "event-1", StatusCode::OK),
+                ("foreign-binding", "event-1", StatusCode::NOT_FOUND),
+                ("binding-responses", "event-missing", StatusCode::NOT_FOUND),
+            ] {
+                let path = format!(
             "/api/v1/cmaeg/bindings/{binding}/conversations/conversation-external/events/{event}"
         );
-        let mut get = request(&path, &principal, Value::Null);
-        *get.method_mut() = Method::GET;
-        *get.body_mut() = Body::empty();
-        let response = app.clone().oneshot(get).await.unwrap();
-        assert_eq!(response.status(), status);
-        if status == StatusCode::OK {
-            let payload: Value =
-                serde_json::from_slice(&to_bytes(response.into_body(), 1_048_576).await.unwrap())
+                let mut get = request(&path, &principal, Value::Null);
+                *get.method_mut() = Method::GET;
+                *get.body_mut() = Body::empty();
+                let response = app.clone().oneshot(get).await.unwrap();
+                assert_eq!(response.status(), status);
+                if status == StatusCode::OK {
+                    let payload: Value = serde_json::from_slice(
+                        &to_bytes(response.into_body(), 1_048_576).await.unwrap(),
+                    )
                     .unwrap();
-            assert_eq!(payload, expected);
-        }
+                    assert_eq!(payload, expected);
+                }
+            }
+        })
+        .await;
     }
 }
 
 #[tokio::test]
 async fn buffered_retained_context_rejects_binding_revoked_during_lookup() {
-    let (app, _, _, principal) = super::binding_tests::fixture_for_owner_with_revocation_race(
-        layer2_core::sandbox::binding::BindingConversationState::Ready,
-        "human",
-    )
-    .await;
-    let body = json!({
-        "conversation":"conversation-external",
-        "stream":true,
-        "input":"Hello",
-        "event_context":context()
-    });
-    assert_eq!(
-        app.clone()
-            .oneshot(request("/api/v2/responses", &principal, body))
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::OK
-    );
+    for enabled in [false, true] {
+        observations::scope(enabled, async {
+            let (app, _, _, principal) = super::binding_tests::fixture_for_owner_with_revocation_race(
+                layer2_core::sandbox::binding::BindingConversationState::Ready,
+                "human",
+            )
+            .await;
+            let body = json!({
+                "conversation":"conversation-external",
+                "stream":true,
+                "input":"Hello",
+                "event_context":context()
+            });
+            assert_eq!(
+                app.clone()
+                    .oneshot(request("/api/v2/responses", &principal, body))
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK
+            );
 
-    let path =
-        "/api/v1/cmaeg/bindings/binding-responses/conversations/conversation-external/events/event-1";
-    let mut get = request(path, &principal, Value::Null);
-    *get.method_mut() = Method::GET;
-    *get.body_mut() = Body::empty();
-    let response = app.oneshot(get).await.unwrap();
-    assert_eq!(response.status(), StatusCode::NOT_FOUND);
-    assert_eq!(response.headers()["cache-control"], "no-store");
+            let path =
+                "/api/v1/cmaeg/bindings/binding-responses/conversations/conversation-external/events/event-1";
+            let mut get = request(path, &principal, Value::Null);
+            *get.method_mut() = Method::GET;
+            *get.body_mut() = Body::empty();
+            let response = app.oneshot(get).await.unwrap();
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            assert_eq!(response.headers()["cache-control"], "no-store");
+
+        }).await;
+    }
 }
 
 #[tokio::test]
 async fn buffered_retained_context_final_fence_failure_is_retryable() {
-    let (app, _, _, principal) = super::binding_tests::fixture_for_owner_with_fence_race(
-        layer2_core::sandbox::binding::BindingConversationState::Ready,
-        "human",
-    )
-    .await;
-    let body = json!({
-        "conversation":"conversation-external",
-        "stream":true,
-        "input":"Hello",
-        "event_context":context()
-    });
-    assert_eq!(
-        app.clone()
-            .oneshot(request("/api/v2/responses", &principal, body))
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::OK
-    );
+    for enabled in [false, true] {
+        observations::scope(enabled, async {
+            let (app, _, _, principal) = super::binding_tests::fixture_for_owner_with_fence_race(
+                layer2_core::sandbox::binding::BindingConversationState::Ready,
+                "human",
+            )
+            .await;
+            let body = json!({
+                "conversation":"conversation-external",
+                "stream":true,
+                "input":"Hello",
+                "event_context":context()
+            });
+            assert_eq!(
+                app.clone()
+                    .oneshot(request("/api/v2/responses", &principal, body))
+                    .await
+                    .unwrap()
+                    .status(),
+                StatusCode::OK
+            );
 
-    let path =
-        "/api/v1/cmaeg/bindings/binding-responses/conversations/conversation-external/events/event-1";
-    let mut get = request(path, &principal, Value::Null);
-    *get.method_mut() = Method::GET;
-    *get.body_mut() = Body::empty();
-    let response = app.oneshot(get).await.unwrap();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(response.headers()["retry-after"], "1");
-    assert_eq!(response.headers()["cache-control"], "no-store");
-    let problem: Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
-    assert_eq!(problem["error"]["code"], "response_unavailable");
+            let path =
+                "/api/v1/cmaeg/bindings/binding-responses/conversations/conversation-external/events/event-1";
+            let mut get = request(path, &principal, Value::Null);
+            *get.method_mut() = Method::GET;
+            *get.body_mut() = Body::empty();
+            let response = app.oneshot(get).await.unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(response.headers()["retry-after"], "1");
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            let problem: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+            assert_eq!(problem["error"]["code"], "response_unavailable");
+
+        }).await;
+    }
 }
 
 #[tokio::test]
 async fn buffered_retained_context_unavailable_lookup_is_retryable() {
-    let (app, _, _, principal) = super::binding_tests::fixture_for_owner_with_unavailable_context(
-        layer2_core::sandbox::binding::BindingConversationState::Ready,
-        "human",
-    )
-    .await;
-    let path =
-        "/api/v1/cmaeg/bindings/binding-responses/conversations/conversation-external/events/event-1";
-    let mut get = request(path, &principal, Value::Null);
-    *get.method_mut() = Method::GET;
-    *get.body_mut() = Body::empty();
-    let response = app.oneshot(get).await.unwrap();
-    assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    assert_eq!(response.headers()["retry-after"], "1");
-    assert_eq!(response.headers()["cache-control"], "no-store");
-    let problem: Value =
-        serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
-    assert_eq!(problem["error"]["code"], "response_unavailable");
+    for enabled in [false, true] {
+        observations::scope(enabled, async {
+            let (app, _, _, principal) = super::binding_tests::fixture_for_owner_with_unavailable_context(
+                layer2_core::sandbox::binding::BindingConversationState::Ready,
+                "human",
+            )
+            .await;
+            let path =
+                "/api/v1/cmaeg/bindings/binding-responses/conversations/conversation-external/events/event-1";
+            let mut get = request(path, &principal, Value::Null);
+            *get.method_mut() = Method::GET;
+            *get.body_mut() = Body::empty();
+            let response = app.oneshot(get).await.unwrap();
+            assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+            assert_eq!(response.headers()["retry-after"], "1");
+            assert_eq!(response.headers()["cache-control"], "no-store");
+            let problem: Value =
+                serde_json::from_slice(&to_bytes(response.into_body(), 4096).await.unwrap()).unwrap();
+            assert_eq!(problem["error"]["code"], "response_unavailable");
+
+        }).await;
+    }
 }

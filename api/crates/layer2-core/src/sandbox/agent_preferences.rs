@@ -109,6 +109,9 @@ impl AgentOperationService {
     ) -> std::sync::Arc<Self> {
         std::sync::Arc::new(Self {
             skill_upgrades_enabled: self.skill_upgrades_enabled,
+            model_credit_required: self.model_credit_required,
+            model_funding: self.model_funding.clone(),
+            funded_message: self.funded_message.clone(),
             instruction_policy: policy,
             settings_authority: self.settings_authority.clone(),
             command_claim: self.command_claim.clone(),
@@ -145,7 +148,7 @@ impl AgentOperationService {
                 update.expected_revision() != current.conversation.preferences.revision
             })
         {
-            return Err(AgentOperationError::Conflict);
+            return Err(AgentOperationError::PreferencesRevisionMismatch);
         }
         Ok(())
     }
@@ -161,7 +164,7 @@ impl AgentOperationService {
         for _ in 0..super::agent_operation_service::MAX_OPERATION_COMMIT_RETRIES {
             let current = self.owned_agent(caller, id).await?;
             if current.conversation.preferences.revision != update.expected_revision() {
-                return Err(AgentOperationError::Conflict);
+                return Err(AgentOperationError::PreferencesRevisionMismatch);
             }
             match &update {
                 AgentPreferencesUpdate::SystemPrompt { system_prompt, .. } => {
@@ -212,7 +215,7 @@ impl AgentOperationService {
                 }
             }
         }
-        Err(AgentOperationError::Conflict)
+        Err(AgentOperationError::ConfigurationAdmissionConflict)
     }
 }
 

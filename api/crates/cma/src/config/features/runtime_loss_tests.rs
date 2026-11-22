@@ -1,6 +1,20 @@
 use super::FeatureFlags;
 
 #[test]
+fn suspended_reopen_admission_is_independent_and_defaults_off() {
+    const KEY: &str = "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.retained_suspended_reopen_enabled, expected);
+        assert!(!flags.retained_reopen_enabled);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "yes".into()))).is_err());
+}
+
+#[test]
 fn runtime_loss_proof_requires_an_independent_strict_default_off_flag() {
     const KEY: &str = "CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED";
     for (value, enabled) in [(None, false), (Some("false"), false), (Some("true"), true)] {

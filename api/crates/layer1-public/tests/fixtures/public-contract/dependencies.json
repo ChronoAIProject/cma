@@ -244,7 +244,8 @@
       "response": {
         "status": 503,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/instance-service-unavailable",

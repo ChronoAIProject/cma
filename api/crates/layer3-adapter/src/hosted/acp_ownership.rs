@@ -1,5 +1,6 @@
 //! A bridge captures its opening epoch; later callers cannot replace it.
 use super::{Bridge, Message};
+use crate::ingress_budget::diagnostic::text;
 use crate::AdapterError;
 use futures_util::SinkExt as _;
 
@@ -7,7 +8,7 @@ impl Bridge {
     pub(super) async fn check_owner(&self) -> crate::Result<()> {
         match &self.authority {
             Some(authority) if !authority.is_current() => {
-                Err(AdapterError::Rejected("conversation owner expired".into()))
+                Err(AdapterError::Rejected(text("conversation owner expired")))
             }
             Some(_) => Ok(()),
             None => Ok(()),
@@ -28,15 +29,15 @@ impl Bridge {
             self.check_owner().await?;
             sink.send(message)
                 .await
-                .map_err(|_| AdapterError::Unavailable("conversation write failed".into()))
+                .map_err(|_| AdapterError::Unavailable(text("conversation write failed")))
         };
         if self.authority.is_none() {
             return write.await;
         }
         tokio::select! { biased;
-            _ = self.owner_revoked() => Err(AdapterError::Rejected("conversation owner expired".into())),
+            _ = self.owner_revoked() => Err(AdapterError::Rejected(text("conversation owner expired"))),
             result = tokio::time::timeout(std::time::Duration::from_secs(5), write) => result
-                .map_err(|_| AdapterError::Unavailable("owned conversation write timed out".into()))?,
+                .map_err(|_| AdapterError::Unavailable(text("owned conversation write timed out")))?,
         }
     }
 }

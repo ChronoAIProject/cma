@@ -172,6 +172,7 @@ impl TurnRunner {
                 &provider,
                 &*self.delivery,
                 self.activity.as_ref(),
+                self.providers.execution_verifiers.verifier(&provider),
                 &mut admitted,
             )
             .await

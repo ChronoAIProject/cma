@@ -8,6 +8,34 @@ const MAX_URL_LENGTH: usize = 2_048;
 const MAX_IMAGE_REFERENCE_LENGTH: usize = 2_048;
 const SHA256_SEPARATOR: &str = "@sha256:";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Provider {
+    OpenSandbox,
+    AgentSandbox,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum RuntimeMode {
+    Execution(Provider),
+    BackendFree,
+}
+
+impl RuntimeMode {
+    pub(super) fn from_lookup(
+        lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+    ) -> Result<Self, String> {
+        match lookup("CHRONO_SANDBOX_PROVIDER")?.as_deref() {
+            None | Some("opensandbox") => Ok(Self::Execution(Provider::OpenSandbox)),
+            Some("agent-sandbox") => Ok(Self::Execution(Provider::AgentSandbox)),
+            Some("none") => match lookup("CHRONO_ENVIRONMENT")?.as_deref() {
+                Some("development" | "staging") => Ok(Self::BackendFree),
+                _ => Err("CHRONO_SANDBOX_PROVIDER=none requires CHRONO_ENVIRONMENT=development or staging".into()),
+            },
+            Some(_) => Err("CHRONO_SANDBOX_PROVIDER must be opensandbox, agent-sandbox or none".into()),
+        }
+    }
+}
+
 /// Deployment-owned endpoints and runtime identity validated at startup.
 #[derive(Clone, PartialEq, Eq)]
 pub(crate) struct RuntimeConfig {
@@ -15,6 +43,7 @@ pub(crate) struct RuntimeConfig {
     pub agent_sandbox: Option<layer3_adapter::agent_sandbox::AgentSandboxConfig>,
     pub agent_sandbox_connection: Option<layer3_adapter::agent_sandbox::RemoteKubernetesConfig>,
     pub agent_sandbox_runtime_transport: layer3_adapter::hosted::NativeRuntimeTransport,
+    pub legacy_receiver_image: Option<layer3_adapter::hosted::LegacyReceiverImage>,
     pub allocate_agent_sandbox: bool,
     pub native_prepared_target: u8,
     pub native_machine_prepared_target: u8,
@@ -69,15 +98,9 @@ impl fmt::Debug for RuntimeConfig {
 impl RuntimeConfig {
     pub(super) fn from_lookup(
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+        provider: Provider,
     ) -> Result<Self, String> {
-        let allocate_agent_sandbox = match lookup("CHRONO_SANDBOX_PROVIDER")?
-            .as_deref()
-            .unwrap_or("opensandbox")
-        {
-            "opensandbox" => false,
-            "agent-sandbox" => true,
-            _ => return Err("CHRONO_SANDBOX_PROVIDER must be opensandbox or agent-sandbox".into()),
-        };
+        let allocate_agent_sandbox = provider == Provider::AgentSandbox;
         let retain_opensandbox = match lookup("CHRONO_RETAIN_OPENSANDBOX")?
             .as_deref()
             .unwrap_or("true")
@@ -235,11 +258,23 @@ impl RuntimeConfig {
             .into());
         }
 
+        let legacy_receiver_image = super::agent_sandbox::legacy_receiver_image(lookup)?;
+        if legacy_receiver_image.is_some()
+            && (agent_sandbox.is_none()
+                || agent_sandbox_runtime_transport
+                    == layer3_adapter::hosted::NativeRuntimeTransport::Direct)
+        {
+            return Err(
+                "CHRONO_LEGACY_RECEIVER_IMAGE_PROOF requires a Kubernetes-bound native transport"
+                    .into(),
+            );
+        }
         Ok(Self {
             capacity: super::runtime_capacity::from_lookup(lookup)?,
             agent_sandbox,
             agent_sandbox_connection,
             agent_sandbox_runtime_transport,
+            legacy_receiver_image,
             allocate_agent_sandbox,
             native_prepared_target,
             native_machine_prepared_target,

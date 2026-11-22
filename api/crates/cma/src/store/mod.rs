@@ -2,6 +2,8 @@
 mod admission_capacity;
 mod admission_checks;
 
+pub(crate) mod account_deletions;
+pub(crate) mod account_erasure;
 pub mod activity;
 pub(crate) mod admission_ceilings;
 pub(crate) mod admission_control;
@@ -33,6 +35,7 @@ mod agent_log_store;
 pub(crate) mod agent_log_telemetry;
 mod agent_log_transcript;
 mod agent_log_usage;
+pub(crate) mod agent_observation;
 mod agent_opening_reads;
 pub(crate) mod agent_ownership;
 mod agent_profiles;
@@ -51,6 +54,8 @@ mod agent_worker_capacity;
 mod agent_worker_reconcile;
 mod agent_worker_store;
 mod agent_worker_transaction;
+#[cfg(test)]
+pub(crate) use agent_worker_transaction::skill_result_test_support;
 mod agent_worktree_recovery;
 mod agent_worktree_recovery_records;
 mod agent_write_coordination;
@@ -93,6 +98,8 @@ mod gateway_records;
 #[cfg(test)]
 mod gateway_records_mongo_integration_tests;
 mod hierarchy;
+#[allow(dead_code)] // Foundation primitives have no production capture worker.
+pub(crate) mod home_backups;
 mod launch_context;
 #[cfg(test)]
 mod launch_context_mongo_integration_tests;
@@ -115,6 +122,7 @@ mod message_feedback;
 pub(crate) mod migrations;
 pub mod mongo;
 mod mongo_diagnostics;
+pub(crate) mod pending_launch_homes;
 #[cfg(test)]
 pub(crate) use mongo_diagnostics::attach_readiness_fixture;
 pub(crate) mod mongo_latency;
@@ -125,11 +133,13 @@ mod operator_profiles;
 mod operator_sandboxes;
 mod platform_write_coordination;
 mod profile_documents;
+mod profile_draft_admission;
 #[cfg(test)]
 mod profile_index_tests;
 mod profile_mongo;
 #[cfg(test)]
 mod profile_operator_mongo_integration_tests;
+mod profile_pin_admission;
 mod profile_references;
 mod profiles;
 pub(crate) mod request_limits;
@@ -138,7 +148,7 @@ mod retained_reopen;
 pub(crate) mod retirement_archive;
 mod sandbox_admission;
 #[cfg(test)]
-mod sandbox_admission_mongo_integration_tests;
+pub(crate) mod sandbox_admission_mongo_integration_tests;
 pub(crate) mod sandbox_billing;
 pub(crate) mod sandbox_colors;
 mod sandbox_controls;
@@ -163,6 +173,7 @@ mod sandbox_sessions;
 mod sandbox_transactions;
 mod sandbox_unpublished_recovery;
 pub(crate) mod sandbox_usage;
+pub(crate) mod sandbox_usage_export;
 mod sandbox_worker_store;
 mod sandboxes;
 #[cfg(test)]
@@ -172,6 +183,8 @@ mod schema;
 mod schema_mongo_integration_tests;
 pub(crate) mod segment_operations;
 pub mod settings;
+mod settings_barrier;
+pub(crate) mod settings_defaults;
 mod shared_child_capacity;
 mod suggestions;
 mod trigger_definitions;

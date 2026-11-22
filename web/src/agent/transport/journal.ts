@@ -6,6 +6,13 @@ import { QueuedCancellationJournal } from './queuedJournal';
 import { QueuedInputJournal } from './queuedInputJournal';
 import { InterruptionJournal } from './interruptionJournal';
 import { LegacySuggestionJournal } from './legacySuggestionJournal';
+import { bindDraftCommand } from '../draftDelivery';
+import { acceptDraftCommand, clearOwnerDrafts } from '../draftStorage';
+import {
+  promptIntentJournal,
+  settingsIntentJournal,
+  type RetainedSettingsEditor,
+} from '../settingsIntent';
 
 const PREFIX = 'cma:agent-transport:v1:';
 const IDENTITY = `${PREFIX}identity`;
@@ -106,6 +113,8 @@ export class AgentTransportJournal {
         if (this.current()?.transport !== 'responses_v2')
           throw new Error('This Agent has not selected the Responses transport.');
       },
+      (input, key) => bindDraftCommand(identity.user, agent, input, key, storage),
+      (key) => acceptDraftCommand(identity.user, agent, key, storage),
     );
     this.queuedInputs = new QueuedInputJournal(
       storage,
@@ -131,11 +140,35 @@ export class AgentTransportJournal {
     return this.agent;
   }
 
-  private current(): TransportRecord | undefined {
+  private requireIdentity(): void {
     if (this.invalidated) throw new IdentityChangedError();
     const identity = readIdentity(this.storage);
     if (identity?.user !== this.identity.user || identity.epoch !== this.identity.epoch)
       throw new IdentityChangedError();
+  }
+
+  settingsIntent<Body>(
+    kind: RetainedSettingsEditor,
+    parseBody: (value: unknown) => Body | undefined,
+  ) {
+    return settingsIntentJournal(
+      this.storage,
+      `${this.key}:configuration:${kind}:${this.identity.epoch}`,
+      () => this.requireIdentity(),
+      parseBody,
+    );
+  }
+
+  promptSettingsIntent() {
+    return promptIntentJournal(
+      this.storage,
+      `${this.key}:configuration:prompt-fingerprint:${this.identity.epoch}`,
+      () => this.requireIdentity(),
+    );
+  }
+
+  private current(): TransportRecord | undefined {
+    this.requireIdentity();
     const source = this.storage.getItem(this.key);
     return source === null ? undefined : parseRecord(source, this.agent, this.identity.epoch);
   }
@@ -145,7 +178,11 @@ export class AgentTransportJournal {
     this.current();
     this.invalidated = true;
     try {
-      clearAgentTransport(this.storage);
+      try {
+        clearOwnerDrafts(this.identity.user, this.storage);
+      } finally {
+        clearAgentTransport(this.storage);
+      }
     } catch (cause) {
       throw new IdentityChangedError({ cause });
     }
@@ -182,6 +219,24 @@ export class AgentTransportJournal {
     return this.current()?.input ?? null;
   }
 
+  /** Finish draft cleanup if a reload interrupted a previously confirmed receipt. */
+  reconcileDraft(): void {
+    try {
+      const input = this.read();
+      const control = this.readControl();
+      const interruption = this.interruption.read();
+      const accepted = [
+        input?.state === 'accepted' ? input.key : undefined,
+        control?.commandId != null ? control.key : undefined,
+        interruption?.receipt != null ? interruption.key : undefined,
+      ];
+      for (const key of accepted)
+        if (key) acceptDraftCommand(this.identity.user, this.agent, key, this.storage);
+    } catch {
+      /* Preserve drafts while the journal or identity cannot be read. */
+    }
+  }
+
   readControl(): ControlRecord | null {
     return this.current()?.control ?? null;
   }
@@ -201,6 +256,14 @@ export class AgentTransportJournal {
       return current.control;
     }
     this.save({ ...current, control });
+    if (control.body.command.type === 'steer')
+      bindDraftCommand(
+        this.identity.user,
+        this.agent,
+        control.body.command.text,
+        control.key,
+        this.storage,
+      );
     return this.readControl()!;
   }
 
@@ -216,6 +279,7 @@ export class AgentTransportJournal {
     )
       throw new Error('The action receipt does not match the retained request.');
     this.save({ ...current, control: { ...control, commandId } });
+    acceptDraftCommand(this.identity.user, this.agent, key, this.storage);
   }
 
   /** Only an authoritative refusal of this exact pending intent permits replacement. */
@@ -250,6 +314,7 @@ export class AgentTransportJournal {
       ...(answerContext === undefined ? {} : { answerContext }),
     };
     this.save({ ...current, input: intent });
+    bindDraftCommand(this.identity.user, this.agent, input, intent.key, this.storage);
     return intent;
   }
 
@@ -269,6 +334,7 @@ export class AgentTransportJournal {
     )
       throw new Error('The recovered response receipt changed identity.');
     this.save({ ...current, input: { ...input, state: 'accepted', receipt: { ...receipt } } });
+    acceptDraftCommand(this.identity.user, this.agent, key, this.storage);
   }
 
   /** Only an authoritative admission refusal permits replacing the pending intent. */

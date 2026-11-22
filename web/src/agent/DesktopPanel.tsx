@@ -11,10 +11,12 @@ import './DesktopPanel.css';
 export function DesktopPanel({
   agentId,
   runtimeReady,
+  runtimeVersion,
   running,
   onClose,
   preparation,
   embedded = false,
+  hidden = false,
   application = 'Desktop',
   onStop,
   runId,
@@ -27,10 +29,12 @@ export function DesktopPanel({
   readonly controlUnavailable?: boolean;
   readonly agentId: string;
   readonly runtimeReady: boolean;
+  readonly runtimeVersion?: string;
   readonly running: boolean;
   readonly onClose: () => void;
   readonly preparation?: DesktopPreparationScope;
   readonly embedded?: boolean;
+  readonly hidden?: boolean;
   readonly application?: string;
 }) {
   const panel = useRef<HTMLElement>(null);
@@ -45,12 +49,13 @@ export function DesktopPanel({
     error?: string;
   }>();
   const [takeoverError, setTakeoverError] = useState<string>();
-  const { screen, phase, error } = useDesktopConnection(
+  const { screen, phase, error, stop } = useDesktopConnection(
     agentId,
     attempt + reconnectRevision,
     control && !running && !controlUnavailable,
     runtimeReady,
     preparation,
+    runtimeVersion,
   );
   const ready = phase === 'ready';
   const [previousGate, setPreviousGate] = useState({ running, ready, controlUnavailable });
@@ -107,6 +112,8 @@ export function DesktopPanel({
   return (
     <section
       ref={panel}
+      hidden={hidden}
+      inert={hidden || undefined}
       id="machine-desktop"
       className="agent-desktop"
       aria-label="Machine desktop"
@@ -142,7 +149,9 @@ export function DesktopPanel({
                         ? 'You control'
                         : 'Watching'
                     : phase === 'error'
-                      ? 'Unavailable'
+                      ? stop === 'exhausted'
+                        ? 'Disconnected'
+                        : 'Unavailable'
                       : phase === 'waiting'
                         ? 'Waiting'
                         : 'Connecting'}

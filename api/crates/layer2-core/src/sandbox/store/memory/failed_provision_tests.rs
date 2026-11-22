@@ -44,10 +44,7 @@ async fn failed_allocation() -> (Arc<InMemorySandboxStore>, SandboxId) {
             agents: vec![],
             agent_scope: SandboxLifecycleAgentScope::Touched,
             appended_at: NOW.into(),
-            events: vec![SandboxEventKind::WorkStepFailed {
-                step: SandboxWorkStep::RunLifecycleOperation,
-                failure,
-            }],
+            events: vec![SandboxEventKind::Failed { failure }],
         })
         .await
         .unwrap();

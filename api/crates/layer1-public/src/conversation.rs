@@ -44,6 +44,7 @@ pub struct AgentConversationState {
     pub(crate) context: Arc<AgentContextService>,
     pub(crate) commands: Option<Arc<AgentCommandService>>,
     updates: Option<Arc<dyn AgentUpdateRecorder>>,
+    pub(crate) bounded_replay: bool,
 }
 
 impl AgentConversationState {
@@ -61,7 +62,13 @@ impl AgentConversationState {
             context,
             updates: None,
             commands: None,
+            bounded_replay: false,
         }
+    }
+
+    pub fn with_bounded_replay(mut self, enabled: bool) -> Self {
+        self.bounded_replay = enabled;
+        self
     }
 
     pub fn with_commands(mut self, commands: Arc<AgentCommandService>) -> Self {
@@ -97,6 +104,13 @@ impl AgentConversationState {
             },
             None => Ok(None),
         }
+    }
+
+    pub(crate) fn watch_head(
+        &self,
+        id: &layer2_core::AgentId,
+    ) -> Option<layer2_core::sandbox::AgentHeadSubscription> {
+        self.updates.as_ref()?.subscribe_head(id)
     }
 
     pub(crate) fn has_live_updates(&self) -> bool {

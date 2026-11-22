@@ -4,7 +4,7 @@ use crate::sandbox::store::{
     validate_agent_cleanup_capacity_log_with_retry, validate_agent_work_mutation_with_sandbox,
     AgentConnectionRecoveryApplication, AgentConnectionRecoveryCandidate,
     AgentConnectionRecoveryOutcome, AgentConnectionRecoveryRequest, AgentWorkMutation,
-    AgentWorkerStore,
+    AgentWorkerStore, StartupWorkFilter,
 };
 
 #[async_trait]
@@ -41,10 +41,12 @@ impl AgentWorkerStore for InMemorySandboxStore {
         }
     }
 
-    async fn due_agent_work(
+    async fn due_agent_work_filtered(
         &self,
         now: &str,
         limit: u16,
+        holds: &std::collections::BTreeSet<AgentId>,
+        startup: StartupWorkFilter<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
         if limit == 0 || limit > MAX_PAGE_SIZE {
             return Err(SandboxStoreError::InvalidPage);
@@ -54,6 +56,11 @@ impl AgentWorkerStore for InMemorySandboxStore {
             .agents
             .values()
             .filter(|agent| agent.work.is_due(now))
+            .filter(|agent| startup.includes(agent))
+            .filter(|agent| {
+                !(holds.contains(&agent.id)
+                    && crate::sandbox::AgentWorkStep::RECEIVER_PACED.contains(&agent.work.step))
+            })
             .map(|agent| agent.id.clone())
             .collect();
         ids.sort_by(|left, right| left.as_str().cmp(right.as_str()));
@@ -100,7 +107,15 @@ impl AgentWorkerStore for InMemorySandboxStore {
         &self,
         mutation: AgentWorkMutation,
     ) -> Result<(), SandboxStoreError> {
-        self.commit_work(mutation, None)
+        self.commit_work(mutation, None, None)
+    }
+
+    async fn commit_agent_skill_result(
+        &self,
+        mutation: AgentWorkMutation,
+        guard: crate::sandbox::store::AgentSkillResultGuard,
+    ) -> Result<(), SandboxStoreError> {
+        self.commit_work(mutation, None, Some(&guard))
     }
 
     async fn commit_agent_work_repeated_failure(
@@ -108,7 +123,7 @@ impl AgentWorkerStore for InMemorySandboxStore {
         retry: crate::sandbox::store::AgentRepeatedFailure,
         _observed: Option<crate::sandbox::store::AgentRetryObservation>,
     ) -> Result<(), SandboxStoreError> {
-        self.commit_work(retry.mutation, Some(&retry.marker))
+        self.commit_work(retry.mutation, Some(&retry.marker), None)
     }
 }
 
@@ -117,6 +132,7 @@ impl InMemorySandboxStore {
         &self,
         mutation: AgentWorkMutation,
         marker: Option<&AgentLogEntry>,
+        skill_guard: Option<&crate::sandbox::store::AgentSkillResultGuard>,
     ) -> Result<(), SandboxStoreError> {
         if mutation.agent_logs.len() > MAX_AGENT_LOG_BATCH_SIZE {
             return Err(SandboxStoreError::AgentLogCapacityExceeded);
@@ -133,6 +149,25 @@ impl InMemorySandboxStore {
             .sandboxes
             .get(&current.sandbox_id)
             .ok_or(SandboxStoreError::NotFound)?;
+        let needs_guard =
+            crate::sandbox::store::requires_agent_skill_result_guard(current, &mutation);
+        if needs_guard != skill_guard.is_some() {
+            return Err(SandboxStoreError::Conflict);
+        }
+        if let Some(guard) = skill_guard {
+            guard.validate(
+                current,
+                sandbox,
+                candidate
+                    .workspaces
+                    .get(&current.workspace_id)
+                    .ok_or(SandboxStoreError::NotFound)?,
+                candidate
+                    .worktrees
+                    .get(&current.worktree_id)
+                    .ok_or(SandboxStoreError::NotFound)?,
+            )?;
+        }
         if let Some(next) = apply_agent_sign_in(sandbox, current, &mutation)? {
             candidate.sandboxes.insert(next.id.clone(), next);
         }

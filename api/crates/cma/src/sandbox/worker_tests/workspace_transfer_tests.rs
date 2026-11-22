@@ -11,6 +11,9 @@ use layer2_core::sandbox::{
     Workspace, WorkspaceOrigin, WorkspaceStatus, WorkspaceWorkState, WorkspaceWorkStep,
 };
 
+#[path = "workspace_transfer_tests/mongo_publication.rs"]
+mod mongo_publication;
+
 async fn owned(
     harness: &Harness,
 ) -> (

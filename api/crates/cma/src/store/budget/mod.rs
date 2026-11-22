@@ -20,11 +20,11 @@ mod period_storage;
 mod requests;
 mod source;
 mod spend_ledger;
+pub(super) use spend_ledger::RegistrationReader;
 mod stop_authority;
 mod transitions;
 pub(super) use cancellation::release_unexecuted;
-pub(super) use period::require_open_with_ceilings;
-pub(super) use period::require_open_with_collections_and_ceilings;
+pub(super) use period::require_open_protected;
 pub(super) use period::{now_seconds, require_open};
 #[cfg(test)]
 pub(super) use period::{period_key, require_open_with};
@@ -86,8 +86,9 @@ async fn save<T: Serialize>(
 /// not contend on implicit collection creation or the singleton's first insert.
 pub(super) async fn initialize_settings(
     store: &MongoSandboxStore,
+    initial_settings: super::settings_defaults::InitialSettings,
 ) -> Result<(), layer2_core::StoreError> {
-    let settings = mongodb::bson::serialize_to_bson(&layer2_core::PlatformSettings::default())
+    let settings = mongodb::bson::serialize_to_bson(&initial_settings.platform())
         .map_err(|_| layer2_core::StoreError::Malformed("default budget settings".into()))?;
     store
         .budget_settings

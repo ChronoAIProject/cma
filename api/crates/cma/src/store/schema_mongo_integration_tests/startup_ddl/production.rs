@@ -29,9 +29,11 @@ async fn production_connection_enforces_both_converted_contracts_before_returnin
                 RETENTION,
                 ("runtime-schema-fixture", None),
                 MongoConnectionPolicy {
+                    shared_observation: false,
                     authority: MongoAuthorityMode::SharedSchema,
                     agent_manager_replicas: false,
                     startup_schema: mode,
+                    initial_settings: Default::default(),
                 },
             )
             .await
@@ -41,6 +43,13 @@ async fn production_connection_enforces_both_converted_contracts_before_returnin
     let empty_observe = connect(StartupSchemaMode::Observe).await;
     let observation_succeeded = empty_observe.is_ok();
     drop(empty_observe);
+    let collections = db.list_collection_names().await.unwrap();
+    for name in ["account_deletions", "account_deletion_events"] {
+        assert!(
+            !collections.iter().any(|existing| existing == name),
+            "disabled deletion admission must not create {name} at startup"
+        );
+    }
     crate::store::migrations::prepare_bindings_for_test(&db).await;
     let missing_retention = connect(StartupSchemaMode::Enforce).await.err();
     super::super::activity_retention::prepare_activity_schema(&db, RETENTION).await;

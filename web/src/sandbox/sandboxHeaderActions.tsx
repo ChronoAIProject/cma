@@ -7,7 +7,8 @@ import {
   IconShareOutline16,
   IconTrashOutline16,
 } from '../ui/icons';
-import { sandboxChildrenAvailable, sandboxRetirementDuringRevive } from './lifecycle';
+import { sandboxChildrenAvailable } from './lifecycle';
+import { sandboxDeletionReason } from './deletionEligibility';
 
 /** What the page knows besides the Sandbox record when it offers an action. */
 export interface SandboxActionContext {
@@ -41,21 +42,6 @@ export function sandboxCreateReason(
     return 'Agents and Workspaces can start when the Sandbox is active.';
   if (context.busy || context.lifecycleBusy) return WAIT;
   if (context.needsConnections) return 'Checking your service connections.';
-  return undefined;
-}
-
-function deleteReason(sandbox: SandboxSummary, context: SandboxActionContext) {
-  if (sandbox.status === 'retired') return 'This Sandbox has been deleted.';
-  if (sandbox.status === 'retiring') return 'Deletion is already in progress.';
-  if (context.stale) return CHECKING;
-  const retireDuringRevive = sandboxRetirementDuringRevive(sandbox);
-  if (
-    context.busy ||
-    (context.lifecycleBusy && !retireDuringRevive) ||
-    sandbox.lifecycle?.checkpoint !== undefined ||
-    (sandbox.lifecycle?.operation !== undefined && !retireDuringRevive)
-  )
-    return WAIT;
   return undefined;
 }
 
@@ -105,7 +91,7 @@ export function sandboxHeaderMenu(
     icon: <IconSettingsOutline16 />,
   });
   if (permissions.deleteSandbox) {
-    const reason = deleteReason(sandbox, context);
+    const reason = sandboxDeletionReason(sandbox, context);
     entries.push(
       { type: 'separator', id: 'before-delete' },
       {

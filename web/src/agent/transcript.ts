@@ -1,6 +1,7 @@
 import type { AgentTranscript } from '../api/types';
 import type { ConversationMessage, ConversationState, RecoveryNotice } from './model';
 import { object, text } from './conversationValues';
+import { failureMessage } from './failureMessage';
 
 function messageStatus(outcome: Readonly<Record<string, unknown>>) {
   return outcome.type === 'failed' ? 'error' : 'complete';
@@ -46,8 +47,7 @@ export function conversationFromTranscript(transcript: AgentTranscript): Convers
           ...turn.messages.map((message) => message.sequence),
         ),
         title: 'Agent run failed',
-        detail: text(failure?.detail) ?? 'The Agent run did not complete.',
-        code: text(failure?.class),
+        ...failureMessage(failure?.class),
         retainedOutput: turn.retainedOutput,
       },
     ];

@@ -1,6 +1,6 @@
 /** @vitest-environment node */
 import { describe, expect, it } from 'vitest';
-import { ApiError, ProtocolError } from '@cma/client';
+import { ApiError, ProtocolError, RequestAborted } from '@cma/client';
 import {
   NOW,
   PROFILE_REF,
@@ -11,6 +11,7 @@ import {
   WIRE_WORKSPACE,
   WIRE_WORKSPACE_DETAIL,
   wireRevision,
+  wireSandboxUsage,
 } from '../test/rest';
 import { CreatedResourceReadError, createRestWebClient } from './rest';
 import { profileFailure } from '../profiles/failure';
@@ -134,25 +135,24 @@ describe('public REST web binding', () => {
     test.reply(WIRE_AGENT);
     expect((await client.readAgent('agent-1')).bootstrap).toBeUndefined();
   });
-  it('projects only safe access settings from the exact pinned Sandbox profile', async () => {
-    const test = restTransport();
-    test.reply(wireRevision('sandbox'));
-    expect(
-      await createRestWebClient(test.sdk).readSandboxProfileSettings({
-        id: 'sandbox-1',
-        revision: 1,
-        digest: 'digest-1',
-      }),
-    ).toEqual({
-      agentProvider: 'codex',
-      modelAccess: 'own_credentials',
-      nyxidServices: ['storage'],
-    });
-    test.reply({ ...wireRevision('sandbox'), revision: 2 });
-    await expect(
-      createRestWebClient(test.sdk).readSandboxProfileSettings({ id: 'sandbox-1', revision: 1 }),
-    ).rejects.toBeInstanceOf(ProtocolError);
-  });
+  it.each([undefined, 'digest-1'])(
+    'projects safe settings for a pinned Sandbox profile with digest %s',
+    async (digest) => {
+      const test = restTransport();
+      test.reply(wireRevision('sandbox'));
+      expect(
+        await createRestWebClient(test.sdk).readSandboxProfileSettings({
+          id: 'sandbox-1',
+          revision: 1,
+          digest,
+        }),
+      ).toEqual({
+        agentProvider: 'codex',
+        modelAccess: 'own_credentials',
+        nyxidServices: ['storage'],
+      });
+    },
+  );
   it.each(['capture', 'resume_writers'] as const)(
     'preserves public lifecycle eligibility and actual %s metadata in lists and details',
     async (phase) => {
@@ -187,47 +187,62 @@ describe('public REST web binding', () => {
     ).toBeUndefined();
   });
 
-  it.each([undefined, 'digest-1'])(
-    'reads configured capacity from the exact pinned revision with optional digest %s',
-    async (digest) => {
+  it.each([{ profile_id: 'other' }, { revision: 2 }, { digest: 'different' }])(
+    'rejects mismatched pinned Sandbox settings: %j',
+    async (change) => {
       const test = restTransport();
-      const client = createRestWebClient(test.sdk);
-      const signal = new AbortController().signal;
-      test.reply(wireRevision('sandbox'));
-      expect(
-        await client.readSandboxProfileCapacity(
-          { id: 'sandbox-1', revision: 1, digest },
-          { signal },
-        ),
-      ).toEqual({ cpuMillis: 2000, memoryBytes: 4096 * 1024 ** 2 });
-      expect(test.fetch.mock.calls[0]?.[0]).toBe('/api/v1/sandbox-profiles/sandbox-1/revisions/1');
-      expect(test.fetch.mock.calls[0]?.[1]?.signal?.aborted).toBe(false);
+      test.reply({ ...wireRevision('sandbox'), ...change });
+      await expect(
+        createRestWebClient(test.sdk).readSandboxProfileSettings({
+          id: 'sandbox-1',
+          revision: 1,
+          digest: 'digest-1',
+        }),
+      ).rejects.toBeInstanceOf(ProtocolError);
     },
   );
 
-  it.each([
-    { profile_id: 'other' },
-    { revision: 2 },
-    { digest: 'different' },
-    { content: { ...wireRevision('sandbox').content, cpu_millis: 0 } },
-    { content: { ...wireRevision('sandbox').content, memory_mib: Number.MAX_SAFE_INTEGER } },
-  ])('refuses mismatched or invalid configured capacity: %j', async (change) => {
+  it('reads the running allocation by Sandbox id and converts memory to bytes', async () => {
     const test = restTransport();
-    test.reply({ ...wireRevision('sandbox'), ...change });
+    const client = createRestWebClient(test.sdk);
+    const controller = new AbortController();
+    test.reply(wireSandboxUsage('sandbox-1'));
+    expect(await client.readSandboxAllocation('sandbox-1', { signal: controller.signal })).toEqual({
+      cpuMillis: 2000,
+      memoryBytes: 4096 * 1024 ** 2,
+    });
+    expect(test.fetch.mock.calls[0]?.[0]).toBe('/api/v1/usage/sandboxes/sandbox-1');
+    controller.abort();
     await expect(
-      createRestWebClient(test.sdk).readSandboxProfileCapacity({
-        id: 'sandbox-1',
-        revision: 1,
-        digest: 'digest-1',
-      }),
-    ).rejects.toBeInstanceOf(ProtocolError);
+      client.readSandboxAllocation('sandbox-1', { signal: controller.signal }),
+    ).rejects.toBeInstanceOf(RequestAborted);
+    expect(test.fetch).toHaveBeenCalledOnce();
   });
 
-  it.each([403, 404])('preserves a refused pinned profile read (%s)', async (status) => {
+  it('omits inactive capacity and rejects another Sandbox or invalid running units', async () => {
+    const test = restTransport();
+    const client = createRestWebClient(test.sdk);
+    const row = wireSandboxUsage('sandbox-1');
+    test.reply({
+      ...row,
+      allocation: { ...row.allocation, running: false, cpu_millis: 0, memory_mib: 0 },
+    });
+    expect(await client.readSandboxAllocation('sandbox-1')).toBeUndefined();
+    for (const invalid of [
+      { ...row, sandbox_id: 'other' },
+      { ...row, allocation: { ...row.allocation, cpu_millis: 0 } },
+      { ...row, allocation: { ...row.allocation, memory_mib: Number.MAX_SAFE_INTEGER } },
+    ]) {
+      test.reply(invalid);
+      await expect(client.readSandboxAllocation('sandbox-1')).rejects.toBeInstanceOf(ProtocolError);
+    }
+  });
+
+  it.each([403, 404])('preserves a refused allocation read (%s)', async (status) => {
     const test = restTransport();
     test.reply({ status, code: 'not_found', detail: 'Unavailable' }, status);
     await expect(
-      createRestWebClient(test.sdk).readSandboxProfileCapacity({ id: 'sandbox-1', revision: 1 }),
+      createRestWebClient(test.sdk).readSandboxAllocation('sandbox-1'),
     ).rejects.toBeInstanceOf(ApiError);
   });
 

@@ -95,6 +95,10 @@ impl WorkerFailure {
 
 pub(super) fn failure(error: AdapterError) -> WorkerFailure {
     match error {
+        AdapterError::AccessRevoked => WorkerFailure::terminal(
+            "workspace_access_revoked",
+            "current runtime authority was revoked",
+        ),
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
         | AdapterError::NativeClaimNotReady(_)
@@ -115,6 +119,9 @@ pub(super) fn failure(error: AdapterError) -> WorkerFailure {
         ),
         AdapterError::Rejected(detail) if detail.starts_with("repository_unavailable:") => WorkerFailure::terminal(
             "repository_unavailable", "The repository is unavailable to the connected account. Check repository access before starting another task.",
+        ),
+        AdapterError::Rejected(detail) if detail.starts_with("repository_archive_unavailable:") => WorkerFailure::terminal(
+            "repository_archive_unavailable", "The repository archive is unavailable. Check access to the requested revision before starting another task.",
         ),
         AdapterError::Rejected(detail) if detail.starts_with("repository_connection_required:") => WorkerFailure::terminal(
             "repository_connection_required", "GitHub authorization does not allow repository preparation. Check the existing GitHub connection before starting another task.",

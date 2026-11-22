@@ -5,6 +5,7 @@ import { agentClient } from '../test/agent';
 import { connectionClient } from '../connections/client';
 import { AgentLifecycleFollowup } from './AgentLifecycleFollowup';
 import { lifecycleScopeForAgent, lifecycleStorageKey } from './lifecycleIntent';
+import { lifecycleRecoveryKey } from './lifecycleIntentStorage';
 
 const body = {
   name: 'Created agent',
@@ -12,6 +13,10 @@ const body = {
   repository: { url: 'https://github.com/org/repo' },
 };
 const key = lifecycleStorageKey('owner', 'wsp_1');
+const recoveryKey = lifecycleRecoveryKey(
+  { owner: 'owner', workspaceId: 'wsp_1' },
+  { agentId: 'agt_1', operationId: 'operation-one' },
+);
 const running: AgentLifecycleOperationView = {
   id: 'operation-one',
   status: 'running',
@@ -48,11 +53,13 @@ it('continues observation after reload without resubmitting, and clears only con
   expect(screen.getByText('Workspace')).toBeInTheDocument();
   expect(screen.getByText('Service access')).toBeInTheDocument();
   expect(screen.getByText('Agent startup')).toBeInTheDocument();
-  expect(sessionStorage.getItem(key)).toContain('original-key');
+  expect(sessionStorage.getItem(key)).toBeNull();
+  expect(sessionStorage.getItem(recoveryKey)).toContain('original-key');
   first.unmount();
   operation = { ...running, status: 'succeeded' };
   render(<AgentLifecycleFollowup client={client} viewerId="owner" agentId="agt_1" />);
-  await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull());
+  await waitFor(() => expect(sessionStorage.getItem(recoveryKey)).toBeNull());
+  expect(sessionStorage.getItem(key)).toBeNull();
   expect(create).not.toHaveBeenCalled();
 });
 
@@ -92,7 +99,8 @@ it('recovers a worker connection gate with the original creation body/key only a
     expect.objectContaining({ idempotencyKey: 'original-key' }),
   );
   expect(check).toHaveBeenCalledWith(target, undefined, expect.any(AbortSignal));
-  await waitFor(() => expect(sessionStorage.getItem(key)).toBeNull());
+  await waitFor(() => expect(sessionStorage.getItem(recoveryKey)).toBeNull());
+  expect(sessionStorage.getItem(key)).toBeNull();
 });
 
 it.each(['owner', 'agent', 'client', 'unmount'] as const)(
@@ -132,7 +140,8 @@ it.each(['owner', 'agent', 'client', 'unmount'] as const)(
       resolve({ owner: 'owner', ready: true, checked_at: '2026-10-14T00:00:00Z', services: [] }),
     );
     expect(create).not.toHaveBeenCalled();
-    expect(sessionStorage.getItem(key)).toContain('original-key');
+    expect(sessionStorage.getItem(key)).toBeNull();
+    expect(sessionStorage.getItem(recoveryKey)).toContain('original-key');
   },
 );
 
@@ -153,7 +162,8 @@ it('refuses mismatched operation lineage and preserves the recoverable record', 
     />,
   );
   await screen.findByText('Agent setup identity could not be verified.');
-  expect(sessionStorage.getItem(key)).toContain('original-key');
+  expect(sessionStorage.getItem(key)).toBeNull();
+  expect(sessionStorage.getItem(recoveryKey)).toContain('original-key');
   expect(create).not.toHaveBeenCalled();
 });
 

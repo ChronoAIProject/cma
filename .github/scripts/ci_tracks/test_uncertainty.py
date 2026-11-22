@@ -106,13 +106,18 @@ class UncertaintyTests(unittest.TestCase):
             value = selection.determine(clone, {'after': self.third}, 'push')
             self.assert_all(value, 'shallow-history')
             self.assertEqual((value['base'], value['head']), (self.second, self.third))
-            self.assertEqual(batch_selection.determine_many(clone, [self.third]), [value])
+            with self.assertRaises(subprocess.CalledProcessError):
+                batch_selection.determine_many(clone, [self.third])
             event = {'pull_request': {'base': {'sha': self.second}, 'head': {'sha': self.third}}}
             self.assertEqual(selection.determine(clone, event, 'pull_request'), value)
             cache = SelectionCache(Path(directory) / 'cache', 'e' * 64)
             cached = batch_selection.determine_many(self.root, [self.third], cache)[0]
             self.assertNotEqual(cached['deployables'], sorted(NAMES))
-            self.assertEqual(batch_selection.determine_many(clone, [self.third], cache), [value])
+            with self.assertRaises(subprocess.CalledProcessError):
+                batch_selection.determine_many(clone, [self.third], cache)
+            subprocess.run(['git', 'fetch', '--deepen=1', 'origin'], cwd=clone, check=True, capture_output=True)
+            self.assertEqual(batch_selection.determine_many(clone, [self.third]), [cached])
+            self.assertEqual(batch_selection.determine_many(clone, [self.third], cache), [cached])
 
     def test_missing_comparison_boundary_selects_all_for_valid_commits(self):
         tree = self.git('rev-parse', self.third + '^{tree}')

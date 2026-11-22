@@ -62,6 +62,17 @@ impl SandboxUsageStore for MongoSandboxStore {
         };
         let pipeline = vec![
             doc! { "$match": owner_filter(owner) },
+            doc! { "$set": {
+                "record.allocation.running": { "$cond": [
+                    { "$in": ["$record.status", ["failed", "retired"]] }, false, "$record.allocation.running"
+                ] },
+                "record.allocation.cpu_millis": { "$cond": [
+                    { "$in": ["$record.status", ["failed", "retired"]] }, 0, "$record.allocation.cpu_millis"
+                ] },
+                "record.allocation.memory_mib": { "$cond": [
+                    { "$in": ["$record.status", ["failed", "retired"]] }, 0, "$record.allocation.memory_mib"
+                ] },
+            } },
             doc! { "$group": {
                 "_id": Bson::Null, "sandbox_count": { "$sum": 1 },
                 "running_count": { "$sum": { "$cond": ["$record.allocation.running", 1, 0] } },

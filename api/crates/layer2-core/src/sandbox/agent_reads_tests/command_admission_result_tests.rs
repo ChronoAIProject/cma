@@ -1,5 +1,41 @@
 use super::*;
 use crate::ids::{AgentCommandId, AgentResponseId};
+use crate::sandbox::AgentOperationError;
+
+#[tokio::test]
+async fn model_credit_refusal_never_reserves_a_new_key_and_preserves_exact_replay() {
+    let (store, service, _, _) = setup(Authority::new()).await;
+    let caller = context("owner");
+    let source = CommandSubmissionSource::Api;
+    let credential = "selected-credential";
+    let accepted = service
+        .admit(&caller, credential, source, submission("one"))
+        .await
+        .unwrap();
+    let service = service.with_model_credit_required(true);
+    let replay = service
+        .admit(&caller, credential, source, submission("one"))
+        .await
+        .unwrap();
+    assert_eq!(replay.receipt.command_id, accepted.receipt.command_id);
+    assert!(matches!(
+        service
+            .admit(&caller, credential, source, submission("two"))
+            .await,
+        Err(CommandAdmissionError::Input(
+            AgentOperationError::ModelFundingUnsupported
+        ))
+    ));
+    assert_eq!(
+        store
+            .command_work_page(&PageRequest::default())
+            .await
+            .unwrap()
+            .items
+            .len(),
+        1
+    );
+}
 
 struct BufferedReservation {
     inner: Arc<InMemorySandboxStore>,

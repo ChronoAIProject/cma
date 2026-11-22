@@ -157,16 +157,18 @@ function EventGatewayBody({
       ) : null}
     </section>
   );
+  const createActive = active && creating;
   const content = (
     <div className="gateway-content">
       {createStarted ? (
-        <section className="gateway-detail gateway-detail--create" hidden={!creating}>
+        <section className="gateway-detail gateway-detail--create" hidden={!createActive}>
           <PageHeader
             breadcrumb={[{ label: 'Event Gateway' }, { label: 'New channel' }]}
             title="New channel"
             description="Connect an event source to your agent."
           />
           <ChannelEditor
+            active={createActive}
             ownerSubject={session.subject}
             denied={denied}
             onDone={(channel) => {

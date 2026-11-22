@@ -1,7 +1,8 @@
 #!/bin/bash
 # Build the installed wlroots ABI with narrowly scoped VKMS primary-node support.
 set -euo pipefail
-build_dir=$(mktemp -d /tmp/cma-omarchy-graphics.XXXXXX)
+build_dir=/tmp/cma-omarchy-graphics
+mkdir "$build_dir"
 trap 'rm -rf "$build_dir"' EXIT
 test "$(pacman -Q wlroots0.20)" = 'wlroots0.20 0.20.2-1'
 test "$(pacman -Q aquamarine)" = 'aquamarine 0.15.1-1'

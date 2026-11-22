@@ -9,6 +9,9 @@ use tracing_subscriber::{
 const LIFECYCLE_TARGET: &str = "agent_scheduler_failure";
 // Preserve the auth emitter's original module target and filter namespace.
 pub(crate) const AUTHENTICATION_TARGET: &str = "cma::auth::middleware::failure_diagnostics";
+pub(crate) const PROVIDER_IDENTITY_TARGET: &str = "cma::auth::verification_diagnostics";
+pub(crate) const ORGANIZATION_PRINCIPAL_TARGET: &str =
+    "cma::auth::organizations::principal_diagnostics";
 
 pub(crate) struct PrivacyFormat<F> {
     ordinary: F,
@@ -27,10 +30,30 @@ where
         writer: format::Writer<'_>,
         event: &Event<'_>,
     ) -> std::fmt::Result {
-        if matches!(
-            event.metadata().target(),
-            LIFECYCLE_TARGET | AUTHENTICATION_TARGET
-        ) {
+        let target = event.metadata().target();
+        let root = match target {
+            AUTHENTICATION_TARGET => Some("authentication_failure"),
+            PROVIDER_IDENTITY_TARGET => Some("identity_verification"),
+            ORGANIZATION_PRINCIPAL_TARGET => Some("organization_principal"),
+            _ => None,
+        };
+        if let Some(root) = root {
+            // A registered root can be hidden by this writer's own filter.
+            // Resolve the explicit parent in the context of this output.
+            let has_root = event
+                .parent()
+                .and_then(|id| ctx.span(id))
+                .is_some_and(|span| {
+                    span.name() == root
+                        && span.metadata().target() == target
+                        && span.metadata().fields().is_empty()
+                        && span.parent().is_none()
+                });
+            if !has_root {
+                return Ok(());
+            }
+        }
+        if target == LIFECYCLE_TARGET || root.is_some() {
             self.context_free.format_event(ctx, writer, event)
         } else {
             self.ordinary.format_event(ctx, writer, event)
@@ -39,8 +62,8 @@ where
 }
 
 pub(crate) fn text() -> PrivacyFormat<format::Format> {
-    // Full text respects an explicit root parent, including parent:None.
-    // Preserve its timestamps and ordinary event context exactly as before.
+    // Full text respects the emitter's explicit parent:None. Preserve its
+    // timestamps and ordinary event context exactly as before.
     PrivacyFormat {
         ordinary: format::format(),
         context_free: format::format(),

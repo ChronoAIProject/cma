@@ -8,7 +8,7 @@ use super::*;
 
 /// A response's safe durable acceptance state. Personal callers may also read
 /// their submitted metadata; recipient history keeps that metadata private.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct AgentResponseReading {
     pub deferred_failure_detail: Option<String>,
     pub command: CommandStatusView,
@@ -23,7 +23,7 @@ impl AgentCommandService {
         authorization: &AgentEventStreamAuthorization,
         id: &AgentResponseId,
     ) -> Result<AgentResponseReading, CommandAdmissionError> {
-        let (authorized, agent_id, personal) = authorization.resource();
+        let (authorized, agent_id, _) = authorization.resource();
         let capability = ResourceCapability::ViewHistory;
         let target = ResourceTarget::Agent {
             agent_id: agent_id.clone(),
@@ -33,6 +33,31 @@ impl AgentCommandService {
             .await;
         self.fence(authorized, &target, capability).await?;
         let record = result??.ok_or(CommandLedgerError::NotFound)?;
+        Self::reading(authorization, id, &record)
+    }
+    /// Fresh cohorts can share source records while each subscriber retains its
+    /// own current release fence and redaction.
+    pub async fn response_for_observed_stream(
+        &self,
+        reads: &crate::sandbox::AgentReadService,
+        authorization: &AgentEventStreamAuthorization,
+        id: &AgentResponseId,
+    ) -> Result<AgentResponseReading, CommandAdmissionError> {
+        let record = reads
+            .observed_command(authorization, id)
+            .await
+            .map_err(|_| CommandLedgerError::Unavailable)?;
+        Self::reading(authorization, id, &record)
+    }
+    fn reading(
+        authorization: &AgentEventStreamAuthorization,
+        id: &AgentResponseId,
+        record: &AdmittedAgentCommand,
+    ) -> Result<AgentResponseReading, CommandAdmissionError> {
+        let (authorized, agent_id, personal) = authorization.resource();
+        let target = ResourceTarget::Agent {
+            agent_id: agent_id.clone(),
+        };
         record.validate()?;
         if record.receipt.response_id.as_ref() != Some(id) {
             return Err(CommandLedgerError::Corrupt.into());
@@ -64,7 +89,7 @@ impl AgentCommandService {
                         dispatch.turn_sequence,
                     )
                 }),
-            command: CommandStatusView::from_record(&record),
+            command: CommandStatusView::from_record(record),
             metadata: if personal || authorized.binding_authority().is_some() {
                 record.receipt.envelope.response_metadata()
             } else {

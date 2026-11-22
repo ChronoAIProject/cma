@@ -6,7 +6,7 @@ use layer2_core::sandbox::store::{
     SandboxLifecycleMutation, SandboxMutationGuard, SandboxStore, SandboxStoreError,
     MAX_SANDBOX_LIFECYCLE_AGENTS,
 };
-use layer2_core::sandbox::{Agent, Sandbox, SandboxEventKind, SandboxWorkStep};
+use layer2_core::sandbox::{Agent, Sandbox, SandboxEventKind, SandboxStatus, SandboxWorkStep};
 
 use super::super::support::WorkerFailure;
 use super::super::SandboxWorker;
@@ -182,16 +182,23 @@ impl SandboxWorker {
             )
             .map_err(model_error)?
         };
+        let event = if sandbox.status != next.status && next.status == SandboxStatus::Failed {
+            SandboxEventKind::Failed {
+                failure: recorded_failure,
+            }
+        } else {
+            SandboxEventKind::WorkStepFailed {
+                step: SandboxWorkStep::RunLifecycleOperation,
+                failure: recorded_failure,
+            }
+        };
         self.commit_lifecycle_phase(
             &sandbox,
             next,
             Vec::new(),
             SandboxLifecycleAgentScope::Touched,
             stamp,
-            vec![SandboxEventKind::WorkStepFailed {
-                step: SandboxWorkStep::RunLifecycleOperation,
-                failure: recorded_failure,
-            }],
+            vec![event],
         )
         .await?;
         if let Some(telemetry) = telemetry {

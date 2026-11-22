@@ -8,9 +8,27 @@ use layer2_core::{resource_access::CallerContext, Caller};
 
 type LifecycleCall = (String, String, String, Option<String>);
 
+#[test]
+fn lifecycle_title_mode_preserves_explicit_intent_and_legacy_serialization() {
+    let legacy = json!({"name":"New task", "machine_included":false});
+    let request: AgentLifecycleCreateRequest = serde_json::from_value(legacy.clone()).unwrap();
+    assert_eq!(serde_json::to_value(request).unwrap(), legacy);
+    for mode in ["automatic", "named"] {
+        let mut value = legacy.clone();
+        value["title_mode"] = json!(mode);
+        let request: AgentLifecycleCreateRequest = serde_json::from_value(value.clone()).unwrap();
+        assert_eq!(serde_json::to_value(request).unwrap(), value);
+    }
+    for invalid in [json!("inferred"), json!(true), json!({"mode":"automatic"})] {
+        let mut value = legacy.clone();
+        value["title_mode"] = invalid;
+        assert!(serde_json::from_value::<AgentLifecycleCreateRequest>(value).is_err());
+    }
+}
+
 #[derive(Default)]
-struct Provisioner {
-    calls: Mutex<Vec<LifecycleCall>>,
+pub(super) struct Provisioner {
+    pub(super) calls: Mutex<Vec<LifecycleCall>>,
     requests: Mutex<Vec<AgentLifecycleCreateRequest>>,
 }
 #[async_trait]

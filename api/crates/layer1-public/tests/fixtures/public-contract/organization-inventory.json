@@ -13,7 +13,8 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "items": [
@@ -45,7 +46,8 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "items": [
@@ -78,7 +80,8 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "items": [
@@ -110,7 +113,8 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "items": [
@@ -143,7 +147,8 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "items": [
@@ -184,7 +189,8 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "items": [
@@ -216,7 +222,8 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "items": []
@@ -237,7 +244,8 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "items": []
@@ -258,7 +266,8 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "items": []
@@ -279,7 +288,8 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "items": [
@@ -321,7 +331,8 @@
       "response": {
         "status": 404,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
@@ -346,7 +357,8 @@
       "response": {
         "status": 404,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
@@ -371,7 +383,8 @@
       "response": {
         "status": 404,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/agent-not-found",
@@ -396,7 +409,8 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "items": [
@@ -456,7 +470,8 @@
       "response": {
         "status": 200,
         "headers": {
-          "content-type": "application/json"
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "items": [
@@ -516,7 +531,8 @@
       "response": {
         "status": 503,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
@@ -541,7 +557,8 @@
       "response": {
         "status": 403,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_forbidden",
@@ -566,7 +583,8 @@
       "response": {
         "status": 401,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
@@ -591,7 +609,8 @@
       "response": {
         "status": 403,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/sandbox-use-forbidden",
@@ -616,7 +635,8 @@
       "response": {
         "status": 503,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/organization_authority_unavailable",
@@ -641,7 +661,8 @@
       "response": {
         "status": 401,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
@@ -666,7 +687,8 @@
       "response": {
         "status": 400,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
@@ -691,7 +713,8 @@
       "response": {
         "status": 400,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
@@ -716,7 +739,8 @@
       "response": {
         "status": 400,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/invalid-instance-query",
@@ -918,7 +942,8 @@
       "response": {
         "status": 409,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_changed",
@@ -943,7 +968,8 @@
       "response": {
         "status": 503,
         "headers": {
-          "content-type": "application/problem+json"
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
         },
         "body": {
           "type": "https://spec.chrono-ai.fun/cma/1.0/problems/resource_access_unavailable",

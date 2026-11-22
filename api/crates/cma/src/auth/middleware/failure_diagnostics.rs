@@ -12,7 +12,11 @@ pub(super) fn record(error: &StoreError, failure: Failure) {
     // Emit in the final consumer's context: a shared verification leader's
     // provider event cannot attribute failure to each admitted caller.
     let context = DiagnosticContext::current();
-    let span = tracing::warn_span!(parent: None, "authentication_failure");
+    let span = tracing::warn_span!(
+        target: crate::diagnostic_format::AUTHENTICATION_TARGET,
+        parent: None,
+        "authentication_failure"
+    );
     // JSON formatters also inspect the entered span. A selectively disabled
     // root would leave a payload-bearing caller span current instead.
     // Shared callsite interest can retain a span handle even when this

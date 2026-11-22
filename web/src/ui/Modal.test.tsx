@@ -37,6 +37,27 @@ describe('the dialog', () => {
     expect(screen.getByRole('button', { name: 'Close' })).toHaveFocus();
   });
 
+  it.each([false, true])(
+    'uses the preferred safe action only when enabled (disabled=%s)',
+    (disabled) => {
+      render(
+        <Modal
+          open
+          title="Keep your draft?"
+          onClose={vi.fn()}
+          footer={
+            <button data-initial-focus="true" disabled={disabled}>
+              Keep editing
+            </button>
+          }
+        />,
+      );
+      expect(
+        screen.getByRole('button', { name: disabled ? 'Close' : 'Keep editing' }),
+      ).toHaveFocus();
+    },
+  );
+
   it('closes on Escape', async () => {
     const user = userEvent.setup();
     const onClose = open();

@@ -3,7 +3,26 @@ import type { ContractCase } from './context.js';
 import { browserOperations } from './navigation.js';
 
 export const localCodes = new Map([
+  ['task-template-missing-field', 'task_template_field_required'],
+  ['task-template-unknown-id', 'task_template_id_unknown'],
+  ['task-template-unknown-version', 'task_template_version_unsupported'],
+  ['task-template-unknown-field', 'task_template_field_unknown'],
+  ['spend-observe-unknown-field', 'invalid_request'],
+  ['spend-observe-unsupported-source', 'invalid_request'],
+  ['spend-observe-adjustment-source', 'invalid_request'],
+  ['spend-observe-fractional-units', 'invalid_request'],
+  ['spend-observe-negative-units', 'invalid_request'],
+  ['spend-observe-unsafe-units', 'invalid_request'],
+  ['spend-observe-null-units', 'invalid_request'],
+  ['spend-observe-missing-field', 'invalid_request'],
+  ['spend-observe-malformed', 'invalid_request'],
+  ['spend-observe-malformed-writes_closed', 'invalid_request'],
+  ['spend-observe-malformed-absent', 'platform_spend_unavailable'],
+  ['spend-observe-malformed-absent_forbidden', 'forbidden'],
+  ['spend-observe-malformed-forbidden', 'forbidden'],
+  ['spend-observe-malformed-anonymous', 'not_authenticated'],
   ['admin-admission-ceilings-invalid', 'invalid_request'],
+  ['admin-pending-homes-invalid', 'invalid_request'],
   ['admin-admission-stop-invalid', 'invalid_request'],
   ['admin-admission-resume-invalid', 'invalid_request'],
   ['deliverables-owner-invalid-revision', 'invalid_deliverable_reference'],
@@ -116,6 +135,7 @@ export const localCodes = new Map([
 ]);
 
 const protectedQueries = new Map([
+  ['usage-admin-summary-unknown-query', ['unknown']],
   ['filesystem-tree-reject-unknown-query', ['owner_access']],
   ['filesystem-content-reject-unknown-query', ['owner_access']],
   ['filesystem-download-reject-unknown-query', ['owner_access']],

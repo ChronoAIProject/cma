@@ -45,6 +45,7 @@ export * from './triggers.js';
 export * from './auth.js';
 export * from './responses.js';
 export * from './responses-v2.js';
+export type { TaskAcceptance, TaskAcceptanceIntent } from './task-acceptance.js';
 export * from './agent-events-v2/index.js';
 export * from './agui/index.js';
 export * from './launch/index.js';
@@ -159,3 +160,8 @@ export { reportBrowserFault, type BrowserFault } from './browser-telemetry.js';
 export * from './agents/capacity-recovery.js';
 
 export type * from './agents/retained-output.js';
+
+export type { SandboxCapacity } from './instances/capacity.js';
+export { agentLifecycleFailure } from './agents/lifecycle.js';
+
+export * from './account-deletion.js';

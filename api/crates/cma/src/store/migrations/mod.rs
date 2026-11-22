@@ -7,13 +7,16 @@ use serde_json::{json, Value};
 mod activity_indexes;
 mod activity_page_index;
 mod agent_log_segments;
+pub(in crate::store) mod agent_log_source_keys;
 mod agent_owner_index;
 mod binding_indexes;
 mod collection_indexes;
+pub(in crate::store) mod home_backup_catalog;
 mod index_inventory;
 mod index_plan;
 mod index_toolkit;
 pub(in crate::store) mod opening_index;
+mod sandbox_usage_capture;
 mod steps;
 use steps::Step;
 mod authority;
@@ -54,6 +57,9 @@ pub(crate) async fn run_command_line(arguments: &[String]) {
 }
 
 pub(crate) async fn command(arguments: &[String]) -> Result<Value> {
+    if let Some(result) = home_backup_catalog::command(arguments) {
+        return result;
+    }
     if index_toolkit::is_command(arguments) {
         return index_toolkit::command(arguments).await;
     }
@@ -114,6 +120,12 @@ async fn execute(arguments: &[String]) -> Result<Value> {
         return match identity {
             Some(identity) => agent_log_segments::apply(&ledger, &database, &identity).await,
             None => agent_log_segments::inspect(&database).await,
+        };
+    }
+    if step == Step::SandboxUsageCapture {
+        return match identity {
+            Some(identity) => sandbox_usage_capture::apply(&ledger, &database, &identity).await,
+            None => sandbox_usage_capture::inspect(&database).await,
         };
     }
     let indexes = step.inspect(&database).await?;

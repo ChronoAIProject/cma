@@ -16,11 +16,38 @@ export class AgentComputerObservation {
       readonly agentId?: string;
     },
     private readonly openTerminal?: () => void,
+    private readonly closeComputer?: () => void,
   ) {}
   private value: OperationObservation | undefined;
   private readonly listeners = new Set<() => void>();
   private terminal: { readonly id: string; readonly revision: number } | undefined;
   private readonly terminalListeners = new Set<() => void>();
+  private conversationFocus?: () => void;
+  private readonly conversationListeners = new Set<() => void>();
+  readonly conversationSnapshot = () => this.conversationFocus;
+  readonly subscribeConversation = (listener: () => void) => {
+    this.conversationListeners.add(listener);
+    return () => {
+      this.conversationListeners.delete(listener);
+    };
+  };
+  offerConversationFocus(focus: () => void) {
+    this.conversationFocus = focus;
+    for (const listener of this.conversationListeners) listener();
+    return () => {
+      if (this.conversationFocus !== focus) return;
+      this.conversationFocus = undefined;
+      for (const listener of this.conversationListeners) listener();
+    };
+  }
+  readonly returnToConversation = () => {
+    const focus = this.conversationFocus;
+    if (!focus) return;
+    this.closeComputer?.();
+    requestAnimationFrame(() => {
+      if (this.conversationFocus === focus) focus();
+    });
+  };
   readonly snapshot = () => this.value;
   readonly subscribe = (listener: () => void) => {
     this.listeners.add(listener);
@@ -61,4 +88,11 @@ export function useTerminalSelection(observation?: AgentComputerObservation) {
     observation?.subscribeTerminal ?? idle,
     observation?.terminalSnapshot ?? empty,
   );
+}
+export function useConversationReturn(observation?: AgentComputerObservation) {
+  const focus = useSyncExternalStore(
+    observation?.subscribeConversation ?? idle,
+    observation?.conversationSnapshot ?? empty,
+  );
+  return focus ? observation?.returnToConversation : undefined;
 }

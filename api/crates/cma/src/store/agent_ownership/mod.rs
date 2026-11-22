@@ -240,6 +240,8 @@ fn invalid(error: impl std::fmt::Display) -> OwnershipError {
 }
 
 #[cfg(test)]
+pub(crate) mod mongo_renewal_faults;
+#[cfg(test)]
 mod mongo_tests;
 
 // This only classifies writes inside an uncommitted effect transaction. A
@@ -257,5 +259,7 @@ fn known_aborted(error: &mongodb::error::Error) -> bool {
     is_transient(error) && !error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT)
 }
 
+#[cfg(test)]
+pub(crate) mod command_test_support;
 #[cfg(test)]
 mod fence_error_tests;

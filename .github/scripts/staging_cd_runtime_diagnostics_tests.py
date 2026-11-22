@@ -9,12 +9,14 @@ from unittest.mock import Mock, patch
 from image_secret_gate import checksum, ScanRefusal
 from staging_cd_build import command
 from staging_cd_common import Refusal
+from staging_cd_contract_tests import fixture_source
 from staging_cd_publication_diagnostics import ImageCommandRefusal, run_publication
 from staging_cd_publish import publish
 import staging_cd_publish_tests as publication_fixtures
 from staging_cd_receipts_tests import fixture_identity, fixture_runtime_receipt
 from staging_cd_runtime_smoke import CleanupIncomplete
 from staging_cd_set import private_document, release_set
+from staging_cd_outcome_tests import legacy
 
 
 class RuntimeDiagnosticsTests(unittest.TestCase):
@@ -22,7 +24,7 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             status = run_publication(operation)
-        return status, output.getvalue()
+        return status, legacy(output.getvalue())
 
     def test_runtime_publication_preserves_smoke_and_bootstrap_after_diagnostics(self):
         for component in ("runtime", "runtime-omarchy"):
@@ -39,13 +41,13 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                 receipts = []
                 def operation(_masker, diagnostics):
                     receipt = publish(archive, identity, root, registry, "fixture", "actor",
-                                      scanner=scanner, runner=runner, smoke=qualify,
-                                      source=root / "source", diagnostics=diagnostics)
+                                      reservation_check=lambda: True, scanner=scanner, runner=runner, smoke=qualify,
+                                      source=fixture_source(root / "source"), diagnostics=diagnostics)
                     receipts.append(receipt)
                     self.assertEqual(diagnostics.stage, "receipt")
                     return True
                 with patch("staging_cd_publish.inspect", return_value=digest):
-                    self.assertEqual(self.observe(operation), (0, "PASS\n"))
+                    self.assertEqual(self.observe(operation), (0, "PASS publication\n"))
                 receipt = receipts[0]
                 self.assertEqual(receipt["runtime_smoke"], proof)
                 encoded = private_document(release_set({component: receipt}))["components"][component]
@@ -82,11 +84,11 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                         scanner = Mock(side_effect=ScanRefusal("private scan output"))
                     def operation(_masker, diagnostics):
                         return publish(archive, fixture_identity(component=component), root, registry,
-                                       "fixture", "actor", scanner=scanner, runner=runner,
-                                       smoke=smoke, diagnostics=diagnostics)
+                                       "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=runner,
+                                       smoke=smoke, source=fixture_source(root / "source"), diagnostics=diagnostics)
                     with patch("staging_cd_publish.inspect", return_value=digest):
                         self.assertEqual(self.observe(operation),
-                                         (1, f"FAIL\nFAIL publication stage={stage} reason={reason}\n"))
+                                         (1, f"FAIL publication\nFAIL publication stage={stage} reason={reason}\n"))
                     runner.assert_not_called()
                     registry.exists.assert_not_called()
                     self.assertFalse((root / "registry-auth.json").exists())
@@ -108,11 +110,11 @@ class RuntimeDiagnosticsTests(unittest.TestCase):
                 smoke = Mock(return_value=proof)
                 def operation(_masker, diagnostics):
                     return publish(archive, fixture_identity(component=component), root, registry,
-                                   "fixture", "actor", scanner=scanner, runner=runner,
-                                   smoke=smoke, diagnostics=diagnostics)
+                                   "fixture", "actor", reservation_check=lambda: True, scanner=scanner, runner=runner,
+                                   smoke=smoke, source=fixture_source(root / "source"), diagnostics=diagnostics)
                 with patch("staging_cd_publish.inspect", return_value=digest):
                     self.assertEqual(self.observe(operation),
-                                     (1, "FAIL\nFAIL publication stage=registry_copy reason=registry_denied\n"))
+                                     (1, "FAIL publication\nFAIL publication stage=registry_copy reason=registry_denied\n"))
                 smoke.assert_called_once()
                 self.assertEqual(runner.call_count, 2)
                 registry.exists.assert_not_called()

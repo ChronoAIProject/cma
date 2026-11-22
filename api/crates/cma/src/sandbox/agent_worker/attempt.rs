@@ -3,6 +3,7 @@
 #[cfg(test)]
 use super::super::lifecycle_failure::Phase;
 use super::super::lifecycle_failure::{LifecycleAttempt, LifecycleTaskFailure, Origin};
+use super::startup_holds::{Admission, ProbePermit};
 use super::*;
 
 impl AgentWorker {
@@ -23,13 +24,37 @@ impl AgentWorker {
         })
     }
 
+    #[cfg(test)]
+    pub(in crate::sandbox) fn run_one_diagnostic(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, LifecycleTaskFailure>> + Send + '_>> {
+        let id = id.clone();
+        Box::pin(async move {
+            let attempt = LifecycleAttempt::new(Phase::Execution, Some(&id));
+            self.run_one_observed(&id, now, &attempt).await
+        })
+    }
+
     async fn run_one_observed(
         &self,
         id: &AgentId,
         now: SystemTime,
         attempt: &LifecycleAttempt,
     ) -> Result<bool, LifecycleTaskFailure> {
+        let startup_probe = match self.startup_admission(id, None, true).await {
+            Admission::Proceed => None,
+            Admission::Probe(permit) => Some(permit),
+            Admission::Hold => return Ok(false),
+        };
         if let Some(coordinator) = &self.config.ownership {
+            use super::super::ownership_retry_hint::{AdvisoryDecision, CapturedOwnershipProbe};
+            if let Some(hints) = &self.config.ownership_retry_hints {
+                if hints.preflight(id).await == AdvisoryDecision::Hold {
+                    return Ok(false);
+                }
+            }
             let Some(authority) = coordinator
                 .acquire(id)
                 .await
@@ -37,30 +62,36 @@ impl AgentWorker {
             else {
                 return Ok(false);
             };
-            let result = authority
-                .run(Box::pin(self.run_claimed(id, now, attempt)))
-                .await
-                .map_err(|error| attempt.ownership(Origin::AuthorityScope, error))?;
-            if result.is_ok()
-                && self
-                    .dependencies
-                    .store
-                    .get_agent(id)
-                    .await
-                    .map_err(|error| attempt.store(Origin::PostWorkRead, error))?
-                    .is_none_or(|agent| {
-                        !agent.status.is_live() && agent.work.step == AgentWorkStep::None
-                    })
-            {
-                self.dependencies.registry.detach_owner(&authority.token);
-                coordinator
-                    .handoff(&authority, authority.revoke_transports())
-                    .await
-                    .map_err(|error| attempt.ownership(Origin::Handoff, error))?;
+            let captured: OnceLock<Arc<dyn CapturedOwnershipProbe>> = OnceLock::new();
+            let evidence = self
+                .config
+                .ownership_retry_hints
+                .as_ref()
+                .and_then(|_| authority.observe_retry_evidence());
+            let outcome = authority
+                .run(Box::pin(self.run_claimed(
+                    id,
+                    now,
+                    attempt,
+                    Some((&authority.token, &captured)),
+                    startup_probe.as_ref(),
+                )))
+                .await;
+            if let (Some(observed), Some(failure)) = (
+                captured.get(),
+                evidence.and_then(|evidence| evidence.first_failure()),
+            ) {
+                let _ = observed.record(&failure).await;
+            }
+            let result =
+                outcome.map_err(|error| attempt.ownership(Origin::AuthorityScope, error))?;
+            if result.is_ok() {
+                self.finish_ownership_attempt(id, coordinator, &authority, attempt)
+                    .await?;
             }
             return result;
         }
-        Box::pin(self.run_claimed(id, now, attempt)).await
+        Box::pin(self.run_claimed(id, now, attempt, None, startup_probe.as_ref())).await
     }
 
     async fn run_claimed(
@@ -68,7 +99,20 @@ impl AgentWorker {
         id: &AgentId,
         now: SystemTime,
         attempt: &LifecycleAttempt,
+        observation: Option<(
+            &layer2_core::agent_ownership::OwnershipToken,
+            &OnceLock<Arc<dyn super::super::ownership_retry_hint::CapturedOwnershipProbe>>,
+        )>,
+        startup_probe: Option<&ProbePermit<'_>>,
     ) -> Result<bool, LifecycleTaskFailure> {
+        if observation.is_some()
+            && matches!(
+                self.startup_admission(id, startup_probe, false).await,
+                Admission::Hold
+            )
+        {
+            return Ok(false);
+        }
         let started = tokio::time::Instant::now();
         let Some(agent) = self
             .dependencies
@@ -85,6 +129,13 @@ impl AgentWorker {
             return Ok(false);
         };
         let claim_ms = started.elapsed().as_millis() as u64;
+        if let (Some(hints), Some((owner, captured))) =
+            (&self.config.ownership_retry_hints, observation)
+        {
+            if let Some(observed) = hints.capture(&agent, owner).await {
+                let _ = captured.set(observed);
+            }
+        }
         let step = agent.work.step;
         let executing = tokio::time::Instant::now();
         let result = Box::pin(self.execute(agent, now + started.elapsed())).await;
@@ -119,6 +170,11 @@ impl AgentWorker {
         now: SystemTime,
         attempt: &LifecycleAttempt,
     ) -> Result<bool, LifecycleTaskFailure> {
+        // A queue may predate the latest receiver failure. Deferral confers no
+        // claim and leaves the durable intent for the next periodic discovery.
+        if self.defer_ownership_retry(id).await {
+            return Ok(false);
+        }
         let started = tokio::time::Instant::now();
         let progressed = Box::pin(self.run_one_observed(id, now, attempt)).await?;
         if !progressed {

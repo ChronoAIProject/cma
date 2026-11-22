@@ -289,10 +289,9 @@ for (const theme of ['light', 'dark']) {
               await expect(plan.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '2');
               await expect(plan.getByText(/^Current step 3:/)).toBeVisible();
               await page.screenshot({ path: info.outputPath(`working-${width}.png`) });
-              if (width < 1024)
-                await page.getByRole('button', { name: 'Show Agent computer' }).click();
+              await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
               await expect(page.getByAltText('Agent browser page')).toBeVisible();
-              await expect(page.getByRole('tab', { name: 'Terminal' })).toHaveCount(0);
+              await expect(page.getByRole('tab', { name: 'Operations' })).toHaveCount(0);
               await page.getByRole('tab', { name: 'Files' }).click();
               await page.getByRole('tab', { name: 'Screen', exact: true }).click();
               await captureSingleBrowserFrame(page, info.outputPath(`computer-${width}.png`));
@@ -310,8 +309,9 @@ for (const theme of ['light', 'dark']) {
               await expect(
                 preview.getByRole('heading', { name: 'Project management tools' }),
               ).toBeVisible();
-              const bounds = (await preview.boundingBox())!;
-              expect(bounds.width).toBeGreaterThanOrEqual(width >= 1024 ? 500 : width - 1);
+              await expect
+                .poll(async () => (await preview.boundingBox())!.width)
+                .toBeGreaterThanOrEqual(width >= 1024 ? 500 : width - 1);
               await page.screenshot({ path: info.outputPath(`completed-${width}.png`) });
               await preview.getByRole('button', { name: 'Close preview' }).click();
             }
@@ -388,8 +388,8 @@ for (const width of [1440, 390]) {
     await browser(page, true);
     try {
       await page.goto('/agents/agt_contract');
-      if (width < 1024) await page.getByRole('button', { name: 'Show Agent computer' }).click();
-      await page.getByRole('tab', { name: 'Terminal' }).click();
+      await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
+      await page.getByRole('tab', { name: 'Operations' }).click();
       const output = page.locator('#computer-page-activity');
       for (const number of [1, 2, 3])
         await expect(output.getByText(`Recorded output ${number}`, { exact: true })).toBeVisible();
@@ -416,6 +416,7 @@ test('LOCAL shared desktop uses the same computer panel and releases control on 
   await boundary.route(page, baseURL!);
   const stream = await desktopBoundary(page);
   await page.goto('/agents/agt_contract');
+  await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
   const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
   const desktop = computer.getByRole('region', { name: 'Machine desktop' });
   await expect(desktop.getByRole('status')).toContainText('Agent paused · Desktop is idle');
@@ -596,6 +597,7 @@ for (const theme of ['light', 'dark']) {
         }),
       );
       await page.goto('/agents/agt_contract');
+      await page.getByRole('button', { name: 'Show Agent computer', exact: true }).click();
       const computer = page.getByRole('complementary', { name: 'Agent computer', exact: true });
       await expect(computer.getByRole('region', { name: 'Machine desktop' })).toBeVisible();
       const answer = page.getByRole('article', { name: 'Chrono Agent' });

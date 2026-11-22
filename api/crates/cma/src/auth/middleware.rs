@@ -19,6 +19,23 @@ use layer2_core::dependency_diagnostics::{
 mod failure_diagnostics;
 
 pub async fn attach_subject(
+    state: State<Arc<AuthState>>,
+    request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    let account_route = request.uri().path() == "/api/v1/account/deletion"
+        && matches!(request.method().as_str(), "GET" | "POST");
+    let mut response = attach_subject_inner(state, request, next).await;
+    if account_route {
+        response.headers_mut().insert(
+            axum::http::header::CACHE_CONTROL,
+            axum::http::HeaderValue::from_static("private, no-store"),
+        );
+    }
+    response
+}
+
+async fn attach_subject_inner(
     State(auth): State<Arc<AuthState>>,
     mut request: axum::extract::Request,
     next: Next,
@@ -90,7 +107,8 @@ pub async fn attach_subject(
             if let Some(seconds) = retry_after {
                 return identity_failure_after(seconds);
             }
-            if request.uri().path() == "/auth/session"
+            if (request.method() == axum::http::Method::GET
+                || request.uri().path() == "/auth/session")
                 && matches!(&error, layer2_core::StoreError::Unavailable(detail) if detail == "identity_provider_unavailable")
             {
                 return identity_failure();
@@ -106,6 +124,18 @@ pub async fn attach_subject(
         }
     };
     if let Some(resolved) = resolved {
+        let owner_session = auth.owner_session_authority(&resolved);
+        if let Some(response) = auth
+            .account_gate(
+                request.method().as_str(),
+                request.uri().path(),
+                &resolved.subject,
+                owner_session.is_some(),
+            )
+            .await
+        {
+            return response;
+        }
         if request.uri().path() == "/api/v1/bots"
             || request.uri().path().starts_with("/api/v1/bots/")
         {
@@ -149,6 +179,9 @@ pub async fn attach_subject(
         request
             .extensions_mut()
             .insert(auth.resource_request_context(&resolved));
+        if let Some(authority) = owner_session {
+            request.extensions_mut().insert(authority);
+        }
         if let Some(value) = resolved.delegated_credential {
             request
                 .extensions_mut()
@@ -216,6 +249,7 @@ fn bypasses_ambient_auth(path: &str) -> bool {
         "/auth/signup-options"
             | "/auth/login"
             | "/auth/callback"
+            | super::service_authorization::CALLBACK_PATH
             | "/auth/logout"
             | "/.well-known/agent-card.json"
     ) {

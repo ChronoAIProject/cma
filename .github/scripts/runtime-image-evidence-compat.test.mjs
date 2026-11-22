@@ -93,7 +93,7 @@ test('verify CLI dispatches historical v1 and v2 and refuses incomplete or unkno
     mkdirSync(join(directory, 'api/crates/layer4-runtime'), { recursive: true });
     copyFileSync(originalPins, join(directory, 'api/crates/layer4-runtime/Dockerfile'));
     for (const name of ['runtime-image-evidence.mjs', 'runtime-image-probe.mjs',
-      'runtime-bootstrap-probe.mjs', 'runtime-github-probe.mjs']) {
+      'runtime-bootstrap-probe.mjs', 'runtime-github-probe.mjs', 'omarchy-contract-source.mjs']) {
       copyFileSync(new URL(name, import.meta.url), join(scripts, name));
     }
     const script = join(scripts, 'runtime-image-evidence.mjs');

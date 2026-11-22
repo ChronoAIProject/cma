@@ -118,7 +118,11 @@ pub(crate) struct LifecycleRecord {
     #[serde(default)]
     pub sandbox_id: Option<String>,
     pub agent_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_commit: Option<String>,
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failure: Option<layer1_public::rest::AgentLifecycleFailure>,
     #[serde(default)]
     pub connection: Option<AgentLifecycleConnectionRequired>,
     pub lease_expires_at: Option<DateTime>,
@@ -233,7 +237,9 @@ impl MongoAgentLifecycleStore {
             events: Vec::new(),
             sandbox_id: None,
             agent_id: None,
+            repository_commit: None,
             error: None,
+            failure: None,
             connection: None,
             lease_expires_at: None,
             lease_token: None,
@@ -378,6 +384,7 @@ impl LifecycleRecord {
             phase: self.phase.clone(),
             agent_id: self.agent_id.clone(),
             error: self.error.clone(),
+            failure: self.failure.clone(),
             connection: self.connection.clone(),
             events: self
                 .events

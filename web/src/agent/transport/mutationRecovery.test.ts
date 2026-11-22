@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { ApiError, TransportError } from '@cma/client';
 import { accepted, harness, json } from './controller.fixture';
+import { commandStatus } from './controls.fixture';
 import { recoverV2Control, submitV2Control } from './controls';
 import { agentTransportJournal, clearAgentTransport } from './journal';
 import { isIdentityChanged } from './identity';
@@ -36,6 +37,7 @@ const cancel = (h: Awaited<ReturnType<typeof setup>>, signal = new AbortControll
 it('recovers a lost Send receipt with identical input, answer context and key', async () => {
   const h = await setup();
   h.post.mockRejectedValueOnce(new TypeError('ingress lost'));
+  h.inputReceipt.mockImplementationOnce(async () => json(commandStatus('resp_1', 1, true)));
   const onAccepted = vi.fn();
   const send = h.session.send('original\ninput', onAccepted, undefined, undefined, {
     turn_sequence: 1,
@@ -43,8 +45,10 @@ it('recovers a lost Send receipt with identical input, answer context and key', 
   });
   await vi.runAllTimersAsync();
   await send;
-  expect(h.post).toHaveBeenCalledTimes(2);
-  const [first, second] = h.post.mock.calls.map(([init]) => init);
+  expect(h.post).toHaveBeenCalledOnce();
+  expect(h.inputReceipt).toHaveBeenCalledOnce();
+  const first = h.post.mock.lastCall?.[0];
+  const second = h.inputReceipt.mock.lastCall?.[0];
   expect(key(first)).toBeTruthy();
   expect(key(second)).toBe(key(first));
   expect(second?.body).toBe(first?.body);
@@ -178,18 +182,23 @@ it.each(['account', 'epoch'] as const)(
     await vi.runAllTimersAsync();
     expect(isIdentityChanged(await result)).toBe(true);
     expect(h.post).toHaveBeenCalledOnce();
+    expect(h.inputReceipt).not.toHaveBeenCalled();
     expect(onAccepted).not.toHaveBeenCalled();
   },
 );
 
-it('bounds repeated lost responses, retaining the original pending input', async () => {
+it('bounds failed receipt reads, retaining the original pending input', async () => {
   const h = await setup();
-  h.post.mockRejectedValue(new TypeError('lost'));
+  h.post.mockRejectedValueOnce(new TypeError('lost'));
+  h.inputReceipt.mockRejectedValue(new TypeError('receipt temporarily unavailable'));
   const operation = expect(h.session.send('input', vi.fn())).rejects.toThrow();
   await vi.runAllTimersAsync();
   await operation;
-  expect(h.post).toHaveBeenCalledTimes(5);
-  expect(new Set(h.post.mock.calls.map(([init]) => key(init))).size).toBe(1);
+  expect(h.post).toHaveBeenCalledOnce();
+  expect(h.inputReceipt).toHaveBeenCalledTimes(4);
+  expect(h.inputReceipt.mock.calls.map(([init]) => key(init))).toEqual(
+    Array(4).fill(key(h.post.mock.lastCall?.[0])),
+  );
   expect(h.session.journal.read()?.state).toBe('pending');
 });
 
@@ -203,9 +212,11 @@ it('keeps default-off loss recoverable only through explicit action', async () =
   await vi.advanceTimersByTimeAsync(0);
   expect(h.post).toHaveBeenCalledOnce();
   expect(vi.getTimerCount()).toBe(0);
-  await h.session.recover(vi.fn());
-  expect(h.post).toHaveBeenCalledTimes(2);
-  expect(key(h.post.mock.calls[1]![0])).toBe(key(h.post.mock.calls[0]![0]));
+  expect(h.inputReceipt).not.toHaveBeenCalled();
+  expect(await h.session.recover(vi.fn())).toBe(false);
+  expect(h.post).toHaveBeenCalledOnce();
+  expect(h.inputReceipt).toHaveBeenCalledOnce();
+  expect(key(h.inputReceipt.mock.lastCall?.[0])).toBe(key(h.post.mock.lastCall?.[0]));
 });
 
 it.each(['send', 'cancel'] as const)(
@@ -265,7 +276,7 @@ it('does not retry a malformed Cancel receipt or clear its pending intent', asyn
 });
 
 it.each(['automatic', 'explicit', 'contention'] as const)(
-  'retains uncertain Send after a later admission refusal during %s recovery',
+  'retains uncertain Send after an unauthorized receipt read during %s recovery',
   async (mode) => {
     const h = await setup(mode === 'automatic');
     if (mode === 'contention')
@@ -273,14 +284,15 @@ it.each(['automatic', 'explicit', 'contention'] as const)(
         errorResponse(409, 'agent_command_admission_conflict'),
       );
     else h.post.mockRejectedValueOnce(new TypeError('lost committed receipt'));
-    h.post.mockImplementationOnce(async () => errorResponse(409, 'agent_command_not_admissible'));
+    h.inputReceipt.mockImplementationOnce(async () => errorResponse(403, 'response_forbidden'));
     const onAccepted = vi.fn();
     const operation = expect(h.session.send('original', onAccepted)).rejects.toThrow();
     await vi.runAllTimersAsync();
     await operation;
-    if (mode === 'explicit') await expect(h.session.recover(onAccepted)).rejects.toThrow();
-    expect(h.post).toHaveBeenCalledTimes(2);
-    expect(key(h.post.mock.calls[1]![0])).toBe(key(h.post.mock.calls[0]![0]));
+    if (mode !== 'automatic') await expect(h.session.recover(onAccepted)).rejects.toThrow();
+    expect(h.post).toHaveBeenCalledOnce();
+    expect(h.inputReceipt).toHaveBeenCalledOnce();
+    expect(key(h.inputReceipt.mock.lastCall?.[0])).toBe(key(h.post.mock.lastCall?.[0]));
     expect(h.session.journal.read()).toMatchObject({ state: 'pending', input: 'original' });
     expect(onAccepted).not.toHaveBeenCalled();
   },

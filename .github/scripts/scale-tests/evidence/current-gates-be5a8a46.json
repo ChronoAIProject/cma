@@ -22,12 +22,12 @@
     "revised_runner_real_execution": "NOT_RUN; exact-source review requested"
   },
   "logs": {
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/clippy-aadd212-final.log": "d2ceea6ca4b18d2845d7f7faf0cfe3a16dad1421f2ee993262a53bb75f09eb4e",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/diagnostics-aadd212-final.log": "1a314ba2211c4a3404898d1f9339a93894267fecb45579879d0b3182267e7556",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/oracle-aadd212-final.log": "a64a090cc367d56ddf52fd4054b5bc4f42c1ec2543eb1407d0b15bc8db0a10f1",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/fmt-aadd212-final.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/python-timeout-retention-final.log": "21f1324fbf6cc310b81d982d748872e346698d77cf7eabe67c8760fa5f73b27e",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/lint-timeout-retention-final.log": "19e27cf7273482ed375e4a47c54b6d0f1e8d67054a048215a0af74a8abb434b1"
+    "tech-lead.staff/developer-17/evidence/final/clippy-aadd212-final.log": "d2ceea6ca4b18d2845d7f7faf0cfe3a16dad1421f2ee993262a53bb75f09eb4e",
+    "tech-lead.staff/developer-17/evidence/final/diagnostics-aadd212-final.log": "1a314ba2211c4a3404898d1f9339a93894267fecb45579879d0b3182267e7556",
+    "tech-lead.staff/developer-17/evidence/final/oracle-aadd212-final.log": "a64a090cc367d56ddf52fd4054b5bc4f42c1ec2543eb1407d0b15bc8db0a10f1",
+    "tech-lead.staff/developer-17/evidence/final/fmt-aadd212-final.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "tech-lead.staff/developer-17/evidence/final/python-timeout-retention-final.log": "21f1324fbf6cc310b81d982d748872e346698d77cf7eabe67c8760fa5f73b27e",
+    "tech-lead.staff/developer-17/evidence/final/lint-timeout-retention-final.log": "19e27cf7273482ed375e4a47c54b6d0f1e8d67054a048215a0af74a8abb434b1"
   },
   "cleanup": {
     "all_owned_disposable_mongo_receipts": true,

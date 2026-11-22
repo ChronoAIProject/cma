@@ -12,15 +12,16 @@ it.each([false, true])(
     const changed = vi.fn();
     const exportAgentHistory = vi.fn();
     if (fails) exportAgentHistory.mockRejectedValue(new Error('Export unavailable'));
-    else exportAgentHistory.mockResolvedValue({ fixture: 'downloaded history' });
+    else exportAgentHistory.mockResolvedValue(new Blob(['downloaded history']));
     const client = agentClient({ exportAgentHistory });
     const view = renderHook(() => useResourceActions(client, changed));
     await act(async () => view.result.current.select({ kind: 'export_history', agentId: 'agt_1' }));
     expect(changed).not.toHaveBeenCalled();
-    expect(exportAgentHistory).toHaveBeenCalledExactlyOnceWith('agt_1');
+    expect(exportAgentHistory).toHaveBeenCalledExactlyOnceWith('agt_1', {
+      signal: expect.any(AbortSignal),
+    });
     if (fails) expect(view.result.current.error).toBe('Export unavailable');
-    else
-      expect(downloadAgentHistory).toHaveBeenCalledWith('agt_1', { fixture: 'downloaded history' });
+    else expect(downloadAgentHistory).toHaveBeenCalledWith('agt_1', expect.any(Blob));
   },
 );
 

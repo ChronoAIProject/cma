@@ -1,4 +1,10 @@
 import {
+  pendingHomesReconciliation,
+  reconcilePendingHomesRequest,
+  type ReconcilePendingHomesRequest,
+} from './pending-homes.js';
+export type * from './pending-homes.js';
+import {
   warmPoolList,
   warmPoolView,
   validateWarmPoolTarget,
@@ -7,6 +13,7 @@ import {
 } from './warm-pools.js';
 export type * from './warm-pools.js';
 import type { ResolvedConfig } from '../config.js';
+import { platformSpend, spendObservationRequest, type SpendObservationRequest } from './spend.js';
 import {
   admissionCeilingsState,
   replaceAdmissionCeilingsRequest,
@@ -69,6 +76,7 @@ import {
 export type * from './types.js';
 export type * from './settings.js';
 export type * from './admission.js';
+export type * from './spend.js';
 
 export interface AdminSandboxListOptions extends PageOptions {
   readonly owner?: string;
@@ -278,6 +286,29 @@ export class Administration {
   }
   readSettings(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/settings', storedPlatformSettings, options);
+  }
+  readSpend(options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/spend', platformSpend, options);
+  }
+  /** Record an explicit cloud observation; uncertain commands are never automatically retried. */
+  recordSpendObservation(body: SpendObservationRequest, options: OperationOptions = {}) {
+    return read(this.config, '/api/v1/admin/spend/observations', platformSpend, {
+      ...options,
+      method: 'POST',
+      body: input(spendObservationRequest, body),
+    });
+  }
+  reconcilePendingHomes(body: ReconcilePendingHomesRequest, options: OperationOptions = {}) {
+    return read(
+      this.config,
+      '/api/v1/admin/admission/pending-homes/reconcile',
+      pendingHomesReconciliation,
+      {
+        ...options,
+        method: 'POST',
+        body: input(reconcilePendingHomesRequest, body),
+      },
+    );
   }
   readAdmission(options: OperationOptions = {}) {
     return read(this.config, '/api/v1/admin/admission', admissionControlRead, options);

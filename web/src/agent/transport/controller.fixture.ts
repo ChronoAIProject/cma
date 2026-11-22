@@ -35,6 +35,9 @@ export function page(items: unknown[], through: number, after?: number) {
 export function item(sequence: number, kind: unknown, response_binding: unknown = null) {
   return { cursor: cursor(sequence), sequence, appended_at: at, kind, response_binding };
 }
+export function completedInputReceipt() {
+  return json(commandStatus('resp_1', 1, true));
+}
 export function accepted() {
   return new Response(new ReadableStream(), {
     headers: {
@@ -62,6 +65,7 @@ export function queuedPage(text = 'Cancel this waiting message', revision = 7) {
 export function harness(storage: Storage = sessionStorage, recovery?: RecoveryPolicy) {
   let stream: ReadableStreamDefaultController<Uint8Array> | undefined;
   const post = vi.fn<(init?: RequestInit) => Promise<Response>>().mockResolvedValue(accepted());
+  const inputReceipt = vi.fn<(init?: RequestInit) => Promise<Response>>(async () => json(null));
   const snapshot = vi
     .fn<(url: string) => Promise<Response>>()
     .mockImplementation(async () => json(page([], 0)));
@@ -151,6 +155,8 @@ export function harness(storage: Storage = sessionStorage, recovery?: RecoveryPo
         }),
         { headers: { 'content-type': 'text/event-stream' } },
       );
+    if (url === '/api/v2/agents/agt_1/responses/receipt' || url === '/api/v1/agui/run/receipt')
+      return inputReceipt(init);
     if (url === '/api/v2/agents/agt_1/responses') return post(init);
     throw new Error(`Unexpected request ${url}`);
   });
@@ -177,6 +183,7 @@ export function harness(storage: Storage = sessionStorage, recovery?: RecoveryPo
     sdk,
     fetch,
     post,
+    inputReceipt,
     snapshot,
     head,
     cancel,

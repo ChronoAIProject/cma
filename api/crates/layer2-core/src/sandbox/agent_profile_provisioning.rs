@@ -68,7 +68,7 @@ impl AgentService {
                     };
                     match self
                         .store
-                        .admit_agent(admission)
+                        .admit_catalogue_agent(admission)
                         .await
                         .map_err(store_error)?
                     {

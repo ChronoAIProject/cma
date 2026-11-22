@@ -484,11 +484,11 @@ async fn enabled_startup_initializes_storage_and_restart_retains_app_and_receipt
 
 #[tokio::test]
 #[ignore = "requires authenticated disposable service Mongo fixture"]
-async fn disabled_or_absent_flag_refuses_admission_and_preserves_integrations() {
+async fn explicitly_disabled_flag_refuses_admission_and_preserves_integrations() {
     let mut fixture = Fixture::new(true).await;
     let app = fixture.register("token-alice", "retained-app", None).await;
-    for enabled in [None, Some(false)] {
-        let disabled = fixture.replica_with_flag(enabled).await;
+    {
+        let disabled = fixture.replica_with_flag(Some(false)).await;
         let capabilities = fixture
             .read(&disabled, "/v1/github/capabilities", "token-alice")
             .await
@@ -627,4 +627,39 @@ async fn legacy_receipt_retention_is_stamped_once_across_repeatable_upgrade() {
         .await
         .unwrap();
     assert_eq!(reread, migrated);
+}
+
+/// `CMAEG_GITHUB_ENABLED` has graduated: an absent flag behaves as `true`.
+#[tokio::test]
+#[ignore = "requires authenticated disposable service Mongo fixture"]
+async fn absent_flag_admits_like_explicitly_enabled() {
+    let mut fixture = Fixture::new(true).await;
+    let app = fixture.register("token-alice", "retained-app", None).await;
+    let absent = fixture.replica_with_flag(None).await;
+    fixture.wait_for_github(&absent).await;
+    assert_eq!(
+        fixture
+            .registration(
+                &absent,
+                "token-alice",
+                "absent-flag-app",
+                &json!({"app_id":43,"display_name":"Absent flag"})
+            )
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        201
+    );
+    let restored = fixture
+        .read(
+            &absent,
+            &format!("/v1/github/apps/{}", app["app_ref"].as_str().unwrap()),
+            "token-alice",
+        )
+        .await
+        .json::<serde_json::Value>()
+        .await
+        .unwrap();
+    assert_eq!(restored, app);
 }

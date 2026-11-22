@@ -79,6 +79,25 @@ impl DocumentStore for MongoDocumentStore {
             .await.map_err(|_| DocumentError::Unavailable)?;
         Ok(result.matched_count == 1)
     }
+    async fn compare_exchange_grant(
+        &self,
+        expected: u64,
+        record: &StoredDocument,
+        recipient: &str,
+    ) -> Result<bool, DocumentError> {
+        let next = expected.checked_add(1).ok_or(DocumentError::Corrupt)?;
+        if record.metadata.revision != next {
+            return Err(DocumentError::Corrupt);
+        }
+        super::grants::exchange(
+            &self.rows,
+            expected,
+            record,
+            encode(record)?,
+            &layer2_core::SubjectId::new(recipient),
+        )
+        .await
+    }
     async fn list(
         &self,
         subject: &str,
@@ -136,7 +155,7 @@ fn encode(record: &StoredDocument) -> Result<Document, DocumentError> {
         "record": data},
     )
 }
-fn decode(value: &Document) -> Result<StoredDocument, DocumentError> {
+pub(crate) fn decode(value: &Document) -> Result<StoredDocument, DocumentError> {
     let data = value.get("record").ok_or(DocumentError::Corrupt)?.clone();
     let record: StoredDocument =
         mongodb::bson::deserialize_from_bson(data).map_err(|_| DocumentError::Corrupt)?;

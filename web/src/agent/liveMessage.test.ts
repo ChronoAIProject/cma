@@ -97,3 +97,34 @@ it('does not invent ordinary messages when their start frame is absent', () => {
     ),
   ).toBe(state);
 });
+
+it('resets partial committed text on replayed START and concatenates every chunk until END', () => {
+  const chunks = ['retained λ '.repeat(800), 'second chunk', ' final chunk'];
+  const start = event('TEXT_MESSAGE_START', { messageId: 'msg_5', role: 'assistant' });
+  let state = foldLiveEvent(empty(), start, 'agt_1');
+  state = foldLiveEvent(
+    state,
+    event('TEXT_MESSAGE_CONTENT', { messageId: 'msg_5', delta: chunks[0] }),
+    'agt_1',
+  );
+  expect(state.cursor).toBe(0);
+  expect(state.messages[0]?.content).toBe(chunks[0]);
+  expect(state.turnOutcomes).toEqual({});
+  state = foldLiveEvent(state, start, 'agt_1');
+  for (const delta of chunks)
+    state = foldLiveEvent(
+      state,
+      event('TEXT_MESSAGE_CONTENT', { messageId: 'msg_5', delta }),
+      'agt_1',
+    );
+  state = foldLiveEvent(
+    state,
+    event('TEXT_MESSAGE_END', { messageId: 'msg_5', cursor: 5 }),
+    'agt_1',
+  );
+  expect(state.cursor).toBe(5);
+  expect(state.messages).toHaveLength(1);
+  expect(state.messages[0]).toMatchObject({ content: chunks.join(''), status: 'complete' });
+  expect(state.turnOutcomes).toEqual({});
+  expect(state.recovery).toEqual([]);
+});

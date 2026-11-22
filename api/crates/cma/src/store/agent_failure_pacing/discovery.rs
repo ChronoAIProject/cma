@@ -1,23 +1,49 @@
-//! Filter held IDs before the page limit; ordinary work never joins parent rows.
+//! Filter held IDs before the page limit; optional ownership hints join their parent.
 use super::*;
+use layer2_core::sandbox::store::StartupWorkFilter;
 
+#[cfg(test)]
 pub(in crate::store) fn pipeline(
     store: &MongoSandboxStore,
     now: &str,
     limit: u16,
+    holds: &std::collections::BTreeSet<layer2_core::AgentId>,
 ) -> Vec<Document> {
-    build(store, now, limit, None, false)
+    filtered_pipeline(store, now, limit, holds, StartupWorkFilter::All)
+}
+
+pub(in crate::store) fn filtered_pipeline(
+    store: &MongoSandboxStore,
+    now: &str,
+    limit: u16,
+    holds: &std::collections::BTreeSet<layer2_core::AgentId>,
+    startup: StartupWorkFilter<'_>,
+) -> Vec<Document> {
+    build(store, now, limit, None, false, holds, startup)
 }
 
 /// Ownership recovery may replace a previous epoch's live worker claim. Keep
 /// the same pacing/wakeup predicates and paginate before choosing local owners.
+#[cfg(test)]
 pub(in crate::store) fn owned_pipeline(
     store: &MongoSandboxStore,
     now: &str,
     limit: u16,
     after: Option<&str>,
+    holds: &std::collections::BTreeSet<layer2_core::AgentId>,
 ) -> Vec<Document> {
-    build(store, now, limit, after, true)
+    filtered_owned_pipeline(store, now, limit, after, holds, StartupWorkFilter::All)
+}
+
+pub(in crate::store) fn filtered_owned_pipeline(
+    store: &MongoSandboxStore,
+    now: &str,
+    limit: u16,
+    after: Option<&str>,
+    holds: &std::collections::BTreeSet<layer2_core::AgentId>,
+    startup: StartupWorkFilter<'_>,
+) -> Vec<Document> {
+    build(store, now, limit, after, true, holds, startup)
 }
 
 fn build(
@@ -26,6 +52,8 @@ fn build(
     limit: u16,
     after: Option<&str>,
     include_claimed: bool,
+    holds: &std::collections::BTreeSet<layer2_core::AgentId>,
+    startup: StartupWorkFilter<'_>,
 ) -> Vec<Document> {
     let latest = layer2_core::seconds_from_rfc3339(now)
         .map(|seconds| {
@@ -50,6 +78,32 @@ fn build(
         // exact envelope and current parents before granting a writer lease.
         "document_schema_version": {"$in": [1_i64, 2_i64]}, "work_pending": true,
     };
+    let mut excluded = Vec::new();
+    if !holds.is_empty() {
+        // Both union arms inherit this predicate before their sort and limit.
+        // An explicit control on a held ID remains eligible immediately.
+        let ids: Vec<_> = holds.iter().map(|id| id.as_str()).collect();
+        let steps = layer2_core::sandbox::AgentWorkStep::RECEIVER_PACED
+            .map(|step| step.operation_name())
+            .to_vec();
+        excluded.push(doc! {"_id": {"$in": ids}, "record.work.step": {"$in": steps}});
+    }
+    match startup {
+        StartupWorkFilter::All => {}
+        StartupWorkFilter::Exclude(sandboxes) => {
+            let ids: Vec<_> = sandboxes.iter().map(|id| id.as_str()).collect();
+            let mut closed = startup_candidate();
+            closed.insert("record.sandbox_id", doc! {"$in": ids});
+            excluded.push(closed);
+        }
+        StartupWorkFilter::Probe(sandbox_id) => {
+            available.extend(startup_candidate());
+            available.insert("record.sandbox_id", sandbox_id.as_str());
+        }
+    }
+    if !excluded.is_empty() {
+        available.insert("$nor", excluded);
+    }
     if !include_claimed {
         available.insert(
             "$or",
@@ -66,6 +120,7 @@ fn build(
     ordinary.insert("work_ready_at", doc! {"$lte": now});
     ordinary.insert("$expr", doc! {"$not": [candidate.clone()]});
     let mut pipeline = vec![doc! {"$match": ordinary}];
+    pipeline.extend(super::ownership::discovery::filter(store));
     pipeline.extend(page(limit));
 
     // Only future paced work needs the three exact parent-index probes. Both
@@ -73,11 +128,18 @@ fn build(
     let mut paced = available;
     paced.insert(format!("{FIELD}.until"), doc! {"$gt": now, "$lte": latest});
     paced.insert("$expr", candidate);
-    let mut wake = vec![
-        doc! {"$match": paced},
-        doc! {"$project": {"_id": 1, "revision": 1, FIELD: 1, "agent_command_admission_fence": 1,
-        "record.sandbox_id": 1, "record.workspace_id": 1, "record.worktree_id": 1}},
-    ];
+    let projection = if store.ownership_retry_hints_active() {
+        doc! {"_id": 1, "revision": 1, FIELD: 1, "agent_command_admission_fence": 1,
+        super::ownership::FIELD: 1, "record.owner": 1, "record.sandbox_id": 1,
+        "record.workspace_id": 1, "record.worktree_id": 1, "record.status": 1,
+        "record.conversation.conversation_id": 1, "record.conversation.runtime_generation": 1,
+        "record.work.step": 1, "record.work.ready_at": 1, "record.work.attempts": 1,
+        "record.requested_stop_reason": 1, "record.deleted_at": 1}
+    } else {
+        doc! {"_id": 1, "revision": 1, FIELD: 1, "agent_command_admission_fence": 1,
+        "record.sandbox_id": 1, "record.workspace_id": 1, "record.worktree_id": 1}
+    };
+    let mut wake = vec![doc! {"$match": paced}, doc! {"$project": projection}];
     let mut holds = vec![
         Bson::Document(doc! {
             "$eq": [format!("{hint}.agent_revision"), "$revision"]
@@ -109,6 +171,7 @@ fn build(
         }
     }
     wake.push(doc! {"$match": {"$expr": {"$not": [{"$and": holds}]}}});
+    wake.extend(super::ownership::discovery::filter(store));
     wake.extend(page(limit));
     pipeline.push(doc! {"$unionWith": {"coll": store.agents.name(), "pipeline": wake}});
     // An advisory read race between arms may yield one ID twice; claims remain
@@ -116,6 +179,17 @@ fn build(
     pipeline.push(doc! {"$group": {"_id": "$_id"}});
     pipeline.extend(page(limit));
     pipeline
+}
+
+fn startup_candidate() -> Document {
+    let steps = StartupWorkFilter::STEPS.map(|step| step.operation_name());
+    // An Agent with uncertain runtime work, or an explicit control step, must
+    // remain visible even when its siblings are waiting for the same Sandbox.
+    doc! {
+        "record.work.step": {"$in": steps},
+        "record.work.lease": Bson::Null,
+        "record.work.cleanup_debt.0": {"$exists": false},
+    }
 }
 
 fn page(limit: u16) -> [Document; 3] {

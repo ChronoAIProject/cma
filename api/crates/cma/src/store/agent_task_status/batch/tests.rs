@@ -135,7 +135,7 @@ async fn task_status_batch_matches_sequential_evidence_and_bounds_round_trips() 
     for agent in &agents {
         expected.insert(
             agent.id.clone(),
-            super::super::read(&store, agent, &mut session)
+            super::super::read_with_turn(&store, agent, &mut session)
                 .await
                 .unwrap(),
         );
@@ -151,7 +151,9 @@ async fn task_status_batch_matches_sequential_evidence_and_bounds_round_trips() 
     start_transaction(&mut session).await.unwrap();
     trace.lock().unwrap().clear();
     let started = std::time::Instant::now();
-    let actual = read_many(&store, &agents, &mut session).await.unwrap();
+    let actual = read_many_with_turns(&store, &agents, &mut session)
+        .await
+        .unwrap();
     let after_ms = started.elapsed().as_secs_f64() * 1000.0;
     let after = trace.lock().unwrap().clone();
     assert_eq!(actual, expected);
@@ -160,14 +162,14 @@ async fn task_status_batch_matches_sequential_evidence_and_bounds_round_trips() 
     assert_eq!(
         actual
             .values()
-            .filter(|status| **status == AgentTaskStatus::Completed)
+            .filter(|(status, _)| *status == AgentTaskStatus::Completed)
             .count(),
         10
     );
     assert_eq!(
         actual
             .values()
-            .filter(|status| **status == AgentTaskStatus::Failed)
+            .filter(|(status, _)| *status == AgentTaskStatus::Failed)
             .count(),
         10
     );

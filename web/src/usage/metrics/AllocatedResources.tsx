@@ -15,7 +15,8 @@ export function AllocatedResources({
       <div>
         <h3>Allocated resource-hours</h3>
         <p className="usage-section-description">
-          Capacity reserved over the report period. This is the basis for billing.
+          Capacity reserved over the report period. Resource-hours describe allocation; billing is
+          separate.
         </p>
       </div>
       <div className="usage-metric-cards" role="region" aria-label="Allocated capacity now">

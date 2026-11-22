@@ -109,7 +109,6 @@ impl SandboxWorker {
             return self.retry_failure(sandbox, failure, now).await;
         }
         let expected_revision = sandbox.revision;
-        let step = sandbox.work.step;
         let fence = self.claimed_fence(&sandbox)?;
         let event_at = rfc3339_at(now);
         sandbox
@@ -130,10 +129,7 @@ impl SandboxWorker {
             expected_revision,
             sandbox,
             event_at,
-            SandboxEventKind::WorkStepFailed {
-                step,
-                failure: typed,
-            },
+            SandboxEventKind::Failed { failure: typed },
         )
         .await
     }
@@ -324,7 +320,7 @@ impl WorkerFailure {
         Self::new("service_not_granted", service, false)
     }
 
-    fn new(class: &'static str, detail: &str, retryable: bool) -> Self {
+    pub(super) fn new(class: &'static str, detail: &str, retryable: bool) -> Self {
         Self {
             class,
             detail: safe_detail(detail),
@@ -360,6 +356,9 @@ pub(super) fn adapter_failure(error: AdapterError) -> WorkerFailure {
     let external = matches!(&error, AdapterError::Unavailable(detail)
         if crate::sandbox::work_retry::replaced_runtime(detail));
     match error {
+        AdapterError::AccessRevoked => {
+            WorkerFailure::terminal_security("current runtime authority was revoked")
+        }
         AdapterError::InputAuthorityUnavailable(_)
         | AdapterError::PromptNotWritten(_)
         | AdapterError::Unavailable(_) => WorkerFailure::retryable(

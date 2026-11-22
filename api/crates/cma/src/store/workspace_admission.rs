@@ -1,4 +1,5 @@
 //! Transactional Mongo admission and removal for workspace aggregates.
+mod commit;
 pub(super) mod retry;
 use super::sandbox_events::{append_in_transaction, reconcile_event};
 use super::sandbox_mongo::{
@@ -48,63 +49,14 @@ impl WorkspaceAdmissionStore for MongoSandboxStore {
         &self,
         admission: WorkspaceAdmission,
     ) -> Result<WorkspaceAdmissionResult, SandboxStoreError> {
-        validate_fresh(&admission.workspace, admission.kind)?;
-        let mut last_transient = None;
-        for attempt in 0..TRANSACTION_ATTEMPTS {
-            retry_delay(attempt).await;
-            let mut session = self
-                .client
-                .start_session()
-                .await
-                .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?;
-            if let Err(error) = start_transaction(&mut session).await {
-                if is_transient(&error) {
-                    last_transient = Some(error.to_string());
-                    continue;
-                }
-                return Err(SandboxStoreError::Unavailable(error.to_string()));
-            }
-            let receipt = match apply_admission(self, &admission, &mut session).await {
-                Ok(receipt) => receipt,
-                Err(ApplyError::Domain(error)) => {
-                    let _ = session.abort_transaction().await;
-                    return Err(error);
-                }
-                Err(ApplyError::Retry(error)) | Err(ApplyError::Driver(error))
-                    if is_transient(&error) =>
-                {
-                    let _ = session.abort_transaction().await;
-                    last_transient = Some(error.to_string());
-                    continue;
-                }
-                Err(ApplyError::Retry(error)) => {
-                    let _ = session.abort_transaction().await;
-                    last_transient = Some(error.to_string());
-                    continue;
-                }
-                Err(ApplyError::Driver(error)) => {
-                    let _ = session.abort_transaction().await;
-                    return Err(SandboxStoreError::Unavailable(error.to_string()));
-                }
-            };
-            match commit_transaction(&mut session).await {
-                CommitOutcome::Committed => return Ok(receipt.result()),
-                CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
-                CommitOutcome::Unknown(error) => {
-                    return if reconcile_admission(self, &receipt).await? {
-                        Ok(receipt.result())
-                    } else {
-                        Err(SandboxStoreError::Unavailable(format!(
-                            "workspace admission commit remained unknown: {error}"
-                        )))
-                    };
-                }
-                CommitOutcome::Failed(error) => {
-                    return Err(SandboxStoreError::Unavailable(error.to_string()));
-                }
-            }
-        }
-        Err(exhausted("workspace admission", last_transient))
+        self.commit_workspace_admission(admission, false).await
+    }
+
+    async fn admit_catalogue_workspace(
+        &self,
+        admission: WorkspaceAdmission,
+    ) -> Result<WorkspaceAdmissionResult, SandboxStoreError> {
+        self.commit_workspace_admission(admission, true).await
     }
 
     async fn begin_workspace_prepare_recovery(
@@ -185,6 +137,7 @@ impl WorkspaceAdmissionStore for MongoSandboxStore {
 async fn apply_admission(
     store: &MongoSandboxStore,
     admission: &WorkspaceAdmission,
+    catalogue: bool,
     session: &mut mongodb::ClientSession,
 ) -> Result<AdmissionReceipt, ApplyError> {
     store
@@ -262,6 +215,29 @@ async fn apply_admission(
                     SandboxStoreError::WorkspaceOriginConflict,
                 ))
             };
+        }
+    }
+    if catalogue {
+        let profile = &candidate.profile;
+        let database = store.client.database(&store.workspaces.namespace().db);
+        if matches!(&candidate.origin, WorkspaceOrigin::Trigger { .. })
+            || !super::profile_pin_admission::workspace(
+                &database,
+                profile.id.as_str(),
+                profile.revision,
+                Some(&profile.digest),
+                session,
+            )
+            .await
+            .map_err(ApplyError::Driver)?
+        {
+            super::profile_pin_admission::frozen::workspace(
+                &database, candidate, &sandbox, session,
+            )
+            .await
+            .map_err(ApplyError::Driver)?
+            .require()
+            .map_err(ApplyError::Domain)?;
         }
     }
     if store

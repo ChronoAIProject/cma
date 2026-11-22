@@ -81,6 +81,8 @@ def stage_sources(text, target, build_args):
             while value.startswith('--'):
                 flag, _, value = value.partition(' ')
                 key, sep, val = flag[2:].partition('=')
+                if key == 'link' and (not sep or val in {'true', 'false'}):
+                    continue
                 if not sep or key not in {'from', 'chown', 'chmod'}:
                     raise ValueError('unsupported Docker copy flag')
                 flags[key] = val
@@ -175,6 +177,8 @@ def matches(path, pattern):
     pattern = pattern.strip('/')
     if pattern == '.':
         return True
+    if '*' not in pattern and '?' not in pattern and '[' not in pattern:
+        return path == pattern or path.startswith(pattern + '/')
     regex = compiled_pattern(pattern)
     # A matching directory includes its descendants; '*' itself cannot cross
     # a slash, while '**' follows Docker's recursive directory semantics.

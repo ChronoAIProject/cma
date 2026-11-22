@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { navigationFixture, sandboxFixture, workspaceFixture } from '../test/hierarchy';
 import { shellCommands, type ShellCommandOptions } from './commands';
+import { filterCommands } from './CommandMenu';
 
 function options(overrides: Partial<ShellCommandOptions> = {}): ShellCommandOptions {
   return {
@@ -48,6 +49,112 @@ describe('shellCommands', () => {
     ]);
   });
 
+  it('finds distinct names and disambiguates identical Agent names by canonical ID', () => {
+    const workspace = workspaceFixture();
+    const first = workspace.agents[0]!;
+    const onNavigate = vi.fn();
+    const list = shellCommands(
+      options({
+        onNavigate,
+        items: [
+          {
+            sandbox: sandboxFixture(),
+            workspaces: [
+              {
+                ...workspace,
+                agents: [
+                  { ...first, id: 'agt_review_alpha', title: 'Review code' },
+                  { ...first, id: 'agt_review_beta', title: 'Review code' },
+                  { ...first, id: 'agt_plan_gamma', title: 'Plan rollout' },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(filterCommands(list, 'Review code')).toHaveLength(2);
+    expect(filterCommands(list, 'Plan rollout').map(({ id }) => id)).toEqual([
+      'agent:agt_plan_gamma',
+    ]);
+    for (const [query, id] of [
+      ['agt_review_alpha', 'agt_review_alpha'],
+      ['  AGT_REVIEW_BETA  ', 'agt_review_beta'],
+      ['_alpha', 'agt_review_alpha'],
+      ['Review _beta', 'agt_review_beta'],
+    ]) {
+      const matches = filterCommands(list, query!);
+      expect(matches.map(({ id }) => id)).toEqual([`agent:${id}`]);
+      matches[0]!.run();
+      expect(onNavigate).toHaveBeenLastCalledWith({ kind: 'agent', agentId: id });
+    }
+    expect(filterCommands(list, 'Plan _beta')).toEqual([]);
+  });
+
+  it('searches each resource ID without indexing internal action or destination keys', () => {
+    const onNavigate = vi.fn();
+    const onNewAgent = vi.fn();
+    const list = shellCommands(options({ onNavigate, onNewAgent }));
+    for (const [id, route] of [
+      ['agt_1', { kind: 'agent', agentId: 'agt_1' }],
+      ['wsp_1', { kind: 'workspace', workspaceId: 'wsp_1' }],
+      ['sbx_1', { kind: 'sandbox', sandboxId: 'sbx_1' }],
+    ] as const) {
+      const matches = filterCommands(list, id);
+      expect(matches).toHaveLength(1);
+      matches[0]!.run();
+      expect(onNavigate).toHaveBeenLastCalledWith(route);
+    }
+    expect(filterCommands(list, 'Atlas Live').map(({ id }) => id)).toEqual(['sandbox:sbx_1']);
+    expect(filterCommands(list, 'sandbox sbx_1').map(({ id }) => id)).toEqual(['sandbox:sbx_1']);
+    for (const query of ['action:new-agent', 'go:agent-manager', 'agent:agt_1', 'agt_not_visible'])
+      expect(filterCommands(list, query)).toEqual([]);
+    expect(onNewAgent).not.toHaveBeenCalled();
+  });
+
+  it('keeps removed resources and their descendants out of ID search', () => {
+    const workspace = workspaceFixture();
+    const first = workspace.agents[0]!;
+    const list = shellCommands(
+      options({
+        items: [
+          {
+            sandbox: sandboxFixture(),
+            workspaces: [
+              { ...workspace, agents: [{ ...first, id: 'agt_deleted', status: 'deleted' }] },
+              {
+                ...workspace,
+                id: 'wsp_removed',
+                status: 'removed',
+                agents: [{ ...first, id: 'agt_removed_parent' }],
+              },
+            ],
+          },
+          ...(['retiring', 'retired'] as const).map((status) => ({
+            sandbox: { ...sandboxFixture(status), id: `sbx_${status}` },
+            workspaces: [
+              { ...workspace, id: `wsp_${status}`, agents: [{ ...first, id: `agt_${status}` }] },
+            ],
+          })),
+        ],
+      }),
+    );
+    for (const id of [
+      'agt_deleted',
+      'wsp_removed',
+      'agt_removed_parent',
+      'sbx_retiring',
+      'sbx_retired',
+      'wsp_retiring',
+      'wsp_retired',
+      'agt_retiring',
+      'agt_retired',
+    ])
+      expect(filterCommands(list, id)).toEqual([]);
+    expect(filterCommands(shellCommands(options({ items: [] })), 'agt_1')).toEqual([]);
+    expect(filterCommands(list, 'wsp_1')).toHaveLength(1);
+  });
+
   it('orders Agents by most recent activity', () => {
     const workspace = workspaceFixture();
     const [first] = workspace.agents;
@@ -59,9 +166,16 @@ describe('shellCommands', () => {
           {
             ...workspace,
             agents: [
-              { ...first, id: 'agt_old', updatedAt: '2026-09-01T00:00:00Z' },
-              { ...first, id: 'agt_new', updatedAt: '2026-09-09T00:00:00Z' },
-              { ...first, id: 'agt_bad', updatedAt: 'not a date' },
+              {
+                ...first,
+                id: 'agt_old',
+                taskActivityAt: '2026-09-01T00:00:00Z',
+                updatedAt: '2026-11-20T00:00:00Z',
+              },
+              { ...first, id: 'agt_new', taskActivityAt: '2026-09-09T00:00:00Z' },
+              { ...first, id: 'agt_z_missing', taskActivityAt: undefined },
+              { ...first, id: 'agt_bad', taskActivityAt: 'not a date' },
+              { ...first, id: 'agt_a_missing', taskActivityAt: undefined },
             ],
           },
         ],
@@ -70,7 +184,13 @@ describe('shellCommands', () => {
     const ids = shellCommands(options({ items }))
       .filter(({ group }) => group === 'Agents')
       .map(({ id }) => id);
-    expect(ids).toEqual(['agent:agt_new', 'agent:agt_old', 'agent:agt_bad']);
+    expect(ids).toEqual([
+      'agent:agt_new',
+      'agent:agt_old',
+      'agent:agt_a_missing',
+      'agent:agt_bad',
+      'agent:agt_z_missing',
+    ]);
   });
 
   it('leaves out deleted Agents, removed Workspaces and retiring Sandboxes', () => {

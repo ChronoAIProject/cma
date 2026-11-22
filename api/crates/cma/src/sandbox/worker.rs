@@ -28,6 +28,7 @@ mod provision_timing;
 mod provisioning;
 mod retained_retirement;
 mod retirement;
+mod retirement_credentials;
 mod retry;
 mod scheduling;
 mod startup_hold;
@@ -291,6 +292,8 @@ impl SandboxWorker {
         let Some(sandbox) = granted else {
             return Ok(false);
         };
+        #[cfg(test)]
+        diagnostics::executing();
         if self.config.renewable_work || sandbox.work.authority_protocol.is_some() {
             return Box::pin(self.run_renewable(sandbox, now, claiming)).await;
         }
@@ -427,3 +430,6 @@ impl SandboxWorker {
         Box::pin(self.execute(sandbox, now)).await
     }
 }
+
+#[cfg(test)]
+mod diagnostics;

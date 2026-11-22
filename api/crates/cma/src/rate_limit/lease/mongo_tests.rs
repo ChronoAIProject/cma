@@ -61,7 +61,7 @@ async fn disabled_leases_preserve_exact_command_sequence_and_one_token_gcra() {
                 "$set": {
                     "document_schema_version":{"$ifNull":["$document_schema_version",1_i32]},
                     "tat":{"$cond":[eligible.clone(),{"$add":[{"$max":[{"$ifNull":["$tat",0_i64]},{"$toLong":"$$NOW"}]},100_i64]},"$tat"]},
-                    "expires_at":{"$cond":[eligible,{"$add":["$$NOW",120_000]},"$expires_at"]}
+                    "expires_at":{"$cond":[eligible,{"$max":[{"$add":["$$NOW",120_000]},{"$toDate":{"$add":[{"$max":[{"$ifNull":["$tat",0_i64]},{"$toLong":"$$NOW"}]},100_i64]}}]},"$expires_at"]}
                 }
             })]
         );

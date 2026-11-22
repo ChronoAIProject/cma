@@ -1,5 +1,9 @@
 //! Preserve each runtime and home provider through creation and recovery.
 use super::*;
+use crate::ingress_budget::{AdmittedError, AdmittedOperation, IngressOwnershipPolicy, OwnedWork};
+
+#[path = "runtime_routing_backend_ingress.rs"]
+mod ingress;
 
 /// Persistence port for the provider chosen before a runtime creation request.
 #[async_trait::async_trait]
@@ -135,6 +139,16 @@ impl HostedBackend for RuntimeBackends {
         self.for_handle(handle)?
             .run_recovery_command(handle, command)
             .await
+    }
+
+    fn run_recovery_command_admitted<'a>(
+        &'a self,
+        handle: &'a RuntimeHandle,
+        command: OwnedWork<super::super::RuntimeRecoveryCommand>,
+        policy: &IngressOwnershipPolicy,
+    ) -> std::result::Result<AdmittedOperation<'a, Vec<u8>>, AdmittedError> {
+        self.admitted_backend(handle, &command, policy)?
+            .run_recovery_command_admitted(handle, command, policy)
     }
 
     async fn reserve_home_request(
@@ -393,6 +407,16 @@ impl HostedBackend for RuntimeBackends {
     ) -> Result<ResponseFrame> {
         self.for_handle(handle)?.exchange(handle, request).await
     }
+
+    fn exchange_admitted<'a>(
+        &'a self,
+        handle: &'a RuntimeHandle,
+        request: OwnedWork<RequestFrame>,
+        policy: &IngressOwnershipPolicy,
+    ) -> std::result::Result<AdmittedOperation<'a, ResponseFrame>, AdmittedError> {
+        self.admitted_backend(handle, &request, policy)?
+            .exchange_admitted(handle, request, policy)
+    }
     async fn export_agent_history(
         &self,
         handle: &RuntimeHandle,
@@ -427,3 +451,7 @@ impl HostedBackend for RuntimeBackends {
         self.for_handle(handle)?.teardown(handle).await
     }
 }
+
+#[cfg(test)]
+#[path = "runtime_routing_backend_ingress_tests.rs"]
+mod ingress_tests;

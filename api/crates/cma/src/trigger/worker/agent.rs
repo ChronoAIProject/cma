@@ -83,6 +83,14 @@ impl LaunchWorker {
         context: &FrozenLaunchContext,
         now: SystemTime,
     ) -> Result<(), LaunchWorkerError> {
+        let launch = if context.revision.publisher_deleted {
+            let Some(launch) = self.recover_retained_agent_effect(launch, now).await? else {
+                return Ok(());
+            };
+            launch
+        } else {
+            launch
+        };
         if !launch.resolution.agent.is_pending() {
             return self.fail_invalid_agent(launch, now).await;
         }
@@ -422,6 +430,17 @@ fn expected_first_message<'a>(
     agent: &'a Agent,
     context: &FrozenLaunchContext,
 ) -> Result<Option<&'a FirstMessageRecord>, LaunchResourceError> {
+    if context.revision.publisher_deleted {
+        return match agent.conversation.first_message.as_ref() {
+            None => Ok(None),
+            Some(record)
+                if record.origin_key == agent.creation_key && record.validate().is_ok() =>
+            {
+                Ok(Some(record))
+            }
+            Some(_) => Err(invalid_first_message()),
+        };
+    }
     let expected = &context.revision.content.first_message;
     match (
         expected.is_empty(),

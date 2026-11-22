@@ -1,0 +1,45 @@
+name: Staging CD catch-up
+
+# Allocation skips a lane while another run owns it. When that owner fails and
+# no push follows, nothing re-plans the lane; nor does anything re-deploy a
+# published final whose staging deployment failed. After every Staging CD run,
+# and hourly as a backstop, re-run the develop head's own push run once if a
+# lane was left behind. A re-run attempt is the same develop push event, so
+# staging-cd.yml stays push-only and keeps every authority check.
+on:
+  workflow_run:
+    workflows: [Staging CD]
+    types: [completed]
+    branches: [develop]
+  schedule:
+    - cron: '23 * * * *'
+
+permissions: {}
+
+jobs:
+  catch_up:
+    if: >-
+      github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/develop' &&
+      (github.event_name == 'schedule' ||
+       (github.event.workflow_run.event == 'push' && github.event.workflow_run.head_branch == 'develop' &&
+        github.event.workflow_run.head_repository.full_name == github.repository))
+    # One check at a time; a newer pending check replaces an older one.
+    concurrency:
+      group: cma-staging-cd-catch-up
+      cancel-in-progress: false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+      # Controller outcomes are read from the staging environment's deployments.
+      deployments: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - name: Re-plan lanes a failed run left behind
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CD_STAGING_ENVIRONMENT: chrono-ai-staging
+        run: python3 -B .github/scripts/staging_cd_catch_up.py

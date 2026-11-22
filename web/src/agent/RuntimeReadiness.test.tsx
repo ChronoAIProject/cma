@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createClient, type AgentEnvironment } from '@cma/client';
+import { ApiError, createClient, type AgentEnvironment } from '@cma/client';
 import { CmaClientProvider } from '../api/context';
 import { agentClient } from '../test/agent';
 import { ArtifactPublicationScope } from '../resources/artifactRecovery';
@@ -41,11 +41,12 @@ function panel(
   onSelect = vi.fn(),
   detail = AGENT_DETAIL,
   viewerId = 'owner-a',
+  agentId = 'agt_1',
 ) {
   return (
     <CmaClientProvider client={client}>
       <AgentSidePanel
-        agentId="agt_1"
+        agentId={agentId}
         shared={false}
         detail={detail}
         viewerId={viewerId}
@@ -74,7 +75,7 @@ it('waits for actual file availability and starts one read when the runtime beco
   await waitFor(() => expect(boundary).toHaveBeenCalledTimes(1));
   expect(fileClient.list).not.toHaveBeenCalled();
   await act(async () => resolve(Response.json(environment('temporarily_unavailable'))));
-  expect(await screen.findByText('Files is temporarily unavailable. Try again.')).toBeVisible();
+  expect(await screen.findByText('We couldn’t check file availability.')).toBeVisible();
   expect(fileClient.list).not.toHaveBeenCalled();
   fireEvent.focus(window);
   await waitFor(() => expect(boundary).toHaveBeenCalledTimes(2));
@@ -86,7 +87,7 @@ it('waits for actual file availability and starts one read when the runtime beco
   expect(fileClient.list).toHaveBeenCalledTimes(1);
 });
 
-it.each(['missing', '404', '403'] as const)(
+it.each(['missing', '404', '403', '503'] as const)(
   'uses only explicit legacy file fallback: %s',
   async (mode) => {
     const sdk = createClient({
@@ -101,7 +102,7 @@ it.each(['missing', '404', '403'] as const)(
       environment: mode === 'missing' ? undefined : sdk.agentFiles.environment.bind(sdk.agentFiles),
     };
     render(panel(agentClient({ files: fileClient })));
-    if (mode === '403') {
+    if (mode === '403' || mode === '503') {
       await act(async () => {});
       expect(fileClient.list).not.toHaveBeenCalled();
     } else await waitFor(() => expect(fileClient.list).toHaveBeenCalledTimes(1));
@@ -131,7 +132,7 @@ it('refreshes unavailable files when readiness changes and preserves an edited f
     sandbox: { ...AGENT_DETAIL.sandbox, status: 'installing' as const },
   };
   const view = render(panel(client, 'files', vi.fn(), starting));
-  await screen.findByText('Files is not enabled for this environment.');
+  await screen.findByText('File browsing is not available for this environment.');
   expect(fileClient.list).not.toHaveBeenCalled();
   available = true;
   view.rerender(panel(client));
@@ -141,10 +142,13 @@ it('refreshes unavailable files when readiness changes and preserves an edited f
   view.rerender(panel(client, 'activity'));
   view.rerender(panel(client, 'details'));
   view.rerender(panel(client));
-  expect(screen.getByRole('textbox', { name: 'Contents of notes.txt' })).toHaveValue(
+  expect(await screen.findByRole('textbox', { name: 'Contents of notes.txt' })).toHaveValue(
     'Retain the unsaved draft',
   );
-  expect(fileClient.list).toHaveBeenCalledTimes(1);
+  // Returning to the files tab re-lists asynchronously; the retained editor can
+  // render before that listing resolves, so wait for it instead of racing it.
+  await waitFor(() => expect(fileClient.list).toHaveBeenCalledTimes(2));
+  expect(fileClient.read).toHaveBeenCalledOnce();
 });
 
 it('selects the available browser without starting a hidden file read', async () => {
@@ -199,13 +203,11 @@ it('refreshes the desktop browser after Agent readiness even when files were alr
   });
   const starting = { ...AGENT_DETAIL, status: 'starting' as const, readyAt: undefined };
   const view = render(panel(client, 'browser', vi.fn(), starting));
-  await screen.findByText('Browser is not enabled for this environment.');
+  await screen.findByText('Live screen is not enabled');
   ready = true;
   view.rerender(panel(client, 'browser'));
   expect(await screen.findByAltText('Agent browser page')).toBeVisible();
-  expect(
-    screen.queryByText('Browser is not enabled for this environment.'),
-  ).not.toBeInTheDocument();
+  expect(screen.queryByText('Live screen is not enabled')).not.toBeInTheDocument();
 });
 
 it.each(['failure', 'expiry'] as const)(
@@ -218,7 +220,7 @@ it.each(['failure', 'expiry'] as const)(
       ...files(),
       environment: async () => {
         if (!available) {
-          if (mode === 'failure') throw new TypeError('Temporary connection failure');
+          if (mode === 'failure') throw new ApiError(503, 'Temporary connection failure');
           await new Promise<void>((done) => {
             resolve = done;
           });
@@ -260,7 +262,7 @@ it.each(['failure', 'expiry'] as const)(
     expect(fileClient.write).not.toHaveBeenCalled();
     available = true;
     if (resolve) await act(async () => resolve?.());
-    else fireEvent.focus(window);
+    else fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(await screen.findByRole('textbox', { name: 'Contents of notes.txt' })).toHaveValue(
       'Retain across outage',
     );
@@ -269,28 +271,41 @@ it.each(['failure', 'expiry'] as const)(
   },
 );
 
-it('cancels a delayed environment read before another account can display its files', async () => {
-  const reads: { signal?: AbortSignal; resolve: (value: AgentEnvironment) => void }[] = [];
-  const fileClient = {
-    ...files(),
-    environment: vi.fn(
-      (_agent: string, options?: { signal?: AbortSignal }) =>
-        new Promise<AgentEnvironment>((resolve) =>
-          reads.push({ signal: options?.signal, resolve }),
-        ),
-    ),
-  };
-  const client = agentClient({ files: fileClient });
-  const view = render(panel(client));
-  await waitFor(() => expect(reads).toHaveLength(1));
-  view.rerender(panel(client, 'files', vi.fn(), AGENT_DETAIL, 'owner-b'));
-  await waitFor(() => expect(reads).toHaveLength(2));
-  expect(reads[0]!.signal?.aborted).toBe(true);
-  await act(async () => reads[0]!.resolve(environment('available')));
-  expect(fileClient.list).not.toHaveBeenCalled();
-  await act(async () => reads[1]!.resolve(environment('available')));
-  await waitFor(() => expect(fileClient.list).toHaveBeenCalledTimes(1));
-});
+it.each(['owner', 'agent'] as const)(
+  'cancels a delayed environment read before another %s can display its files',
+  async (scope) => {
+    const reads: { signal?: AbortSignal; resolve: (value: AgentEnvironment) => void }[] = [];
+    const fileClient = {
+      ...files(),
+      environment: vi.fn(
+        (_agent: string, options?: { signal?: AbortSignal }) =>
+          new Promise<AgentEnvironment>((resolve) =>
+            reads.push({ signal: options?.signal, resolve }),
+          ),
+      ),
+    };
+    const client = agentClient({ files: fileClient });
+    const view = render(panel(client));
+    await waitFor(() => expect(reads).toHaveLength(1));
+    const nextAgent = scope === 'agent' ? 'agt_2' : 'agt_1';
+    view.rerender(
+      panel(
+        client,
+        'files',
+        vi.fn(),
+        AGENT_DETAIL,
+        scope === 'owner' ? 'owner-b' : 'owner-a',
+        nextAgent,
+      ),
+    );
+    await waitFor(() => expect(reads).toHaveLength(2));
+    expect(reads[0]!.signal?.aborted).toBe(true);
+    await act(async () => reads[0]!.resolve(environment('available')));
+    expect(fileClient.list).not.toHaveBeenCalled();
+    await act(async () => reads[1]!.resolve({ ...environment('available'), agent_id: nextAgent }));
+    await waitFor(() => expect(fileClient.list).toHaveBeenCalledTimes(1));
+  },
+);
 
 it('keeps stored settings visible and defers only models until ready, including recovery', async () => {
   const readAgentModels = vi.fn(async () => [

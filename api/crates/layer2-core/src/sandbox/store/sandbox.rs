@@ -9,6 +9,15 @@ use crate::{SandboxId, SubjectId};
 
 #[async_trait]
 pub trait SandboxStore: Send + Sync {
+    async fn owner_capacity(
+        &self,
+        _owner: &SubjectId,
+    ) -> Result<crate::sandbox::SandboxCapacitySnapshot, SandboxStoreError> {
+        Err(SandboxStoreError::Unavailable(
+            "Sandbox capacity is unavailable".into(),
+        ))
+    }
+
     /// Read compatible history for this exact failed aggregate; never backfill it.
     async fn failed_lifecycle_admission(
         &self,
@@ -33,11 +42,38 @@ pub trait SandboxStore: Send + Sync {
         ))
     }
 
+    /// Full admission evidence for the owner assessment, without writer audits.
+    async fn retained_reopen_assessment_snapshot(
+        &self,
+        _id: &SandboxId,
+        _path: crate::sandbox::RetainedReopenPath,
+    ) -> Result<crate::sandbox::RetainedReopenSnapshot, SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "retained reopening assessment is unavailable",
+        ))
+    }
+
     async fn retained_reopen_receipt(
         &self,
         _id: &SandboxId,
     ) -> Result<Option<crate::sandbox::RetainedReopenReceipt>, SandboxStoreError> {
         Ok(None)
+    }
+
+    async fn retained_reopen_replay(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Option<crate::sandbox::RetainedReopenReplay>, SandboxStoreError> {
+        Ok(self.retained_reopen_receipt(id).await?.map(Into::into))
+    }
+
+    async fn retained_suspended_reopen_snapshot(
+        &self,
+        _id: &SandboxId,
+    ) -> Result<crate::sandbox::RetainedReopenSnapshot, SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "suspended retained reopening is unavailable",
+        ))
     }
 
     async fn admit_retained_reopen(
@@ -46,6 +82,15 @@ pub trait SandboxStore: Send + Sync {
     ) -> Result<crate::sandbox::RetainedReopenAccepted, SandboxStoreError> {
         Err(SandboxStoreError::InvalidTransaction(
             "retained reopening is unavailable",
+        ))
+    }
+
+    async fn admit_suspended_reopen(
+        &self,
+        _request: crate::sandbox::RetainedSuspendedReopenRequest,
+    ) -> Result<crate::sandbox::RetainedReopenAccepted, SandboxStoreError> {
+        Err(SandboxStoreError::InvalidTransaction(
+            "suspended retained reopening is unavailable",
         ))
     }
 

@@ -1,5 +1,6 @@
 use super::*;
 mod acceptance;
+mod environment;
 mod transport_auth;
 use axum::{
     http::{HeaderMap, Method, StatusCode, Uri},
@@ -26,6 +27,10 @@ pub(crate) struct Instance {
     address: String,
     server: JoinHandle<()>,
 }
+
+pub(crate) fn public_routes(relay: &Arc<Relay>, router: Router) -> Router {
+    relay.routes(router)
+}
 impl Drop for Instance {
     fn drop(&mut self) {
         self.server.abort();
@@ -38,6 +43,14 @@ pub(crate) async fn cluster(count: usize) -> (Arc<MemoryOwnershipStore>, Vec<Ins
 async fn cluster_with_capacity(
     count: usize,
     capacity: crate::config::RelayCapacityConfig,
+) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
+    cluster_with_middleware(count, capacity, |router| router).await
+}
+
+async fn cluster_with_middleware(
+    count: usize,
+    capacity: crate::config::RelayCapacityConfig,
+    wrap: impl Fn(Router) -> Router,
 ) -> (Arc<MemoryOwnershipStore>, Vec<Instance>) {
     let store = Arc::new(MemoryOwnershipStore::default());
     let mut instances = Vec::new();
@@ -73,6 +86,11 @@ async fn cluster_with_capacity(
         updates.install_live_source(relay.live_source());
         let router = relay.routes(
             Router::new()
+                .route("/api/v1/agents/{agent}", get(environment::ready_fixture_read))
+                .route(
+                    "/api/v1/agents/{agent}/transcript",
+                    get(environment::ready_fixture_read),
+                )
                 .route(
                     "/api/v1/agents/{agent}/{*operation}",
                     axum::routing::any(|headers: HeaderMap, body: axum::body::Bytes| async move {
@@ -104,6 +122,7 @@ async fn cluster_with_capacity(
                 )
                 .layer(axum::extract::DefaultBodyLimit::max(MAX_BUFFERED_BODY_BYTES)),
         ).layer(axum::middleware::from_fn(test_auth));
+        let router = wrap(router);
         let server = tokio::spawn(async move {
             axum::serve(listener, router).await.unwrap();
         });

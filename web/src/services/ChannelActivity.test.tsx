@@ -51,6 +51,101 @@ const snapshot = (state: 'queued' | 'produced' = 'queued'): ActivityPage => ({
   ],
 });
 
+it('labels the bound from confirmed delivery and replaces it when exact production arrives', () => {
+  vi.stubGlobal('EventSource', Feed);
+  render(<ChannelActivity owner="owner" channelId="channel" active />);
+  const page = snapshot('produced');
+  const consumer = page.items[0]!.consumers[0]!;
+  const exact = consumer.produced_at;
+  consumer.state = 'completed';
+  consumer.produced_at = null;
+  consumer.produced_by = '2026-10-27T00:00:07Z';
+  act(() => Feed.instances[0]!.snapshot(page));
+  expect(
+    screen.getByText('Response produced by').parentElement?.querySelector('time'),
+  ).toHaveAttribute('datetime', consumer.produced_by);
+  expect(screen.getByText(/Confirmed answer delivery/)).toBeVisible();
+
+  consumer.produced_at = exact;
+  act(() => Feed.instances[0]!.snapshot({ ...page, cursor: 'exact' }));
+  expect(
+    screen.getByText('Response produced').parentElement?.querySelector('time'),
+  ).toHaveAttribute('datetime', exact);
+  expect(screen.queryByText('Response produced by')).not.toBeInTheDocument();
+  expect(screen.queryByText(/Confirmed answer delivery/)).not.toBeInTheDocument();
+});
+
+it.each(['lark', 'telegram'])(
+  'explains an unreported provider Agent on a completed %s delivery',
+  (platform) => {
+    vi.stubGlobal('EventSource', Feed);
+    render(<ChannelActivity owner="owner" channelId="channel" active />);
+    const page = snapshot('produced');
+    page.items[0]!.source = { type: 'nyxid_relay', platform };
+    const consumer = page.items[0]!.consumers[0]!;
+    consumer.state = 'completed';
+    consumer.conversation_id = 'gateway-conversation';
+    consumer.response_id = 'response-one';
+    consumer.deliveries = [
+      {
+        step: 'answer',
+        destination: 'origin',
+        outcome: 'confirmed',
+        observed_at: '2026-10-27T00:00:04Z',
+        confirmed_at: '2026-10-27T00:00:04Z',
+        platform_message_id: null,
+        recipients: [{ kind: `${platform}_chat`, id: 'recipient-one', thread_id: null }],
+      },
+    ];
+    for (const agentId of [undefined, null]) {
+      consumer.agent_id = agentId;
+      act(() => Feed.instances[0]!.snapshot(page));
+      const identity = screen.getByText('Provider Agent', { selector: 'dt' }).parentElement!;
+      expect(within(identity).getByText('Provider Agent identity was not reported')).toBeVisible();
+      expect(screen.queryByText('Provider execution reference')).not.toBeInTheDocument();
+      expect(screen.queryByText('Produced by')).not.toBeInTheDocument();
+      expect(screen.getByText('Agent completed')).toBeVisible();
+      expect(screen.getByText('Delivery confirmed')).toBeVisible();
+      expect(screen.getByText('Response produced', { selector: 'dt' })).toBeVisible();
+      expect(screen.getByText('gateway-conversation')).toBeVisible();
+      expect(screen.getByText('event-one')).toBeVisible();
+    }
+  },
+);
+
+it.each(['lark', 'telegram'])(
+  'keeps the reported %s provider Agent through reset and reconnect snapshots',
+  async (platform) => {
+    vi.stubGlobal('EventSource', Feed);
+    render(<ChannelActivity owner="owner" channelId="channel" active />);
+    const page = snapshot('produced');
+    page.items[0]!.source = { type: 'nyxid_relay', platform };
+    page.items[0]!.consumers[0]!.agent_id = 'agt_provider';
+    page.items[0]!.consumers[0]!.execution_reference = 'exec_terminal_worker';
+    act(() => Feed.instances[0]!.snapshot(page));
+    const identity = () =>
+      within(screen.getByText('Provider Agent', { selector: 'dt' }).parentElement!);
+    expect(identity().getByText('agt_provider')).toBeVisible();
+    expect(
+      within(screen.getByText('Provider execution reference').parentElement!).getByText(
+        'exec_terminal_worker',
+      ),
+    ).toBeVisible();
+    expect(screen.queryByText('Provider Agent identity was not reported')).not.toBeInTheDocument();
+    act(() => Feed.instances[0]!.snapshot(page, 'reset'));
+    expect(identity().getByText('agt_provider')).toBeVisible();
+    act(() => {
+      Feed.instances[0]!.readyState = Feed.CLOSED;
+      Feed.instances[0]!.onerror?.();
+    });
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Reconnect activity' }));
+    act(() => Feed.instances[1]!.snapshot(page));
+    expect(identity().getByText('agt_provider')).toBeVisible();
+    expect(screen.getByText('exec_terminal_worker')).toBeVisible();
+    expect(Feed.instances[0]!.closed).toBe(true);
+  },
+);
+
 it('shows the recorded refusal reason without claiming a chat reply', () => {
   vi.stubGlobal('EventSource', Feed);
   render(<ChannelActivity owner="owner" channelId="channel" active />);
@@ -76,7 +171,9 @@ it('shows the initial and pushed snapshots without refresh and never calls queue
   render(<ChannelActivity owner="owner" channelId="channel" active />);
   expect(Feed.instances[0]?.url).toBe('/api/event-gateway/v1/channels/channel/activity/stream');
   act(() => Feed.instances[0]!.snapshot(snapshot()));
-  expect(screen.getByText('Build service ·', { exact: false })).toBeVisible();
+  expect(screen.getByText('Actor not reported ·', { exact: false })).toBeVisible();
+  expect(document.body.innerHTML).not.toContain('Build service');
+  expect(document.body.innerHTML).not.toContain('producer');
   expect(screen.getByText('Queued')).toBeVisible();
   expect(screen.getByText('No recipient delivery receipt recorded.')).toBeVisible();
   expect(screen.queryByText('Delivery confirmed')).not.toBeInTheDocument();
@@ -109,7 +206,7 @@ it('preserves records on disconnect, explicitly reconnects, and ignores old chan
   expect(Feed.instances[1]?.closed).toBe(true);
   expect(screen.queryByText('Response produced', { selector: 'span' })).not.toBeInTheDocument();
   act(() => first.snapshot(snapshot('produced')));
-  expect(screen.queryByText('Build service', { exact: false })).not.toBeInTheDocument();
+  expect(screen.queryByText('event-one')).not.toBeInTheDocument();
   const page = snapshot('produced');
   page.items[0]!.consumers[0]!.deliveries = [
     {

@@ -96,9 +96,15 @@ export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFe
                         </dd>
                       </div>
                       <div>
-                        <dt>Produced by</dt>
-                        <dd>{consumer.agent_id ?? 'Not reported'}</dd>
+                        <dt>Provider Agent</dt>
+                        <dd>{consumer.agent_id ?? 'Provider Agent identity was not reported'}</dd>
                       </div>
+                      {consumer.execution_reference ? (
+                        <div>
+                          <dt>Provider execution reference</dt>
+                          <dd>{consumer.execution_reference}</dd>
+                        </div>
+                      ) : null}
                       {consumer.provider ? (
                         <div>
                           <dt>Provider</dt>
@@ -112,9 +118,16 @@ export function ChannelActivityView({ feed }: { readonly feed: ChannelActivityFe
                         </div>
                       ) : null}
                       <div>
-                        <dt>Response produced</dt>
+                        <dt>
+                          {!consumer.produced_at && consumer.produced_by
+                            ? 'Response produced by'
+                            : 'Response produced'}
+                        </dt>
                         <dd>
-                          <ActivityTimestamp value={consumer.produced_at} />
+                          <ActivityTimestamp value={consumer.produced_at ?? consumer.produced_by} />
+                          {!consumer.produced_at && consumer.produced_by ? (
+                            <span> · Confirmed answer delivery</span>
+                          ) : null}
                         </dd>
                       </div>
                     </dl>

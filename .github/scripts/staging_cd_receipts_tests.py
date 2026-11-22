@@ -3,7 +3,9 @@ import copy
 import unittest
 
 from staging_cd_common import Refusal
+from image_scanner_policy import MANIFEST_SHA256
 from staging_cd_receipts import (
+    SUPPORTED_SCANS,
     annotation, parse_annotation, published_receipt, validate_identity, validate_receipt,
 )
 from staging_cd_versions import plan_version
@@ -16,8 +18,14 @@ def fixture_identity(**changes):
 
 
 def fixture_receipt(**changes):
-    return published_receipt(fixture_identity(**changes), "sha256:" + "d" * 64, "e" * 64,
-                             {"detected": 3, "blocking": 0, "advisory": 2, "reviewed": 1, "allowlisted": 0})
+    from staging_cd_contract import GROUP, SCHEMA
+    identity = fixture_identity(**changes)
+    contract = ({"schema": SCHEMA, "source": identity["source"],
+                 "runtime_contract": "3", "bootstrap": "1", "home_layout": "2"}
+                if identity["component"] in GROUP else None)
+    return published_receipt(identity, "sha256:" + "d" * 64, "e" * 64,
+                             {"detected": 3, "blocking": 0, "advisory": 2, "reviewed": 1, "allowlisted": 0},
+                             scanner_identity=("1.0.4", MANIFEST_SHA256), compatibility=contract)
 
 
 def fixture_runtime_receipt(component="runtime", **changes):
@@ -58,6 +66,28 @@ class ReceiptTests(unittest.TestCase):
             scan["counts"][key] = value
             with self.subTest(key=key), self.assertRaises(Refusal):
                 validate_receipt(dict(receipt, scan=scan))
+
+    def test_recovery_reads_reviewed_pairs_but_writer_requires_its_verified_identity(self):
+        receipt = fixture_receipt()
+        previous = ("c84f531cc76a09aca96ba5fa153d31a640e119fb27b9c0c73b3a9d538c94f9df",
+                    "0d9e8ed1bd80b7e055107023fe73ce7c5cebb241c91667c07157d39c775b8aa3")
+        for digest in previous:
+            self.assertIn(("1.0.3", digest), SUPPORTED_SCANS)
+        current = (receipt["scan"]["version"], receipt["scan"]["bundle"])
+        self.assertEqual(current, ("1.0.4", MANIFEST_SHA256))
+        self.assertIn(("1.0.3", "1d7bc6478a8e4c8aa11c4e7293403ce5128efde58dec3206cf2d219e896a9dce"), SUPPORTED_SCANS)
+        self.assertIn(("1.0.4", "06e96df755ff3d8a60894bac93cfc9f80e713b44024b914b963f60ba00d7d2aa"), SUPPORTED_SCANS)
+        for version, bundle in SUPPORTED_SCANS:
+            old = dict(receipt, scan=dict(receipt["scan"], version=version, bundle=bundle))
+            self.assertEqual(parse_annotation(annotation(old)), old)
+            crossed = "1.0.3" if version == "1.0.4" else "1.0.4"
+            with self.subTest(version=crossed, bundle=bundle), self.assertRaises(Refusal):
+                validate_receipt(dict(old, scan=dict(old["scan"], version=crossed)))
+        wrong = [*sorted(SUPPORTED_SCANS - {current}), ("1.0.3", MANIFEST_SHA256), ("1.0.4", "f" * 64)]
+        for pair in wrong:
+            with self.subTest(pair=pair), self.assertRaises(Refusal):
+                published_receipt(receipt["identity"], receipt["digest"], receipt["archive"],
+                                  receipt["scan"]["counts"], scanner_identity=pair)
 
     def test_malformed_or_conflicting_receipts_cannot_allocate_another_version(self):
         for changes in ({"schema": "other"}, {"version": "0.11.0"}, {"pr": True},

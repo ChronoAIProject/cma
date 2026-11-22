@@ -1,5 +1,12 @@
 <!-- openapi-operations:start -->
 
+### Account deletion
+
+| Operation | Behavior |
+|---|---|
+| `GET /api/v1/account/deletion` | Read the authenticated owner's deletion status, including when new requests are disabled. |
+| `POST /api/v1/account/deletion` | Request deletion with explicit confirmation and `Idempotency-Key`; return 202 with a durable receipt. Replays remain available when new requests are disabled. |
+
 ### Event Worker Profiles
 
 These owner-scoped resources compose three published CMA profile revisions into
@@ -103,8 +110,11 @@ returns 409, including changing an omitted default into an explicit reference.
 | `GET /api/v1/admin/admission` | - | - | 200 AdmissionReadView |
 | `POST /api/v1/admin/admission/stop` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `PUT /api/v1/admin/admission/ceilings` | ReplaceCeilingsRequest | - | 200 CeilingsStateView |
+| `POST /api/v1/admin/admission/pending-homes/reconcile` | ReconcilePendingHomesRequest | - | 200 PendingHomesReconciliationView |
 | `POST /api/v1/admin/admission/resume` | AdmissionChangeRequest | - | 200 AdmissionView |
 | `GET /api/v1/admin/settings` | - | - | 200 SettingsView |
+| `GET /api/v1/admin/spend` | ConfigurePlatform; no write gate | - | 200 SpendView; 401 not_authenticated; 403 forbidden (not-an-operator); 503 platform_spend_unavailable. An absent service precedes the capability check. |
+| `POST /api/v1/admin/spend/observations` | ConfigurePlatform; CHRONO_MODEL_BUDGET_WRITES_ENABLED and CHRONO_PLATFORM_SPEND_WRITES_ENABLED; ObservationRequest | - | 200 SpendView; 401 not_authenticated; 403 forbidden (not-an-operator); 422 invalid_request; 503 model_budget_writes_unavailable or platform_spend_unavailable. Identical observations at the same instant are idempotent; conflicting units return 422. |
 | `PUT /api/v1/admin/settings` | ReplaceRequest | - | 200 SettingsView |
 | `PATCH /api/v1/admin/settings` | PatchRequest | - | 200 SettingsView |
 | `POST /api/v1/admin/settings/reset` | ResetRequest | - | 200 SettingsView |
@@ -470,6 +480,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v1/agui/capabilities` | - | - | 200 JSON |
 | `GET /api/v1/agui/events` | - | thread_id*, starting_after, after, follow | 200 SSE |
 | `POST /api/v1/agui/run` | RunRequest | - | 200 SSE |
+| `POST /api/v1/agui/run/receipt` | RunRequest / required Idempotency-Key | - | 200 InputReceipt or null |
 
 ### Trigger launches
 
@@ -507,6 +518,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v2` | - | - | 200 JSON capabilities |
 | `POST /api/v2/responses` | CreateV2ResponseRequest | - | 200 SSE |
 | `POST /api/v2/agents/{agent_id}/responses` | CreateV2ResponseRequest | - | 200 SSE |
+| `POST /api/v2/agents/{agent_id}/responses/receipt` | CreateV2ResponseRequest / required Idempotency-Key | - | 200 V2CommandStatus or null |
 | `GET /api/v2/responses/{response_id}` | - | - | 200 V2ResponseObject |
 | `GET /api/v2/responses/{response_id}/events` | - | starting_after | 200 SSE |
 | `GET /api/v2/responses/{response_id}/output` | - | after | 200 JSON output page |
@@ -637,6 +649,7 @@ volume; CMA does not expose a Sandbox snapshot archive endpoint.
 | `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables` | - | - | 200 AnswerDeliverablesView |
 | `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}` | - | `verify` (default false) | 200 AnswerDeliverableReadingView |
 | `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download` | - | - | 200 opaque attachment; 409 changed bytes |
+| `POST /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation` | TaskDeliveryConfirmation | - | 200 TaskAcceptanceView |
 
 Selectors are `{kind:"agent_artifact",id}`, `{kind:"document",id,revision}` or
 `{kind:"live_file",path}`. The descriptor validates the resource's own access and
@@ -689,6 +702,7 @@ conversation, and listing does not download file bodies. See
 | Operation | Body / Key | Query | Response |
 |---|---|---|---|
 | `GET /api/v1/sandboxes` | - | organization, shared, status, cursor, limit | 200 AccessibleSandboxPageView |
+| `GET /api/v1/sandboxes/capacity` | Observe authenticated owner Sandbox quota. |
 | `POST /api/v1/sandboxes` | CreateSandboxRequest; key | - | 201 SandboxView |
 | `GET /api/v1/sandboxes/{id}` | - | - | 200 AccessibleSandboxDetailView |
 | `DELETE /api/v1/sandboxes/{id}` | -; key | - | 202 SandboxView |
@@ -851,6 +865,7 @@ Errors:400 invalid_document_request/missing_idempotency_key/invalid_idempotency_
 | `GET /api/v1/documents/{id}/source` | Read current or specific source revision. |
 | `GET /api/v1/documents/{id}/revisions` | Page immutable source revision metadata. |
 | `GET /api/v1/documents/{id}/shares` | Owner direct recipient inventory. |
+| `GET /api/v1/documents/{id}/share-recipients` | Owner search for eligible direct recipients. |
 | `PUT /api/v1/documents/{id}/shares/{subject}` | Grant/update read or comment access. |
 | `DELETE /api/v1/documents/{id}/shares/{subject}` | Revoke direct recipient access. |
 | `GET /api/v1/documents/{id}/share-links` | Owner link metadata, never secrets. |

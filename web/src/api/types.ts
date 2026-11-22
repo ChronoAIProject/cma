@@ -190,7 +190,9 @@ export interface AgentRuntimeMetadata {
   readonly descriptionIsSetupPreview?: boolean;
 }
 export interface AgentSummary {
+  readonly taskAcceptance?: import('@cma/client').TaskAcceptance;
   readonly taskStartedAt?: string;
+  readonly taskActivityAt?: string;
   readonly taskStatus?: import('@cma/client').AgentTaskStatus;
   readonly ownerTitle?: string;
   readonly runtimeMetadata?: AgentRuntimeMetadata;
@@ -247,6 +249,7 @@ export interface FirstMessageState {
 }
 
 export interface AgentDetail {
+  readonly taskAcceptance?: import('@cma/client').TaskAcceptance;
   readonly ownerTitle?: string;
   readonly runtimeMetadata?: AgentRuntimeMetadata;
   readonly id: string;

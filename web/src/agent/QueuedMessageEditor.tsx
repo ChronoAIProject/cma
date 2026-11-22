@@ -5,6 +5,7 @@ import { usePresenceExiting } from '../ui/Presence';
 import {
   attachmentLimit,
   attachmentMarker,
+  describeAttachment,
   splitAttachmentMessage,
   transferredFiles,
   type DraftAttachment,
@@ -241,7 +242,7 @@ export function QueuedMessageEditor({
                   disabled={locked}
                   onClick={() => attachments.retry(item.key)}
                 >
-                  Retry {item.file.name}
+                  Retry {describeAttachment(item).name}
                 </Button>
               ))}
             <Button size="sm" disabled={localLocked} onClick={() => void copy()}>

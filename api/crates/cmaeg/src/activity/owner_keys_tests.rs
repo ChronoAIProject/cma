@@ -4,6 +4,7 @@ use crate::{auth::owner_keys::tests::OwnerFixture, worker_credentials::WorkerHis
 #[tokio::test]
 async fn scoped_owner_key_reads_public_management_routes_and_refuses_foreign_scope_and_owner() {
     let (server, mut state, mut request, owner) = fixture_app().await;
+    super::privacy::private_actor(&mut request);
     let channel = Arc::make_mut(&mut request.channel);
     channel.definition.creation = Some(cmaeg_core::channel::ChannelCreation {
         channel_id: channel.id.clone(),
@@ -40,6 +41,11 @@ async fn scoped_owner_key_reads_public_management_routes_and_refuses_foreign_sco
         ),
         format!("/v1/channels/{}", request.channel.id),
         format!("/v1/channels/{}/activity", request.channel.id),
+        format!(
+            "/v1/channels/{}/activity?diagnostics=true&raw=true",
+            request.channel.id
+        ),
+        format!("/v1/channels/{}/activity/stream", request.channel.id),
     ];
     let original = auth.claims.lock().unwrap().clone();
     for path in &paths {
@@ -51,6 +57,34 @@ async fn scoped_owner_key_reads_public_management_routes_and_refuses_foreign_sco
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK, "{path}");
         assert_eq!(response.headers()["cache-control"], "no-store");
+        if path.contains("/activity") {
+            let bytes = response.bytes_stream().next().await.unwrap().unwrap();
+            let body = std::str::from_utf8(&bytes).unwrap();
+            assert!(body.contains("Participant"));
+            assert!(body.contains("redacted"));
+            assert!(!body.contains(&request.activity.actor.id));
+            assert!(!body.contains(request.activity.actor.display_name.as_ref().unwrap()));
+        }
+        assert_eq!(
+            client
+                .get(format!("{base}{path}"))
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            client
+                .get(format!("{base}{path}"))
+                .headers(auth.headers.clone())
+                .header("X-CMAEG-Owner", "foreign-organization")
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
     }
     for (claim, value, status) in [
         (

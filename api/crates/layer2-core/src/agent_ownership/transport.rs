@@ -1,26 +1,76 @@
 use super::{bounded, Authority, OwnershipError};
 use layer3_adapter::owner_protocol::{
-    OwnershipFailure, OwnershipFailureReason, OwnershipPhase, TransportAuthority, TransportOwner,
+    OwnershipFailure, OwnershipFailureReason, OwnershipPhase, ReceiverCleanup,
+    ReceiverConfirmationCustody, ReceiverRevocation, TransportAuthority, TransportOwner,
 };
 use layer3_adapter::AdapterError;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 #[path = "receiver_diagnostics.rs"]
 mod diagnostics;
 use diagnostics::{emit, Event};
 
+#[derive(Clone)]
+pub(super) struct RegisteredReceiver {
+    revocation: Arc<dyn ReceiverRevocation>,
+    confirmation: ReceiverConfirmationCustody,
+}
+
 #[async_trait::async_trait]
 impl TransportAuthority for Authority {
+    fn retry_evidence(
+        &self,
+    ) -> Option<std::sync::Arc<layer3_adapter::owner_protocol::OwnershipEvidence>> {
+        self.retry_evidence.get().cloned()
+    }
     fn register_receiver(
         &self,
-        receiver: std::sync::Arc<dyn layer3_adapter::owner_protocol::ReceiverRevocation>,
+        receiver: Arc<dyn ReceiverRevocation>,
     ) -> layer3_adapter::Result<()> {
         let mut receivers = self.receivers.lock().unwrap();
-        if !self.is_current() || receivers.len() >= 64 {
+        if !self.is_current() {
             return Err(stale());
         }
-        receivers.insert(receiver.identity(), receiver);
+        let identity = receiver.identity();
+        if let Some(registered) = receivers.get_mut(&identity) {
+            // Preserve the captured revoker once we know this receiver may
+            // exist. A later registration cannot replace stronger custody.
+            if registered.confirmation == ReceiverConfirmationCustody::NeverSent {
+                registered.revocation = receiver;
+            }
+        } else {
+            if receivers.len() >= 64 {
+                return Err(stale());
+            }
+            receivers.insert(
+                identity.clone(),
+                RegisteredReceiver {
+                    revocation: receiver,
+                    confirmation: ReceiverConfirmationCustody::NeverSent,
+                },
+            );
+        }
+        self.confirmed_receivers.lock().unwrap().remove(&identity);
         Ok(())
+    }
+    fn receiver_observed(&self, identity: &str) {
+        if let Some(receiver) = self.receivers.lock().unwrap().get_mut(identity) {
+            if receiver.confirmation == ReceiverConfirmationCustody::NeverSent {
+                receiver.confirmation = ReceiverConfirmationCustody::ReceiverObserved;
+            }
+        }
+    }
+    fn begin_receiver_confirmation(&self, identity: &str) -> layer3_adapter::Result<()> {
+        let mut receivers = self.receivers.lock().unwrap();
+        if !self.is_current() {
+            return Err(stale());
+        }
+        let receiver = receivers.get_mut(identity).ok_or_else(stale)?;
+        receiver.confirmation = ReceiverConfirmationCustody::PossiblyDelivered;
+        Ok(())
+    }
+    fn receiver_confirmed(&self, identity: &str) {
+        self.confirm_receiver_binding(identity);
     }
     fn is_current(&self) -> bool {
         Authority::is_current(self)
@@ -98,6 +148,9 @@ impl TransportAuthority for Authority {
     }
 
     async fn record_failure(&self, failure: OwnershipFailure) {
+        if let Some(evidence) = self.retry_evidence.get() {
+            evidence.record_unknown(self.owner(), failure);
+        }
         let Some(store) = self
             .store
             .as_ref()
@@ -161,14 +214,63 @@ impl Authority {
     /// Retain every contacted receiver until all revocations succeed. A cancelled
     /// or ambiguous confirmation may have installed authority at the runtime.
     pub async fn revoke_transports(&self) -> Result<(), super::OwnershipError> {
+        self.settle_transports(false).await
+    }
+
+    /// Run after closing local admission, joining owned work, and detaching
+    /// owner sessions. A negative receiver proof does not provide quiescence.
+    pub async fn revoke_transports_after_local_drain(&self) -> Result<(), super::OwnershipError> {
+        self.settle_transports(true).await
+    }
+
+    async fn settle_transports(
+        &self,
+        after_local_drain: bool,
+    ) -> Result<(), super::OwnershipError> {
+        // Close confirmation admission before taking the same mutex used to
+        // record a possible send. A racing send is either captured or refused.
         self.revoke();
-        let receivers: Vec<_> = self.receivers.lock().unwrap().values().cloned().collect();
-        for receiver in receivers {
-            receiver.revoke().await.map_err(|_| {
-                super::OwnershipError::Unavailable("receiving runtime revocation failed".into())
-            })?;
+        if after_local_drain {
+            self.join_local_work().await?;
         }
-        self.receivers.lock().unwrap().clear();
+        let receivers: Vec<_> = self
+            .receivers
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(identity, receiver)| (identity.clone(), receiver.clone()))
+            .collect();
+        for (identity, receiver) in receivers {
+            let result = if after_local_drain {
+                receiver.revocation.settle(receiver.confirmation).await
+            } else {
+                receiver
+                    .revocation
+                    .revoke()
+                    .await
+                    .map(|()| ReceiverCleanup::Acknowledged)
+            };
+            match result {
+                Ok(ReceiverCleanup::Acknowledged) => {
+                    // Confirmation admission is closed. A matching runtime ACK
+                    // settles this token permanently, even if a sibling or
+                    // durable release still needs another attempt.
+                    self.receivers.lock().unwrap().remove(&identity);
+                    self.confirmed_receivers.lock().unwrap().remove(&identity);
+                }
+                Ok(ReceiverCleanup::NoReceiver)
+                    if receiver.confirmation == ReceiverConfirmationCustody::NeverSent =>
+                {
+                    // Keep only negative evidence in the retry set. Its
+                    // incumbent runtime must still be proven on the next attempt.
+                }
+                _ => {
+                    return Err(super::OwnershipError::Unavailable(
+                        "receiving runtime revocation failed".into(),
+                    ));
+                }
+            }
+        }
         Ok(())
     }
 }
@@ -189,3 +291,7 @@ fn failure_reason(error: &OwnershipError) -> OwnershipFailureReason {
         OwnershipError::Stale | OwnershipError::Invalid(_) => OwnershipFailureReason::AuthorityLost,
     }
 }
+
+#[cfg(test)]
+#[path = "receiver_custody_tests.rs"]
+mod tests;

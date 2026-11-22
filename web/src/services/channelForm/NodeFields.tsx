@@ -1,3 +1,5 @@
+import { ValidationScope } from './ValidationPath';
+import { SetupPolicy, SetupReview, SetupSection } from './SetupSections';
 import type { Denied } from '../client';
 import {
   nativeDiscordProviderUnavailable,
@@ -31,6 +33,7 @@ import {
 } from './model';
 export function NodeFields({
   draft,
+  active = true,
   onChange,
   credentials,
   onCredentials,
@@ -41,6 +44,7 @@ export function NodeFields({
   denied,
 }: {
   draft: Fields;
+  active?: boolean;
   onChange: (v: Fields) => void;
   credentials: Fields;
   onCredentials: (v: Fields) => void;
@@ -62,164 +66,202 @@ export function NodeFields({
   const set = (key: string, next: unknown) => onChange({ ...draft, [key]: next });
   return (
     <>
-      {create || section.kind === 'channel' ? (
-        <ChannelPolicyFields value={draft} onChange={onChange} hideConnection={create} />
-      ) : null}
-      {create ? (
-        <ManagedConnectionFields value={draft} onChange={onChange} denied={denied} />
-      ) : null}
-      {create && hasCustomSource(draft) && discovery.status === 'failed' ? (
-        <p className="channel-field-hint" role="status">
-          Could not check channel support. Your draft is retained.
-          {discovery.retry ? <Button onClick={discovery.retry}>Retry support check</Button> : null}
-        </p>
-      ) : null}
-      {create || section.kind === 'producer'
-        ? sources.map((source, index) =>
-            create || index === producer ? (
-              <Section title={`Producer ${index + 1}`} key={index} navigation={create}>
-                {create || index >= sourceCount ? (
-                  <Choice
-                    label={`Producer ${index + 1} connection type`}
-                    value={source.type}
-                    options={[
-                      { value: 'nyxid_relay', label: 'NyxID messaging connection' },
-                      { value: 'telegram', label: 'Direct Telegram bot' },
-                      {
-                        value: 'native_lark',
-                        label: 'Direct Lark / Feishu app',
-                        unavailable:
-                          nativeLarkUnavailable(discovery) ??
-                          (sources.some((other, i) => i !== index && other.type === 'native_lark')
-                            ? 'A channel can have only one direct Lark / Feishu producer.'
-                            : undefined),
-                      },
-                      {
-                        value: 'whatsapp',
-                        label: 'Direct WhatsApp Business',
-                        unavailable: nativeWhatsappUnavailable(discovery),
-                      },
-                      {
-                        value: 'discord',
-                        label: 'Direct Discord bot',
-                        unavailable: nativeDiscordUnavailable(discovery) ?? providerUnavailable,
-                      },
-                      { value: 'custom', label: 'Custom event' },
-                    ].filter((option) => {
-                      // Hide new setup until the gateway confirms activation. Existing
-                      // sources below remain inspectable when rollout gates are paused.
-                      if (option.value === 'native_lark') return !nativeLarkUnavailable(discovery);
-                      if (option.value === 'whatsapp') return !nativeWhatsappUnavailable(discovery);
-                      if (option.value === 'discord') return !nativeDiscordUnavailable(discovery);
-                      return true;
-                    })}
-                    onChange={(type) =>
-                      set(
-                        'sources',
-                        sources.map((v, i) => (i === index ? defaultSource(type) : v)),
-                      )
-                    }
-                  />
-                ) : null}
-                <SourceFields
-                  value={source}
-                  attachmentDescription={customAttachmentDescription(
-                    draft,
-                    create
-                      ? customExecutionSelected(discovery, draft)
-                      : savedCustomExecution === true,
-                  )}
-                  managedIdentity={Boolean(draft.connection_ref)}
-                  onChange={(next) =>
-                    set(
-                      'sources',
-                      sources.map((v, i) => (i === index ? next : v)),
-                    )
-                  }
-                />
-                {source.type === 'native_lark' ? (
-                  <NativeLarkCredentialsFields
-                    value={credentials}
-                    onChange={onCredentials}
-                    create={create || index >= sourceCount}
-                  />
-                ) : null}
-                {source.type === 'whatsapp' ? (
-                  <WhatsappCredentialsFields
-                    value={credentials}
-                    onChange={onCredentials}
-                    create={create}
-                  />
-                ) : null}
-                {!create &&
-                !draft.connection_ref &&
-                !['whatsapp', 'native_lark'].includes(String(source.type)) ? (
-                  <CredentialsFields
-                    value={credentials}
-                    onChange={onCredentials}
-                    keys={
-                      source.type === 'discord'
-                        ? ['discord_bot_token']
-                        : source.type === 'telegram'
-                          ? ['telegram_bot_token', 'telegram_webhook_secret']
-                          : source.type === 'nyxid_relay'
-                            ? ['channel_key']
-                            : []
-                    }
-                    hmac={source.type === 'custom'}
-                  />
-                ) : null}
-              </Section>
-            ) : null,
-          )
-        : null}
-      {create && draft.connection_ref === undefined ? (
-        <Button
-          disabled={sources.length >= 4}
-          onClick={() => set('sources', [...sources, defaultSource('custom')])}
-        >
-          Add producer
-        </Button>
-      ) : null}
-      {create || (section.kind === 'consumer' && section.id === 'default') ? (
-        <>
-          {create && sources.some((source) => source.type === 'discord') && providerUnavailable ? (
-            <p className="channel-field-hint" role="status">
-              {providerUnavailable}
-            </p>
-          ) : null}
-          <ProviderFields
-            immutable={!create}
-            value={object(draft.provider)}
-            onChange={(v) => set('provider', v)}
+      <SetupSection
+        enabled={create}
+        title="Connection"
+        description="Choose a supported platform and a connection you own. Next, review Agent behavior, access and replies. Fields marked Required must be completed before saving."
+      >
+        {create || section.kind === 'channel' ? (
+          <ChannelPolicyFields
+            value={draft}
+            onChange={onChange}
+            hideConnection={create}
+            part={create ? 'identity' : 'all'}
           />
-          <ProfileFields
-            immutableIdentity={!create}
-            value={object(draft.profile)}
-            onChange={(v) => set('profile', v)}
+        ) : null}
+        {create ? (
+          <ManagedConnectionFields
+            active={active}
+            value={draft}
+            onChange={onChange}
+            denied={denied}
+            hideAdmission
           />
+        ) : null}
+        {create && hasCustomSource(draft) && discovery.status === 'failed' ? (
+          <p className="channel-field-hint" role="status">
+            Could not check channel support. Your draft is retained.
+            {discovery.retry ? (
+              <Button onClick={discovery.retry}>Retry support check</Button>
+            ) : null}
+          </p>
+        ) : null}
+        {create || section.kind === 'producer'
+          ? sources.map((source, index) =>
+              create || index === producer ? (
+                <Section title={`Producer ${index + 1}`} key={index} navigation={false}>
+                  {create || index >= sourceCount ? (
+                    <Choice
+                      label={`Producer ${index + 1} connection type`}
+                      value={source.type}
+                      options={[
+                        { value: 'nyxid_relay', label: 'NyxID messaging connection' },
+                        { value: 'telegram', label: 'Direct Telegram bot' },
+                        {
+                          value: 'native_lark',
+                          label: 'Direct Lark / Feishu app',
+                          unavailable:
+                            nativeLarkUnavailable(discovery) ??
+                            (sources.some((other, i) => i !== index && other.type === 'native_lark')
+                              ? 'A channel can have only one direct Lark / Feishu producer.'
+                              : undefined),
+                        },
+                        {
+                          value: 'whatsapp',
+                          label: 'Direct WhatsApp Business',
+                          unavailable: nativeWhatsappUnavailable(discovery),
+                        },
+                        {
+                          value: 'discord',
+                          label: 'Direct Discord bot',
+                          unavailable: nativeDiscordUnavailable(discovery) ?? providerUnavailable,
+                        },
+                        { value: 'custom', label: 'Custom event' },
+                      ].filter((option) => {
+                        // Hide new setup until the gateway confirms activation. Existing
+                        // sources below remain inspectable when rollout gates are paused.
+                        if (option.value === 'native_lark')
+                          return !nativeLarkUnavailable(discovery);
+                        if (option.value === 'whatsapp')
+                          return !nativeWhatsappUnavailable(discovery);
+                        if (option.value === 'discord') return !nativeDiscordUnavailable(discovery);
+                        return true;
+                      })}
+                      onChange={(type) =>
+                        set(
+                          'sources',
+                          sources.map((v, i) => (i === index ? defaultSource(type) : v)),
+                        )
+                      }
+                    />
+                  ) : null}
+                  <ValidationScope value={`/sources/${index}`}>
+                    <SourceFields
+                      guided={create}
+                      hideAdmission={create}
+                      value={source}
+                      attachmentDescription={customAttachmentDescription(
+                        draft,
+                        create
+                          ? customExecutionSelected(discovery, draft)
+                          : savedCustomExecution === true,
+                      )}
+                      managedIdentity={Boolean(draft.connection_ref)}
+                      onChange={(next) =>
+                        set(
+                          'sources',
+                          sources.map((v, i) => (i === index ? next : v)),
+                        )
+                      }
+                    />
+                  </ValidationScope>
+                  {source.type === 'native_lark' ? (
+                    <NativeLarkCredentialsFields
+                      value={credentials}
+                      onChange={onCredentials}
+                      create={create || index >= sourceCount}
+                    />
+                  ) : null}
+                  {source.type === 'whatsapp' ? (
+                    <WhatsappCredentialsFields
+                      value={credentials}
+                      onChange={onCredentials}
+                      create={create}
+                    />
+                  ) : null}
+                  {!create &&
+                  !draft.connection_ref &&
+                  !['whatsapp', 'native_lark'].includes(String(source.type)) ? (
+                    <CredentialsFields
+                      value={credentials}
+                      onChange={onCredentials}
+                      keys={
+                        source.type === 'discord'
+                          ? ['discord_bot_token']
+                          : source.type === 'telegram'
+                            ? ['telegram_bot_token', 'telegram_webhook_secret']
+                            : source.type === 'nyxid_relay'
+                              ? ['channel_key']
+                              : []
+                      }
+                      hmac={source.type === 'custom'}
+                    />
+                  ) : null}
+                </Section>
+              ) : null,
+            )
+          : null}
+        {create && draft.connection_ref === undefined ? (
+          <Button
+            disabled={sources.length >= 4}
+            onClick={() => set('sources', [...sources, defaultSource('custom')])}
+          >
+            Add producer
+          </Button>
+        ) : null}
+        {create && (draft.connection_ref === undefined || usesHmacCredentials(draft)) ? (
           <CredentialsFields
             value={credentials}
             onChange={onCredentials}
-            keys={
-              create && draft.connection_ref === undefined
-                ? [
-                    'agent_key',
-                    ...(sources.some((source) => source.type === 'nyxid_relay')
-                      ? ['channel_key']
-                      : []),
-                    ...(sources.some((source) => source.type === 'telegram')
-                      ? ['telegram_bot_token', 'telegram_webhook_secret']
-                      : []),
-                    ...(sources.some((source) => source.type === 'discord')
-                      ? ['discord_bot_token']
-                      : []),
-                  ]
-                : ['agent_key']
-            }
-            create={create}
-            hmac={create && usesHmacCredentials(draft)}
+            create
+            keys={(draft.connection_ref === undefined ? sources : [])
+              .flatMap((source) => producerCredentialKeys(source.type))
+              .filter(
+                (key) => !['native_lark', 'whatsapp', 'replace_hmac', 'hmac_secrets'].includes(key),
+              )
+              .filter((key, index, keys) => keys.indexOf(key) === index)}
+            hmac={usesHmacCredentials(draft)}
           />
+        ) : null}
+      </SetupSection>
+      <SetupSection
+        enabled={create}
+        title="Agent behavior"
+        description="Review the destination, model, instructions and service permissions used for incoming messages."
+      >
+        {create || (section.kind === 'consumer' && section.id === 'default') ? (
+          <>
+            {create &&
+            sources.some((source) => source.type === 'discord') &&
+            providerUnavailable ? (
+              <p className="channel-field-hint" role="status">
+                {providerUnavailable}
+              </p>
+            ) : null}
+            <ProviderFields
+              immutable={!create}
+              value={object(draft.provider)}
+              onChange={(v) => set('provider', v)}
+            />
+            <ProfileFields
+              guided={create}
+              immutableIdentity={!create}
+              value={object(draft.profile)}
+              onChange={(v) => set('profile', v)}
+            />
+            <CredentialsFields
+              value={credentials}
+              onChange={onCredentials}
+              keys={['agent_key']}
+              create={create}
+            />
+          </>
+        ) : null}
+      </SetupSection>
+      {create ? (
+        <>
+          <SetupPolicy value={draft} onChange={onChange} />
+          <SetupReview value={draft} />
         </>
       ) : null}
       {!create && section.kind === 'channel' ? (

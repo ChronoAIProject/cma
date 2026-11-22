@@ -12,14 +12,21 @@ use super::{
     MongoUserDirectoryStore,
 };
 
+#[path = "account_mongo.rs"]
+mod account;
+pub(crate) use account::MongoAccountStores;
+
 pub(crate) struct MongoConnectionPolicy {
     pub authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     pub agent_manager_replicas: bool,
     pub startup_schema: crate::config::StartupSchemaMode,
+    pub shared_observation: bool,
+    pub initial_settings: super::settings_defaults::InitialSettings,
 }
 
 /// Aggregate-neutral stores opened atomically at process startup.
 pub struct MongoStores {
+    pub(crate) account_deletions: Arc<super::account_deletions::MongoAccountDeletionStore>,
     pub(crate) request_limits: Arc<super::request_limits::MongoRequestLimits>,
     pub(crate) document_artifacts: Arc<crate::document_artifacts::MongoDocumentStore>,
     pub(crate) message_feedback: Arc<super::message_feedback::MongoMessageFeedbackStore>,
@@ -51,6 +58,7 @@ pub struct MongoStores {
     pub(crate) agent_lifecycle: Arc<super::MongoAgentLifecycleStore>,
     client: Client,
     database: String,
+    initial_settings: super::settings_defaults::InitialSettings,
 }
 
 impl MongoStores {
@@ -58,21 +66,30 @@ impl MongoStores {
         mut self,
         deployment_limit: u16,
         writes_enabled: bool,
+        pending_home_reconciliation: bool,
     ) -> Result<Self, StoreError> {
+        if writes_enabled {
+            self.registration_capacity = Arc::new(
+                super::MongoRegistrationCapacityStore::open_with_defaults(
+                    &self.client,
+                    &self.database,
+                    true,
+                    self.initial_settings,
+                )
+                .await?,
+            );
+        }
         self.admission_ceilings = Arc::new(
-            super::MongoAdmissionCeilingsStore::open(
+            super::MongoAdmissionCeilingsStore::open_with_defaults(
                 &self.client,
                 &self.database,
                 deployment_limit,
+                self.initial_settings,
             )
-            .await?,
+            .await?
+            .with_activation(self.registration_capacity.activation_observation())
+            .with_pending_home_reconciliation(pending_home_reconciliation),
         );
-        if writes_enabled {
-            self.registration_capacity = Arc::new(
-                super::MongoRegistrationCapacityStore::open(&self.client, &self.database, true)
-                    .await?,
-            );
-        }
         Ok(self)
     }
 
@@ -138,6 +155,8 @@ impl MongoStores {
                 authority,
                 agent_manager_replicas: false,
                 startup_schema: Default::default(),
+                shared_observation: false,
+                initial_settings: Default::default(),
             },
         )
         .await
@@ -161,6 +180,9 @@ impl MongoStores {
             policy.agent_manager_replicas,
         )
         .await?;
+        if policy.shared_observation {
+            super::isolation::verify_observation(&client.database(database)).await?;
+        }
         Self::open_configured(
             client,
             database,
@@ -171,6 +193,7 @@ impl MongoStores {
                 checkpoint_storage: Arc::new(super::checkpoint_storage::RetiredCheckpointStorage),
                 runtime,
                 schema: super::schema::StartupObserver::new(policy.startup_schema),
+                initial_settings: policy.initial_settings,
             },
         )
         .await
@@ -196,6 +219,7 @@ impl MongoStores {
                 checkpoint_storage,
                 runtime,
                 schema: super::schema::StartupObserver::new(Default::default()),
+                initial_settings: Default::default(),
             },
         )
         .await
@@ -216,6 +240,7 @@ impl MongoStores {
             database,
             startup.checkpoint_storage,
             &mut startup.schema,
+            startup.initial_settings,
         )
         .await?
         .with_managed_runtime_version(startup.runtime.0.into());
@@ -227,7 +252,8 @@ impl MongoStores {
         );
         let trigger_definitions = Arc::new(
             MongoTriggerDefinitionStore::open(&client, database, Arc::clone(&sandbox_profiles))
-                .await?,
+                .await?
+                .with_initial_settings(startup.initial_settings),
         );
         let auth = Arc::new(
             MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
@@ -246,13 +272,41 @@ impl MongoStores {
             .await?,
         );
         let users = Arc::new(MongoUserDirectoryStore::open(&client, database).await?);
-        let settings = Arc::new(MongoPlatformSettingsStore::open(&client, database).await?);
-        let admission_control =
-            Arc::new(MongoAdmissionControlStore::open(&client, database).await?);
-        let admission_ceilings =
-            Arc::new(super::MongoAdmissionCeilingsStore::open(&client, database, 0).await?);
-        let registration_capacity =
-            Arc::new(super::MongoRegistrationCapacityStore::open(&client, database, false).await?);
+        let settings = Arc::new(
+            MongoPlatformSettingsStore::open_with_defaults(
+                &client,
+                database,
+                startup.initial_settings,
+            )
+            .await?,
+        );
+        let admission_control = Arc::new(
+            MongoAdmissionControlStore::open_with_defaults(
+                &client,
+                database,
+                startup.initial_settings,
+            )
+            .await?,
+        );
+        let registration_capacity = Arc::new(
+            super::MongoRegistrationCapacityStore::open_with_defaults(
+                &client,
+                database,
+                false,
+                startup.initial_settings,
+            )
+            .await?,
+        );
+        let admission_ceilings = Arc::new(
+            super::MongoAdmissionCeilingsStore::open_with_defaults(
+                &client,
+                database,
+                0,
+                startup.initial_settings,
+            )
+            .await?
+            .with_activation(registration_capacity.activation_observation()),
+        );
         let operations = Arc::new(MongoOperationStore::open(&client, database).await?);
         let agent_lifecycle =
             Arc::new(super::MongoAgentLifecycleStore::open(&client.database(database)).await?);
@@ -313,10 +367,16 @@ impl MongoStores {
             .ensure_indexes()
             .await
             .map_err(|_| StoreError::Unavailable("initialize document registry".into()))?;
+        let account_deletions = Arc::new(
+            super::account_deletions::MongoAccountDeletionStore::from_database(
+                &client.database(database),
+            ),
+        );
         let request_limits = Arc::new(
             super::request_limits::MongoRequestLimits::open(&client.database(database)).await?,
         );
         let stores = Self {
+            account_deletions,
             request_limits,
             document_artifacts,
             message_feedback,
@@ -342,6 +402,7 @@ impl MongoStores {
             agent_lifecycle,
             client,
             database: database.to_owned(),
+            initial_settings: startup.initial_settings,
         };
         stores.ping().await?;
         Ok(stores)
@@ -375,4 +436,5 @@ struct StoreStartup<'a> {
     checkpoint_storage: Arc<dyn super::CheckpointBlobStore>,
     runtime: (&'a str, Option<&'a layer3_adapter::HomeVolumePolicy>),
     schema: super::schema::StartupObserver,
+    initial_settings: super::settings_defaults::InitialSettings,
 }

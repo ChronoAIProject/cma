@@ -13,8 +13,10 @@ import { loadV2Agent } from './transport/load';
 import type { AgentV2Session } from './transport/client';
 import type { V2AgentEventItem } from '@cma/client';
 import { takeOpeningReads } from './transport/openingReads';
+import type { ActivityStatus } from './activityStatus';
 
 export interface ReadyAgent {
+  readonly activityStatus?: ActivityStatus;
   readonly v2?: AgentV2Session;
   readonly v2Items?: readonly V2AgentEventItem[];
   readonly detail: AgentDetail;

@@ -11,6 +11,16 @@ pub(super) fn cancellation(value: QueuedCancellationError) -> Response {
             "queued_response_cancellation_not_admitted",
             "The original cancellation was not admitted and its source command revision is permanently stale. Observe again before creating a new intent.", None),
         QueuedCancellationError::Admission(value) => admission(value),
+        QueuedCancellationError::OwnerRequired => {
+            let mut response = error::error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "agent_owner_unavailable",
+                "The Agent owner is temporarily unavailable. Retry with the original cancellation key and body.",
+                None,
+            );
+            response.extensions_mut().insert(super::QueuedCancellationNeedsOwner);
+            response
+        }
     }
 }
 

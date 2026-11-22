@@ -22,7 +22,7 @@ for (const theme of ['light', 'dark']) {
       const field = page.getByRole('textbox', { name: 'Message', exact: true });
       const queue = page.getByRole('button', { name: 'Queue message', exact: true });
       const stop = page.getByRole('button', { name: 'Stop response', exact: true });
-      await expect(queue).toBeVisible();
+      await expect(queue).toHaveCount(0);
       await expect(stop).toBeEnabled();
       await field.fill('Continue with this after the active response');
       await page.evaluate(
@@ -31,31 +31,35 @@ for (const theme of ['light', 'dark']) {
       );
       for (const width of [1440, 390, 320]) {
         await page.setViewportSize({ width, height: 900 });
-        for (const button of [queue, stop]) {
-          await expect
-            .poll(() =>
-              button.evaluate((element) => {
-                const box = element.getBoundingClientRect();
-                return (
-                  box.left >= 0 &&
-                  box.right <= innerWidth &&
-                  box.top >= 0 &&
-                  box.bottom <= innerHeight
-                );
-              }),
-            )
-            .toBe(true);
-        }
+        await field.fill('');
+        await expect(stop).toBeEnabled();
+        // Finish the frame's resize measurement and column transition before
+        // comparing the controls at this viewport width.
+        await page.locator('.frame').evaluate(async (frame) => {
+          await document.fonts.ready;
+          await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+          });
+          await Promise.all(frame.getAnimations().map((animation) => animation.finished));
+        });
+        const stopBox = await stop.boundingBox();
+        await field.fill('Continue with this after the active response');
+        await expect(queue).toBeEnabled();
+        expect(await queue.boundingBox()).toEqual(stopBox);
+        await expect(stop).toHaveCount(0);
         await expect
-          .poll(async () => {
-            const [queueBox, stopBox] = await Promise.all([
-              queue.boundingBox(),
-              stop.boundingBox(),
-            ]);
-            if (queueBox === null || stopBox === null) return Number.POSITIVE_INFINITY;
-            return Math.abs(queueBox.y + queueBox.height / 2 - (stopBox.y + stopBox.height / 2));
-          })
-          .toBeLessThan(1);
+          .poll(() =>
+            queue.evaluate((element) => {
+              const box = element.getBoundingClientRect();
+              return (
+                box.left >= 0 &&
+                box.right <= innerWidth &&
+                box.top >= 0 &&
+                box.bottom <= innerHeight
+              );
+            }),
+          )
+          .toBe(true);
         await page.screenshot({
           path: info.outputPath(`queued-composer-${theme}-${width}.png`),
           animations: 'disabled',
@@ -65,7 +69,7 @@ for (const theme of ['light', 'dark']) {
       await field.press('Enter');
       await expect(field).toHaveValue('');
       await expect(
-        page.getByRole('button', { name: 'Cancel queued message', exact: true }),
+        page.getByRole('button', { name: 'Remove queued message 1', exact: true }),
       ).toBeEnabled();
       expect(fixture.writes).toHaveLength(1);
       expect(fixture.writes[0]!.path).toBe('/api/v2/agents/agt_contract/responses');
@@ -73,7 +77,7 @@ for (const theme of ['light', 'dark']) {
         input: 'Continue with this after the active response',
         stream: true,
       });
-      await expect(page.getByRole('button', { name: /^Thinking/ })).toBeVisible();
+      await expect(page.getByRole('status').filter({ hasText: /^Thinking$/ })).toBeVisible();
       await expect(stop).toBeEnabled();
       fixture.append({
         type: 'tool_started',
@@ -82,18 +86,16 @@ for (const theme of ['light', 'dark']) {
         kind: 'execute',
         status: 'running',
       });
-      await expect(page.getByRole('button', { name: /^Thinking/ })).toContainText(
-        'Continue original work',
-      );
+      await page.getByRole('button', { name: 'View activity', exact: true }).click();
+      await expect(page.locator('.thinking__activity')).toContainText('Continue original work');
       await field.fill('Keep this next draft');
-      await page.getByRole('button', { name: 'Cancel queued message', exact: true }).click();
+      await page.getByRole('button', { name: 'Remove queued message 1', exact: true }).click();
       await expect(
-        page
-          .getByRole('status')
-          .filter({ hasText: 'Your queued message was cancelled before it started.' }),
-      ).toBeVisible();
+        page.getByRole('button', { name: 'Remove queued message 1', exact: true }),
+      ).toHaveCount(0);
       await expect(field).toHaveValue('Keep this next draft');
-      await expect(stop).toBeEnabled();
+      await expect(queue).toBeEnabled();
+      await expect(stop).toHaveCount(0);
       expect(fixture.writes.filter((write) => write.path.endsWith('/controls'))).toEqual([]);
       expect(fixture.boundary.writes).toEqual([]);
       expect(fixture.boundary.unexpected).toEqual([]);
@@ -139,7 +141,7 @@ for (const theme of ['light', 'dark']) {
         const control = await send.boundingBox();
         const seat = await page.locator('.agent-composer__form').boundingBox();
         expect(initial?.height).toBe(40);
-        expect(control?.height).toBe(width > 480 ? 28 : 44);
+        expect(control?.height).toBe(width > 480 ? 32 : 44);
         const padding = await field.evaluate((element) => {
           const style = getComputedStyle(element);
           return [style.paddingTop, style.paddingBottom];
@@ -328,6 +330,101 @@ test('LOCAL browser clipboard screenshot and dropped file preview, persist, and 
     expect(fixture.errors).toEqual([]);
   } finally {
     releaseImage?.();
+    await fixture.close(page);
+  }
+});
+
+for (const action of ['button', 'Escape'] as const) {
+  test(`LOCAL response Stop: ${action} submits one fenced cancellation and retains its outcome`, async ({
+    page,
+    baseURL,
+  }) => {
+    const fixture = new LocalAgentV2();
+    fixture.append(
+      { type: 'turn_started', turn_sequence: 1 },
+      {
+        response_id: 'resp_1',
+        command_id: 'cmd_1',
+        turn_sequence: 1,
+      },
+    );
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let attempts = 0;
+    try {
+      await fixture.route(page, baseURL!);
+      await page.route('**/responses/resp_1/controls', async (route) => {
+        if (route.request().method() === 'POST') {
+          attempts += 1;
+          await pending;
+        }
+        await route.fallback();
+      });
+      await page.goto('/agents/agt_contract');
+      const field = page.getByRole('textbox', { name: 'Message', exact: true });
+      const stop = page.getByRole('button', { name: 'Stop response', exact: true });
+      await expect(stop).toBeEnabled();
+      await field.focus();
+      await expect(page.getByText('Esc to stop', { exact: true })).toBeVisible();
+      if (action === 'Escape') await field.press('Escape');
+      else await stop.click();
+      await expect.poll(() => attempts).toBe(1);
+      await expect(page.getByRole('button', { name: 'Stopping response' })).toBeDisabled();
+      await field.press('Escape');
+      await field.press('Escape');
+      expect(attempts).toBe(1);
+      await expect(page.getByText('Esc to stop', { exact: true })).toHaveCount(0);
+      release();
+      await expect.poll(() => fixture.writes.length).toBe(1);
+      expect(fixture.writes[0]).toMatchObject({
+        path: '/api/v2/agents/agt_contract/responses/resp_1/controls',
+        body: { turn_sequence: 1, expected_agent_revision: 10, command: { type: 'cancel' } },
+      });
+      expect(fixture.writes[0]!.key).toBeTruthy();
+      fixture.append({ type: 'turn_cancelled', turn_sequence: 1 });
+      await expect(page.getByRole('button', { name: /Stop.*response/ })).toHaveCount(0);
+      await page.reload();
+      await expect(field).toBeVisible();
+      await field.press('Escape');
+      expect(fixture.writes).toHaveLength(1);
+      expect(fixture.boundary.unexpected).toEqual([]);
+      expect(fixture.boundary.writes).toEqual([]);
+      expect(fixture.errors).toEqual([]);
+    } finally {
+      release();
+      await fixture.close(page);
+    }
+  });
+}
+
+test('LOCAL unbound response never advertises Stop; focus outside the composer cannot cancel it', async ({
+  page,
+  baseURL,
+}) => {
+  const fixture = new LocalAgentV2();
+  fixture.append({ type: 'turn_started', turn_sequence: 1 });
+  try {
+    await fixture.route(page, baseURL!);
+    await page.goto('/agents/agt_contract');
+    const field = page.getByRole('textbox', { name: 'Message', exact: true });
+    await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeDisabled();
+    await expect(
+      page.getByText('Stop is unavailable for this response.', { exact: true }),
+    ).toBeVisible();
+    await field.press('Escape');
+    await expect(page.getByText('Esc to stop', { exact: true })).toHaveCount(0);
+    await page.getByRole('button', { name: 'Show Agent details', exact: true }).focus();
+    await page.keyboard.press('Escape');
+    expect(fixture.writes).toEqual([]);
+    await page.reload();
+    await expect(page.getByRole('button', { name: 'Stop response', exact: true })).toBeDisabled();
+    await expect(page.getByText('Esc to stop', { exact: true })).toHaveCount(0);
+    expect(fixture.writes).toEqual([]);
+    expect(fixture.boundary.unexpected).toEqual([]);
+    expect(fixture.errors).toEqual([]);
+  } finally {
     await fixture.close(page);
   }
 });

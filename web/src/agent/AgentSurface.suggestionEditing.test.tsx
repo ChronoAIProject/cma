@@ -7,7 +7,14 @@ import { accessRequests } from './accessRequests';
 import { AgentSurface } from './AgentSurface';
 import { useAgentController } from './controller';
 import { useAgentDraft } from './draft';
-import { accepted, harness, item, json, page } from './transport/controller.fixture';
+import {
+  accepted,
+  harness,
+  item,
+  json,
+  page,
+  completedInputReceipt,
+} from './transport/controller.fixture';
 import type { SuggestedReplySet } from './suggestions';
 
 const suggestionText = 'Add explicit comparison criteria and explain the trade-offs.';
@@ -262,18 +269,20 @@ it('recovers an immutable uncertain request while retaining newer edited text an
   await user.click(screen.getByRole('button', { name: 'Replace text' }));
   fireEvent.change(field, { target: { value: 'Fresh edited budget request' } });
   expect(screen.getByRole('button', { name: 'Send message' })).toBeDisabled();
+  fixture.inputReceipt.mockImplementationOnce(async () => completedInputReceipt());
   await user.click(recovery);
-  await waitFor(() => expect(fixture.post).toHaveBeenCalledTimes(2));
-  expect(fixture.post.mock.calls[1]![0]!.body).toBe(original.body);
-  expect(new Headers(fixture.post.mock.calls[1]![0]!.headers).get('Idempotency-Key')).toBe(
+  await waitFor(() => expect(fixture.inputReceipt).toHaveBeenCalledTimes(2));
+  expect(fixture.post).toHaveBeenCalledOnce();
+  expect(fixture.inputReceipt.mock.lastCall![0]!.body).toBe(original.body);
+  expect(new Headers(fixture.inputReceipt.mock.lastCall![0]!.headers).get('Idempotency-Key')).toBe(
     new Headers(original.headers).get('Idempotency-Key'),
   );
   expect(field).toHaveValue('Fresh edited budget request');
   expect(screen.getByRole('list', { name: 'Attachments' })).toHaveTextContent('budget.txt');
   await waitFor(() => expect(screen.getByRole('button', { name: 'Send message' })).toBeEnabled());
   await user.click(screen.getByRole('button', { name: 'Send message' }));
-  await waitFor(() => expect(fixture.post).toHaveBeenCalledTimes(3));
-  const fresh = fixture.post.mock.calls[2]![0]!;
+  await waitFor(() => expect(fixture.post).toHaveBeenCalledTimes(2));
+  const fresh = fixture.post.mock.calls[1]![0]!;
   expect(new Headers(fresh.headers).get('Idempotency-Key')).not.toBe(
     new Headers(original.headers).get('Idempotency-Key'),
   );
@@ -339,7 +348,7 @@ it('withdraws an open edit decision when its answer expires and preserves the cu
   expect(fixture.post).not.toHaveBeenCalled();
 });
 
-it('keeps an expired edited source as ordinary input and rechecks the owner before sending it', async () => {
+it('clears an expired edited draft on confirmed account change and requires new input after rechecking', async () => {
   const { field, user, fixture, rerender } = await setup();
   await user.click(screen.getByRole('button', { name: 'Edit suggestion 1 before sending' }));
   fireEvent.change(field, { target: { value: 'Manual budget follow-up' } });
@@ -360,9 +369,9 @@ it('keeps an expired edited source as ordinary input and rechecks the owner befo
   fixture.currentUser.mockResolvedValue('alice');
   rerender({ provided: null });
   await user.click(screen.getByRole('button', { name: 'Try again' }));
-  expect(await screen.findByRole('textbox', { name: 'Message' })).toHaveValue(
-    'Manual budget follow-up',
-  );
+  const recovered = await screen.findByRole('textbox', { name: 'Message' });
+  expect(recovered).toHaveValue('');
+  fireEvent.change(recovered, { target: { value: 'Manual budget follow-up' } });
   await user.click(screen.getByRole('button', { name: 'Send message' }));
   await waitFor(() => expect(fixture.post).toHaveBeenCalledOnce());
   expect(JSON.parse(String(fixture.post.mock.calls[0]![0]!.body))).toEqual({
@@ -412,7 +421,7 @@ it('retires replacement undo after manual editing even if the user types the sam
   expect(field).toHaveValue(suggestionText);
 });
 
-it('uses the normal AG-UI route to recover the exact edited intent while keeping newer draft text', async () => {
+it('uses an AG-UI receipt to recover the exact edited intent while keeping newer draft text', async () => {
   const { field, user, fixture, attach } = await setup(true);
   await attach();
   await user.click(screen.getByRole('button', { name: 'Edit suggestion 1 before sending' }));
@@ -427,21 +436,14 @@ it('uses the normal AG-UI route to recover the exact edited intent while keeping
   expect(body.messages[0].content).toContain('保留预算上限\nCompare latency and cost.');
   expect(body.forwardedProps.answerContext).toEqual({ turn_sequence: 1, answer_sequence: 3 });
   fireEvent.change(field, { target: { value: 'Later independent draft' } });
-  fixture.post.mockResolvedValueOnce(
-    new Response(
-      [
-        { type: 'RUN_STARTED', threadId: 'agt_1', runId: '5' },
-        { type: 'RUN_FINISHED', threadId: 'agt_1', runId: '5' },
-      ]
-        .map((event) => `data: ${JSON.stringify(event)}\n\n`)
-        .join(''),
-      { headers: { 'content-type': 'text/event-stream' } },
-    ),
+  fixture.inputReceipt.mockImplementationOnce(async () =>
+    json({ threadId: 'agt_1', runId: '5', status: 'completed' }),
   );
   await user.click(recover);
-  await waitFor(() => expect(fixture.post).toHaveBeenCalledTimes(2));
-  expect(fixture.post.mock.calls[1]![0]!.body).toBe(original.body);
-  expect(new Headers(fixture.post.mock.calls[1]![0]!.headers).get('Idempotency-Key')).toBe(
+  await waitFor(() => expect(fixture.inputReceipt).toHaveBeenCalledTimes(2));
+  expect(fixture.post).toHaveBeenCalledOnce();
+  expect(fixture.inputReceipt.mock.lastCall![0]!.body).toBe(original.body);
+  expect(new Headers(fixture.inputReceipt.mock.lastCall![0]!.headers).get('Idempotency-Key')).toBe(
     new Headers(original.headers).get('Idempotency-Key'),
   );
   expect(field).toHaveValue('Later independent draft');

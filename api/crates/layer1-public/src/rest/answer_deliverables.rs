@@ -1,3 +1,4 @@
+use super::task_acceptance_shapes::TaskAcceptanceView;
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
 use axum::{
     extract::{Path, Query, State},
@@ -16,7 +17,7 @@ pub(crate) use shapes::*;
 
 #[derive(utoipa::OpenApi)]
 #[openapi(
-    paths(describe, list, read_item, download),
+    paths(describe, list, read_item, download, confirm_task_delivery),
     components(schemas(
         DeliverableResourceView,
         DeliverableReferenceView,
@@ -44,6 +45,10 @@ pub fn answer_deliverables_router(service: Arc<AnswerDeliverableService>) -> Rou
             "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download",
             get(download),
         )
+        .route(
+            "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation",
+            post(confirm_task_delivery),
+        )
         .layer(axum::middleware::from_fn(private_headers))
         .with_state(service)
 }
@@ -67,6 +72,16 @@ async fn private_headers(
     response
 }
 
+fn prefers_native_media(headers: &HeaderMap) -> bool {
+    headers.get_all("prefer").iter().any(|value| {
+        value.to_str().is_ok_and(|value| {
+            value
+                .split(',')
+                .any(|token| token.trim() == "cma-native-attachment-media")
+        })
+    })
+}
+
 fn access<'a>(
     caller: &'a layer2_core::Caller,
     resource: &'a Option<AuthenticatedResourceCaller>,
@@ -84,7 +99,8 @@ fn access<'a>(
 }
 
 #[utoipa::path(post, path = "/api/v1/agents/{id}/deliverable-references", tag = "agents",
-    params(("id" = String, Path), ("X-CMA-Document-Share-Token" = Option<String>, Header)),
+    params(("id" = String, Path), ("X-CMA-Document-Share-Token" = Option<String>, Header),
+        ("Prefer" = Option<String>, Header, description = "Use cma-native-attachment-media to request native media types")),
     request_body = DeliverableResourceView,
     responses((status = 200, body = DeliverableDescriptionView), (status = 401, body = super::ProblemDocument),
         (status = 404, body = super::ProblemDocument), (status = 422, body = super::ProblemDocument), (status = 503, body = super::ProblemDocument)))]
@@ -99,19 +115,23 @@ pub(crate) async fn describe(
     let body = body
         .map_err(|error| super::BodyProblem::from(error).into_response())?
         .0;
-    service
+    let mut description = service
         .describe(
             &access(&caller, &resource, &headers).map_err(IntoResponse::into_response)?,
             &AgentId(agent),
             body,
         )
         .await
-        .map(Json)
-        .map_err(problem)
+        .map_err(problem)?;
+    if !prefers_native_media(&headers) {
+        description.reference.use_legacy_file_media();
+    }
+    Ok(Json(description))
 }
 
 #[utoipa::path(get, path = "/api/v1/agents/{id}/answers/{answer_id}/deliverables", tag = "agents",
-    params(("id" = String, Path), ("answer_id" = String, Path), ("X-CMA-Document-Share-Token" = Option<String>, Header)),
+    params(("id" = String, Path), ("answer_id" = String, Path), ("X-CMA-Document-Share-Token" = Option<String>, Header),
+        ("Prefer" = Option<String>, Header, description = "Use cma-native-attachment-media to request native media types")),
     responses((status = 200, body = AnswerDeliverablesView), (status = 401, body = super::ProblemDocument),
         (status = 404, body = super::ProblemDocument), (status = 422, body = super::ProblemDocument), (status = 503, body = super::ProblemDocument)))]
 pub(crate) async fn list(
@@ -121,15 +141,20 @@ pub(crate) async fn list(
     Path((agent, answer)): Path<(String, String)>,
     headers: HeaderMap,
 ) -> Result<Json<AnswerDeliverables>, Response> {
-    service
+    let mut list = service
         .list(
             &access(&caller, &resource, &headers).map_err(IntoResponse::into_response)?,
             &AgentId(agent),
             sequence(&answer).map_err(problem)?,
         )
         .await
-        .map(Json)
-        .map_err(problem)
+        .map_err(problem)?;
+    if !prefers_native_media(&headers) {
+        for item in &mut list.items {
+            item.reference.use_legacy_file_media();
+        }
+    }
+    Ok(Json(list))
 }
 
 #[derive(serde::Deserialize)]
@@ -141,7 +166,8 @@ pub(crate) struct VerifyParams {
 
 #[utoipa::path(get, path = "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}", tag = "agents",
     params(("id" = String, Path), ("answer_id" = String, Path), ("delivery_id" = String, Path),
-        ("verify" = Option<bool>, Query), ("X-CMA-Document-Share-Token" = Option<String>, Header)),
+        ("verify" = Option<bool>, Query), ("X-CMA-Document-Share-Token" = Option<String>, Header),
+        ("Prefer" = Option<String>, Header, description = "Use cma-native-attachment-media to request native media types")),
     responses((status = 200, body = AnswerDeliverableReadingView), (status = 401, body = super::ProblemDocument),
         (status = 404, body = super::ProblemDocument), (status = 422, body = super::ProblemDocument), (status = 503, body = super::ProblemDocument)))]
 pub(crate) async fn read_item(
@@ -153,7 +179,7 @@ pub(crate) async fn read_item(
     headers: HeaderMap,
 ) -> Result<Json<AnswerDeliverableReading>, Response> {
     let query = query.map_err(|_| problem(DeliverableError::Invalid))?.0;
-    service
+    let mut reading = service
         .read_item(
             &access(&caller, &resource, &headers).map_err(IntoResponse::into_response)?,
             &AgentId(agent),
@@ -162,13 +188,23 @@ pub(crate) async fn read_item(
             query.verify,
         )
         .await
-        .map(Json)
-        .map_err(problem)
+        .map_err(problem)?;
+    if !prefers_native_media(&headers) {
+        reading.item.reference.use_legacy_file_media();
+    }
+    Ok(Json(reading))
 }
 
 #[utoipa::path(get, path = "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download", tag = "agents",
-    params(("id" = String, Path), ("answer_id" = String, Path), ("delivery_id" = String, Path), ("X-CMA-Document-Share-Token" = Option<String>, Header)),
-    responses((status = 200, body = Vec<u8>, content_type = "application/octet-stream"),
+    params(("id" = String, Path), ("answer_id" = String, Path), ("delivery_id" = String, Path), ("X-CMA-Document-Share-Token" = Option<String>, Header),
+        ("Prefer" = Option<String>, Header, description = "Use cma-native-attachment-media to request native media types")),
+    responses((status = 200, content(
+        (Vec<u8> = "application/octet-stream"),
+        (Vec<u8> = "text/csv"),
+        (Vec<u8> = "application/json"),
+        (Vec<u8> = "application/zip"),
+        (Vec<u8> = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        (Vec<u8> = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))),
         (status = 401, body = super::ProblemDocument), (status = 404, body = super::ProblemDocument),
         (status = 409, body = super::ProblemDocument), (status = 422, body = super::ProblemDocument), (status = 503, body = super::ProblemDocument)))]
 pub(crate) async fn download(
@@ -187,9 +223,15 @@ pub(crate) async fn download(
         )
         .await
         .map_err(problem)?;
+    let media_type = match reference.resource {
+        DeliverableResource::LiveFile { .. } if prefers_native_media(&headers) => {
+            reference.media_type
+        }
+        _ => "application/octet-stream".to_owned(),
+    };
     Ok((
         [
-            (header::CONTENT_TYPE, "application/octet-stream".to_owned()),
+            (header::CONTENT_TYPE, media_type),
             (
                 header::CONTENT_DISPOSITION,
                 super::agent_filesystem::download_name(&reference.name, &reference.sha256),
@@ -208,6 +250,44 @@ fn sequence(answer: &str) -> Result<u64, DeliverableError> {
         .and_then(|value| value.parse::<u64>().ok())
         .filter(|sequence| *sequence > 0 && answer == format!("event:{sequence}"))
         .ok_or(DeliverableError::Invalid)
+}
+
+#[derive(serde::Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TaskDeliveryConfirmation {
+    task_id: String,
+}
+
+#[utoipa::path(post, path = "/api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation", tag = "agents",
+    params(("id" = String, Path), ("answer_id" = String, Path), ("delivery_id" = String, Path),
+        ("X-CMA-Document-Share-Token" = Option<String>, Header)),
+    request_body = TaskDeliveryConfirmation,
+    responses((status = 200, body = TaskAcceptanceView), (status = 401, body = super::ProblemDocument),
+        (status = 404, body = super::ProblemDocument), (status = 422, body = super::ProblemDocument),
+        (status = 503, body = super::ProblemDocument)))]
+pub(crate) async fn confirm_task_delivery(
+    State(service): State<Arc<AnswerDeliverableService>>,
+    AuthenticatedCaller(caller): AuthenticatedCaller,
+    resource: Option<AuthenticatedResourceCaller>,
+    Path((agent, answer, delivery)): Path<(String, String, String)>,
+    headers: HeaderMap,
+    body: Result<Json<TaskDeliveryConfirmation>, axum::extract::rejection::JsonRejection>,
+) -> Result<Json<TaskAcceptanceView>, Response> {
+    let Json(body) = body.map_err(|error| super::BodyProblem::from(error).into_response())?;
+    if body.task_id.is_empty() || body.task_id.len() > 80 {
+        return Err(problem(DeliverableError::Invalid));
+    }
+    let task = service
+        .confirm_task_delivery(
+            &access(&caller, &resource, &headers).map_err(IntoResponse::into_response)?,
+            &AgentId(agent),
+            &layer2_core::ids::AgentCommandId(body.task_id),
+            sequence(&answer).map_err(problem)?,
+            &delivery,
+        )
+        .await
+        .map_err(problem)?;
+    Ok(Json(task.into()))
 }
 
 fn problem(error: DeliverableError) -> Response {

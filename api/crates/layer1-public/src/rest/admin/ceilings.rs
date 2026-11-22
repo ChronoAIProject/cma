@@ -130,6 +130,7 @@ pub(super) struct CapacityView {
     registrations: Option<CapacityCountView>,
     retained_homes: Option<CapacityCountView>,
     pending_launch_homes: u64,
+    pending_homes: super::pending_homes::PendingHomesObservationView,
     active_sessions: Option<CapacityCountView>,
 }
 
@@ -150,7 +151,16 @@ pub(super) async fn read_view(
             service.read_with_history(caller).await?,
             service.writes_enabled(),
         ),
-        None => (AdmissionCeilingsRead::default(), false),
+        None => (
+            AdmissionCeilingsRead {
+                counts: AdmissionCapacityCounts {
+                    pending_homes: PendingHomesObservation::Unavailable,
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            false,
+        ),
     };
     Ok(CeilingsReadView {
         ceilings: CeilingsStateView::new(read.state, writes),
@@ -159,6 +169,7 @@ pub(super) async fn read_view(
             registrations: read.counts.registrations.map(Into::into),
             retained_homes: read.counts.retained_homes.map(Into::into),
             pending_launch_homes: read.counts.pending_launch_homes,
+            pending_homes: read.counts.pending_homes.into(),
             active_sessions: read.counts.active_sessions.map(Into::into),
         },
         ceilings_history: read.history.into_iter().map(Into::into).collect(),

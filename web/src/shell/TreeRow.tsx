@@ -16,6 +16,7 @@ export interface TreeRowAction {
   readonly danger?: boolean;
   readonly disabled?: boolean;
   readonly reason?: string;
+  readonly route?: AppRoute;
 }
 
 interface TreeRowProps {
@@ -79,6 +80,7 @@ export function TreeRow({
     icon: action.icon,
     danger: action.danger,
     disabled: action.disabled,
+    href: action.route ? routePath(action.route) : undefined,
   }));
 
   const labelContent = (
@@ -182,7 +184,9 @@ export function TreeRow({
           }}
           onSelect={(id) => {
             setMenuOpen(false);
-            onAction?.(id);
+            const destination = actions.find((action) => action.id === id)?.route;
+            if (destination) onNavigate(destination);
+            else onAction?.(id);
           }}
           anchor={
             <button
