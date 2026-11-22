@@ -492,3 +492,6 @@ async fn proof_refusal_cancellation_and_driver_failures_keep_original_ownership(
     reader.shutdown().await;
     client.database(&name).drop().await.unwrap();
 }
+
+#[path = "read_assessment_ingress_tests.rs"]
+mod assessment;

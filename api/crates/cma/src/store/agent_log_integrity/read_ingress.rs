@@ -126,6 +126,80 @@ use layer2_core::sandbox::ingress_ownership::OwnedWork;
 type ProvenRead<'a> =
     AdmittedOperation<'a, Result<Option<(SharedOwned<Agent>, bool)>, ReadFailure>>;
 type LegacyRead<'a> = AdmittedOperation<'a, Result<bool, ReadFailure>>;
+type CompleteRead<'a> = AdmittedOperation<'a, Result<LogSummary, ReadFailure>>;
+
+/// Recheck the caller's Agent and proof in the supplied transaction, then scan
+/// every row and validate creation lineage. Borrowed input/session provenance
+/// and the source plan remain caller obligations; this grants no write authority.
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "enabled recording awaits complete ingress composition"
+    )
+)]
+pub(in crate::store) fn scan_complete_log_with_session_admitted<'a>(
+    caller: ScanCaller,
+    store: &'a MongoSandboxStore,
+    agent: &'a Agent,
+    session: &'a mut mongodb::ClientSession,
+    policy: &'a IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+) -> Result<CompleteRead<'a>, AdmittedError> {
+    AdmittedOperation::from_owned(
+        policy,
+        IngressClass::Transformation,
+        AllocationPlan::checked(
+            "read-only complete assessment",
+            &[128, shared_owner_bytes::<ReadFailure>()],
+        )?,
+        move |scope| async move {
+            let input = match store
+                .integrity_agent_read_admitted(&agent.id, session, false, policy, read_plan)?
+                .await?
+                .transpose()
+            {
+                Ok(input) => input,
+                Err(error) => return Ok(error.map(Err)),
+            };
+            let Some(input) = input.as_ref() else {
+                return Ok(scope
+                    .initialize_owned(|| Err(ReadFailure::Domain(SandboxStoreError::NotFound))));
+            };
+            if *input.agent != *agent {
+                return Ok(scope
+                    .initialize_owned(|| Err(ReadFailure::Domain(SandboxStoreError::Conflict))));
+            }
+            if let Err(error) = read_only_summary_admitted(
+                store, agent, &input.raw, session, false, policy, read_plan,
+            )?
+            .await?
+            .transpose()
+            {
+                return Ok(error.map(Err));
+            }
+            scan::cursor::scan_collection_admitted(
+                caller,
+                scan::cursor::ScanInput {
+                    collection: &store.agent_log,
+                    agent_id: &agent.id,
+                    last_seq: agent.conversation.last_seq,
+                },
+                session,
+                ScanOptions::new(false, store.scan_cooperation),
+                policy,
+                read_plan,
+                |entry| {
+                    scope
+                        .initialize_owned(|| validate_creation_lineage(agent, &entry))
+                        .transpose()
+                        .map(|_| ())
+                },
+            )?
+            .await
+        },
+    )
+}
 
 /// The returned Agent keeps its Data owner. The boolean has the legacy reader's
 /// meaning and does not replace complete fallback or transaction provenance.

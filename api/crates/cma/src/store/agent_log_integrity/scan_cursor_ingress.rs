@@ -86,10 +86,6 @@ type ScanRead<'a> = AdmittedOperation<'a, Result<LogSummary, ReadFailure>>;
 /// The plan covers query/raw/cursor/error storage; driver bounds and detached
 /// cleanup remain unqualified. Callback captures and input provenance remain
 /// with the caller. Every failure discards the private partial scan state.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "full admitted assessment composition pending")
-)]
 pub(in crate::store::agent_log_integrity) fn scan_collection_admitted<'a, F, C>(
     caller: ScanCaller,
     input: ScanInput<'a>,
