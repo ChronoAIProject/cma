@@ -14,6 +14,17 @@ async fn update_and_before_projection_share_now_even_across_delayed_evaluation()
     for index in 0..12 {
         let key = format!("clock-{index}");
         f.seed(&key, Bson::Int32(0)).await;
+        // Apply the TTL deletion predicate before replay, independently of the monitor.
+        let expired = f
+            .left
+            .limits
+            .delete_one(doc! {"_id":&key, "$expr":{"$lte":["$expires_at", "$$NOW"]}})
+            .await
+            .unwrap();
+        assert_eq!(
+            expired.deleted_count, 0,
+            "the clock test needs a retained preimage"
+        );
         let mut command = replay(template.clone(), &key);
         // Retain the exact production update and preimage projection. Force time
         // to pass AFTER the update evaluates $$NOW but BEFORE projecting the

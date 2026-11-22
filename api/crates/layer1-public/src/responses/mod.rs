@@ -10,6 +10,7 @@ use axum::{
 };
 
 pub mod v2;
+pub use retrieve::parse_response_id;
 
 mod conversations;
 mod create;
@@ -86,7 +87,9 @@ impl InterfaceProfile for ResponsesInterface {
     }
 }
 
-fn not_found() -> Response {
+use response_not_found as not_found;
+
+pub fn response_not_found() -> Response {
     failure(
         StatusCode::NOT_FOUND,
         "response_not_found",

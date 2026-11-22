@@ -3,6 +3,8 @@
 mod agent_event_page_tests;
 pub(super) mod home_backup;
 #[cfg(test)]
+mod home_backup_expiry_tests;
+#[cfg(test)]
 mod home_backup_tests;
 #[cfg(test)]
 #[path = "ingress_coordinator_tests.rs"]
@@ -20,6 +22,7 @@ pub(crate) struct FeatureFlags {
     pub admin_runtime_inventory: bool,
     pub ownership_retry_hints_enabled: bool,
     pub home_backup_enabled: bool,
+    pub home_backup_expiry_enabled: bool,
     pub agent_model_discovery_cache: bool,
     pub agent_environment_async: bool,
     pub agent_settings_owner_relay: bool,
@@ -28,6 +31,7 @@ pub(crate) struct FeatureFlags {
     pub agent_shared_observation: bool,
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
+    pub native_retirement_finality_enabled: bool,
     pub command_reconcile_pacing: bool,
     pub ownership_cleanup_pacing: bool,
     pub coordinated_ingress: bool,
@@ -74,6 +78,9 @@ pub(crate) struct FeatureFlags {
     pub trigger_command_admission: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
+    /// Gated writer for the stable proxy replay principal (reader floor landed first).
+    pub nyxid_proxy_replay_principal: bool,
+    pub service_authorization: bool,
     pub silent_sign_in: bool,
     pub document_revocation_reserve: bool,
     pub document_quotas: bool,
@@ -139,6 +146,7 @@ impl FeatureFlags {
                 "CHRONO_AGENT_OWNERSHIP_RETRY_HINT_ENABLED",
             )?,
             home_backup_enabled: flag(lookup, "CHRONO_HOME_BACKUP_ENABLED")?,
+            home_backup_expiry_enabled: flag(lookup, "CHRONO_HOME_BACKUP_EXPIRY_ENABLED")?,
             agent_model_discovery_cache: flag(
                 lookup,
                 "CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED",
@@ -152,6 +160,10 @@ impl FeatureFlags {
             runtime_loss_bounded_proof_enabled: flag(
                 lookup,
                 "CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED",
+            )?,
+            native_retirement_finality_enabled: flag(
+                lookup,
+                "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED",
             )?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
             ownership_cleanup_pacing: flag(lookup, "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED")?,
@@ -264,6 +276,11 @@ impl FeatureFlags {
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
             nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
+            nyxid_proxy_replay_principal: flag(
+                lookup,
+                "CHRONO_NYXID_PROXY_REPLAY_PRINCIPAL_ENABLED",
+            )?,
+            service_authorization: flag(lookup, "CHRONO_SERVICE_AUTHORIZATION_ENABLED")?,
             silent_sign_in: flag(lookup, "CHRONO_SILENT_SIGN_IN_ENABLED")?,
             document_revocation_reserve: flag(
                 lookup,

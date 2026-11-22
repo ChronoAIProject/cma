@@ -385,12 +385,13 @@ pub(super) fn open_pointer(
             _ => ManagementError::NotFound,
         })?
         .payload;
-    if state
+    state
         .records
         .record_url(pointer.record_id.as_str())
-        .map_err(ManagementError::Record)?
-        .as_str()
-        != pointer.record_url
+        .map_err(ManagementError::Record)?;
+    if !state
+        .records
+        .names_record(&pointer.record_url, pointer.record_id.as_str())
     {
         return Err(ManagementError::NotFound);
     }

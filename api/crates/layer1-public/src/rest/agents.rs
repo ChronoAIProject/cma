@@ -10,17 +10,16 @@ use axum::{
     Json, Router,
 };
 use layer2_core::profiles::AgentProfileRef;
-use layer2_core::sandbox::store::PageRequest;
-use layer2_core::sandbox::{AgentListQuery, AgentOrigin, AgentStatus, CreateAgent};
-use layer2_core::{AgentId, AgentProfileId, Caller, Capability, SandboxId, SubjectId, WorkspaceId};
-use serde::Deserialize;
+use layer2_core::sandbox::{AgentOrigin, CreateAgent};
+use layer2_core::{AgentId, AgentProfileId, Caller, Capability, WorkspaceId};
 
 #[path = "agent_state.rs"]
 mod agent_state;
+mod inventory;
 use super::agent_lifecycle::{
     AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleProvisioningError,
 };
-use super::agent_openapi_shapes::{AgentListItemView, AgentView, CreateAgentRequest};
+use super::agent_openapi_shapes::{AgentView, CreateAgentRequest};
 use super::agent_shared_shapes::{
     AccessibleAgentListItemView, AccessibleAgentPageView, AccessibleAgentView,
 };
@@ -29,51 +28,9 @@ use super::instance_problem::InstanceProblem;
 use super::BodyProblem;
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
 pub use agent_state::AgentRoutesState;
-
-const DEFAULT_PAGE_LIMIT: u16 = 200;
-
-#[derive(Debug, Deserialize, utoipa::IntoParams)]
-#[into_params(parameter_in = Query)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AgentPageParams {
-    organization: Option<String>,
-    sandbox: Option<String>,
-    workspace: Option<String>,
-    #[param(value_type = Option<String>)]
-    status: Option<AgentStatus>,
-    cursor: Option<String>,
-    #[param(minimum = 1, maximum = 200, default = 200)]
-    limit: Option<u16>,
-}
-
-impl AgentPageParams {
-    fn into_parts(
-        self,
-    ) -> Result<(Option<SubjectId>, AgentListQuery, PageRequest), InstanceProblem> {
-        if self.organization.as_ref().is_some_and(|value| {
-            value.trim().is_empty() || value.len() > 128 || value != value.trim()
-        }) || self.sandbox.as_ref().is_some_and(|value| value.is_empty())
-            || self
-                .workspace
-                .as_ref()
-                .is_some_and(|value| value.is_empty())
-            || self.cursor.as_ref().is_some_and(String::is_empty)
-        {
-            return Err(InstanceProblem::InvalidQuery);
-        }
-        let page = PageRequest::new(self.limit.unwrap_or(DEFAULT_PAGE_LIMIT), self.cursor)
-            .map_err(|_| InstanceProblem::InvalidQuery)?;
-        Ok((
-            self.organization.map(SubjectId::new),
-            AgentListQuery {
-                sandbox_id: self.sandbox.map(SandboxId),
-                workspace_id: self.workspace.map(WorkspaceId),
-                status: self.status,
-            },
-            page,
-        ))
-    }
-}
+use inventory::personal_agent_page;
+pub(crate) use inventory::AgentPageParams;
+pub use inventory::{personal_agent_inventory_router, PersonalAgentInventory};
 
 pub(super) fn routes() -> Router<AgentRoutesState> {
     let list = get(list).layer(axum::middleware::from_fn(agent_state::list_private_headers));
@@ -321,23 +278,7 @@ pub(crate) async fn list(
         .into_response());
     }
     let stored = state.reads.list(&caller, &query, &page).await?;
-    Ok(
-        tracing::debug_span!(target: "cma.agent_inventory", "serialize").in_scope(|| {
-            Json(AccessibleAgentPageView {
-                items: stored
-                    .items
-                    .into_iter()
-                    .map(|agent| {
-                        AccessibleAgentListItemView::Personal(Box::new(AgentListItemView::from(
-                            agent,
-                        )))
-                    })
-                    .collect(),
-                next: stored.next,
-            })
-            .into_response()
-        }),
-    )
+    Ok(personal_agent_page(stored))
 }
 
 #[utoipa::path(

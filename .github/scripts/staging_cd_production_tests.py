@@ -8,10 +8,12 @@ from unittest.mock import Mock, patch
 
 import cd_target
 import staging_cd_invoke as invoke
+import staging_cd_invoke_tests as invoke_fixtures
 from staging_cd_admission import event_identity
 from staging_cd_checkout import checkout_path
-from staging_cd_clock import dispatch_started, run_created
+from staging_cd_clock import CONTROLLER_TOTAL_ENV, dispatch_started, run_created
 from staging_cd_common import Refusal
+from staging_cd_deploy_result_tests import fixture_result
 from staging_cd_tools import install_requirements
 
 SHA = "a" * 40
@@ -51,8 +53,10 @@ class TargetTests(unittest.TestCase):
         self.assertEqual(cd_target.branch({}), "develop")
         self.assertEqual(cd_target.controller({}), ("staging",))
         self.assertEqual(cd_target.workflows({})["push"], "staging-cd.yml")
-        with self.assertRaises(Refusal):
-            cd_target.current({"CD_TARGET": "prod"})
+        self.assertEqual((cd_target.name({}), cd_target.name({"CD_TARGET": "production"})), ("staging", "production"))
+        for lookup in (cd_target.current, cd_target.name):
+            with self.subTest(lookup=lookup.__name__), self.assertRaises(Refusal):
+                lookup({"CD_TARGET": "prod"})
 
     def test_production_target_is_main_and_the_production_controller(self):
         env = {"CD_TARGET": "production"}
@@ -116,6 +120,59 @@ class ClockTests(unittest.TestCase):
             for key, value in (("head_branch", "develop"), ("path", ".github/workflows/redeploy-staging.yml")):
                 with self.subTest(key=key), self.assertRaises(Refusal):
                     dispatch_started(env, Mock(return_value=dict(run, **{key: value})))
+
+
+class BudgetTests(unittest.TestCase):
+    """Only a production release reserves the production controller total."""
+
+    def test_the_launcher_reserves_each_targets_own_controller_total(self):
+        with tempfile.TemporaryDirectory() as directory:
+            script = Path(directory) / "prod/chrono-cd/scripts/deploy_set.py"
+            for target, mode, total in ((None, "bootstrap", 600), (None, "release", 990), ("staging", "release", 990),
+                                        ("production", "bootstrap", 600), ("production", "release", 3600)):
+                options = {} if target is None else {"target": target}
+                with self.subTest(target=target, mode=mode), patch("staging_cd_clock.time.time", return_value=1010), \
+                        patch.object(invoke, "run_process", return_value=0) as process:
+                    self.assertEqual(invoke.execute(script, Path(directory) / "input", mode, timestamp(1000), {},
+                                                    **options), 0)
+                    self.assertEqual(process.call_args.args[1][CONTROLLER_TOTAL_ENV], str(total))
+                    self.assertEqual(process.call_args.args[2], total - 10)
+                    self.assertEqual(process.call_args.kwargs["grace_seconds"], 15)
+
+    def deploy(self, target, finish):
+        """One release through the default launcher; the controller returns at `finish`."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            env = invoke_fixtures.InvokeTests().environment(root)
+            env["CD_STARTED_AT"] = timestamp(1000)
+            if target is not None:
+                Path(env["GITHUB_EVENT_PATH"]).write_text(json.dumps(
+                    {"ref": "refs/heads/main", "after": SHA, "deleted": False,
+                     "repository": {"full_name": "ChronoAIProject/cma"}}))
+                env.update(CD_TARGET=target, GITHUB_REF="refs/heads/main")
+            clock, launched = [1010], []
+
+            def process(args, child_env, wait, **kwargs):
+                launched.append((child_env[CONTROLLER_TOTAL_ENV], wait, kwargs["grace_seconds"]))
+                fixture_result(Path(args[args.index("--release-set") + 1]))
+                clock[0] = finish
+                return 0
+
+            with patch("staging_cd_clock.time.time", side_effect=lambda: clock[0]), \
+                    patch.object(invoke, "run_process", side_effect=process), \
+                    patch.object(invoke, "controller_receipts", side_effect=lambda receipts, *_args: (receipts, 0)):
+                code = invoke.deploy(env, Mock(), lambda _env: root / "deploy_set.py",
+                                     policy_reader=lambda _script, selected, **_kw: sorted(selected))
+            return code, launched
+
+    def test_a_production_release_outlasts_the_staging_total_and_staging_keeps_it(self):
+        self.assertEqual(self.deploy(None, 1985), (0, [("990", 980, 15)]))
+        self.assertEqual(self.deploy(None, 1991), (20, [("990", 980, 15)]))
+        for finish in (1991, 3000, 4600):
+            with self.subTest(finish=finish):
+                self.assertEqual(self.deploy("production", finish), (0, [("3600", 3590, 15)]))
+        # A result after the production total is still unverified.
+        self.assertEqual(self.deploy("production", 4601), (20, [("3600", 3590, 15)]))
 
 
 class ControllerPathTests(unittest.TestCase):

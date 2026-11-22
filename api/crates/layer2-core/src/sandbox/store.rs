@@ -52,7 +52,7 @@ pub use agent_reads::AgentReadQueryStore;
 mod reconciliation;
 pub use reconciliation::{
     apply_sandbox_runtime_loss, precheck_runtime_loss_agents, precheck_sandbox_runtime_loss,
-    validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
+    retirement_debt_is_local, validate_sandbox_runtime_loss_request, SandboxReconciliationStore,
     SandboxRuntimeLossAgentMutation, SandboxRuntimeLossApplication, SandboxRuntimeLossMutation,
     SandboxRuntimeLossOutcome, SandboxRuntimeLossRequest,
 };
@@ -82,6 +82,8 @@ pub use agent_conversation::{
 pub use agent_message_checkpoint::{AgentMessageCheckpoint, AgentMessageSnapshot};
 pub use agent_reopen::AgentReopenGuard;
 mod agent_lifecycle;
+mod agent_skill_result;
+pub use agent_skill_result::{requires_agent_skill_result_guard, AgentSkillResultGuard};
 mod agent_log_capacity;
 pub use agent_log_capacity::{plan_agent_log_capacity_failure, AGENT_LOG_CAPACITY_FAILURE};
 mod agent_repeated_failure;

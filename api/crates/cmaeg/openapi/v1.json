@@ -3349,6 +3349,15 @@
         ],
         "type": "object"
       },
+      "CoverageGap": {
+        "enum": [
+          "legacy_partial",
+          "retention_expired",
+          "unreadable_record",
+          "capture_gap"
+        ],
+        "type": "string"
+      },
       "CreateAppRequest": {
         "additionalProperties": false,
         "properties": {
@@ -4519,14 +4528,144 @@
           }
         ]
       },
+      "HistoryCoverage": {
+        "properties": {
+          "all_writers_capture_from": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "all_writers_capture_until": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "complete_event_enumeration": {
+            "type": "boolean"
+          },
+          "current_summaries": {
+            "description": "Summaries may advance during paging; intermediate transitions are not archived.",
+            "type": "boolean"
+          },
+          "gaps": {
+            "items": {
+              "$ref": "#/components/schemas/CoverageGap"
+            },
+            "type": "array"
+          },
+          "retained_from": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "complete_event_enumeration",
+          "gaps",
+          "retained_from",
+          "current_summaries"
+        ],
+        "type": "object"
+      },
       "HistoryCursor": {
         "type": "string"
+      },
+      "HistoryDetailPart": {
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "index": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "sha256",
+          "data"
+        ],
+        "type": "object"
+      },
+      "HistoryDetails": {
+        "properties": {
+          "detail_incomplete": {
+            "type": "boolean"
+          },
+          "detail_truncated": {
+            "type": "boolean"
+          },
+          "encoding": {
+            "type": "string"
+          },
+          "generation": {
+            "type": "string"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "parts": {
+            "description": "Concatenate decoded parts in index order, then deserialize ChannelActivity.",
+            "items": {
+              "$ref": "#/components/schemas/HistoryDetailPart"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "generation",
+          "encoding",
+          "parts",
+          "detail_incomplete",
+          "detail_truncated"
+        ],
+        "type": "object"
       },
       "HistoryDirection": {
         "enum": [
           "backward"
         ],
         "type": "string"
+      },
+      "HistoryItem": {
+        "properties": {
+          "activity": {
+            "$ref": "#/components/schemas/ChannelActivity"
+          },
+          "detail_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "detail_incomplete": {
+            "type": "boolean"
+          },
+          "detail_truncated": {
+            "type": "boolean"
+          },
+          "history_event_id": {
+            "description": "Opaque identity used by the details route; activity.event_id is the source identity.",
+            "type": "string"
+          },
+          "legacy_partial": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "history_event_id",
+          "activity",
+          "detail_incomplete",
+          "detail_truncated",
+          "legacy_partial"
+        ],
+        "type": "object"
       },
       "HistoryMessage": {
         "additionalProperties": false,
@@ -4590,6 +4729,53 @@
           "media"
         ],
         "type": "string"
+      },
+      "HistoryPage": {
+        "properties": {
+          "coverage": {
+            "$ref": "#/components/schemas/HistoryCoverage"
+          },
+          "has_more": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HistoryItem"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "range": {
+            "$ref": "#/components/schemas/HistoryRange"
+          }
+        },
+        "required": [
+          "items",
+          "has_more",
+          "range",
+          "coverage"
+        ],
+        "type": "object"
+      },
+      "HistoryRange": {
+        "properties": {
+          "from": {
+            "type": "string"
+          },
+          "until": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "from",
+          "until"
+        ],
+        "type": "object"
       },
       "HmacSecretRequest": {
         "additionalProperties": false,
@@ -11028,6 +11214,183 @@
               }
             },
             "description": ""
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/activity/history": {
+      "get": {
+        "operationId": "getChannelActivityHistory",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "until",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "required": false,
+            "schema": {
+              "format": "int32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryPage"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid range or cursor"
+          },
+          "410": {
+            "description": "Paging session expired"
+          },
+          "503": {
+            "description": "History unavailable"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Problem"
+                }
+              }
+            },
+            "description": ""
+          }
+        },
+        "security": [
+          {
+            "creatorBearer": []
+          }
+        ],
+        "tags": [
+          "channels"
+        ]
+      }
+    },
+    "/channels/{channel_id}/activity/history/events/{event_id}/details": {
+      "get": {
+        "operationId": "getChannelActivityHistoryDetails",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "channel_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CMAEG-Owner",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HistoryDetails"
+                }
+              }
+            },
+            "description": ""
+          },
+          "400": {
+            "description": "Invalid detail cursor"
+          },
+          "410": {
+            "description": "Paging session expired"
           },
           "default": {
             "content": {

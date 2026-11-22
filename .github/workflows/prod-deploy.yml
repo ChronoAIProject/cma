@@ -39,7 +39,10 @@ jobs:
       github.repository == 'ChronoAIProject/cma' && github.ref == 'refs/heads/main' &&
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # The production release total (3600 s) and the watchdog's termination grace
+    # start only after the approved set is reproduced; the rest covers that
+    # reproduction, checkout and cleanup.
+    timeout-minutes: 75
     permissions:
       contents: read
       actions: read

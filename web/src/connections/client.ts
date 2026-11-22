@@ -34,6 +34,7 @@ export interface ConnectionReport {
   readonly checked_at: string;
   readonly services: readonly ConnectionRow[];
   readonly active_state?: 'pending' | 'satisfied' | 'expired' | 'cancelled' | 'failed';
+  readonly service_authorization_recovery?: boolean;
 }
 
 /** An action cannot rely on readiness from a partial or inconsistent response. */

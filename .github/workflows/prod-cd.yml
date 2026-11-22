@@ -115,6 +115,8 @@ jobs:
     permissions:
       contents: read
       actions: read
+    # Held for the whole call, including the deploy job's full production
+    # budget; later releases queue behind it and none is cancelled.
     concurrency:
       group: cma-prod-deploy-set
       queue: max
