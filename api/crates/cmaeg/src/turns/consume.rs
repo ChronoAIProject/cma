@@ -24,16 +24,23 @@ pub(super) async fn consume(
     execution_verifier: Option<&dyn ExecutionReceiptVerifier>,
     admitted: &mut Option<oneshot::Sender<LaunchOutcome>>,
 ) -> Result<&'static str, &'static str> {
+    // No provider acceptance observed yet.
     let mut acceptance_pending = true;
+    // The acceptance signal can still arrive. A stream that ends without one
+    // closes it, while any terminal answer it sent remains queued as an event.
+    let mut acceptance_open = true;
     let mut accepted_response = None;
     let mut projection = Projection::default();
     let mut trace = None;
     loop {
         tokio::select! {
             biased;
-            accepted = &mut stream.accepted, if acceptance_pending => {
+            accepted = &mut stream.accepted, if acceptance_open => {
+                acceptance_open = false;
+                // Drain the events: an ended stream is lost only if it never
+                // delivered a terminal answer.
+                let Ok(accepted) = accepted else { continue };
                 acceptance_pending = false;
-                let accepted = accepted.map_err(|_| "stream_lost")?;
                 adopt_trace(&stream, &turn, &mut trace);
                 metrics::histogram!(crate::telemetry::names::PROVIDER_ACCEPT,
                     crate::telemetry::names::PROVIDER => provider.to_owned())
@@ -64,9 +71,6 @@ pub(super) async fn consume(
                 if let Some(outcome) = projection.event(event)? {
                     let terminal = outcome.terminal();
                     let kind = outcome.kind();
-                    if terminal && acceptance_pending {
-                        refuse(admitted,ProblemCode::ProviderUnavailable,"provider stream ended before acceptance");
-                    }
                     let answer_response_id = if observed.bound_to_accepted
                         && matches!(outcome, TurnOutcome::MessageCommitted { .. } | TurnOutcome::Completed { .. })
                     {
@@ -75,6 +79,17 @@ pub(super) async fn consume(
                         None
                     };
                     let delivery = send(delivery,&turn,outcome, answer_response_id).await;
+                    if terminal && acceptance_pending {
+                        // The provider answered without a response identity.
+                        // Once delivery holds that answer the event is handled:
+                        // refusing it would invite the source to redeliver an
+                        // event whose answer the user already has.
+                        if delivery.is_ok() {
+                            if let Some(sender) = admitted.take() {let _ = sender.send(LaunchOutcome::Deferred);}
+                        } else {
+                            refuse(admitted,ProblemCode::ProviderUnavailable,"provider stream ended before acceptance");
+                        }
+                    }
                     if let Some(change) = execution {
                         activity.checkpoint(&turn.channel.definition.record_id,
                             &turn.activity.event_id, change).await;
