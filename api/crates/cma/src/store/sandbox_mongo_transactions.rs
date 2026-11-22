@@ -20,6 +20,12 @@ pub(in crate::store) fn is_transient(error: &Error) -> bool {
     error.contains_label(TRANSIENT_TRANSACTION_ERROR)
 }
 
+/// A body error with uncertain outcome never permits a new transaction.
+pub(in crate::store) fn is_confirmed_body_retry(error: &Error) -> bool {
+    !error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT)
+        && (is_transient(error) || is_duplicate_key(error))
+}
+
 pub(in crate::store) enum CommitResolution<E> {
     Committed,
     Retry(E),

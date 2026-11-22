@@ -105,6 +105,20 @@ impl AuthState {
         Ok(self)
     }
 
+    /// Record the stable replay principal on new proxy command admissions.
+    ///
+    /// Each proxied request carries a fresh signed assertion, so the exact
+    /// grant (which includes the assertion id) cannot scope idempotency: an
+    /// exact-key retry would otherwise admit a second command. Readers accept
+    /// the principal already; enable this only after every running reader
+    /// includes that floor.
+    pub(crate) fn with_proxy_replay_principal(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("configure before sharing")
+            .proxy_replay_principal_enabled = enabled;
+        self
+    }
+
     pub(super) async fn proxy_request(
         &self,
         headers: &HeaderMap,

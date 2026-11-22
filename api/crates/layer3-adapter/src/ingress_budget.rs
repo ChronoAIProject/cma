@@ -8,6 +8,7 @@ const PROCESS_BYTES: usize = 128 * 1024 * 1024;
 
 mod attachment;
 mod classes;
+mod component;
 pub(crate) mod custody;
 pub(crate) mod diagnostic;
 pub mod failure;
@@ -26,6 +27,7 @@ pub use crate::conversation_channel::admitted::{
     AdmittedConversationSettingsSupport,
 };
 pub use attachment::IngressAttachment;
+pub use component::SharedComponentOwned;
 pub use failure::{AdmissionRefusal, AdmittedError};
 pub use observation::DeliveryObservation;
 pub use operation::AdmittedOperation;

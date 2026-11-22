@@ -261,9 +261,9 @@ pub(super) async fn complete_failed_environment_retirement(
     tokio::time::timeout(Duration::from_secs(15), async {
         loop {
             if let Some(agent) = agent {
-                retry.should_retry(harness.worker.run_one(&agent.id, SystemTime::now()).await);
+                retry.agent(harness, &agent.id).await;
             }
-            retry.should_retry(worker.run_one(sandbox_id, SystemTime::now()).await);
+            retry.sandbox(harness, worker, sandbox_id).await;
             let sandbox = harness
                 .store
                 .get_sandbox(sandbox_id)

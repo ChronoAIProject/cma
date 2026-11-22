@@ -8,8 +8,9 @@ async fn original_receipt_proves_commit_and_refuses_abort_foreign_or_changed_pub
     let original = row(&store, &agent).await;
     let request = loss(&sandbox);
     let mut session = client.start_session().await.unwrap();
-    let RecoveryApplication::Persist(aborted) =
-        apply_attempt(&store, &request, &mut session).await.unwrap()
+    let RecoveryApplication::Persist(aborted) = apply_attempt(&store, &request, None, &mut session)
+        .await
+        .unwrap()
     else {
         panic!("expected publication");
     };
@@ -21,8 +22,9 @@ async fn original_receipt_proves_commit_and_refuses_abort_foreign_or_changed_pub
         .unwrap());
     unchanged(&store, &sandbox, &agent, &original).await;
 
-    let RecoveryApplication::Persist(receipt) =
-        apply_attempt(&store, &request, &mut session).await.unwrap()
+    let RecoveryApplication::Persist(receipt) = apply_attempt(&store, &request, None, &mut session)
+        .await
+        .unwrap()
     else {
         panic!("expected publication");
     };

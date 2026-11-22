@@ -6,6 +6,8 @@ mod support;
 use support::{Fixture, Reply};
 #[path = "coordinator_renewal_diagnostic_tests.rs"]
 mod diagnostics;
+#[path = "coordinator_heartbeat_tests.rs"]
+mod heartbeat;
 
 #[tokio::test(start_paused = true)]
 async fn unavailable_renewal_cancels_only_live_authority_and_does_not_replay() {
@@ -79,8 +81,9 @@ async fn operation_timeout_contains_before_authority_deadline_but_not_at_or_afte
 }
 
 #[tokio::test(start_paused = true)]
-async fn heartbeat_timeout_and_invalid_membership_remain_process_fatal() {
-    for mode in [1, 2, 3, 4, 6] {
+async fn invalid_membership_and_non_transient_heartbeat_errors_remain_process_fatal() {
+    // Protocol, drain, missing member, Stale, IncompatibleProtocol and Invalid.
+    for mode in [2, 3, 4, 8, 9, 10] {
         let fixture = Fixture::new(2).await;
         fixture.store.heartbeat_mode.store(mode, Ordering::SeqCst);
         assert!(fixture.manager.maintain().await.is_err());

@@ -6,6 +6,7 @@ use tokio::sync::Notify;
 #[derive(Clone)]
 pub(super) enum Reply {
     Error(OwnershipError),
+    Renew,
     DifferentToken(&'static str),
     ExpiredDeadline,
 }
@@ -37,6 +38,23 @@ impl OwnershipStore for Store {
         self.inner.register(member).await
     }
     async fn heartbeat(&self, id: &str, draining: bool) -> Result<Membership, OwnershipError> {
+        // Modes 7-11 fail before the store row changes; 1 and 6 lose a committed reply.
+        match self.heartbeat_mode.load(Ordering::SeqCst) {
+            7 => {
+                return Err(OwnershipError::Unavailable(
+                    "heartbeat not committed".into(),
+                ))
+            }
+            8 => return Err(OwnershipError::Stale),
+            9 => return Err(OwnershipError::IncompatibleProtocol),
+            10 => return Err(OwnershipError::Invalid("synthetic invalid member".into())),
+            11 => {
+                self.entered.notify_one();
+                self.resume.notified().await;
+                return Err(OwnershipError::Unavailable("gated heartbeat".into()));
+            }
+            _ => (),
+        }
         let mut membership = self.inner.heartbeat(id, draining).await?;
         match self.heartbeat_mode.load(Ordering::SeqCst) {
             1 => tokio::time::sleep(Duration::from_secs(10)).await,
@@ -88,6 +106,7 @@ impl OwnershipStore for Store {
         let reply = self.reply.lock().unwrap().clone();
         match reply {
             Reply::Error(error) => Err(error),
+            Reply::Renew => self.inner.renew(token).await,
             Reply::DifferentToken(field) => {
                 let mut lease = self.inner.renew(token).await?;
                 match field {
@@ -160,6 +179,20 @@ impl Fixture {
             manager,
             owners,
         }
+    }
+
+    pub(super) async fn leases(&self) -> Vec<OwnershipLease> {
+        let mut leases = Vec::new();
+        for authority in &self.owners {
+            leases.push(
+                self.store
+                    .owner(&authority.token.agent_id)
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            );
+        }
+        leases
     }
 
     pub(super) fn assert_failed(&self) {

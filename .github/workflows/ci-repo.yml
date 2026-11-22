@@ -29,12 +29,19 @@ jobs:
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -m pip install --disable-pip-version-check PyYAML==6.0.3
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'staging_cd_*_tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'ci_retry_tests.py'
+          "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'ci_artifact_download_tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B -m unittest discover -s .github/scripts -p 'runtime_image_*tests.py'
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B .github/scripts/image-secret-gate-tests.py
           ruby .github/scripts/staging_cd_workflows_tests.rb
       -
         name: "Omarchy package bundle regressions"
         run: "python3 -B .github/scripts/omarchy-package-bundle-tests.py"
+      -
+        name: "Omarchy package bundle retention regressions"
+        run: "ruby .github/scripts/omarchy-package-retention-tests.rb"
+      -
+        name: "Omarchy package bundle is never deleted"
+        run: "ruby .github/scripts/omarchy-package-retention.rb"
       -
         name: "Source file size validator regressions"
         run: ".github/scripts/check-file-size-tests.sh"
@@ -47,7 +54,7 @@ jobs:
           node-version: 26
       -
         name: "Synthetic authority and observer regressions"
-        run: "node --test .github/scripts/staging-authority.test.mjs .github/scripts/public-journey-evidence.test.mjs .github/scripts/deployment-observer.test.mjs"
+        run: "node --test .github/scripts/staging-authority.test.mjs .github/scripts/public-journey-evidence.test.mjs .github/scripts/connection-journey-evidence.test.mjs .github/scripts/connection-campaign.test.mjs .github/scripts/deployment-observer.test.mjs"
       -
         name: "Synthetic home restore evidence regressions"
         run: "node --test .github/scripts/home-backup/*.test.mjs"

@@ -420,6 +420,10 @@ pub(super) fn credential_failure(error: CredentialError) -> WorkerFailure {
 
 pub(super) fn dependency_failure(error: SandboxDependencyError) -> WorkerFailure {
     match error {
+        SandboxDependencyError::AgentsStopping => {
+            WorkerFailure::retryable("lifecycle dependency unavailable")
+                .with_retry_kind(WorkRetryFailure::Waiting)
+        }
         SandboxDependencyError::Transient(detail) => WorkerFailure::retryable(
             "lifecycle dependency unavailable",
         )

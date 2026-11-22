@@ -146,6 +146,8 @@ mod expiry_tests;
 #[cfg(test)]
 mod oversized_frame_tests;
 #[cfg(test)]
+mod preparation_activity_tests;
+#[cfg(test)]
 mod projection_store_tests;
 #[cfg(test)]
 mod replay_trace_tests;

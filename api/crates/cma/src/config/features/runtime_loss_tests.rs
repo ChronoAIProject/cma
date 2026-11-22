@@ -1,6 +1,20 @@
 use super::FeatureFlags;
 
 #[test]
+fn native_retirement_finality_defaults_off_and_requires_explicit_selection() {
+    const KEY: &str = "CHRONO_NATIVE_RETIREMENT_FINALITY_ENABLED";
+    for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
+        let flags = FeatureFlags::from_lookup(&mut |key| {
+            Ok((key == KEY).then(|| value.map(str::to_owned)).flatten())
+        })
+        .unwrap();
+        assert_eq!(flags.native_retirement_finality_enabled, expected);
+        assert!(!flags.runtime_loss_bounded_proof_enabled);
+    }
+    assert!(FeatureFlags::from_lookup(&mut |key| Ok((key == KEY).then(|| "yes".into()))).is_err());
+}
+
+#[test]
 fn suspended_reopen_admission_is_independent_and_defaults_off() {
     const KEY: &str = "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED";
     for (value, expected) in [(None, false), (Some("false"), false), (Some("true"), true)] {
