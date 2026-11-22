@@ -6,6 +6,8 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { currentJourneyCases, validatePublicJourneyProof } from './public-journey-evidence.mjs';
+import { connectionCaseTitles } from './connection-journey-evidence.mjs';
+import { bindConnectionFixtures, requireConnectionCoverage, validateConnectionCases } from './connection-campaign.mjs';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const digest = /^sha256:[0-9a-f]{64}$/;
@@ -42,7 +44,7 @@ export const phases = Object.freeze([
   'invocation', 'plan_reviewed_commit', 'plan_develop_head', 'plan_authority_hash', 'plan_output',
   'environment_policy', 'checkout_commit', 'authority_hash', 'fixture_file', 'fixture_binding', 'observer', 'receipt',
   'fixture_changed', 'attestation_output', 'attestation_files', 'attestations', 'expected_identity', 'campaign_results',
-  'cleanup_journal', 'audit_output', 'inventory_listing', 'inventory_cases', 'unclassified',
+  'cleanup_journal', 'connection_fixtures', 'connection_coverage', 'audit_output', 'inventory_listing', 'inventory_cases', 'unclassified',
 ]);
 const signals = Object.freeze(['SIGTERM', 'SIGINT', 'SIGKILL', 'SIGHUP']);
 export const refusalCodes = Object.freeze([
@@ -97,14 +99,14 @@ export const requiredCases = [
   ...['install_failure', 'clone_failure', 'worktree_conflict', 'agent_start_timeout', 'first_message_ambiguity', 'worker_crash'].map((name) => `FAULT-${name} records the real fault and preserves command identity`),
   'FAULT-nyxid-requirements upstream outage never invents satisfied requirements',
   'FAULT-browser-close durable Launch completes while its browser is closed',
-  'FAULT-popup-blocked connection falls back to the same tab without duplicate handoff',
-  'FAULT-handoff-response lost browser response keeps the same unsettled handoff command',
-  'FAULT-nyxid real upstream unavailability preserves handoff command identity',
+  connectionCaseTitles['FAULT-popup-blocked'],
+  connectionCaseTitles['FAULT-handoff-response'],
+  connectionCaseTitles['FAULT-nyxid'],
   'J0 new account returns to the same Trigger and reaches ready after one CMA click',
   'J1 always-new creates distinct visitor-owned Sandboxes',
   'J2 reuse Sandbox creates a new Workspace each time',
   'J3 reuse both supports ask resume, ask new and resume-existing',
-  ...['oauth', 'api_key', 'device_code'].map((mode) => `J4-${mode} G-T2 missing service connection assistant continues via ${mode}`),
+  ...['oauth', 'api_key', 'device_code'].map((mode) => connectionCaseTitles[`J4-${mode}`]),
   'J7-retired Trigger cannot admit work',
   'J7-paused orchestration freezes a durable Launch without failing it',
   currentJourneyCases.j6,
@@ -277,7 +279,8 @@ export function validateCampaign(results, journal) {
     assert.deepEqual(results.cases.map((row) => row.case).sort(), [...requiredCases].sort());
     for (const row of results.cases) {
       const current = [currentJourneyCases.j5, currentJourneyCases.j6].includes(row.case);
-      keys(row, ['case', 'status', 'durationMs', ...(current ? ['proof'] : [])]);
+      const connection = Object.values(connectionCaseTitles).includes(row.case);
+      keys(row, ['case', 'status', 'durationMs', ...(current ? ['proof'] : []), ...(connection ? ['connectionProof'] : [])]);
       assert.equal(row.status, 'passed');
       assert.ok(Number.isFinite(row.durationMs) && row.durationMs >= 0);
     }
@@ -320,6 +323,7 @@ export function validateCampaign(results, journal) {
     for (const row of results.cases)
       if ([currentJourneyCases.j5, currentJourneyCases.j6].includes(row.case))
         validatePublicJourneyProof(row.case, row.proof, journal);
+    validateConnectionCases(results, journal);
   });
 }
 
@@ -369,6 +373,15 @@ function audit(directory, beforePath, afterPath) {
   const results = withPhase('campaign_results', () => JSON.parse(readFileSync(join(directory, 'results.json'), 'utf8')));
   const journal = withPhase('cleanup_journal', () => readFileSync(join(directory, 'cleanup.ndjson'), 'utf8').trim().split('\n').map((line) => JSON.parse(line)));
   validateCampaign(results, journal);
+  const connectionProofs = withPhase('connection_fixtures', () => {
+    const fixture = JSON.parse(privateFile(process.env.CMA_E2E_FIXTURE_FILE));
+    const proofs = validateConnectionCases(results, journal);
+    assert.equal(fixture.origin, after.request.expected.origin);
+    assert.equal(fixture.fixtureOwner, process.env.CMA_E2E_FIXTURE_OWNER);
+    bindConnectionFixtures(proofs, fixture, after.request.expected.nyxidCommit);
+    return proofs;
+  });
+  withPhase('connection_coverage', () => requireConnectionCoverage(connectionProofs));
   withPhase('audit_output', () => {
     writeFileSync(join(directory, 'attestation.json'), JSON.stringify({ before: before.receipt, after: after.receipt, scope: 'independent-deployment-identity-not-model-proof' }), { flag: 'wx', mode: 0o600 });
     appendFileSync(process.env.GITHUB_OUTPUT, 'publishable=true\n');

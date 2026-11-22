@@ -24,6 +24,8 @@ mod sandbox_inventory;
 mod sandbox_snapshot;
 #[path = "resource_access_tests/share_links.rs"]
 mod share_links;
+#[path = "resource_access_tests/share_transaction_contract.rs"]
+mod share_transaction_contract;
 #[path = "resource_access_tests/snapshot_reads.rs"]
 mod snapshot_reads;
 use layer2_core::resource_access::*;

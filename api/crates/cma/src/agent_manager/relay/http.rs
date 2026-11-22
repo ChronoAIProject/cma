@@ -215,6 +215,12 @@ async fn route_request(
         }
         match relay.destination(&id).await {
             Ok(value) => value,
+            Err(reason) if serves_without_owner(request.uri().path(), reason) => {
+                // A stopped Agent holds no owner, and a draining owner cannot
+                // accept new work. Runtime file operations do not depend on
+                // owner authority, so serve the authorized request here.
+                return retain(next.run(request).await, slot);
+            }
             Err(reason) => return unavailable_with(environment.as_ref(), reason),
         }
     };
@@ -288,6 +294,18 @@ fn needs_owner(path: &str, method: &axum::http::Method) -> bool {
     ) || (method == axum::http::Method::PATCH && suffix == "preferences")
         || suffix.starts_with("files/")
         || suffix == "browser/control"
+}
+
+/// File requests need no execution owner. Only an absent or no longer live
+/// owner falls back locally; store and authority failures still refuse.
+fn serves_without_owner(path: &str, reason: Refusal) -> bool {
+    matches!(
+        reason,
+        Refusal::OwnerMissing | Refusal::OwnerMemberUnavailable
+    ) && path
+        .strip_prefix("/api/v1/agents/")
+        .and_then(|path| path.split_once('/'))
+        .is_some_and(|(_, suffix)| suffix == "files" || suffix.starts_with("files/"))
 }
 
 fn settings_patch(path: &str, method: &axum::http::Method) -> bool {
