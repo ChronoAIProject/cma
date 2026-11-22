@@ -613,9 +613,9 @@
         },
         "GITHUB_READ_DENIED": {
           "title": "GitHub read denied",
-          "meaning": "GitHub answered an API read with 401, or with 403 and no rate limit: the workflow token is invalid or lacks a permission the read needs.",
+          "meaning": "GitHub answered an API read with 401, or 403 without rate-limit headers. The workflow fixes the token's permissions, so a 403 that comes and goes is usually a secondary rate limit, not a permission change.",
           "cause": "operator",
-          "next": "An operator must check the allocate job's token permissions (contents, pull-requests and actions) and the repository's Actions settings, then re-run the failed jobs."
+          "next": "If this read passed in recent runs, re-run the failed jobs. Otherwise an operator must check the allocate job's token permissions (contents, pull-requests, actions) and the Actions settings."
         },
         "GITHUB_RESPONSE_INVALID": {
           "title": "GitHub response invalid",
