@@ -146,9 +146,13 @@ function attach(canvas: HTMLCanvasElement, placement: TopographicPlacement): () 
         return;
       }
       if (!surface && factory && context) {
-        surface = factory(canvas, context, () =>
-          eligible() ? (lease?.takeFrame() ?? null) : null,
-        );
+        surface = factory(canvas, context, () => {
+          if (!eligible()) return null;
+          const grant = lease?.takeFrame();
+          return grant
+            ? { elapsed: grant.elapsed, submit: (draw) => eligible() && grant.submit(draw) }
+            : null;
+        });
       }
       if (surface) schedule();
       else if (!lease && !loading && !deferred && !frame) {

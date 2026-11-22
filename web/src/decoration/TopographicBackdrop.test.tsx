@@ -170,7 +170,8 @@ it('caps actual draws and disposes after four seconds under StrictMode', async (
   await advance(5000);
   expect(draw).toHaveBeenCalledTimes(count);
   view.unmount();
-  render(<Backdrop placement="landing" />);
+  const remount = render(<Backdrop placement="landing" />);
+  intersection(remount.container);
   await advance(5000);
   expect(factory).toHaveBeenCalledTimes(1);
 });
@@ -299,6 +300,50 @@ it('disposes the capability context when an import arrives after unmount', async
   expect(factory).not.toHaveBeenCalled();
   expect(lose).toHaveBeenCalledOnce();
   expect(observers.every((item) => item.disconnect.mock.calls.length === 1)).toBe(true);
+});
+it('uses the original deadline after a visible route remount', async () => {
+  const first = await playing();
+  await advance(2000);
+  first.unmount();
+  const remount = render(<Backdrop placement="landing" />);
+  intersection(remount.container);
+  await advance(100);
+  expect(factory).toHaveBeenCalledTimes(2);
+  await advance(2000);
+  expect(dispose).toHaveBeenCalledTimes(2);
+  expect(vi.getTimerCount()).toBe(0);
+});
+it('does not allocate a renderer from a chunk that arrives while hidden', async () => {
+  let resolve!: (value: typeof factory) => void;
+  mocks.load.mockReturnValue(
+    new Promise((done) => {
+      resolve = done;
+    }),
+  );
+  const view = render(<Backdrop placement="landing" />);
+  intersection(view.container);
+  await advance(100);
+  intersection(view.container, false);
+  await act(async () => resolve(factory));
+  expect(factory).not.toHaveBeenCalled();
+  intersection(view.container);
+  await advance(100);
+  expect(factory).toHaveBeenCalledOnce();
+});
+it('releases an expired pending import and ignores its later resolution', async () => {
+  let resolve!: (value: typeof factory) => void;
+  mocks.load.mockReturnValue(
+    new Promise((done) => {
+      resolve = done;
+    }),
+  );
+  const view = render(<Backdrop placement="landing" />);
+  intersection(view.container);
+  await advance(4500);
+  await act(async () => resolve(factory));
+  expect(factory).not.toHaveBeenCalled();
+  expect(lose).toHaveBeenCalledOnce();
+  expect(vi.getTimerCount()).toBe(0);
 });
 it('releases every subscription even when renderer disposal throws', async () => {
   const view = await playing();

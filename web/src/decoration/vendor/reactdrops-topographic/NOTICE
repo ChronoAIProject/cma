@@ -23,5 +23,5 @@ categories. No runtime asset, shader or package is fetched from upstream.
 
 The static SVG masks in ../../assets are derived from the same seeded field
 and contour algorithms. Their alpha masks use CMA theme tokens for color.
-The full RCL text is also retained in the browser surface module's license
-comment. See source-map.json for exact source spans and adaptation details.
+The full RCL text is distributed as a bundled asset referenced by a
+rel=license link in the decoration. See source-map.json for exact source spans and adaptation details.

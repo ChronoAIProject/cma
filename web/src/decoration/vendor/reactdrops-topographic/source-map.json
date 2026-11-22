@@ -106,12 +106,12 @@
     {
       "target": "topographic-surface.ts",
       "source": "topographic-surface.ts:672-758,760-871",
-      "changes": "Adapt flat field texture preparation and draw to synchronous renderFrame/dispose. Preserve scale=270, distortion=2.4, seed=42, speed=.32. No timers, observers, pointer or context-restoration lifecycle; caller grants each actual draw and rechecks deadline after preparation. Include the full RCL text in a retained bundle license comment."
+      "changes": "Adapt flat field texture preparation and draw to synchronous renderFrame/dispose. Preserve scale=270, distortion=2.4, seed=42, speed=.32. No timers, observers, pointer or context-restoration lifecycle; caller grants each actual draw and rechecks deadline after preparation."
     },
     {
       "target": "../../assets/topographic-{dark,light}.svg",
-      "source": "topographic-field.ts:1-36,294-405,407-525",
-      "changes": "Generate fixed synthetic contours and cubic spline paths at 560x220, seed42, scale270, density5, distortion2.4, 143x58 field grid, scale*.45 overscan. Both theme assets are alpha masks; resolved CMA CSS tokens supply colors. Standalone runtime contour helpers are omitted after generation."
+      "source": "topographic-field.ts:1-36,251-405,407-525",
+      "changes": "Generate fixed synthetic contours and cubic spline paths at 560x220, seed42, scale270, density5, distortion2.4, 143x58 field grid, visible-region sampling and 6px contour resampling. Both theme assets are alpha masks; resolved CMA CSS tokens supply colors. Standalone runtime contour helpers are omitted after generation."
     }
   ],
   "omitted_surface_modes": [
@@ -139,7 +139,8 @@
     "lineStyle": "solid"
   },
   "assets": {
-    "topographic-light.svg": "ea6a7a0252801d9d5c9c36d8816ef0914fd13dea3210e0047dc9c6265f958f9c",
-    "topographic-dark.svg": "ea6a7a0252801d9d5c9c36d8816ef0914fd13dea3210e0047dc9c6265f958f9c"
-  }
+    "topographic-light.svg": "c3888b5cf02812b90a5df6c0eb322843b1fa8ebfcf7e8f0f90b4a2102dc3ae74",
+    "topographic-dark.svg": "c3888b5cf02812b90a5df6c0eb322843b1fa8ebfcf7e8f0f90b4a2102dc3ae74"
+  },
+  "distribution": "TopographicBackdrop links the emitted exact LICENSE asset via rel=license; Vite minification strips source license comments."
 }
