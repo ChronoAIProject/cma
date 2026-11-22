@@ -106,14 +106,13 @@ pub(super) async fn read_only_summary(
             .map_err(|error| SandboxStoreError::Corrupt(error.to_string()))
             .and_then(|document| read_entry(&document));
         let entry = entry?;
-        if entry.agent_id != agent.id
-            || entry.seq != integrity.head_seq
-            || hash_raw(raw.as_bytes()) != integrity.head_hash
-        {
-            return Err(
-                SandboxStoreError::Corrupt("Agent log integrity tail proof failed".into()).into(),
-            );
-        }
+        validate_tail(
+            &entry,
+            &agent.id,
+            integrity.head_seq,
+            &integrity.head_hash,
+            &raw,
+        )?;
     }
     if stale {
         return Ok(None);
@@ -138,6 +137,24 @@ pub(super) async fn read_only_summary(
         head_hash: integrity.head_hash,
         semantic: Some(integrity.semantic),
     }))
+}
+
+fn validate_tail(
+    entry: &AgentLogEntry,
+    agent_id: &AgentId,
+    sequence: u64,
+    head_hash: &[u8; HASH_BYTES],
+    raw: &mongodb::bson::RawDocument,
+) -> Result<(), SandboxStoreError> {
+    if entry.agent_id != *agent_id
+        || entry.seq != sequence
+        || hash_raw(raw.as_bytes()) != *head_hash
+    {
+        return Err(SandboxStoreError::Corrupt(
+            "Agent log integrity tail proof failed".into(),
+        ));
+    }
+    Ok(())
 }
 
 /// Persist invalidation outside the failed transaction. Fence the immutable
