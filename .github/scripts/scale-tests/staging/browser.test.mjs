@@ -38,6 +38,7 @@ test('real browser cookie fetch, stream bridge, rendering and redirect guards us
     assert.match(body, /cma.agent.live/); assert.equal(transport.http.streamOpened, 1);
     await transport.observeAgent('agt_synthetic');
     await assert.rejects(transport.visible('agt_synthetic', 'OK synthetic-nonce', 50));
+    await transport.observeAgent('agt_synthetic');
     await transport.observers.get('agt_synthetic').evaluate(() => {
       const node = document.createElement('article'); node.className = 'message--assistant';
       node.innerHTML = '<div class="message__body">OK synthetic-nonce</div>'; document.body.append(node);

@@ -9,17 +9,20 @@ export class StagingRun {
     Object.assign(this, { config, wire, readAuthority, connect, evidence, time });
     this.fixtures = new Map(); this.connections = new Map(); this.pending = new Set(); this.rates = new Map();
     this.offered = 0; this.stopped = false; this.preparing = false;
+    this.observation = new AbortController();
   }
   record(row) {
     try { return this.evidence.record(row); }
     catch {
       this.stopped = true; this.evidenceFailed = true;
+      this.observation.abort();
       if (!this.closing) throw new GateError('evidence_write_failed');
       // Custody stays in memory and cleanup must proceed even when its evidence sink fails.
       return row;
     }
   }
   stop(code = 'operator_stop') {
+    this.observation.abort();
     if (this.stopped) return;
     this.stopped = true;
     try { this.record({ scenario: 'stop', status: 'BLOCKED', code }); }

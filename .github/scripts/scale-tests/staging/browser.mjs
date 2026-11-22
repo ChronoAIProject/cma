@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { check } from '../lib/checks.mjs';
+import { check, GateError } from '../lib/checks.mjs';
 import { BODY_BYTES } from './authority.mjs';
 import { paint, openAgent } from '../timing/lib/flows.mjs';
 
@@ -131,13 +131,36 @@ export class BrowserTransport {
     try { await openAgent(page, this.origin, id); this.observers.set(id, page); }
     finally { clearTimeout(timer); }
   }
-  async visible(id, answer, timeoutMs) {
+  async visible(id, answer, timeoutMs, signal) {
     const page = this.observers.get(id);
     check(page, 'browser_observer_missing');
+    check(Number.isFinite(timeoutMs) && timeoutMs > 0, 'browser_observation_budget');
+    const deadline = performance.now() + timeoutMs;
     const row = page.locator('.message--assistant .message__body').filter({ hasText: answer });
-    await row.first().waitFor({ state: 'visible', timeout: timeoutMs });
-    check(await row.count() === 1, 'duplicate_visible_answer');
-    await paint(page);
+    const remaining = () => {
+      check(!signal?.aborted, 'browser_observation_stopped');
+      const ms = deadline - performance.now();
+      check(ms > 0, 'browser_observation_deadline'); return ms;
+    };
+    let timer; let abort;
+    const expired = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new GateError('browser_observation_deadline')), timeoutMs);
+      abort = () => reject(new GateError('browser_observation_stopped'));
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
+    });
+    try {
+      await Promise.race([expired, (async () => {
+        await row.first().waitFor({ state: 'visible', timeout: remaining() });
+        remaining(); check(await row.count() === 1, 'duplicate_visible_answer');
+        remaining(); await paint(page); remaining();
+      })()]);
+    } catch (error) {
+      if (this.observers.get(id) === page) this.observers.delete(id);
+      // Dispose only the DOM observer; API and primary stream custody remain usable.
+      void page.close({ runBeforeUnload: false }).catch(() => {});
+      throw error;
+    } finally { clearTimeout(timer); signal?.removeEventListener('abort', abort); }
   }
   async close() {
     await this.context.close();

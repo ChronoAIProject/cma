@@ -78,7 +78,7 @@ export class Turn {
     this.started = this.run.time.now(); const deadline = this.started + TURN_MS;
     this.state = 'uncertain';
     this.record({ status: 'issued', requestHash: hash(JSON.stringify({ text: this.prompt })) });
-    const visible = f.spec.browserSample ? f.http.visible(f.agent, this.answer, FIRST_VISIBLE_MS).then(() => {
+    const visible = f.spec.browserSample ? f.http.visible(f.agent, this.answer, FIRST_VISIBLE_MS, this.run.observation.signal).then(() => {
       this.visibleMs = this.run.time.now() - this.started;
     }).catch((error) => { this.visibleError = error; }) : null;
     try {

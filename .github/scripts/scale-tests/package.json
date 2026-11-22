@@ -13,7 +13,7 @@
     "lint": "eslint . --max-warnings=0 && node check.mjs",
     "run": "node run.mjs",
     "run:ha": "node run.mjs --scenario ha",
-    "test:staging:browser": "node --test staging/browser.test.mjs"
+    "test:staging:browser": "node --test staging/*.test.mjs"
   },
   "devDependencies": {
     "eslint": "9.39.0",
