@@ -1,3 +1,5 @@
+import { requireTaskStorage } from '../create/taskIdentity';
+
 export interface RevocationIntent {
   readonly key: string;
   readonly shareId: string;
@@ -9,6 +11,7 @@ const prefix = 'cma:resource-revocation:';
 const storageKey = (owner: string, agent: string) => `${prefix}${JSON.stringify([owner, agent])}`;
 
 export function readRevocations(owner: string, agent: string): readonly RevocationIntent[] {
+  requireTaskStorage();
   const raw = sessionStorage.getItem(storageKey(owner, agent));
   if (raw === null) return [];
   const value: unknown = JSON.parse(raw);

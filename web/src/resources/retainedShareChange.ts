@@ -1,6 +1,7 @@
 import type { ResourceShare, ShareReceipt } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import type { ShareTarget } from './sharing';
+import { requireTaskStorage } from '../create/taskIdentity';
 
 export interface RetainedShareChange {
   readonly key: string;
@@ -20,6 +21,7 @@ export function readShareChanges(
   owner: string,
   target: ShareTarget,
 ): readonly RetainedShareChange[] {
+  requireTaskStorage();
   const raw = sessionStorage.getItem(storageKey(owner, target));
   if (raw === null) return [];
   const parsed: unknown = JSON.parse(raw);
