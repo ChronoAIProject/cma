@@ -21,6 +21,9 @@ pub(super) struct State {
     pub extra_discovery: Vec<RevocationOperationV1>,
     pub effects: Option<Vec<EffectRecordV1>>,
     pub effect_pages: Vec<u32>,
+    pub record_reads: usize,
+    pub record_gate: Option<Arc<tokio::sync::Semaphore>>,
+    pub effect_page_gate: Option<(u32, Arc<tokio::sync::Semaphore>)>,
 }
 
 pub(super) struct Store(pub Mutex<State>);
@@ -40,6 +43,9 @@ impl Store {
             extra_discovery: Vec::new(),
             effects: None,
             effect_pages: Vec::new(),
+            record_reads: 0,
+            record_gate: None,
+            effect_page_gate: None,
         })))
     }
     pub fn id(&self) -> wire::Digest {
@@ -116,14 +122,22 @@ impl ResourceExecutionStore for Store {
         &self,
         registration: &wire::Digest,
     ) -> ExecutionResult<Option<ExecutionRecordV1>> {
-        Ok(self
-            .0
-            .lock()
-            .unwrap()
-            .members
-            .iter()
-            .find(|row| &row.registration == registration)
-            .cloned())
+        let (record, gate) = {
+            let mut state = self.0.lock().unwrap();
+            state.record_reads += 1;
+            (
+                state
+                    .members
+                    .iter()
+                    .find(|row| &row.registration == registration)
+                    .cloned(),
+                state.record_gate.clone(),
+            )
+        };
+        if let Some(gate) = gate {
+            gate.acquire().await.unwrap().forget();
+        }
+        Ok(record)
     }
     async fn observe_barrier(&self, receipt: &wire::BarrierReceiptV1) -> ExecutionResult<()> {
         let mut state = self.0.lock().unwrap();
@@ -229,18 +243,31 @@ impl ResourceExecutionStore for Store {
         after: u32,
         limit: u32,
     ) -> ExecutionResult<Vec<EffectRecordV1>> {
-        let mut state = self.0.lock().unwrap();
-        assert_eq!(registration, &state.members[0].registration);
-        assert!(limit > 0 && limit <= MAX_PAGE_MEMBERS);
-        state.effect_pages.push(after);
-        Ok(state
-            .effects
-            .as_ref()
-            .expect("effect reconciliation requires a status provider")
-            .iter()
-            .skip(after as usize)
-            .take(limit as usize)
-            .cloned()
-            .collect())
+        let (page, gate) = {
+            let mut state = self.0.lock().unwrap();
+            assert_eq!(registration, &state.members[0].registration);
+            assert!(limit > 0 && limit <= MAX_PAGE_MEMBERS);
+            state.effect_pages.push(after);
+            (
+                state
+                    .effects
+                    .as_ref()
+                    .expect("effect reconciliation requires a status provider")
+                    .iter()
+                    .skip(after as usize)
+                    .take(limit as usize)
+                    .cloned()
+                    .collect(),
+                state
+                    .effect_page_gate
+                    .as_ref()
+                    .filter(|(offset, _)| *offset == after)
+                    .map(|(_, gate)| gate.clone()),
+            )
+        };
+        if let Some(gate) = gate {
+            gate.acquire().await.unwrap().forget();
+        }
+        Ok(page)
     }
 }

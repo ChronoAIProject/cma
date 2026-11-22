@@ -3,6 +3,7 @@ use super::super::reconciliation::{
 };
 use super::*;
 
+mod admission;
 mod budget;
 pub(super) mod fixture;
 use fixture::{append, setup};

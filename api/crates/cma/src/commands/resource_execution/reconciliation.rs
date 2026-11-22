@@ -5,6 +5,8 @@ use layer2_core::resource_access::execution::{
 };
 use std::time::Duration;
 
+const RECONCILIATION_CONCURRENCY: usize = 4;
+const LEDGER_READ_TIMEOUT: Duration = Duration::from_secs(5);
 const STATUS_CONCURRENCY: usize = 16;
 const STATUS_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -30,6 +32,7 @@ pub(crate) struct EffectReconciler {
     store: Arc<dyn ResourceExecutionStore>,
     provider: Arc<dyn EffectStatusProvider>,
     status_slots: tokio::sync::Semaphore,
+    reconciliation_slots: tokio::sync::Semaphore,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -55,6 +58,7 @@ impl EffectReconciler {
             store,
             provider,
             status_slots: tokio::sync::Semaphore::new(STATUS_CONCURRENCY),
+            reconciliation_slots: tokio::sync::Semaphore::new(RECONCILIATION_CONCURRENCY),
         }
     }
 
@@ -71,6 +75,39 @@ impl EffectReconciler {
         &self,
         registration: &wire::Digest,
     ) -> ExecutionResult<EffectProgress> {
+        let _attempt = self
+            .reconciliation_slots
+            .try_acquire()
+            .map_err(|_| ExecutionError::Capacity)?;
+        let effects = tokio::time::timeout(LEDGER_READ_TIMEOUT, self.capture(registration))
+            .await
+            .unwrap_or(Err(ExecutionError::Unavailable))?;
+        // Validate the full captured ledger before querying any external status.
+        let mut results = stream::iter(effects.into_iter().map(|effect| async move {
+            let id = effect.permission.intent.effect_id.clone();
+            let result = self.observe(effect).await;
+            (id, result)
+        }))
+        .buffer_unordered(STATUS_CONCURRENCY);
+        let mut progress = EffectProgress {
+            terminal: 0,
+            unresolved: 0,
+            failures: Vec::new(),
+        };
+        while let Some((id, result)) = results.next().await {
+            match result {
+                Ok(true) => progress.terminal += 1,
+                Ok(false) => progress.unresolved += 1,
+                Err(error) => {
+                    progress.unresolved += 1;
+                    progress.failures.push((id, error));
+                }
+            }
+        }
+        Ok(progress)
+    }
+
+    async fn capture(&self, registration: &wire::Digest) -> ExecutionResult<Vec<EffectRecordV1>> {
         let member = self
             .store
             .record(registration)
@@ -104,29 +141,7 @@ impl EffectReconciler {
                 effects.push(effect);
             }
         }
-        // Validate the full captured ledger before querying any external status.
-        let mut results = stream::iter(effects.into_iter().map(|effect| async move {
-            let id = effect.permission.intent.effect_id.clone();
-            let result = self.observe(effect).await;
-            (id, result)
-        }))
-        .buffer_unordered(STATUS_CONCURRENCY);
-        let mut progress = EffectProgress {
-            terminal: 0,
-            unresolved: 0,
-            failures: Vec::new(),
-        };
-        while let Some((id, result)) = results.next().await {
-            match result {
-                Ok(true) => progress.terminal += 1,
-                Ok(false) => progress.unresolved += 1,
-                Err(error) => {
-                    progress.unresolved += 1;
-                    progress.failures.push((id, error));
-                }
-            }
-        }
-        Ok(progress)
+        Ok(effects)
     }
 
     async fn observe(&self, effect: EffectRecordV1) -> ExecutionResult<bool> {
