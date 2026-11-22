@@ -121,14 +121,15 @@ async fn persisted_block_replays_and_resumes(kind: &str) {
     assert_eq!(raw_record(&db).await, original);
     assert_eq!(raw_events(&db).await, history);
 
+    let at = database_now(&db).await;
     let mut rearmed = loaded.clone();
-    let event = rearmed.rearm(LATER).unwrap();
+    let event = rearmed.rearm(&at).unwrap();
     store
         .commit(rearmed, vec![event], loaded.revision, None)
         .await
         .unwrap();
     let mut claimed = store
-        .claim_due("compatible-worker", LATER, Duration::from_secs(90))
+        .claim_due("compatible-worker", &at, Duration::from_secs(90))
         .await
         .unwrap()
         .unwrap();
@@ -137,9 +138,7 @@ async fn persisted_block_replays_and_resumes(kind: &str) {
     assert!(claimed.block.is_none());
     let revision = claimed.revision;
     let lease = claimed.work.lease.as_ref().unwrap().clone();
-    let event = claimed
-        .advance(lease.fence, LATER, BTreeMap::new())
-        .unwrap();
+    let event = claimed.advance(lease.fence, &at, BTreeMap::new()).unwrap();
     store
         .commit(claimed, vec![event], revision, Some(&lease.token))
         .await

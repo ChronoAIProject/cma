@@ -8,9 +8,12 @@ use mongodb::{
 };
 use std::{collections::BTreeSet, time::Duration};
 
+#[cfg(test)]
+mod commit_pause;
 mod completion_guard;
 mod events;
 mod indexes;
+mod lease_admission;
 mod records;
 mod requests;
 #[cfg(test)]
@@ -31,6 +34,8 @@ pub(crate) struct MongoAccountDeletionStore {
     database: Database,
     records: Collection<Document>,
     events: Collection<Document>,
+    #[cfg(test)]
+    commit_pause: Option<std::sync::Arc<commit_pause::Pause>>,
 }
 impl MongoAccountDeletionStore {
     pub(crate) fn from_database(database: &Database) -> Self {
@@ -38,6 +43,8 @@ impl MongoAccountDeletionStore {
             database: database.clone(),
             records: super::durability::majority_collection(database, RECORDS),
             events: super::durability::majority_collection(database, EVENTS),
+            #[cfg(test)]
+            commit_pause: None,
         }
     }
     pub(crate) async fn require_admission_schema(&self) -> Result<(), StoreError> {
