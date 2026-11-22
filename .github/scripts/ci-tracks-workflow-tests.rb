@@ -2,6 +2,7 @@
 require 'yaml'
 require 'json'
 require_relative 'omarchy-ci-contract'
+require_relative 'scanner-ci-contract'
 root = File.expand_path('../..', __dir__)
 
 
@@ -124,6 +125,7 @@ def check_merge_group_triggers(workflows)
 end
 
 def validate(documents, actions)
+  ScannerCIContract.validate(documents)
   require_runtime_inventory(documents)
   check_component_cache_writers(documents)
   check_merge_group_artifacts(documents)
@@ -440,6 +442,7 @@ documents['ci-images']['jobs']['images']['steps'].each_with_index do |step, inde
   mutations << ->(d) { d['ci-images']['jobs']['images']['steps'][index]['with'].delete('package-manager-cache') }
   mutations << ->(d) { d['ci-images']['jobs']['images']['steps'][index]['with']['cache'] = 'npm' }
 end
+mutations.concat(ScannerCIContract.mutations)
 mutations.each do |mutate|
   copy = Marshal.load(Marshal.dump(documents))
   mutate.call(copy)

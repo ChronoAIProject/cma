@@ -65,6 +65,17 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             select(['../escape'], self.graph)
 
+    def test_scanner_qualification_changes_select_am(self):
+        for path in ['.github/scripts/scanner-contract.py',
+                     '.github/scripts/scanner-contract.test.mjs',
+                     '.github/scripts/scanner-contract-test-support.mjs',
+                     '.github/scripts/scanner-ci-contract.rb',
+                     '.github/scripts/install-image-gitleaks.sh',
+                     '.github/secret-scanner-build-tests.sh']:
+            result = select([path], self.graph)
+            self.assertTrue(result['am'], path)
+            self.assertIn('cma', result['am_packages'], path)
+
     def test_new_dependency_inherits_owner(self):
         data = metadata(self.root)
         data['packages'].append({'id': 'new', 'name': 'new', 'manifest_path': '/synthetic/api/crates/new/Cargo.toml', 'dependencies': []})
