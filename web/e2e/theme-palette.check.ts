@@ -52,7 +52,7 @@ for (const theme of ['light', 'dark'] as const) {
       await expect(send).toHaveCSS('color', 'rgb(11, 11, 12)');
       await expect(page.locator('.task-home__composer')).toHaveCSS(
         'background-color',
-        theme === 'light' ? 'rgb(250, 250, 250)' : 'rgb(19, 19, 21)',
+        theme === 'light' ? 'rgb(255, 255, 255)' : 'rgb(20, 20, 22)',
       );
       await expect(page.locator('.console__surface')).toHaveCSS(
         'background-color',
