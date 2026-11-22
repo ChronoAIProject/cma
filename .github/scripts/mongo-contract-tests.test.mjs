@@ -10,6 +10,7 @@ import './mongo-contract-registry.test.mjs';
 import { registerSelectionTests } from './mongo-contract-selection-tests.mjs';
 import { registerShardTests } from './mongo-contract-shards.test.mjs';
 import { registerRegistryRunnerTests } from './mongo-contract-registry-runner-tests.mjs';
+import { registerQualificationTests } from './inventory-qualification.test.mjs';
 
 const scaleTest = 'store::usage_reports::tests::scale::metrics_over_twenty_thousand_sandboxes_generate_full_cohort_and_indexed_pages';
 const ownerTest = 'store::usage_reports::tests::owner_allocation::metrics_owner_allocations_full_cohort_at_400_and_20001_is_bounded_and_cursor_bound';
@@ -34,7 +35,7 @@ function fixture(scenario, reuse = false) {
   const scripts = join(root, '.github/scripts');
   mkdirSync(scripts, {recursive: true});
   mkdirSync(join(root, 'api/target/nextest'), {recursive: true});
-  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-registry.py', 'mongo-contract-partitions.py', 'mongo-contract-schedule.py', 'mongo-contract-timings.json', 'mongo-contract-completeness.py', 'mongo-contract-exceptions.json', 'backend-nextest.sh']) {
+  for (const name of ['mongo-contract-tests.sh', 'mongo-contract-registry.py', 'mongo-contract-partitions.py', 'mongo-contract-schedule.py', 'mongo-contract-timings.json', 'mongo-contract-completeness.py', 'mongo-contract-exceptions.json', 'backend-nextest.sh', 'inventory-qualification.py', 'inventory_qualification_build.py', 'inventory_qualification_results.py', 'inventory_qualification_fixture.py']) {
     copyFileSync(new URL(name, import.meta.url), join(scripts, name));
   }
   cpSync(new URL('mongo-contract-suites', import.meta.url), join(scripts, 'mongo-contract-suites'), {recursive: true});
@@ -174,6 +175,13 @@ if (command === 'cargo') {
       if (scenario === 'volume-cleanup-error' || (scenario === 'owner-volume-cleanup-error' && fs.existsSync(log+'.finished--1')) || (scenario === 'audit-volume-cleanup-error' && fs.existsSync(log+'.finished--2')) || (scenario === 'diagnostics-volume-cleanup-error' && fs.existsSync(log+'.finished--3')) || (scenario === 'scan-volume-cleanup-error' && fs.existsSync(log+'.finished--4')) || fs.existsSync(file(owner))) process.exit(21);
       fs.unlinkSync(volume(name));
     } else process.exit(22);
+  } else if (args[0] === 'inspect') {
+    const name = args[1], state = JSON.parse(fs.readFileSync(file(name)));
+    console.log(JSON.stringify([{Id:state.id, Image:'sha256:'+'a'.repeat(64), RestartCount:0,
+      State:{StartedAt:'2026-01-01T00:00:00Z',Running:true,OOMKilled:false},
+      Config:{Labels:{'dev.chrono.cma.mongo-contract':name}, Cmd:['--wiredTigerCacheSizeGB','0.25'],
+        Image:'mongo:8.0.13@sha256:cf340b1e5283843c63eb12999922f20c463ae31285f746d30f05dcc21cd1d47c'},
+      HostConfig:{Memory:2147483648,MemorySwap:2147483648,NanoCpus:2000000000,PidsLimit:256}}]));
   } else if (args[0] === 'run') {
     if (scenario === 'run-error') process.exit(23);
     const name = args[args.indexOf('--name')+1];
@@ -226,6 +234,7 @@ if (command === 'cargo') {
 }
 
 registerRegistryRunnerTests({fixture, requiredPrefixes});
+registerQualificationTests({fixture});
 
 for (const reuse of [false, true]) {
   const mode = reuse ? 'archive' : 'source';

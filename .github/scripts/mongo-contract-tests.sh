@@ -4,9 +4,17 @@ set -euo pipefail
 script_directory=$(dirname -- "${BASH_SOURCE[0]}")
 repo_root=$(CDPATH='' cd -- "${script_directory}/../.." && pwd -P)
 readonly repo_root
+if [[ $# == 2 && "$1" == '--qualify' ]]; then
+  exec python3 -B "$repo_root/.github/scripts/inventory-qualification.py" "$2"
+fi
 unset CHRONO_TEST_MONGODB_URI CHRONO_TEST_MONGODB_FAILPOINT_URI CMA_IM_TEST_MONGODB_URI
 # shellcheck source=.github/scripts/backend-nextest.sh
 source "$script_directory/backend-nextest.sh"
+qualification_list=false
+if [[ $# == 2 && "$1" == '--list-qualification' ]]; then
+  qualification_list=true
+  set -- "$2"
+fi
 
 # Listing and execution share one complete selection. The coordinator sizes
 # disposable fixtures from this list, keeping database metadata growth bounded.
@@ -112,8 +120,21 @@ else
   partition=$1
 fi
 
-if [[ "${CMA_NEXTEST_REUSE:-}" != 1 && ( "$selection" == organization-inventory || "$selection" == agent-list-contracts || "$selection" == availability || "$selection" == agent-lists || "$selection" == agent-list-profile ) ]]; then
+if [[ -n "${CMA_INVENTORY_QUALIFICATION_DIR:-}" ]]; then
+  [[ -z "${CMA_NEXTEST_REUSE+x}" && -f "$CMA_INVENTORY_QUALIFICATION_DIR/build.json" ]] || exit 2
+  case "$selection" in
+    availability|agent-lists|agent-list-profile|organization-inventory|observation-budget) ;;
+    *) exit 2 ;;
+  esac
+  nextest_build_args=(--locked --release -p cma --bin cma)
+elif [[ "$qualification_list" == true ]]; then
+  exit 2
+elif [[ "${CMA_NEXTEST_REUSE:-}" != 1 && ( "$selection" == organization-inventory || "$selection" == agent-list-contracts || "$selection" == availability || "$selection" == agent-lists || "$selection" == agent-list-profile ) ]]; then
   nextest_build_args=(--locked -p cma)
+fi
+if [[ "$qualification_list" == true ]]; then
+  nextest_contracts list --message-format json
+  exit
 fi
 
 # This entry point always creates its own disposable replica set. It does not
@@ -139,10 +160,14 @@ existing_volume=$(docker volume ls --quiet --filter "name=^${contract_volume}$")
 [[ -z "$existing_volume" ]] || exit 1
 
 cleanup() {
-  local status=$? ids remaining id volume owner
+  local status=$? ids remaining id volume owner original_status
+  original_status=$status
   # 125 tells the coordinator cleanup is uncertain, so no new phase may start.
   trap - EXIT
   trap '' INT TERM
+  if [[ -n "${CMA_INVENTORY_QUALIFICATION_DIR:-}" ]]; then
+    python3 -B "$repo_root/.github/scripts/inventory_qualification_fixture.py" closing || status=125
+  fi
   if ! ids=$(docker ps --all --quiet --filter "label=${contract_label}"); then
     exit 125
   fi
@@ -161,6 +186,9 @@ cleanup() {
   fi
   remaining=$(docker volume ls --quiet --filter "name=^${contract_volume}$") || exit 125
   [[ -z "$remaining" ]] || status=125
+  if [[ -n "${CMA_INVENTORY_QUALIFICATION_DIR:-}" ]]; then
+    python3 -B "$repo_root/.github/scripts/inventory_qualification_fixture.py" closed "$status" "$original_status" || status=125
+  fi
   exit "$status"
 }
 trap cleanup EXIT
@@ -197,8 +225,13 @@ endpoint=$(docker port "$contract_name" 27017/tcp)
 [[ "$endpoint" =~ ^127\.0\.0\.1:[0-9]+$ ]] || exit 1
 export CHRONO_TEST_MONGODB_URI="mongodb://${endpoint}/?directConnection=true&replicaSet=cma_ci"
 export CHRONO_TEST_MONGODB_FAILPOINT_URI="$CHRONO_TEST_MONGODB_URI"
+if [[ -n "${CMA_INVENTORY_QUALIFICATION_DIR:-}" ]]; then
+  python3 -B "$repo_root/.github/scripts/inventory_qualification_fixture.py" start "$contract_name"
+fi
 cd "$repo_root/api"
-if [[ "$selection" == 'availability' ]]; then
+if [[ -n "${CMA_INVENTORY_QUALIFICATION_DIR:-}" ]]; then
+  nextest_contracts run --test-threads 1 --retries 0 --no-fail-fast --no-capture
+elif [[ "$selection" == 'availability' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --no-capture
 elif [[ "$selection" == 'scale' || "$selection" == 'owner-allocation' || "$selection" == 'audit-bounds' || "$selection" == 'diagnostics' || "$selection" == 'organization-inventory' || "$selection" == 'agent-list-contracts' || "$selection" == 'agent-lists' || "$selection" == 'agent-list-profile' || "$selection" == 'request-limits' || "$selection" == 'cpu-profile' || "$selection" == 'scan-cooperation' || "$selection" == 'bson-ceiling' || "$selection" == 'first-response' || "$selection" == 'observation-budget' ]]; then
   nextest_contracts run --test-threads 1 --no-fail-fast --success-output final
