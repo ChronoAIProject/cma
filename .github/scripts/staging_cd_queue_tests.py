@@ -28,24 +28,28 @@ class QueueTests(unittest.TestCase):
         api = Mock()
         reference = {"ref": "refs/heads/develop", "object": {"type": "commit", "sha": THIRD}}
         api.request.return_value = reference
-        self.assertTrue(recheck(THIRD, api))
+        api.deadline = None
+        self.assertTrue(recheck(THIRD, api, sleep=Mock(side_effect=AssertionError("no wait expected"))))
         run = {"head_sha": THIRD, "event": "push", "head_branch": "develop",
                "path": ".github/workflows/staging-cd.yml", "status": "in_progress"}
-        for updates in ({}, {"status": "completed", "conclusion": "success"}):
+        for updates in ({}, {"status": "completed", "conclusion": "success"},
+                        *({"status": status} for status in ("queued", "waiting", "requested", "pending"))):
             api.request.side_effect = [reference, {"workflow_runs": [dict(run, **updates)]}]
-            self.assertTrue(recheck(SECOND, api))
-        # A run that exists but failed is refused at once, without waiting.
-        api.request.side_effect = [reference, {"workflow_runs": [dict(run, status="completed", conclusion="failure")]}]
-        sleep = Mock()
-        with self.assertRaises(Refusal):
-            recheck(SECOND, api, sleep=sleep)
-        sleep.assert_not_called()
+            self.assertTrue(recheck(SECOND, api, sleep=Mock(side_effect=AssertionError("no wait expected"))))
+        # A run that exists but did not succeed is refused at once, without waiting.
+        for conclusion in ("failure", "cancelled", "timed_out", "startup_failure"):
+            api.request.side_effect = [reference, {"workflow_runs": [dict(run, status="completed", conclusion=conclusion)]}]
+            sleep = Mock()
+            with self.assertRaisesRegex(Refusal, "no active or successful"):
+                recheck(SECOND, api, sleep=sleep)
+            sleep.assert_not_called()
         # No visible run, even after every bounded wait, is refused.
-        for runs in ([], [dict(run, head_sha=FIRST)]):
+        for runs in ([], [dict(run, head_sha=FIRST)], [dict(run, path=".github/workflows/ci.yml")],
+                     [dict(run, head_branch="main")]):
             polls = len(staging_cd_recheck.RUN_WAITS) + 1
             api.request.side_effect = [reference, {"workflow_runs": runs}] * polls
             sleep = Mock()
-            with self.assertRaises(Refusal):
+            with self.assertRaisesRegex(Refusal, "never showed a reconciliation run"):
                 recheck(SECOND, api, sleep=sleep)
             self.assertEqual([call.args[0] for call in sleep.call_args_list], list(staging_cd_recheck.RUN_WAITS))
 
@@ -70,6 +74,19 @@ class QueueTests(unittest.TestCase):
                "path": ".github/workflows/staging-cd.yml", "status": "in_progress"}
         api.request.side_effect = [third, {"workflow_runs": []}, fourth, {"workflow_runs": [run]}]
         self.assertTrue(recheck(SECOND, api, sleep=Mock()))
+
+    def test_recheck_never_sleeps_into_the_read_deadline(self):
+        api = Mock()
+        reference = {"ref": "refs/heads/develop", "object": {"type": "commit", "sha": THIRD}}
+        api.request.side_effect = [reference, {"workflow_runs": []}] * 6
+        now = [100.0]
+        api.deadline = 100.0 + 2 + 4 + staging_cd_recheck.READ_RESERVE_SECONDS + 1
+        def sleep(seconds):
+            now[0] += seconds
+        with self.assertRaisesRegex(Refusal, "never showed a reconciliation run"):
+            recheck(SECOND, api, sleep=sleep, clock=lambda: now[0])
+        # 2 and 4 fit; 8 would end inside the read reserve, so it is not taken.
+        self.assertEqual(now[0], 106.0)
 
     def test_recheck_waits_fit_inside_its_budget(self):
         # Reads are bounded separately by the client deadline; the waits alone

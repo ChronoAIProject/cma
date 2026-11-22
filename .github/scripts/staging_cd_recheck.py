@@ -39,9 +39,18 @@ def push_runs(api, revision):
             and run.get("path") == ".github/workflows/staging-cd.yml"]
 
 
-def recheck(head, api, *, sleep=time.sleep):
+# Time kept after the last wait for that pass's two reads.
+READ_RESERVE_SECONDS = 15
+
+
+def recheck(head, api, *, sleep=time.sleep, clock=time.monotonic):
+    deadline = getattr(api, "deadline", None)
     for wait in (0, *RUN_WAITS):
         if wait:
+            # Never sleep into the read deadline; refuse with the domain reason
+            # instead of a later "GitHub read budget expired".
+            if isinstance(deadline, (int, float)) and clock() + wait + READ_RESERVE_SECONDS > deadline:
+                break
             sleep(wait)
         # Develop may move again while waiting; the newest head is what matters.
         revision = develop_head(api)
@@ -53,7 +62,7 @@ def recheck(head, api, *, sleep=time.sleep):
             return True
         # A run that exists but did not succeed is a real gap; waiting cannot fix it.
         require(not candidates, "Newer merges have no active or successful reconciliation run")
-    require(False, "Newer merges have no active or successful reconciliation run")
+    require(False, "Newer develop head never showed a reconciliation run within the wait")
 
 
 def main():
