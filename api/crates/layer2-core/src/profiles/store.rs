@@ -387,4 +387,5 @@ mod marketplace_memory;
 mod marketplace_public_values;
 mod marketplace_support;
 mod memory;
+mod memory_publication;
 mod reference_memory;
