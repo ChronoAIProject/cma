@@ -96,9 +96,8 @@ class Develop:
                 raise GitHubNotFound("GitHub resource was not found")
             if parts[5:] == ["jobs"]:
                 state = self.runs[run_id]["attempts"][attempt - 1]
-                return {"jobs": [self.plan_job(state.get("plan", "success")),
-                                 {"name": "allocate", "status": "completed" if state["allocate"] else "queued",
-                                  "conclusion": state["allocate"]}] + [dict(job) for job in state["jobs"]]}
+                return {"jobs": [self.plan_job(state.get("plan", "success")), self.allocate_job(state["allocate"])]
+                        + [dict(job) for job in state["jobs"]]}
             return self.view(run_id, attempt)
         return self.view(run_id)
 
@@ -108,7 +107,9 @@ class Develop:
 
     @staticmethod
     def plan_job(outcome):
-        """The plan job: successful, stopped at its transient gate, or failed in its plan step."""
+        """The plan job: successful, stopped at its transient gate, failed in its plan step, or a given job."""
+        if isinstance(outcome, dict):
+            return dict(outcome, name="plan")
         steps = {"success": [("Reconcile first-parent merges with the shared selector", "success"),
                              ("Require a complete release plan", "skipped")],
                  "stopped": [("Reconcile first-parent merges with the shared selector", "success"),
@@ -116,6 +117,25 @@ class Develop:
                              ("Require a complete release plan", "failure")],
                  "failed": [("Reconcile first-parent merges with the shared selector", "failure")]}[outcome]
         return {"name": "plan", "status": "completed", "conclusion": "success" if outcome == "success" else "failure",
+                "steps": [{"name": name, "conclusion": conclusion} for name, conclusion in steps]}
+
+    @staticmethod
+    def allocate_job(outcome):
+        """The allocate job: not started, successful, stopped at its settlement gate, failed, or a given job."""
+        if isinstance(outcome, dict):
+            return dict(outcome, name="allocate")
+        if outcome is None:
+            return {"name": "allocate", "status": "queued", "conclusion": None}
+        steps = {"success": [("Reserve independent immutable component versions", "success"),
+                             ("Require a settled allocation", "skipped"),
+                             ("Route finalized components by contract", "success")],
+                 "stopped": [("Reserve independent immutable component versions", "success"),
+                             ("Require a settled allocation", "failure"),
+                             ("Route finalized components by contract", "skipped")],
+                 "failure": [("Reserve independent immutable component versions", "failure"),
+                             ("Require a settled allocation", "skipped"),
+                             ("Route finalized components by contract", "skipped")]}[outcome]
+        return {"name": "allocate", "status": "completed", "conclusion": "success" if outcome == "success" else "failure",
                 "steps": [{"name": name, "conclusion": conclusion} for name, conclusion in steps]}
 
     def complete(self, *run_ids):

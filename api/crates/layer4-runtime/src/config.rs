@@ -38,6 +38,7 @@ pub(crate) struct RuntimeConfig {
     pub extended_desktop_startup: bool,
     pub capacity_recovery_enabled: bool,
     pub legacy_journal_recovery_enabled: bool,
+    pub preserve_file_mode: bool,
 }
 
 impl RuntimeConfig {
@@ -93,6 +94,8 @@ impl RuntimeConfig {
             &process_env,
             "CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED",
         )?;
+
+        let preserve_file_mode = crate::agent_filesystem::preserve_mode_enabled(&process_env)?;
 
         let bind = env_socket(&process_env, "CHRONO_RUNTIME_BIND", DEFAULT_BIND)?;
         process_env.insert("HOME".into(), home.to_string_lossy().into_owned());
@@ -173,6 +176,7 @@ impl RuntimeConfig {
             extended_desktop_startup,
             capacity_recovery_enabled,
             legacy_journal_recovery_enabled,
+            preserve_file_mode,
         })
     }
 
@@ -215,6 +219,7 @@ impl RuntimeConfig {
             extended_desktop_startup: false,
             capacity_recovery_enabled: false,
             legacy_journal_recovery_enabled: false,
+            preserve_file_mode: false,
         }
     }
 }

@@ -145,36 +145,68 @@ class EvidenceTests(unittest.TestCase):
                     run_view(7, event="pull_request"), dict(run_view(7), id=8)):
             self.assertFalse(select.trusted_run(Mock(return_value=bad), 7))
 
-    def test_verified_image_is_found_and_forged_or_stale_evidence_is_ignored(self):
-        listing = {"artifacts": [
-            artifact(1, 10, name="unrelated"),
-            artifact(2, 11, expired=True),
-            artifact(3, 12, branch="pr-branch"),
-            artifact(4, 13),   # untrusted workflow path
-            artifact(5, 14),   # trusted, wrong image
-            artifact(6, 15),   # trusted, verified
-        ]}
-        runs = {13: run_view(13, path=".github/workflows/ci.yml"), 14: run_view(14), 15: run_view(15)}
-
+    def staging_runs(self, runs, artifacts, workflow="staging-cd.yml"):
+        """A request stub: workflow run listings, then each run's own artifacts."""
         def request(path):
-            if path.startswith("actions/artifacts"):
-                return listing
-            return runs[int(path.rsplit("/", 1)[1])]
+            if path.startswith(f"actions/workflows/{workflow}/runs"):
+                page = int(path.rsplit("page=", 1)[1])
+                return {"workflow_runs": runs[(page - 1) * 100:page * 100]}
+            if path.startswith("actions/workflows/"):
+                return {"workflow_runs": []}
+            if path.startswith("actions/runs/") and "/artifacts" in path:
+                return {"artifacts": artifacts.get(int(path.split("/")[2]), [])}
+            raise AssertionError(path)
+        return request
 
-        archives = {5: evidence({"web": {"state": "controller-verified", "image": WEB.replace("4", "9")}}),
-                    6: evidence({"web": {"state": "controller-verified", "image": WEB}})}
+    def test_verified_image_is_found_through_staging_runs_and_forged_evidence_is_ignored(self):
+        runs = [run_view(13, path=".github/workflows/ci.yml"), run_view(12, branch="feature"),
+                run_view(14), run_view(15)]
+        artifacts = {
+            13: [artifact(1, 13)],                                    # untrusted workflow path
+            12: [artifact(2, 12)],                                    # not develop
+            14: [artifact(3, 14, name="staging-deployment-99-1"),     # names another run
+                 artifact(4, 14, expired=True),
+                 artifact(5, 14, name="unrelated"),
+                 artifact(6, 14)],                                    # trusted, wrong image
+            15: [artifact(7, 15, name="staging-deployment-15-2-web")],  # trusted, verified
+        }
+        archives = {6: evidence({"web": {"state": "controller-verified", "image": WEB.replace("4", "9")}}),
+                    7: evidence({"web": {"state": "controller-verified", "image": WEB}})}
         download = Mock(side_effect=lambda item: archives[item["id"]])
+        request = self.staging_runs(runs, artifacts)
         self.assertEqual(select.staging_verified({"web": WEB}, request, download), {"web"})
-        self.assertEqual([c.args[0]["id"] for c in download.call_args_list], [5, 6])
-        archives[6] = evidence({"web": {"state": "rolled-back", "image": WEB}})
+        self.assertEqual([c.args[0]["id"] for c in download.call_args_list], [6, 7])
+        archives[7] = evidence({"web": {"state": "rolled-back", "image": WEB}})
         self.assertEqual(select.staging_verified({"web": WEB}, request, download), set())
 
+    def test_old_evidence_beyond_newer_runs_is_still_found(self):
+        # Hundreds of newer artifacts elsewhere must not hide an older lane's evidence.
+        runs = [run_view(1000 - i) for i in range(150)]
+        artifacts = {1000 - i: [artifact(i, 1000 - i, name=f"staging-deployment-{1000 - i}-1-am")]
+                     for i in range(149)}
+        artifacts[851] = [artifact(9001, 851, name="staging-deployment-851-1-web")]
+        download = Mock(return_value=evidence({"web": {"state": "controller-verified", "image": WEB}}))
+        self.assertEqual(select.staging_verified({"web": WEB}, self.staging_runs(runs, artifacts), download),
+                         {"web"})
+        self.assertEqual([c.args[0]["id"] for c in download.call_args_list], [9001])
+
+    def test_contract_and_unsuffixed_evidence_is_always_read(self):
+        runs = [run_view(20)]
+        artifacts = {20: [artifact(1, 20, name="staging-deployment-20-1-contract"),
+                          artifact(2, 20, name="staging-deployment-20-1"),
+                          artifact(3, 20, name="staging-deployment-20-01-web")]}
+        download = Mock(return_value=evidence({}))
+        select.staging_verified({"web": WEB}, self.staging_runs(runs, artifacts), download)
+        self.assertEqual([c.args[0]["id"] for c in download.call_args_list], [1, 2])
+
     def test_evidence_search_is_bounded(self):
-        listing = {"artifacts": [artifact(i, 100 + i) for i in range(select.MAX_DOWNLOADS + 1)]}
-        request = Mock(side_effect=lambda path: listing if path.startswith("actions/artifacts")
-                       else run_view(int(path.rsplit("/", 1)[1])))
+        runs = [run_view(5000 - i) for i in range(select.MAX_RUN_LISTINGS + 1)]
         with self.assertRaises(Refusal):
-            select.staging_verified({"web": WEB}, request, Mock(return_value=evidence({})))
+            select.staging_verified({"web": WEB}, self.staging_runs(runs, {}), Mock(return_value=evidence({})))
+        runs = [run_view(10)]
+        artifacts = {10: [artifact(i, 10, name=f"staging-deployment-10-{i + 1}") for i in range(select.MAX_DOWNLOADS + 1)]}
+        with self.assertRaises(Refusal):
+            select.staging_verified({"web": WEB}, self.staging_runs(runs, artifacts), Mock(return_value=evidence({})))
 
 
 class PlanTests(unittest.TestCase):

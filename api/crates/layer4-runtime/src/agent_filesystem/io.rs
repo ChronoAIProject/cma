@@ -114,6 +114,10 @@ pub(crate) fn names(directory: &File) -> Result<Vec<String>> {
 }
 pub(crate) fn read_regular(parent: &File, name: &str, limit: u64) -> Result<Vec<u8>> {
     let file = open_at(parent, name, libc::O_RDONLY, 0)?;
+    read_held_regular(&file, limit)
+}
+
+pub(super) fn read_held_regular(file: &File, limit: u64) -> Result<Vec<u8>> {
     let metadata = file.metadata().map_err(io_error)?;
     if !metadata.is_file() || metadata.nlink() != 1 {
         return Err(rejected("path is not an single-link regular file"));
