@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 304,
+  "openapi_operations": 305,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -3371,6 +3371,14 @@
         "agent_not_found",
         "deliverable_not_found",
         "invalid_deliverable_reference",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Verify a required output against its bound turn and current owner.",
+      "required_problems": [
+        "agent_not_found",
         "not_authenticated"
       ]
     },

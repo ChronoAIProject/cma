@@ -23,6 +23,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -33,8 +34,19 @@ EVIDENCE_PREFIX = "staging-deployment-"
 EVIDENCE_WORKFLOWS = (".github/workflows/staging-cd.yml", ".github/workflows/redeploy-staging.yml")
 EVIDENCE_SCHEMA = "cma-component-deployment-v1"
 VERIFIED = "controller-verified"
-MAX_ARTIFACT_PAGES = 10
-MAX_DOWNLOADS = 40
+# Evidence is found through the staging deployment workflows' own runs, not
+# the repository-wide artifact list: CI uploads hundreds of artifacts a day,
+# so ten pages of that list covered about two hours, and a component staging
+# had verified earlier could never be released. Runs are listed newest first.
+EVIDENCE_RUN_PAGES = 5
+MAX_RUN_LISTINGS = 300
+# Each staging run keeps one evidence archive per lane, so a component last
+# verified a few hours ago sits behind several archives per newer run.
+MAX_DOWNLOADS = 200
+DOWNLOAD_ATTEMPTS = 3
+# staging-promote.yml names each lane's evidence after the lane; a lane that
+# is not exactly one component (contract) or no suffix is always read.
+COMPONENT_LANES = frozenset({"am", "eg", "web", "runtime", "runtime-omarchy"})
 MAX_EVIDENCE_BYTES = 65536
 MAIN = "refs/heads/main"
 
@@ -135,42 +147,64 @@ def evidence_rows(archive):
     return value["components"]
 
 
-def trusted_run(request, run_id):
-    run = request(f"actions/runs/{run_id}")
-    return (isinstance(run, dict) and run.get("id") == run_id and run.get("head_branch") == "develop"
+def trusted_view(run):
+    return (isinstance(run, dict) and isinstance(run.get("id"), int) and run.get("head_branch") == "develop"
             and run.get("event") in ("push", "workflow_dispatch") and run.get("path") in EVIDENCE_WORKFLOWS
             and run.get("conclusion") in ("success", "failure")
             and isinstance(run.get("repository"), dict)
             and run["repository"].get("full_name") == "ChronoAIProject/cma")
 
 
+def trusted_run(request, run_id):
+    run = request(f"actions/runs/{run_id}")
+    return trusted_view(run) and run.get("id") == run_id
+
+
+def evidence_lane(name, run_id):
+    """Return the lane suffix of this run's evidence artifact, '' for none, or None if foreign."""
+    prefix = f"{EVIDENCE_PREFIX}{run_id}-"
+    if not isinstance(name, str) or not name.startswith(prefix):
+        return None
+    attempt, _, lane = name[len(prefix):].partition("-")
+    if not attempt.isdigit() or attempt.startswith("0"):
+        return None
+    return lane
+
+
 def staging_verified(images, request, download):
     """Return the components whose exact image staging recorded as controller-verified."""
-    pending, verified, downloads, trusted = dict(images), set(), 0, {}
-    for page in range(1, MAX_ARTIFACT_PAGES + 1):
-        listing = request(f"actions/artifacts?per_page=100&page={page}")
-        require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list),
-                "Staging deployment evidence inventory is unavailable")
-        for artifact in listing["artifacts"]:
-            name, run = artifact.get("name"), artifact.get("workflow_run") or {}
-            if (not isinstance(name, str) or not name.startswith(EVIDENCE_PREFIX) or artifact.get("expired")
-                    or run.get("head_branch") != "develop" or not isinstance(run.get("id"), int)):
-                continue
-            if run["id"] not in trusted:
-                trusted[run["id"]] = trusted_run(request, run["id"])
-            if not trusted[run["id"]]:
-                continue
-            require(downloads < MAX_DOWNLOADS, "Staging deployment evidence search exceeded its bound")
-            downloads += 1
-            for component, row in evidence_rows(download(artifact)).items():
-                if (component in pending and isinstance(row, dict) and row.get("state") == VERIFIED
-                        and row.get("image") == pending[component]):
-                    verified.add(component)
-                    del pending[component]
-            if not pending:
-                return verified
-        if len(listing["artifacts"]) < 100:
-            break
+    pending, verified, downloads, listings = dict(images), set(), 0, 0
+    for workflow in EVIDENCE_WORKFLOWS:
+        name = workflow.rsplit("/", 1)[1]
+        for page in range(1, EVIDENCE_RUN_PAGES + 1):
+            runs = request(f"actions/workflows/{name}/runs?branch=develop&status=completed&per_page=100&page={page}")
+            require(isinstance(runs, dict) and isinstance(runs.get("workflow_runs"), list),
+                    "Staging deployment evidence inventory is unavailable")
+            for run in runs["workflow_runs"]:
+                if not trusted_view(run) or run.get("path") != workflow:
+                    continue
+                require(listings < MAX_RUN_LISTINGS, "Staging deployment evidence search exceeded its bound")
+                listings += 1
+                listing = request(f"actions/runs/{run['id']}/artifacts?per_page=100")
+                require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list),
+                        "Staging deployment evidence inventory is unavailable")
+                for artifact in listing["artifacts"]:
+                    lane = evidence_lane(artifact.get("name"), run["id"])
+                    if lane is None or artifact.get("expired"):
+                        continue
+                    if lane in COMPONENT_LANES and lane not in pending:
+                        continue
+                    require(downloads < MAX_DOWNLOADS, "Staging deployment evidence search exceeded its bound")
+                    downloads += 1
+                    for component, row in evidence_rows(download(artifact)).items():
+                        if (component in pending and isinstance(row, dict) and row.get("state") == VERIFIED
+                                and row.get("image") == pending[component]):
+                            verified.add(component)
+                            del pending[component]
+                    if not pending:
+                        return verified
+            if len(runs["workflow_runs"]) < 100:
+                break
     return verified
 
 
@@ -181,10 +215,16 @@ def gh_download(token):
         env.update(GH_TOKEN=token, GH_HOST="github.com", GH_PROMPT_DISABLED="1")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "evidence.zip"
-            with path.open("wb") as stream:
-                result = subprocess.run(
-                    ["gh", "api", f"repos/ChronoAIProject/cma/actions/artifacts/{artifact['id']}/zip"],
-                    env=env, stdout=stream, stderr=subprocess.DEVNULL, timeout=60, check=False)
+            for attempt in range(DOWNLOAD_ATTEMPTS):
+                # A transient download failure is retried a bounded number of
+                # times; a persistent one still refuses the whole selection.
+                with path.open("wb") as stream:
+                    result = subprocess.run(
+                        ["gh", "api", f"repos/ChronoAIProject/cma/actions/artifacts/{artifact['id']}/zip"],
+                        env=env, stdout=stream, stderr=subprocess.DEVNULL, timeout=60, check=False)
+                if result.returncode == 0 or attempt == DOWNLOAD_ATTEMPTS - 1:
+                    break
+                time.sleep(2 * (attempt + 1))
             require(result.returncode == 0 and path.stat().st_size <= 4 * MAX_EVIDENCE_BYTES,
                     "Staging deployment evidence could not be downloaded")
             return path.read_bytes()

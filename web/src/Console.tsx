@@ -437,6 +437,11 @@ function ConsoleContent({
                 navigation={navigation}
                 currentAgent={ready?.detail}
                 currentActivity={ready?.activityStatus}
+                currentTurnId={
+                  ready?.historyLoading || ready?.historyUnavailable
+                    ? undefined
+                    : ready?.conversation.latestTurnId
+                }
                 permissions={permissions}
                 pending={actions.pending}
                 busySandboxIds={actions.busySandboxIds}
@@ -446,6 +451,7 @@ function ConsoleContent({
                   if (next.kind !== 'usage') onSidebarNavigate();
                   onNavigate(next);
                 }}
+                onRestoreTaskRoute={onNavigate}
                 onAgentIntent={navigationScope === '' ? onAgentIntent : undefined}
                 onAction={actions.select}
               />

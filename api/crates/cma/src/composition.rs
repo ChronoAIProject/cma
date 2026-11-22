@@ -308,7 +308,7 @@ impl ControlPlaneComposition {
                 context: context.clone(),
             },
             worker_holder.clone(),
-            ownership,
+            ownership.clone(),
             config.features.command_reconcile_pacing,
             adapters.model_funding.clone(),
         )?;
@@ -341,6 +341,7 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             worker_holder,
             access::ToolServices {
+                ownership,
                 model_credit_required: config.features.model_credit_required,
                 model_funding: adapters.model_funding,
                 source: access_tools,
@@ -350,11 +351,10 @@ impl ControlPlaneComposition {
                 task_experience: config.task_experience.clone(),
             },
         );
-        let command_service = agent_access.commands;
-        let projections = projections.with_commands(command_service.clone());
+        let projections = projections.with_commands(agent_access.commands.clone());
         let responses_v2 = bindings::responses(
             &stores,
-            command_service.clone(),
+            agent_access.commands.clone(),
             projections.reads(),
             agent_page_origin,
             &bindings,
@@ -432,7 +432,7 @@ impl ControlPlaneComposition {
             auth.clone(),
             settings.clone(),
             bots.as_ref(),
-            command_service,
+            agent_access.commands,
             resource_routes.merge(bot_routes),
         )?;
         let provenance_backfill =

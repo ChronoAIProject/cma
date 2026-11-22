@@ -68,12 +68,14 @@ fn source_config(request: &HomeSnapshotExportRequest) -> Result<RuntimeConfig> {
         platform_proxy: None,
         tool_proxy: None,
         github_proxy: None,
+        desktop_supervision_enabled: false,
         nyxid_url: None,
         allow_local_git: false,
         machine_included: false,
         extended_desktop_startup: false,
         capacity_recovery_enabled: false,
         legacy_journal_recovery_enabled: false,
+        preserve_file_mode: false,
     })
 }
 

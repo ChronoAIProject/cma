@@ -5,12 +5,14 @@ use layer2_core::sandbox::*;
 use std::sync::atomic::{AtomicUsize, Ordering};
 mod admission;
 mod association;
+mod cancellation_relay;
 mod fixtures;
 mod guards;
 mod readiness;
 mod reclaim;
 mod reuse;
 mod segmented;
+mod terminal_handoff;
 mod unknown_commit;
 mod worker;
 use fixtures::*;
@@ -281,3 +283,5 @@ async fn trigger_common_expiry_closes_first_reservation_without_a_synthetic_turn
     );
     accepted.f.close().await;
 }
+#[path = "common_execution/ownership.rs"]
+mod ownership;

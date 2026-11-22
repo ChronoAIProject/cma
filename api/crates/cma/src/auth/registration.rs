@@ -28,10 +28,6 @@ impl RegistrationPolicy for SpendRegistrationPolicy {
 
 #[async_trait::async_trait]
 pub(crate) trait RegistrationCapacity: Send + Sync {
-    /// Tracking becomes durable at the first activation, independently of limits.
-    async fn tracking_active(&self) -> Result<bool, StoreError> {
-        Ok(true)
-    }
     /// Includes an exact registration replay and retained existing consumers.
     async fn existing_subject(&self, subject: &SubjectId) -> Result<bool, StoreError>;
     /// Atomically claim one public registration, or refuse without side effects.

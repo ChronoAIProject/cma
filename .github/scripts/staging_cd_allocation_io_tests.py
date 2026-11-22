@@ -6,8 +6,9 @@ import time
 import unittest
 from unittest.mock import Mock, patch
 
-from staging_cd_allocation_io import (ALLOCATION_SECONDS, PUSH_RESERVE_SECONDS, AllocationGitHub, AllocationIO,
-                                      parallel_read)
+from staging_cd_allocation_io import (ALLOCATION_SECONDS, PUSH_RESERVE_SECONDS, PUSH_SECONDS, PUSH_SETTLEMENT_SECONDS,
+                                      SETTLE_WAITS, VERIFY_RESERVE_SECONDS, AllocationGitHub, AllocationIO,
+                                      TransientRead, parallel_read)
 from staging_cd_allocation_snapshot import AllocationSnapshot
 from staging_cd_common import Refusal
 from staging_cd_github import GitHub, GitHubNotFound
@@ -73,6 +74,28 @@ class AllocationIOTests(unittest.TestCase):
             ["git", "push", "fixture"])
         runner.assert_called_once()
 
+    def test_git_fatal_outage_is_repeated_but_other_fatal_errors_are_returned(self):
+        # Git exits 128 for every fatal error, so only its diagnostic marks an outage.
+        outage = subprocess.CompletedProcess([], 128, "", "fatal: unable to access "
+                                             "'https://github.com/ChronoAIProject/cma.git/': "
+                                             "The requested URL returned error: 502\n")
+        refused = subprocess.CompletedProcess([], 128, "", "fatal: repository "
+                                              "'https://github.com/ChronoAIProject/cma.git/' not found\n")
+        runner = Mock(side_effect=[outage, outage, refused])
+        io = AllocationIO(runner, clock=lambda: 0, sleep=Mock(), rand=lambda: 1.0)
+        self.assertIs(io.read(["git", "ls-remote"]), refused)
+        self.assertEqual(runner.call_count, 3)
+        self.assertEqual([call.args[0] for call in io.sleep.call_args_list], [0.5, 1.0])
+        runner = Mock(return_value=outage)
+        with self.assertRaisesRegex(Refusal, "Allocation read failed") as raised:
+            AllocationIO(runner, clock=lambda: 0, sleep=Mock()).read(["git", "ls-remote"])
+        self.assertIsInstance(raised.exception, TransientRead)
+        self.assertEqual(runner.call_count, 3)
+        # Only Git reports a fatal error this way; another client's exit 128 is returned.
+        runner = Mock(return_value=outage)
+        self.assertIs(AllocationIO(runner, clock=lambda: 0, sleep=Mock()).read(["gh", "api"]), outage)
+        runner.assert_called_once()
+
     def test_auth_and_missing_provenance_do_not_retry(self):
         for code in (401, 403, 404):
             runner = Mock(return_value=response(code, '{"status":"404"}'))
@@ -90,13 +113,26 @@ class AllocationIOTests(unittest.TestCase):
             io.read(["fixture"])
         runner.assert_not_called()
 
+    def test_settlement_reserve_is_the_full_wait_ladder_and_the_verification_reserve(self):
+        # A push that uses its whole bound still leaves 1 + 2 + 4 + 8 s of waits
+        # and the verification reserve for the last read and owner readbacks.
+        self.assertEqual((SETTLE_WAITS, VERIFY_RESERVE_SECONDS), ((1, 2, 4, 8), 5))
+        self.assertEqual((PUSH_SETTLEMENT_SECONDS, PUSH_RESERVE_SECONDS), (20, 21))
+
     def test_push_after_slow_inventory_keeps_its_settlement_margin(self):
         # Hosted allocation reached the push after 23-28 s of inventory reads.
+        # GitHub can take longer than 10 s to accept the atomic push, so it gets
+        # PUSH_SECONDS while the settlement margin stays reserved after it.
         runner = Mock(return_value=Mock(returncode=0, stdout=""))
         AllocationIO(runner, clock=Mock(side_effect=[0, 28])).write(["git", "push", "fixture"])
-        self.assertEqual(runner.call_args.kwargs["timeout"], 10)
+        self.assertEqual(runner.call_args.kwargs["timeout"], PUSH_SECONDS)
         runner.reset_mock()
-        late = AllocationIO(runner, clock=Mock(side_effect=[0, ALLOCATION_SECONDS - 6.5]))
+        # Close to the deadline the push is bounded by what leaves settlement time.
+        AllocationIO(runner, clock=Mock(side_effect=[0, ALLOCATION_SECONDS - PUSH_SETTLEMENT_SECONDS - 12])).write(
+            ["git", "push", "fixture"])
+        self.assertEqual(runner.call_args.kwargs["timeout"], 12)
+        runner.reset_mock()
+        late = AllocationIO(runner, clock=Mock(side_effect=[0, ALLOCATION_SECONDS - PUSH_RESERVE_SECONDS + 0.5]))
         with self.assertRaisesRegex(Refusal, "deadline"):
             late.write(["git", "push", "fixture"])
         runner.assert_not_called()

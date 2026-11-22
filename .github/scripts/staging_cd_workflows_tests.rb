@@ -577,6 +577,28 @@ class StagingWorkflowTest < Minitest::Test
                     'python3 -B .github/scripts/staging_cd_allocate.py'
   end
 
+  def test_catch_up_reads_the_allocation_gate_by_its_exact_name
+    source = File.read(File.join(__dir__, 'staging_cd_catch_up.py'))
+    gate = source.scan(/^ALLOCATION_GATE = "([^"]+)"$/).flatten
+    assert_equal 1, gate.size
+    steps = workflow('staging-cd').dig('jobs', 'allocate', 'steps')
+    allocate = steps.index { |step| step['id'] == 'allocate' }
+    routes = steps.index { |step| step['id'] == 'routes' }
+    gates = steps.each_index.select { |index| steps[index]['name'] == gate.first }
+    assert_equal 1, gates.size
+    # The gate follows allocation directly and precedes routing, which its failure skips.
+    assert_equal [allocate + 1, allocate + 2], [gates.first, routes]
+    step = steps[gates.first]
+    # Renaming the gate, or letting a refusal that needs a person fail at it,
+    # would change what catch-up re-runs.
+    assert_equal "steps.allocate.outputs.transient == 'true'", step['if']
+    assert_equal({ 'CD_ALLOCATION_REFUSED' => '${{ steps.allocate.outputs.refused }}',
+                   'CD_ALLOCATION_SITE' => '${{ steps.allocate.outputs.site }}' }, step['env'])
+    assert_equal 'python3 -B .github/scripts/staging_cd_allocate.py --require-settled', step['run']
+    [steps[allocate], step, steps[routes]].each { |item| refute item.key?('continue-on-error') }
+    refute steps[routes].key?('if'), 'routing must run only after a settled allocation'
+  end
+
   def test_package_and_download_tools_repeat_transient_network_failures
     env = workflow('staging-cd').fetch('env')
     %w[CARGO_NET_RETRY PIP_RETRIES RUSTUP_MAX_RETRIES].each { |key| assert_operator env.fetch(key).to_i, :>=, 3 }

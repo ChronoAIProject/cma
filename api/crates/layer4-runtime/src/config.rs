@@ -31,6 +31,7 @@ pub(crate) struct RuntimeConfig {
     pub platform_proxy: Option<ProxyConfig>,
     pub tool_proxy: Option<crate::tool_proxy::ToolProxyConfig>,
     pub github_proxy: Option<crate::github_proxy::GithubProxyConfig>,
+    pub desktop_supervision_enabled: bool,
     pub nyxid_url: Option<String>,
     pub allow_local_git: bool,
     /// Set only on a Sandbox whose immutable profile requested a desktop.
@@ -38,6 +39,7 @@ pub(crate) struct RuntimeConfig {
     pub extended_desktop_startup: bool,
     pub capacity_recovery_enabled: bool,
     pub legacy_journal_recovery_enabled: bool,
+    pub preserve_file_mode: bool,
 }
 
 impl RuntimeConfig {
@@ -93,6 +95,8 @@ impl RuntimeConfig {
             &process_env,
             "CHRONO_RUNTIME_LEGACY_JOURNAL_RECOVERY_ENABLED",
         )?;
+
+        let preserve_file_mode = crate::agent_filesystem::preserve_mode_enabled(&process_env)?;
 
         let bind = env_socket(&process_env, "CHRONO_RUNTIME_BIND", DEFAULT_BIND)?;
         process_env.insert("HOME".into(), home.to_string_lossy().into_owned());
@@ -151,6 +155,8 @@ impl RuntimeConfig {
             platform_proxy.as_ref(),
         )?;
         let checkpoint_root = checkpoint_root(&process_env, &home, home_identity.is_some())?;
+        let desktop_supervision_enabled =
+            crate::desktop_process::supervision_enabled(&process_env)?;
 
         Ok(Self {
             bind,
@@ -167,12 +173,14 @@ impl RuntimeConfig {
             platform_proxy,
             tool_proxy,
             github_proxy,
+            desktop_supervision_enabled,
             nyxid_url,
             allow_local_git: false,
             machine_included,
             extended_desktop_startup,
             capacity_recovery_enabled,
             legacy_journal_recovery_enabled,
+            preserve_file_mode,
         })
     }
 
@@ -209,12 +217,14 @@ impl RuntimeConfig {
             platform_proxy: None,
             tool_proxy: None,
             github_proxy: None,
+            desktop_supervision_enabled: false,
             nyxid_url: None,
             allow_local_git: true,
             machine_included: false,
             extended_desktop_startup: false,
             capacity_recovery_enabled: false,
             legacy_journal_recovery_enabled: false,
+            preserve_file_mode: false,
         }
     }
 }

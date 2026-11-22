@@ -8,6 +8,8 @@ import {
   IconQuestionOutline14,
 } from '../ui/icons';
 import type { StatusTone } from '../vocabulary/status';
+import type { TaskAcceptance } from '@cma/client';
+import { taskAcceptanceLabel, taskAcceptanceReason } from './taskAcceptance';
 import type { ConversationState, PlanSnapshot } from './model';
 import { planAnchor, reportedPlanProgress } from './plans';
 import './PlanCard.css';
@@ -34,15 +36,19 @@ export function PlanCard({
   plan,
   active = true,
   outcome,
+  taskAcceptance,
 }: {
   readonly plan: PlanSnapshot;
   readonly active?: boolean;
   readonly outcome?: NonNullable<ConversationState['turnOutcomes']>[string];
+  readonly taskAcceptance?: TaskAcceptance;
 }) {
   const [chosen, setChosen] = useState<boolean>();
   const open = chosen ?? active;
   const stepsId = useId();
   const { completed, currentIndex, multiple, known, summary } = reportedPlanProgress(plan);
+  const acceptance = taskAcceptanceLabel(taskAcceptance);
+  const reason = taskAcceptanceReason(taskAcceptance);
   return (
     <section
       className="plan-card"
@@ -58,17 +64,19 @@ export function PlanCard({
         <div className="plan-card__status" role="status" aria-live="polite" aria-atomic="true">
           {active ? null : (
             <span className="plan-card__summary">
-              {outcome === 'completed'
-                ? known && completed === plan.entries.length && plan.entries.length > 0
-                  ? `Turn ended · ${completed} plan ${completed === 1 ? 'step' : 'steps'} reported complete`
-                  : known
-                    ? 'Turn ended · Check unfinished plan steps and output.'
-                    : 'Turn ended · Check plan progress and output.'
-                : outcome === 'failed'
-                  ? 'Response failed'
-                  : outcome === 'interrupted'
-                    ? 'Response cancelled'
-                    : 'Outcome unknown'}
+              {acceptance
+                ? [acceptance, reason].filter(Boolean).join(' · ')
+                : outcome === 'completed'
+                  ? known && completed === plan.entries.length && plan.entries.length > 0
+                    ? `Turn ended · ${completed} plan ${completed === 1 ? 'step' : 'steps'} reported complete`
+                    : known
+                      ? 'Turn ended · Check unfinished plan steps and output.'
+                      : 'Turn ended · Check plan progress and output.'
+                  : outcome === 'failed'
+                    ? 'Response failed'
+                    : outcome === 'interrupted'
+                      ? 'Response cancelled'
+                      : 'Outcome unknown'}
             </span>
           )}
           {active || !known || completed !== plan.entries.length ? (
