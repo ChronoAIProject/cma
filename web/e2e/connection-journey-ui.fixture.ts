@@ -75,6 +75,7 @@ export async function connectionWizardFixture(
   const target = { type: 'launch' as const, id: launch.id };
   let upstreamUnavailable = false;
   let independentlyConnected = false;
+  let terminalState: 'expired' | 'failed' | 'cancelled' | undefined;
   const startRequests: { bytes: string; intent: ConnectionIntent }[] = [];
   const admissions: { bytes: string; intent: ConnectionIntent }[] = [];
   const cancellations: { target: typeof target; active: Omit<ConnectionIntent, 'target'> }[] = [];
@@ -149,7 +150,10 @@ export async function connectionWizardFixture(
           owner,
           ready: complete,
           checked_at: new Date().toISOString(),
-          active_state: active === undefined ? undefined : complete ? 'satisfied' : 'pending',
+          active_state:
+            active === undefined
+              ? undefined
+              : (terminalState ?? (complete ? 'satisfied' : 'pending')),
           services: [
             {
               service: selectedService.serviceId,
@@ -303,6 +307,9 @@ export async function connectionWizardFixture(
     },
     set independentlyConnected(value: boolean) {
       independentlyConnected = value;
+    },
+    set terminalState(value: 'expired' | 'failed' | 'cancelled') {
+      terminalState = value;
     },
     set invalidReply(value: 'owner' | 'intent' | 'service') {
       invalidReply = value;

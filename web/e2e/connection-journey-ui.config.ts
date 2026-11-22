@@ -14,6 +14,7 @@ export default defineConfig(startup, {
     'connection-journey-ui-modes.check.ts',
     'connection-popup-blocked.check.ts',
     'connection-cancel-reentry.check.ts',
+    'connection-terminal-reentry.check.ts',
   ],
   metadata: { connectionWizardBuild: output },
   use: { baseURL },
