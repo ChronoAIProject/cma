@@ -239,10 +239,15 @@ fn operation_custody_domain_is_checked_before_polling_without_allocation() {
     let calls = AtomicUsize::new(0);
     let operations = policies.each_ref().map(|policy| {
         let calls = &calls;
-        AdmittedOperation::from_owned(policy, IngressClass::Data, plan(0), |scope| async move {
-            calls.fetch_add(1, Ordering::Relaxed);
-            Ok(scope.initialize_owned(|| None::<usize>))
-        })
+        AdmittedOperation::from_owned(
+            policy,
+            IngressClass::Data,
+            plan(0),
+            move |scope| async move {
+                calls.fetch_add(1, Ordering::Relaxed);
+                Ok(scope.initialize_owned(|| None::<usize>))
+            },
+        )
         .unwrap()
     });
     let available = root.available_bytes();
