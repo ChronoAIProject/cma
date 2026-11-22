@@ -17,6 +17,7 @@ for (const width of [1440, 390, 320]) {
       fixture.append({ type: 'turn_completed', turn_sequence: 1 });
       try {
         await fixture.route(page, baseURL!);
+        if (process.env.CMA_SUGGESTION_BASELINE !== '1') await fixture.suggestReply(page, text);
         await page.route('**/api/v2/agents/agt_contract/events/head', (route) =>
           route.fulfill({
             json: {
@@ -62,14 +63,17 @@ for (const width of [1440, 390, 320]) {
         expect((await suggestion.boundingBox())!.height).toBeGreaterThanOrEqual(44);
         await page.screenshot({ path: info.outputPath('after.png'), fullPage: true });
         let uncertain = true;
+        fixture.revealInputReceipt = false;
         await page.route('**/api/v2/agents/agt_contract/responses', async (route) => {
           if (!uncertain) return route.fallback();
           uncertain = false;
-          fixture.writes.push({
+          const write = {
             path: '/api/v2/agents/agt_contract/responses',
             body: route.request().postDataJSON(),
             key: route.request().headers()['idempotency-key'],
-          });
+          };
+          fixture.writes.push(write);
+          fixture.admitInput(write);
           await route.fulfill({
             status: 503,
             json: {
@@ -96,10 +100,14 @@ for (const width of [1440, 390, 320]) {
         await expect(suggestion).toBeDisabled();
         await expect(field).toHaveValue('Keep the budget limit.');
         await page.screenshot({ path: info.outputPath('recovery.png'), fullPage: true });
+        fixture.revealInputReceipt = true;
         await page.getByRole('button', { name: 'Recover pending request' }).click();
         await expect(region).toHaveCount(0);
-        expect(fixture.writes).toHaveLength(2);
-        expect(fixture.writes[1]).toEqual(fixture.writes[0]);
+        expect(fixture.writes).toHaveLength(1);
+        expect(fixture.receiptReads.at(-1)).toEqual({
+          ...fixture.writes[0],
+          path: `${fixture.writes[0]!.path}/receipt`,
+        });
         expect(fixture.writes[0]!.body).toEqual({
           input: text,
           stream: true,

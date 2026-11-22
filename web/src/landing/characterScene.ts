@@ -198,6 +198,8 @@ export function mountCharacter(host: HTMLElement, options: CharacterOptions = {}
   }
 
   function applyTheme() {
+    // The host can leave the DOM before React disposes this observer.
+    if (disposed || !host.isConnected) return;
     character.applyPalette(readPalette(host, options.state));
     requestRender();
   }

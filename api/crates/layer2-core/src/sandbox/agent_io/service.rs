@@ -49,13 +49,27 @@ impl AgentOperationService {
                 order,
                 metadata,
             } => {
+                let task_acceptance = input.task_acceptance.clone();
+                if task_acceptance.is_some() && self.command_claim.is_none() {
+                    return Err(super::input::invalid(
+                        "task acceptance requires durable admission",
+                    ));
+                }
                 let text = input.into_text()?;
                 match order {
                     AgentInputOrder::Append | AgentInputOrder::InterruptAfterTurn { .. } => {
-                        self.execute_message(caller, id, text, metadata).await
+                        self.execute_message(caller, id, text, metadata, task_acceptance.as_ref())
+                            .await
                     }
                     AgentInputOrder::AfterTurn { turn_sequence } => self
-                        .execute_linear_message(caller, id, text, turn_sequence, metadata)
+                        .execute_linear_message(
+                            caller,
+                            id,
+                            text,
+                            turn_sequence,
+                            metadata,
+                            task_acceptance.as_ref(),
+                        )
                         .await
                         .map(AgentMessageOutcome::Dispatched),
                 }

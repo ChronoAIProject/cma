@@ -4,16 +4,72 @@ use super::{
     dispatcher::{admission_error, current_target},
     storage,
     tool_reply_store::{ReplyClaim, ReplyStore},
-    ExecutionError, FrozenTurn, Lease, RoutedDelivery, ToolReplyStatus,
+    ExecutionError, FrozenTurn, Lease, ReplayEffect, RoutedDelivery, ToolReplyStatus,
 };
 use crate::delivery::{
     intents::{DeliveryOutcome, IntentReceipt},
     retained_receipt::INLINE_LIMIT,
 };
 
-use crate::ingress::routing_store::EventIdentity;
+use crate::{
+    ingress::routing_store::{AdmittedPlan, EventIdentity, StoredTarget},
+    providers::{OutputItem, RecoveryEvent, ResponsesEvent},
+    turns::observer::{DeliveryStep, Destination},
+};
+
+pub(super) fn answer_response_id<'a>(
+    frame: &'a RecoveryEvent,
+    effect: &ReplayEffect,
+) -> Option<&'a str> {
+    let ReplayEffect::Reply(message) = effect else {
+        return None;
+    };
+    (matches!(
+        frame.event,
+        ResponsesEvent::Completed { .. }
+            | ResponsesEvent::OutputTextDone { .. }
+            | ResponsesEvent::OutputItemDone {
+                item: OutputItem::Message { .. },
+                ..
+            }
+    ) && message
+        .text
+        .as_ref()
+        .is_some_and(|text| !text.trim().is_empty()))
+    .then_some(frame.response_id.as_str())
+}
 
 impl RoutedDelivery {
+    pub(super) async fn observe_replayed_answer(
+        &self,
+        plan: &AdmittedPlan,
+        target: &StoredTarget,
+        body: &FrozenTurn,
+        response_id: &str,
+        receipt: &IntentReceipt,
+    ) {
+        if !matches!(&receipt.delivery, DeliveryOutcome::Confirmed { platform_message_id: Some(id) } if !id.is_empty())
+        {
+            return;
+        }
+        let event = super::model::delivery_event(plan, target);
+        let default = body.delivery.default_destination.as_ref();
+        let change = crate::activity::facts::delivery(
+            target.launch.consumer.as_str(),
+            DeliveryStep::Answer,
+            &receipt.delivery,
+            if default.is_some() {
+                Destination::Default
+            } else {
+                Destination::Origin
+            },
+            &event.reply,
+            default,
+        )
+        .join_retained_answer(response_id);
+        self.journal.observe(&plan.identity, change).await;
+    }
+
     pub(super) async fn retained_reply_observation(
         &self,
         identity: &EventIdentity,

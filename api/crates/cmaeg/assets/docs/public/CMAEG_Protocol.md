@@ -850,6 +850,12 @@ new binding negotiation. `definition.secrets` contains only `agent_key_hash`.
 | `POST /v1/channels/{channel_id}/rekey` | CMA service bearer; no body | 200 `{"kid":1}` | 401 service authentication failure |
 | `GET /v1/permissions` | No body; creator bearer | 200 `{"subject":"...","roles":[...]}` for the authenticated creator | 401 unauthenticated |
 
+Activity snapshots may include `produced_by` when `produced_at` is unavailable.
+It is the earliest confirmation time of an Answer receipt whose
+`answer_response_id` matches the consumer's `response_id`. Use `produced_at`
+for exact-time metrics. Buffering, failed and uncorrelated receipts provide no
+production bound.
+
 PUT replaces policy, not a merge patch. Omitted/null `credentials` retains all
 credentials. A supplied patch has optional `agent_key`, `channel_key` and
 `hmac_secrets`; omitted/null fields retain prior values, while a supplied HMAC

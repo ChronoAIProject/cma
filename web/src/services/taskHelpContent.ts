@@ -46,7 +46,7 @@ export const TASK_GUIDES: Record<HelpTopic, TaskGuide> = {
         state:
           'Home shows how many Sandbox environment slots are used. This count can differ from the Agent list: a Sandbox can contain multiple Agents or no Agents.',
         action:
-          'Open Manage environments to review your Sandboxes and their available actions. Use an existing eligible environment when appropriate. If the observation is stale or unavailable, choose Refresh Sandbox capacity.',
+          'Choose Environments in the sidebar to review your Sandboxes and their available actions. Use an existing eligible environment when appropriate. If the observation is stale or unavailable, choose Refresh Sandbox capacity.',
         completion:
           'A fresh capacity observation shows the used slots and limit. An unavailable observation does not confirm that there is space for a new Sandbox.',
       },

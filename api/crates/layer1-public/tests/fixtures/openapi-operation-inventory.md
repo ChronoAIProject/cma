@@ -482,6 +482,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v1/agui/capabilities` | - | - | 200 JSON |
 | `GET /api/v1/agui/events` | - | thread_id*, starting_after, after, follow | 200 SSE |
 | `POST /api/v1/agui/run` | RunRequest | - | 200 SSE |
+| `POST /api/v1/agui/run/receipt` | RunRequest / required Idempotency-Key | - | 200 InputReceipt or null |
 
 ### Trigger launches
 
@@ -519,6 +520,7 @@ All report, row, chart and owner-search reads reauthorize current access.
 | `GET /api/v2` | - | - | 200 JSON capabilities |
 | `POST /api/v2/responses` | CreateV2ResponseRequest | - | 200 SSE |
 | `POST /api/v2/agents/{agent_id}/responses` | CreateV2ResponseRequest | - | 200 SSE |
+| `POST /api/v2/agents/{agent_id}/responses/receipt` | CreateV2ResponseRequest / required Idempotency-Key | - | 200 V2CommandStatus or null |
 | `GET /api/v2/responses/{response_id}` | - | - | 200 V2ResponseObject |
 | `GET /api/v2/responses/{response_id}/events` | - | starting_after | 200 SSE |
 | `GET /api/v2/responses/{response_id}/output` | - | after | 200 JSON output page |
@@ -649,6 +651,7 @@ volume; CMA does not expose a Sandbox snapshot archive endpoint.
 | `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables` | - | - | 200 AnswerDeliverablesView |
 | `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}` | - | `verify` (default false) | 200 AnswerDeliverableReadingView |
 | `GET /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/download` | - | - | 200 opaque attachment; 409 changed bytes |
+| `POST /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation` | TaskDeliveryConfirmation | - | 200 TaskAcceptanceView |
 
 Selectors are `{kind:"agent_artifact",id}`, `{kind:"document",id,revision}` or
 `{kind:"live_file",path}`. The descriptor validates the resource's own access and

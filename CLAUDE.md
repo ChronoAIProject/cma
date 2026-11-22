@@ -462,7 +462,8 @@ owner to manually restart an Agent after deployment.
 | Branch | Purpose | Rules |
 |---|---|---|
 | `develop` | daily development; **default branch** | protected; no force push; accepts PRs from any branch |
-| `main` | production; each merge is a release | protected; no force push; accepts PRs **only** from `develop` |
+| `main` | production; each merge is a release | protected; no force push; accepts PRs **only** from `develop` or from a `release/<name>` branch |
+| `release/<name>` | one frozen release candidate | cut from a commit on `develop`'s first-parent history; never receives commits of its own |
 
 ### CI gates on every PR into `develop`
 
@@ -489,6 +490,8 @@ owner to manually restart an Agent after deployment.
 - Repository structure — root contains only the allowed entries; the public-tree guard enforces private-path and manifest exclusions; layer dependency rule holds
 
 ### Additional gates on a PR from `develop` into `main`
+
+A release PR's head is `develop` or a `release/<name>` branch. A release branch freezes one `develop` commit, so the release candidate stops moving while the merge queue keeps advancing `develop`; CI and the release gate then run once on exactly what is released. Its head must be a commit on `develop`'s first-parent history, with no commits of its own, and it must contain `main`. A fix goes to `develop` first, and a new release branch is cut from it.
 
 Everything above, plus:
 
@@ -539,7 +542,10 @@ approval in the `production` environment. It never deploys an image rebuilt for 
 for each component production enables, it promotes the newest published version whose
 source is the merged `develop` commit or one of its ancestors, and only if staging deployment
 evidence recorded that exact image as controller-verified. The same deployment helpers and
-private controller design as staging do the write. Deployment configuration, including
+private controller design as staging do the write. A production release requests its own
+one-hour controller budget, because a production rollout takes far longer than staging's,
+and the deploy job's timeout outlives it; staging's release and bootstrap budgets are
+unchanged. Deployment configuration, including
 which components production enables, is maintained privately.
 Production selects only the application components (`am`, `eg`, `web`), never the
 `runtime` or `runtime-omarchy` images: until a reviewed production runtime-promotion

@@ -89,12 +89,14 @@ interface Pending {
 }
 export function ChannelEditor({
   channel,
+  active = true,
   section = { kind: 'channel' },
   ownerSubject = '',
   onDone,
   denied,
 }: {
   readonly channel?: Channel;
+  readonly active?: boolean;
   readonly section?: EditorSection;
   readonly ownerSubject?: string;
   readonly onDone: (channel?: Channel) => void;
@@ -262,6 +264,7 @@ export function ChannelEditor({
         >
           <fieldset className="channel-form-section" disabled={pending !== undefined || busy}>
             <NodeFields
+              active={active}
               draft={draft}
               onChange={setDraft}
               credentials={credentials}

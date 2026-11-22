@@ -43,6 +43,7 @@ export const ActivityDeliverySchema = object({
   outcome: text,
   observed_at: text,
   confirmed_at: optional(nullable(text)),
+  answer_response_id: optional(nullable(text)),
   platform_message_id: optional(nullable(text)),
   recipients: array(ActivityRecipientSchema),
 });
@@ -89,6 +90,7 @@ export const ActivityConsumerSchema = object({
   dispatched_at: optional(nullable(text)),
   accepted_at: optional(nullable(text)),
   produced_at: optional(nullable(text)),
+  produced_by: optional(nullable(text)),
   completed_at: optional(nullable(text)),
   response_id: optional(nullable(text)),
   deliveries: array(ActivityDeliverySchema),

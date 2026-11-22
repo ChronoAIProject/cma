@@ -5,13 +5,13 @@ use reqwest::header::{HeaderMap, RETRY_AFTER};
 use tokio::time::Instant;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RetryAfter {
+pub(crate) struct RetryAfter {
     observed: Instant,
     delay: Duration,
 }
 
 impl RetryAfter {
-    pub(super) fn from_headers(headers: &HeaderMap) -> Self {
+    pub(crate) fn from_headers(headers: &HeaderMap) -> Self {
         // Missing/invalid hints must not create a hot retry loop. Multiple valid
         // hints are conservatively combined, never shortened to fit our budget.
         let delay = headers
@@ -27,7 +27,7 @@ impl RetryAfter {
         }
     }
 
-    pub(super) fn remaining(self) -> Duration {
+    pub(crate) fn remaining(self) -> Duration {
         self.delay.saturating_sub(self.observed.elapsed())
     }
 

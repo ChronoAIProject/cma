@@ -9,6 +9,9 @@ use std::{
     time::{Duration, SystemTime},
 };
 
+#[path = "worker_ownership.rs"]
+mod ownership;
+
 pub(super) const IO_BOUND: Duration = Duration::from_secs(15);
 const ATTEMPT_BOUND: Duration = Duration::from_secs(45);
 const LEASE_LIFETIME: Duration = Duration::from_secs(30);
@@ -64,6 +67,7 @@ pub struct AgentCommandWorker {
     pub(super) store: Arc<dyn AgentCommandWorkerStore>,
     pub(super) dispatched_recheck_delay: Duration,
     execution: Arc<dyn AgentCommandExecution>,
+    ownership: Option<Arc<crate::agent_ownership::OwnershipCoordinator>>,
     holder: String,
     pub(super) model_funding: Option<Arc<crate::sandbox::model_credit::AgentTurnFunding>>,
 }
@@ -93,6 +97,7 @@ impl AgentCommandWorker {
         Ok(Arc::new(Self {
             store,
             execution,
+            ownership: None,
             holder,
             dispatched_recheck_delay,
             model_funding: None,
@@ -159,15 +164,10 @@ impl AgentCommandWorker {
             return Ok(funding_delay);
         }
         if candidate.work.dispatch.is_some() {
-            return bounded(self.store.reconcile_command(id))
+            return self
+                .reconcile_dispatched(id, &candidate)
                 .await
-                .map(|command| {
-                    super::reconcile_pacing::recheck_delay(
-                        command.status,
-                        self.dispatched_recheck_delay,
-                    )
-                    .max(funding_delay)
-                });
+                .map(|delay| delay.max(funding_delay));
         }
         let delay = candidate.continuation_retry_delay(&now_rfc3339());
         if !delay.is_zero() && !candidate.queue_expired(&now_rfc3339()) {
@@ -217,16 +217,25 @@ impl AgentCommandWorker {
                 return Ok(unclaimed_cooldown(&candidate, delay));
             }
             CommandReadiness::Reject(code) => {
-                return bounded(self.store.reject_unclaimed_command(
-                    id,
-                    candidate.revision,
-                    code,
-                    now_rfc3339(),
-                ))
-                .await
-                .map(|()| Duration::ZERO);
+                return self.reject_without_dispatch(id, &candidate, code).await;
             }
         }
+        let Some(scope) = self.scope(&candidate, true).await else {
+            return Ok(unclaimed_cooldown(
+                &candidate,
+                unclaimed_recheck_delay(&candidate),
+            ));
+        };
+        scope.run(self.claim_and_drive(id, candidate)).await
+    }
+
+    // Preparation, native execution and settlement share this attempt's
+    // captured epoch. A successor only reconciles separately read durable evidence.
+    async fn claim_and_drive(
+        &self,
+        id: &AgentCommandId,
+        candidate: AdmittedAgentCommand,
+    ) -> Result<Duration, CommandLedgerError> {
         let now = SystemTime::now();
         let selected = bounded(self.store.claim_observed_command(
             CommandClaimRequest {

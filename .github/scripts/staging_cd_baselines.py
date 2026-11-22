@@ -23,7 +23,10 @@ def durable_baselines(changes, pending, finals, history):
     for item in [*pending, *(tag["receipt"]["identity"] for tag in finals)]:
         component, source = item["component"], item["source"]
         # Legacy records outside history order nothing; records older than the
-        # reconciled window keep their existing (unselected) treatment.
+        # queue's first row keep their existing (unselected) treatment. A
+        # bounded plan lists its first revision even when it selects nothing,
+        # so a lane's newest final there resumes. The adoption window lists
+        # only selected revisions, and strands such a final when it is older.
         if component not in DEPLOYABLES or source not in history.positions:
             continue
         position = history.position(source)

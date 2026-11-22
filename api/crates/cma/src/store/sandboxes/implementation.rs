@@ -1,4 +1,6 @@
 use super::*;
+use crate::store::agent_log_integrity::IntegrityFailurePolicy;
+use layer2_core::sandbox::RetainedReopenPath;
 
 #[async_trait::async_trait]
 impl SandboxStore for MongoSandboxStore {
@@ -38,7 +40,22 @@ impl SandboxStore for MongoSandboxStore {
         &self,
         id: &SandboxId,
     ) -> Result<layer2_core::sandbox::RetainedReopenSnapshot, SandboxStoreError> {
-        super::super::retained_reopen::snapshot(self, id).await
+        super::super::retained_reopen::snapshot(
+            self,
+            id,
+            RetainedReopenPath::Idle,
+            IntegrityFailurePolicy::Quarantine,
+        )
+        .await
+    }
+
+    async fn retained_reopen_assessment_snapshot(
+        &self,
+        id: &SandboxId,
+        path: RetainedReopenPath,
+    ) -> Result<layer2_core::sandbox::RetainedReopenSnapshot, SandboxStoreError> {
+        super::super::retained_reopen::snapshot(self, id, path, IntegrityFailurePolicy::ReportOnly)
+            .await
     }
 
     async fn retained_reopen_receipt(
@@ -48,11 +65,38 @@ impl SandboxStore for MongoSandboxStore {
         super::super::retained_reopen::receipt(self, id).await
     }
 
+    async fn retained_reopen_replay(
+        &self,
+        id: &SandboxId,
+    ) -> Result<Option<layer2_core::sandbox::RetainedReopenReplay>, SandboxStoreError> {
+        super::super::retained_reopen::replay(self, id).await
+    }
+
+    async fn retained_suspended_reopen_snapshot(
+        &self,
+        id: &SandboxId,
+    ) -> Result<layer2_core::sandbox::RetainedReopenSnapshot, SandboxStoreError> {
+        super::super::retained_reopen::snapshot(
+            self,
+            id,
+            RetainedReopenPath::Suspended,
+            IntegrityFailurePolicy::Quarantine,
+        )
+        .await
+    }
+
     async fn admit_retained_reopen(
         &self,
         request: layer2_core::sandbox::RetainedReopenRequest,
     ) -> Result<layer2_core::sandbox::RetainedReopenAccepted, SandboxStoreError> {
         super::super::retained_reopen::admit(self, request).await
+    }
+
+    async fn admit_suspended_reopen(
+        &self,
+        request: layer2_core::sandbox::RetainedSuspendedReopenRequest,
+    ) -> Result<layer2_core::sandbox::RetainedReopenAccepted, SandboxStoreError> {
+        super::super::retained_reopen::admit_suspended(self, request).await
     }
 
     async fn retained_runtime_recovery_snapshot(

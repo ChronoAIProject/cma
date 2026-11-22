@@ -6,9 +6,9 @@ import { connectionClient } from '../connections/client';
 import { accessRequests } from './accessRequests';
 import { AgentSurface } from './AgentSurface';
 import { useAgentController } from './controller';
-import { accepted, binding, harness, item, json, page } from './transport/controller.fixture';
+import { binding, harness, item, json, page } from './transport/controller.fixture';
 import { agentTransportJournal } from './transport/journal';
-import { observation } from './transport/controls.fixture';
+import { commandStatus, observation } from './transport/controls.fixture';
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -122,14 +122,7 @@ it.each([false, true])(
       json(page([item(1, { type: 'turn_started', turn_sequence: 1 }, binding)], 1)),
     );
     h.observe.mockResolvedValueOnce(json({ ...observation(), target_active: false }));
-    h.post
-      .mockImplementation(async () => {
-        const response = accepted();
-        response.headers.set('x-cma-command-id', 'cmd_fallback');
-        response.headers.set('x-cma-response-id', 'resp_fallback');
-        return response;
-      })
-      .mockRejectedValueOnce(new TypeError('Ordinary receipt lost'));
+    h.post.mockRejectedValueOnce(new TypeError('Ordinary receipt lost'));
     function Agent() {
       const controller = useAgentController(h.client, 'agt_1', { viewerId: 'alice' });
       return (
@@ -175,12 +168,17 @@ it.each([false, true])(
         1,
       );
     }
-    fireEvent.click(screen.getByRole('button', { name: 'Recover pending request' }));
+    const recover = await screen.findByRole('button', { name: 'Recover pending request' });
+    h.inputReceipt.mockImplementationOnce(async () => {
+      const value = commandStatus('resp_fallback', 1, true);
+      return json({ ...value, receipt: { ...value.receipt, command_id: 'cmd_fallback' } });
+    });
+    fireEvent.click(recover);
     await screen.findByText('Sent');
     expect(screen.getAllByText('Start after the finished turn', { selector: 'p' })).toHaveLength(1);
     expect(screen.getByRole('textbox', { name: 'Message' })).toHaveValue('');
-    expect(h.post).toHaveBeenCalledTimes(2);
-    const replayed = h.post.mock.calls[1]![0]!;
+    expect(h.post).toHaveBeenCalledOnce();
+    const replayed = h.inputReceipt.mock.lastCall![0]!;
     expect(replayed.body).toBe(original.body);
     expect(new Headers(replayed.headers).get('idempotency-key')).toBe(
       new Headers(original.headers).get('idempotency-key'),
