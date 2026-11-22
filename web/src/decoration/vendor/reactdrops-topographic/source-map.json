@@ -1,0 +1,88 @@
+{
+  "upstream": "https://github.com/crisjavr/reactdrops",
+  "revision": "aed0014649a2f0964041ac33c5f02dc3a40c5e13",
+  "originals": [
+    {
+      "source": "packages/components/src/topographic-flow/topographic-field.ts",
+      "git_blob": "0d07c28baf5f6c2ce55e3b22ed1d045a7d2d4da0",
+      "sha256": "bb05626ac6671fd9b40ae3c21793639bd2876e0db64276f8410411261b044c42",
+      "lines": 525
+    },
+    {
+      "source": "packages/components/src/topographic-flow/topographic-flow.css",
+      "git_blob": "c0f4af8eb91b09bb771856c96b5a37b01d0b4714",
+      "sha256": "5189905fda401f0f5ea9fd55d0c568e79d1150e8069b6bd2f7b9bb00ca343d1a",
+      "lines": 61
+    },
+    {
+      "source": "packages/components/src/topographic-flow/topographic-flow.tsx",
+      "git_blob": "677669bfc1bb97cc1a2fe7dd32d86dbe22d9c159",
+      "sha256": "9fcce73721da7eb79a617b93847d416d891c7cc4f44a0a9bf7603533c0f43e86",
+      "lines": 220
+    },
+    {
+      "source": "packages/components/src/topographic-flow/topographic-grain.ts",
+      "git_blob": "8b71faeb133e1af6789cc0a4d6fe915c98f2329b",
+      "sha256": "519a4626d1a99f542bbb55e569c0f14a30ed1db1c20a487c3fd5830e03f20efe",
+      "lines": 170
+    },
+    {
+      "source": "packages/components/src/topographic-flow/topographic-presets.ts",
+      "git_blob": "9debfce8bfb6859dfbb3a14f131509457eb432d6",
+      "sha256": "57d99479a4cfbbe1b146fb30c6e1e392a3ac7adfd979b401d14cc5617a9fb822",
+      "lines": 265
+    },
+    {
+      "source": "packages/components/src/topographic-flow/topographic-renderer.ts",
+      "git_blob": "02119ac85f72eaff6a574dcbdbf572b72537e587",
+      "sha256": "504cd7575f9c691b4afd91f9459721015bc65ff9164708c29e184e3deec76c09",
+      "lines": 527
+    },
+    {
+      "source": "packages/components/src/topographic-flow/topographic-surface.ts",
+      "git_blob": "8191bff40a88ec3c4f760b2e6499dc047bf536f9",
+      "sha256": "f05b47da0e6a041edb0c69970a872a1ce30543d0f37b5361f28068e5c4482219",
+      "lines": 1113
+    },
+    {
+      "source": [
+        "LICENSE",
+        "apps/catalog/LICENSE",
+        "packages/catalog-data/LICENSE",
+        "packages/catalog-ui/LICENSE",
+        "packages/component-schema/LICENSE",
+        "packages/components/LICENSE"
+      ],
+      "git_blob": "a5ebc5af2c3495ff5dbc0dc00f0d70cfd0272f89",
+      "sha256": "c899796a18b9d85487fe8df8d7c69c66812e37bb439789b6bcac5a78dbbfd592",
+      "lines": 94
+    }
+  ],
+  "mechanical_extractions": [
+    {
+      "source": "topographic-field.ts",
+      "lines": "294-406",
+      "target": "topographic-field.ts",
+      "changes": "License reference header only."
+    },
+    {
+      "source": "topographic-field.ts",
+      "lines": "1-293,407-525",
+      "target": "topographic-contours.ts",
+      "changes": "License reference header and import of createElevationField from extracted module."
+    },
+    {
+      "source": "topographic-surface.ts",
+      "lines": "66-235",
+      "target": "topographic-surface-shaders.ts",
+      "changes": "License reference header and exported vertex/fragment declarations."
+    }
+  ],
+  "not_vendored": {
+    "topographic-flow.tsx": "Application owns React integration and theme/lifetime policy.",
+    "topographic-presets.ts": "Application uses one fixed Flow configuration and its resolved tokens.",
+    "topographic-renderer.ts": "Canvas2D animated fallback is outside the selected behavior.",
+    "topographic-grain.ts": "Selected effect has grain=0.",
+    "topographic-flow.css": "Application owns clipped presentation and static fallback."
+  }
+}

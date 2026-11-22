@@ -1,0 +1,15 @@
+ReactDrops Topographic Flow
+Copyright (c) 2026 ReactDrops
+Author: crisjavr; https://github.com/crisjavr/reactdrops
+Pinned revision: aed0014649a2f0964041ac33c5f02dc3a40c5e13
+License: ReactDrops Component License 1.0 (exact text in LICENSE).
+
+Selected source is incorporated into the CMA application. It is not exported
+as a reusable component library. Original paths and SHA-256 hashes are recorded
+in source-map.json. No separately identified third-party notices appear in
+these selected source files.
+
+Mechanical extraction: topographic-field.ts is split into seeded elevation
+noise and contour helpers. The flat Flow shaders are extracted from
+topographic-surface.ts with export declarations. Application lifetime, theme,
+and rendering-budget adaptations are recorded separately in source-map.json.
