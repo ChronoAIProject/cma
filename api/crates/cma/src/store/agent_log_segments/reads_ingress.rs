@@ -6,7 +6,8 @@ use layer2_core::sandbox::store::SandboxStoreError;
 use mongodb::{bson::Document, ClientSession};
 
 use super::{
-    collection, corrupt, Head, MongoSandboxStore, RawDocumentBuf, ReadConcern, Seal, SEGMENTS,
+    corrupt, database, majority_collection, Head, MongoSandboxStore, RawDocumentBuf, ReadConcern,
+    Seal, SEGMENTS,
 };
 use crate::store::ingress_reads::{
     error::{self, ReadFailure},
@@ -42,7 +43,7 @@ impl Seal {
             )?,
             move |scope| async move {
                 let result = row::load_with_error::<SealSchema, _, _>(policy, read_plan, || async {
-                    let seals = collection(store, SEGMENTS).clone_with_type::<RawDocumentBuf>();
+                    let seals = majority_collection::<RawDocumentBuf>(&database(store), SEGMENTS);
                     let find = seals.find_one(mongodb::bson::doc! {
                         "agent_id": &head.agent_id, "incarnation": &head.incarnation, "ordinal": ordinal,
                     });
