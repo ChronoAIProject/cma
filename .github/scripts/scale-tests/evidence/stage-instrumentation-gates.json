@@ -14,11 +14,11 @@
   "unchanged_custody_helper_sha256": "3fd09309fb6a0127d4d641e7ce7f96156bf6fb4e2936e9677ecba76ec80d045d",
   "binaries": {
     "test": {
-      "path": "/Users/shining/code/work/tech-lead.staff/developer-17/build-target/debug/deps/relay_ingress-4ffc7afe85db2aba",
+      "path": "tech-lead.staff/developer-17/build-target/debug/deps/relay_ingress-4ffc7afe85db2aba",
       "sha256": "e81f4e575c90a00364a03f5fa048d0edfe0e615c99fd3b91b4d1449997deddb7"
     },
     "application": {
-      "path": "/Users/shining/code/work/tech-lead.staff/developer-17/build-target/debug/cmaeg",
+      "path": "tech-lead.staff/developer-17/build-target/debug/cmaeg",
       "sha256": "54cbd773129c6f0bc3b98fd3900b9d5508ea0d0d76a6f1eca31c7ff0d933ece0"
     }
   },
@@ -37,9 +37,9 @@
     "javascript": "unchanged from28PASS; not rerun"
   },
   "logs": {
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/stage-rust-gates.log": "fcc5016a5ead1acdffea5c0d048fd41e5bdf734f8879956d788b4c9edea8f47a",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/stage-helper-gates.log": "12fa8d7e18cebbfa9394db5ffd038ea23a13bb044372ba3a6668eaa19c548b9b",
-    "/Users/shining/code/work/tech-lead.staff/developer-17/evidence/final/stage-parser-coverage.log": "842b33b016f9f1474590a3ca7d3ff21825750ae73df6eb50b9b1103407733a5a"
+    "tech-lead.staff/developer-17/evidence/final/stage-rust-gates.log": "fcc5016a5ead1acdffea5c0d048fd41e5bdf734f8879956d788b4c9edea8f47a",
+    "tech-lead.staff/developer-17/evidence/final/stage-helper-gates.log": "12fa8d7e18cebbfa9394db5ffd038ea23a13bb044372ba3a6668eaa19c548b9b",
+    "tech-lead.staff/developer-17/evidence/final/stage-parser-coverage.log": "842b33b016f9f1474590a3ca7d3ff21825750ae73df6eb50b9b1103407733a5a"
   },
   "commands": [
     "build-slot cargo1.96.1 fmt --all; cargo1.96.1 fmt --all --check; cargo1.96.1 clippy --locked -p cmaeg --all-targets --all-features -- -D warnings; cargo1.96.1 test --locked -p cmaeg --test relay_ingress runner_binary::replicas::failure_diagnostics_reject_unreviewed_text -- --exact",

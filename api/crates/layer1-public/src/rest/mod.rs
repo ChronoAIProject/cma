@@ -96,7 +96,9 @@ mod badge_mark;
 mod badge_tests;
 mod defaults;
 mod desktop;
-pub use desktop::{desktop_router, desktop_router_with_origins};
+pub use desktop::{
+    desktop_router, desktop_router_with_origins, permitted_origin as desktop_origin_permitted,
+};
 mod documents;
 pub use documents::documents_router;
 mod embed;
@@ -142,12 +144,10 @@ mod shared_source_tests;
 #[cfg(test)]
 pub(crate) mod shared_stream_tests;
 pub use resource_access::resource_access_router;
+mod browser_telemetry;
 #[cfg(test)]
 mod trigger_assets_test_support;
-
-mod browser_telemetry;
 pub use browser_telemetry::{browser_telemetry_router, BrowserFault};
-
 mod bindings;
 #[cfg(test)]
 mod bindings_tests;
@@ -197,7 +197,7 @@ mod trigger_routes_tests;
 mod triggers;
 mod workspaces;
 mod worktrees;
-
+use crate::{InterfaceProfile, Operation};
 pub use agent_history::{AgentHistoryExportError, AgentHistoryExporter};
 pub use agent_lifecycle::{
     AgentLifecycleConnectionRequired, AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest,
@@ -208,7 +208,9 @@ pub use agent_lifecycle::{
     AgentLifecycleTitleMode,
 };
 pub use agent_source::agent_source_router;
-pub use agents::{agent_router, AgentRoutesState};
+pub use agents::{
+    agent_router, personal_agent_inventory_router, AgentRoutesState, PersonalAgentInventory,
+};
 pub use embed::{
     EmbedContentSecurityPolicy, EmbedDescriptor, EmbedSnippets, EMBED_V1_JAVASCRIPT_SRI,
 };
@@ -220,14 +222,12 @@ pub use launch_events::{
     LaunchStepStatusValue, LaunchStepView, RepeatChoiceValue, ServiceRequirementStateValue,
 };
 pub use launch_quota::{LaunchQuota, LaunchQuotaError, LaunchQuotaPermit, LaunchQuotaRefusal};
+use openapi_shapes::ConformanceDocument;
 pub(crate) use problems::{problem_document, problem_response};
 pub use problems::{HttpProblem, Problem, ProblemDocument};
 pub use profile_authoring::profile_authoring_router;
 pub use profiles::{profiles_router, ProfileRoutePolicy, ProfilesState};
 pub use triggers::{trigger_router, TriggerRoutesState};
-
-use crate::{InterfaceProfile, Operation};
-use openapi_shapes::ConformanceDocument;
 
 pub(crate) const PROBLEM_BASE: &str = "https://spec.chrono-ai.fun/cma/1.0/problems";
 pub const REQUEST_ID_LENGTH: usize = 36;

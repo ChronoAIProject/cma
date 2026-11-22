@@ -142,6 +142,7 @@ async fn diagnostic_worker_refusal_preserves_dependency_reason_and_recovery() {
         let app = monitored(
             Arc::new(Immediate(store_available)),
             Some(workers.clone()),
+            false,
             Some(capture.recorder.clone()),
         );
         tokio::task::yield_now().await;

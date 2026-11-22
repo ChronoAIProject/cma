@@ -198,6 +198,7 @@ async fn scenario(name: &str) -> Scenario {
                 verifier: SecretValue::new("contract-verifier".into()),
                 return_to: Some("/t/public-contract/placement-contract".into()),
                 actor_link_intent: None,
+                service_authorization: None,
                 silent: name == "auth_callback_silent_declined",
                 consent_requested: false,
                 custody_reserved: false,
