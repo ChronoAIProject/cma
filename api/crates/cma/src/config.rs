@@ -58,6 +58,8 @@ mod browser_session;
 mod documents;
 pub(crate) mod report_views;
 mod sandbox_billing;
+mod sandbox_usage_export;
+pub(crate) use sandbox_usage_export::UsageCaptureConfig;
 pub(crate) mod sandbox_metrics;
 mod usage_billing;
 pub(crate) use bot_father::BotFatherConfig;
@@ -190,6 +192,7 @@ pub struct Config {
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
     pub gateway: Option<GatewayConfig>,
     pub usage_billing: Option<UsageBillingConfig>,
+    pub(crate) usage_capture: Option<UsageCaptureConfig>,
     pub(crate) usage_metrics: MetricsConfig,
     pub sandbox_billing: Option<SandboxBillingConfig>,
     pub bot_father: Option<BotFatherConfig>,
@@ -371,6 +374,7 @@ impl Config {
             agent_log_fleet_percent,
             gateway: GatewayConfig::from_lookup(&mut lookup)?,
             usage_billing: UsageBillingConfig::from_lookup(&mut lookup)?,
+            usage_capture: UsageCaptureConfig::from_lookup(&mut lookup)?,
             usage_metrics: MetricsConfig::from_lookup(&mut lookup)?,
             sandbox_billing: SandboxBillingConfig::from_lookup(&mut lookup)?,
             bot_father: BotFatherConfig::from_lookup(&mut lookup)?,
