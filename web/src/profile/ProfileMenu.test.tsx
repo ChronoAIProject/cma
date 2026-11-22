@@ -16,6 +16,24 @@ const user = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('account menu', () => {
+  it('keeps the original tab when its query cannot be restored through ordinary sign-in', async () => {
+    window.history.replaceState(null, '', '/event-gateway?unsupported=state');
+    try {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async () => new Response(null, { status: 401 })),
+      );
+      const actor = userEvent.setup();
+      render(<ProfileMenu user={{ ...user, serviceAuthorization: true }} onSignOut={vi.fn()} />);
+      await actor.click(screen.getByRole('button', { name: /account menu/i }));
+      await actor.click(screen.getByRole('menuitem', { name: 'Service authorization' }));
+      const link = await screen.findByRole('link', { name: 'Sign in again' });
+      expect(link).toHaveAttribute('href', '/auth/login');
+      expect(link).toHaveAttribute('target', '_blank');
+    } finally {
+      window.history.replaceState(null, '', '/');
+    }
+  });
   it.each([401, 403, 503])(
     'offers ordinary sign-in only for a confirmed 401 (%i)',
     async (status) => {

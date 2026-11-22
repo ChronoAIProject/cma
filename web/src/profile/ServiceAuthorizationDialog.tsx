@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { accountGrant } from '../auth/serviceAuthorization';
 import { signInPath } from '../auth/nyxid';
+import { classifyReturnTarget } from '../auth/returnTarget';
 import { Modal } from '../ui/Modal';
 
 const STATUS = {
@@ -25,6 +26,7 @@ export function ServiceAuthorizationDialog({
   readonly onClose: () => void;
 }) {
   const [grant, setGrant] = useState<Awaited<ReturnType<typeof accountGrant>>>();
+  const destination = classifyReturnTarget(window.location.pathname + window.location.search);
   useEffect(() => {
     const controller = new AbortController();
     void accountGrant(owner, controller.signal).then(
@@ -43,7 +45,7 @@ export function ServiceAuthorizationDialog({
       <p role="status">{grant === undefined ? 'Checking account grant…' : STATUS[grant.status]}</p>
       {grant?.status === 'sign_in_required' && (
         <a
-          href={signInPath(window.location.pathname + window.location.search)}
+          href={signInPath(destination.kind === 'reject' ? undefined : destination.target)}
           target="_blank"
           rel="noreferrer"
         >
