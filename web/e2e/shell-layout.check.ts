@@ -144,7 +144,10 @@ for (const width of [390, 360, 320]) {
         const settings = form.getByRole('button', { name: /^Agent settings:/ });
         await insideViewport(settings);
         await expect(settings).toHaveAccessibleDescription(
-          'Context: 0. Total tokens: 0 (0 input · 0 output).',
+          'Context: 0. Latest provider observation for one context window. ' +
+            'Total tokens: 0 (0 input · 0 output). ' +
+            'Provider-reported input and output accumulated for this Agent. ' +
+            'Input includes any cache reads. Cache breakdown and billed usage are unavailable here.',
         );
         await expect(form.getByRole('button', { name: 'Context usage', exact: true })).toHaveCount(
           0,
