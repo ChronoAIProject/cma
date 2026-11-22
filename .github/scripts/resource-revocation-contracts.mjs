@@ -1,7 +1,8 @@
 // Offline trace contract only. The caller owns authenticated candidate evidence
 // collection; this tool neither contacts a service nor authorizes activation.
 import { createHash } from 'node:crypto';
-import { readFileSync, statSync } from 'node:fs';
+import { closeSync, constants, fstatSync, openSync, readFileSync, readSync, statSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const RELEASE = Object.freeze([
@@ -25,6 +26,8 @@ const integer = value => Number.isSafeInteger(value) && value >= 0;
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const exactKeys = (value, names) => object(value) &&
   Object.keys(value).sort().join(',') === [...names].sort().join(',');
+
+export const releaseRoutes = () => [...ROUTES];
 
 export function releaseSchedules() {
   const result = [];
@@ -214,7 +217,113 @@ function jsonFile(path) {
   return JSON.parse(readFileSync(path, 'utf8'));
 }
 
+// Re-evaluate raw traces. A prior report's status or digest is not evidence.
+export function checkReleaseMatrix(binding, entries, load = entry => entry.observations) {
+  const errors = [];
+  const campaigns = [];
+  const seen = new Set();
+  const releases = new Map();
+  if (!object(binding) || Object.hasOwn(binding, 'route') ||
+      !validBinding({ ...binding, route: releaseRoutes()[0] }))
+    errors.push('invalid_expected_binding');
+  if (!Array.isArray(entries)) {
+    entries = [];
+    errors.push('invalid_route_inventory');
+  }
+  const maximum = ROUTES.size * 2;
+  if (entries.length > maximum) errors.push('oversized_route_inventory');
+  for (const [index, entry] of entries.slice(0, maximum).entries()) {
+    if (!object(entry) || !ROUTES.has(entry.route)) {
+      errors.push('invalid_route_entry');
+      campaigns.push({ index, route: null, status: 'blocked', errors: ['invalid_route_entry'] });
+      continue;
+    }
+    const route = entry.route;
+    if (seen.has(route)) errors.push('duplicate_route');
+    seen.add(route);
+    let observations;
+    try {
+      observations = load(entry);
+    } catch {
+      campaigns.push({ index, route, status: 'blocked', errors: ['invalid_route_input'] });
+      continue;
+    }
+    const report = checkReleaseCampaign({ ...binding, route }, observations);
+    const result = { index, route, status: report.status, errors: [], report };
+    if (report.status === 'pass') {
+      for (const row of observations) {
+        if (row.origin !== 'candidate') continue;
+        const previous = releases.get(row.identity.release);
+        if (previous && previous !== route) {
+          result.status = 'blocked';
+          result.errors.push('release_identity_reused_across_routes');
+        }
+        releases.set(row.identity.release, route);
+      }
+      result.errors = [...new Set(result.errors)];
+    }
+    campaigns.push(result);
+  }
+  const missing = releaseRoutes().filter(route => !seen.has(route));
+  if (missing.length) errors.push('missing_routes');
+  return {
+    schema: 1, scope: 'release_route_matrix_contract',
+    status: campaigns.some(row => row.status === 'fail') ? 'fail' :
+      errors.length || campaigns.some(row => row.status === 'blocked') ? 'blocked' : 'pass',
+    activation_authorized: false, qualification: 'not_assessed',
+    required_routes: releaseRoutes(), missing_routes: missing,
+    errors: [...new Set(errors)], campaigns,
+  };
+}
+
+function boundedFile(path, maximum) {
+  const fd = openSync(path, constants.O_RDONLY | constants.O_NONBLOCK);
+  try {
+    const info = fstatSync(fd);
+    if (!info.isFile() || info.size > maximum) throw new Error('invalid input');
+    const bytes = Buffer.alloc(maximum + 1);
+    let used = 0;
+    while (used < bytes.length) {
+      const size = readSync(fd, bytes, used, bytes.length - used, null);
+      if (!size) break;
+      used += size;
+    }
+    if (used > maximum) throw new Error('invalid input');
+    return bytes.subarray(0, used);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function matrixFiles(bindingPath, manifestPath) {
+  const binding = JSON.parse(boundedFile(bindingPath, 64 * 1024).toString('utf8'));
+  const manifest = JSON.parse(boundedFile(manifestPath, 64 * 1024).toString('utf8'));
+  const entries = exactKeys(manifest, ['schema', 'routes']) && manifest.schema === 1
+    ? manifest.routes : null;
+  return checkReleaseMatrix(binding, entries, entry => {
+    if (!exactKeys(entry, ['route', 'observations_file', 'observations_sha256']) ||
+        typeof entry.observations_file !== 'string' || !entry.observations_file ||
+        typeof entry.observations_sha256 !== 'string' || !HASH.test(entry.observations_sha256))
+      throw new Error('invalid input');
+    const bytes = boundedFile(resolve(dirname(manifestPath), entry.observations_file), 32 * 1024 * 1024);
+    if (createHash('sha256').update(bytes).digest('hex') !== entry.observations_sha256)
+      throw new Error('invalid input');
+    return JSON.parse(bytes.toString('utf8'));
+  });
+}
+
 export function main(args) {
+  if (args.length === 1 && args[0] === 'matrix-plan') {
+    return { exit: 2, report: {
+      schema: 1, scope: 'release_route_matrix_contract', status: 'blocked',
+      activation_authorized: false, qualification: 'not_assessed',
+      routes: releaseRoutes().map(route => ({ route, execution: 'not_executed' })),
+    } };
+  }
+  if (args.length === 3 && args[0] === 'check-matrix') {
+    const report = matrixFiles(args[1], args[2]);
+    return { exit: report.status === 'pass' ? 0 : report.status === 'fail' ? 1 : 2, report };
+  }
   if (args.length === 1 && args[0] === 'plan') {
     return { exit: 2, report: {
       schema: 1, scope: 'release_trace_contract', status: 'blocked',

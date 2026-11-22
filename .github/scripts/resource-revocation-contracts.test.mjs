@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -8,48 +7,9 @@ import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import { checkReleaseCampaign, evaluateReleaseTrace, main, releaseSchedules, validBinding } from './resource-revocation-contracts.mjs';
 
-const hash = value => createHash('sha256').update(value).digest('hex');
-const binding = {
-  source_revision: 'a'.repeat(40),
-  api_image_sha256: hash('synthetic-api'),
-  runtime_image_sha256: hash('synthetic-runtime'),
-  web_bundle_sha256: hash('synthetic-web'),
-  configuration_sha256: hash('synthetic-config'),
-  observer_sha256: hash('synthetic-observer'),
-  route: 'retained_output',
-};
-const schedules = releaseSchedules();
-// These are fabricated observer reports for checker tests, not candidate runs.
-function observation(schedule, origin = 'synthetic') {
-  let shared = 0;
-  const chunks = [0, 0];
-  let closed = false;
-  const registered = schedule.actions.indexOf('register_body_attempt') < schedule.actions.indexOf('freeze_commit');
-  const authorized = registered && schedule.actions.indexOf('final_check_attempt') < schedule.actions.indexOf('freeze_commit');
-  return {
-    schema: 1, schedule_id: schedule.id, origin, binding: { ...binding },
-    execution: 'observed', boundary: 'server_transport_handoff',
-    identity: Object.fromEntries(['operation', 'grant', 'release', 'api_boot'].map(key => [key, hash(key + schedule.id)])),
-    events: [...schedule.actions, 'observation_complete'].map((action, index) => {
-      if (action === 'close_body' || action === 'close_release_gate') closed = true;
-      if (action.includes('handoff_attempt') && authorized && !closed) {
-        chunks[action === 'chunk_0_handoff_attempt' ? 0 : 1] += 8;
-        shared += 8;
-      }
-      return {
-        action, sequence: index + 1, elapsed_ms: index * 10,
-        private_bytes_total: shared,
-        private_bytes_by_chunk: [...chunks],
-        owner_bytes_total: action === 'observation_complete' ? 12 : 0,
-        buffered_private_bytes: 0,
-        ...(action === 'read_source_attempt' ? { source_private_bytes: registered ? 16 : 0 } : {}),
-        ...(action === 'final_check_attempt' ? { authorized } : {}),
-        ...(['durable_release_ack', 'effective_commit'].includes(action)
-          ? { receipt_sha256: hash(action + schedule.id) } : {}),
-      };
-    }),
-  };
-}
+import { hash, binding, schedules, observation } from './resource-revocation-contracts.fixture.mjs';
+import './resource-revocation-matrix.test.mjs';
+
 const delayed = schedules.find(row => row.actions.indexOf('effective_commit') < row.actions.indexOf('chunk_0_handoff_attempt'));
 const evaluate = input => evaluateReleaseTrace(delayed, input, binding);
 
