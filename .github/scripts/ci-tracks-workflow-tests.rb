@@ -2,6 +2,7 @@
 require 'yaml'
 require 'json'
 require_relative 'omarchy-ci-contract'
+require_relative 'api-scanner-ci-contract-tests'
 root = File.expand_path('../..', __dir__)
 
 

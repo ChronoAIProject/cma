@@ -32,6 +32,14 @@ heredoc_body() {
   ' "$dockerfile"
 }
 
+case "$#:${1:-}" in
+  0:) ;;
+  1:--require-real-binary)
+    [ -n "${CMA_TEST_GITLEAKS:-}" ] || fail 'required real scanner path is missing'
+    ;;
+  *) fail 'unsupported scanner qualification arguments' ;;
+esac
+
 prepare=$(heredoc_body PREPARE_SCANNER)
 build=$(heredoc_body BUILD_SCANNER)
 [ -n "$prepare" ] && [ -n "$build" ] || fail 'scanner build steps are missing'
@@ -198,6 +206,7 @@ for name, value, secret in cases:
         if any(not isinstance(item, dict) or item.get("StartLine") != 1
                or item.get("EndLine") != 1 for item in findings):
             sys.exit(name + ": finding line mapping was invalid")
+    print("SCANNER_CASE_PASS=" + name)
 PY
   pass 'real scanner preserves production stdin, redaction, and no-bypass behavior'
 else
