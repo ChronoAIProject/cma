@@ -18,8 +18,20 @@ pub(in crate::store) async fn validate_and_fence(
         .map_err(ApplyError::Driver)?
         .ok_or(ApplyError::Domain(SandboxStoreError::Conflict))?;
     let parent = super::super::sandboxes::read_sandbox(&row).map_err(ApplyError::Domain)?;
+    validate_parent_and_fence(store, agent, guard, &parent, session).await
+}
+
+// The parent must come from this transaction. Its allocation owner does not
+// replace either guard validation or the write that conflicts with takeover.
+pub(super) async fn validate_parent_and_fence(
+    store: &MongoSandboxStore,
+    agent: &Agent,
+    guard: &AgentReopenGuard,
+    parent: &layer2_core::sandbox::Sandbox,
+    session: &mut ClientSession,
+) -> Result<(), ApplyError> {
     guard
-        .validate(&parent, agent, &layer2_core::now_rfc3339())
+        .validate(parent, agent, &layer2_core::now_rfc3339())
         .map_err(|_| {
             ApplyError::Domain(SandboxStoreError::InvalidTransaction(
                 "reopen output authority is stale",
