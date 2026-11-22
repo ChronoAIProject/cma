@@ -2,12 +2,16 @@
 //! admitted batch; it cannot turn a prior turn or worker lease into an unlimited
 //! permit for future output or different payloads. A fresh lease may advance the
 //! aggregate revision; it does not change the original logical publication.
+use layer2_core::sandbox::ingress_ownership::{
+    sizing::shared_owner_bytes, AdmittedError, AdmittedOperation, AllocationPlan, IngressClass,
+    IngressOwnershipPolicy, SharedOwned,
+};
 use layer2_core::{
     sandbox::{store::SandboxStoreError, Agent},
     seconds_from_rfc3339,
 };
 use mongodb::{
-    bson::{self, doc, Binary, Document},
+    bson::{self, doc, Binary, Document, RawDocumentBuf},
     ClientSession, Database,
 };
 use serde::{Deserialize, Serialize};
@@ -17,7 +21,15 @@ use super::{
     publication::{self, PublicationIdentity},
     writer_gate::{self, GateName, GateProof},
 };
-use crate::store::{agent_log_integrity::TransactionLogError, sandbox_mongo::is_duplicate_key};
+use crate::store::{
+    agent_log_integrity::TransactionLogError,
+    ingress_reads::{
+        error::{self, ReadFailure},
+        layout::{BsonLayout, LayoutError},
+        row::{self, ConversionPlan, RowSchema},
+    },
+    sandbox_mongo::is_duplicate_key,
+};
 
 pub(in crate::store) const COLLECTION: &str = "agent_log_admissions";
 
@@ -161,6 +173,89 @@ fn validate_read(
         return Err(SandboxStoreError::Conflict);
     }
     Ok(())
+}
+
+type AdmissionRead<'a> = AdmittedOperation<'a, Result<Option<SharedOwned<Admission>>, ReadFailure>>;
+
+/// The caller's read plan covers query/raw response/driver storage. Driver
+/// bounds and detached cleanup still require their separately qualified port.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "enabled recording awaits driver resource custody")
+)]
+pub(in crate::store) fn read_admitted<'a>(
+    database: &'a Database,
+    agent: &'a Agent,
+    operation: &'a PublicationIdentity,
+    session: &'a mut ClientSession,
+    policy: &'a IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+) -> Result<AdmissionRead<'a>, AdmittedError> {
+    AdmittedOperation::from_owned(
+        policy,
+        IngressClass::Transformation,
+        // Incarnation formatting, validation diagnostics and the owned error.
+        AllocationPlan::checked(
+            "publication admission read",
+            &[1024, shared_owner_bytes::<SandboxStoreError>()],
+        )?,
+        move |scope| async move {
+            if let Err(error) = operation.validate() {
+                return Ok(scope.initialize_owned(|| Err(ReadFailure::Domain(error))));
+            }
+            let incarnation = digest::incarnation(agent);
+            let result = row::load_with_error::<AdmissionSchema, _, _>(policy, read_plan, || async {
+                database
+                    .collection::<RawDocumentBuf>(COLLECTION)
+                    .find_one(doc! {
+                        "_id": publication::identity(agent.id.as_str(), &incarnation, &operation.key)
+                    })
+                    .session(session)
+                    .await
+            })
+            .await;
+            let value = match result {
+                Ok(value) => value,
+                Err(error) => return error::finish(Err(error), &scope),
+            };
+            if let Some(value) = &value {
+                if let Err(error) = validate_read(value, agent, operation, &incarnation) {
+                    return Ok(scope.initialize_owned(|| Err(ReadFailure::Domain(error))));
+                }
+            }
+            Ok(scope.initialize_owned(|| Ok(value)))
+        },
+    )
+}
+
+struct AdmissionSchema;
+
+impl RowSchema for AdmissionSchema {
+    type Value = Admission;
+    const INVALID_RAW: &'static str = "invalid raw publication admission";
+
+    fn plan(layout: BsonLayout) -> Result<ConversionPlan, LayoutError> {
+        // Admission has only inline fields, Strings and one binary Vec; the
+        // borrowed layout counts all string/binary bytes, including field names.
+        let retained = layout.domain_bytes(0, shared_owner_bytes::<Admission>())?;
+        // BSON/serde storage, partial typed output, identity formatting and
+        // malformed-field diagnostics can overlap before validation completes.
+        let temporary = layout
+            .bson_bytes()?
+            .checked_mul(3)
+            .and_then(|bytes| retained.checked_mul(2)?.checked_add(bytes))
+            .and_then(|bytes| layout.wire_bytes.checked_mul(4)?.checked_add(bytes))
+            .and_then(|bytes| bytes.checked_add(4096))
+            .ok_or(LayoutError::Structure)?;
+        Ok(ConversionPlan {
+            temporary_bytes: temporary,
+            retained_bytes: retained,
+        })
+    }
+
+    fn decode(row: Document) -> Result<Admission, SandboxStoreError> {
+        Admission::read(row)
+    }
 }
 
 /// Run before the publication transaction, using the same stable request key,
