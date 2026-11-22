@@ -330,20 +330,7 @@ impl HostedBackend for AgentSandboxBackend {
         if !home.request.policy.is_native_vct() {
             return self.adopt(handle, request).await;
         }
-        let object = timed(
-            Stage::NativeIdentity,
-            self.client
-                .validate_native_request_with_home(handle, request, home),
-        )
-        .await?;
-        self.bind_adopted(handle, request, &object).await?;
-        // Binding may wait or deliver bootstrap. Its earlier observation cannot
-        // authorize the returned runtime after either boundary completes.
-        timed(
-            Stage::NativeIdentity,
-            self.refreshed_adoption_observation(handle, request, Some(home)),
-        )
-        .await
+        self.adopt_persisted_home(handle, request, home).await
     }
     async fn inspect_native_runtime(
         &self,
