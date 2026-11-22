@@ -7,8 +7,9 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::Instant;
 
-// Only the faulted member's heartbeat uses the tagged client. Its renewals,
-// effects and the peer's whole membership use an unaffected connection pool.
+// Only the faulted member's maintenance heartbeat uses the tagged client. Its
+// renewals, effects, cleanup drain and the peer's whole membership use an
+// unaffected connection pool.
 struct HeartbeatRouted {
     inner: Arc<MongoAgentOwnership>,
     heartbeat: MongoAgentOwnership,
@@ -20,6 +21,11 @@ impl OwnershipStore for HeartbeatRouted {
         self.inner.register(member).await
     }
     async fn heartbeat(&self, id: &str, draining: bool) -> Result<Membership, OwnershipError> {
+        // After an injected shutdown error the tagged client can stay busy
+        // past the 2 s bound, so cleanup would otherwise wait for it.
+        if draining {
+            return self.inner.heartbeat(id, draining).await;
+        }
         self.heartbeat.heartbeat(id, draining).await
     }
     async fn membership(&self) -> Result<Membership, OwnershipError> {
