@@ -6,6 +6,8 @@ use crate::store::{
 };
 use mongodb::options::ReadConcern;
 
+#[path = "scan_assessment_ingress.rs"]
+pub(super) mod assessment;
 #[path = "scan_cursor_ingress.rs"]
 pub(super) mod cursor;
 #[path = "scan_ingress.rs"]

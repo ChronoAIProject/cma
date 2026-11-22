@@ -33,7 +33,7 @@ pub(in crate::store) async fn scan_complete_log_with_session(
     .await
 }
 
-fn validate_creation_lineage(
+pub(super) fn validate_creation_lineage(
     agent: &Agent,
     entry: &AgentLogEntry,
 ) -> Result<(), SandboxStoreError> {

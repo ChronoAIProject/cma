@@ -136,13 +136,6 @@ pub(in crate::store) struct ProofInput<'a> {
 /// Retain the primary proof result while attempting known-corruption diagnostics.
 /// Secondary failures never replace that result. The caller retains input/session
 /// provenance and owns any transaction abort or quarantine decision.
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "enabled recording awaits complete ingress composition"
-    )
-)]
 pub(in crate::store) fn validate_summary_admitted<'a>(
     store: &'a MongoSandboxStore,
     input: ProofInput<'a>,
@@ -413,12 +406,12 @@ async fn prove_legacy(
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct ReaderFlags {
-    segmented: bool,
+pub(in crate::store::agent_log_integrity) struct ReaderFlags {
+    pub(in crate::store::agent_log_integrity) segmented: bool,
     quarantined: bool,
 }
 
-struct ReaderFlagsSchema<const CHECK_FORMAT: bool>;
+pub(in crate::store::agent_log_integrity) struct ReaderFlagsSchema<const CHECK_FORMAT: bool>;
 
 impl<const CHECK_FORMAT: bool> RowSchema for ReaderFlagsSchema<CHECK_FORMAT> {
     type Value = ReaderFlags;
