@@ -16,6 +16,7 @@ import { AgentShareRecipients } from './AgentShareRecipients';
 import { agentShareUrl, newAgentShareToken } from './agentShareToken';
 import './AgentShareLinks.css';
 import { RevocationStatus } from './RevocationStatus';
+import { UnresolvedRevocations } from './UnresolvedRevocations';
 import {
   readRevocations,
   saveRevocation,
@@ -72,32 +73,18 @@ function AgentShareLinksContent({ client, ownerId, agentId, open, onClose }: Pro
       return [];
     }
   });
-  const revoked = useCallback(
-    (shareId: string, unresolved = 0) => {
-      try {
-        if (ownerId) forgetRevocation(ownerId, agentId, shareId);
-      } catch {
-        setError(
-          'Access revoked. The saved request could not be cleared; restore session storage before another change.',
-        );
-      }
-      setCompleted(
-        unresolved > 0
-          ? 'Access revoked. Previously submitted external requests may still complete.'
-          : 'Access revoked.',
-      );
-      revokeKeys.current.delete(shareId);
-      setRevocations((rows) => rows.filter((row) => row.shareId !== shareId));
-      setLinks((current) => current.filter((item) => item.id !== shareId));
-      setUrls((current) => {
-        const next = new Map(current);
-        next.delete(shareId);
-        return next;
-      });
-      setConfirm(undefined);
-    },
-    [ownerId, agentId],
-  );
+  const confirmed = useCallback((shareId: string, unresolved = 0) => {
+    setCompleted(unresolved > 0 ? undefined : 'Access revoked.');
+    revokeKeys.current.delete(shareId);
+    setRevocations((rows) => rows.filter((row) => row.shareId !== shareId));
+    setLinks((current) => current.filter((item) => item.id !== shareId));
+    setUrls((current) => {
+      const next = new Map(current);
+      next.delete(shareId);
+      return next;
+    });
+    setConfirm(undefined);
+  }, []);
   useEffect(() => {
     const activeRequests = requests.current;
     return () => {
@@ -233,7 +220,14 @@ function AgentShareLinksContent({ client, ownerId, agentId, open, onClose }: Pro
       if (request.signal.aborted) return;
       if (result.id !== link.id || result.agent_id !== agentId || result.revoked_at === null)
         throw new Error('Revocation could not be confirmed. Try again.');
-      revoked(link.id);
+      try {
+        if (ownerId) forgetRevocation(ownerId, agentId, link.id);
+      } catch {
+        setError(
+          'Access revoked. The saved request could not be cleared; restore session storage before another change.',
+        );
+      }
+      confirmed(link.id);
     } catch (cause) {
       if (!request.signal.aborted) {
         const operation = pendingRevocation(cause, 'agent', agentId);
@@ -382,15 +376,19 @@ function AgentShareLinksContent({ client, ownerId, agentId, open, onClose }: Pro
         </form>
         {error ? <p role="alert">{error}</p> : null}
         {completed ? <p role="status">{completed}</p> : null}
+        {!loading && !loadError ? (
+          <UnresolvedRevocations client={client} owner={ownerId} kind="agent" id={agentId} />
+        ) : null}
         {revocations
           .filter((item) => item.operation)
           .map((item) => (
             <RevocationStatus
               key={item.shareId}
               client={client}
+              owner={ownerId}
               target={{ kind: 'agent', id: agentId }}
               intent={item}
-              onEffective={revoked}
+              onEffective={confirmed}
             />
           ))}
         <section className="agent-share__links" aria-label="Active share links">

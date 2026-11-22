@@ -15,6 +15,7 @@ import {
 } from './sharing';
 import { useShareChangeRecovery } from './useShareChangeRecovery';
 import { RevocationStatus } from './RevocationStatus';
+import { UnresolvedRevocations } from './UnresolvedRevocations';
 import { ShareRow } from './ShareRow';
 
 export type ShareCommand = {
@@ -164,6 +165,9 @@ export function ShareScopeEditor({
       {sharing.state.status === 'error' ? <p role="alert">{sharing.state.message}</p> : null}
       {recovery.error ? <p role="alert">{recovery.error}</p> : null}
       {recovery.notice ? <p role="status">{recovery.notice}</p> : null}
+      {available ? (
+        <UnresolvedRevocations client={client} owner={ownerId} kind={kind} id={id} />
+      ) : null}
       {available
         ? recovery.changes.map((change) => (
             <div key={change.key} aria-label="Saved share change">
@@ -176,6 +180,7 @@ export function ShareScopeEditor({
               {change.operation ? (
                 <RevocationStatus
                   client={client}
+                  owner={ownerId}
                   target={target}
                   intent={change}
                   expected={change}

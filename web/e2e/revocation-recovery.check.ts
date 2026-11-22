@@ -132,6 +132,8 @@ async function agentRevocationRecovery(page: Page, baseURL: string, entry: 'deta
   const commands: { key?: string; revision: string | null }[] = [];
   let lost = true;
   let effective = false;
+  let statusUnavailable = false;
+  let unresolved = 1;
   let statusReads = 0;
   await page.route('**/api/v1/organizations', (route) => route.fulfill({ json: { items: [] } }));
   await page.route('**/api/v1/agents/agt_contract/share-links**', async (route) => {
@@ -154,6 +156,8 @@ async function agentRevocationRecovery(page: Page, baseURL: string, entry: 'deta
   await page.route('**/api/v1/resource-revocations/**', async (route) => {
     statusReads++;
     expect(route.request().method()).toBe('GET');
+    if (statusUnavailable)
+      return route.fulfill({ status: 503, json: { code: 'resource_revocation_unavailable' } });
     const actor = { kind: 'human', subject: 'local-owner' };
     const selector = { kind: 'agent', agent_id: 'agt_contract' };
     return route.fulfill({
@@ -165,7 +169,7 @@ async function agentRevocationRecovery(page: Page, baseURL: string, entry: 'deta
         state: effective ? 'effective' : 'pending',
         participants: 1,
         stopped: effective ? 1 : 0,
-        unresolved_effects: 1,
+        unresolved_effects: unresolved,
         deadline_unix_ms: 11000,
         deadline_exceeded: !effective,
         receipt: effective
@@ -225,6 +229,24 @@ async function agentRevocationRecovery(page: Page, baseURL: string, entry: 'deta
     page.getByText('Access revoked. Previously submitted external requests may still complete.'),
   ).toBeVisible();
   expect(statusReads).toBeGreaterThan(1);
+  const previousReads = statusReads;
+  statusUnavailable = true;
+  await page.reload();
+  await open();
+  await expect(
+    page.getByText('Access revoked. Previously submitted external requests may still complete.'),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/The latest external request status could not be checked/),
+  ).toBeVisible();
+  expect(statusReads).toBeGreaterThan(previousReads);
+  statusUnavailable = false;
+  unresolved = 0;
+  await page.getByRole('button', { name: 'Check external requests', exact: true }).click();
+  await expect(page.getByRole('region', { name: 'Unresolved external requests' })).toHaveCount(0);
+  await page.reload();
+  await open();
+  await expect(page.getByRole('region', { name: 'Unresolved external requests' })).toHaveCount(0);
   expect(commands).toHaveLength(2);
   expect(boundary.errors).toEqual([]);
   expect(boundary.unexpected).toEqual([]);
@@ -254,6 +276,9 @@ for (const change of ['revoke', 'set_mode'] as const) {
     };
     let lost = true;
     let finished = false;
+    let statusUnavailable = false;
+    let unresolved = 1;
+    let statusReads = 0;
     const writes: { method: string; body: unknown; key?: string; revision: string | null }[] = [];
     await page.route('**/api/v1/organizations', (route) =>
       route.fulfill({
@@ -273,7 +298,12 @@ for (const change of ['revoke', 'set_mode'] as const) {
       const request = route.request();
       if (request.method() === 'GET')
         return route.fulfill({
-          json: { items: finished && change === 'revoke' ? [] : [original] },
+          json: {
+            items:
+              finished && change === 'revoke'
+                ? []
+                : [finished ? { ...original, revision: 2, mode: 'view' } : original],
+          },
         });
       writes.push({
         method: request.method(),
@@ -290,8 +320,12 @@ for (const change of ['revoke', 'set_mode'] as const) {
         json: { code: 'resource_revocation_pending', detail: 'Pending' },
       });
     });
-    await page.route('**/api/v1/resource-revocations/**', (route) =>
-      route.fulfill({
+    await page.route('**/api/v1/resource-revocations/**', (route) => {
+      statusReads++;
+      expect(route.request().method()).toBe('GET');
+      if (statusUnavailable)
+        return route.fulfill({ status: 503, json: { code: 'resource_revocation_unavailable' } });
+      return route.fulfill({
         json: {
           operation_id: operation,
           selector,
@@ -300,7 +334,7 @@ for (const change of ['revoke', 'set_mode'] as const) {
           state: finished ? 'effective' : 'evidence_received',
           participants: 1,
           stopped: 1,
-          unresolved_effects: 1,
+          unresolved_effects: unresolved,
           deadline_unix_ms: 11000,
           deadline_exceeded: !finished,
           receipt: finished
@@ -318,8 +352,8 @@ for (const change of ['revoke', 'set_mode'] as const) {
               }
             : null,
         },
-      }),
-    );
+      });
+    });
     const open = async () => {
       await page.getByRole('button', { name: 'More actions', exact: true }).click();
       await page.getByRole('menuitem', { name: 'Sharing', exact: true }).click();
@@ -355,6 +389,26 @@ for (const change of ['revoke', 'set_mode'] as const) {
         `${change === 'revoke' ? 'Access revoked.' : 'Access change confirmed.'} Previously submitted external requests may still complete.`,
       ),
     ).toBeVisible();
+    const previousReads = statusReads;
+    statusUnavailable = true;
+    await page.reload();
+    await open();
+    await expect(
+      page.getByText(/Previously submitted external requests may still complete/),
+    ).toBeVisible();
+    await expect(
+      page.getByText(/The latest external request status could not be checked/),
+    ).toBeVisible();
+    expect(statusReads).toBeGreaterThan(previousReads);
+    if (change === 'set_mode')
+      await expect(page.getByRole('button', { name: 'Revoke', exact: true })).toBeEnabled();
+    statusUnavailable = false;
+    unresolved = 0;
+    await page.getByRole('button', { name: 'Check external requests', exact: true }).click();
+    await expect(page.getByRole('region', { name: 'Unresolved external requests' })).toHaveCount(0);
+    await page.reload();
+    await open();
+    await expect(page.getByRole('region', { name: 'Unresolved external requests' })).toHaveCount(0);
     expect(writes).toHaveLength(2);
     expect(writes[0]!.key).toBeTruthy();
     expect(boundary.errors).toEqual([]);

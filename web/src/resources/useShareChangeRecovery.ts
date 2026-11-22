@@ -45,25 +45,13 @@ export function useShareChangeRecovery(
     (shareId: string, unresolved: number) => {
       const change = changes.find((row) => row.shareId === shareId);
       if (!change || !owner) return;
-      try {
-        forgetShareChange(owner, target, change);
-        setChanges((rows) => rows.filter((row) => row.shareId !== shareId));
-        setError(undefined);
-      } catch {
-        setError(
-          'The share change is confirmed, but the saved request could not be cleared. Restore session storage before another change.',
-        );
-        return;
-      }
+      setChanges((rows) => rows.filter((row) => row.shareId !== shareId));
+      setError(undefined);
       const result = change.revoked ? 'Access revoked.' : 'Access change confirmed.';
-      setNotice(
-        unresolved > 0
-          ? `${result} Previously submitted external requests may still complete.`
-          : result,
-      );
+      setNotice(unresolved > 0 ? undefined : result);
       refresh();
     },
-    [changes, owner, target, refresh],
+    [changes, owner, refresh],
   );
   const send = async (proposed: RetainedShareChange) => {
     if (!owner || !allowed || active.current) return;

@@ -135,6 +135,25 @@ it('resumes status after remount without resending and confirms unresolved exter
   expect(screen.queryByRole('article')).not.toBeInTheDocument();
   expect(test.writes).toHaveLength(1);
 });
+it('retains the confirmed external-effect warning after remount when status is unavailable', async () => {
+  const test = fixture();
+  const first = test.draw();
+  await revoke();
+  await screen.findByRole('button', { name: 'Check revocation' });
+  test.state.statusUnavailable = false;
+  test.state.complete = true;
+  await userEvent.click(screen.getByRole('button', { name: 'Check revocation' }));
+  await screen.findByText(
+    'Access revoked. Previously submitted external requests may still complete.',
+  );
+  first.unmount();
+  const previousReads = test.reads.length;
+  test.state.statusUnavailable = true;
+  test.draw();
+  await screen.findByText(/Previously submitted external requests may still complete/);
+  await waitFor(() => expect(test.reads.length).toBeGreaterThan(previousReads));
+  expect(test.writes).toHaveLength(1);
+});
 it('retains key and original revision after lost response and reload, until an explicit retry', async () => {
   const test = fixture();
   test.state.deleteUnavailable = true;

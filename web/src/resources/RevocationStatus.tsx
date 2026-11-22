@@ -2,17 +2,20 @@ import { useEffect, useState } from 'react';
 import type { ResourceRevocationStatus } from '@cma/client';
 import type { ResourceViewsClient } from './client';
 import type { RevocationIntent } from './revocationIntent';
-import { matchesShareChange, type RetainedShareChange } from './retainedShareChange';
+import type { RetainedShareChange } from './retainedShareChange';
+import { observePendingRevocation } from './revocationObservation';
 import { Button } from '../ui/Button';
 
 export function RevocationStatus({
   client,
+  owner,
   target,
   expected,
   intent,
   onEffective,
 }: {
   readonly client: ResourceViewsClient;
+  readonly owner: string | undefined;
   readonly target: { readonly kind: 'agent' | 'sandbox'; readonly id: string };
   readonly expected?: RetainedShareChange;
   readonly intent: RevocationIntent;
@@ -28,23 +31,22 @@ export function RevocationStatus({
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
       try {
-        const value = await client.resourceRevocations!.status(intent.operation!, kind, id, {
-          signal: request.signal,
-        });
+        if (!owner) throw new Error('The owner identity is unavailable.');
+        const { status: value, retained } = await observePendingRevocation(
+          client,
+          { owner, kind, id },
+          intent,
+          expected,
+          request.signal,
+        );
         if (request.signal.aborted) return;
-        if (
-          value.share_id !== intent.shareId ||
-          value.expected_revision !== intent.revision ||
-          (value.state === 'effective' &&
-            (!value.receipt ||
-              (expected
-                ? !matchesShareChange(value.receipt, { kind, id }, expected)
-                : !value.receipt.share.revoked_at)))
-        )
-          throw new Error('The revocation result did not match this share change.');
         setStatus(value);
         setError(undefined);
-        if (value.state === 'effective') onEffective(intent.shareId, value.unresolved_effects);
+        if (!retained)
+          setError(
+            'The access change is confirmed, but saved recovery information could not be updated. Keep this tab open and restore session storage.',
+          );
+        else if (value.state === 'effective') onEffective(intent.shareId, value.unresolved_effects);
         else timer = setTimeout(() => void poll(), 2000);
       } catch {
         if (!request.signal.aborted)
@@ -56,17 +58,7 @@ export function RevocationStatus({
       request.abort();
       clearTimeout(timer);
     };
-  }, [
-    client,
-    kind,
-    id,
-    expected,
-    intent.operation,
-    intent.revision,
-    intent.shareId,
-    onEffective,
-    retry,
-  ]);
+  }, [client, owner, kind, id, expected, intent, onEffective, retry]);
   return (
     <div aria-label="Revocation status">
       <p role="status">

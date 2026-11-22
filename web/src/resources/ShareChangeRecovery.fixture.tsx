@@ -25,6 +25,7 @@ export function fixture() {
     unknown: false,
     statusUnavailable: true,
     effective: false,
+    operation,
     wrongReceipt: false,
     mode: 'view' as ResourceShare['mode'],
     revoked: false,
@@ -91,7 +92,7 @@ export function fixture() {
         {
           status: 409,
           headers: {
-            Link: `</api/v1/resource-revocations/${operation}?kind=sandbox&id=sandbox>; rel="status"`,
+            Link: `</api/v1/resource-revocations/${state.operation}?kind=sandbox&id=sandbox>; rel="status"`,
           },
         },
       );

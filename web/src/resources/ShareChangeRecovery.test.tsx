@@ -6,6 +6,7 @@ import { fixture, original, target, operation, actor } from './ShareChangeRecove
 import { readShareChanges, saveShareChange } from './retainedShareChange';
 import { useShareChangeRecovery } from './useShareChangeRecovery';
 import { retainTaskViewer } from '../create/taskIdentity';
+import { readRevocationEvidence } from './revocationEvidence';
 
 beforeEach(() => {
   sessionStorage.clear();
@@ -87,6 +88,36 @@ it('recovers a revoke even when the active grant list no longer includes it', as
   expect(test.writes).toHaveLength(1);
   expect(readShareChanges('owner', target)).toEqual([]);
 });
+it.each(['revoke', 'set_mode'] as const)(
+  'retains confirmed %s external-effect evidence after remount when status is unavailable',
+  async (change) => {
+    const test = fixture();
+    test.state.revoked = change === 'revoke';
+    if (change === 'revoke') test.state.mode = 'org_roles';
+    const first = test.draw();
+    if (change === 'revoke') {
+      await screen.findByText('Current access: Use organization roles');
+      await userEvent.click(screen.getByRole('button', { name: 'Revoke' }));
+      await userEvent.click(screen.getByRole('button', { name: 'Revoke grant' }));
+    } else await narrow();
+    await screen.findByRole('button', { name: 'Check revocation' });
+    test.state.statusUnavailable = false;
+    test.state.effective = true;
+    test.state.shares = change === 'revoke' ? [] : [{ ...original, revision: 2, mode: 'view' }];
+    await userEvent.click(screen.getByRole('button', { name: 'Check revocation' }));
+    await screen.findByText(
+      /Access (revoked|change confirmed)\. Previously submitted external requests may still complete\./,
+    );
+    first.unmount();
+    const previousReads = test.reads.length;
+    test.state.statusUnavailable = true;
+    test.draw();
+    await screen.findByText(/Previously submitted external requests may still complete/);
+    await waitFor(() => expect(test.reads.length).toBeGreaterThan(previousReads));
+    expect(test.writes).toHaveLength(1);
+    if (change === 'set_mode') expect(screen.getByRole('button', { name: 'Revoke' })).toBeEnabled();
+  },
+);
 it('withholds writes when storage is unavailable', async () => {
   const test = fixture();
   test.draw();
@@ -98,7 +129,64 @@ it('withholds writes when storage is unavailable', async () => {
   await screen.findByRole('alert');
   expect(test.writes).toEqual([]);
 });
-it('keeps confirmed status if storage cleanup fails, without automatic rereads or writes', async () => {
+it('allows a later mode change while preserving independent evidence from the earlier operation', async () => {
+  const test = fixture();
+  const second = 'b'.repeat(64);
+  let firstResolved = false;
+  let firstEffective = false;
+  vi.spyOn(test.client.resourceRevocations!, 'status').mockImplementation(async (op) => {
+    if (!firstEffective) throw new Error('unavailable');
+    const later = op === second;
+    return {
+      operation_id: op,
+      selector: original.selector,
+      share_id: original.id,
+      expected_revision: later ? 2 : 1,
+      state: 'effective',
+      participants: 1,
+      stopped: 1,
+      unresolved_effects: !later && firstResolved ? 0 : 1,
+      deadline_unix_ms: 11000,
+      deadline_exceeded: false,
+      receipt: {
+        operation_id: op,
+        actor,
+        at: original.created_at,
+        policy_revision: later ? 3 : 2,
+        share: { ...original, revision: later ? 3 : 2, mode: later ? 'org_roles' : 'view' },
+      },
+    };
+  });
+  test.draw();
+  const user = await narrow();
+  await screen.findByRole('button', { name: 'Check revocation' });
+  firstEffective = true;
+  test.state.shares = [{ ...original, revision: 2, mode: 'view' }];
+  await user.click(screen.getByRole('button', { name: 'Check revocation' }));
+  await screen.findByText('Current access: View only');
+  expect(readShareChanges('owner', target)).toEqual([]);
+  expect(screen.getByRole('button', { name: 'Revoke' })).toBeEnabled();
+  test.state.operation = second;
+  await chooseOption(user, 'Access for Research team', 'Use organization roles');
+  test.state.shares = [{ ...original, revision: 3 }];
+  await user.click(screen.getByRole('button', { name: 'Save access' }));
+  await screen.findByText('Current access: Use organization roles');
+  await waitFor(() =>
+    expect(screen.getAllByRole('button', { name: 'Check external requests' })).toHaveLength(2),
+  );
+  expect(test.writes).toHaveLength(2);
+  expect(test.writes[1]!.key).not.toBe(test.writes[0]!.key);
+  expect(test.writes[1]!.revision).toBe(2);
+  const scope = { owner: 'owner', kind: 'sandbox', id: target.id } as const;
+  expect(readRevocationEvidence(scope).map((row) => row.operation)).toEqual([operation, second]);
+  firstResolved = true;
+  await user.click(screen.getAllByRole('button', { name: 'Check external requests' })[0]!);
+  await waitFor(() =>
+    expect(readRevocationEvidence(scope).map((row) => row.operation)).toEqual([second]),
+  );
+  expect(test.writes).toHaveLength(2);
+});
+it('keeps confirmed status and archived evidence if pending cleanup fails, without resending', async () => {
   const test = fixture();
   test.draw();
   await narrow();
@@ -110,11 +198,11 @@ it('keeps confirmed status if storage cleanup fails, without automatic rereads o
   });
   await userEvent.click(screen.getByRole('button', { name: 'Check revocation' }));
   await screen.findByText(
-    /The share change is confirmed, but the saved request could not be cleared/,
+    /The access change is confirmed, but saved recovery information could not be updated/,
   );
   expect(readShareChanges('owner', target)).toHaveLength(1);
   expect(test.writes).toHaveLength(1);
-  expect(test.reads).toHaveLength(2);
+  expect(test.reads).toHaveLength(3);
 });
 it('isolates resource and owner identities and clears saved changes on account change', async () => {
   retainTaskViewer('owner');
