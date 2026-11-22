@@ -177,3 +177,176 @@ async fn worker_revisions_are_atomic_owner_fenced_and_survive_reopen() {
     );
     client.database(&database).drop().await.unwrap();
 }
+
+struct NoProfileResolution;
+#[async_trait::async_trait]
+impl BotProfileResolver for NoProfileResolution {
+    async fn resolve(&self, _: &SubjectId, _: &CreateBot) -> Result<BotProfiles, BotError> {
+        panic!("an already admitted operation must reuse its immutable profiles")
+    }
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable MongoDB replica set"]
+async fn bot_effect_custody_survives_independent_clients_expiry_and_old_writer_cas() {
+    use std::{
+        sync::Arc,
+        time::{Duration, SystemTime},
+    };
+    let uri = std::env::var("CHRONO_TEST_MONGODB_URI").unwrap();
+    let first_client = Client::with_uri_str(&uri).await.unwrap();
+    let second_client = Client::with_uri_str(&uri).await.unwrap();
+    let database = format!("cma_bot_effects_test_{}", uuid::Uuid::new_v4().simple());
+    let a = Arc::new(MongoBotStore::open(&first_client, &database).await.unwrap());
+    let b = Arc::new(
+        MongoBotStore::open(&second_client, &database)
+            .await
+            .unwrap(),
+    );
+    let first = BotService::new(
+        a.clone(),
+        Arc::new(NoProfileResolution),
+        "registered".into(),
+    )
+    .with_effect_reservations(true);
+    let second = BotService::new(
+        b.clone(),
+        Arc::new(NoProfileResolution),
+        "registered".into(),
+    )
+    .with_effect_reservations(true);
+    // The enabled worker can upgrade only untouched admitted legacy work.
+    let initial = bot("owner", "a");
+    a.insert(&initial).await.unwrap();
+    let mut owned = first
+        .claim(&initial.bot_id, "first", SystemTime::now())
+        .await
+        .unwrap()
+        .unwrap();
+    let mut before_reservation = owned.clone();
+    first
+        .reserve_effect(&mut owned, "first", "mint_agent_key")
+        .await
+        .unwrap();
+    let reserved = b.get(&initial.bot_id).await.unwrap().unwrap();
+    assert_eq!(reserved, owned);
+    assert!(reserved.work.as_ref().unwrap().effect.is_some());
+    assert!(second
+        .claim(
+            &initial.bot_id,
+            "successor",
+            SystemTime::now() + Duration::from_secs(3600)
+        )
+        .await
+        .unwrap()
+        .is_none());
+    assert_eq!(
+        first
+            .checkpoint(&mut before_reservation, "first", "stale")
+            .await,
+        Err(BotError::Conflict)
+    );
+    let records = first_client
+        .database(&database)
+        .collection::<mongodb::bson::Document>("bots");
+    let raw = records
+        .find_one(doc! {"_id": &initial.bot_id})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(raw.get_i32("document_schema_version").unwrap(), 2);
+    // Exercise the real startup guard against serializer output, not only the decoder.
+    super::schema::refuse_unknown_versions(&first_client.database(&database), &["bots"])
+        .await
+        .unwrap();
+    // This is the exact old binary's replace predicate, even supplied the
+    // current revision. Its payload cannot erase the new reservation.
+    let legacy = records
+        .replace_one(
+            doc! {"_id": &initial.bot_id,
+            "revision": i64::try_from(owned.revision).unwrap(), "document_schema_version": 1},
+            raw.clone(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(legacy.matched_count, 0);
+    let mut forged = owned.clone();
+    forged.revision += 1;
+    forged.work.as_mut().unwrap().holder = Some("successor".into());
+    assert_eq!(
+        b.replace(owned.revision, &forged).await,
+        Err(BotError::Conflict)
+    );
+    // A definitive late response publishes its resource identity atomically
+    // with clearing the exact reservation, without a lease-expiry takeover.
+    owned.resources.credentials.agent_key_id = Some(uuid::Uuid::new_v4().to_string());
+    owned.resources.credentials.agent_key_hash = Some("c".repeat(64));
+    first.settle_effect(&mut owned, "first").await.unwrap();
+    let settled = b.get(&initial.bot_id).await.unwrap().unwrap();
+    assert_eq!(settled, owned);
+    assert!(settled.work.as_ref().unwrap().effect.is_none());
+    assert!(settled.resources.credentials.agent_key_id.is_some());
+    let mut cleanup = second
+        .claim(
+            &initial.bot_id,
+            "successor",
+            SystemTime::now() + Duration::from_secs(3600),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        cleanup.work.as_ref().unwrap().operation,
+        BotOperation::Cleanup
+    );
+    assert_eq!(cleanup.resources, settled.resources);
+    let mut stale = reserved;
+    assert_eq!(
+        first.settle_effect(&mut stale, "first").await,
+        Err(BotError::Conflict)
+    );
+    assert_eq!(b.get(&initial.bot_id).await.unwrap().unwrap(), cleanup);
+    cleanup.resources = BotResources::default();
+    let state = cleanup.state.clone();
+    second
+        .complete(&mut cleanup, "successor", state)
+        .await
+        .unwrap();
+    let raw = records
+        .find_one(doc! {"_id": &initial.bot_id})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        raw.get_i32("document_schema_version").unwrap(),
+        2,
+        "completion cannot lower the old-writer floor"
+    );
+    let off = BotService::new(
+        b.clone(),
+        Arc::new(NoProfileResolution),
+        "registered".into(),
+    );
+    let caller = layer2_core::Caller::new(
+        SubjectId::new("owner"),
+        layer2_core::Authorization::new([layer2_core::Capability::ManageOwnBots]),
+    );
+    assert_eq!(
+        off.admit(&caller, &initial.bot_id, BotOperation::Delete)
+            .await,
+        Err(BotError::Conflict)
+    );
+    let mut corrupt = raw;
+    corrupt.insert("document_schema_version", 1);
+    let work = mongodb::bson::serialize_to_bson(&owned.work).unwrap();
+    corrupt
+        .get_document_mut("bot")
+        .unwrap()
+        .insert("work", work);
+    records
+        .replace_one(doc! {"_id": &initial.bot_id}, corrupt)
+        .await
+        .unwrap();
+    assert_eq!(b.get(&initial.bot_id).await, Err(BotError::Unavailable));
+    first_client.database(&database).drop().await.unwrap();
+}

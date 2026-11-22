@@ -246,7 +246,15 @@ impl HostedAdapter {
         self.verify_spec_home(&adoption.spec).await?;
         self.verify_adoption_home_route(adoption)?;
         let expected = provider_request_identity(&request)?;
-        let Some(observation) = self.backend.adopt(&adoption.handle, &request).await? else {
+        let observed = match adoption.spec.home_volume.as_deref() {
+            Some(home) => {
+                self.backend
+                    .adopt_with_home(&adoption.handle, &request, home)
+                    .await?
+            }
+            None => self.backend.adopt(&adoption.handle, &request).await?,
+        };
+        let Some(observation) = observed else {
             return Ok(None);
         };
         if validate_inventory(std::slice::from_ref(&observation)).is_err() {
