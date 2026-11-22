@@ -95,7 +95,11 @@ fn exports_real_mutation_identity_and_every_authority_fence() {
     assert_eq!(facts.len(), 4);
     let fences: Vec<_> = facts
         .iter()
-        .filter_map(|r| r["fact"]["fence"].as_u64())
+        .filter_map(|r| {
+            r["fact"]["fence"]
+                .as_str()
+                .map(|value| value.parse::<u64>().unwrap())
+        })
         .collect();
     assert_eq!(fences.len(), 3);
     for fence in [1, 2, 3] {
@@ -205,12 +209,12 @@ fn historical_completed_and_current_unknown_outcomes_keep_distinct_scopes() {
     assert!(rows
         .iter()
         .any(|r| r["scope"]["kind"] == "process_generation"
-            && r["scope"]["generation"] == 2
+            && r["scope"]["generation"] == "2"
             && r["fact"]["status"] == "completed"));
     assert!(rows
         .iter()
         .any(|r| r["scope"]["kind"] == "process_generation"
-            && r["scope"]["generation"] == 7
+            && r["scope"]["generation"] == "7"
             && r["fact"]["status"] == "indeterminate"));
 }
 

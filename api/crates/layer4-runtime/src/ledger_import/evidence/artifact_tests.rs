@@ -387,3 +387,35 @@ fn short_writes_and_flush_failure_keep_exact_output_outcomes() {
         assert_eq!(source(&fixture), before);
     }
 }
+
+#[test]
+fn generation_and_fence_identity_remain_lossless_above_json_safe_integer_range() {
+    let mut fixture = semantic::fixture();
+    fixture.config.generation = u64::MAX;
+    let binding = fixture.config.state_root.join("home-binding/binding.json");
+    let mut value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&binding).unwrap()).unwrap();
+    value["runtime_generation"] = u64::MAX.into();
+    std::fs::write(binding, serde_json::to_vec(&value).unwrap()).unwrap();
+    semantic::authority(&fixture.config, u64::MAX, &semantic::add());
+    let operation =
+        crate::mutation_journal::Operation::close_agent(&layer3_adapter::AgentCloseRequest::new(
+            "agent:agent:close:v1",
+            layer3_adapter::AgentSlot::new("agent"),
+        ));
+    semantic::journal(
+        &fixture.config,
+        &crate::mutation_journal::Record::started(&fixture.config, &operation).unwrap(),
+    );
+    let before = source(&fixture);
+    let destination = fixture.root.join("evidence");
+    create(&fixture, &destination).unwrap();
+    let value: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(destination.join("evidence.json")).unwrap()).unwrap();
+    let exact = "18446744073709551615";
+    assert_eq!(value["generation"], exact);
+    let records = value["records"].as_array().unwrap();
+    assert!(records.iter().any(|r| r["fact"]["fence"] == exact));
+    assert!(records.iter().any(|r| r["scope"]["generation"] == exact));
+    assert_eq!(source(&fixture), before);
+}

@@ -23,7 +23,7 @@ pub(super) struct Record {
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum Scope {
     LegacyGlobal,
-    ProcessGeneration { generation: u64 },
+    ProcessGeneration { generation: String },
 }
 
 #[derive(Serialize)]
@@ -36,7 +36,7 @@ enum Fact {
     Authority {
         operation: OperationFact,
         resource_sha256: String,
-        fence: u64,
+        fence: String,
         disposition: Disposition,
     },
 }
@@ -96,7 +96,7 @@ pub(super) fn project(
             Some(Fact::Authority {
                 operation: OperationFact::new(record.operation())?,
                 resource_sha256: digest(&record.resource)?,
-                fence: record.authority_fence,
+                fence: record.authority_fence.to_string(),
                 disposition: record.disposition,
             })
         }
@@ -117,7 +117,7 @@ pub(super) fn project(
             Scope::LegacyGlobal
         } else {
             Scope::ProcessGeneration {
-                generation: root.scope,
+                generation: root.scope.to_string(),
             }
         },
         kind: root.kind,
