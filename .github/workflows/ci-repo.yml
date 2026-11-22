@@ -44,7 +44,7 @@ jobs:
           node-version: 26
       -
         name: "Synthetic authority and observer regressions"
-        run: "node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs"
+        run: "node --test .github/scripts/staging-authority.test.mjs .github/scripts/public-journey-evidence.test.mjs .github/scripts/deployment-observer.test.mjs"
       -
         name: "Synthetic home restore evidence regressions"
         run: "node --test .github/scripts/home-backup/*.test.mjs"
