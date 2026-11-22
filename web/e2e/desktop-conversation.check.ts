@@ -1,3 +1,4 @@
+import { registerComputerSkillsRedesignCases } from './redesign-agent.cases';
 import { test, expect } from '@playwright/test';
 import { binding, cursor, LocalAgentV2 } from './agent-v2.fixture';
 
@@ -581,3 +582,5 @@ for (const completion of ['before End', 'after End'] as const) {
     }
   });
 }
+
+registerComputerSkillsRedesignCases();
