@@ -99,6 +99,11 @@ jobs:
     uses: "./.github/workflows/ci-rust-archive.yml"
   am:
     name: "Agent Manager checks"
+    # A called workflow cannot hold more than this: its Rust jobs restore the
+    # shared test archive through the artifacts API.
+    permissions:
+      contents: "read"
+      actions: "read"
     needs:
       - "changes"
       - "rust-test-build"
@@ -109,6 +114,11 @@ jobs:
       packages: "${{ needs.changes.outputs.am_packages }}"
   eg:
     name: "Event Gateway checks"
+    # A called workflow cannot hold more than this: its Rust jobs restore the
+    # shared test archive through the artifacts API.
+    permissions:
+      contents: "read"
+      actions: "read"
     needs:
       - "changes"
       - "rust-test-build"
