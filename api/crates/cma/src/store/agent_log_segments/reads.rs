@@ -223,14 +223,7 @@ async fn containing_from(
             .map_err(TransactionLogError::Driver)?
             .ok_or_else(corrupt)?,
     )?;
-    if seal.agent_id != head.agent_id
-        || seal.incarnation != head.incarnation
-        || seal.start_seq > seq
-        || seal.end_seq < seq
-        || seal.ordinal >= head.active_ordinal
-    {
-        return Err(corrupt().into());
-    }
+    validate_containing(&seal, head, seq)?;
     if seal.ordinal > 0 {
         let previous = seal_at_from(db, head, seal.ordinal - 1, session, snapshot).await?;
         seal.follows(&previous)?;
@@ -242,6 +235,22 @@ async fn containing_from(
         next.follows(&seal)?;
     }
     Ok(seal)
+}
+
+fn validate_containing(
+    seal: &Seal,
+    head: &Head,
+    seq: i64,
+) -> std::result::Result<(), SandboxStoreError> {
+    if seal.agent_id != head.agent_id
+        || seal.incarnation != head.incarnation
+        || seal.start_seq > seq
+        || seal.end_seq < seq
+        || seal.ordinal >= head.active_ordinal
+    {
+        return Err(corrupt());
+    }
+    Ok(())
 }
 
 /// Validate all requested rows even when the caller has filled its projected
