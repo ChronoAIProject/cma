@@ -1,0 +1,211 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "agui-input-receipt-unknown",
+      "operation": "POST /api/v1/agui/run/receipt",
+      "scenario": "experience_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run/receipt",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "receipt-proof"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": null,
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-input-receipt-foreign",
+      "operation": "POST /api/v1/agui/run/receipt",
+      "scenario": "experience_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run/receipt",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "receipt-proof"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/thread-not-found",
+          "title": "thread not found",
+          "status": 404,
+          "detail": "The Agent is not available to this caller.",
+          "code": "thread_not_found"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "agui-input-receipt-anonymous",
+      "operation": "POST /api/v1/agui/run/receipt",
+      "scenario": "experience_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v1/agui/run/receipt",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "receipt-proof"
+        },
+        "body": {
+          "threadId": "agt_contract",
+          "messages": [
+            {
+              "role": "user",
+              "content": "Hello"
+            }
+          ]
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/problem+json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "type": "https://spec.chrono-ai.fun/cma/1.0/problems/not-authenticated",
+          "title": "not authenticated",
+          "status": 401,
+          "detail": "This operation requires an authenticated subject.",
+          "code": "not_authenticated"
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-input-receipt-unknown",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/receipt",
+      "scenario": "responses_v2_output_owner",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/receipt",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "receipt-proof"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 200,
+        "headers": {
+          "cache-control": "private, no-store",
+          "content-type": "application/json"
+        },
+        "body": null,
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-input-receipt-foreign",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/receipt",
+      "scenario": "responses_v2_foreign",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/receipt",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "receipt-proof"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 404,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "response_not_found",
+            "message": "The requested response or conversation is unavailable.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    },
+    {
+      "id": "responses-v2-input-receipt-anonymous",
+      "operation": "POST /api/v2/agents/{agent_id}/responses/receipt",
+      "scenario": "responses_v2_anonymous",
+      "request": {
+        "method": "POST",
+        "path": "/api/v2/agents/agt_fixture/responses/receipt",
+        "headers": {
+          "content-type": "application/json",
+          "idempotency-key": "receipt-proof"
+        },
+        "body": {
+          "conversation": "agt_fixture",
+          "input": "Hello",
+          "stream": true
+        }
+      },
+      "response": {
+        "status": 401,
+        "headers": {
+          "content-type": "application/json",
+          "cache-control": "private, no-store"
+        },
+        "body": {
+          "error": {
+            "type": "invalid_request_error",
+            "code": "authentication_required",
+            "message": "A current authenticated request credential is required.",
+            "param": null
+          }
+        },
+        "bodyKind": "json"
+      },
+      "captures": {}
+    }
+  ]
+}

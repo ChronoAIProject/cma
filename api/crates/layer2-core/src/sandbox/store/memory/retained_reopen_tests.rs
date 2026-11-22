@@ -130,6 +130,42 @@ fn proof(snapshot: &RetainedReopenSnapshot) -> RetainedReopenProof {
     proof
 }
 
+#[tokio::test]
+async fn idle_reopen_refuses_a_live_child_before_observing_a_replacement_boot() {
+    for live_child in [false, true] {
+        let (store, caller, id) = fixture();
+        let parent = {
+            let mut state = store.lock();
+            let parent = state.sandboxes.get_mut(&id).unwrap();
+            parent.failure.as_mut().unwrap().class = "runtime_lost".into();
+            let parent = parent.clone();
+            if live_child {
+                let agent = state.agents.values_mut().next().unwrap();
+                agent.status = AgentStatus::Ready;
+                agent.conversation.last_seq -= 1;
+                let agent_id = agent.id.clone();
+                state.agent_logs.get_mut(&agent_id).unwrap().pop().unwrap();
+            }
+            parent
+        };
+        let (service, verifier) = service(&store, true, 0);
+        let request = service.request(&caller, &id, parent.revision, "same-image", true);
+        if live_child {
+            assert!(matches!(request.await, Err(E::Refused)));
+            assert_eq!(store.get_sandbox(&id).await.unwrap(), Some(parent));
+            assert!(store.retained_reopen_receipt(&id).await.unwrap().is_none());
+            assert_eq!(verifier.calls.load(Ordering::SeqCst), 0);
+        } else {
+            request.await.unwrap();
+            let accepted = store.retained_reopen_receipt(&id).await.unwrap().unwrap();
+            let expected = parent.runtime.unwrap();
+            assert_eq!(accepted.proof.expected_runtime, expected);
+            assert_ne!(accepted.proof.observed_boot, expected.boot_id.unwrap());
+            assert_eq!(verifier.calls.load(Ordering::SeqCst), 1);
+        }
+    }
+}
+
 fn service(
     store: &Arc<InMemorySandboxStore>,
     enabled: bool,

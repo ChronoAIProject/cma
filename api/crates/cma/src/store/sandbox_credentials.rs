@@ -2,9 +2,13 @@
 
 mod binding;
 mod custody;
+#[cfg(test)]
+mod fixtures;
 pub(super) mod issuance;
+mod issuance_record;
 #[cfg(test)]
 mod provided_tests;
+pub(super) mod purge;
 
 use layer2_core::{seconds_from_rfc3339, SandboxId, StoreError, SubjectId};
 use mongodb::bson::doc;

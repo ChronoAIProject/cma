@@ -58,7 +58,8 @@ async fn expanded_writes_reopen_through_flag_off_rollback_reader() {
     let store = Arc::new(MongoDocumentStore::new(database.clone()));
     store.ensure_indexes().await.unwrap();
     let blobs = Arc::new(memory::MemoryDocumentBlobs::default());
-    let writer = DocumentService::with_revocation_reserve(store.clone(), blobs.clone(), true);
+    let writer = DocumentService::with_revocation_reserve(store.clone(), blobs.clone(), true)
+        .with_directory(memory::recipient_directory(&["guest", "remaining"]));
     let owner = caller("owner");
     let guest = caller("guest");
     let remaining = caller("remaining");

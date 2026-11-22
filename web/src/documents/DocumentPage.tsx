@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { DocumentsClient, DocumentView } from '../api/documents';
 import { DocumentError } from '../api/documents';
 import type { AppRoute } from '../routing/routes';
+import { DocumentNavigationGuard } from './DocumentNavigationGuard';
 import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
 import { Modal } from '../ui/Modal';
@@ -12,6 +13,13 @@ import { DocumentComments } from './DocumentComments';
 import { DocumentSharing } from './DocumentSharing';
 import { documentDraft, retainDocumentDraft, type DocumentSaveIntent } from './drafts';
 import { readDocumentShareToken, retainDocumentShareToken } from './shareToken';
+import {
+  downloadSavedDocument,
+  ownsSavedDocument,
+  prepareSavedDocumentExport,
+  SavedDocumentExportError,
+} from './savedExport';
+import { savedDocumentExportEnabled } from './savedExportFeature';
 const RichDocumentEditor = lazy(() => import('./RichDocumentEditor'));
 interface Loaded {
   readonly document: DocumentView;
@@ -19,17 +27,18 @@ interface Loaded {
   readonly baseSourceRevision: number;
 }
 
-export function DocumentPage({
-  client,
-  id,
-  viewer,
-  onNavigate,
-}: {
+interface DocumentPageProps {
   readonly client: DocumentsClient;
   readonly id: string;
   readonly viewer: string;
   readonly onNavigate: (route: AppRoute) => void;
-}) {
+}
+
+export function DocumentPage(props: DocumentPageProps) {
+  return <DocumentPageContent key={`${props.viewer}/${props.id}`} {...props} />;
+}
+
+function DocumentPageContent({ client, id, viewer, onNavigate }: DocumentPageProps) {
   const [shareToken] = useState(() => readDocumentShareToken(id));
   const [loaded, setLoaded] = useState<Loaded>();
   const [error, setError] = useState<string>();
@@ -45,12 +54,36 @@ export function DocumentPage({
   const [busy, setBusy] = useState(false);
   const [intent, setIntent] = useState<DocumentSaveIntent>();
   const mutation = useRef<AbortController | undefined>(undefined);
+  const exportRequest = useRef<AbortController | undefined>(undefined);
+  const [exporting, setExporting] = useState<AbortController>();
   const owner = loaded?.document.access === 'owner';
   const dirty = owner && (title !== loaded.document.title || markdown !== loaded.markdown);
+  const canChange = owner && !preview && !busy && !conflict;
+  const canEdit = canChange && intent === undefined;
+  const canSave =
+    canChange &&
+    (dirty || intent !== undefined) &&
+    title.trim().length > 0 &&
+    new TextEncoder().encode(title.trim()).length <= 240 &&
+    markdown.trim().length > 0 &&
+    new TextEncoder().encode(markdown).length <= 1024 * 1024;
+  const revoke = () => {
+    mutation.current?.abort();
+    exportRequest.current?.abort();
+    retainDocumentDraft(viewer, id);
+    setLoaded(undefined);
+    setTitle('');
+    setMarkdown('');
+    setIntent(undefined);
+    setBusy(false);
+    setShareOpen(false);
+    setDiscardOpen(false);
+  };
   useEffect(() => {
     retainDocumentShareToken(id);
   }, [id]);
   useEffect(() => () => mutation.current?.abort(), []);
+  useEffect(() => () => exportRequest.current?.abort(), [client, id, viewer]);
   useEffect(() => {
     const request = new AbortController();
     void (async () => {
@@ -93,27 +126,8 @@ export function DocumentPage({
         : undefined,
     );
   }, [viewer, id, loaded, owner, dirty, title, markdown, intent]);
-  useEffect(() => {
-    if (!dirty) return;
-    const warn = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = '';
-    };
-    window.addEventListener('beforeunload', warn);
-    return () => window.removeEventListener('beforeunload', warn);
-  }, [dirty]);
   const save = async () => {
-    if (
-      mutation.current ||
-      !loaded ||
-      !owner ||
-      conflict ||
-      !title.trim() ||
-      new TextEncoder().encode(title.trim()).length > 240 ||
-      !markdown.trim() ||
-      new TextEncoder().encode(markdown).length > 1024 * 1024
-    )
-      return;
+    if (mutation.current || !loaded || !canSave) return;
     const retained = intent ?? {
       key: crypto.randomUUID(),
       body: { title: title.trim(), markdown, expected_revision: loaded.document.revision },
@@ -140,6 +154,7 @@ export function DocumentPage({
       setIntent(undefined);
     } catch (cause) {
       if (!request.signal.aborted) {
+        if (cause instanceof DocumentError && [401, 403, 404].includes(cause.status)) revoke();
         if (cause instanceof DocumentError && cause.status >= 400 && cause.status < 500) {
           setIntent(undefined);
           if (cause.status === 409) setConflict(true);
@@ -183,8 +198,49 @@ export function DocumentPage({
     anchor.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
+  const exportSaved = async () => {
+    if (
+      (exportRequest.current && !exportRequest.current.signal.aborted) ||
+      !savedDocumentExportEnabled() ||
+      !loaded ||
+      loaded.document.id !== id ||
+      !ownsSavedDocument(loaded.document, viewer)
+    )
+      return;
+    const request = new AbortController();
+    exportRequest.current = request;
+    setExporting(request);
+    setError(undefined);
+    try {
+      const result = await prepareSavedDocumentExport(client, id, viewer, request.signal);
+      if (request.signal.aborted) return;
+      downloadSavedDocument(result);
+      console.info('Saved document export download started.');
+    } catch (cause) {
+      if (!request.signal.aborted) {
+        console.warn('Saved document export failed.', {
+          status: cause instanceof DocumentError ? cause.status : undefined,
+        });
+        setError(
+          cause instanceof SavedDocumentExportError
+            ? cause.message
+            : 'The saved document could not be exported. Reload the document and try again.',
+        );
+      }
+    } finally {
+      if (exportRequest.current === request) {
+        exportRequest.current = undefined;
+        setExporting(undefined);
+      }
+    }
+  };
   return (
     <section className="document-workspace" aria-label="Document">
+      <DocumentNavigationGuard
+        id={id}
+        protectedChanges={Boolean(owner && (dirty || intent))}
+        saving={intent !== undefined}
+      />
       <header className="document-workspace__header">
         <Button
           size="sm"
@@ -199,7 +255,7 @@ export function DocumentPage({
             aria-label="Document title"
             value={title}
             maxLength={240}
-            readOnly={!owner || busy || intent !== undefined}
+            disabled={!canEdit}
             onChange={(event) => setTitle(event.target.value)}
           />
         ) : (
@@ -219,6 +275,12 @@ export function DocumentPage({
                 : loaded
                   ? 'Saved'
                   : ''}
+          {preview && dirty && !busy && !conflict ? (
+            <>
+              {' · '}
+              <span>Switch to Edit to save</span>
+            </>
+          ) : null}
         </span>
         {owner ? (
           <div className="document-workspace__mode" role="group" aria-label="Document mode">
@@ -248,21 +310,20 @@ export function DocumentPage({
             Share
           </Button>
         ) : null}
-        {owner ? (
+        {savedDocumentExportEnabled() &&
+        loaded?.document.id === id &&
+        ownsSavedDocument(loaded.document, viewer) ? (
           <Button
             size="sm"
-            variant="primary"
-            disabled={
-              busy ||
-              (!dirty && !intent) ||
-              conflict ||
-              !title.trim() ||
-              new TextEncoder().encode(title.trim()).length > 240 ||
-              !markdown.trim() ||
-              new TextEncoder().encode(markdown).length > 1024 * 1024
-            }
-            onClick={() => void save()}
+            icon={<IconDownloadOutline16 />}
+            disabled={(exporting && !exporting.signal.aborted) || busy || intent !== undefined}
+            onClick={() => void exportSaved()}
           >
+            {exporting && !exporting.signal.aborted ? 'Exporting saved JSON…' : 'Export saved JSON'}
+          </Button>
+        ) : null}
+        {owner ? (
+          <Button size="sm" variant="primary" disabled={!canSave} onClick={() => void save()}>
             {intent && !busy ? 'Retry save' : 'Save'}
           </Button>
         ) : null}
@@ -318,7 +379,7 @@ export function DocumentPage({
               <RichDocumentEditor
                 key={`${id}:${revision}`}
                 source={markdown}
-                editable={owner && !preview && !busy && intent === undefined && !conflict}
+                editable={canEdit}
                 onChange={setMarkdown}
                 onSave={() => void save()}
               />
@@ -343,6 +404,7 @@ export function DocumentPage({
       </div>
       {loaded && owner ? (
         <DocumentSharing
+          key={loaded.document.id}
           client={client}
           document={loaded.document}
           open={shareOpen}

@@ -53,7 +53,10 @@ it('releases hidden and closed observation, reconnects without enablement, and w
   Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
   fireEvent(document, new Event('visibilitychange'));
   expect(screen.queryByAltText('Agent browser page')).not.toBeInTheDocument();
-  expect(screen.getByText('Browser observation paused.')).toBeInTheDocument();
+  expect(
+    screen.getByText('Live view pauses while this tab is in the background.'),
+  ).toBeInTheDocument();
+  expect(screen.queryByText(/Agent paused/)).not.toBeInTheDocument();
   await act(() => vi.advanceTimersByTimeAsync(0));
   const count = fetch.mock.calls.length;
   await act(() => vi.advanceTimersByTimeAsync(10000));
@@ -236,7 +239,7 @@ it('enables only after owner action, exposes failure, and preserves the explicit
   await act(() => vi.advanceTimersByTimeAsync(1));
   expect(onSelect).not.toHaveBeenCalled();
   expect(screen.getByRole('tab', { name: 'Files' })).toHaveAttribute('aria-selected', 'true');
-  expect(screen.queryByRole('tab', { name: 'Terminal' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('tab', { name: 'Operations' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('tab', { name: 'Screen' }));
   fireEvent(window, new Event('focus'));
   await act(() => vi.advanceTimersByTimeAsync(1));
@@ -244,7 +247,7 @@ it('enables only after owner action, exposes failure, and preserves the explicit
   expect(fetch.mock.calls.filter(([, options]) => options?.method === 'PUT')).toHaveLength(2);
 });
 
-it('keeps an explicit Terminal jump when an enabled browser becomes available', async () => {
+it('keeps an explicit Operations jump when an enabled browser becomes available', async () => {
   vi.useFakeTimers();
   const client = agentClient({
     taskExperience: taskExperience('owner'),
@@ -341,7 +344,7 @@ function observation(sequence: number) {
   };
 }
 
-it('returns to Screen when a selected Terminal is unavailable for the next task', async () => {
+it('returns to Screen when a selected Operations tab is unavailable for the next task', async () => {
   const client = agentClient();
   const selected = new AgentComputerObservation({ client, subject: 'owner', agentId: 'agent-a' });
   selected.publish([]);
@@ -362,6 +365,6 @@ it('returns to Screen when a selected Terminal is unavailable for the next task'
     </CmaClientProvider>,
   );
   await act(async () => {});
-  expect(screen.queryByRole('tab', { name: 'Terminal' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('tab', { name: 'Operations' })).not.toBeInTheDocument();
   expect(onSelect).toHaveBeenCalledExactlyOnceWith('browser');
 });

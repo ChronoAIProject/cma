@@ -44,7 +44,7 @@ def export(component, revision, destination):
     version = labels.get("org.opencontainers.image.version")
     require(isinstance(version, str) and version.strip(), "image version label required")
     runtime_contract = labels.get("dev.chrono.cma.runtime-contract")
-    if component in ("runtime", "runtime-desktop", "runtime-omarchy"):
+    if component in ("runtime", "runtime-omarchy"):
         require(runtime_contract == "3", "runtime contract differs")
     repository = os.environ.get("GITHUB_REPOSITORY", "")
     run_id = os.environ.get("GITHUB_RUN_ID", "")
@@ -52,7 +52,7 @@ def export(component, revision, destination):
     event = os.environ.get("GITHUB_EVENT_NAME", "")
     require(repository == "ChronoAIProject/cma", "CI repository differs")
     require(re.fullmatch(r"[1-9][0-9]*", run_id) and re.fullmatch(r"[1-9][0-9]*", attempt), "CI run identity required")
-    require(event in ("push", "pull_request"), "CI event identity required")
+    require(event in ("push", "pull_request", "merge_group"), "CI event identity required")
 
     destination.mkdir(mode=0o700, parents=True, exist_ok=False)
     archive = destination / f"cma-{component}-linux-amd64.docker.tar.gz"
@@ -96,7 +96,7 @@ def export(component, revision, destination):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("component", choices=("api", "web", "runtime", "runtime-desktop", "runtime-omarchy", "cmaeg", "image-manager"))
+    parser.add_argument("component", choices=("api", "web", "runtime", "runtime-omarchy", "cmaeg"))
     parser.add_argument("revision")
     parser.add_argument("destination", type=Path)
     args = parser.parse_args()

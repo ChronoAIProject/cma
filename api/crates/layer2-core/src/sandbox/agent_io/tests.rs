@@ -19,6 +19,7 @@ fn canonical_text_partitions_and_metadata_order_share_a_fingerprint() {
     let simple = AgentCommand::message("hello world");
     let partitioned = AgentCommand::Message {
         input: AgentInput {
+            task_acceptance: None,
             content: vec![
                 AgentContent::Text {
                     text: "hello ".into(),
@@ -98,6 +99,7 @@ fn attachments_are_hash_bound_and_never_silently_dropped() {
         size_bytes: 4096,
     };
     let input = AgentInput {
+        task_acceptance: None,
         content: vec![
             AgentContent::Text {
                 text: "describe".into(),
@@ -119,6 +121,7 @@ fn attachments_are_hash_bound_and_never_silently_dropped() {
     reference.sha256 = "b".repeat(64);
     let changed = AgentCommand::Steer {
         input: AgentInput {
+            task_acceptance: None,
             content: vec![
                 AgentContent::Text {
                     text: "describe".into(),
@@ -133,10 +136,14 @@ fn attachments_are_hash_bound_and_never_silently_dropped() {
 #[test]
 fn invalid_or_unbounded_content_is_refused() {
     for input in [
-        AgentInput { content: vec![] },
+        AgentInput {
+            task_acceptance: None,
+            content: vec![],
+        },
         AgentInput::text(" \n"),
         AgentInput::text("x".repeat(crate::sandbox::MAX_AGENT_MESSAGE_BYTES + 1)),
         AgentInput {
+            task_acceptance: None,
             content: vec![AgentContent::Text { text: "x".into() }; 33],
         },
     ] {
@@ -171,6 +178,7 @@ fn admission_receipt_binds_version_input_and_order_without_conflating_owner_and_
             correlation_id: "correlation-one".into(),
             request_fingerprint: command.fingerprint().unwrap(),
             authorization: AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "membership-one".into(),
                 policy_revision: 1,
                 grant_revision: None,

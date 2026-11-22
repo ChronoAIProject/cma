@@ -1,5 +1,7 @@
 //! Consult the credential's connection state, not only its routing row.
 
+use tokio::time::Instant;
+
 use super::{
     decode, malformed, Deserialize, NyxidServiceConnectionBroker, SecretValue,
     ServiceConnectionError, ServiceRequirementState, UserServiceCredentialSource,
@@ -31,6 +33,7 @@ impl NyxidServiceConnectionBroker {
         credential: &SecretValue,
         id: &str,
         slug: &str,
+        deadline: Option<Instant>,
     ) -> Result<ServiceRequirementState, ServiceConnectionError> {
         let mut url =
             reqwest::Url::parse(&self.endpoint("/api/v1/keys/")).map_err(|_| malformed())?;
@@ -39,7 +42,11 @@ impl NyxidServiceConnectionBroker {
             .pop_if_empty()
             .push(id);
         let response = match self
-            .send(self.http.get(url).bearer_auth(credential.expose()), true)
+            .send(
+                self.http.get(url).bearer_auth(credential.expose()),
+                true,
+                deadline,
+            )
             .await
         {
             Ok(response) => response,
@@ -102,6 +109,7 @@ impl NyxidServiceConnectionBroker {
                         .get(self.endpoint("/api/v1/assistant/readiness"))
                         .bearer_auth(credential.expose()),
                     false,
+                    deadline,
                 )
                 .await?;
             let readiness: Readiness = decode(response).await?;

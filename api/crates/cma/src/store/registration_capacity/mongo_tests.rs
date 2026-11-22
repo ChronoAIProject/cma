@@ -1,5 +1,5 @@
 use super::*;
-use layer2_core::admission::{AdmissionCeilings, AdmissionCeilingsState};
+use layer2_core::admission::AdmissionCeilings;
 use std::sync::Arc;
 
 async fn fixture(activated: bool) -> (Client, String, MongoRegistrationCapacityStore) {
@@ -17,31 +17,15 @@ async fn fixture(activated: bool) -> (Client, String, MongoRegistrationCapacityS
 }
 
 async fn set_limit(store: &MongoRegistrationCapacityStore, limit: Option<u32>) {
-    let state = AdmissionCeilingsState::default()
-        .changed(
-            0,
-            &SubjectId::new("capacity-operator"),
-            "set registration capacity",
-            AdmissionCeilings {
-                registrations: limit,
-                ..Default::default()
-            },
-            100,
-        )
-        .unwrap()
-        .unwrap_or_default();
-    store
-        .settings
-        .update_one(
-            doc! {"_id":"platform"},
-            doc! {"$set": {
-                "document_schema_version": DOCUMENT_SCHEMA_VERSION,
-                "admission_ceilings": mongodb::bson::serialize_to_bson(&state).unwrap(),
-            }},
-        )
-        .upsert(true)
-        .await
-        .unwrap();
+    crate::store::settings_barrier::test_support::set_ceilings(
+        &store.client,
+        store.database.name(),
+        AdmissionCeilings {
+            registrations: limit,
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 async fn count(store: &MongoRegistrationCapacityStore) -> u64 {
@@ -192,8 +176,9 @@ async fn unreadable_ceilings_refuse_fresh_registration_but_keep_existing_subject
     let (client, name, store) = fixture(true).await;
     store
         .settings
-        .insert_one(
-            doc! {"_id":"platform","document_schema_version":1_i64,"admission_ceilings":false},
+        .update_one(
+            doc! {"_id": "platform"},
+            doc! {"$set": {"admission_ceilings": false}},
         )
         .await
         .unwrap();
@@ -269,3 +254,5 @@ async fn unset_registration_advisory_adds_no_capacity_query() {
     assert!(trace.lock().unwrap().is_empty());
     client.database(&name).drop().await.unwrap();
 }
+
+mod cutoff;

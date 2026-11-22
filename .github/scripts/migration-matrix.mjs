@@ -176,7 +176,10 @@ function containedFile(root, relative) {
 }
 
 export function verifyFiles(planPath, evidencePath, expectedSource, expectedImage) {
-  const planBytes = boundedFile(planPath);
+  return verifyEvidenceFiles(boundedFile(planPath), evidencePath, expectedSource, expectedImage);
+}
+
+export function verifyEvidenceFiles(planBytes, evidencePath, expectedSource, expectedImage) {
   const plan = validatePlan(JSON.parse(planBytes.toString('utf8')));
   // The release's selected candidate is independent of the evidence producer.
   assert.deepEqual(plan.candidate, { source: expectedSource, image: expectedImage });

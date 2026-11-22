@@ -88,10 +88,11 @@ impl ResourceShareStore for MongoSandboxStore {
     }
 }
 
-async fn apply(
+async fn apply_inner(
     store: &MongoSandboxStore,
     request: &ShareMutation,
     session: &mut ClientSession,
+    guarded: bool,
 ) -> Result<ShareMutationReceipt, ReadError> {
     if let Some(receipt) = store
         .resource_share_commands
@@ -101,6 +102,10 @@ async fn apply(
     {
         return Ok(request.replay(records::read_receipt(&receipt)?)?);
     }
+    if !guarded {
+        super::execution::refuse_legacy_change(store, request, session).await?;
+    }
+    fence_recipients(store, request, session).await?;
     let snapshot = snapshot::read(store, &request.target(), session).await?;
     let sandbox_id = &snapshot.lineage.sandbox.id;
     let id = match &request.change {
@@ -172,6 +177,30 @@ async fn apply(
     Ok(plan.receipt)
 }
 
+async fn fence_recipients(
+    store: &MongoSandboxStore,
+    request: &ShareMutation,
+    session: &mut ClientSession,
+) -> Result<(), ReadError> {
+    let subjects: Vec<_> = match &request.change {
+        ShareChange::CreateLink {
+            audience: layer2_core::resource_access::AgentShareAudience::Users { subjects },
+            ..
+        } => subjects.iter().collect(),
+        ShareChange::RedeemLink { subject, .. } => vec![subject],
+        _ => Vec::new(),
+    };
+    let database = store.client.database(&store.sandboxes.namespace().db);
+    for subject in subjects {
+        if crate::store::account_deletions::fence_subject_in_session(&database, subject, session)
+            .await?
+        {
+            return Err(ResourceAccessStoreError::ShareRecipientUnavailable.into());
+        }
+    }
+    Ok(())
+}
+
 pub(in crate::store) async fn fence_lineage(
     store: &MongoSandboxStore,
     snapshot: &ResourceAccessSnapshot,
@@ -201,4 +230,19 @@ pub(in crate::store) async fn fence_lineage(
         }
     }
     Ok(())
+}
+
+async fn apply(
+    store: &MongoSandboxStore,
+    request: &ShareMutation,
+    session: &mut ClientSession,
+) -> Result<ShareMutationReceipt, ReadError> {
+    apply_inner(store, request, session, false).await
+}
+pub(super) async fn apply_execution_finalization(
+    store: &MongoSandboxStore,
+    permit: &super::execution::FinalizationPermit,
+    session: &mut ClientSession,
+) -> Result<ShareMutationReceipt, ReadError> {
+    apply_inner(store, permit.request(), session, true).await
 }

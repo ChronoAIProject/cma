@@ -23,7 +23,9 @@ impl From<&Agent> for AgentHierarchySummary {
     fn from(value: &Agent) -> Self {
         Self {
             task_status: super::super::AgentTaskStatus::Unknown,
+            task_acceptance: None,
             task_started_at: None,
+            task_activity_at: None,
             runtime_metadata: (!value.conversation.observations.is_empty())
                 .then(|| value.conversation.observations.metadata.clone()),
             id: value.id.clone(),
@@ -143,11 +145,22 @@ pub(super) fn workspace_view(
         .map(|agent| {
             let mut summary = AgentHierarchySummary::from(agent);
             summary.task_started_at = record.task_started_at.get(&agent.id).cloned();
+            summary.task_activity_at = record.task_activity_at.get(&agent.id).cloned();
             summary.task_status = record
                 .task_statuses
                 .get(&agent.id)
                 .copied()
                 .unwrap_or_default();
+            if summary.task_status == super::super::AgentTaskStatus::Completed {
+                let turn = record.task_turns.get(&agent.id).copied().flatten();
+                summary.task_acceptance = agent
+                    .conversation
+                    .observations
+                    .task_acceptance
+                    .as_ref()
+                    .filter(|task| Some(task.turn_sequence) == turn)
+                    .map(|task| task.summary());
+            }
             summary
         })
         .collect();

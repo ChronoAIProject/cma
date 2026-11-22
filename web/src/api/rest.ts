@@ -1,5 +1,11 @@
 import { createUsageClient } from '../usage/client';
-import { ApiError, ProtocolError, type Cma } from '@cma/client';
+import {
+  ApiError,
+  ProtocolError,
+  agentLifecycleFailure,
+  type AgentLifecycleFailure,
+  type Cma,
+} from '@cma/client';
 import { AgentLifecycleCreateError } from './client';
 import type {
   AgentLifecycleConnectionRequired,
@@ -24,6 +30,7 @@ import { messageFeedbackClient } from './rest/messageFeedback';
 import { agentFilesClient } from './rest/agentFiles';
 import { documentsClient } from './rest/documents';
 import { computerClient } from './rest/computer';
+import { exportRawHistory } from './rest/history';
 
 /** The write succeeded; a failed detail read must not release its command key. */
 export class CreatedResourceReadError extends Error {
@@ -72,7 +79,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
   return {
     usageViews: createUsageClient(sdk),
     deliverables: sdk.agents,
-    documents: documentsClient(),
+    documents: documentsClient(sdk.documents),
     browser: sdk.agentBrowser,
     browserControl: computer.browserControl,
     taskExperience: sdk.taskExperience,
@@ -108,8 +115,12 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     },
     agentTransport: transport === undefined ? undefined : createAgentTransport(sdk, transport),
     resourceViews: sdk,
+    readTaskTemplateSupport: async (options) =>
+      (await sdk.readOpenApi(options))['x-cma-task-templates-v1'] === true,
     readTaskRepositorySupport: async (options) =>
       (await sdk.readOpenApi(options))['x-cma-task-repository'] === true,
+    readTaskTitleModeSupport: async (options) =>
+      (await sdk.readOpenApi(options))['x-cma-agent-title-mode'] === true,
     readTaskCreationSupport: async (options) => {
       const document = await sdk.readOpenApi(options);
       const components = document.components as
@@ -141,18 +152,23 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         let detail = `Agent Manager could not create this Agent (${String(response.status)}).`;
         let code: string | undefined;
         let connection: AgentLifecycleConnectionRequired | undefined;
+        let failure: AgentLifecycleFailure | undefined;
         try {
           const value = (await response.json()) as {
             detail?: unknown;
             code?: unknown;
             services?: unknown;
             connection_target?: unknown;
+            limit?: unknown;
+            live?: unknown;
           };
           if (typeof value.detail === 'string') detail = value.detail;
           if (typeof value.code === 'string') {
             code = value.code;
             if (value.detail === undefined) detail = value.code;
           }
+          if (response.status === 429 && code === 'sandbox_limit_reached')
+            failure = agentLifecycleFailure(value);
           if (
             code === 'connection_required' &&
             Array.isArray(value.services) &&
@@ -168,7 +184,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         } catch {
           /* Keep the status-based message. */
         }
-        throw new AgentLifecycleCreateError(detail, response.status, code, connection);
+        throw new AgentLifecycleCreateError(detail, response.status, code, connection, failure);
       }
       const value = (await response.json()) as { id?: unknown; status?: unknown };
       if (typeof value.id !== 'string' || value.id.length === 0)
@@ -211,10 +227,12 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         (value.status === 'succeeded' && (typeof value.agent_id !== 'string' || !value.agent_id))
       )
         throw new ProtocolError('Agent Manager returned an invalid lifecycle operation.');
+      if (value.failure !== undefined) agentLifecycleFailure(value.failure);
       return value;
     },
     uploadAgentAttachment: (id, file, options) => sdk.agentAttachments.upload(id, file, options),
     botViews: sdk,
+    readSandboxCapacity: (options) => sdk.sandboxes.capacity(options),
     listSandboxes: async (options) => {
       const page = await sdk.sandboxes.list(options);
       return { items: page.items.map(sandboxSummary), next: page.next };
@@ -225,10 +243,11 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
     readAgentResources: (id, options) => sdk.agents.resources(id, options),
     readAgentSource: (id, options) => sdk.agents.sourceAccessible(id, options),
     readAgentProvenance: (id, options) => sdk.agents.provenance(id, options),
-    readSandboxProfileCapacity: async (reference, options) => {
-      const content = await pinnedSandboxProfile(reference, options);
-      const cpuMillis = content.cpu_millis;
-      const memoryBytes = content.memory_mib * 1024 ** 2;
+    readSandboxAllocation: async (sandboxId, options) => {
+      const { allocation } = await sdk.usage.sandbox(sandboxId, options);
+      if (!allocation.running) return undefined;
+      const cpuMillis = allocation.cpu_millis;
+      const memoryBytes = allocation.memory_mib * 1024 ** 2;
       if (
         !Number.isSafeInteger(cpuMillis) ||
         cpuMillis <= 0 ||
@@ -284,20 +303,7 @@ export function createRestWebClient(sdk: Cma, transport?: AgentTransportOptions)
         })),
       };
     },
-    exportAgentHistory: async (id, options) => {
-      const response = await sdk.config.fetch(
-        `${sdk.config.baseUrl}/api/v1/agents/${encodeURIComponent(id)}/history`,
-        {
-          credentials: sdk.config.cookies ? 'include' : 'omit',
-          cache: 'no-store',
-          signal: options?.signal,
-        },
-      );
-      if (!response.ok) {
-        throw new ProtocolError(`Agent history export failed (${String(response.status)}).`);
-      }
-      return response.blob();
-    },
+    exportAgentHistory: (id, options) => exportRawHistory(sdk, id, options),
     readAgentUsage: async (id, options) => {
       const value = await sdk.agents.usage(id, options);
       return {

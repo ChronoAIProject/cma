@@ -19,6 +19,8 @@ mod activity_pages;
 mod activity_retention;
 mod auto_pause_compatibility;
 mod session_versions;
+mod startup_ddl;
+mod visitor_defaults;
 
 async fn database() -> (Client, String) {
     let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
@@ -76,13 +78,18 @@ async fn retained_stores_initialize_and_refuse_unsupported_schema_versions() {
     for collection in AUTH_COLLECTIONS
         .iter()
         .copied()
-        .chain([ACTIVITY, USERS, OPERATIONS, SETTINGS])
+        .chain([USERS, OPERATIONS, SETTINGS])
     {
         assert!(
             names.iter().any(|name| name == collection),
             "startup did not create {collection}"
         );
     }
+
+    assert!(
+        !names.iter().any(|name| name == ACTIVITY),
+        "activity startup must not bootstrap its collection"
+    );
 
     for collection in AUTH_COLLECTIONS {
         insert(

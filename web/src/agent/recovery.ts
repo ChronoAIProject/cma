@@ -1,7 +1,8 @@
 import type { AgentEvent } from '../api/types';
-import { number, object, text, upsert } from './conversationValues';
+import { number, object, upsert } from './conversationValues';
+import { failureMessage } from './failureMessage';
 import { clearLiveGapRun } from './liveMessage';
-import { finishTurn } from './turnTiming';
+import { endTurn } from './turnTiming';
 import type { ConversationState, RecoveryNotice } from './model';
 
 export function recover(state: ConversationState, notice: RecoveryNotice): ConversationState {
@@ -22,7 +23,7 @@ export function failedTurn(next: ConversationState, event: AgentEvent): Conversa
   const runId = number(kind.turn_sequence)?.toString() ?? next.activeRunId;
   return recover(
     {
-      ...finishTurn(
+      ...endTurn(
         next,
         number(kind.turn_sequence)?.toString() ?? next.activeRunId,
         event.appendedAt,
@@ -33,17 +34,13 @@ export function failedTurn(next: ConversationState, event: AgentEvent): Conversa
         ...next.turnOutcomes,
         [number(kind.turn_sequence)?.toString() ?? next.activeRunId ?? 'unattributed']: 'failed',
       },
-      activeRunId: undefined,
-      activeRunStartedAt: undefined,
-      reasoning: [],
     },
     {
       id: `run-error:${String(event.seq)}`,
       runId:
         number(kind.turn_sequence) === undefined ? next.activeRunId : String(kind.turn_sequence),
       title: 'Agent run failed',
-      detail: text(failure?.detail) ?? 'The Agent run did not complete.',
-      code: text(failure?.class),
+      ...failureMessage(failure?.class),
       retainedOutput: event.retainedOutput,
     },
   );

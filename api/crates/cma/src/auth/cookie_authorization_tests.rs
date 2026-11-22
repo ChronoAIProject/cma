@@ -24,10 +24,14 @@ mod bots_tests;
 mod browser_rejection_tests;
 #[path = "cookie_authorization_tests/concurrency_tests.rs"]
 mod concurrency_tests;
+#[path = "cookie_authorization_tests/connection_route_tests.rs"]
+mod connection_route_tests;
 #[path = "cookie_authorization_tests/deferred_command_tests.rs"]
 mod deferred_command_tests;
 #[path = "cookie_authorization_tests/personal_owner_tests.rs"]
 mod personal_owner_tests;
+#[path = "cookie_authorization_tests/protected_outage_tests.rs"]
+mod protected_outage_tests;
 #[path = "cookie_authorization_tests/provider_overlap_tests.rs"]
 mod provider_overlap_tests;
 #[path = "cookie_authorization_tests/resource_command_tests.rs"]

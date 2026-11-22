@@ -12,6 +12,21 @@ class PublicTreeTests < Minitest::Test
     end
   end
 
+  def test_generated_python_bytecode_is_rejected_everywhere
+    %w[
+      .github/scripts/ci_tracks/__pycache__/selection.cpython-314.pyc
+      .github/scripts/__pycache__/ci_retry.cpython-312.pyc
+      api/tools/legacy.pyc
+      web/scripts/old.pyo
+      .github/scripts/fixtures/__pycache__/fixture.cpython-312.pyc
+    ].each do |path|
+      assert_equal "generated Python bytecode is never tracked", PublicTree.violation(path, ""), path
+    end
+    %w[.github/scripts/ci_retry.py .github/scripts/pycache_notes.md].each do |path|
+      assert_nil PublicTree.violation(path, ""), path
+    end
+  end
+
   def test_component_build_recipes_are_permitted
     PublicTree::DOCKERFILES.each { |path| assert_nil PublicTree.violation(path, "FROM scratch\n") }
     refute_nil PublicTree.violation("docker/api/Dockerfile", "FROM scratch\n")

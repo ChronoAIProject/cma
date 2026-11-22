@@ -12,7 +12,8 @@ from urllib.parse import urlsplit
 
 PARENT_PREFIX = "store::sandbox_sessions::exclusive::service_tests::endpoint_tests::"
 PARENTS = [
-    PARENT_PREFIX + "public_legacy_provider_connects_before_receiver_activation",
+    PARENT_PREFIX + "public_disabled_services_and_ownerless_receiver_refuse_new_streams",
+    PARENT_PREFIX + "retained_legacy_rows_block_until_close_or_expiry_and_cannot_release_successor",
     PARENT_PREFIX + "public_replica_handoff_and_revocation_use_actual_receiver",
     PARENT_PREFIX + "public_uncertain_confirm_and_receiver_restart_preserve_fencing",
     PARENT_PREFIX + "delayed_receiver_renewal_ack_cannot_restore_public_authority",
@@ -46,7 +47,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--evidence", type=Path, required=True,
                         help="new dedicated directory; existing evidence is never overwritten")
-    parser.add_argument("--mode", choices=["contracts", "legacy", "one", "two"], default="contracts")
+    parser.add_argument("--mode", choices=["contracts", "one", "two"], default="contracts")
     parser.add_argument("--diagnostics", action="store_true", help="separate trace/metric run, never timing acceptance")
     args = parser.parse_args()
     uri = os.environ.get("CHRONO_TEST_MONGODB_URI", "")

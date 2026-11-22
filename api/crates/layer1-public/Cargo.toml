@@ -40,6 +40,7 @@ uuid = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+tracing-subscriber = { workspace = true, features = ["json"] }
 reqwest = { workspace = true }
 tokio-tungstenite = { workspace = true }
 layer2-core = { workspace = true, features = ["test-support"] }

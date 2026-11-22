@@ -2,12 +2,20 @@
 mod access_snapshot_session;
 #[path = "resource_access_tests/artifacts.rs"]
 mod artifacts;
+#[path = "resource_access_tests/backend_free.rs"]
+mod backend_free;
 #[path = "resource_access_tests/hierarchy.rs"]
 mod hierarchy;
 #[path = "resource_access_tests/history_measurement.rs"]
 mod history_measurement;
 #[path = "resource_access_tests/inventory.rs"]
 mod inventory;
+#[path = "resource_access_tests/observation.rs"]
+mod observation;
+#[path = "resource_access_tests/observation_leases.rs"]
+mod observation_leases;
+#[path = "resource_access_tests/personal_inventory.rs"]
+mod personal_inventory;
 #[path = "resource_access_tests/provenance.rs"]
 mod provenance;
 #[path = "resource_access_tests/sandbox_inventory.rs"]

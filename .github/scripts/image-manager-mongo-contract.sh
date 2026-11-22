@@ -135,6 +135,15 @@ contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
 contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cmaeg) and kind(lib) and test(~turns::routed::media_effects::tests::)'
 
+# PR B's replica capability and unresolved-history regressions are outside the
+# broad partition-discovery and delayed-effect selections above.
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~replicas::membership::capability::)'
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~replicas::unresolved::)'
+contract_nextest eg run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cmaeg) and kind(lib) and test(~replicas::mongo_tests::)'
+
 contract_nextest am run -E 'package(=cma) and test(~gateway::tests::)' \
   --run-ignored only --test-threads 1
 
@@ -142,3 +151,11 @@ contract_nextest am run -E 'package(=cma) and test(~gateway::tests::)' \
 CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
   contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and test(~sender_context_tests::)'
+
+# The gateway reset journey also opens M1's store on this authenticated fixture.
+CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
+  contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma) and test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors)'
+
+contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma) and test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure)'

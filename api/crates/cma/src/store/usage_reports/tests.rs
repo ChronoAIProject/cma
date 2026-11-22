@@ -392,6 +392,7 @@ async fn metrics_all_sorts_are_indexed_stable_null_last_and_cursor_bound() {
 }
 
 mod allocated;
+mod allocated_sort;
 mod allocation_cold_range;
 mod allocation_interval;
 pub(super) mod circuit_capture;
@@ -410,6 +411,8 @@ mod read_models;
 mod scale;
 mod submission;
 mod tenant_isolation;
+mod terminal_reports;
+mod terminal_usage;
 
 mod retained_recovery;
 mod retained_restart;
@@ -430,3 +433,5 @@ mod on_demand_races;
 mod on_demand_views;
 
 mod hotfix_cpu;
+
+mod allocation_write_order;

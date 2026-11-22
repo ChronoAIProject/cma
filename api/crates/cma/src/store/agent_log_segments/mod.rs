@@ -24,6 +24,7 @@ pub(in crate::store) mod publication;
 mod reads;
 pub(in crate::store) mod retention;
 pub(in crate::store) mod schema;
+mod source_keys;
 pub(in crate::store) mod transaction_scope;
 pub(in crate::store) mod writer_admission;
 pub(in crate::store) mod writer_bootstrap;
@@ -37,7 +38,7 @@ pub(in crate::store) mod writer_reconcile;
 pub(in crate::store) use codec::{Head, Seal};
 pub(in crate::store) use envelope::{read_format, require_agent_version, validate_identity};
 use layer2_core::sandbox::store::SandboxStoreError;
-pub(in crate::store) use reads::{read_head, visit_range, LogRange};
+pub(in crate::store) use reads::{read_head, retained_turn, visit_range, LogRange};
 
 pub(in crate::store) const HEADS: &str = "agent_log_heads";
 pub(in crate::store) const SEGMENTS: &str = "agent_log_segments";

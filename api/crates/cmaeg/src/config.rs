@@ -15,6 +15,7 @@ mod console;
 mod delivery;
 mod duration;
 use duration::positive_duration;
+mod graduated;
 mod ingress;
 mod management;
 pub use management::ManagementConfig;
@@ -285,29 +286,12 @@ impl Config {
             cma_service_account: ServiceAccountConfig::from_env()?,
             channel_cache: ChannelCacheConfig::from_env()?,
             github_enabled: github_writes_enabled()?,
-            native_bot_mentions_writes_enabled: match env::var(
+            native_bot_mentions_writes_enabled: routing::write_flag(
                 "CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED",
-            ) {
-                Err(env::VarError::NotPresent) => false,
-                Ok(value) if value == "false" => false,
-                Ok(value) if value == "true" => true,
-                _ => {
-                    return Err(ConfigError::InvalidManagement {
-                        detail: "CMAEG_NATIVE_BOT_MENTIONS_WRITES_ENABLED must be true or false"
-                            .into(),
-                    });
-                }
-            },
-            thread_contract_writes_enabled: match env::var("CMAEG_THREAD_CONTRACT_WRITES_ENABLED") {
-                Err(env::VarError::NotPresent) => false,
-                Ok(value) if value == "false" => false,
-                Ok(value) if value == "true" => true,
-                _ => {
-                    return Err(ConfigError::InvalidManagement {
-                        detail: "CMAEG_THREAD_CONTRACT_WRITES_ENABLED must be true or false".into(),
-                    });
-                }
-            },
+            )?,
+            thread_contract_writes_enabled: routing::write_flag(
+                "CMAEG_THREAD_CONTRACT_WRITES_ENABLED",
+            )?,
             multi_consumer_writes_enabled: routing::write_flag(
                 "CMAEG_MULTI_CONSUMER_WRITES_ENABLED",
             )?,

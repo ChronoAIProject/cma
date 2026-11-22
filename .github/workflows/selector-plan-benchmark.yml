@@ -1,0 +1,36 @@
+name: Staging plan benchmark
+on:
+  pull_request:
+    branches: [develop]
+    paths:
+      - .github/scripts/ci_tracks/**
+      - .github/scripts/staging_cd_queue.py
+      - .github/scripts/staging_cd_comparisons.py
+      - .github/scripts/staging_cd_selection_cache.py
+      - .github/workflows/staging-cd.yml
+      - .github/workflows/selector-plan-*.yml
+permissions:
+  contents: read
+jobs:
+  prime:
+    uses: ./.github/workflows/selector-plan-sample.yml
+    with:
+      sample: parent
+  cold:
+    uses: ./.github/workflows/selector-plan-sample.yml
+    with:
+      sample: cold
+  warm:
+    needs: prime
+    uses: ./.github/workflows/selector-plan-sample.yml
+    with:
+      sample: warm
+  compare:
+    needs: [cold, warm]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require identical cold and warm release queues
+        env:
+          COLD: ${{ needs.cold.outputs.digest }}
+          WARM: ${{ needs.warm.outputs.digest }}
+        run: '[[ "$COLD" =~ ^[0-9a-f]{64}$ && "$COLD" == "$WARM" ]]'

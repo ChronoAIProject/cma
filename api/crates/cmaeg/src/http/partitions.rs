@@ -27,7 +27,7 @@ pub struct PartitionQuery {
     pub consumer_id: Option<String>,
 }
 
-#[derive(Serialize, ToSchema)]
+#[derive(Serialize, Deserialize, ToSchema)]
 pub struct PartitionInspection {
     pub consumer_id: String,
     pub transport_conversation_id: String,
@@ -105,22 +105,13 @@ async fn read(
             "partition inspection requires an active cma_codex consumer with conversation affinity",
         )));
     }
-    let conversation = if consumer.id.is_default() {
-        ConversationId::derive(
-            &state.master_keys,
-            &channel_id,
-            loaded.definition.partition.version,
-            &query.partition_key,
-        )
-    } else {
-        ConversationId::derive_for_consumer(
-            &state.master_keys,
-            &channel_id,
-            loaded.definition.partition.version,
-            consumer.id,
-            &compact_partition_key(&query.partition_key),
-        )
-    };
+    let conversation = conversation_id(
+        &state.master_keys,
+        &channel_id,
+        loaded.definition.partition.version,
+        consumer.id,
+        &query.partition_key,
+    );
     let credential = consumer.credential.ok_or_else(|| {
         ManagementError::Provider(ProviderError::Unavailable(
             "provider credential unavailable".into(),
@@ -148,4 +139,24 @@ async fn read(
         transport_conversation_id: conversation.to_string(),
         mapping,
     })
+}
+
+pub(super) fn conversation_id(
+    keys: &cmaeg_core::seal::MasterKeyRing,
+    channel: &cmaeg_core::ids::ChannelId,
+    version: u16,
+    consumer: &ConsumerId,
+    partition: &str,
+) -> ConversationId {
+    if consumer.is_default() {
+        ConversationId::derive(keys, channel, version, partition)
+    } else {
+        ConversationId::derive_for_consumer(
+            keys,
+            channel,
+            version,
+            consumer,
+            &compact_partition_key(partition),
+        )
+    }
 }

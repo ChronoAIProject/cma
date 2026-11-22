@@ -10,6 +10,13 @@ pub(super) fn from_lookup(
         request_limit: number(lookup, "CHRONO_RUNTIME_REQUEST_LIMIT", 32, 1, 4096)?,
         stream_reserve: number(lookup, "CHRONO_RUNTIME_STREAM_RESERVE", 0, 0, 4095)?,
         request_reserve: number(lookup, "CHRONO_RUNTIME_REQUEST_RESERVE", 0, 0, 4095)?,
+        native_http_session_reserve: number(
+            lookup,
+            "CHRONO_RUNTIME_NATIVE_HTTP_SESSION_RESERVE",
+            0,
+            0,
+            RuntimeCapacityConfig::NATIVE_HTTP_SESSION_LIMIT - 1,
+        )?,
         request_queue_limit: number(lookup, "CHRONO_RUNTIME_REQUEST_QUEUE_LIMIT", 0, 0, 1024)?,
         request_queue_max_wait: Duration::from_millis(number(
             lookup,
@@ -54,6 +61,7 @@ mod tests {
             Ok(match key {
                 "CHRONO_RUNTIME_STREAM_RESERVE" => Some("16".into()),
                 "CHRONO_RUNTIME_REQUEST_RESERVE" => Some("8".into()),
+                "CHRONO_RUNTIME_NATIVE_HTTP_SESSION_RESERVE" => Some("2".into()),
                 "CHRONO_RUNTIME_REQUEST_QUEUE_LIMIT" => Some("64".into()),
                 _ => None,
             })
@@ -64,6 +72,15 @@ mod tests {
             (48, 24)
         );
         assert_eq!(config.request_queue_max_wait, Duration::from_secs(1));
+        assert_eq!(config.native_http_session_reserve, 2);
+        assert_eq!(
+            from_lookup(&mut |key| Ok(
+                (key == "CHRONO_RUNTIME_NATIVE_HTTP_SESSION_RESERVE").then(|| "15".into())
+            ))
+            .unwrap()
+            .native_http_session_reserve,
+            15
+        );
     }
     #[test]
     fn invalid_config_fails_before_startup() {
@@ -72,6 +89,7 @@ mod tests {
             "CHRONO_RUNTIME_REQUEST_LIMIT",
             "CHRONO_RUNTIME_STREAM_RESERVE",
             "CHRONO_RUNTIME_REQUEST_RESERVE",
+            "CHRONO_RUNTIME_NATIVE_HTTP_SESSION_RESERVE",
             "CHRONO_RUNTIME_REQUEST_QUEUE_LIMIT",
             "CHRONO_RUNTIME_REQUEST_QUEUE_MAX_WAIT_MS",
         ] {
@@ -96,6 +114,7 @@ mod tests {
             ("CHRONO_RUNTIME_REQUEST_LIMIT", "4097"),
             ("CHRONO_RUNTIME_STREAM_RESERVE", "64"),
             ("CHRONO_RUNTIME_REQUEST_RESERVE", "32"),
+            ("CHRONO_RUNTIME_NATIVE_HTTP_SESSION_RESERVE", "16"),
             ("CHRONO_RUNTIME_REQUEST_QUEUE_LIMIT", "1025"),
             ("CHRONO_RUNTIME_REQUEST_QUEUE_MAX_WAIT_MS", "60001"),
             ("CHRONO_RUNTIME_REQUEST_QUEUE_MAX_WAIT_MS", "0"),

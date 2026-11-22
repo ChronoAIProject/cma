@@ -88,6 +88,13 @@ pub(crate) async fn configure(
     Ok(())
 }
 
+impl super::ActivityStore {
+    pub fn with_history(mut self, history: std::sync::Arc<ActivityHistory>) -> Self {
+        self.history = history;
+        self
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test_repository;
 #[cfg(test)]

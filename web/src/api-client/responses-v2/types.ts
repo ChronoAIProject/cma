@@ -1,6 +1,7 @@
 import { retainedOutputAvailability } from '../agents/retained-output.js';
 import type { V2EventContext } from './event-context.js';
 import type { AnswerContext } from '../answer-context.js';
+import type { TaskAcceptanceIntent } from '../task-acceptance.js';
 export type { V2EventContext } from './event-context.js';
 import { v2QueuedCancellationCapability } from './queued-cancellation-types.js';
 import { ProtocolError } from '../errors.js';
@@ -184,6 +185,7 @@ export interface V2ResponseInput {
         },
       ];
   readonly stream: true;
+  readonly task_acceptance?: TaskAcceptanceIntent;
   readonly metadata?: Readonly<Record<string, string>> | null;
   readonly model?: string;
   readonly store?: true;

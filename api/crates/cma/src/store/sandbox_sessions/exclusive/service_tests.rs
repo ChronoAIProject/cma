@@ -171,25 +171,37 @@ async fn remote_authorization_change_ends_an_existing_stream() {
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
-async fn switch_off_preserves_legacy_desktop_protocol() {
+async fn disabled_services_refuse_before_socket_or_session_effects() {
     let f = Services::new(false).await;
-    let mut connection = f
-        .left
-        .open_authorized(&f.caller, &f.agents[0], f.authority())
-        .await
-        .unwrap();
-    assert_eq!(f.receiver.legacy_opens.load(Ordering::SeqCst), 1);
-    assert!(matches!(
+    let (left, right) = tokio::join!(
         f.left
-            .open_authorized(&f.caller, &f.agents[1], f.authority())
-            .await,
-        Err(DesktopError::Busy)
-    ));
-    connection
-        .send(DesktopFrame::Binary(vec![1]))
-        .await
-        .unwrap();
-    f.left.close_connection(&mut connection).await;
+            .open_authorized(&f.caller, &f.agents[0], f.authority()),
+        f.right
+            .open_authorized(&f.caller, &f.agents[1], f.authority()),
+    );
+    assert_eq!(f.receiver.legacy_opens.load(Ordering::SeqCst), 0);
+    assert_eq!(f.receiver.frames(), 0);
+    assert_eq!(
+        f.stores
+            .db
+            .collection::<mongodb::bson::Document>("sandbox_sessions")
+            .count_documents(mongodb::bson::doc! {})
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(matches!(left, Err(DesktopError::AuthorityUnavailable)));
+    assert!(matches!(right, Err(DesktopError::AuthorityUnavailable)));
+    for (service, id) in [(&f.left, &f.agents[0]), (&f.right, &f.agents[1])] {
+        assert!(matches!(
+            service.available(&f.caller, id).await,
+            Err(DesktopError::AuthorityUnavailable)
+        ));
+        assert!(matches!(
+            service.open(&f.caller, id).await,
+            Err(DesktopError::AuthorityUnavailable)
+        ));
+    }
     f.stores.db.drop().await.unwrap();
 }
 

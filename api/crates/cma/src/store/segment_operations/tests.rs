@@ -166,6 +166,9 @@ fn read_only_gate_role_cannot_mutate_and_audit_role_cannot_rewrite_source_log() 
         .unwrap();
     assert_eq!(
         source.get_array("actions").unwrap(),
-        &vec![Bson::String("find".into())]
+        &vec![
+            Bson::String("find".into()),
+            Bson::String("listIndexes".into())
+        ]
     );
 }

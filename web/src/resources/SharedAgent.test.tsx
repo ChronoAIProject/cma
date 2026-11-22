@@ -310,10 +310,10 @@ it('shares the authorized conversation observation with the computer and clears 
   });
   test.show();
   await userEvent.click(await screen.findByRole('button', { name: 'Show Agent computer' }));
-  await userEvent.click(screen.getByRole('tab', { name: 'Terminal' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Operations' }));
   expect(await screen.findByText('shared-proof', { exact: true })).toBeInTheDocument();
   await userEvent.click(screen.getByRole('tab', { name: 'Screen' }));
-  await userEvent.click(screen.getByRole('tab', { name: 'Terminal' }));
+  await userEvent.click(screen.getByRole('tab', { name: 'Operations' }));
   expect(replayAgent).toHaveBeenCalledOnce();
   test.state.capabilities = ['view_details'];
   test.state.policy += 1;

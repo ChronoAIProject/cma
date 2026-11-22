@@ -1,6 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import markMarkup from '../assets/brand/cma-mark.svg?raw';
 import { elapsedTime } from './workspaceTime';
+import { ThinkingProgress } from './ThinkingProgress';
 const markHtml = { __html: markMarkup };
 import './Thinking.css';
 
@@ -22,6 +23,7 @@ export interface ThinkingActivity {
 }
 
 interface ThinkingProps {
+  readonly progressKey?: string;
   readonly text?: string;
   readonly activities?: readonly ThinkingActivity[];
   readonly startedAt?: string;
@@ -44,7 +46,7 @@ export function activitySummary(activity: ThinkingActivity): string {
 }
 
 /** Active-turn liveness, with a clock anchored to the public turn record rather than mount. */
-export function Thinking({ text = '', activities = [], startedAt }: ThinkingProps) {
+export function Thinking({ text = '', activities = [], startedAt, progressKey }: ThinkingProps) {
   const [open, setOpen] = useState(false);
   const [now, setNow] = useState(Date.now);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -91,6 +93,7 @@ export function Thinking({ text = '', activities = [], startedAt }: ThinkingProp
           View activity
         </button>
       </div>
+      <ThinkingProgress key={progressKey ?? JSON.stringify([text, activities])} />
       {open ? (
         <div className="thinking__body" id={bodyId} ref={bodyRef}>
           {text === '' ? null : <div className="thinking__reasoning">{text}</div>}

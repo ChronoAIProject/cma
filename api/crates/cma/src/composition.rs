@@ -1,9 +1,10 @@
-//! Production control-plane service and router assembly.
 use std::sync::Arc;
 mod access;
+mod account_deletion;
 pub(crate) mod activity;
 mod adapter;
 mod agent_manager;
+pub(crate) mod backend_free;
 mod bindings;
 mod bots;
 mod capacity_recovery;
@@ -12,10 +13,13 @@ mod desktop;
 mod documents;
 pub(crate) mod event_routing;
 mod media;
+mod observation;
 mod profiles;
 mod routes;
 mod runtime;
+mod runtime_inventory;
 mod stores;
+mod usage;
 use crate::{
     auth::{service_portal, AuthState},
     config::Config,
@@ -28,9 +32,8 @@ use crate::{
         SandboxLifecycleComposition, SandboxLifecycleDependencies,
     },
     store::{DefaultProfileSpec, MongoStores},
-    trigger::{CmaServiceConnectionBroker, TriggerComposition, TriggerCompositionDependencies},
+    trigger::{TriggerComposition, TriggerCompositionDependencies},
 };
-use axum::Router;
 use layer1_public::rest::{self, HierarchyState, ProfilesState};
 use layer2_core::{
     profiles::authoring::ProfileAuthoringService,
@@ -42,11 +45,12 @@ pub(crate) use state::ControlPlaneComposition;
 impl ControlPlaneComposition {
     async fn assemble(config: &Config) -> Result<Self, String> {
         let stores = stores::connect(config).await?;
+        let (deletions, standing) = account_deletion::compose(config, &stores).await?;
         let activity = ActivityService::new(stores.activity.clone());
         let documents::DocumentComposition {
             service: documents,
             maintenance: document_blob_maintenance,
-        } = documents::compose(config, &stores)?;
+        } = documents::compose(config, &stores, standing.clone())?;
         let users = UserDirectory::new(stores.users.clone());
         let profile_policy = profile_route_policy();
         let authoring_bounds = profile_policy.capacity_bounds;
@@ -60,29 +64,24 @@ impl ControlPlaneComposition {
         ));
         let subscriptions =
             crate::connections::CodexSubscriptions::new(stores.codex_subscriptions.clone());
-        let access_tools = credentials::agent_access_tools(config, &stores)?;
-        let (provider_tools, provider_tool_routes) = credentials::provider_tools(config, &stores)?;
+        let access_tools = credentials::agent_access_tools(config, &stores, standing.clone())?;
+        let (provider_tools, provider_tool_routes) =
+            credentials::provider_tools(config, &stores, standing.clone())?;
         let adapters = adapter::production_adapter(
             config,
             stores.sandbox_model.clone(),
             subscriptions.clone(),
             access_tools.clone(),
             provider_tools,
+            standing.clone(),
         )
         .await?;
         let adapter = adapters.owned;
         let auth =
-            credentials::authentication(config, &stores, &users, &activity, settings.clone())?;
-        let broker = Arc::new(
-            CmaServiceConnectionBroker::from_auth_config_with_callback(
-                &config.auth_mode,
-                config.nyxid_public_url.as_deref(),
-                Some(config.public_url.as_str()),
-                Arc::clone(&auth),
-            )
-            .map_err(|error| format!("service connection broker is not usable: {error}"))?
-            .with_subscriptions(subscriptions.clone()),
-        );
+            credentials::authentication(config, &stores, &users, &activity, settings.clone())?
+                .with_account_standing(standing.clone())
+                .with_account_deletion_enabled(config.account_deletion_enabled);
+        let broker = credentials::connection_broker(config, auth.clone(), subscriptions.clone())?;
         let connection_prerequisite = crate::connections::ConnectionPrerequisite::new(
             auth.clone(),
             broker.clone(),
@@ -111,7 +110,7 @@ impl ControlPlaneComposition {
         let ownership = agent_manager
             .as_ref()
             .map(|manager| manager.coordinator.clone());
-        let resource_access = bindings::resource_access(&stores, auth.clone());
+        let resource_access = bindings::resource_access(&stores, auth.clone(), standing.clone());
         let agent_page_origin = layer1_public::agent_page::AgentPageOrigin::new(&config.public_url)
             .map_err(|error| error.to_string())?;
         let projections = AgentProjectionServices::new(
@@ -122,7 +121,7 @@ impl ControlPlaneComposition {
             Arc::new(AdapterSandboxResources::new(Arc::clone(&adapter))),
             runtime_capabilities(adapter.capabilities()),
         )
-        .with_skill_upgrades(config.features.agent_skill_upgrade_enabled)
+        .with_features(config.features, adapters.model_funding.clone())
         .with_connections(connection_prerequisite.clone())
         .with_message_feedback(stores.message_feedback.clone())
         .with_suggestions(stores.sandbox_model.clone())
@@ -133,6 +132,8 @@ impl ControlPlaneComposition {
         .with_resource_access(resource_access.clone())
         .with_response_logs(stores.sandbox_model.response_log_reader())
         .with_history_exporter(Arc::new(AdapterAgentHistoryExporter::new(adapter.clone())));
+        let (projections, observations) =
+            observation::prepare(config, &stores, &agent_manager, projections).await?;
         let image_resolver = crate::agent_lifecycle::ImageManagerResolver::new(
             config.image_manager_base_url.clone(),
         )
@@ -153,7 +154,8 @@ impl ControlPlaneComposition {
             Some(stores.sandbox_model.clone()),
             Some(adapter::desktop_creation(config, adapter.clone())?),
         )
-        .with_task_experience(config.task_experience.clone());
+        .with_task_experience(config.task_experience.clone())
+        .with_failure_metadata(config.lifecycle_failure_metadata_enabled);
         let lifecycle_drain = inline_lifecycle.drain_handle();
         if let Some(manager) = &agent_manager {
             manager.register_lifecycle(lifecycle_drain.clone())?;
@@ -177,10 +179,12 @@ impl ControlPlaneComposition {
             .with_resource_access(resource_access.clone());
         let runtime = runtime::RuntimeServices::new(config, &stores, adapter.clone());
         let native_warm_pools = runtime.warm_pools;
-        let admin = layer1_public::rest::admin::AdminState::new(
+        let admin = runtime_inventory::admin_state(
+            config.features,
             Arc::clone(&settings),
             sandbox_operators,
             Arc::clone(&activity),
+            Arc::clone(&adapter),
         )
         .with_user_directory(Arc::clone(&users))
         .with_runtime_updates(runtime.updates.clone())
@@ -237,6 +241,7 @@ impl ControlPlaneComposition {
         let mut sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
                 store: stores.sandbox_model.clone(),
+                pending_homes: Arc::new(stores.admission_ceilings.pending_homes.clone()),
                 title_budget: stores.request_limits.clone(),
                 title_runtime: Arc::new(PlatformTitleEndpoint {
                     platform_base_url: config.runtime.platform_base_url.clone(),
@@ -255,6 +260,7 @@ impl ControlPlaneComposition {
         )?;
         sandbox_lifecycle.register_inline_lifecycle(lifecycle_drain);
         let trigger = TriggerComposition::new(TriggerCompositionDependencies {
+            standing,
             common_first_messages: config.features.trigger_command_admission,
             agent_reads: projections.reads(),
             credentials: connection_prerequisite.clone(),
@@ -302,8 +308,9 @@ impl ControlPlaneComposition {
                 context: context.clone(),
             },
             worker_holder.clone(),
-            ownership,
+            ownership.clone(),
             config.features.command_reconcile_pacing,
+            adapters.model_funding.clone(),
         )?;
         let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
             layer2_core::sandbox::control::SandboxControlWorker::new(
@@ -334,6 +341,9 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             worker_holder,
             access::ToolServices {
+                ownership,
+                model_credit_required: config.features.model_credit_required,
+                model_funding: adapters.model_funding,
                 source: access_tools,
                 documents: config.document_storage.as_ref().map(|_| documents.clone()),
                 deliverables: deliverables.clone(),
@@ -341,11 +351,10 @@ impl ControlPlaneComposition {
                 task_experience: config.task_experience.clone(),
             },
         );
-        let command_service = agent_access.commands;
-        let projections = projections.with_commands(command_service.clone());
+        let projections = projections.with_commands(agent_access.commands.clone());
         let responses_v2 = bindings::responses(
             &stores,
-            command_service.clone(),
+            agent_access.commands.clone(),
             projections.reads(),
             agent_page_origin,
             &bindings,
@@ -361,7 +370,9 @@ impl ControlPlaneComposition {
             ),
             "cma_codex".into(),
         );
+        let metadata = routes::agent_metadata(&stores, resource_access.clone(), config);
         let resource_routes = rest::profiles_router(profiles)
+            .merge(rest::account_deletion_router(deletions))
             .merge(rest::answer_deliverables_router(deliverables))
             .merge(media::router(media))
             .merge(rest::documents_router(documents.clone()))
@@ -374,19 +385,15 @@ impl ControlPlaneComposition {
                 adapter.clone(),
                 config,
             ))
-            .merge(layer1_public::rest::sandbox_commands_router(
-                sandbox_control_service,
-            ))
-            .merge(routes::agent_metadata(&stores, resource_access.clone()))
+            .merge(rest::sandbox_commands_router(sandbox_control_service))
+            .merge(metadata)
             .merge(capacity_recovery::router(
                 &stores,
                 resource_access.clone(),
                 &mut sandbox_lifecycle,
                 config.features.capacity_recovery_enabled,
             ))
-            .merge(layer1_public::rest::resource_access_router(
-                resource_access.clone(),
-            ))
+            .merge(rest::resource_access_router(resource_access.clone()))
             .merge(rest::profile_authoring_router(profile_authoring))
             .merge(rest::hierarchy_router(hierarchy))
             .merge(projections.router(Arc::clone(&operations)))
@@ -425,7 +432,7 @@ impl ControlPlaneComposition {
             auth.clone(),
             settings.clone(),
             bots.as_ref(),
-            command_service,
+            agent_access.commands,
             resource_routes.merge(bot_routes),
         )?;
         let provenance_backfill =
@@ -451,6 +458,7 @@ impl ControlPlaneComposition {
                 adapter.clone(),
             ),
         )?;
+        observations.finish(&relay, &sandbox_lifecycle, &projections)?;
         let router = routes::compose(
             resource_routes,
             browser_connections,
@@ -466,16 +474,12 @@ impl ControlPlaneComposition {
             ),
             relay.as_ref(),
         );
-        let router = match (&relay, &agent_manager) {
-            (Some(relay), Some(manager)) => relay.internal_router(router, manager.clone()),
-            _ => router,
-        };
         Ok(Self {
             activity_worker,
             workers,
             document_blob_maintenance,
             worker_observations,
-            router,
+            router: agent_manager::internal_router(&relay, &agent_manager, router),
             agent_manager,
             auth,
             bindings,

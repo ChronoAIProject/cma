@@ -5,6 +5,7 @@ import {
   createClient,
   ProtocolError,
   RequestAborted,
+  TransportError,
   ValidationError,
   type Cma,
 } from '../index.js';
@@ -243,6 +244,8 @@ it.each([
   ['services', 403, 'forbidden'],
   ['services', 503, 'profile_services_unavailable'],
   ['skills', 403, 'forbidden'],
+  ['skills', 401, 'not_authenticated'],
+  ['skills', 429, 'rate_limited'],
   ['skills', 400, 'invalid_profile_authoring_query'],
   ['skills', 503, 'profile_skills_unavailable'],
   ['repositories/resolve', 403, 'forbidden'],
@@ -309,4 +312,40 @@ it('accepts AbortSignal for the read-only POST and cancels without admission or 
     t.client.profileAuthoring.resolveRepository(request, { signal: controller.signal }),
   ).rejects.toBeInstanceOf(RequestAborted);
   expect(t.fetch).not.toHaveBeenCalled();
+});
+
+it('preserves skill catalog transport and protocol failures without replacing them with empty pages', async () => {
+  const t = transport();
+  t.fetch.mockRejectedValueOnce(new TypeError('Synthetic connection failure'));
+  await expect(t.client.profileAuthoring.searchSkills()).rejects.toBeInstanceOf(TransportError);
+  t.fetch.mockResolvedValueOnce(new Response('<html>synthetic upstream failure</html>'));
+  await expect(t.client.profileAuthoring.searchSkills()).rejects.toBeInstanceOf(ProtocolError);
+  expect(t.fetch).toHaveBeenCalledTimes(2);
+});
+
+it('aborts an in-flight skill page without retrying or accepting a late response', async () => {
+  const t = transport();
+  const controller = new AbortController();
+  let resolve!: (response: Response) => void;
+  let started!: () => void;
+  const fetching = new Promise<void>((done) => {
+    started = done;
+  });
+  t.fetch.mockImplementationOnce(
+    () =>
+      new Promise<Response>((done) => {
+        resolve = done;
+        started();
+      }),
+  );
+  const result = t.client.profileAuthoring.searchSkills(
+    { q: 'synthetic', cursor: 'original-page' },
+    { signal: controller.signal },
+  );
+  const rejected = expect(result).rejects.toBeInstanceOf(RequestAborted);
+  await fetching;
+  controller.abort();
+  await rejected;
+  resolve(new Response(JSON.stringify({ items: [skill] })));
+  expect(t.fetch).toHaveBeenCalledOnce();
 });

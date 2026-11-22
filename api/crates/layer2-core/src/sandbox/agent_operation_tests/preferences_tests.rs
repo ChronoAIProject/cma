@@ -62,7 +62,7 @@ async fn rename_during_work_retains_every_runtime_and_history_field_and_rejects_
                 }
             )
             .await,
-        Err(AgentOperationError::Conflict)
+        Err(AgentOperationError::PreferencesRevisionMismatch)
     ));
 }
 

@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 use layer2_core::trigger_domain::{
     BrokerHandoff, BrokerHandoffState, ServiceConnectionBroker, ServiceConnectionError,
@@ -6,12 +6,11 @@ use layer2_core::trigger_domain::{
 };
 use layer2_core::{ServiceId, SubjectId};
 
-use super::NyxidServiceConnectionBroker;
+use super::{NyxidServiceConnectionBroker, PROVIDER_HTTP_TIMEOUT};
 use crate::auth::{AuthMode, AuthState};
 use crate::connections::{CodexSubscriptions, SubscriptionError};
 use layer3_adapter::codex::CODEX_SUBSCRIPTION_CONNECTION;
 
-const PROVIDER_HTTP_TIMEOUT: Duration = Duration::from_secs(15);
 const INVALID_PROVIDER_CONFIGURATION: &str =
     "NyxID service connection configuration was not usable";
 

@@ -24,10 +24,14 @@ pub(in crate::responses::v2) async fn output_page(
             "Use the returned output-page cursor.",
         );
     };
-    let (authorization, status) = match authorize(&state, &auth, &AgentResponseId(id.clone())).await
-    {
+    let (mut authorization, status) =
+        match authorize(&state, &auth, &AgentResponseId(id.clone())).await {
+            Ok(value) => value,
+            Err(value) => return *value,
+        };
+    let _observation = match state.reads.observe_output_stream(&mut authorization) {
         Ok(value) => value,
-        Err(value) => return *value,
+        Err(error) => return super::super::error::read(error),
     };
     let receipt = &status.receipt;
     let reading = match state

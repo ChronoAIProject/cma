@@ -26,6 +26,40 @@ pub struct RetainedReopenSnapshot {
 impl RetainedReopenSnapshot {
     pub fn validate(&self) -> Result<(), SandboxStoreError> {
         let source = self.retained.source().map_err(|_| refused())?;
+        self.validate_common()?;
+        for agent in &self.retained.agents {
+            if agent.status != AgentStatus::Paused
+                || agent
+                    .conversation
+                    .runtime_generation
+                    .is_none_or(|old| old == 0 || old >= source.generation)
+                || agent
+                    .conversation
+                    .operation
+                    .as_ref()
+                    .is_some_and(|operation| {
+                        operation.runtime_generation >= source.generation
+                            || !matches!(
+                                operation.state,
+                                AgentOperationDelivery::ExecutionObserved
+                                    | AgentOperationDelivery::PreWriteFailed
+                                    | AgentOperationDelivery::RuntimeLost
+                            )
+                    })
+                || agent
+                    .work
+                    .live_skills
+                    .iter()
+                    .any(|skill| skill.status == super::AgentSkillInstallStatus::Pending)
+                || agent.failure.is_some()
+            {
+                return Err(refused());
+            }
+        }
+        Ok(())
+    }
+
+    pub(super) fn validate_common(&self) -> Result<(), SandboxStoreError> {
         let sandbox = &self.retained.sandbox;
         if self.retained.agents.is_empty()
             || self.retained.agents.len() > 16
@@ -89,33 +123,6 @@ impl RetainedReopenSnapshot {
                 .find(|tree| tree.id == agent.worktree_id)
                 .ok_or_else(refused)?;
             agent.validate_prerequisites(tree).map_err(|_| refused())?;
-            if agent.status != AgentStatus::Paused
-                || agent
-                    .conversation
-                    .runtime_generation
-                    .is_none_or(|old| old == 0 || old >= source.generation)
-                || agent
-                    .conversation
-                    .operation
-                    .as_ref()
-                    .is_some_and(|operation| {
-                        operation.runtime_generation >= source.generation
-                            || !matches!(
-                                operation.state,
-                                AgentOperationDelivery::ExecutionObserved
-                                    | AgentOperationDelivery::PreWriteFailed
-                                    | AgentOperationDelivery::RuntimeLost
-                            )
-                    })
-                || agent
-                    .work
-                    .live_skills
-                    .iter()
-                    .any(|skill| skill.status == super::AgentSkillInstallStatus::Pending)
-                || agent.failure.is_some()
-            {
-                return Err(refused());
-            }
         }
         Ok(())
     }
@@ -182,6 +189,13 @@ pub trait RetainedReopenVerifier: Send + Sync {
         &self,
         snapshot: &RetainedReopenSnapshot,
     ) -> Result<RetainedReopenProof, SandboxStoreError>;
+
+    async fn verify_suspended(
+        &self,
+        _snapshot: &RetainedReopenSnapshot,
+    ) -> Result<super::RetainedSuspendedReopenProof, SandboxStoreError> {
+        Err(refused())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -201,6 +215,13 @@ pub struct RetainedReopenAccepted {
     pub accepted_at: String,
 }
 
+pub struct RetainedReopenReplay {
+    pub owner: crate::SubjectId,
+    pub expected_revision: u64,
+    pub key_sha256: String,
+    pub accepted: RetainedReopenAccepted,
+}
+
 /// Stored outside the serialized Sandbox record. Old readers ignore this receipt;
 /// old $set aggregate saves preserve it. It never authorizes an old worker effect.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -216,6 +237,17 @@ pub struct RetainedReopenReceipt {
     pub original_failure: super::TypedFailure,
     pub proof: RetainedReopenProof,
     pub accepted: RetainedReopenAccepted,
+}
+
+impl From<RetainedReopenReceipt> for RetainedReopenReplay {
+    fn from(receipt: RetainedReopenReceipt) -> Self {
+        Self {
+            owner: receipt.owner,
+            expected_revision: receipt.expected_revision,
+            key_sha256: receipt.key_sha256,
+            accepted: receipt.accepted,
+        }
+    }
 }
 
 pub fn apply_retained_reopen(

@@ -79,6 +79,7 @@ seccompiler = { workspace = true }
 [dev-dependencies]
 # Exercise the public router with its real authentication extractors.
 tower = { version = "0.5", features = ["util"] }
+tracing-subscriber = { workspace = true, features = ["json"] }
 # Process CPU measurements include the asynchronous trace serializer.
 libc = { workspace = true }
 # Validate generated OpenAPI payloads without network reference retrieval.

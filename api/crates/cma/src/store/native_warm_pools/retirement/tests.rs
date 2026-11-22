@@ -201,7 +201,8 @@ async fn retirement_retains_original_authority_and_requires_current_lease_to_del
                 &ResizeWarmPoolBody {
                     expected_revision: retired.revision as u64,
                     target_replicas: 3
-                }
+                },
+                false
             )
             .await,
         Err(WarmPoolError::Conflict)

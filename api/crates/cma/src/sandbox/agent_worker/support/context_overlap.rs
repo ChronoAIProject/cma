@@ -14,7 +14,7 @@ impl AgentWorker {
         &self,
         agent: &Agent,
     ) -> Result<AgentContext, WorkerFailure> {
-        let started = std::time::Instant::now();
+        let started = tokio::time::Instant::now();
         let ((sandbox, workspace, worktree), attached) = read_and_inspect(
             agent,
             self.dependencies.store.get_sandbox(&agent.sandbox_id),
@@ -42,6 +42,7 @@ impl AgentWorker {
             },
         )
         .await?;
+        self.observe_runtime_startup(&sandbox, started, &attached);
         tracing::info!(
             elapsed_ms = started.elapsed().as_millis(),
             succeeded = attached.is_ok(),

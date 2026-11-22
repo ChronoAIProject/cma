@@ -7,12 +7,16 @@ use serde_json::{json, Value};
 mod activity_indexes;
 mod activity_page_index;
 mod agent_log_segments;
+pub(in crate::store) mod agent_log_source_keys;
 mod agent_owner_index;
+mod binding_indexes;
 mod collection_indexes;
+pub(in crate::store) mod home_backup_catalog;
 mod index_inventory;
 mod index_plan;
 mod index_toolkit;
 pub(in crate::store) mod opening_index;
+mod sandbox_usage_capture;
 mod steps;
 use steps::Step;
 mod authority;
@@ -53,6 +57,9 @@ pub(crate) async fn run_command_line(arguments: &[String]) {
 }
 
 pub(crate) async fn command(arguments: &[String]) -> Result<Value> {
+    if let Some(result) = home_backup_catalog::command(arguments) {
+        return result;
+    }
     if index_toolkit::is_command(arguments) {
         return index_toolkit::command(arguments).await;
     }
@@ -115,9 +122,17 @@ async fn execute(arguments: &[String]) -> Result<Value> {
             None => agent_log_segments::inspect(&database).await,
         };
     }
+    if step == Step::SandboxUsageCapture {
+        return match identity {
+            Some(identity) => sandbox_usage_capture::apply(&ledger, &database, &identity).await,
+            None => sandbox_usage_capture::inspect(&database).await,
+        };
+    }
     let indexes = step.inspect(&database).await?;
     if let Some(identity) = identity {
         apply_indexes(&ledger, &database, &identity).await
+    } else if step == Step::BindingIndexes {
+        Ok(binding_indexes::plan(indexes.len()))
     } else {
         Ok(json!({"migration":step.id(),"checksum":step.checksum(),
             "prerequisites":[],"phase":"expand","missing_indexes":indexes.len(),
@@ -134,6 +149,9 @@ async fn apply_indexes(
     super::sandbox_mongo::require_transaction_topology(database)
         .await
         .map_err(|_| "migration requires a supported replica set or mongos")?;
+    if step == Step::BindingIndexes {
+        step.inspect(database).await?;
+    }
     ledger.initialize().await?;
     if ledger.completed().await? {
         if !step.inspect(database).await?.is_empty() {
@@ -168,7 +186,9 @@ async fn apply_indexes(
     .await;
     ledger.finish(&lease, outcome).await?;
     let changed = outcome?;
-    Ok(json!({"migration":step.id(),"outcome":"completed","created_indexes":changed}))
+    let mut result = json!({"migration":step.id(),"outcome":"completed"});
+    result[step.effect_field()] = changed.into();
+    Ok(result)
 }
 
 // Keep the original one-step CLI spelling compatible; explicit IDs select new steps.
@@ -192,3 +212,13 @@ fn invocation(arguments: &[String]) -> Result<Invocation<'_>> {
         _ => Err("unsupported migration command or arguments"),
     }
 }
+
+// Reuse the immutable activity manifest without changing its checksum.
+pub(in crate::store) fn missing_activity_indexes(
+    existing: &[mongodb::bson::Document],
+) -> Result<Vec<mongodb::bson::Document>> {
+    activity_indexes::missing(existing)
+}
+
+#[cfg(test)]
+pub(in crate::store) use tests::startup_ddl::prepare_bindings_for_test;

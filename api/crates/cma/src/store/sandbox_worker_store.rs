@@ -311,12 +311,24 @@ async fn purge_in_transaction(
     let sandbox = read_sandbox(&aggregate).map_err(|_| PurgeError::Conflict)?;
     if sandbox.retirement_archive_pending()
         || sandbox.status != SandboxStatus::Retired
+        || sandbox.runtime.is_some()
         || !sandbox.credential.revoke_debt.is_empty()
     {
         return Err(PurgeError::Conflict);
     }
     if layer2_core::sandbox_usage::Allocation::from_sandbox(&sandbox)
         != layer2_core::sandbox_usage::Allocation::default()
+    {
+        return Err(PurgeError::Conflict);
+    }
+    if super::sandbox_credentials::purge::required(
+        &store.client.database(&store.sandboxes.namespace().db),
+        &aggregate,
+        &sandbox,
+        session,
+    )
+    .await
+    .map_err(PurgeError::Driver)?
     {
         return Err(PurgeError::Conflict);
     }

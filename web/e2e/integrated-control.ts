@@ -97,7 +97,7 @@ export async function composedControl(
   expect(audit.audit.some((entry: { kind: string }) => entry.kind === 'input')).toBe(true);
   expect(audit.audit.some((entry: { kind: string }) => entry.kind === 'returned')).toBe(true);
   if (process.env.CMA_INTEGRATED_POLICY === '1') await restoreAfterReturn(page, directory);
-  await page.getByRole('tab', { name: 'Terminal', exact: true }).click();
+  await page.getByRole('tab', { name: 'Operations', exact: true }).click();
   const output = page.locator('#computer-page-activity');
   await expect(output.getByRole('article')).toContainText('report.txt');
   await expect(output.getByRole('slider')).toHaveCount(0);

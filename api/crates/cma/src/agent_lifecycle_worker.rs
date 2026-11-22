@@ -105,9 +105,8 @@ impl InlineAgentLifecycle {
             SubjectId::new(record.owner),
             Authorization::new(record.input.capabilities),
         );
-        let work = self.provision(
-            &caller,
-            ProvisionInput {
+        let work = async {
+            let mut input = ProvisionInput {
                 behavior: record.input.behavior,
                 first_message,
                 request,
@@ -120,8 +119,11 @@ impl InlineAgentLifecycle {
                 existing_sandbox_id: record.sandbox_id,
                 existing_agent_id: record.agent_id,
                 actor: record.input.actor,
-            },
-        );
+            };
+            self.preflight_repository(&caller, &mut input, record.repository_commit.as_deref())
+                .await?;
+            self.provision(&caller, input).await
+        };
         tokio::pin!(work);
         // Claim delivery can itself be delayed. Reconfirm the captured token
         // before polling provider work, then bound every renewal wait.
@@ -151,7 +153,28 @@ impl InlineAgentLifecycle {
                     .wait_for_connection(&lease, services, connection_target)
                     .await
             }
-            Err(error) => self.operations.fail(&lease, &error.to_string()).await,
+            Err(error) => {
+                let failure = self
+                    .failure_metadata_enabled
+                    .get()
+                    .copied()
+                    .unwrap_or(false)
+                    .then_some(match &error {
+                        AgentLifecycleProvisioningError::SandboxLimitReached { limit, live } => {
+                            Some(
+                                layer1_public::rest::AgentLifecycleFailure::SandboxLimitReached {
+                                    limit: *limit,
+                                    live: *live,
+                                },
+                            )
+                        }
+                        _ => None,
+                    })
+                    .flatten();
+                self.operations
+                    .fail_with_metadata(&lease, &error.to_string(), failure)
+                    .await
+            }
         }
     }
 }

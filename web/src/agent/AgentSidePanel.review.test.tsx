@@ -82,12 +82,12 @@ it('follows actual browser and desktop commands without a manual source toggle',
   expect(await screen.findByText('Native desktop · Desktop')).toBeVisible();
   expect(screen.queryByRole('button', { name: /Shared desktop|Agent browser/ })).toBeNull();
 });
-it('preserves a requested Terminal during loading and redirects only after confirmed empty history', async () => {
+it('preserves a requested Operations tab during loading and redirects only after confirmed empty history', async () => {
   const select = vi.fn();
   const view = render(draw([], true, 'activity', select));
   await act(async () => {});
   expect(select).not.toHaveBeenCalled();
-  expect(screen.getByRole('tab', { name: 'Terminal' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('tab', { name: 'Operations' })).toHaveAttribute('aria-selected', 'true');
   expect(screen.getByText('Loading recorded operations…')).toBeVisible();
   view.rerender(
     draw(
@@ -97,7 +97,7 @@ it('preserves a requested Terminal during loading and redirects only after confi
       select,
     ),
   );
-  expect(screen.getByRole('tab', { name: 'Terminal' })).toHaveAttribute('aria-selected', 'true');
+  expect(screen.getByRole('tab', { name: 'Operations' })).toHaveAttribute('aria-selected', 'true');
   expect(select).not.toHaveBeenCalled();
   view.rerender(draw([], false, 'activity', select));
   await waitFor(() => expect(select).toHaveBeenCalledWith('browser'));

@@ -10,17 +10,16 @@ use axum::{
     Json, Router,
 };
 use layer2_core::profiles::AgentProfileRef;
-use layer2_core::sandbox::store::PageRequest;
-use layer2_core::sandbox::{AgentListQuery, AgentOrigin, AgentStatus, CreateAgent};
-use layer2_core::{AgentId, AgentProfileId, Caller, Capability, SandboxId, SubjectId, WorkspaceId};
-use serde::Deserialize;
+use layer2_core::sandbox::{AgentOrigin, CreateAgent};
+use layer2_core::{AgentId, AgentProfileId, Caller, Capability, WorkspaceId};
 
 #[path = "agent_state.rs"]
 mod agent_state;
+mod inventory;
 use super::agent_lifecycle::{
     AgentLifecycleCreateReceipt, AgentLifecycleCreateRequest, AgentLifecycleProvisioningError,
 };
-use super::agent_openapi_shapes::{AgentListItemView, AgentView, CreateAgentRequest};
+use super::agent_openapi_shapes::{AgentView, CreateAgentRequest};
 use super::agent_shared_shapes::{
     AccessibleAgentListItemView, AccessibleAgentPageView, AccessibleAgentView,
 };
@@ -29,53 +28,15 @@ use super::instance_problem::InstanceProblem;
 use super::BodyProblem;
 use crate::{AuthenticatedCaller, AuthenticatedResourceCaller, DelegatedCredential};
 pub use agent_state::AgentRoutesState;
-
-const DEFAULT_PAGE_LIMIT: u16 = 200;
-
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct AgentPageParams {
-    organization: Option<String>,
-    sandbox: Option<String>,
-    workspace: Option<String>,
-    status: Option<AgentStatus>,
-    cursor: Option<String>,
-    limit: Option<u16>,
-}
-
-impl AgentPageParams {
-    fn into_parts(
-        self,
-    ) -> Result<(Option<SubjectId>, AgentListQuery, PageRequest), InstanceProblem> {
-        if self.organization.as_ref().is_some_and(|value| {
-            value.trim().is_empty() || value.len() > 128 || value != value.trim()
-        }) || self.sandbox.as_ref().is_some_and(|value| value.is_empty())
-            || self
-                .workspace
-                .as_ref()
-                .is_some_and(|value| value.is_empty())
-            || self.cursor.as_ref().is_some_and(String::is_empty)
-        {
-            return Err(InstanceProblem::InvalidQuery);
-        }
-        let page = PageRequest::new(self.limit.unwrap_or(DEFAULT_PAGE_LIMIT), self.cursor)
-            .map_err(|_| InstanceProblem::InvalidQuery)?;
-        Ok((
-            self.organization.map(SubjectId::new),
-            AgentListQuery {
-                sandbox_id: self.sandbox.map(SandboxId),
-                workspace_id: self.workspace.map(WorkspaceId),
-                status: self.status,
-            },
-            page,
-        ))
-    }
-}
+use inventory::personal_agent_page;
+pub(crate) use inventory::AgentPageParams;
+pub use inventory::{personal_agent_inventory_router, PersonalAgentInventory};
 
 pub(super) fn routes() -> Router<AgentRoutesState> {
+    let list = get(list).layer(axum::middleware::from_fn(agent_state::list_private_headers));
     Router::new()
         .route("/api/v1/workspaces/{id}/agents", post(create))
-        .route("/api/v1/agents", get(list).post(create_lifecycle))
+        .route("/api/v1/agents", list.post(create_lifecycle))
         .route(
             "/api/v1/desktop-capability",
             get(super::desktop_creation::read),
@@ -158,7 +119,8 @@ pub(crate) async fn read_lifecycle_operation(
     request_body = AgentLifecycleCreateRequest,
     responses(
         (status = 202, body = AgentLifecycleCreateReceipt),
-        (status = 422, body = crate::rest::ProblemDocument),
+        (status = 422, description = "Invalid template inputs: task_template_field_required, task_template_field_placeholder, task_template_field_unknown, task_template_id_unknown, task_template_version_unsupported, task_template_message_mismatch or task_template_message_too_large; other invalid lifecycle requests use their existing problem codes.", body = crate::rest::ProblemDocument),
+        (status = 429, description = "sandbox_limit_reached", body = crate::rest::ProblemDocument),
         (status = 503, body = crate::rest::ProblemDocument)
     )
 )]
@@ -186,6 +148,9 @@ pub(crate) async fn create_lifecycle(
         Ok(body) => body,
         Err(error) => return error.into_response(),
     };
+    if let Err(error) = request.validate_template() {
+        return error.into_response();
+    }
     if request.desktop && request.initial_message.is_none() {
         return AgentLifecycleProvisioningError::Invalid(
             "desktop creation requires initial_message".into(),
@@ -276,22 +241,16 @@ pub(crate) async fn create(
     get,
     path = "/api/v1/agents",
     tag = "agents",
-    params(
-        ("organization" = Option<String>, Query),
-        ("sandbox" = Option<String>, Query),
-        ("workspace" = Option<String>, Query),
-        ("status" = Option<String>, Query),
-        ("cursor" = Option<String>, Query),
-        ("limit" = Option<u16>, Query)
-    ),
-    responses((status = 200, body = AccessibleAgentPageView))
+    params(AgentPageParams),
+    responses((status = 200, body = AccessibleAgentPageView),
+        (status = 400, description = "invalid_instance_query: invalid filters, cursor or limit; limit must be from 1 through 200", body = super::ProblemDocument, content_type = "application/problem+json"))
 )]
 pub(crate) async fn list(
     State(state): State<AgentRoutesState>,
     AuthenticatedCaller(caller): AuthenticatedCaller,
     resource: Option<AuthenticatedResourceCaller>,
     params: Result<Query<AgentPageParams>, axum::extract::rejection::QueryRejection>,
-) -> Result<Json<AccessibleAgentPageView>, InstanceProblem> {
+) -> Result<Response, InstanceProblem> {
     let (organization, query, page) = params
         .map_err(|_| InstanceProblem::InvalidQuery)?
         .0
@@ -315,19 +274,11 @@ pub(crate) async fn list(
                 .map(AccessibleAgentListItemView::from)
                 .collect(),
             next: stored.next,
-        }));
+        })
+        .into_response());
     }
     let stored = state.reads.list(&caller, &query, &page).await?;
-    Ok(Json(AccessibleAgentPageView {
-        items: stored
-            .items
-            .into_iter()
-            .map(|agent| {
-                AccessibleAgentListItemView::Personal(Box::new(AgentListItemView::from(agent)))
-            })
-            .collect(),
-        next: stored.next,
-    }))
+    Ok(personal_agent_page(stored))
 }
 
 #[utoipa::path(

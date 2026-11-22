@@ -34,6 +34,8 @@ mod startup_timing_tests;
 mod buffered_recovery_tests;
 #[path = "acp_fresh_bridge_tests.rs"]
 mod fresh_bridge_tests;
+#[path = "acp_provider_recovery_tests.rs"]
+mod provider_recovery_tests;
 #[path = "acp_reconnect_turn_tests.rs"]
 mod reconnect_turn_tests;
 #[path = "acp_recovery_deadline_tests.rs"]
@@ -166,7 +168,7 @@ pub(super) fn settings(
     }
 }
 
-pub(super) async fn stop(opened: OpenedBridge) {
+pub(super) async fn stop<C, B: std::ops::Deref<Target = Bridge>>(opened: OpenedBridge<C, B>) {
     opened.bridge.retire().await;
     opened.reader.abort();
     opened.relay.abort();

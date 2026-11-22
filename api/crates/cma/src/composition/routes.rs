@@ -26,8 +26,9 @@ pub(super) fn compose(
     relay: Option<&Arc<crate::agent_manager::relay::Relay>>,
 ) -> Router {
     let public = crate::rest_router(resources)
-        .merge(crate::connections::router(connections))
+        .merge(crate::connections::router(connections, auth.clone()))
         .merge(crate::auth::router(auth.clone()))
+        .merge(crate::auth::service_authorization::router(auth.clone()))
         .layer(axum::middleware::from_fn_with_state(
             recorder,
             crate::activity::record,
@@ -118,6 +119,7 @@ pub(super) fn agent_files(
 pub(super) fn agent_metadata(
     stores: &MongoStores,
     access: Arc<layer2_core::resource_access::ResourceAccessService>,
+    config: &crate::config::Config,
 ) -> Router {
     use layer1_public::rest;
     use layer2_core::sandbox::{
@@ -134,7 +136,7 @@ pub(super) fn agent_metadata(
         AgentChannelUsageService::new(stores.sandbox_model.clone(), access.clone()),
     ))
     .merge(rest::sandbox_usage_router(
-        layer2_core::sandbox_usage_service::SandboxUsageService::new(stores.sandbox_model.clone()),
+        super::usage::service(stores.sandbox_model.clone(), config),
     ))
     .merge(rest::agent_provider_associations_router(
         AgentProviderAssociationService::new(stores.sandbox_model.clone(), access.clone()),

@@ -1,27 +1,36 @@
 import { useEffect, useMemo } from 'react';
-import { TASK_GROUPS, taskGroup, taskTime, taskColor, runningTaskTime } from './taskGroups';
+import {
+  TASK_GROUPS,
+  taskGroup,
+  taskTime,
+  taskColor,
+  runningTaskTime,
+  taskActivityOrder,
+} from './taskGroups';
 import { useTaskClock } from './useTaskClock';
 import type { TreeProps } from './Tree';
 import { TreeRow } from './TreeRow';
 import { agentActions } from './treeActions';
 import { keyboardNavigation, agentSignal } from './treePresentation';
-import { taskWords, taskStatus } from './taskStatus';
-import { sandboxChildrenAvailable, sandboxChildStatus } from '../sandbox/lifecycle';
+import { observedTaskStatus } from './taskStatus';
+import { taskPresentation } from './taskPresentation';
+import { IconDataOutline16 } from '../ui/icons';
+import { sandboxChildStatus } from '../sandbox/lifecycle';
 import { taskTitle } from './taskTitle';
 import type { AgentSummary, SandboxDetail } from '../api/types';
+import { setupEnvironmentRoute, SETUP_ENVIRONMENT_NOTICE } from '../agent/setupEnvironment';
 
 interface AgentCard {
   readonly sandbox: SandboxDetail;
   readonly agent: AgentSummary;
 }
 
-function updated(agent: Pick<AgentSummary, 'updatedAt'>): number {
-  const at = Date.parse(agent.updatedAt);
-  return Number.isFinite(at) ? at : 0;
-}
-
 /** Flat navigation keeps each Agent's parent only for status and action eligibility. */
-function agentCards(items: TreeProps['items'], statusFilter: string): readonly AgentCard[] {
+function agentCards(
+  items: TreeProps['items'],
+  statusFilter: string,
+  currentTask?: TreeProps['currentTask'],
+): readonly AgentCard[] {
   return items
     .flatMap(({ sandbox, workspaces }) =>
       workspaces
@@ -30,15 +39,22 @@ function agentCards(items: TreeProps['items'], statusFilter: string): readonly A
         .filter(
           (agent) =>
             agent.status !== 'deleted' &&
-            (statusFilter === 'all' || taskStatus(agent, sandbox) === statusFilter),
+            (statusFilter === 'all' ||
+              observedTaskStatus(agent, sandbox, currentTask) === statusFilter),
         )
         .map((agent) => ({ sandbox, agent })),
     )
-    .sort((a, b) => updated(b.agent) - updated(a.agent) || a.agent.id.localeCompare(b.agent.id));
+    .sort(
+      (a, b) =>
+        taskActivityOrder(b.agent) - taskActivityOrder(a.agent) ||
+        a.agent.id.localeCompare(b.agent.id),
+    );
 }
 
 /** Agent view uses the same authorized hierarchy and parent lifecycle barriers. */
 export function PersonalAgentTree({
+  currentTask,
+  viewerId,
   active,
   items,
   statusFilter,
@@ -52,6 +68,8 @@ export function PersonalAgentTree({
   onAction,
 }: Pick<
   TreeProps,
+  | 'currentTask'
+  | 'viewerId'
   | 'items'
   | 'active'
   | 'statusFilter'
@@ -64,7 +82,19 @@ export function PersonalAgentTree({
   | 'onAgentIntent'
   | 'onAction'
 >) {
-  const cards = useMemo(() => agentCards(items, statusFilter ?? 'all'), [items, statusFilter]);
+  const cards = useMemo(
+    () =>
+      agentCards(items, statusFilter ?? 'all', currentTask).flatMap((card) => {
+        const presentation = taskPresentation(
+          card.agent,
+          card.sandbox,
+          refreshError === undefined ? 'fresh' : 'stale',
+          currentTask,
+        );
+        return presentation ? [{ ...card, presentation }] : [];
+      }),
+    [items, statusFilter, refreshError, currentTask],
+  );
   const listPrefetchAgent =
     active && route.kind !== 'agent' && refreshError === undefined ? cards[0]?.agent.id : undefined;
   useEffect(() => {
@@ -74,7 +104,7 @@ export function PersonalAgentTree({
   }, [listPrefetchAgent, onAgentIntent]);
   const now = useTaskClock(
     cards
-      .filter(({ agent, sandbox }) => taskStatus(agent, sandbox) === 'working')
+      .filter(({ presentation }) => presentation.showRunningTime)
       .flatMap(({ agent }) => (agent.taskStartedAt ? [agent.taskStartedAt] : [])),
   );
   return (
@@ -86,72 +116,112 @@ export function PersonalAgentTree({
     >
       {TASK_GROUPS.map((heading) => {
         const rows = cards.filter(
-          ({ sandbox, agent }) =>
-            taskGroup(taskStatus(agent, sandbox), agent.updatedAt, now) === heading,
+          ({ presentation, agent }) =>
+            (presentation.group ?? taskGroup(presentation.status, agent.taskActivityAt, now)) ===
+            heading,
         );
         if (!rows.length) return null;
         return (
           <div role="group" aria-label={heading} key={heading}>
             <h3 className="task-group__heading">{heading}</h3>
-            {rows.map(({ sandbox, agent }) => {
-              const status = taskStatus(agent, sandbox);
+            {rows.map(({ sandbox, agent, presentation }) => {
+              const setupRoute = setupEnvironmentRoute(
+                agent.status,
+                agent.sandboxId,
+                viewerId,
+                permissions.deleteSandbox,
+                { sandbox, stale: refreshError !== undefined },
+              );
+              const { status, label, parentNotice, showRunningTime } = presentation;
+              const environmentNotice =
+                parentNotice !== undefined || presentation.group === 'Status unavailable';
               const displayedTime =
-                status === 'not_started'
+                environmentNotice || status === 'not_started'
                   ? ''
-                  : status === 'working'
+                  : showRunningTime
                     ? runningTaskTime(agent.taskStartedAt, now)
-                    : taskTime(agent.updatedAt, now);
+                    : taskTime(agent.taskActivityAt, now);
               return (
                 <TreeRow
                   key={agent.id}
                   nodeId={`agent:${agent.id}`}
                   level={1}
                   label={taskTitle(agent)}
-                  accessibleLabel={`${taskTitle(agent)}, ${taskWords[status]}${displayedTime ? `, ${displayedTime}` : ''}${refreshError ? ', status may be stale' : ''}`}
-                  layout="line"
-                  icon={agentSignal(
-                    sandboxChildStatus(sandbox, agent.status),
-                    agent.id,
-                    24,
-                    sandbox.color ?? taskColor(agent.id),
-                  )}
+                  accessibleLabel={`${taskTitle(agent)}, ${label}${parentNotice && parentNotice !== label ? `, ${parentNotice}` : ''}${displayedTime ? `, ${displayedTime}` : ''}`}
+                  layout={environmentNotice ? 'stacked' : 'line'}
+                  icon={
+                    environmentNotice ? (
+                      <IconDataOutline16 />
+                    ) : (
+                      agentSignal(
+                        sandboxChildStatus(sandbox, agent.status),
+                        agent.id,
+                        24,
+                        sandbox.color ?? taskColor(agent.id),
+                      )
+                    )
+                  }
                   route={{ kind: 'agent', agentId: agent.id }}
                   selected={route.kind === 'agent' && route.agentId === agent.id}
                   dimmed={sandbox.status === 'paused'}
                   meta={
                     <>
-                      <span className="sr-only">
-                        {taskWords[status]}
-                        {refreshError ? ', status may be stale' : ''}
-                      </span>
-                      {status === 'not_started' ? (
+                      {environmentNotice ? (
+                        <span className="task-environment-notice">
+                          {label}
+                          {parentNotice && parentNotice !== label ? ` · ${parentNotice}` : ''}
+                        </span>
+                      ) : (
+                        <span className="sr-only">{label}</span>
+                      )}
+                      {environmentNotice ? null : status === 'not_started' ? (
                         <span className="task-ready">Ready</span>
-                      ) : status === 'working' ? (
+                      ) : showRunningTime ? (
                         <span className="task-running">
                           <span aria-hidden="true" className="task-running__dot" />
                           {runningTaskTime(agent.taskStartedAt, now)}
                         </span>
+                      ) : !Number.isFinite(taskActivityOrder(agent)) ? (
+                        <span>Task time unavailable</span>
                       ) : (
-                        <time dateTime={agent.updatedAt}>{taskTime(agent.updatedAt, now)}</time>
+                        <time dateTime={agent.taskActivityAt}>
+                          {taskTime(agent.taskActivityAt, now)}
+                        </time>
                       )}
                     </>
                   }
-                  actions={agentActions(
-                    agent.status,
-                    permissions,
-                    !lifecycleBusy &&
-                      !busySandboxIds?.has(sandbox.id) &&
-                      !refreshError &&
-                      sandboxChildrenAvailable(sandbox),
-                  )}
+                  actions={[
+                    ...agentActions(agent.status, permissions, {
+                      sandbox: agent.sandboxId === sandbox.id ? sandbox : undefined,
+                      viewerId,
+                      busy: lifecycleBusy || busySandboxIds?.has(sandbox.id),
+                      stale: refreshError !== undefined,
+                    }),
+                    ...(setupRoute || environmentNotice
+                      ? [
+                          {
+                            id: 'view_environment',
+                            label: setupRoute ? 'Review environment' : 'View environment',
+                            reason: setupRoute ? SETUP_ENVIRONMENT_NOTICE : undefined,
+                            icon: <IconDataOutline16 />,
+                          },
+                        ]
+                      : []),
+                  ]}
                   onNavigate={onNavigate}
                   onIntentStart={() => onAgentIntent?.(agent.id, true)}
                   onIntentEnd={() => onAgentIntent?.(agent.id, false)}
                   onAction={(kind) =>
-                    onAction({
-                      kind: kind as 'stop_agent' | 'delete_agent' | 'export_history',
-                      agentId: agent.id,
-                    })
+                    kind === 'view_environment'
+                      ? onNavigate({ kind: 'sandbox', sandboxId: sandbox.id })
+                      : onAction({
+                          kind: kind as
+                            | 'stop_agent'
+                            | 'delete_agent'
+                            | 'export_history'
+                            | 'export_retained_conversation',
+                          agentId: agent.id,
+                        })
                   }
                 />
               );

@@ -11,7 +11,7 @@ const page: cmaeg.ActivityPage = {
     {
       event_id: 'event-1',
       source: { type: 'custom' },
-      actor: { id: 'person', kind: 'human' },
+      actor: { id: 'redacted', display_name: 'Participant', kind: 'human' },
       conversation: { id: 'conversation', kind: 'private' },
       occurred_at: '2026-10-27T01:00:00Z',
       received_at: '2026-10-27T01:00:01Z',

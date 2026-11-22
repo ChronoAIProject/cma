@@ -10,6 +10,9 @@ import { scopeValue } from './scope';
 import { SandboxBranch, type TreeExpansion } from './HierarchyTree';
 import { keyboardNavigation } from '../shell/treePresentation';
 import '../shell/Tree.css';
+import { sandboxFilterEmpty, sandboxNavigation } from '../shell/navigationStatuses';
+import { DeletionProgressList } from '../shell/DeletionProgressList';
+import { useTreeFocus } from '../shell/useTreeFocus';
 
 interface Props {
   readonly client: ResourceViewsClient;
@@ -75,6 +78,9 @@ function SandboxTreePage({
     [client, organization, shared, cursor],
   );
   const current = useAuthorizedRead(read);
+  const focus = useTreeFocus();
+  const items = current.state.status === 'ready' ? current.state.value.items : [];
+  const { groups, deleting } = sandboxNavigation(items, (sandbox) => sandbox, statusFilter);
   const accessSummaries = useAccessSummaries(
     client,
     'sandbox',
@@ -82,7 +88,7 @@ function SandboxTreePage({
     scopeValue(organization, shared),
   );
   return (
-    <div className="scoped-navigation__tree resource-tree">
+    <div className="scoped-navigation__tree resource-tree" {...focus}>
       <Button size="sm" onClick={current.reload}>
         {shared === true ? 'Refresh shared Sandboxes' : 'Refresh organization'}
       </Button>
@@ -94,34 +100,32 @@ function SandboxTreePage({
         <p role="alert">{current.state.message}</p>
       ) : (
         <>
+          <DeletionProgressList
+            sandboxes={deleting}
+            onViewStatus={(sandboxId) => onNavigate({ kind: 'sandbox', sandboxId })}
+          />
           {current.state.value.items.length === 0 ? (
             <p>
-              {shared === true
-                ? 'No shared Sandboxes on this page. Individually shared Agents appear in Agents view.'
-                : 'No authorized Sandboxes on this page. Agent-only grants appear in the Agent inventory.'}
+              {statusFilter !== 'all'
+                ? sandboxFilterEmpty(statusFilter, true)
+                : shared === true
+                  ? 'No shared Sandboxes on this page. Individually shared Agents appear in Agents view.'
+                  : 'No authorized Sandboxes on this page. Agent-only grants appear in the Agent inventory.'}
             </p>
           ) : (
             <div>
-              {['Live', 'Paused'].map((label) => (
+              {groups.map(({ id, label, items }) => (
                 <SandboxGroup
-                  key={label}
+                  key={id}
                   label={label}
-                  items={
-                    current.state.status === 'ready'
-                      ? current.state.value.items.filter(
-                          (sandbox) =>
-                            sandbox.status !== 'retired' &&
-                            (statusFilter === 'all' || sandbox.status === statusFilter) &&
-                            (sandbox.status === 'paused') === (label === 'Paused'),
-                        )
-                      : []
-                  }
+                  items={items}
                   client={client}
                   expansion={expansion}
                   route={route}
                   onNavigate={onNavigate}
                   accessSummaries={accessSummaries}
                   onAccessChanged={current.reload}
+                  statusFilter={statusFilter}
                 />
               ))}
             </div>
@@ -162,6 +166,7 @@ function SandboxGroup({
   accessSummaries,
   onNavigate,
   onAccessChanged,
+  statusFilter,
 }: {
   readonly label: string;
   readonly expansion: TreeExpansion;
@@ -171,6 +176,7 @@ function SandboxGroup({
   readonly accessSummaries: ReadonlyMap<string, import('./accessSummary').AccessSummary>;
   readonly onNavigate: (route: AppRoute) => void;
   readonly onAccessChanged: () => void;
+  readonly statusFilter: string;
 }) {
   const node = `group:${label}`;
   const open = !expansion.collapsed.has(node);
@@ -202,7 +208,11 @@ function SandboxGroup({
             />
           ))}
           {items.length === 0 ? (
-            <p className="resource-tree__empty">No {label.toLowerCase()} sandboxes</p>
+            <p className="resource-tree__empty">
+              {statusFilter === 'all'
+                ? `No ${label.toLowerCase()} sandboxes on this page.`
+                : sandboxFilterEmpty(statusFilter, true)}
+            </p>
           ) : null}
         </div>
       ) : null}

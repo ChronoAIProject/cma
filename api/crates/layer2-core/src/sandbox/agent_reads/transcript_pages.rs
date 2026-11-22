@@ -11,7 +11,8 @@ impl AgentReadService {
         let (lineage, held) = self
             .owner_projection_authority(caller, id, crate::RuntimeCapability::Conversation)
             .await?;
-        let transcript = self.read_transcript(&lineage.agent).await?;
+        let mut transcript = self.read_transcript(&lineage.agent).await?;
+        crate::sandbox::sanitize_agent_transcript(&mut transcript);
         self.finish_owner_projection(
             caller,
             id,
@@ -34,7 +35,8 @@ impl AgentReadService {
         let (lineage, held) = self
             .owner_projection_authority(caller, id, crate::RuntimeCapability::Conversation)
             .await?;
-        let result = self.read_transcript_page(&lineage.agent, request).await?;
+        let mut result = self.read_transcript_page(&lineage.agent, request).await?;
+        crate::sandbox::sanitize_agent_transcript(&mut result.transcript);
         self.finish_owner_projection(
             caller,
             id,
@@ -125,6 +127,7 @@ impl AgentReadService {
             .ok_or_else(|| corrupt("Agent is absent"))?;
         require_granted(agent, crate::RuntimeCapability::Conversation)?;
         let mut result = self.read_transcript_page(agent, request).await?;
+        crate::sandbox::sanitize_agent_transcript(&mut result.transcript);
         if !authorized::is_personal(&held, context) {
             visibility::shared_transcript(&mut result.transcript);
         }

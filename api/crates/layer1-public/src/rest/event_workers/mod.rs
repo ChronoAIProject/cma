@@ -36,9 +36,11 @@ async fn no_store(request: axum::extract::Request, next: axum::middleware::Next)
     response
 }
 #[derive(serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct ListQuery {
     after: Option<String>,
+    #[param(minimum = 1, maximum = 200, default = 50)]
     limit: Option<usize>,
 }
 #[utoipa::path(get,path="/api/v1/event-worker-profiles",tag="event-worker-profiles",params(ListQuery),responses((status=200,body=ProfilePage),(status=403,body=super::ProblemDocument),(status=503,body=super::ProblemDocument)))]
@@ -128,6 +130,7 @@ pub async fn update(
     )
 }
 #[derive(serde::Deserialize, utoipa::IntoParams)]
+#[into_params(parameter_in = Query)]
 #[serde(deny_unknown_fields)]
 pub struct DeleteQuery {
     expected_revision: u32,
@@ -156,6 +159,11 @@ fn view(value: Result<EventWorkerProfile, BotError>, status: StatusCode) -> Resp
 }
 fn problem(error: BotError) -> Response {
     let (status, code, detail) = match error {
+        BotError::AccountDeletionInProgress => {
+            return super::account_deletion_problem(
+                layer2_core::account_deletion::AccountDeletionError::InProgress,
+            )
+        }
         BotError::Forbidden => (
             StatusCode::FORBIDDEN,
             "event_worker_profile_forbidden",

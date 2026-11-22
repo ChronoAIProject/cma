@@ -7,8 +7,11 @@ import { OwnerAllocationTable } from './OwnerAllocationTable';
 import { OwnerAllocationName, ownerAllocationText } from './OwnerAllocationName';
 import { MetricsNotice } from './MetricsNotice';
 import { displayQuantity, type Metric, type MetricsClient } from './model';
+import { sandboxCount } from './sandboxCount';
 import type { MetricsFailure } from './failure';
 import { useOwnerAllocations } from './useOwnerAllocations';
+import { allocationCoverage } from './allocationCoverage';
+import { AllocationCoverageNote } from './AllocationCoverageStatus';
 
 const ROW = 48;
 const HEIGHT = ROW * 8;
@@ -52,7 +55,7 @@ export function OwnerAllocationChart({
   const max = Math.max(1, Number(data.items[0]?.allocated_hours ?? 0));
   const ticks = [0, max / 4, max / 2, (max * 3) / 4, max];
   const unit = metric === 'cpu' ? 'core-hours' : 'GiB-hours';
-  const partial = data.items.slice(0, size).some((item) => !item.complete);
+  const coverage = { complete: data.items.slice(0, size).every((item) => item.complete) };
   useEffect(() => {
     if (data.error?.denied || data.error?.expired) onFailure(data.error);
   }, [data.error, onFailure]);
@@ -166,8 +169,7 @@ export function OwnerAllocationChart({
                       <OwnerAllocationName label={row.label} disambiguator={row.disambiguator} />
                       <span className="usage-owner-allocation__sr">
                         {displayQuantity(row.allocated_hours)} {unit};{' '}
-                        {displayQuantity(row.sandbox_count)} Sandboxes;{' '}
-                        {row.complete ? 'Complete' : 'Partial'} history
+                        {sandboxCount(row.sandbox_count)}; {allocationCoverage(row).label}
                       </span>
                     </li>
                   ))}
@@ -219,12 +221,7 @@ export function OwnerAllocationChart({
           unit={unit}
         />
       )}
-      {partial && (
-        <p className="usage-metric-coverage">
-          Partial history: bars show recorded allocation only, including any extension from the last
-          known state. Missing history is excluded.
-        </p>
-      )}
+      {size > 0 && <AllocationCoverageNote scope="Selected owners" value={coverage} />}
     </div>
   );
 }

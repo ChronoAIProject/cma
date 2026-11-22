@@ -1,12 +1,16 @@
 //! Allocation metering at the durable Sandbox lifecycle boundary.
 //!
-//! CPU and memory accrue while a runtime is bound. A retained home accrues
-//! storage even while its runtime is paused. These are allocated resource-time
-//! quantities, not sampled CPU utilization, RSS or filesystem bytes used.
+//! CPU and memory accrue while a nonterminal Sandbox has a runtime bound.
+//! A retained home accrues storage even while its runtime is paused or failed.
+//! These are allocated resource-time quantities, not sampled CPU utilization,
+//! RSS or filesystem bytes used.
 
 use serde::{Deserialize, Serialize};
 
-use crate::{sandbox::Sandbox, seconds_from_rfc3339, SandboxId, SubjectId};
+use crate::{
+    sandbox::{Sandbox, SandboxStatus},
+    seconds_from_rfc3339, SandboxId, SubjectId,
+};
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -19,7 +23,11 @@ pub struct Allocation {
 
 impl Allocation {
     pub fn from_sandbox(sandbox: &Sandbox) -> Self {
-        let running = sandbox.runtime.is_some();
+        let running = sandbox.runtime.is_some()
+            && !matches!(
+                sandbox.status,
+                SandboxStatus::Failed | SandboxStatus::Retired
+            );
         Self {
             running,
             cpu_millis: if running {
@@ -38,6 +46,15 @@ impl Allocation {
                 .as_ref()
                 .filter(|home| home.receipt.is_some() && !home.released)
                 .map_or(0, |home| home.request.policy.capacity_gib),
+        }
+    }
+
+    fn without_compute(self) -> Self {
+        Self {
+            running: false,
+            cpu_millis: 0,
+            memory_mib: 0,
+            ..self
         }
     }
 
@@ -112,10 +129,19 @@ pub struct SandboxUsage {
 }
 
 impl SandboxUsage {
+    /// Legacy terminal rows can retain compute allocation until the next checkpoint.
+    pub fn current_allocation(&self) -> Allocation {
+        if matches!(self.status.as_str(), "failed" | "retired") {
+            self.allocation.clone().without_compute()
+        } else {
+            self.allocation.clone()
+        }
+    }
+
     /// A live tail is projected at read time; reads never advance the ledger.
     pub fn totals_at(&self, as_of: u64) -> Result<UsageTotals, UsageError> {
         self.totals.checked_add(
-            &self.allocation.usage(
+            &self.current_allocation().usage(
                 as_of
                     .checked_sub(self.last_observed_at)
                     .ok_or(UsageError::InvalidTime)?,
@@ -192,6 +218,16 @@ pub fn observe_funded_checkpoint(
     observe_inner(previous, sandbox, source_seq, at, true, true)
 }
 
+/// Retained evidence includes observed zero allocation for every owner.
+pub fn observe_capture_checkpoint(
+    previous: Option<&SandboxUsage>,
+    sandbox: &Sandbox,
+    source_seq: u64,
+    at: &str,
+) -> Result<Option<(SandboxUsage, UsageEvent)>, UsageError> {
+    observe_inner(previous, sandbox, source_seq, at, true, true)
+}
+
 fn observe_inner(
     previous: Option<&SandboxUsage>,
     sandbox: &Sandbox,
@@ -202,7 +238,7 @@ fn observe_inner(
 ) -> Result<Option<(SandboxUsage, UsageEvent)>, UsageError> {
     let observed = timestamp(at)?;
     let created_at = timestamp(&sandbox.created_at)?;
-    let allocation = Allocation::from_sandbox(sandbox);
+    let mut allocation = Allocation::from_sandbox(sandbox);
     let status = sandbox.status.name().to_string();
     let Some(previous) = previous else {
         if observed < created_at {
@@ -251,12 +287,25 @@ fn observe_inner(
     {
         return Err(UsageError::Conflict);
     }
+    // Retirement cannot restart compute that terminal failure already stopped.
+    if sandbox.status == SandboxStatus::Retiring
+        && (matches!(previous.status.as_str(), "failed" | "retired")
+            || (previous.status == "retiring" && !previous.allocation.running))
+    {
+        allocation = allocation.without_compute();
+    }
+    let previous_allocation = previous.current_allocation();
+    let terminal_correction = previous_allocation != previous.allocation
+        && previous_allocation == allocation
+        && previous.status == status
+        && previous.name == sandbox.name;
     let unchanged = previous.allocation == allocation
         && previous.status == status
         && previous.name == sandbox.name;
     if source_seq == previous.source_seq
         && sandbox.revision == previous.source_revision
         && !unchanged
+        && !terminal_correction
     {
         return Err(UsageError::Conflict);
     }
@@ -294,9 +343,7 @@ fn observe_inner(
     } else {
         UsageEventKind::StateChanged
     };
-    let quantity = previous
-        .allocation
-        .usage(ended_at - previous.last_observed_at)?;
+    let quantity = previous_allocation.usage(ended_at - previous.last_observed_at)?;
     let revision = previous
         .revision
         .checked_add(1)
@@ -309,7 +356,7 @@ fn observe_inner(
         kind,
         started_at: previous.last_observed_at,
         ended_at,
-        allocation: previous.allocation.clone(),
+        allocation: previous_allocation,
         next_allocation: allocation.clone(),
         status: status.clone(),
         quantity: quantity.clone(),

@@ -14,8 +14,13 @@ mod authority;
 mod desktop;
 mod desktop_native;
 mod environment;
+mod environment_workers;
 mod integrated_tests;
+mod machine_policy;
+mod receipt_output;
 mod recovery;
+mod repository_connection_tests;
+mod repository_marker;
 mod restart;
 mod store_retry;
 mod subprocess;
@@ -105,9 +110,12 @@ async fn router_with_connections(
         desktop::CreationSupport {
             connections,
             adapter: None,
+            policy: Some(task_experience_policy()),
+            machine_image: None,
         },
     )
     .await
+    .0
 }
 
 async fn router_with_support(
@@ -118,7 +126,7 @@ async fn router_with_support(
     owner: &str,
     can_create: bool,
     support: desktop::CreationSupport,
-) -> Router {
+) -> (Router, crate::agent_lifecycle::LifecycleDrain) {
     let profiles = Arc::new(
         MongoProfileStore::open(database_client, database.name())
             .await
@@ -173,7 +181,7 @@ async fn router_with_support(
         } else {
             SandboxCapacity::default()
         },
-        None,
+        support.machine_image,
         Arc::new([] as [String; 0]),
         Arc::new(MongoAgentLifecycleStore::open(database).await.unwrap()),
         None,
@@ -185,8 +193,12 @@ async fn router_with_support(
             )
             .unwrap()
         }),
-    )
-    .with_task_experience(task_experience_policy());
+    );
+    let lifecycle = match support.policy {
+        Some(policy) => lifecycle.with_task_experience(policy),
+        None => lifecycle,
+    };
+    let drain = lifecycle.drain_handle();
     let mut routes = services
         .with_lifecycle(lifecycle.clone())
         .with_lifecycle_operations(lifecycle)
@@ -203,10 +215,13 @@ async fn router_with_support(
             ),
         ));
     }
-    routes.layer(middleware::from_fn_with_state(
-        (SubjectId::new(owner), can_create),
-        authenticate_task_owner,
-    ))
+    (
+        routes.layer(middleware::from_fn_with_state(
+            (SubjectId::new(owner), can_create),
+            authenticate_task_owner,
+        )),
+        drain,
+    )
 }
 
 async fn authenticate_task_owner(

@@ -14,30 +14,51 @@ use super::*;
 struct State {
     members: BTreeMap<String, Member>,
     owners: BTreeMap<AgentId, (u64, Option<OwnershipLease>)>,
+    failures: BTreeMap<AgentId, (OwnershipToken, OwnershipFailure)>,
 }
 
 pub struct MemoryOwnershipStore {
     started: Instant,
+    fixed_time_ms: Option<i64>,
     state: Arc<Mutex<State>>,
     partitioned: AtomicBool,
+    diagnostics_enabled: AtomicBool,
 }
 
 impl Default for MemoryOwnershipStore {
     fn default() -> Self {
         Self {
             started: Instant::now(),
+            fixed_time_ms: None,
             state: Arc::default(),
             partitioned: AtomicBool::new(false),
+            diagnostics_enabled: AtomicBool::new(true),
         }
     }
 }
 
 impl MemoryOwnershipStore {
+    pub fn at_fixed_time(now_ms: i64) -> Self {
+        Self {
+            fixed_time_ms: Some(now_ms),
+            ..Self::default()
+        }
+    }
+
+    pub fn enable_receiver_diagnostics(&self, enabled: bool) {
+        self.diagnostics_enabled.store(enabled, Ordering::Release);
+    }
+
+    pub fn recorded_failure(&self, id: &AgentId) -> Option<(OwnershipToken, OwnershipFailure)> {
+        self.state.lock().unwrap().failures.get(id).cloned()
+    }
     pub fn client(&self) -> Arc<Self> {
         Arc::new(Self {
             started: self.started,
+            fixed_time_ms: self.fixed_time_ms,
             state: self.state.clone(),
             partitioned: AtomicBool::new(false),
+            diagnostics_enabled: AtomicBool::new(true),
         })
     }
 
@@ -46,7 +67,8 @@ impl MemoryOwnershipStore {
     }
 
     fn now(&self) -> i64 {
-        self.started.elapsed().as_millis() as i64 + 1
+        self.fixed_time_ms
+            .unwrap_or_else(|| self.started.elapsed().as_millis() as i64 + 1)
     }
 
     fn accessible(&self) -> Result<(), OwnershipError> {
@@ -89,6 +111,10 @@ impl MemoryOwnershipStore {
 
 #[async_trait::async_trait]
 impl OwnershipStore for MemoryOwnershipStore {
+    fn receiver_diagnostics_enabled(&self) -> bool {
+        self.diagnostics_enabled.load(Ordering::Acquire)
+    }
+
     async fn register(&self, mut member: Member) -> Result<Membership, OwnershipError> {
         self.accessible()?;
         if member.protocol != PROTOCOL_VERSION {
@@ -227,5 +253,29 @@ impl OwnershipStore for MemoryOwnershipStore {
     async fn check(&self, token: &OwnershipToken) -> Result<(), OwnershipError> {
         self.accessible()?;
         self.require(&self.state.lock().unwrap(), token).map(|_| ())
+    }
+
+    async fn record_receiver_failure(
+        &self,
+        token: &OwnershipToken,
+        failure: OwnershipFailure,
+    ) -> Result<(), OwnershipError> {
+        self.accessible()?;
+        let mut state = self.state.lock().unwrap();
+        let current = state
+            .owners
+            .get(&token.agent_id)
+            .and_then(|(_, lease)| lease.as_ref());
+        if current.is_none_or(|lease| lease.token != *token || lease.expires_at_ms <= self.now()) {
+            return Err(OwnershipError::Stale);
+        }
+        let retained = state
+            .failures
+            .entry(token.agent_id.clone())
+            .or_insert((token.clone(), failure));
+        if retained.0 != *token {
+            *retained = (token.clone(), failure);
+        }
+        Ok(())
     }
 }

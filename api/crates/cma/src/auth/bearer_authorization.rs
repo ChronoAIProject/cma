@@ -7,13 +7,15 @@ use std::time::Duration;
 use tokio::sync::{Mutex, OnceCell};
 
 use super::{
-    identity::VerifiedSubject, persistence::SecretDigest,
-    verification_error::ProviderVerificationError, AuthState, ProviderMetadata,
+    identity::VerifiedSubject,
+    persistence::SecretDigest,
+    verification_error::{ProviderVerificationError, VerificationCause, VerificationFailure},
+    AuthState, ProviderMetadata,
 };
 
 const PROVIDER_VERIFICATION_TIMEOUT: Duration = super::identity_retry::DEADLINE;
 const MAX_VERIFICATION_FLIGHTS: usize = 256;
-type VerificationFlight = OnceCell<Result<Arc<VerifiedSubject>, ProviderVerificationError>>;
+type VerificationFlight = OnceCell<Result<Arc<VerifiedSubject>, VerificationFailure>>;
 
 #[derive(Default)]
 pub(super) struct VerificationFlights {
@@ -61,14 +63,32 @@ async fn verify_with_timeout(
     credential: &str,
     timeout: Duration,
 ) -> Result<Arc<VerifiedSubject>, ProviderVerificationError> {
-    verify_optional_metadata(auth, Some(metadata), credential, timeout).await
+    verify_optional_metadata(auth, Some(metadata), credential, timeout)
+        .await
+        .map_err(|failure| failure.error)
+}
+
+pub(super) async fn verify_subject_detailed(
+    auth: &AuthState,
+    metadata: &ProviderMetadata,
+    credential: &str,
+) -> Result<Arc<VerifiedSubject>, VerificationFailure> {
+    verify_optional_metadata(
+        auth,
+        Some(metadata),
+        credential,
+        PROVIDER_VERIFICATION_TIMEOUT,
+    )
+    .await
 }
 
 pub(super) async fn verify_request(
     auth: &AuthState,
     credential: &str,
 ) -> Result<Arc<VerifiedSubject>, ProviderVerificationError> {
-    verify_optional_metadata(auth, None, credential, PROVIDER_VERIFICATION_TIMEOUT).await
+    verify_optional_metadata(auth, None, credential, PROVIDER_VERIFICATION_TIMEOUT)
+        .await
+        .map_err(|failure| failure.error)
 }
 
 async fn verify_optional_metadata(
@@ -76,7 +96,7 @@ async fn verify_optional_metadata(
     metadata: Option<&ProviderMetadata>,
     credential: &str,
     timeout: Duration,
-) -> Result<Arc<VerifiedSubject>, ProviderVerificationError> {
+) -> Result<Arc<VerifiedSubject>, VerificationFailure> {
     let key = SecretDigest::identify("independent-bearer-verification", credential);
     let flight = auth.bearer_verifications.acquire(&key).await;
     let led = std::sync::atomic::AtomicBool::new(false);
@@ -84,7 +104,7 @@ async fn verify_optional_metadata(
         timeout,
         flight.get_or_init(|| {
             led.store(true, std::sync::atomic::Ordering::Relaxed);
-            super::identity_retry::verify(auth, metadata, credential, None, None, timeout)
+            super::identity_retry::verify_detailed(auth, metadata, credential, None, None, timeout)
         }),
     )
     .await
@@ -101,7 +121,10 @@ async fn verify_optional_metadata(
                 None,
                 &error,
             );
-            Err(error)
+            Err(VerificationFailure::new(
+                error,
+                VerificationCause::CallerDeadline,
+            ))
         }
     };
     super::identity_observations::resolution(if led.load(std::sync::atomic::Ordering::Relaxed) {
@@ -113,9 +136,12 @@ async fn verify_optional_metadata(
         auth.bearer_verifications.release(&key, &flight).await;
     }
     verified.and_then(|evidence| {
-        if !super::identity_lifetime::current(auth, &evidence) {
-            return Err(ProviderVerificationError::Unavailable(
-                "identity evidence changed before consumption".into(),
+        if let Some(cause) = super::identity_lifetime::failure(auth, &evidence) {
+            return Err(VerificationFailure::new(
+                ProviderVerificationError::Unavailable(
+                    "identity evidence changed before consumption".into(),
+                ),
+                cause,
             ));
         }
         super::identity_lifetime::retain(&evidence);

@@ -50,6 +50,7 @@ pub(in crate::sandbox::store::memory) async fn fixture() -> (
             correlation_id: "targeted-fixture".into(),
             request_fingerprint: command.fingerprint().unwrap(),
             authorization: AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "owner-custody".into(),
                 policy_revision: 1,
                 grant_revision: None,

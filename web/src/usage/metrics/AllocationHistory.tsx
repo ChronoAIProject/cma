@@ -1,38 +1,27 @@
 import './AllocationHistory.css';
-import type { UsageMetricQuantity, UsageMetricRow } from '@cma/client';
+import type { UsageMetricRow } from '@cma/client';
 import { Badge } from '../../ui/Badge';
-
-export function humanDuration(value: UsageMetricQuantity): string {
-  const seconds = typeof value === 'string' ? BigInt(value) : BigInt(Math.floor(value));
-  if (seconds === 0n) return 'None';
-  const days = seconds / 86400n;
-  const hours = (seconds % 86400n) / 3600n;
-  const minutes = (seconds % 3600n) / 60n;
-  const parts = [
-    days > 0n ? `${days.toLocaleString('en-SG')}d` : '',
-    hours > 0n ? `${hours}h` : '',
-    minutes > 0n ? `${minutes}m` : '',
-  ].filter(Boolean);
-  return parts.length ? parts.slice(0, 2).join(' ') : `${seconds}s`;
-}
+import { allocationCoverage } from './allocationCoverage';
+import { humanDuration } from './humanDuration';
 
 export function AllocationHistory({
   value,
 }: {
   readonly value: UsageMetricRow['allocated_period'];
 }) {
+  const history = allocationCoverage(value);
   return (
     <details className="usage-allocation-history">
       <summary>
-        <Badge tone={value.complete ? 'neutral' : 'warning'}>
-          {value.complete ? 'Complete history' : 'Partial history'}
+        <Badge tone={history.coverage === 'complete' ? 'neutral' : 'warning'}>
+          {history.label}
         </Badge>
-        <span>
-          {value.complete ? 'How allocation is calculated' : 'Some allocation history is missing'}
-        </span>
-        <span className="usage-history-disclosure">
-          {value.complete ? 'Details' : 'What’s missing?'}
-        </span>
+        {history.coverage === 'missing' && (
+          <span>Confirmed missing duration: {history.missingDuration}</span>
+        )}
+        {history.coverage === 'unverified' && <span>{history.description}</span>}
+        {history.projection && <span>{history.projection}</span>}
+        <span className="usage-history-disclosure">How this is calculated</span>
       </summary>
       <p>
         Resource-hours add up the capacity reserved for each Sandbox over time. One CPU core
@@ -41,19 +30,26 @@ export function AllocationHistory({
       </p>
       <dl className="usage-history-facts">
         <div>
-          <dt>Missing history</dt>
-          <dd>{humanDuration(value.unknown_seconds)}</dd>
+          <dt>Missing intervals</dt>
+          <dd>{history.missingDuration}</dd>
         </div>
         <div>
-          <dt>Extended from last known state</dt>
-          <dd>{humanDuration(value.projected_tail_seconds)}</dd>
+          <dt>Projection from last known state</dt>
+          <dd>
+            {humanDuration(value.projected_tail_seconds)}
+            {history.projected ? ' (estimated)' : ''}
+          </dd>
         </div>
       </dl>
-      <p>
-        Missing history is excluded from these totals; it does not mean zero usage. The last known
-        allocation is extended to the end of the period until another lifecycle event is recorded.
-        Durations add up across Sandboxes and can exceed the report period.
-      </p>
+      {history.coverage !== 'unverified' && <p>{history.description}</p>}
+      {history.projected && (
+        <p>
+          Projection estimates allocation from the last known state to the end of the period until
+          another lifecycle event is recorded. It does not establish missing intervals or verify
+          coverage.
+        </p>
+      )}
+      <p>Durations add up across Sandboxes and can exceed the report period.</p>
     </details>
   );
 }

@@ -77,7 +77,7 @@ class ZipProbeTests(unittest.TestCase):
         self.assertEqual(report["error"], "encrypted-nested-archive")
         original[0:4] = b"BAD!"
         report = self.scan([("data.dat", b"prefix" + original)], 2)
-        self.assertEqual(report["error"], "nested-zip-decode-failed")
+        self.assertEqual(report["error"], "nested-zip-framing-invalid")
 
     def test_zip64_prefix_and_damaged_directory(self):
         original = zip_bytes("data.txt", b"public text")

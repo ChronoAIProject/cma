@@ -1,5 +1,8 @@
 //! Real Mongo, public binary route and file publication with an attestation peer.
 use super::*;
+
+#[path = "media_continuation_ownership_tests.rs"]
+mod ownership;
 use crate::media_continuations::{MediaContinuations, MediaUploadRecord, MediaUploadStore};
 use axum::{
     body::{to_bytes, Body},
@@ -19,6 +22,9 @@ use layer2_core::sandbox::agent_attachments::*;
 use serde_json::{json, Value};
 use std::{path::PathBuf, sync::atomic::AtomicBool};
 use tower::ServiceExt;
+
+#[path = "media_continuation_tests/ownership_handoff.rs"]
+mod ownership_handoff;
 
 struct Peer {
     active: AtomicBool,
@@ -784,7 +790,7 @@ async fn media_continuation_append_preserves_active_original_turn() {
     f.close().await;
 }
 
-async fn deferred_fixture(label: &str) -> (Fixture, AdmittedAgentCommand) {
+async fn claimed_continuation_fixture(label: &str) -> (Fixture, AdmittedAgentCommand) {
     let f = Fixture::new(label, false).await;
     let receipt = f.upload().await.unwrap();
     f.service
@@ -814,6 +820,11 @@ async fn deferred_fixture(label: &str) -> (Fixture, AdmittedAgentCommand) {
         .await
         .unwrap()
         .unwrap();
+    (f, claimed)
+}
+
+async fn deferred_fixture(label: &str) -> (Fixture, AdmittedAgentCommand) {
+    let (f, claimed) = claimed_continuation_fixture(label).await;
     let authority = f
         .auth
         .authorize_resource_command(&f.access, &claimed.receipt.envelope)
@@ -947,6 +958,7 @@ async fn media_continuation_unknown_requeue_commit_recovers_same_slot_after_sour
     assert_eq!(sends.load(Ordering::SeqCst), 1);
     f.close().await;
 }
+
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn media_continuation_cancellation_racing_retry_claim_is_not_resurrected() {
@@ -1079,7 +1091,9 @@ async fn media_continuation_retry_requires_exact_atomic_no_write_pair_and_curren
         reading.deferred_failure_detail
     );
     assert!(
-        matches!(&failed.kind,Some(AgentLogKind::TurnFailed {failure,..}) if failure.detail == "This Agent turn failed.")
+        matches!(&failed.kind,Some(AgentLogKind::TurnFailed {failure,..})
+            if failure.class == SOURCE_DEFERRED_FAILURE
+                && failure.detail == "The Agent input could not be authorized before it was sent.")
     );
     let deferred = logs.iter().position(|entry| matches!(&entry.kind, AgentLogKind::TurnFailed { failure, .. } if failure.class == SOURCE_DEFERRED_FAILURE)).unwrap();
     let prewrite = deferred - 1;

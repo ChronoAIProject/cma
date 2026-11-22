@@ -41,6 +41,7 @@ impl AgentCommandAdmissionAuthority for ProgressingAuthority {
         }
         if call > 0 && matches!(self.progress, Progress::ChangedScope) {
             return Ok(AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "replacement-custody".into(),
                 policy_revision: 2,
                 grant_revision: None,

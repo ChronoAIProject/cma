@@ -31,6 +31,7 @@ type Contexts = BTreeMap<(String, String), (String, i64)>;
 #[derive(Clone)]
 pub struct ActivityStore {
     pub history: Arc<super::history::ActivityHistory>,
+    execution_attribution_enabled: bool,
     records: RecordClient,
     keys: Arc<MasterKeyRing>,
     writes: Arc<[Mutex<()>; 64]>,
@@ -62,6 +63,7 @@ impl ActivityStore {
                 keys.clone(),
                 Default::default(),
             )),
+            execution_attribution_enabled: false,
             records,
             keys,
             writes: Arc::new(std::array::from_fn(|_| Mutex::new(()))),
@@ -69,8 +71,8 @@ impl ActivityStore {
             contexts: Arc::default(),
         }
     }
-    pub fn with_history(mut self, history: Arc<super::history::ActivityHistory>) -> Self {
-        self.history = history;
+    pub(crate) fn with_execution_attribution(mut self, enabled: bool) -> Self {
+        self.execution_attribution_enabled = enabled;
         self
     }
     pub fn subscribe(&self) -> broadcast::Receiver<String> {
@@ -100,6 +102,13 @@ impl ActivityStore {
         });
         has_more |= items.len() > LIMIT;
         items.truncate(LIMIT);
+        for consumer in items.iter_mut().flat_map(|row| &mut row.consumers) {
+            // A projected field is never authoritative storage.
+            consumer.execution_reference = None;
+            if !self.execution_attribution_enabled {
+                consumer.execution_attributions.clear();
+            }
+        }
         let cursor = URL_SAFE_NO_PAD.encode(
             serde_json::to_vec(&Cursor {
                 record: record_hash(record),
@@ -272,6 +281,9 @@ impl ActivityStore {
         event: &str,
         change: &Change,
     ) -> Result<(), RecordError> {
+        if change.execution_attribution.is_some() && !self.execution_attribution_enabled {
+            return Ok(());
+        }
         let context = self
             .contexts
             .lock()

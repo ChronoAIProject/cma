@@ -1,7 +1,10 @@
 //! Process-local stop-loss state. Providers supply opaque boot/process identities
 //! and content-free termination evidence; durable work remains authoritative.
 use crate::runtime_startup::{StartupIncarnation, StartupTermination};
-use crate::{AdapterError, RuntimeHandle, RuntimeStartupFailure, RuntimeStartupFailureClass};
+use crate::{
+    AdapterError, RuntimeHandle, RuntimeStartupFailure, RuntimeStartupFailureClass,
+    RuntimeStartupProbe,
+};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -20,11 +23,23 @@ pub(super) struct StartupBreaker {
 
 struct StartupRecord {
     sandbox_id: String,
+    generation: u64,
     boot: String,
     last_delivery: Delivery,
     failure: RuntimeStartupFailure,
     next_probe: Option<Instant>,
     probe_interval: Duration,
+}
+
+impl StartupRecord {
+    fn failure_at(&self, handle: &RuntimeHandle, next_probe_at: Instant) -> RuntimeStartupFailure {
+        self.failure.clone().with_probe(RuntimeStartupProbe {
+            runtime: handle.clone(),
+            sandbox_id: self.sandbox_id.clone(),
+            generation: self.generation,
+            next_probe_at,
+        })
+    }
 }
 
 #[derive(Clone, PartialEq, Eq)]
@@ -57,18 +72,18 @@ impl StartupBreaker {
     }
 
     pub(super) fn failure(&self, handle: &RuntimeHandle) -> Option<RuntimeStartupFailure> {
-        self.entries
-            .lock()
-            .unwrap()
-            .get(handle)
-            .filter(|record| record.next_probe.is_some())
-            .map(|record| record.failure)
+        self.entries.lock().unwrap().get(handle).and_then(|record| {
+            record
+                .next_probe
+                .map(|next| record.failure_at(handle, next))
+        })
     }
 
     pub(super) fn hold_before_wait(&self, handle: &RuntimeHandle) -> Option<AdapterError> {
         let entries = self.entries.lock().unwrap();
         let record = entries.get(handle)?;
-        (Instant::now() < record.next_probe?).then(|| suppressed(record.failure))
+        let next = record.next_probe?;
+        (Instant::now() < next).then(|| suppressed(record.failure_at(handle, next)))
     }
 
     pub(super) fn evidence_needed(
@@ -132,7 +147,7 @@ impl StartupBreaker {
         };
         let now = Instant::now();
         if now < next {
-            return Err(suppressed(record.failure));
+            return Err(suppressed(record.failure_at(handle, next)));
         }
         // Claim before delivery, including failed or unacknowledged probes.
         record.probe_interval = (record.probe_interval * 2).min(MAX_PROBE);
@@ -146,6 +161,7 @@ impl StartupBreaker {
         handle: &RuntimeHandle,
         incarnation: StartupIncarnation,
         sandbox_id: String,
+        generation: u64,
         delivered_at: SystemTime,
     ) {
         let mut entries = self.entries.lock().unwrap();
@@ -157,10 +173,11 @@ impl StartupBreaker {
             delivered_at,
             inspected: false,
         };
-        if let Some(record) = entries
-            .get_mut(handle)
-            .filter(|record| record.boot == incarnation.boot)
-        {
+        if let Some(record) = entries.get_mut(handle).filter(|record| {
+            record.boot == incarnation.boot
+                && record.sandbox_id == sandbox_id
+                && record.generation == generation
+        }) {
             // Duplicate acknowledgements are still delivered normally. They
             // must not re-arm an already inspected failure of this incarnation
             // or replace evidence of a newer acknowledged incarnation.
@@ -174,12 +191,13 @@ impl StartupBreaker {
                 handle.clone(),
                 StartupRecord {
                     sandbox_id,
+                    generation,
                     boot: incarnation.boot,
                     last_delivery: delivery,
-                    failure: RuntimeStartupFailure {
-                        class: RuntimeStartupFailureClass::ExitedBeforeServing,
-                        consecutive: 0,
-                    },
+                    failure: RuntimeStartupFailure::new(
+                        RuntimeStartupFailureClass::ExitedBeforeServing,
+                        0,
+                    ),
                     next_probe: None,
                     probe_interval: FIRST_PROBE,
                 },

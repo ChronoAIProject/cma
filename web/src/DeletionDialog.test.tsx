@@ -52,6 +52,11 @@ it('loads completed Agent deletion activity even before request acceptance is co
     />,
   );
   expect(await screen.findByRole('dialog', { name: 'Agent deleted' })).toBeInTheDocument();
+  expect(screen.getByText(/Its Sandbox environment is retained and still counts/)).toBeVisible();
+  expect(screen.getByRole('link', { name: 'Review parent environment' })).toHaveAttribute(
+    'href',
+    `/sandboxes/${AGENT_DETAIL.sandbox.id}`,
+  );
   expect(screen.getByRole('region', { name: 'Recorded activity' })).not.toBeVisible();
   fireEvent.click(screen.getByText('Cleanup progress'));
   expect(readAgentEvents).toHaveBeenCalledTimes(1);
@@ -168,10 +173,10 @@ it('retains the same command key after an uncertain response and never automatic
   ]);
 });
 
-it('does not declare success on read failures or a missing resource', async () => {
+it.each([401, 403, 404])('does not declare success on a %s read failure', async (status) => {
   const client = agentClient({
     readSandbox: async () => {
-      throw new ApiError(404, 'Not found', 'not_found');
+      throw new ApiError(status, 'Unavailable', 'unavailable');
     },
   });
   render(
@@ -271,3 +276,59 @@ it('reports child cleanup stages from refreshed Workspace records', async () => 
     expect(observation.complete).toBe(workspaceStatus === 'removed');
   }
 });
+
+it.each(['authorized', 'checkpoint', 'no-retire'] as const)(
+  'guards revive deletion confirmation using a fresh %s observation',
+  async (condition) => {
+    const actor = userEvent.setup();
+    const sandbox = sandboxFixture('reviving');
+    const deleteSandbox = vi.fn(async () => undefined);
+    render(
+      <DeletionDialog
+        viewerId="owner"
+        client={agentClient({
+          readSandbox: async () => ({
+            ...sandbox,
+            lifecycle: {
+              ...sandbox.lifecycle!,
+              operation: {
+                purpose: 'revive',
+                phase: 'conversation_reopen',
+                startedAt: '2026-11-16T00:00:00Z',
+              },
+              result: {
+                state: 'in_progress',
+                operationId: 'revive-original',
+                startedAt: '2026-11-16T00:00:00Z',
+                resultDueAt: '2026-11-16T00:01:30Z',
+                continuing: true,
+                actions: condition === 'no-retire' ? ['observe'] : ['observe', 'retire'],
+              },
+              checkpoint:
+                condition === 'checkpoint'
+                  ? { phase: 'capture', startedAt: '2026-11-16T00:00:00Z', epoch: 1 }
+                  : undefined,
+            },
+          }),
+          deleteSandbox,
+        })}
+        initial={initial}
+        restored={false}
+        onChanged={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    await actor.click(await screen.findByRole('checkbox'));
+    const confirm = screen.getByRole('button', { name: 'Delete Sandbox' });
+    if (condition === 'authorized') {
+      expect(confirm).toBeEnabled();
+      await actor.click(confirm);
+      expect(deleteSandbox).toHaveBeenCalledExactlyOnceWith('sbx_1', {
+        idempotencyKey: initial.key,
+      });
+    } else {
+      expect(confirm).toBeDisabled();
+      expect(deleteSandbox).not.toHaveBeenCalled();
+    }
+  },
+);

@@ -76,6 +76,7 @@ async fn mongo_access_failed_retry_is_a_new_pending_attempt_without_inherited_co
             vec![ServiceId::new("api-github")],
             &[],
             AgentAuthorizationRevision {
+                replay_principal: None,
                 authority_id: "personal:new-owner-consent".into(),
                 policy_revision: 1,
                 grant_revision: None,

@@ -70,35 +70,14 @@ pub(super) async fn create_profiles(
                 revision: workspace_revision.revision,
             };
 
-            let mut permissions = validation::services_for(&profile.permissions, behavior)?;
-            if request.initial_message.is_some()
-                && request.repository.is_some()
-                && !permissions
-                    .iter()
-                    .any(|service| service.as_str() == "api-github")
-            {
-                permissions.push(layer2_core::ServiceId::new("api-github"));
-            }
-            let sandbox_content = SandboxProfileContent {
+            let sandbox_content = inline_sandbox_content(
+                request,
                 runtime_image,
-                cpu_millis: capacity.cpu_millis,
-                memory_mib: capacity.memory_mib,
-                nyxid_services: permissions,
-                agent_provider: AgentProvider::Codex,
-                model_access: ModelAccess::ChronoaiManaged,
-                max_workspaces: limits.max_workspaces,
-                max_agents_per_workspace: limits.max_agents_per_workspace,
-                workspace_profiles: vec![workspace_ref.clone()],
-                software_install_commands: Vec::new(),
-                environment_variables: if request.machine_included {
-                    vec![EnvironmentVariable {
-                        name: "CMA_MACHINE_INCLUDED".into(),
-                        value: "1".into(),
-                    }]
-                } else {
-                    Vec::new()
-                },
-            };
+                capacity,
+                limits,
+                behavior,
+                Some(workspace_ref.clone()),
+            )?;
             let sandbox_revision = profiles
                 .create_sandbox_configured_for_owner(
                     &caller.subject,
@@ -122,6 +101,46 @@ pub(super) async fn create_profiles(
     let agent_revision = agent_result?;
     let (workspace_ref, sandbox_ref) = dependent_result?;
     Ok((agent_revision, workspace_ref, sandbox_ref))
+}
+
+pub(super) fn inline_sandbox_content(
+    request: &AgentLifecycleCreateRequest,
+    runtime_image: Option<String>,
+    capacity: layer3_adapter::SandboxCapacity,
+    limits: layer2_core::sandbox::SandboxLimits,
+    behavior: LifecycleBehavior,
+    workspace: Option<WorkspaceProfileRef>,
+) -> Result<SandboxProfileContent, AgentLifecycleProvisioningError> {
+    let profile = request.profile.clone().unwrap_or_default();
+    let mut permissions = validation::services_for(&profile.permissions, behavior)?;
+    if request.initial_message.is_some()
+        && request.repository.is_some()
+        && !permissions
+            .iter()
+            .any(|service| service.as_str() == "api-github")
+    {
+        permissions.push(layer2_core::ServiceId::new("api-github"));
+    }
+    Ok(SandboxProfileContent {
+        runtime_image,
+        cpu_millis: capacity.cpu_millis,
+        memory_mib: capacity.memory_mib,
+        nyxid_services: permissions,
+        agent_provider: AgentProvider::Codex,
+        model_access: ModelAccess::ChronoaiManaged,
+        max_workspaces: limits.max_workspaces,
+        max_agents_per_workspace: limits.max_agents_per_workspace,
+        workspace_profiles: workspace.into_iter().collect(),
+        software_install_commands: Vec::new(),
+        environment_variables: if request.machine_included {
+            vec![EnvironmentVariable {
+                name: "CMA_MACHINE_INCLUDED".into(),
+                value: "1".into(),
+            }]
+        } else {
+            Vec::new()
+        },
+    })
 }
 
 pub(super) fn display_name(agent_name: &str, suffix: &str) -> String {

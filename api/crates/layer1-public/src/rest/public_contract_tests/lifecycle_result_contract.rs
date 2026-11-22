@@ -3,6 +3,19 @@ use serde_json::Value;
 
 pub(super) fn validate(value: &Value) {
     if let Some(result) = value.pointer("/lifecycle/result") {
+        if result["code"] == "lifecycle_failed_admission_unavailable" {
+            assert_eq!(result["state"], "failed");
+            assert_eq!(result["continuing"], false);
+            for field in [
+                "operation_id",
+                "started_at",
+                "result_due_at",
+                "retry_after_seconds",
+            ] {
+                assert!(result.get(field).is_none());
+            }
+            return;
+        }
         let seconds = |key: &str| {
             layer2_core::seconds_from_rfc3339(result[key].as_str().expect("timestamp is a string"))
                 .expect("valid lifecycle timestamp")
@@ -40,9 +53,9 @@ fn failed_result_wire_fixture_omits_retry_after() {
         SandboxLifecycleResult {
             state: SandboxLifecycleResultState::Failed,
             code: Some("lifecycle_failed"),
-            operation_id: "original".into(),
-            started_at: "2026-11-16T00:00:00Z".into(),
-            result_due_at: "2026-11-16T00:01:30Z".into(),
+            operation_id: Some("original".into()),
+            started_at: Some("2026-11-16T00:00:00Z".into()),
+            result_due_at: Some("2026-11-16T00:01:30Z".into()),
             continuing: false,
             actions: vec![
                 SandboxLifecycleAction::Observe,

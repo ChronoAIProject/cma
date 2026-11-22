@@ -270,9 +270,8 @@ for (const managed of [false, true]) {
       await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Retained draft');
       await expect(page.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled();
       if (managed) {
-        await page.getByRole('button', { name: 'Filter', exact: true }).click();
-        await page.getByRole('button', { name: 'Manage environments', exact: true }).click();
-        await page.getByRole('button', { name: 'Back to tasks', exact: true }).click();
+        await page.getByRole('button', { name: 'Environments', exact: true }).click();
+        await page.getByRole('button', { name: 'Tasks', exact: true }).click();
       }
       await page.waitForTimeout(3000);
       observed.begin('idleTree');

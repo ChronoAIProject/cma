@@ -13,41 +13,10 @@ use layer2_core::{
     Authorization, Caller, Capability, RuntimeCapabilities, RuntimeCapability, WorktreeId,
 };
 mod common_execution;
+mod connection;
 mod input_protocol;
-
-struct Connected;
-#[async_trait::async_trait]
-impl ServiceConnectionBroker for Connected {
-    async fn requirements(
-        &self,
-        _: &SubjectId,
-        services: &[ServiceId],
-    ) -> Result<Vec<ServiceRequirement>, ServiceConnectionError> {
-        Ok(services
-            .iter()
-            .map(|service| ServiceRequirement {
-                service: service.clone(),
-                state: ServiceRequirementState::Satisfied,
-            })
-            .collect())
-    }
-    async fn create_handoff(
-        &self,
-        _: &SubjectId,
-        _: &ServiceId,
-        _: &str,
-    ) -> Result<BrokerHandoff, ServiceConnectionError> {
-        Err(ServiceConnectionError::Refused)
-    }
-    async fn handoff_state(
-        &self,
-        _: &SubjectId,
-        _: &str,
-        _: &ServiceId,
-    ) -> Result<BrokerHandoffState, ServiceConnectionError> {
-        Err(ServiceConnectionError::Refused)
-    }
-}
+mod publisher_erasure;
+use connection::Connected;
 
 struct Fixture {
     seed: Seeded,
@@ -61,12 +30,12 @@ struct Fixture {
 
 impl Fixture {
     async fn new(api: bool) -> Self {
-        let seed = seeded(if api {
+        let case = if api {
             "initiation_api"
         } else {
             "initiation_human"
-        })
-        .await;
+        };
+        let seed = seeded(case).await;
         let (resources, target) =
             crate::store::sandbox_mongo_integration_tests::resource_access_tests::fixture(
                 &seed.client,
@@ -134,6 +103,7 @@ impl Fixture {
             Arc::new(LaunchPolicy {
                 enabled: true,
                 orchestration_paused: false,
+                visitor_launches_per_day: 5,
             }),
             Arc::new(FixedSandboxCredentialPrerequisite::Ready),
         );

@@ -1,6 +1,8 @@
 import type { ResolvedConfig } from '../config.js';
 import type { DocumentAccessOptions } from '../documents.js';
 import { ProtocolError } from '../errors.js';
+import { deliverableResource as resource, type DeliverableResource } from './delivery-resource.js';
+import { taskAcceptance } from '../task-acceptance.js';
 import {
   readBytes,
   requestResponse,
@@ -15,33 +17,43 @@ import {
   integer,
   object,
   positiveInteger,
-  tagged,
   text,
   type Output,
 } from '../schema.js';
 
-const resource = tagged(
-  {
-    agent_artifact: object({ kind: enumeration('agent_artifact'), id: text }),
-    document: object({ kind: enumeration('document'), id: text, revision: positiveInteger }),
-    live_file: object({ kind: enumeration('live_file'), path: text }),
-  },
-  'kind',
-);
+const opaque = 'application/octet-stream';
+const artifactMediaTypes = [
+  'text/plain',
+  'text/markdown',
+  'application/json',
+  'application/pdf',
+  opaque,
+  'image/png',
+  'image/jpeg',
+  'image/webp',
+] as const;
+const artifactMedia: ReadonlySet<string> = new Set(artifactMediaTypes);
+const nativeMediaTypes = {
+  csv: 'text/csv',
+  json: 'application/json',
+  zip: 'application/zip',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+} as const;
+
+function nativeMedia(path: string): string | undefined {
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  const extension = /.+\.([a-z]+)$/i.exec(name)?.[1]?.toLowerCase();
+  return extension === undefined
+    ? undefined
+    : Object.entries(nativeMediaTypes).find(([suffix]) => suffix === extension)?.[1];
+}
+
 const reference = object({
   agent_id: text,
   resource,
   name: text,
-  media_type: enumeration(
-    'text/plain',
-    'text/markdown',
-    'application/json',
-    'application/pdf',
-    'application/octet-stream',
-    'image/png',
-    'image/jpeg',
-    'image/webp',
-  ),
+  media_type: enumeration(...artifactMediaTypes, ...Object.values(nativeMediaTypes)),
   size_bytes: integer,
   sha256: text,
 });
@@ -74,7 +86,7 @@ const reading = object({
 });
 const description = object({ reference, marker: text });
 
-export type DeliverableResource = Output<typeof resource>;
+export type { DeliverableResource } from './delivery-resource.js';
 export type DeliverableReference = Output<typeof reference>;
 export type AnswerDeliverable = Output<typeof delivery>;
 export type AnswerDeliverables = Output<typeof collection>;
@@ -139,7 +151,7 @@ function validateReference(item: DeliverableReference, agentId: string): Deliver
   const selected = item.resource;
   if (selected.kind === 'live_file') {
     if (
-      item.media_type !== 'application/octet-stream' ||
+      (item.media_type !== opaque && item.media_type !== nativeMedia(selected.path)) ||
       item.size_bytes > 32 * 1024 * 1024 ||
       new TextEncoder().encode(selected.path).length > 1024 ||
       /[\p{Cc}\\]/u.test(selected.path) ||
@@ -150,7 +162,8 @@ function validateReference(item: DeliverableReference, agentId: string): Deliver
   } else if (
     item.size_bytes === 0 ||
     item.size_bytes > 1024 * 1024 ||
-    (selected.kind === 'agent_artifact' && !/^art_[a-f0-9]{64}$/.test(selected.id)) ||
+    (selected.kind === 'agent_artifact' &&
+      (!/^art_[a-f0-9]{64}$/.test(selected.id) || !artifactMedia.has(item.media_type))) ||
     (selected.kind === 'document' &&
       (!/^doc_[a-f0-9]{32}$/.test(selected.id) || item.media_type !== 'text/markdown'))
   ) {
@@ -190,8 +203,12 @@ function access(options: DocumentAccessOptions): RequestOptions {
     }, options.shareToken);
   return {
     ...options,
-    headers:
-      options.shareToken === undefined ? {} : { 'X-CMA-Document-Share-Token': options.shareToken },
+    headers: {
+      Prefer: 'cma-native-attachment-media',
+      ...(options.shareToken === undefined
+        ? {}
+        : { 'X-CMA-Document-Share-Token': options.shareToken }),
+    },
   };
 }
 
@@ -224,10 +241,15 @@ export function describeDeliverable(
           .replaceAll('+', '-')
           .replaceAll('/', '_')
           .replace(/=+$/, '');
+        const storedMedia =
+          result.reference.resource.kind === 'live_file'
+            ? { ...result.reference, media_type: opaque }
+            : result.reference;
+        const markerBody = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
         if (
           canonical !== encoded ||
-          new TextDecoder('utf-8', { fatal: true }).decode(bytes) !==
-            JSON.stringify(result.reference)
+          (markerBody !== JSON.stringify(result.reference) &&
+            markerBody !== JSON.stringify(storedMedia))
         ) {
           throw new Error('descriptor mismatch');
         }
@@ -290,6 +312,27 @@ export function readAnswerDeliverable(
   );
 }
 
+export function confirmTaskDelivery(
+  config: ResolvedConfig,
+  agentId: string,
+  answerId: string,
+  id: string,
+  taskId: string,
+  options: DocumentAccessOptions = {},
+) {
+  input(deliveryId, id);
+  return read(
+    config,
+    `${path(agentId, answerId)}/${segment(id)}/confirmation`,
+    (value) => {
+      const task = taskAcceptance(value);
+      if (task.task_id !== taskId) throw new ProtocolError('task confirmation changed identity');
+      return task;
+    },
+    { ...access(options), method: 'POST', body: { task_id: taskId } },
+  );
+}
+
 export class DeliverableUnavailable extends ProtocolError {
   constructor(readonly status: AnswerDeliverable['status']) {
     super(`delivery is unavailable (${status})`);
@@ -330,12 +373,12 @@ export function downloadAnswerDeliverable(
       requestId,
       expectedStatus: 200,
     });
-    if (
-      response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase() !==
-      'application/octet-stream'
-    ) {
+    const mediaType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+    if (!downloadMediaMatches(selected.reference, mediaType)) {
       await response.body?.cancel();
-      throw new ProtocolError('deliverable download did not return opaque bytes');
+      throw new ProtocolError(
+        'deliverable download media type does not match the selected resource',
+      );
     }
     const bytes = await readBytes(response, signal, Math.max(1, selected.reference.size_bytes));
     const digest = new Uint8Array(
@@ -353,4 +396,53 @@ export function downloadAnswerDeliverable(
     throwIfSignalAborted(signal);
     return bytes;
   });
+}
+
+function downloadMediaMatches(reference: DeliverableReference, mediaType: string | undefined) {
+  if (!mediaType) return false;
+  if (reference.resource.kind !== 'live_file') return mediaType === opaque;
+  if (reference.media_type === mediaType) return true;
+  // Earlier markers only stored octet-stream. The server can now identify their exact bytes.
+  return reference.media_type === opaque && mediaType === nativeMedia(reference.resource.path);
+}
+
+export class AgentDeliverables {
+  constructor(protected readonly config: ResolvedConfig) {}
+
+  answerDeliverables(id: string, answerId: string, options: DocumentAccessOptions = {}) {
+    return listAnswerDeliverables(this.config, id, answerId, options);
+  }
+  describeDeliverable(
+    id: string,
+    selected: DeliverableResource,
+    options: DocumentAccessOptions = {},
+  ) {
+    return describeDeliverable(this.config, id, selected, options);
+  }
+  readAnswerDeliverable(
+    id: string,
+    answerId: string,
+    deliveryId: string,
+    options: DeliverableReadOptions = {},
+  ) {
+    return readAnswerDeliverable(this.config, id, answerId, deliveryId, options);
+  }
+  downloadAnswerDeliverable(
+    id: string,
+    answerId: string,
+    expected: AnswerDeliverable,
+    options: DocumentAccessOptions = {},
+  ) {
+    return downloadAnswerDeliverable(this.config, id, answerId, expected, options);
+  }
+
+  confirmTaskDelivery(
+    id: string,
+    answerId: string,
+    deliveryId: string,
+    taskId: string,
+    options: DocumentAccessOptions = {},
+  ) {
+    return confirmTaskDelivery(this.config, id, answerId, deliveryId, taskId, options);
+  }
 }

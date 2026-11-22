@@ -7,7 +7,10 @@ use mongodb::{
 use std::collections::{BTreeMap, BTreeSet};
 pub(crate) mod replicas;
 pub(crate) const COLLECTIONS: &[&str] = &[
+    "account_deletions",
+    "account_deletion_events",
     super::budget::COLLECTION,
+    super::agent_observation::COLLECTION,
     super::sandbox_metric_bindings::COLLECTION,
     super::sandbox_metric_rollups::COLLECTION,
     super::sandbox_usage_rollups::COLLECTION,
@@ -142,11 +145,18 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "sandbox_events",
     super::sandbox_usage::STATES,
     super::sandbox_usage::EVENTS,
+    super::sandbox_usage_export::CAPTURES,
+    super::sandbox_usage_export::EVIDENCE,
+    super::sandbox_usage_export::OUTBOX,
+    super::sandbox_usage_export::STREAMS,
+    super::sandbox_usage_export::INVENTORY,
     "sandbox_profile_revisions",
     "sandbox_profiles",
     "sandbox_retained_availability",
     "sandbox_sessions",
     "sandboxes",
+    super::home_backups::SCHEDULES_COLLECTION,
+    super::home_backups::BACKUPS_COLLECTION,
     "service_connection_handoffs",
     "trigger_definition_revisions",
     "trigger_definitions",
@@ -163,7 +173,17 @@ pub(crate) const COLLECTIONS: &[&str] = &[
 ];
 // These derived stores are activated separately. Existing credentials must
 // still start while the feature is disabled; partial grants remain invalid.
-pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[super::allocation_buckets::COLLECTION];
+pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
+    super::sandbox_usage_export::CAPTURES,
+    super::sandbox_usage_export::EVIDENCE,
+    super::sandbox_usage_export::OUTBOX,
+    super::sandbox_usage_export::STREAMS,
+    super::sandbox_usage_export::INVENTORY,
+    super::home_backups::SCHEDULES_COLLECTION,
+    super::home_backups::BACKUPS_COLLECTION,
+    super::allocation_buckets::COLLECTION,
+    super::agent_observation::COLLECTION,
+];
 const MIGRATION_COLLECTION: &str = "agent_manager_migrations";
 const MIGRATION_ACTIONS: &[&str] = &["find", "insert", "update", "createCollection"];
 // Existing AM stores initialize their own indexes and schemas at startup.
@@ -431,3 +451,39 @@ mod segments;
 mod shared_schema_contract;
 #[cfg(test)]
 mod tests;
+
+/// Required only by the enabled read service; installation remains additive.
+pub(crate) async fn verify_observation(database: &Database) -> Result<(), StoreError> {
+    let status = database
+        .run_command(doc! {"connectionStatus": 1, "showPrivileges": true})
+        .await
+        .map_err(|_| StoreError::Unavailable("cannot verify observation grants".into()))?;
+    validate_observation_grants(&status, database.name())
+}
+fn validate_observation_grants(status: &Document, database: &str) -> Result<(), StoreError> {
+    let role = doc! {"privileges": [{"resource": {"db": database, "collection": super::agent_observation::COLLECTION}, "actions": ACTIONS}]};
+    cma_service_auth::mongodb_authority::verify_shared_schema(status, database, &role)
+        .map_err(|error| StoreError::Unavailable(error.into()))
+}
+#[cfg(test)]
+mod observation_grants_tests {
+    use super::*;
+    #[test]
+    fn observation_grants_are_optional_when_closed_and_required_when_enabled() {
+        let mut grants = role("cma").get_array("privileges").unwrap().clone();
+        let status = |grants| doc! {"authInfo": {"authenticatedUsers": [{"user": "manager", "db": "cma"}], "authenticatedUserPrivileges": grants}};
+        validate_observation_grants(&status(grants.clone()), "cma").unwrap();
+        grants.retain(|grant| {
+            grant
+                .as_document()
+                .unwrap()
+                .get_document("resource")
+                .unwrap()
+                .get_str("collection")
+                .unwrap()
+                != super::super::agent_observation::COLLECTION
+        });
+        validate(&status(grants.clone()), "cma").unwrap();
+        assert!(validate_observation_grants(&status(grants), "cma").is_err());
+    }
+}

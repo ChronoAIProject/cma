@@ -22,9 +22,10 @@ impl InlineAgentLifecycle {
                 .get()
                 .is_some_and(|policy| policy.allows(&caller.subject, capability))
         };
-        if (request.initial_message.is_some()
+        if ((request.initial_message.is_some() || request.title_mode.is_some())
             && !allows(TaskExperienceCapability::TaskHomeAdmission))
-            || (request.desktop && !allows(TaskExperienceCapability::DesktopEnable))
+            || ((request.desktop || request.machine_included)
+                && !allows(TaskExperienceCapability::DesktopEnable))
         {
             return Err(AgentLifecycleProvisioningError::Forbidden);
         }

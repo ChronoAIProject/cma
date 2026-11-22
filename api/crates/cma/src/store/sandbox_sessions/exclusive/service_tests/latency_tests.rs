@@ -6,7 +6,7 @@ use tracing::Instrument;
 #[ignore = "requires CHRONO_TEST_MONGODB_URI disposable replica set"]
 async fn repeated_desktop_connect_windows() {
     let mode = std::env::var("CMA_DESKTOP_LATENCY_MODE").unwrap_or_else(|_| "one".into());
-    assert!(["legacy", "one", "two"].contains(&mode.as_str()));
+    assert!(["one", "two"].contains(&mode.as_str()));
     // Phase-enabled runs diagnose orchestration; log formatting is part of their
     // elapsed time, so keep them separate from the no-regression measurements.
     let subscriber =
@@ -18,7 +18,7 @@ async fn repeated_desktop_connect_windows() {
                 .finish()
         });
     let _scope = subscriber.map(tracing::subscriber::set_default);
-    let f = Services::new(mode != "legacy").await;
+    let f = Services::new(true).await;
     let mut windows = Vec::new();
     for window in 0..3 {
         let mut timings = Vec::new();

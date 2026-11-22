@@ -1,5 +1,6 @@
 use super::*;
 use crate::sandbox_usage::Allocation;
+use crate::sandbox_usage_cursor::{UsageCursorPolicy, UsageCursors};
 use crate::Authorization;
 
 struct Store(SandboxUsage);
@@ -74,7 +75,10 @@ async fn retained_usage_is_readable_only_by_owner_or_operator() {
         complete_lifecycle: true,
         totals: UsageTotals::default(),
     };
-    let service = SandboxUsageService::new(Arc::new(Store(state.clone())));
+    let service = SandboxUsageService::new(
+        Arc::new(Store(state.clone())),
+        UsageCursors::new(&[7; 32], UsageCursorPolicy::default()),
+    );
     assert!(service
         .read(
             &caller("owner", &[Capability::UseOwnSandboxes]),
@@ -99,7 +103,7 @@ async fn retained_usage_is_readable_only_by_owner_or_operator() {
         ));
         assert!(matches!(
             service
-                .events(&actor, &state.sandbox_id, &PageRequest::default())
+                .events(&actor, &state.sandbox_id, None, &PageRequest::default())
                 .await,
             Err(UsageReadError::NotFound)
         ));

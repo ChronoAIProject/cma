@@ -1,139 +1,129 @@
-import { useEffect, useRef, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useCmaClient } from '../api/context';
 import type { AgentPreferencesView, UpdateAgentPreferences } from '../api/client';
-import { AgentPreferencesError } from '../api/rest/agentPreferences';
 import { Modal } from '../ui/Modal';
 import { Input } from '../ui/Input';
 import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
+import { useSettingsEditor, type SettingsEditorAdapter } from './useSettingsEditor';
+import { unconfirmedSettingsWarning, useUnconfirmedSettings } from './useUnconfirmedSettings';
+import { parsePreferencesIntentBody } from './settingsIntent';
+import { agentTransportJournal } from './transport/journal';
 import './AgentPreferencesDialog.css';
 
-/** Preference mutations never reload or remount the conversation. */
-export function AgentPreferencesDialog({
-  agentId,
-  mode,
-  currentTitle,
-  active,
-  onTitleUpdated,
-  onClose,
-}: {
+interface AgentPreferencesProps {
   readonly agentId: string;
+  readonly viewerId?: string;
   readonly mode: 'rename' | 'prompt';
   readonly currentTitle: string;
   readonly active: boolean;
   readonly onTitleUpdated?: (title: string) => void;
   readonly onClose: () => void;
-}) {
+}
+
+/** Preference mutations never reload or remount the conversation. */
+export function AgentPreferencesDialog(props: AgentPreferencesProps) {
+  return (
+    <PreferencesForm key={JSON.stringify([props.viewerId, props.agentId, props.mode])} {...props} />
+  );
+}
+
+function PreferencesForm({
+  agentId,
+  viewerId,
+  mode,
+  currentTitle,
+  active,
+  onTitleUpdated,
+  onClose,
+}: AgentPreferencesProps) {
   const client = useCmaClient();
-  const [preferences, setPreferences] = useState<AgentPreferencesView>();
-  const [value, setValue] = useState('');
-  const [error, setError] = useState<string>();
-  const [notice, setNotice] = useState<string>();
-  const [reload, setReload] = useState(0);
-  const [busy, setBusy] = useState(false);
-  const [conflict, setConflict] = useState(false);
-  const [intent, setIntent] = useState<{ key: string; body: UpdateAgentPreferences }>();
-  const mutation = useRef<AbortController | undefined>(undefined);
-  useEffect(() => () => mutation.current?.abort(), []);
-  useEffect(() => {
-    const read = new AbortController();
-    void client.readAgentPreferences?.(agentId, { signal: read.signal }).then(
-      (next) => {
-        if (read.signal.aborted) return;
-        setPreferences(next);
-        setValue(mode === 'rename' ? (next.title ?? currentTitle) : next.system_prompt);
-        setError(undefined);
-        setConflict(false);
-      },
-      (cause) => {
-        if (!read.signal.aborted)
-          setError(cause instanceof Error ? cause.message : 'Preferences could not be loaded.');
-      },
-    );
-    return () => read.abort();
-  }, [client, agentId, mode, currentTitle, reload]);
+  const [initialTitle] = useState(currentTitle);
+  const adapter = useMemo<
+    SettingsEditorAdapter<AgentPreferencesView, string, UpdateAgentPreferences>
+  >(
+    () => ({
+      read: (signal) => client.readAgentPreferences!(agentId, { signal }),
+      update: (body, options) => client.updateAgentPreferences!(agentId, body, options),
+      proposal: (view) => (mode === 'rename' ? (view.title ?? initialTitle) : view.system_prompt),
+      body: (view, proposal) => ({
+        expected_revision: view.revision,
+        ...(mode === 'rename' ? { title: proposal.trim() } : { system_prompt: proposal }),
+      }),
+      equal: (left, right) => left === right,
+      pending: (view) => mode === 'prompt' && view.prompt_pending,
+      retention: viewerId
+        ? {
+            journal: () => {
+              const journal = agentTransportJournal(sessionStorage, viewerId, agentId);
+              return mode === 'prompt'
+                ? journal.promptSettingsIntent()
+                : journal.settingsIntent('rename', (value) =>
+                    parsePreferencesIntentBody(value, 'rename'),
+                  );
+            },
+            proposal: (body) => body.title ?? body.system_prompt ?? '',
+            emptyReentry: mode === 'prompt' ? '' : undefined,
+          }
+        : undefined,
+    }),
+    [client, agentId, mode, initialTitle, viewerId],
+  );
+  const editor = useSettingsEditor(adapter, !!client.readAgentPreferences);
+  const { snapshot: preferences, intent } = editor;
+  const showIntent = intent && (mode !== 'prompt' || preferences || !viewerId);
+  const value = editor.proposal ?? '';
+  const [confirmClose, setConfirmClose] = useState(false);
+  useUnconfirmedSettings(intent !== undefined && !viewerId);
+  const close = () => {
+    if (intent && !viewerId) setConfirmClose(true);
+    else onClose();
+  };
   const promptUnavailable =
-    mode === 'prompt' && (!preferences?.prompt_supported || active || preferences.prompt_pending);
+    mode === 'prompt' && (!preferences?.prompt_supported || active || editor.pending);
   const invalid =
     mode === 'rename'
       ? !value.trim() || Array.from(value.trim()).length > 64
       : new TextEncoder().encode(value).length > 32768;
   const save = async () => {
-    if (
-      mutation.current ||
-      !preferences ||
-      !client.updateAgentPreferences ||
-      invalid ||
-      conflict ||
-      promptUnavailable
-    )
-      return;
-    const retained = intent ?? {
-      key: crypto.randomUUID(),
-      body: {
-        expected_revision: preferences.revision,
-        ...(mode === 'rename' ? { title: value.trim() } : { system_prompt: value }),
-      },
-    };
-    const request = new AbortController();
-    mutation.current = request;
-    setBusy(true);
-    setIntent(retained);
-    setError(undefined);
-    try {
-      const next = await client.updateAgentPreferences(agentId, retained.body, {
-        signal: request.signal,
-        idempotencyKey: retained.key,
-      });
-      if (request.signal.aborted) return;
-      setPreferences(next);
-      setIntent(undefined);
-      if (mode === 'rename') {
-        onTitleUpdated?.(next.title ?? value.trim());
-        onClose();
-      } else if (next.prompt_pending)
-        setNotice('Saved. The Agent is applying the updated system prompt.');
-      else onClose();
-    } catch (cause) {
-      if (!request.signal.aborted) {
-        if (cause instanceof AgentPreferencesError && cause.status >= 400 && cause.status < 500) {
-          setIntent(undefined);
-          if (cause.status === 409) setConflict(true);
-        }
-        setError(
-          cause instanceof Error
-            ? cause.message
-            : 'The change could not be confirmed. Retry the same request.',
-        );
-      }
-    } finally {
-      mutation.current = undefined;
-      if (!request.signal.aborted) setBusy(false);
-    }
+    if (!editor.canApply || invalid || promptUnavailable || !client.updateAgentPreferences) return;
+    const next = await editor.apply();
+    if (!next) return;
+    if (mode === 'rename') {
+      onTitleUpdated?.(next.title ?? value.trim());
+      onClose();
+    } else if (!next.prompt_pending) onClose();
   };
   return (
     <Modal
       open
       title={mode === 'rename' ? 'Rename Agent' : 'Update system prompt'}
-      dismissible={!busy}
-      onClose={onClose}
+      dismissible={!editor.saving}
+      onClose={close}
       footer={
-        <>
-          <Button disabled={busy} onClick={onClose}>
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            disabled={!preferences || busy || invalid || conflict || promptUnavailable}
-            onClick={() => void save()}
-          >
-            {busy ? 'Saving…' : intent ? 'Retry change' : 'Save'}
-          </Button>
-        </>
+        confirmClose ? (
+          <>
+            <Button onClick={() => setConfirmClose(false)}>Keep editing</Button>
+            <Button onClick={onClose}>Discard local changes and close</Button>
+          </>
+        ) : (
+          <>
+            <Button disabled={editor.saving} onClick={close}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              disabled={!preferences || !editor.canApply || invalid || promptUnavailable}
+              onClick={() => void save()}
+            >
+              {editor.saving ? 'Saving…' : showIntent ? 'Retry change' : 'Save'}
+            </Button>
+          </>
+        )
       }
     >
       <div className="agent-preferences">
-        {!preferences && !error ? <p role="status">Loading preferences…</p> : null}
+        {!preferences && !editor.failure ? <p role="status">Loading preferences…</p> : null}
         {preferences ? (
           <label>
             <span>{mode === 'rename' ? 'Agent name' : 'System prompt'}</span>
@@ -141,20 +131,21 @@ export function AgentPreferencesDialog({
               <Input
                 aria-label="Agent name"
                 value={value}
-                disabled={busy || intent !== undefined}
-                onChange={(event) => setValue(event.target.value)}
+                disabled={editor.locked}
+                onChange={(event) => editor.edit(event.target.value)}
               />
             ) : (
               <textarea
                 aria-label="Agent system prompt"
                 value={value}
-                disabled={busy || intent !== undefined || promptUnavailable}
-                onChange={(event) => setValue(event.target.value)}
+                disabled={editor.locked || promptUnavailable}
+                onChange={(event) => editor.edit(event.target.value)}
                 spellCheck={false}
               />
             )}
           </label>
         ) : null}
+        {preferences ? <p>Current preferences revision: {preferences.revision}.</p> : null}
         {preferences && invalid ? (
           <p role="alert">
             {mode === 'rename'
@@ -168,24 +159,35 @@ export function AgentPreferencesDialog({
               ? 'This runtime does not support system prompt updates yet.'
               : active
                 ? 'Wait for the current turn to finish before changing the system prompt.'
-                : preferences.prompt_pending
+                : editor.pending
                   ? 'A system prompt update is still being applied.'
                   : 'Your updated instructions apply to subsequent turns in this Agent.'}
           </p>
         ) : null}
-        {notice ? <p role="status">{notice}</p> : null}
-        {error ? (
+        {editor.confirmed ? <p role="status">The changes are applied to this Agent.</p> : null}
+        {showIntent ? (
+          <p role="status">
+            {intent?.phase === 'reenter'
+              ? 'Re-enter the exact original system prompt to check the pending change.'
+              : unconfirmedSettingsWarning(viewerId)}
+          </p>
+        ) : null}
+        {confirmClose ? (
+          <p role="alert">
+            Discard the local edits and retry details? This does not cancel a server update.
+          </p>
+        ) : null}
+        {editor.waiting ? <p role="status">Waiting before another request is allowed.</p> : null}
+        {editor.failure ? (
           <Alert
             tone="error"
             actions={
-              !intent ? (
-                <Button size="sm" disabled={busy} onClick={() => setReload((value) => value + 1)}>
-                  Reload preferences
-                </Button>
-              ) : undefined
+              <Button size="sm" disabled={editor.busy || editor.waiting} onClick={editor.refresh}>
+                Reload preferences
+              </Button>
             }
           >
-            {error}
+            {editor.failure.message}
           </Alert>
         ) : null}
       </div>

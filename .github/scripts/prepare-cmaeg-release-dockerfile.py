@@ -7,6 +7,7 @@ import sys
 
 
 ALLOCATOR_GATE = "RUN --network=none /out/cmaeg --allocator-self-test"
+STRIP_BINARY = "RUN --network=none strip --strip-all /out/cmaeg"
 RUNTIME_BINARY = "COPY --from=build /out/cmaeg /usr/local/bin/cmaeg"
 MEDIA_REPORT = (
     "COPY --from=media-self-test /tmp/media-self-test.txt "
@@ -56,7 +57,10 @@ def render(dockerfile):
     require_once(build, "    && cp /build/target/release/cmaeg /out/cmaeg")
     if "zig" in build.lower():
         raise ValueError("local release requires the official Alpine Cargo build")
+    require_once(build, STRIP_BINARY)
     require_once(build, ALLOCATOR_GATE)
+    if build.index(STRIP_BINARY) > build.index(ALLOCATOR_GATE):
+        raise ValueError("stripping must precede the allocator gate")
     if build.count(SANDBOX_GATE) != 1:
         raise ValueError("missing or changed release sandbox gate")
     if build.index(SANDBOX_GATE) < build.index(ALLOCATOR_GATE):
@@ -91,10 +95,10 @@ def render(dockerfile):
         "# Input ELF must come from the official native Alpine Cargo build.\n"
         "FROM scratch AS dependencies\nCOPY dependencies/ /\n"
         "FROM dependencies AS ffmpeg-build\n"
-        "FROM dependencies AS codex-auth\n"
-        "FROM dependencies AS secret-scanner\n"
         f"FROM {base[1]} AS build\nARG TARGETARCH\n"
+        "RUN apk add --no-cache binutils\n"
         "COPY native/cmaeg /out/cmaeg\n"
+        f"{STRIP_BINARY}\n"
         f"{gates}\n{media}\n{runtime}"
     )
 

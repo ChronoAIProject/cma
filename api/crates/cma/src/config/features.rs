@@ -1,19 +1,38 @@
 //! Independent rollout policy for the current CMA interfaces.
 #[cfg(test)]
 mod agent_event_page_tests;
+pub(super) mod home_backup;
+#[cfg(test)]
+mod home_backup_expiry_tests;
+#[cfg(test)]
+mod home_backup_tests;
 #[cfg(test)]
 #[path = "ingress_coordinator_tests.rs"]
 mod ingress_coordinator_tests;
 #[cfg(test)]
+mod resource_list_tests;
+#[cfg(test)]
 mod segmentation_tests;
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub(crate) struct FeatureFlags {
+    pub visitor_launch_admission: bool,
+    pub usage_signed_cursors_enabled: bool,
+    pub usage_strict_cursors_enabled: bool,
+    pub visitor_two_sandbox_defaults: bool,
+    pub admin_runtime_inventory: bool,
+    pub ownership_retry_hints_enabled: bool,
+    pub home_backup_enabled: bool,
+    pub home_backup_expiry_enabled: bool,
     pub agent_model_discovery_cache: bool,
     pub agent_environment_async: bool,
+    pub agent_settings_owner_relay: bool,
     pub agent_event_stream_wake: bool,
+    pub agui_bounded_replay: bool,
+    pub agent_shared_observation: bool,
     pub agent_event_stream_fallback: std::time::Duration,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub command_reconcile_pacing: bool,
+    pub ownership_cleanup_pacing: bool,
     pub coordinated_ingress: bool,
     pub retained_json: bool,
     pub bounded_raw_output: bool,
@@ -24,18 +43,23 @@ pub(crate) struct FeatureFlags {
     pub retain_read_frames: bool,
     pub bounded_permission_state: bool,
     pub parent_not_ready_pacing_enabled: bool,
+    pub startup_sibling_hold_enabled: bool,
     pub retained_reopen_enabled: bool,
+    pub retained_suspended_reopen_enabled: bool,
     pub agent_skill_upgrade_enabled: bool,
     pub shared_runtime_output: bool,
     pub model_budget_writes_enabled: bool,
+    pub model_credit_required: bool,
     pub model_request_budget_writes_enabled: bool,
     pub platform_spend_writes_enabled: bool,
     pub platform_counter_shards: bool,
     pub admission_control_writes_enabled: bool,
     pub admission_ceilings_writes_enabled: bool,
+    pub pending_home_reconciliation: bool,
     pub agent_control_write_coordination: bool,
     pub bounded_title_reads: bool,
     pub access_snapshot_session: bool,
+    pub resource_list_batch_reads: bool,
     pub single_fence_event_pages: bool,
     pub concurrent_sandbox_detail_enrichment: bool,
     pub sandbox_agent_projection: bool,
@@ -53,6 +77,7 @@ pub(crate) struct FeatureFlags {
     pub trigger_command_admission: bool,
     pub nyxid_resource_request: bool,
     pub nyxid_proxy: bool,
+    pub service_authorization: bool,
     pub silent_sign_in: bool,
     pub document_revocation_reserve: bool,
     pub document_quotas: bool,
@@ -65,31 +90,68 @@ pub(crate) struct FeatureFlags {
     pub cleanup_continuation_enabled: bool,
     pub agent_log_scan_cooperative_enabled: bool,
     pub retained_context_lookup: bool,
+    pub context_diagnostics: bool,
     pub event_driven_reconciliation: bool,
     pub agent_connection_observations: bool,
     pub empty_discovery: bool,
     pub sandbox_reconciliation_reserved_lane: bool,
 }
+/// Rollout gates graduated to default-on after their rollout completed in
+/// every environment. Unset means enabled; an explicit `false` remains the
+/// emergency off-switch, and any other value keeps the strict-boolean error.
+/// No startup validation ties these gates to another setting.
+pub(super) const GRADUATED: &[&str] = &[
+    "CHRONO_AGENT_CONTROL_WRITE_COORDINATION_ENABLED",
+    "CHRONO_COMMAND_RECONCILE_PACING_ENABLED",
+    "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED",
+    "CHRONO_SANDBOX_NATIVE_CLAIM_GUARD_ENABLED",
+    "CHRONO_V2_UI_TRANSPORT_ENABLED",
+];
+
+/// Read one strict boolean rollout gate. Unset is off unless it graduated.
+pub(super) fn flag(
+    lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
+    key: &str,
+) -> Result<bool, String> {
+    match lookup(key)?.as_deref() {
+        None => Ok(GRADUATED.contains(&key)),
+        Some("false") => Ok(false),
+        Some("true") => Ok(true),
+        _ => Err(format!("{key} must be true or false")),
+    }
+}
+
 impl FeatureFlags {
     pub(crate) fn from_lookup(
         lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
-        fn flag(
-            lookup: &mut impl FnMut(&str) -> Result<Option<String>, String>,
-            key: &str,
-        ) -> Result<bool, String> {
-            match lookup(key)?.as_deref() {
-                None | Some("false") => Ok(false),
-                Some("true") => Ok(true),
-                _ => Err(format!("{key} must be true or false")),
-            }
-        }
         let flags = Self {
+            pending_home_reconciliation: flag(
+                lookup,
+                "CHRONO_PENDING_HOME_RECONCILIATION_ENABLED",
+            )?,
+            visitor_launch_admission: flag(lookup, "CHRONO_VISITOR_LAUNCH_ADMISSION_ENABLED")?,
+            usage_signed_cursors_enabled: flag(lookup, "CHRONO_USAGE_SIGNED_CURSORS_ENABLED")?,
+            usage_strict_cursors_enabled: flag(lookup, "CHRONO_USAGE_STRICT_CURSORS_ENABLED")?,
+            visitor_two_sandbox_defaults: flag(
+                lookup,
+                "CHRONO_VISITOR_TWO_SANDBOX_DEFAULTS_ENABLED",
+            )?,
+            admin_runtime_inventory: flag(lookup, "CHRONO_ADMIN_RUNTIME_INVENTORY_ENABLED")?,
+            ownership_retry_hints_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_OWNERSHIP_RETRY_HINT_ENABLED",
+            )?,
+            home_backup_enabled: flag(lookup, "CHRONO_HOME_BACKUP_ENABLED")?,
+            home_backup_expiry_enabled: flag(lookup, "CHRONO_HOME_BACKUP_EXPIRY_ENABLED")?,
             agent_model_discovery_cache: flag(
                 lookup,
                 "CHRONO_AGENT_MODEL_DISCOVERY_CACHE_ENABLED",
             )?,
             agent_environment_async: flag(lookup, "CHRONO_AGENT_ENVIRONMENT_ASYNC_ENABLED")?,
+            agent_settings_owner_relay: flag(lookup, "CHRONO_AGENT_SETTINGS_OWNER_RELAY_ENABLED")?,
+            agent_shared_observation: flag(lookup, "CHRONO_AGENT_SHARED_OBSERVATION_ENABLED")?,
+            agui_bounded_replay: flag(lookup, "CHRONO_AGUI_BOUNDED_REPLAY_ENABLED")?,
             agent_event_stream_wake: flag(lookup, "CHRONO_AGENT_EVENT_STREAM_WAKE_ENABLED")?,
             agent_event_stream_fallback: super::public_streams::event_fallback(lookup)?,
             runtime_loss_bounded_proof_enabled: flag(
@@ -97,6 +159,7 @@ impl FeatureFlags {
                 "CHRONO_RUNTIME_LOSS_BOUNDED_PROOF_ENABLED",
             )?,
             command_reconcile_pacing: flag(lookup, "CHRONO_COMMAND_RECONCILE_PACING_ENABLED")?,
+            ownership_cleanup_pacing: flag(lookup, "CHRONO_OWNERSHIP_CLEANUP_PACING_ENABLED")?,
             coordinated_ingress: flag(lookup, "CHRONO_INGRESS_COORDINATOR_ENABLED")?,
             retained_json: flag(lookup, "CHRONO_RUNTIME_JSON_RETENTION_BOUNDS_ENABLED")?,
             bounded_raw_output: flag(lookup, "CHRONO_RUNTIME_RAW_OUTPUT_BOUNDS_ENABLED")?,
@@ -110,9 +173,18 @@ impl FeatureFlags {
                 lookup,
                 "CHRONO_AGENT_PARENT_NOT_READY_PACING_ENABLED",
             )?,
+            startup_sibling_hold_enabled: flag(
+                lookup,
+                "CHRONO_AGENT_STARTUP_SIBLING_HOLD_ENABLED",
+            )?,
             retained_reopen_enabled: flag(lookup, "CHRONO_RETAINED_REOPEN_ENABLED")?,
+            retained_suspended_reopen_enabled: flag(
+                lookup,
+                "CHRONO_RETAINED_SUSPENDED_REOPEN_ENABLED",
+            )?,
             agent_skill_upgrade_enabled: flag(lookup, "CHRONO_AGENT_SKILL_UPGRADE_ENABLED")?,
             access_snapshot_session: super::access_snapshot::enabled(lookup)?,
+            resource_list_batch_reads: flag(lookup, "CHRONO_RESOURCE_LIST_BATCH_READS_ENABLED")?,
             single_fence_event_pages: flag(lookup, "CHRONO_AGENT_EVENT_PAGE_SINGLE_FENCE_ENABLED")?,
             concurrent_sandbox_detail_enrichment: flag(
                 lookup,
@@ -148,6 +220,7 @@ impl FeatureFlags {
                 "CHRONO_AGENT_LOG_SCAN_COOPERATIVE_ENABLED",
             )?,
             retained_context_lookup: flag(lookup, "CHRONO_CMAEG_RETAINED_CONTEXT_LOOKUP_ENABLED")?,
+            context_diagnostics: flag(lookup, "CHRONO_CMAEG_CONTEXT_DIAGNOSTICS_ENABLED")?,
             event_driven_reconciliation: flag(
                 lookup,
                 "CHRONO_AGENT_RECONCILIATION_EVENT_DRIVEN_ENABLED",
@@ -163,6 +236,7 @@ impl FeatureFlags {
             )?,
             bounded_approval_reads: flag(lookup, "CHRONO_AGENT_APPROVAL_BOUNDED_READS_ENABLED")?,
             model_budget_writes_enabled: flag(lookup, "CHRONO_MODEL_BUDGET_WRITES_ENABLED")?,
+            model_credit_required: flag(lookup, "CHRONO_AGENT_MODEL_CREDIT_REQUIRED")?,
             model_request_budget_writes_enabled: flag(
                 lookup,
                 "CHRONO_MODEL_REQUEST_BUDGET_WRITES_ENABLED",
@@ -195,12 +269,22 @@ impl FeatureFlags {
             trigger_command_admission: flag(lookup, "CHRONO_TRIGGER_COMMAND_ADMISSION_ENABLED")?,
             nyxid_resource_request: flag(lookup, "CHRONO_NYXID_RESOURCE_REQUEST_ENABLED")?,
             nyxid_proxy: flag(lookup, "CHRONO_NYXID_PROXY_ENABLED")?,
+            service_authorization: flag(lookup, "CHRONO_SERVICE_AUTHORIZATION_ENABLED")?,
             silent_sign_in: flag(lookup, "CHRONO_SILENT_SIGN_IN_ENABLED")?,
             document_revocation_reserve: flag(
                 lookup,
                 "CHRONO_DOCUMENT_REVOCATION_RESERVE_ENABLED",
             )?,
         };
+        if flags.usage_strict_cursors_enabled && !flags.usage_signed_cursors_enabled {
+            return Err(
+                "CHRONO_USAGE_STRICT_CURSORS_ENABLED requires CHRONO_USAGE_SIGNED_CURSORS_ENABLED"
+                    .into(),
+            );
+        }
+        if flags.agent_shared_observation && !flags.agui_bounded_replay {
+            return Err("CHRONO_AGENT_SHARED_OBSERVATION_ENABLED requires CHRONO_AGUI_BOUNDED_REPLAY_ENABLED".into());
+        }
         if flags.sandbox_batched_reads && !flags.sandbox_snapshot_reads {
             return Err("CHRONO_SANDBOX_BATCHED_READS_ENABLED requires CHRONO_SANDBOX_SNAPSHOT_READS_ENABLED".into());
         }
@@ -215,6 +299,9 @@ impl FeatureFlags {
         Ok(flags)
     }
 }
+
+#[cfg(test)]
+mod usage_cursor_tests;
 
 #[cfg(test)]
 mod capacity_tests;
@@ -305,3 +392,19 @@ mod native_create_retry_tests;
 
 #[cfg(test)]
 mod discovery_tests;
+
+#[cfg(test)]
+mod observation_tests;
+
+#[cfg(test)]
+#[path = "features/ownership_retry_hint_tests.rs"]
+mod ownership_retry_hint_tests;
+
+mod launch_admission;
+
+#[cfg(test)]
+mod pending_homes_tests;
+
+#[cfg(test)]
+#[path = "features/visitor_defaults_tests.rs"]
+mod visitor_defaults_tests;

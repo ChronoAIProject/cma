@@ -157,6 +157,7 @@ impl ResourceAccessService {
             authorized.push(AuthorizedResource {
                 snapshot,
                 decision,
+                caller: context.caller.clone(),
                 binding: None,
             });
         }
@@ -172,7 +173,10 @@ impl ResourceAccessService {
                     })
                 })
                 .collect::<Result<_, ResourceAccessError>>()?;
-            let current = self.store.resource_access_snapshots(&targets).await?;
+            let current = match self.organization_agent_fences(&authorized).await? {
+                Some(current) => current,
+                None => self.store.resource_access_snapshots(&targets).await?,
+            };
             if current.len() != authorized.len() {
                 return Err(ResourceAccessStoreError::Corrupt.into());
             }

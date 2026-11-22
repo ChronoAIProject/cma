@@ -30,6 +30,10 @@ pub fn management_router(state: ManagementState) -> Router {
             get(super::partitions::inspect),
         )
         .route(
+            "/v1/channels/{channel_id}/partition/resets",
+            post(super::partition_resets::reset),
+        )
+        .route(
             "/v1/channels/{channel_id}/activity",
             get(super::activity::latest),
         )

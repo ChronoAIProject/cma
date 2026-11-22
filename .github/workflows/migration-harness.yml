@@ -25,6 +25,10 @@ concurrency:
 
 jobs:
   contracts:
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/develop' && 'cma-develop-cache-readers' || format('migration-contracts-{0}-{1}', github.run_id, github.run_attempt) }}
+      queue: max
+      cancel-in-progress: false
     name: Migration harness contracts
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -41,4 +45,8 @@ jobs:
       - name: Inventory, runner and application-fixture regressions
         run: python3 -B -m unittest discover -s .github/scripts -p 'test_migration*.py'
       - name: Evidence envelope and Mongo catalog regressions
-        run: node --test .github/scripts/migration-matrix.test.mjs .github/scripts/migration_catalog.test.cjs
+        run: >-
+          node --test .github/scripts/migration-matrix.test.mjs
+          .github/scripts/migration_catalog.test.cjs
+          .github/scripts/migration-matrix-inventory.test.mjs
+          .github/scripts/migration-matrix-inventory-files.test.mjs

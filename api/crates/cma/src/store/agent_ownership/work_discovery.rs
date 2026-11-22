@@ -2,7 +2,7 @@
 use super::super::sandbox_mongo::MongoSandboxStore;
 use super::*;
 use layer2_core::agent_ownership::candidates;
-use layer2_core::sandbox::store::SandboxStoreError;
+use layer2_core::sandbox::store::{SandboxStoreError, StartupWorkFilter};
 use std::collections::BTreeMap;
 
 impl MongoSandboxStore {
@@ -10,6 +10,8 @@ impl MongoSandboxStore {
         &self,
         now: &str,
         limit: u16,
+        holds: &std::collections::BTreeSet<AgentId>,
+        startup: StartupWorkFilter<'_>,
     ) -> Result<Vec<AgentId>, SandboxStoreError> {
         let ownership = self
             .agent_ownership
@@ -23,12 +25,15 @@ impl MongoSandboxStore {
         let mut last = None;
         let mut result = Vec::new();
         loop {
-            let mut pipeline = super::super::agent_failure_pacing::discovery::owned_pipeline(
-                self,
-                now,
-                100,
-                last.as_deref(),
-            );
+            let mut pipeline =
+                super::super::agent_failure_pacing::discovery::filtered_owned_pipeline(
+                    self,
+                    now,
+                    100,
+                    last.as_deref(),
+                    holds,
+                    startup,
+                );
             // Fetch claim metadata only for the bounded, paced candidate page.
             // Claims still revalidate the complete current row and exact epoch.
             pipeline.extend([

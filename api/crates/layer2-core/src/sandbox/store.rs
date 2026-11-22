@@ -82,6 +82,8 @@ pub use agent_conversation::{
 pub use agent_message_checkpoint::{AgentMessageCheckpoint, AgentMessageSnapshot};
 pub use agent_reopen::AgentReopenGuard;
 mod agent_lifecycle;
+mod agent_skill_result;
+pub use agent_skill_result::{requires_agent_skill_result_guard, AgentSkillResultGuard};
 mod agent_log_capacity;
 pub use agent_log_capacity::{plan_agent_log_capacity_failure, AGENT_LOG_CAPACITY_FAILURE};
 mod agent_repeated_failure;
@@ -102,7 +104,8 @@ pub use agent_lifecycle::{
     apply_agent_connection_recovery, AgentConnectionRecoveryApplication,
     AgentConnectionRecoveryCandidate, AgentConnectionRecoveryCause, AgentConnectionRecoveryOutcome,
     AgentConnectionRecoveryRequest, AgentCreateAdmission, AgentRetryObservation, AgentWorkMutation,
-    AgentWorkerStore, VersionedWorktree,
+    AgentWorkPublication, AgentWorkPublicationLineage, AgentWorkPublicationParents,
+    AgentWorkerStore, StartupWorkFilter, VersionedWorktree,
 };
 pub use agent_sign_in::apply_agent_sign_in;
 mod agent_work_evidence_validation;
@@ -125,7 +128,7 @@ pub use agent_work_validation::{
 mod sandbox_admission;
 pub use sandbox_admission::{
     allocated_sandbox_name, valid_admission_fingerprint, SandboxAdmission, SandboxAdmissionName,
-    SandboxAdmissionReplay, SandboxAdmissionResult, SandboxAdmissionStore,
+    SandboxAdmissionReplay, SandboxAdmissionResult, SandboxAdmissionStore, SandboxLimitClass,
 };
 mod lifecycle_command;
 pub use lifecycle_command::*;
@@ -182,6 +185,8 @@ pub struct Page<T> {
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SandboxStoreError {
+    #[error("account deletion is in progress")]
+    AccountDeletionInProgress,
     #[error(transparent)]
     Budget(crate::budget::BudgetError),
     #[error("new work is temporarily paused; existing work continues")]
@@ -286,7 +291,6 @@ pub enum WorkspaceAdmissionResult {
     Created(Workspace),
     Existing(Workspace),
 }
-
 /// Atomic sandbox readiness, lineage/name/limit admission and Created event.
 #[async_trait]
 pub trait WorkspaceAdmissionStore: Send + Sync {
@@ -294,7 +298,13 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
         &self,
         admission: WorkspaceAdmission,
     ) -> Result<WorkspaceAdmissionResult, SandboxStoreError>;
-
+    /// Snapshot-only callers keep the ordinary admission contract.
+    async fn admit_catalogue_workspace(
+        &self,
+        admission: WorkspaceAdmission,
+    ) -> Result<WorkspaceAdmissionResult, SandboxStoreError> {
+        self.admit_workspace(admission).await
+    }
     /// Explicitly recover only an original never-ready Workspace; all guards are atomic.
     async fn begin_workspace_prepare_recovery(
         &self,
@@ -303,7 +313,6 @@ pub trait WorkspaceAdmissionStore: Send + Sync {
         operation_id: &str,
         now: String,
     ) -> Result<Workspace, SandboxStoreError>;
-
     /// Fence new child admission and durably schedule removal, including child cleanup.
     async fn begin_workspace_removal(
         &self,
@@ -346,6 +355,13 @@ pub trait SandboxEventStore: Send + Sync {
 }
 
 #[derive(Debug, Clone)]
+pub struct RepositoryPreparationRuntime {
+    pub binding: super::RuntimeBinding,
+    pub generation: u64,
+    pub key_generation: u64,
+}
+
+#[derive(Debug, Clone)]
 pub enum SandboxTransaction {
     CreateWorktreeAndAgent {
         worktree: Box<Worktree>,
@@ -363,6 +379,8 @@ pub enum SandboxTransaction {
         event: SandboxEventKind,
     },
     SaveWorkspaceAndAppend {
+        /// Runtime that returned a terminal initial repository preparation failure.
+        repository_runtime: Option<Box<RepositoryPreparationRuntime>>,
         expected_revision: u64,
         workspace: Box<Workspace>,
         event_at: String,
@@ -394,6 +412,7 @@ struct State {
     retained_reopen_receipts: HashMap<SandboxId, super::RetainedReopenReceipt>,
     suggestions: HashMap<String, super::suggestions::SuggestionWork>,
     binding_association_index: std::collections::BTreeMap<(SubjectId, AgentId, String), ()>,
+    binding_resets: HashMap<String, super::binding::ConversationResetState>,
     binding_key_history: std::collections::HashSet<String>,
     bindings: std::collections::BTreeMap<String, super::binding::ProviderBinding>,
     binding_conversations: std::collections::BTreeMap<String, super::binding::BindingConversation>,

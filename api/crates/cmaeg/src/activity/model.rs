@@ -1,6 +1,9 @@
 use cmaeg_core::activity::{ActivityConversation, Actor, SourceKind};
 use serde::{Deserialize, Serialize};
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use utoipa::ToSchema;
+
+use super::ExecutionAttribution;
 
 pub const LIMIT: usize = 50;
 pub const RETENTION_DAYS: i64 = 7;
@@ -94,12 +97,22 @@ pub struct ActivityConsumer {
     pub consumer_id: String,
     pub display_name: Option<String>,
     pub agent_id: Option<String>,
+    /// Provider-verified execution reference for this response, when available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub execution_reference: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schema(ignore)]
+    pub(crate) execution_attributions: Vec<ExecutionAttribution>,
     pub provider: Option<String>,
     pub conversation_id: Option<String>,
     pub state: ConsumerState,
     pub dispatched_at: Option<String>,
     pub accepted_at: Option<String>,
     pub produced_at: Option<String>,
+    /// Upper bound from the earliest confirmed Answer receipt bound to this
+    /// response. Only projected when the exact production time is unavailable.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub produced_by: Option<String>,
     pub completed_at: Option<String>,
     pub response_id: Option<String>,
     pub deliveries: Vec<ActivityDelivery>,
@@ -126,17 +139,33 @@ impl ActivityConsumer {
             last_non_admission_code: None,
             display_name: None,
             agent_id: None,
+            execution_reference: None,
+            execution_attributions: Vec::new(),
             provider: None,
             conversation_id: None,
             state: ConsumerState::Received,
             dispatched_at: None,
             accepted_at: None,
             produced_at: None,
+            produced_by: None,
             completed_at: None,
             response_id: None,
             deliveries: Vec::new(),
             media_responses: Vec::new(),
         }
+    }
+
+    pub(crate) fn answer_production_bound(&self) -> Option<String> {
+        let response_id = self.response_id.as_deref()?;
+        if self.produced_at.is_some() {
+            return None;
+        }
+        self.deliveries
+            .iter()
+            .filter(|delivery| delivery.answer_response_id.as_deref() == Some(response_id))
+            .filter_map(ActivityDelivery::answer_confirmation)
+            .min()
+            .map(|(_, at)| at.to_owned())
     }
 }
 
@@ -149,8 +178,28 @@ pub struct ActivityDelivery {
     pub observed_at: String,
     /// Present only for a confirmed platform/transport receipt.
     pub confirmed_at: Option<String>,
+    /// Exact provider response bound to this confirmed Answer at delivery.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answer_response_id: Option<String>,
     pub platform_message_id: Option<String>,
     pub recipients: Vec<ActivityRecipient>,
+}
+
+impl ActivityDelivery {
+    fn answer_confirmation(&self) -> Option<(OffsetDateTime, &str)> {
+        if self.step != "answer" || self.outcome != "confirmed" {
+            return None;
+        }
+        let at = self.confirmed_at.as_deref()?;
+        Some((OffsetDateTime::parse(at, &Rfc3339).ok()?, at))
+    }
+
+    fn same_delivery(&self, other: &Self) -> bool {
+        self.step == other.step
+            && self.destination == other.destination
+            && self.recipients == other.recipients
+            && (self.step == "heartbeat" || self.platform_message_id == other.platform_message_id)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, ToSchema)]
@@ -162,6 +211,7 @@ pub struct ActivityRecipient {
 
 #[derive(Clone)]
 pub struct Change {
+    pub(crate) execution_attribution: Option<ExecutionAttribution>,
     pub refusal_code: Option<String>,
     pub last_non_admission_code: Option<String>,
     pub consumer: String,
@@ -175,11 +225,13 @@ pub struct Change {
     pub agent_id: Option<String>,
     pub processing_completed: bool,
     pub media_response: Option<ActivityMediaResponse>,
+    join_retained_answer: bool,
 }
 impl Change {
     pub fn state(consumer: &str, state: ConsumerState, response_id: Option<String>) -> Self {
         Self {
             consumer: consumer.into(),
+            execution_attribution: None,
             refusal_code: None,
             last_non_admission_code: None,
             state: Some(state),
@@ -192,7 +244,14 @@ impl Change {
             agent_id: None,
             processing_completed: false,
             media_response: None,
+            join_retained_answer: false,
         }
+    }
+    pub(crate) fn execution_attribution(consumer: &str, value: ExecutionAttribution) -> Self {
+        let mut change = Self::state(consumer, ConsumerState::Received, None);
+        change.state = None;
+        change.execution_attribution = Some(value);
+        change
     }
     pub fn refused(consumer: &str, code: &str) -> Self {
         let mut change = Self::state(consumer, ConsumerState::Refused, None);
@@ -206,9 +265,26 @@ impl Change {
         change.processing_completed = true;
         change
     }
+
+    pub(crate) fn with_answer_response(mut self, response_id: Option<&str>) -> Self {
+        if let (Some(delivery), Some(id)) = (&mut self.delivery, response_id) {
+            if delivery.answer_confirmation().is_some() && !id.trim().is_empty() && id.len() <= 512
+            {
+                delivery.answer_response_id = Some(id.to_owned());
+            }
+        }
+        self
+    }
+
+    pub(crate) fn join_retained_answer(self, response_id: &str) -> Self {
+        let mut change = self.with_answer_response(Some(response_id));
+        change.join_retained_answer = true;
+        change
+    }
+
     pub fn apply(&self, row: &mut ChannelActivity) {
         if !row.consumers.iter().any(|c| c.consumer_id == self.consumer) {
-            if row.consumers.len() >= 16 {
+            if self.join_retained_answer || row.consumers.len() >= 16 {
                 return;
             }
             row.consumers.push(ActivityConsumer::new(&self.consumer));
@@ -300,14 +376,33 @@ impl Change {
         if let Some(value) = &self.agent_id {
             consumer.agent_id = Some(value.clone());
         }
+        if let Some(attribution) = &self.execution_attribution {
+            attribution.retain(&mut consumer.execution_attributions);
+        }
         if let Some(delivery) = &self.delivery {
+            if self.join_retained_answer {
+                // Replay can prove identity but cannot reconstruct a confirmation time.
+                if let Some(id) = delivery.answer_response_id.as_ref().filter(|_| {
+                    delivery
+                        .platform_message_id
+                        .as_ref()
+                        .is_some_and(|message| !message.is_empty())
+                }) {
+                    let mut retained = consumer.deliveries.iter_mut().filter(|old| {
+                        old.same_delivery(delivery) && old.answer_confirmation().is_some()
+                    });
+                    if let Some(old) = retained.next() {
+                        if retained.next().is_none() && old.answer_response_id.is_none() {
+                            old.answer_response_id = Some(id.clone());
+                        }
+                    }
+                }
+                return;
+            }
             // Bounded receipt list. Heartbeats replace their prior receipt.
             if let Some(previous) = consumer.deliveries.iter_mut().find(|previous| {
-                previous.step == delivery.step
-                    && previous.destination == delivery.destination
-                    && previous.recipients == delivery.recipients
-                    && (delivery.step == "heartbeat"
-                        || previous.platform_message_id == delivery.platform_message_id)
+                previous.same_delivery(delivery)
+                    && previous.answer_response_id == delivery.answer_response_id
             }) {
                 if matches!(
                     delivery.step.as_str(),
@@ -326,6 +421,15 @@ impl Change {
                     if rank(&delivery.outcome) <= rank(&previous.outcome) {
                         return;
                     }
+                }
+                // Repeated observations of one confirmed answer retain its earliest evidence.
+                if delivery.answer_response_id.is_some()
+                    && previous
+                        .answer_confirmation()
+                        .zip(delivery.answer_confirmation())
+                        .is_some_and(|(earlier, later)| earlier <= later)
+                {
+                    return;
                 }
                 *previous = delivery.clone();
             } else {

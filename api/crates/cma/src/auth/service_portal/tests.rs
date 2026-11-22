@@ -7,7 +7,9 @@ use crate::auth::{
     AuthMode,
 };
 use axum::{
+    extract::Path,
     http::{HeaderValue, Request as HttpRequest},
+    middleware::{from_fn_with_state, Next},
     routing::{get, post},
 };
 use layer2_core::{Authorization, SubjectId};
@@ -18,6 +20,10 @@ use std::{
 };
 use tokio::sync::{Notify, RwLock};
 use tower::ServiceExt;
+#[path = "source_tests.rs"]
+mod source_tests;
+#[path = "standing_tests.rs"]
+mod standing_tests;
 #[path = "streaming_tests.rs"]
 mod streaming_tests;
 #[derive(Default)]
@@ -28,6 +34,8 @@ struct Gate {
 #[derive(Default)]
 struct Control {
     calls: AtomicUsize,
+    refresh_calls: AtomicUsize,
+    requests: RwLock<Vec<(Method, String)>>,
     headers: RwLock<HeaderMap>,
     resource: RwLock<Option<String>>,
     permissions: RwLock<Vec<String>>,
@@ -60,6 +68,11 @@ async fn serve(router: Router) -> (String, tokio::task::JoinHandle<()>) {
 }
 impl Fixture {
     async fn new() -> Self {
+        Self::with_standing(Arc::new(layer2_core::account_deletion::AvailableAccounts)).await
+    }
+    async fn with_standing(
+        standing: Arc<dyn layer2_core::account_deletion::AccountStanding>,
+    ) -> Self {
         let control = Arc::new(Control::default());
         *control.active.write().await = true;
         *control.permissions.write().await = vec!["cma-eg:channels:read".into()];
@@ -70,7 +83,7 @@ impl Fixture {
             .route("/.well-known/openid-configuration", get(move || { let origin=discovery.clone(); async move { let base=origin.read().await; Json(json!({"authorization_endpoint":format!("{base}/authorize"),"token_endpoint":format!("{base}/token"),"userinfo_endpoint":format!("{base}/userinfo"),"introspection_endpoint":format!("{base}/oauth/introspect")})) } }))
             .route("/userinfo", get(|| async { Json(json!({"sub":"owner"})) }))
             .route("/oauth/introspect", post(move |State(control):State<Arc<Control>>| { let issuer=introspection.clone(); async move { Json(json!({"active":*control.active.read().await,"sub":"owner","iss":*issuer.read().await,"token_type":"access","exp":SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs()+3600,"permissions":*control.permissions.read().await,"resource":control.resource.read().await.clone().map(|v|vec![v])})) } }))
-            .route("/token", post(|| async { Json(json!({"access_token":"renewed-test-access","refresh_token":"renewed-test-refresh","expires_in":3600})) }))
+            .route("/token", post(|State(control):State<Arc<Control>>| async move { control.refresh_calls.fetch_add(1, Ordering::SeqCst); Json(json!({"access_token":"renewed-test-access","refresh_token":"renewed-test-refresh","expires_in":3600})) }))
             .with_state(control.clone());
         let (base, provider_task) = serve(provider).await;
         *issuer.write().await = base.clone();
@@ -82,7 +95,15 @@ impl Fixture {
         )
         .unwrap();
         let upstream_auth = eg_auth.clone();
+        let source_auth = eg_auth.clone();
         let upstream = Router::new()
+            .route(
+                "/v1/channels/channel/outbound-messages/delivery/send",
+                post(|State(control): State<Arc<Control>>| async move {
+                    control.calls.fetch_add(1, Ordering::SeqCst);
+                    Json(json!({"sent":true}))
+                }),
+            )
             .route(
                 "/v1/channels",
                 get(
@@ -135,9 +156,53 @@ impl Fixture {
                     },
                 ),
             )
+            .route(
+                "/v1/channels/{channel}/sources/{index}/test",
+                post(
+                    move |State(control): State<Arc<Control>>,
+                          Path((channel, index)): Path<(String, usize)>,
+                          headers: HeaderMap| {
+                        let auth = source_auth.clone();
+                        async move {
+                            *control.headers.write().await = headers.clone();
+                            let principal = match auth.authenticate(&headers).await {
+                                Ok(principal) => principal,
+                                Err(error) => return error.into_response(),
+                            };
+                            if let Err(error) = principal.require("cma-eg:channels:test") {
+                                return error.into_response();
+                            }
+                            if principal.subject != "owner" || channel == "foreign" || index != 0 {
+                                return (
+                                    StatusCode::NOT_FOUND,
+                                    Json(json!({"status":404,"detail":"Source not found."})),
+                                )
+                                    .into_response();
+                            }
+                            let platform = match channel.as_str() {
+                                "saved-discord" => "discord",
+                                "saved-relay" => "telegram",
+                                _ => return StatusCode::NOT_FOUND.into_response(),
+                            };
+                            Json(source_check_response(platform)).into_response()
+                        }
+                    },
+                ),
+            )
             .merge(streaming_tests::routes(eg_auth.clone()))
             .with_state(control.clone())
-            .merge(cma_service_auth::session::router(eg_auth));
+            .merge(cma_service_auth::session::router(eg_auth))
+            .layer(from_fn_with_state(
+                control.clone(),
+                |State(control): State<Arc<Control>>, request: Request, next: Next| async move {
+                    control
+                        .requests
+                        .write()
+                        .await
+                        .push((request.method().clone(), request.uri().to_string()));
+                    next.run(request).await
+                },
+            ));
         let (gateway, gateway_task) = serve(upstream).await;
         let store = Arc::new(MemoryAuthStore::default());
         let auth = AuthState::with_store(
@@ -150,7 +215,8 @@ impl Fixture {
             None,
             store.clone(),
         )
-        .with_browser_origins(&[HeaderValue::from_static("https://new-cma.example.test")]);
+        .with_browser_origins(&[HeaderValue::from_static("https://new-cma.example.test")])
+        .with_account_standing(standing);
         store
             .put_subject(SubjectAuthState::new(
                 SubjectId::new("owner"),
@@ -172,6 +238,7 @@ impl Fixture {
             auth.clone(),
             Some(&crate::config::GatewayConfig {
                 binding_preparation_enabled: false,
+                conversation_reset_enabled: false,
                 base_url: gateway,
                 public_url: "https://gateway.example".into(),
                 public_api_url: "https://gateway.example".into(),
@@ -199,7 +266,26 @@ impl Fixture {
     async fn send(&self, r: HttpRequest<Body>) -> Response {
         self.router.clone().oneshot(r).await.unwrap()
     }
+    fn post(&self, path: &str) -> HttpRequest<Body> {
+        let mut request = self.request(Method::POST, path);
+        request.headers_mut().insert(
+            header::ORIGIN,
+            HeaderValue::from_static("https://cma.example.test"),
+        );
+        request
+    }
 }
+
+fn source_check_response(platform: &str) -> Value {
+    json!({
+        "source_index": 0,
+        "platform": platform,
+        "scope": "configuration_only",
+        "external_delivery_tested": false,
+        "checks": [{"id":"credential", "label":"Credential", "status":"unavailable", "detail":"A credential is not configured."}]
+    })
+}
+
 #[tokio::test]
 async fn existing_login_reaches_gateway_with_no_credentials_in_browser_response() {
     let f = Fixture::new().await;

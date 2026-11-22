@@ -13,6 +13,8 @@ pub(super) enum Policy {
 }
 use Policy::*;
 pub(super) const AUDIT: &[(&str, Policy)] = &[
+    ("account_deletions", Independent),
+    ("account_deletion_events", Independent),
     ("model_budget_reservations", Budget),
     ("sandbox_metric_bindings", Sandbox(&["sandbox_id"])),
     ("sandbox_metric_rollups", Sandbox(&["sandbox_id"])),
@@ -34,6 +36,9 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("runtime_backend_routes", Sandbox(&["sandbox_id"])),
     ("activity", Activity),
     ("agent_artifacts", Agent(&["agent_id"])),
+    // Global read-coordination epochs stay in place across Sandbox capture and
+    // restore. Only database backup/recovery may restore these watermarks.
+    ("agent_read_observers_v1", Independent),
     ("agent_channel_usage", Agent(&["_id"])),
     ("agent_suggestions", Agent(&["agent_id"])),
     ("agent_command_orders", Agent(&["_id"])),
@@ -157,11 +162,18 @@ pub(super) const AUDIT: &[(&str, Policy)] = &[
     ("sandbox_events", Sandbox(&["sandbox_id"])),
     ("sandbox_usage", Sandbox(&["_id"])),
     ("sandbox_usage_events", Sandbox(&["sandbox_id"])),
+    ("sandbox_usage_captures_v1", Empty),
+    ("sandbox_usage_evidence_v1", Empty),
+    ("sandbox_usage_outbox_v1", Empty),
+    ("sandbox_usage_streams_v1", Empty),
+    ("sandbox_usage_inventory_v1", Empty),
     ("sandbox_profile_revisions", Independent),
     ("sandbox_profiles", Independent),
     ("sandbox_retained_availability", Sandbox(&["_id"])),
     ("sandbox_sessions", Sandbox(&["sandbox_id"])),
     ("sandboxes", Sandbox(&["_id"])),
+    ("home_backup_schedules", Sandbox(&["_id"])),
+    ("home_backups", Sandbox(&["sandbox_id"])),
     ("service_connection_handoffs", Empty),
     ("trigger_definition_revisions", Empty),
     ("trigger_definitions", Empty),

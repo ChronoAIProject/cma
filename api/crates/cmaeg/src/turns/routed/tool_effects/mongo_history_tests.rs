@@ -113,7 +113,7 @@ async fn inspection_counts_all_unexpired_quarantines_in_one_effect_history_pass(
                 capability.issued_at -= 5;
                 capability.event = super::super::model::delivery_event(plan, &plan.targets[0]);
                 let root = Store(journal.clone())
-                    .admit(
+                    .admit_legacy(
                         plan,
                         &plan.targets[0],
                         "queued",

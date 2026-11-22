@@ -28,5 +28,6 @@ pub(crate) use scheduler::LaunchScheduler;
 #[cfg(test)]
 pub(crate) use worker::{
     LaunchResourceDriver, LaunchResourceEffect, LaunchResourceError, LaunchWorker,
-    LaunchWorkerConfig,
+    LaunchWorkerConfig, LaunchWorkerError, ServiceLaunchResourceDependencies,
+    ServiceLaunchResourceDriver,
 };

@@ -57,8 +57,20 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           CD_RESOLVE_MODE: dispatch
         run: python3 -B .github/scripts/staging_cd_resolve.py
+      # Minting a token is safe to repeat. Only the repeat may fail the job.
       - name: Create restricted infrastructure reader token
         id: infra-token
+        continue-on-error: true
+        uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
+        with:
+          app-id: ${{ vars.CMA_INFRA_APP_ID }}
+          private-key: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+          owner: ChronoAIProject
+          repositories: cma-infra
+          permission-contents: read
+      - name: Retry restricted infrastructure reader token
+        id: infra-token-retry
+        if: steps.infra-token.outcome == 'failure'
         uses: actions/create-github-app-token@fee1f7d63c2ff003460e3d139729b119787bc349
         with:
           app-id: ${{ vars.CMA_INFRA_APP_ID }}
@@ -69,7 +81,7 @@ jobs:
       - name: Resolve infrastructure revision once for all components
         id: private
         env:
-          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token }}
+          CD_INFRA_TOKEN: ${{ steps.infra-token.outputs.token || steps.infra-token-retry.outputs.token }}
           CD_INFRA_REF: ${{ inputs.infra_ref }}
         run: python3 -B .github/scripts/staging_cd_checkout.py prepare-app
   deploy:
@@ -77,7 +89,15 @@ jobs:
     permissions:
       contents: read
       actions: read
+    concurrency:
+      group: cma-staging-deploy-set
+      queue: max
+      cancel-in-progress: false
     uses: ./.github/workflows/staging-deploy.yml
+    secrets:
+      CMA_INFRA_APP_PRIVATE_KEY: ${{ secrets.CMA_INFRA_APP_PRIVATE_KEY }}
+      CD_NYXID_CLIENT_ID: ${{ secrets.CD_NYXID_CLIENT_ID }}
+      CD_NYXID_CLIENT_SECRET: ${{ secrets.CD_NYXID_CLIENT_SECRET }}
     with:
       release_set: ${{ needs.resolve.outputs.release_set }}
       mode: ${{ needs.resolve.outputs.mode }}

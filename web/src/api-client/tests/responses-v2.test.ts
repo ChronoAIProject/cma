@@ -6,6 +6,7 @@ import {
   TransportError,
   ValidationError,
   errorFromResponse,
+  type TaskAcceptanceIntent,
   type V2ResponseEvent,
 } from '../index.js';
 import {
@@ -22,6 +23,65 @@ import {
 } from './responses-v2-fixtures.js';
 
 describe('Responses v2 durable streams', () => {
+  const declaration = {
+    version: 1,
+    action: {
+      type: 'declare',
+      requirements: [
+        { id: 'plan', required: true, evidence: { kind: 'plan_step', title: 'Write report' } },
+        {
+          id: 'output',
+          required: true,
+          evidence: {
+            kind: 'deliverable',
+            resource: { kind: 'live_file', path: 'out/report.csv' },
+          },
+        },
+      ],
+    },
+  } as const satisfies TaskAcceptanceIntent;
+  const retry = {
+    version: 1,
+    action: { type: 'retry', task_id: 'cmd_original', after_turn_sequence: 3 },
+  } as const satisfies TaskAcceptanceIntent;
+
+  it.each([declaration, retry])(
+    'sends the exact versioned task action through the SDK',
+    async (task) => {
+      const t = harness();
+      t.fetch.mockResolvedValueOnce(sse());
+      const body = { input: 'Write the report', stream: true, task_acceptance: task } as const;
+      const options = { onEvent: t.onEvent, idempotencyKey: 'contract-key' };
+      await expect(t.client.responsesV2.createForAgent(agentId, body, options)).resolves.toEqual(
+        completed,
+      );
+      expect(t.fetch).toHaveBeenCalledOnce();
+      const [url, init] = t.fetch.mock.calls[0]!;
+      expect(String(url)).toBe(`https://cma.example/api/v2/agents/${agentId}/responses`);
+      expect(new Headers(init?.headers).get('idempotency-key')).toBe('contract-key');
+      expect(JSON.parse(String(init?.body))).toEqual(body);
+    },
+  );
+
+  it.each([
+    { task_acceptance: { ...declaration, version: 2 } },
+    { task_acceptance: { ...declaration, action: { ...declaration.action, requirements: [] } } },
+    { task_acceptance: { ...retry, action: { ...retry.action, after_turn_sequence: 0 } } },
+    { task_acceptance: { ...retry, action: { ...retry.action, future_field: true } } },
+    { task_acceptance: declaration, future_field: true },
+  ])('rejects invalid task requests before calling the transport', async (fields) => {
+    const t = harness();
+    const body = {
+      input: 'Write the report',
+      stream: true,
+      ...fields,
+    } as unknown as typeof request;
+    await expect(
+      t.client.responsesV2.createForAgent(agentId, body, { onEvent: t.onEvent }),
+    ).rejects.toBeInstanceOf(ValidationError);
+    expect(t.fetch).not.toHaveBeenCalled();
+  });
+
   it('retains the receipt before any frame and sends the same stable key through both aliases', async () => {
     const t = harness();
     const order: string[] = [];

@@ -8,9 +8,14 @@ use layer2_core::sandbox::store::{SandboxStoreError, MAX_PAGE_SIZE};
 use layer2_core::AgentId;
 use tokio::sync::{watch, Notify};
 use tokio::task::{Id, JoinError, JoinHandle, JoinSet};
-use tokio::time::MissedTickBehavior;
+use tokio::time::{Instant, MissedTickBehavior};
 
 use super::agent_worker::AgentWorker;
+use super::lifecycle_failure::{
+    LifecycleAttempt, LifecycleTaskFailure, Origin, Phase, DISCOVERY_DEADLINE,
+};
+#[path = "agent_scheduler_diagnostics.rs"]
+mod diagnostics;
 
 const SWEEP_INTERVAL: Duration = Duration::from_secs(1);
 const RECONCILIATION_FALLBACK_INTERVAL: Duration = Duration::from_secs(30);
@@ -30,13 +35,26 @@ pub(crate) struct AgentScheduler {
 
 #[async_trait::async_trait]
 trait AgentScheduleWork: Send + Sync {
+    fn next_startup_probe(&self) -> Option<Instant> {
+        None
+    }
+
     async fn due(&self, now: SystemTime, limit: u16) -> Result<Vec<AgentId>, SandboxStoreError>;
     async fn reconcile(&self, now: SystemTime) -> Result<usize, SandboxStoreError>;
-    async fn run_one(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError>;
+    async fn run_one(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+        attempt: &LifecycleAttempt,
+    ) -> Result<bool, LifecycleTaskFailure>;
 }
 
 #[async_trait::async_trait]
 impl AgentScheduleWork for AgentWorker {
+    fn next_startup_probe(&self) -> Option<Instant> {
+        AgentWorker::next_startup_probe(self)
+    }
+
     async fn due(&self, now: SystemTime, limit: u16) -> Result<Vec<AgentId>, SandboxStoreError> {
         layer2_core::diagnostic_context::DiagnosticContext::background("scheduler")
             .scope(self.due_work(now, limit))
@@ -47,9 +65,14 @@ impl AgentScheduleWork for AgentWorker {
         self.reconcile_connections(now).await
     }
 
-    async fn run_one(&self, id: &AgentId, now: SystemTime) -> Result<bool, SandboxStoreError> {
+    async fn run_one(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+        attempt: &LifecycleAttempt,
+    ) -> Result<bool, LifecycleTaskFailure> {
         layer2_core::diagnostic_context::DiagnosticContext::background("agent_worker")
-            .scope(AgentWorker::run_scheduled(self, id, now))
+            .scope(AgentWorker::run_scheduled_observed(self, id, now, attempt))
             .await
     }
 }
@@ -128,6 +151,7 @@ impl AgentScheduler {
                         if *shutdown.borrow() {
                             break;
                         }
+                        let startup_probe = work.worker.next_startup_probe();
                         tokio::select! {
                             changed = shutdown.changed() => {
                                 if changed.is_err() || *shutdown.borrow() {
@@ -149,6 +173,7 @@ impl AgentScheduler {
                             // Keep one coalesced hint through a full queue, full capacity,
                             // or an in-progress discovery that may predate the admission.
                             _ = admitted.notified(), if work.can_discover() => work.discover(),
+                            _ = startup_probe_wake(startup_probe), if startup_probe.is_some() && work.can_discover() => work.discover(),
                         }
                         if !*shutdown.borrow() {
                             work.fill_slots();
@@ -179,6 +204,12 @@ impl AgentScheduler {
     }
 }
 
+async fn startup_probe_wake(deadline: Option<Instant>) {
+    if let Some(deadline) = deadline {
+        tokio::time::sleep_until(deadline).await;
+    }
+}
+
 enum TaskKind {
     Due,
     Reconcile,
@@ -190,7 +221,26 @@ enum TaskOutput {
     Completed(usize),
 }
 
-type TaskResult = Result<TaskOutput, SandboxStoreError>;
+type TaskResult = Result<TaskOutput, LifecycleTaskFailure>;
+
+struct TaskMetadata {
+    kind: TaskKind,
+    attempt: LifecycleAttempt,
+}
+
+impl TaskMetadata {
+    fn new(kind: TaskKind) -> Self {
+        let (phase, agent) = match &kind {
+            TaskKind::Due => (Phase::Discovery, None),
+            TaskKind::Reconcile => (Phase::Reconciliation, None),
+            TaskKind::Agent(id) => (Phase::Execution, Some(id)),
+        };
+        Self {
+            attempt: LifecycleAttempt::new(phase, agent),
+            kind,
+        }
+    }
+}
 
 struct ScheduledWork {
     activity: Option<crate::worker_supervision::Activity>,
@@ -198,7 +248,7 @@ struct ScheduledWork {
     worker: Arc<dyn AgentScheduleWork>,
     concurrency: usize,
     tasks: JoinSet<TaskResult>,
-    kinds: HashMap<Id, TaskKind>,
+    kinds: HashMap<Id, TaskMetadata>,
     in_flight: BTreeSet<AgentId>,
     queued: VecDeque<AgentId>,
     polling: bool,
@@ -242,6 +292,8 @@ impl ScheduledWork {
             let worker = Arc::clone(&self.worker);
             let reconciliation = self.reconciliation.clone();
             let activity = self.activity.clone();
+            let metadata = TaskMetadata::new(TaskKind::Reconcile);
+            let attempt = metadata.attempt.clone();
             let task = self.tasks.spawn(async move {
                 reconciliation
                     .run(|| async {
@@ -250,8 +302,9 @@ impl ScheduledWork {
                     })
                     .await
                     .map(|completed| TaskOutput::Completed(completed.unwrap_or(0)))
+                    .map_err(|error| attempt.store(Origin::Reconciliation, error))
             });
-            self.kinds.insert(task.id(), TaskKind::Reconcile);
+            self.kinds.insert(task.id(), metadata);
             self.reconciling = true;
         }
     }
@@ -264,16 +317,19 @@ impl ScheduledWork {
         if self.can_discover() {
             let worker = Arc::clone(&self.worker);
             let activity = self.activity.clone();
+            let metadata = TaskMetadata::new(TaskKind::Due);
+            let attempt = metadata.attempt.clone();
             let task = self.tasks.spawn(async move {
                 crate::worker_supervision::discover(
                     activity,
                     worker.due(SystemTime::now(), MAX_PAGE_SIZE),
-                    SandboxStoreError::Unavailable("discovery deadline".into()),
+                    SandboxStoreError::Unavailable(DISCOVERY_DEADLINE.into()),
                 )
                 .await
                 .map(TaskOutput::Due)
+                .map_err(|error| attempt.store(Origin::Discovery, error))
             });
-            self.kinds.insert(task.id(), TaskKind::Due);
+            self.kinds.insert(task.id(), metadata);
             self.polling = true;
         }
     }
@@ -289,15 +345,17 @@ impl ScheduledWork {
             let worker = Arc::clone(&self.worker);
             let priority = self.reconciliation.clone();
             let work_id = id.clone();
+            let metadata = TaskMetadata::new(TaskKind::Agent(id));
+            let attempt = metadata.attempt.clone();
             let task = self.tasks.spawn(async move {
                 let _priority = priority.foreground();
                 // The query and local queue confer no authority; claim using fresh time.
                 worker
-                    .run_one(&work_id, SystemTime::now())
+                    .run_one(&work_id, SystemTime::now(), &attempt)
                     .await
                     .map(|completed| TaskOutput::Completed(usize::from(completed)))
             });
-            self.kinds.insert(task.id(), TaskKind::Agent(id));
+            self.kinds.insert(task.id(), metadata);
         }
     }
 
@@ -306,22 +364,21 @@ impl ScheduledWork {
             Ok((id, _)) => *id,
             Err(error) => error.id(),
         };
-        let phase = match self.kinds.get(&task_id) {
-            Some(TaskKind::Due) => "discovery",
-            Some(TaskKind::Reconcile) => "reconciliation",
-            _ => "execution",
-        };
+        let metadata = self.kinds.remove(&task_id);
+        let phase = metadata
+            .as_ref()
+            .map_or("execution", |task| task.attempt.phase());
         let outcome = match &result {
             Ok((_, Ok(_))) => "ok",
             Ok((_, Err(_))) => "error",
             Err(_) => "terminated",
         };
         crate::telemetry::worker::completed("agents", phase, outcome);
-        match self.kinds.remove(&task_id) {
+        match metadata.as_ref().map(|task| &task.kind) {
             Some(TaskKind::Due) => self.polling = false,
             Some(TaskKind::Reconcile) => self.reconciling = false,
             Some(TaskKind::Agent(id)) => {
-                self.in_flight.remove(&id);
+                self.in_flight.remove(id);
             }
             None => {}
         }
@@ -338,10 +395,19 @@ impl ScheduledWork {
             }
             Ok((_, Ok(_))) => {}
             Ok((_, Err(error))) => {
-                tracing::error!(error = %error, "agent lifecycle task failed");
+                diagnostics::failed(&error.observation);
+                drop(error.into_compatibility());
             }
             Err(error) => {
-                tracing::error!(error = %error, "agent lifecycle task terminated unexpectedly");
+                let fallback;
+                let attempt = match &metadata {
+                    Some(task) => &task.attempt,
+                    None => {
+                        fallback = LifecycleAttempt::new(Phase::Execution, None);
+                        &fallback
+                    }
+                };
+                diagnostics::failed(&attempt.terminated(error.is_panic()));
             }
         }
     }
@@ -350,3 +416,7 @@ impl ScheduledWork {
 #[cfg(test)]
 #[path = "agent_scheduler_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "agent_scheduler_diagnostics_tests.rs"]
+mod diagnostic_tests;

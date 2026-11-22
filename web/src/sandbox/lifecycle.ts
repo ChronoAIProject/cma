@@ -1,5 +1,5 @@
 import type { AgentStatus, SandboxSummary, WorkspaceStatus } from '../api/types';
-import { statusLabel, statusTone, type StatusTone } from '../vocabulary/status';
+import { sandboxStatusPresentation, type SandboxStatusObservation } from './presentation';
 
 export function transitionRefreshDelay(startedAt: number): number {
   return Date.now() - startedAt < 10_000 ? 250 : 1500;
@@ -13,19 +13,25 @@ export function sandboxChildrenAvailable(sandbox: SandboxSummary): boolean {
   );
 }
 
+export function sandboxRetirementDuringRevive(sandbox: SandboxSummary): boolean {
+  return (
+    sandbox.status === 'reviving' && sandbox.lifecycle?.result?.actions.includes('retire') === true
+  );
+}
+
 export function sandboxChildrenReadable(sandbox: SandboxSummary): boolean {
   return ['active', 'credential_rotating', 'paused', 'pausing', 'reviving', 'rotating'].includes(
     sandbox.status,
   );
 }
 
-export function sandboxChildStatus(sandbox: SandboxSummary, status: AgentStatus | WorkspaceStatus) {
+export function sandboxChildStatus(
+  sandbox: SandboxStatusObservation,
+  status: AgentStatus | WorkspaceStatus,
+) {
   if (['stopped', 'failed', 'deleted', 'removed', 'removing'].includes(status)) return status;
-  const purpose = sandbox.lifecycle?.operation?.purpose;
-  if (purpose === 'pause') return 'pausing';
-  if (purpose === 'revive') return 'reviving';
-  if (purpose === 'image_rotation') return 'rotating';
-  return ['active', 'credential_rotating'].includes(sandbox.status) ? status : sandbox.status;
+  const parent = sandboxStatusPresentation(sandbox).status;
+  return parent === 'active' || parent === 'credential_rotating' ? status : parent;
 }
 
 export function sandboxUnavailableNotice(sandbox: SandboxSummary): string | undefined {
@@ -84,26 +90,11 @@ export function sandboxLifecycleAction(sandbox: SandboxSummary, stale = false) {
 }
 
 export function sandboxLifecycleLabel(sandbox: SandboxSummary): string {
-  if (sandbox.status === 'retiring') return 'Deleting';
-  if (sandbox.status === 'retired') return 'Deleted';
-  if (sandbox.lifecycle?.operation !== undefined) {
-    switch (sandbox.lifecycle.operation.purpose) {
-      case 'pause':
-        return 'Pausing';
-      case 'revive':
-        return 'Resuming';
-      case 'image_rotation':
-        return 'Updating runtime';
-    }
-  }
-  return statusLabel(sandbox.status);
+  return sandboxStatusPresentation(sandbox).label;
 }
 
-/** The tone of the word `sandboxLifecycleLabel` gives: an operation in flight is active. */
-export function sandboxTone(sandbox: SandboxSummary): StatusTone {
-  if (['retiring', 'retired'].includes(sandbox.status)) return statusTone(sandbox.status);
-  if (sandbox.lifecycle?.operation !== undefined) return 'active';
-  return statusTone(sandbox.status);
+export function sandboxTone(sandbox: SandboxSummary) {
+  return sandboxStatusPresentation(sandbox).tone;
 }
 
 export function sandboxRefreshDelay(sandbox: SandboxSummary): number {

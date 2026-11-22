@@ -16,11 +16,15 @@ pub(super) fn owned_home(
         return Ok(Owned::Unrelated);
     }
     // An incomplete initial allocation can have selected this pool without yet
-    // recording its Claim. Its durable Sandbox must block retirement first.
+    // recording its Claim. Until its home records the selected pool, its durable
+    // Sandbox blocks every retirement. Once recorded, it blocks only that pool
+    // (below): a single stuck installation must not keep every obsolete pool's
+    // spare capacity running.
     if matches!(
         sandbox.status,
         SandboxStatus::Provisioning | SandboxStatus::Installing
-    ) {
+    ) && home.is_none_or(|h| h.native_pool.is_none())
+    {
         return Ok(Owned::Blocked);
     }
     if sandbox

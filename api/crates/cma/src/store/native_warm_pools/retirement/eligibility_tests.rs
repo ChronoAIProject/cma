@@ -269,3 +269,37 @@ fn incomplete_upgrade_failed_recovery_and_replaced_pool_never_allow_retirement()
         Owned::Blocked
     ));
 }
+
+#[test]
+fn incomplete_allocation_blocks_every_pool_only_until_it_records_its_pool() {
+    let (sandbox, target, image) = upgraded();
+    let mut other = target.clone();
+    other.plan.config_sha256 = "other-config".into();
+    other.plan.spec.image.uri = "ghcr.io/chronoaiproject/cma-runtime@sha256:other".into();
+    for status in [SandboxStatus::Provisioning, SandboxStatus::Installing] {
+        let mut pending = sandbox.clone();
+        pending.status = status;
+        // Its recorded pool stays protected, but another pool may now retire.
+        assert!(matches!(
+            owned_home(&pending, &target, &image).unwrap(),
+            Owned::Blocked
+        ));
+        assert!(matches!(
+            owned_home(&pending, &other, &image).unwrap(),
+            Owned::Unrelated
+        ));
+        // Before the pool is recorded, the selection may still be in flight.
+        let mut unrecorded = pending.clone();
+        unrecorded.lifecycle.home.as_mut().unwrap().native_pool = None;
+        assert!(matches!(
+            owned_home(&unrecorded, &other, &image).unwrap(),
+            Owned::Blocked
+        ));
+        let mut homeless = pending.clone();
+        homeless.lifecycle.home = None;
+        assert!(matches!(
+            owned_home(&homeless, &other, &image).unwrap(),
+            Owned::Blocked
+        ));
+    }
+}

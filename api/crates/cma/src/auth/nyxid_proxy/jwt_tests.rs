@@ -1,5 +1,6 @@
 use super::*;
 use axum::{http::StatusCode, routing::get, Router};
+use cma_service_auth::signing_keys::{FetchFuture, Fetcher};
 use ring::{
     rand::SystemRandom,
     signature::{KeyPair, RsaKeyPair, RSA_PKCS1_SHA256},
@@ -8,11 +9,12 @@ use serde_json::{json, Value};
 use std::{
     process::Command,
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         OnceLock,
     },
 };
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
+use tokio::time::timeout;
 
 // Test-only RSA keys are generated in memory. No private fixture is committed.
 pub(crate) struct Signer(RsaKeyPair);
@@ -124,30 +126,119 @@ fn verify_locally(raw: &str, at: i64) -> Result<VerifiedIdentity, VerifyError> {
         .validate(&config("https://nyx.example/jwks".into()), at)
 }
 
+fn forged_token(kid: &str) -> String {
+    format!(
+        "{}.{}.{}",
+        URL_SAFE_NO_PAD.encode(json!({"alg":"RS256","typ":"JWT","kid":kid}).to_string()),
+        URL_SAFE_NO_PAD.encode("{}"),
+        URL_SAFE_NO_PAD.encode([0_u8; 256])
+    )
+}
+
+struct Gate {
+    held: AtomicBool,
+    entered: Semaphore,
+    released: Semaphore,
+    completed: Semaphore,
+}
+impl Gate {
+    fn new() -> Self {
+        Self {
+            held: AtomicBool::new(false),
+            entered: Semaphore::new(0),
+            released: Semaphore::new(0),
+            completed: Semaphore::new(0),
+        }
+    }
+    fn hold(&self) {
+        self.held.store(true, Ordering::SeqCst);
+    }
+    async fn wait_for_entry(&self) {
+        timeout(Duration::from_secs(1), self.entered.acquire())
+            .await
+            .expect("JWKS handler entered")
+            .unwrap()
+            .forget();
+    }
+    async fn wait_for_completion(&self) {
+        timeout(Duration::from_secs(1), self.completed.acquire())
+            .await
+            .expect("JWKS fetch completed")
+            .unwrap()
+            .forget();
+    }
+    fn release(&self) {
+        self.held.store(false, Ordering::SeqCst);
+        self.released.add_permits(1);
+    }
+}
+
 struct Fixture {
-    verifier: Verifier,
+    verifier: Arc<Verifier>,
     body: Arc<RwLock<String>>,
     status: Arc<RwLock<StatusCode>>,
     calls: Arc<AtomicUsize>,
     redirected: Arc<AtomicUsize>,
-    server: tokio::task::JoinHandle<()>,
+    gate: Arc<Gate>,
+    server: Option<tokio::task::JoinHandle<()>>,
 }
 impl Fixture {
     async fn new() -> Self {
         let body = Arc::new(RwLock::new(key_set().to_string()));
         let status = Arc::new(RwLock::new(StatusCode::OK));
         let calls = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(Gate::new());
+        let fetcher = Arc::new(FakeFetcher {
+            body: body.clone(),
+            status: status.clone(),
+            calls: calls.clone(),
+            gate: gate.clone(),
+        });
+        let cache = Cache::with_fetcher(
+            signing_keys::Config::new(CACHE_TTL, 1),
+            KeySet::parse,
+            transport_error,
+            fetcher,
+        );
+        Self {
+            verifier: Arc::new(Verifier {
+                config: config("https://nyx.example/jwks".into()),
+                cache,
+            }),
+            body,
+            status,
+            calls,
+            gate,
+            redirected: Arc::new(AtomicUsize::new(0)),
+            server: None,
+        }
+    }
+    async fn new_http() -> Self {
+        let body = Arc::new(RwLock::new(key_set().to_string()));
+        let status = Arc::new(RwLock::new(StatusCode::OK));
+        let calls = Arc::new(AtomicUsize::new(0));
         let redirected = Arc::new(AtomicUsize::new(0));
+        let gate = Arc::new(Gate::new());
         let (returned, response_status, counter) = (body.clone(), status.clone(), calls.clone());
         let redirect_counter = redirected.clone();
+        let request_gate = gate.clone();
         let app = Router::new()
             .route(
                 "/jwks",
                 get(move || {
                     let (body, status, counter) =
                         (returned.clone(), response_status.clone(), counter.clone());
+                    let gate = request_gate.clone();
                     async move {
                         counter.fetch_add(1, Ordering::SeqCst);
+                        if gate.held.load(Ordering::SeqCst) {
+                            gate.entered.add_permits(1);
+                            timeout(Duration::from_secs(1), gate.released.acquire())
+                                .await
+                                .expect("JWKS handler released")
+                                .unwrap()
+                                .forget();
+                        }
                         (
                             *status.read().await,
                             [("location", "/redirect-target")],
@@ -172,31 +263,60 @@ impl Fixture {
             axum::serve(listener, app).await.unwrap();
         });
         Self {
-            verifier: Verifier::new(config(url)).unwrap(),
+            verifier: Arc::new(Verifier::new(config(url)).unwrap()),
             body,
             status,
             calls,
             redirected,
-            server,
+            gate,
+            server: Some(server),
         }
     }
     fn requests(&self) -> usize {
         self.calls.load(Ordering::SeqCst)
     }
     async fn permit_refresh(&self) {
-        self.verifier.cache.lock().await.next_refresh = None;
+        if self.server.is_some() {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        } else {
+            tokio::time::advance(Duration::from_secs(5)).await;
+        }
     }
     async fn expire_cache(&self) {
-        let mut cache = self.verifier.cache.lock().await;
-        cache.next_refresh = None;
-        if let Some((_, expiry)) = cache.keys.as_mut() {
-            *expiry = Instant::now();
-        }
+        tokio::time::advance(CACHE_TTL).await;
     }
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        self.server.abort();
+        if let Some(server) = &self.server {
+            server.abort();
+        }
+    }
+}
+struct FakeFetcher {
+    body: Arc<RwLock<String>>,
+    status: Arc<RwLock<StatusCode>>,
+    calls: Arc<AtomicUsize>,
+    gate: Arc<Gate>,
+}
+impl Fetcher for FakeFetcher {
+    fn fetch<'a>(&'a self, _: &'a str, max_body_bytes: usize) -> FetchFuture<'a> {
+        Box::pin(async move {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            if self.gate.held.load(Ordering::SeqCst) {
+                self.gate.entered.add_permits(1);
+                self.gate.released.acquire().await.unwrap().forget();
+            }
+            if !self.status.read().await.is_success() {
+                return Err(TransportFailure::Status);
+            }
+            let bytes = self.body.read().await.as_bytes().to_vec();
+            if bytes.len() > max_body_bytes {
+                return Err(TransportFailure::Bounds);
+            }
+            self.gate.completed.add_permits(1);
+            Ok(bytes)
+        })
     }
 }
 
@@ -408,7 +528,7 @@ fn endpoint_configuration_and_http_header_multiplicity_are_validated() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn concurrent_requests_coalesce_and_fresh_cache_avoids_provider_io() {
     let fixture = Fixture::new().await;
     let token = Signer::primary().token(&claims(now()), "key-1");
@@ -423,7 +543,230 @@ async fn concurrent_requests_coalesce_and_fresh_cache_avoids_provider_io() {
     assert_eq!(fixture.requests(), 2);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
+async fn cached_kid_verifies_while_forged_unknown_kid_refresh_is_held() {
+    let fixture = Fixture::new().await;
+    let valid = Signer::primary().token(&claims(now()), "key-1");
+    fixture.verifier.verify(&valid).await.unwrap();
+    fixture.permit_refresh().await;
+    fixture.gate.hold();
+    let verifier = fixture.verifier.clone();
+    let attack =
+        tokio::spawn(async move { verifier.verify(&forged_token("attacker-unknown-kid")).await });
+    fixture.gate.wait_for_entry().await;
+    timeout(Duration::from_millis(100), fixture.verifier.verify(&valid))
+        .await
+        .expect("cached key must not wait for JWKS")
+        .unwrap();
+    assert!(!attack.is_finished());
+    fixture.gate.release();
+    assert_eq!(
+        timeout(Duration::from_secs(1), attack)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err(),
+        VerifyError::Rejected("signing_key_unknown")
+    );
+    assert_eq!(fixture.requests(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn failed_refresh_and_cooldown_keep_cached_kids_available() {
+    let fixture = Fixture::new().await;
+    let valid = Signer::primary().token(&claims(now()), "key-1");
+    fixture.verifier.verify(&valid).await.unwrap();
+    fixture.permit_refresh().await;
+    *fixture.status.write().await = StatusCode::SERVICE_UNAVAILABLE;
+    fixture.gate.hold();
+    let verifier = fixture.verifier.clone();
+    let starter = tokio::spawn(async move { verifier.verify(&forged_token("unknown-1")).await });
+    fixture.gate.wait_for_entry().await;
+    timeout(Duration::from_millis(100), fixture.verifier.verify(&valid))
+        .await
+        .expect("cached key must remain available during a failing refresh")
+        .unwrap();
+    let unknown = forged_token("unknown-2");
+    let mut joiner = std::pin::pin!(fixture.verifier.verify(&unknown));
+    assert!(futures_util::poll!(&mut joiner).is_pending());
+    fixture.gate.release();
+    assert_eq!(
+        timeout(Duration::from_secs(1), starter)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err(),
+        VerifyError::Unavailable("jwks_status")
+    );
+    assert_eq!(
+        timeout(Duration::from_secs(1), joiner)
+            .await
+            .unwrap()
+            .unwrap_err(),
+        VerifyError::Rejected("signing_key_unknown")
+    );
+    fixture.verifier.verify(&valid).await.unwrap();
+    assert_eq!(
+        fixture
+            .verifier
+            .verify(&forged_token("unknown-3"))
+            .await
+            .unwrap_err(),
+        VerifyError::Rejected("signing_key_unknown")
+    );
+    fixture.verifier.verify(&valid).await.unwrap();
+    assert_eq!(fixture.requests(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn concurrent_unknown_kids_join_one_refresh_even_after_cooldown() {
+    for past_cooldown in [false, true] {
+        let fixture = Fixture::new().await;
+        let valid = Signer::primary().token(&claims(now()), "key-1");
+        fixture.verifier.verify(&valid).await.unwrap();
+        fixture.permit_refresh().await;
+        fixture.gate.hold();
+        let verifier = fixture.verifier.clone();
+        let starter = tokio::spawn(async move { verifier.verify(&forged_token("unknown")).await });
+        fixture.gate.wait_for_entry().await;
+        if past_cooldown {
+            // Keep the flight held past the cooldown, then publish the joiners' key.
+            fixture.permit_refresh().await;
+            *fixture.body.write().await =
+                json!({"keys":[Signer::primary().key("rotated")]}).to_string();
+        }
+        let tokens: Vec<_> = (0..24)
+            .map(|index| {
+                forged_token(&if past_cooldown {
+                    "rotated".to_owned()
+                } else {
+                    format!("unknown-{index}")
+                })
+            })
+            .collect();
+        let mut joiners = std::pin::pin!(futures_util::future::join_all(
+            tokens.iter().map(|token| fixture.verifier.verify(token))
+        ));
+        assert!(futures_util::poll!(&mut joiners).is_pending());
+        assert_eq!(fixture.requests(), 2);
+        fixture.gate.release();
+        assert_eq!(
+            timeout(Duration::from_secs(1), starter)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap_err(),
+            VerifyError::Rejected("signing_key_unknown")
+        );
+        for result in timeout(Duration::from_secs(1), joiners).await.unwrap() {
+            assert_eq!(
+                result.unwrap_err(),
+                if past_cooldown {
+                    VerifyError::Rejected("token_signature")
+                } else {
+                    VerifyError::Rejected("signing_key_unknown")
+                }
+            );
+        }
+        assert_eq!(fixture.requests(), 2);
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn cancelling_refresh_starter_still_stores_rotated_keys() {
+    let fixture = Fixture::new().await;
+    let value = claims(now());
+    let old = Signer::primary().token(&value, "key-1");
+    let rotated = Signer::rotated().token(&value, "key-2");
+    fixture.verifier.verify(&old).await.unwrap();
+    fixture.gate.wait_for_completion().await;
+    *fixture.body.write().await = json!({"keys":[Signer::rotated().key("key-2")]}).to_string();
+    fixture.permit_refresh().await;
+    fixture.gate.hold();
+    let verifier = fixture.verifier.clone();
+    let starter = tokio::spawn(async move { verifier.verify(&forged_token("unknown")).await });
+    fixture.gate.wait_for_entry().await;
+    starter.abort();
+    assert!(starter.await.unwrap_err().is_cancelled());
+    fixture.gate.release();
+    fixture.gate.wait_for_completion().await;
+    // On this current-thread runtime the refresh cannot yield between the
+    // fetch completion signal and storing keys. Verify a hit on the first poll.
+    let mut lookup = std::pin::pin!(fixture.verifier.verify(&rotated));
+    assert!(matches!(
+        futures_util::poll!(&mut lookup),
+        std::task::Poll::Ready(Ok(_))
+    ));
+    assert_eq!(fixture.requests(), 2);
+}
+
+#[tokio::test(start_paused = true)]
+async fn failed_cold_refresh_joiners_keep_throttled_outcome() {
+    let fixture = Fixture::new().await;
+    *fixture.status.write().await = StatusCode::SERVICE_UNAVAILABLE;
+    fixture.gate.hold();
+    let verifier = fixture.verifier.clone();
+    let starter = tokio::spawn(async move { verifier.verify(&forged_token("unknown-1")).await });
+    fixture.gate.wait_for_entry().await;
+    let unknown = forged_token("unknown-2");
+    let mut joiner = std::pin::pin!(fixture.verifier.verify(&unknown));
+    assert!(futures_util::poll!(&mut joiner).is_pending());
+    fixture.gate.release();
+    assert_eq!(
+        timeout(Duration::from_secs(1), starter)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err(),
+        VerifyError::Unavailable("jwks_status")
+    );
+    assert_eq!(
+        timeout(Duration::from_secs(1), joiner)
+            .await
+            .unwrap()
+            .unwrap_err(),
+        VerifyError::Unavailable("jwks_refresh_throttled")
+    );
+    assert_eq!(fixture.requests(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn dropped_refresh_sender_maps_to_unavailable_and_can_recover() {
+    struct PanicOnce(AtomicBool);
+    impl Fetcher for PanicOnce {
+        fn fetch<'a>(&'a self, _: &'a str, _: usize) -> FetchFuture<'a> {
+            Box::pin(async move {
+                assert!(
+                    !self.0.swap(false, Ordering::SeqCst),
+                    "simulate a lost refresh task"
+                );
+                Ok(key_set().to_string().into_bytes())
+            })
+        }
+    }
+    let verifier = Verifier {
+        config: config("https://nyx.example/jwks".into()),
+        cache: Cache::with_fetcher(
+            signing_keys::Config::new(CACHE_TTL, 1),
+            KeySet::parse,
+            transport_error,
+            Arc::new(PanicOnce(AtomicBool::new(true))),
+        ),
+    };
+    let valid = Signer::primary().token(&claims(now()), "key-1");
+    assert_eq!(
+        verifier.verify(&valid).await.unwrap_err(),
+        VerifyError::Unavailable("jwks_refresh")
+    );
+    assert_eq!(
+        verifier.verify(&valid).await.unwrap_err(),
+        VerifyError::Unavailable("jwks_refresh_throttled")
+    );
+    tokio::time::advance(Duration::from_secs(5)).await;
+    verifier.verify(&valid).await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
 async fn bad_signature_for_known_kid_never_refreshes_or_accepts_replacement_key() {
     let fixture = Fixture::new().await;
     let value = claims(now());
@@ -451,7 +794,7 @@ async fn bad_signature_for_known_kid_never_refreshes_or_accepts_replacement_key(
     assert_eq!(fixture.requests(), 1);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn unknown_key_refresh_is_bounded_even_for_distinct_attacker_kids() {
     let fixture = Fixture::new().await;
     let value = claims(now());
@@ -474,7 +817,7 @@ async fn unknown_key_refresh_is_bounded_even_for_distinct_attacker_kids() {
     assert_eq!(fixture.requests(), 2);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn rotated_and_retained_keys_work_then_retired_key_stops_working() {
     let fixture = Fixture::new().await;
     let value = claims(now());
@@ -497,7 +840,7 @@ async fn rotated_and_retained_keys_work_then_retired_key_stops_working() {
     assert_eq!(fixture.requests(), 3);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn failed_unknown_key_refresh_keeps_fresh_keys_but_never_uses_expired_keys() {
     let fixture = Fixture::new().await;
     let value = claims(now());
@@ -528,7 +871,7 @@ async fn failed_unknown_key_refresh_keeps_fresh_keys_but_never_uses_expired_keys
 
 #[tokio::test]
 async fn redirects_oversized_responses_and_invalid_provider_keys_fail_closed() {
-    let fixture = Fixture::new().await;
+    let fixture = Fixture::new_http().await;
     let token = Signer::primary().token(&claims(now()), "key-1");
     *fixture.status.write().await = StatusCode::FOUND;
     assert_eq!(
@@ -552,7 +895,7 @@ async fn redirects_oversized_responses_and_invalid_provider_keys_fail_closed() {
     );
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn malformed_and_oversized_tokens_never_fetch_keys() {
     let fixture = Fixture::new().await;
     for token in [

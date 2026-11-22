@@ -6,6 +6,30 @@ impl SandboxWorker {
         sandbox: Sandbox,
         now: SystemTime,
     ) -> Result<(), SandboxStoreError> {
+        if sandbox.work.step == SandboxWorkStep::RunLifecycleOperation
+            && sandbox
+                .lifecycle
+                .home_restore
+                .as_ref()
+                .is_some_and(|restore| {
+                    restore.receipt.is_none()
+                        || sandbox
+                            .lifecycle
+                            .operation
+                            .as_ref()
+                            .is_some_and(|operation| {
+                                operation.authority().operation_id == restore.operation_id
+                            })
+                })
+        {
+            let waiting = support::WorkerFailure::new(
+                "home_restore_wait_for_compatible_worker",
+                "home restoration requires a compatible worker; pinned authority is retained",
+                true,
+            )
+            .with_retry_kind(layer2_core::sandbox::work_retry::WorkRetryFailure::Waiting);
+            return self.handle_lifecycle_failure(sandbox, waiting, now).await;
+        }
         // Re-read before any retirement side effect, including channel teardown.
         // Admission requires old-worker exclusion; an existing hold never expires.
         if sandbox.status == layer2_core::sandbox::SandboxStatus::Retiring

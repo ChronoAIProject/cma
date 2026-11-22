@@ -131,7 +131,7 @@ jobs:
       # release job will not run either way.
       fail-fast: false
       matrix:
-        component: [api, web, runtime, cmaeg, image-manager]
+        component: [api, web, runtime, cmaeg, runtime-omarchy]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
@@ -225,29 +225,48 @@ jobs:
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         if: success() && steps.reconcile.outputs.reuse == 'false'
 
-      # Built and scanned before anything is pushed. The runtime's final OS
-      # refresh deliberately runs again for this workflow attempt, so a fix or
-      # vulnerability published after the pull-request scan is evaluated here
-      # before the image becomes a release artifact.
+      # Built and scanned before anything is pushed. Runtime images install
+      # packages from the Dockerfile's pinned Debian snapshot, so their OS
+      # refresh is keyed on that snapshot and security updates arrive only when
+      # the snapshot is deliberately bumped and its catalog reviewed. Other
+      # images refresh their OS packages again for this workflow attempt, so a
+      # fix published after the pull-request scan is evaluated here before the
+      # image becomes a release artifact.
+      - name: Resolve OS security refresh key
+        id: os-refresh
+        if: success() && steps.reconcile.outputs.reuse == 'false'
+        env:
+          IMAGE_COMPONENT: ${{ matrix.component }}
+          PER_BUILD_KEY: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: python3 .github/scripts/os_refresh_key.py "$IMAGE_COMPONENT" api/crates/layer4-runtime/Dockerfile "$PER_BUILD_KEY" >> "$GITHUB_OUTPUT"
+
       - name: Build the native image for scanning
         if: success() && steps.reconcile.outputs.reuse == 'false'
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || matrix.component == 'image-manager' && 'api/crates/cma-image-manager/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
+          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
+          target: ${{ matrix.component == 'runtime-omarchy' && 'omarchy' || matrix.component == 'runtime' && 'default-runtime' || 'runtime' }}
           platforms: linux/amd64
           push: false
           load: true
+          outputs: ${{ startsWith(matrix.component, 'runtime') && 'type=docker,rewrite-timestamp=true' || '' }}
           tags: cma-${{ matrix.component }}:release
           build-args: |
+            RUNTIME_DESKTOP=${{ matrix.component == 'runtime-omarchy' && '1' || '0' }}
+            OMARCHY_CMA_BASE=runtime-tools
             CHRONO_BUILD=${{ needs.plan.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
+            ${{ startsWith(matrix.component, 'runtime') && 'SOURCE_DATE_EPOCH=0' || '' }}
           # Populated by ci.yml. A run on main can restore caches from main and
           # from the default branch, and develop is the default branch, so the
           # layers the merged pull request built are still warm here.
           cache-from: type=gha,scope=${{ matrix.component }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.component }}
+          # A layer export is an optimisation. A failed or refused export (a
+          # read-only cache once the Actions budget is reached) must never fail
+          # the release build that already produced the image.
+          cache-to: type=gha,mode=max,ignore-error=true,scope=${{ matrix.component }}
 
       - name: Verify web bundle identity against image metadata
         if: success() && steps.reconcile.outputs.reuse == 'false' && matrix.component == 'web'
@@ -277,10 +296,11 @@ jobs:
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
-          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || matrix.component == 'image-manager' && 'api/crates/cma-image-manager/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
+          file: ${{ matrix.component == 'web' && 'web/Dockerfile' || matrix.component == 'api' && 'api/crates/cma/Dockerfile' || matrix.component == 'cmaeg' && 'api/crates/cmaeg/Dockerfile' || 'api/crates/layer4-runtime/Dockerfile' }}
+          target: ${{ matrix.component == 'runtime-omarchy' && 'omarchy' || matrix.component == 'runtime' && 'default-runtime' || 'runtime' }}
           platforms: ${{ matrix.component == 'web' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
           push: false
-          outputs: type=oci,dest=${{ steps.skopeo.outputs.output_dir }}/candidate.oci.tar
+          outputs: type=oci,dest=${{ steps.skopeo.outputs.output_dir }}/candidate.oci.tar${{ startsWith(matrix.component, 'runtime') && ',rewrite-timestamp=true' || '' }}
           provenance: false
           # These tags are intended to be assigned once. GHCR has no tag CAS;
           # the second absence check only narrows stale-read overwrite risk.
@@ -290,9 +310,12 @@ jobs:
           # web's status band and api's discovery responses bake the version
           # so they name the release actually running. Ignored by runtime.
           build-args: |
+            RUNTIME_DESKTOP=${{ matrix.component == 'runtime-omarchy' && '1' || '0' }}
+            OMARCHY_CMA_BASE=runtime-tools
             CHRONO_BUILD=${{ needs.plan.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
+            ${{ startsWith(matrix.component, 'runtime') && 'SOURCE_DATE_EPOCH=0' || '' }}
           # One archive reference avoids ambiguity in the OCI transport. The
           # publisher assigns both registry tags to these exact scanned bytes.
           tags: cma-${{ matrix.component }}:candidate
@@ -336,7 +359,7 @@ jobs:
       # failed leg can be re-run without rebuilding or moving either image tag.
       fail-fast: false
       matrix:
-        component: [api, web, runtime, cmaeg, image-manager]
+        component: [api, web, runtime, cmaeg, runtime-omarchy]
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
 
@@ -539,7 +562,7 @@ jobs:
           fi
 
           revision=${GITHUB_SHA:0:7}
-          for component in api web runtime cmaeg image-manager; do
+          for component in api web runtime cmaeg runtime-omarchy; do
             expected="cma-${component}-${VERSION}-${revision}-oci"
             matches=$(jq -r --arg name "$expected" \
               '[.artifacts[] | select(.name == $name)] | length' \

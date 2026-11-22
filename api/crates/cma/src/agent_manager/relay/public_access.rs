@@ -1,7 +1,9 @@
-//! Public runtime routing reuses the serving operation's domain authorization.
+//! Public owner routing reuses the serving operation's domain authorization.
 use axum::http::{HeaderMap, Method, StatusCode, Uri};
 use layer2_core::{
-    resource_access::{AccessPurpose, CallerContext, ResourceAccessService, ResourceCapability},
+    resource_access::{
+        AccessPurpose, CallerContext, ResourceAccessService, ResourceCapability, ResourceTarget,
+    },
     sandbox::{
         agent_attachments::AgentAttachmentService, agent_filesystem::AgentFileService,
         AgentReadService,
@@ -21,12 +23,24 @@ pub(super) struct PublicRequest<'a> {
 
 #[async_trait::async_trait]
 pub(super) trait PublicAuthorization: Send + Sync {
-    async fn authorize(&self, request: PublicRequest<'_>) -> Result<(), StatusCode>;
+    async fn authorize(&self, request: PublicRequest<'_>) -> Result<(), PublicRefusal>;
+}
+
+#[derive(Debug)]
+pub(super) enum PublicRefusal {
+    Status(StatusCode),
+    AccountDeletionInProgress,
+}
+impl From<StatusCode> for PublicRefusal {
+    fn from(status: StatusCode) -> Self {
+        Self::Status(status)
+    }
 }
 
 pub(crate) struct PublicAccess {
     auth: Arc<crate::auth::AuthState>,
     reads: Arc<AgentReadService>,
+    access: Arc<ResourceAccessService>,
     files: Arc<AgentFileService>,
     attachments: Arc<AgentAttachmentService>,
 }
@@ -40,6 +54,7 @@ impl PublicAccess {
         Arc::new(Self {
             auth,
             reads,
+            access: access.clone(),
             files: AgentFileService::new(access.clone(), adapter.clone()),
             attachments: AgentAttachmentService::new(access, adapter),
         })
@@ -48,7 +63,7 @@ impl PublicAccess {
 
 #[async_trait::async_trait]
 impl PublicAuthorization for PublicAccess {
-    async fn authorize(&self, request: PublicRequest<'_>) -> Result<(), StatusCode> {
+    async fn authorize(&self, request: PublicRequest<'_>) -> Result<(), PublicRefusal> {
         let PublicRequest {
             id,
             method,
@@ -66,6 +81,36 @@ impl PublicAuthorization for PublicAccess {
         )
         .await?;
         match operation {
+            Operation::Preferences | Operation::Settings => {
+                if !context.validate_principal()
+                    || !context
+                        .caller
+                        .authorization
+                        .allows(layer2_core::Capability::UseOwnSandboxes)
+                {
+                    return Err(StatusCode::FORBIDDEN.into());
+                }
+                let target = ResourceTarget::Agent {
+                    agent_id: id.clone(),
+                };
+                let authorized = self
+                    .access
+                    .authorize(
+                        context,
+                        credential,
+                        &target,
+                        ResourceCapability::OperateAgent,
+                        AccessPurpose::Mutation {
+                            started_at: SystemTime::now(),
+                        },
+                    )
+                    .await
+                    .map_err(access_error)?;
+                self.access
+                    .validate_read_result(&authorized, &target, ResourceCapability::OperateAgent)
+                    .await
+                    .map_err(access_error)?;
+            }
             Operation::Models => {
                 let read = self
                     .reads
@@ -97,7 +142,7 @@ impl PublicAuthorization for PublicAccess {
                         layer2_core::sandbox::agent_attachments::AttachmentError::Access(error) => {
                             access_error(error)
                         }
-                        _ => StatusCode::SERVICE_UNAVAILABLE,
+                        _ => StatusCode::SERVICE_UNAVAILABLE.into(),
                     })?;
             }
             Operation::Files(capability, mutation) => {
@@ -115,16 +160,18 @@ impl PublicAuthorization for PublicAccess {
                         layer2_core::sandbox::agent_filesystem::AgentFileError::Access(error) => {
                             access_error(error)
                         }
-                        _ => StatusCode::SERVICE_UNAVAILABLE,
+                        _ => StatusCode::SERVICE_UNAVAILABLE.into(),
                     })?;
             }
         }
-        caller.current().await
+        caller.current().await.map_err(Into::into)
     }
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum Operation {
+    Preferences,
+    Settings,
     Models,
     Skills,
     Recovery,
@@ -141,6 +188,8 @@ fn operation(method: &Method, uri: &Uri) -> Result<Operation, StatusCode> {
         .ok_or(StatusCode::FORBIDDEN)?;
     let read = method == Method::GET || method == Method::HEAD;
     Ok(match suffix {
+        "preferences" if method == Method::PATCH => Operation::Preferences,
+        "settings" if method == Method::PATCH => Operation::Settings,
         "models" if read => Operation::Models,
         "skills" if read || method == Method::POST => Operation::Skills,
         "recover-worktree" if method == Method::POST => Operation::Recovery,
@@ -172,11 +221,13 @@ fn operation(method: &Method, uri: &Uri) -> Result<Operation, StatusCode> {
     })
 }
 
-fn access_error(error: layer2_core::resource_access::ResourceAccessError) -> StatusCode {
+fn access_error(error: layer2_core::resource_access::ResourceAccessError) -> PublicRefusal {
     use layer2_core::resource_access::{
         AccessError, MembershipError, ResourceAccessError::*, ResourceAccessStoreError,
     };
-    match error {
+    let status = match error {
+        AccountDeletionInProgress => return PublicRefusal::AccountDeletionInProgress,
+        Store(ResourceAccessStoreError::ShareRecipientUnavailable) => StatusCode::NOT_FOUND,
         Access(AccessError::NotFound) | Store(ResourceAccessStoreError::NotFound) => {
             StatusCode::NOT_FOUND
         }
@@ -196,11 +247,25 @@ fn access_error(error: layer2_core::resource_access::ResourceAccessError) -> Sta
         | Store(ResourceAccessStoreError::Unavailable | ResourceAccessStoreError::Corrupt) => {
             StatusCode::SERVICE_UNAVAILABLE
         }
-    }
+    };
+    status.into()
 }
 
-pub(super) fn refusal(status: StatusCode) -> axum::response::Response {
+pub(super) fn refusal(error: PublicRefusal) -> axum::response::Response {
     use axum::response::IntoResponse;
+    let status = match error {
+        PublicRefusal::Status(status) => status,
+        PublicRefusal::AccountDeletionInProgress => {
+            let mut response = layer1_public::rest::account_deletion_problem(
+                layer2_core::account_deletion::AccountDeletionError::InProgress,
+            );
+            response.headers_mut().insert(
+                axum::http::header::CACHE_CONTROL,
+                axum::http::HeaderValue::from_static("private, no-store"),
+            );
+            return response;
+        }
+    };
     let code = match status {
         StatusCode::UNAUTHORIZED => "authentication_required",
         StatusCode::FORBIDDEN => "resource_forbidden",
@@ -217,18 +282,24 @@ pub(super) fn refusal(status: StatusCode) -> axum::response::Response {
             "status":status.as_u16(), "code":code, "detail":"Current authority does not permit routing this Agent operation."}))).into_response()
 }
 
-fn read_error(error: layer2_core::sandbox::AgentReadError) -> StatusCode {
+fn read_error(error: layer2_core::sandbox::AgentReadError) -> PublicRefusal {
     use layer2_core::sandbox::AgentReadError;
-    match error {
+    let status = match error {
+        AgentReadError::Access(
+            layer2_core::resource_access::ResourceAccessError::AccountDeletionInProgress,
+        ) => return PublicRefusal::AccountDeletionInProgress,
         AgentReadError::NotFound => StatusCode::NOT_FOUND,
         AgentReadError::Forbidden => StatusCode::FORBIDDEN,
         _ => StatusCode::SERVICE_UNAVAILABLE,
-    }
+    };
+    status.into()
 }
 
 #[cfg(test)]
 mod custody_tests;
 #[cfg(test)]
 pub(crate) mod fixture;
+#[cfg(test)]
+mod standing_tests;
 #[cfg(test)]
 mod tests;

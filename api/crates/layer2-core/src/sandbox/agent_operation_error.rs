@@ -7,6 +7,10 @@ pub enum AgentOperationError {
     Budget(crate::budget::BudgetError),
     #[error("new work is temporarily paused; existing work continues")]
     AdmissionPaused,
+    #[error("guaranteed model funding is unsupported")]
+    ModelFundingUnsupported,
+    #[error(transparent)]
+    ModelFunding(crate::sandbox::model_credit::FundingError),
     #[error("active session capacity is unavailable")]
     SessionCapacityUnavailable,
     #[error(transparent)]
@@ -51,6 +55,10 @@ pub enum AgentOperationError {
     SkillHistoryFull,
     #[error("agent changed while the operation was being fenced")]
     Conflict,
+    #[error("configuration admission lost a concurrent state comparison")]
+    ConfigurationAdmissionConflict,
+    #[error("agent preferences revision does not match")]
+    PreferencesRevisionMismatch,
     #[error("sandbox checkpoint is in progress; input was not admitted")]
     CheckpointInProgress,
     #[error("the previous turn does not match the conversation's latest turn")]
@@ -77,6 +85,8 @@ impl AgentOperationError {
         match self {
             Self::Budget(reason) => reason.code(),
             Self::AdmissionPaused => "admission_paused",
+            Self::ModelFundingUnsupported => "model_funding_unsupported",
+            Self::ModelFunding(_) => "model_funding_refused",
             Self::SessionCapacityUnavailable => "session_capacity_unavailable",
             Self::Connection(error) => error.code(),
             Self::Forbidden => "forbidden",
@@ -97,7 +107,9 @@ impl AgentOperationError {
             }
             Self::SkillUpgradeDisabled => "agent_skill_upgrade_disabled",
             Self::SkillHistoryFull => "agent_skill_history_full",
-            Self::Conflict => "agent_operation_conflict",
+            Self::Conflict
+            | Self::ConfigurationAdmissionConflict
+            | Self::PreferencesRevisionMismatch => "agent_operation_conflict",
             Self::CheckpointInProgress => "sandbox_checkpoint_in_progress",
             Self::PreviousTurnConflict => "agent_previous_turn_conflict",
             Self::LogCapacityExceeded => "agent_log_capacity_exceeded",
@@ -106,6 +118,16 @@ impl AgentOperationError {
             Self::DeliveryAmbiguous { .. } => "agent_delivery_ambiguous",
             Self::OutcomeUnavailable(_) => "agent_operation_outcome_unavailable",
             Self::Unavailable(_) => "agent_operation_unavailable",
+        }
+    }
+}
+
+impl From<crate::sandbox::model_credit::FundingError> for AgentOperationError {
+    fn from(error: crate::sandbox::model_credit::FundingError) -> Self {
+        if error == crate::sandbox::model_credit::FundingError::Unsupported {
+            Self::ModelFundingUnsupported
+        } else {
+            Self::ModelFunding(error)
         }
     }
 }
