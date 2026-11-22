@@ -194,3 +194,149 @@ async fn synchronous_snapshot_keeps_the_original_unavailable_error_owned() {
     drop(admin);
     fixture.finish().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn projection_operation_refuses_before_queries_and_retains_original_driver_error() {
+    use crate::store::{
+        agent_log_segments::{projection::read_admitted as read, PROJECTIONS},
+        ingress_reads::error::ReadFailure,
+    };
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let mut options =
+        mongodb::options::ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+    let app_name = "cma-ingress-projection-custody";
+    options.app_name = Some(app_name.into());
+    options.command_event_handler = Some(mongodb::event::EventHandler::callback(move |event| {
+        if let mongodb::event::command::CommandEvent::Started(event) = event {
+            if event.command_name == "find"
+                && event.command.get_str("find").ok() == Some(PROJECTIONS)
+            {
+                observed.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }));
+    let fixture = fixture::Fixture::with_client(
+        mongodb::Client::with_options(options).unwrap(),
+        "projection_custody",
+    )
+    .await;
+    let store = &fixture.store;
+    let (agent, head, row) = fixture::projection_fixture(&fixture.agent, 1);
+    store
+        .segment_logs
+        .projections
+        .insert_one(mongodb::bson::serialize_to_document(&row).unwrap())
+        .await
+        .unwrap();
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    let full = AllocationPlan::checked(
+        "full projection work",
+        &[policy.bounds().transformation_bytes()],
+    )
+    .unwrap();
+    let occupied = policy.admit(IngressClass::Transformation, full).unwrap();
+    assert!(matches!(
+        read(store, &agent, &head, &mut session, &policy, gate_plan()),
+        Err(AdmittedError::Refused(_))
+    ));
+    drop(occupied);
+    drop(read(store, &agent, &head, &mut session, &policy, gate_plan()).unwrap());
+    assert!(matches!(
+        read(store, &agent, &head, &mut session, &policy, full)
+            .unwrap()
+            .await,
+        Err(AdmittedError::Refused(_))
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(root.available_bytes(), idle);
+    let occupied = policy
+        .admit(
+            IngressClass::Data,
+            AllocationPlan::checked("full projection Data", &[policy.bounds().data_bytes()])
+                .unwrap(),
+        )
+        .unwrap();
+    assert!(matches!(
+        read(store, &agent, &head, &mut session, &policy, gate_plan())
+            .unwrap()
+            .await,
+        Err(AdmittedError::Refused(_))
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    drop(occupied);
+    assert_eq!(root.available_bytes(), idle);
+    let mut large_agent = agent.clone();
+    large_agent.id.0 = "a".repeat(4 * 1024 * 1024);
+    let occupied = policy
+        .admit(
+            IngressClass::Transformation,
+            AllocationPlan::checked("validation pressure", &[64 * 1024 * 1024]).unwrap(),
+        )
+        .unwrap();
+    let held = root.available_bytes();
+    assert!(matches!(
+        read(
+            store,
+            &large_agent,
+            &head,
+            &mut session,
+            &policy,
+            AllocationPlan::checked("small projection response", &[1024 * 1024]).unwrap()
+        )
+        .unwrap()
+        .await,
+        Err(AdmittedError::Refused(_))
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    assert_eq!(root.available_bytes(), held);
+    drop((occupied, large_agent));
+    assert_eq!(root.available_bytes(), idle);
+    let admin = store.client.database("admin");
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    admin
+        .run_command(
+            doc! {"configureFailPoint":"failCommand", "mode":{"times":1}, "data":{
+                "failCommands":["find"], "appName":app_name, "errorCode":112,
+                "errorLabels":["TransientTransactionError"],
+            }},
+        )
+        .await
+        .unwrap();
+    let result = read(store, &agent, &head, &mut session, &policy, gate_plan())
+        .unwrap()
+        .await;
+    admin
+        .run_command(doc! {"configureFailPoint":"failCommand", "mode":"off"})
+        .await
+        .unwrap();
+    let error = result.unwrap().transpose().unwrap_err();
+    let ReadFailure::Driver(driver) = &*error else {
+        panic!("driver classification changed")
+    };
+    assert!(driver.contains_label("TransientTransactionError"));
+    let pointer = std::ptr::from_ref(driver.kind.as_ref());
+    let error = error.map(|error| match error {
+        ReadFailure::Driver(driver) => driver,
+        _ => unreachable!(),
+    });
+    assert_eq!(std::ptr::from_ref(error.kind.as_ref()), pointer);
+    assert!(error.belongs_to(&policy));
+    assert!(root.available_bytes() < idle);
+    drop(error);
+    assert_eq!(root.available_bytes(), idle);
+    let _ = session.abort_transaction().await;
+    drop((session, admin));
+    fixture.finish().await;
+}

@@ -121,3 +121,57 @@ impl Fixture {
             .expect("fixture Mongo resources did not finish cleanup");
     }
 }
+
+pub(super) fn projection_fixture(
+    agent: &Agent,
+    count: usize,
+) -> (
+    Agent,
+    crate::store::agent_log_segments::Head,
+    crate::store::agent_log_segments::projection::Projection,
+) {
+    use crate::store::agent_log_segments::projection::Projection;
+    use layer2_core::sandbox::{
+        AgentLogProjectionState, AgentLogQueuedReference, QueuedAgentMessage,
+    };
+    let mut agent = agent.clone();
+    agent.conversation.last_seq = 128;
+    agent.conversation.active_turn = None;
+    agent.conversation.conversation_id = None;
+    agent.conversation.runtime_generation = None;
+    agent.conversation.queued_messages = (0..count)
+        .map(|n| {
+            QueuedAgentMessage::new(
+                n as u64 + 1,
+                format!("queued {n}"),
+                "2026-01-01T00:00:00Z".into(),
+            )
+            .unwrap()
+        })
+        .collect();
+    let mut record = AgentLogProjectionState::default();
+    record.through_seq = 128;
+    record.latest_task_status = Some(1);
+    record.unconsumed_queue = agent
+        .conversation
+        .queued_messages
+        .iter()
+        .map(|queued| AgentLogQueuedReference {
+            sequence: queued.sequence,
+            payload_sha256: queued.payload_sha256.clone(),
+        })
+        .collect();
+    record.validate_aggregate(&agent).unwrap();
+    let (mut head, _) = super::read_ports::seal_fixture(128);
+    head.agent_id = agent.id.as_str().into();
+    let projection = Projection {
+        agent_id: head.agent_id.clone(),
+        format_version: 1,
+        incarnation: head.incarnation.clone(),
+        evidence_generation: head.evidence_generation.clone(),
+        through_seq: head.last_seq,
+        head_revision: head.revision,
+        record,
+    };
+    (agent, head, projection)
+}

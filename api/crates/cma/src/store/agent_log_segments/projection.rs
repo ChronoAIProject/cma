@@ -1,6 +1,15 @@
 //! Bounded semantic state and indexed source references shared by all writers.
+use crate::store::ingress_reads::{
+    error::{self, ReadFailure},
+    layout::{BsonLayout, LayoutError},
+    row::{self, ConversionPlan, RowSchema},
+};
 use layer2_core::sandbox::agent_output_index::{
     AgentOutputChange, AgentToolOutputState, AgentTurnOutputIndex,
+};
+use layer2_core::sandbox::ingress_ownership::{
+    sizing::shared_owner_bytes, AdmittedError, AdmittedOperation, AllocationPlan, IngressClass,
+    IngressOwnershipPolicy, IngressWorkScope, SharedOwned,
 };
 use layer2_core::sandbox::{
     store::SandboxStoreError, Agent, AgentLogEvidenceChange, AgentLogProjectionState,
@@ -152,6 +161,132 @@ fn validate_projection(
         .validate_aggregate(agent)
         .map_err(SandboxStoreError::Corrupt)?;
     Ok(())
+}
+
+type ProjectionRead<'a> = AdmittedOperation<'a, Result<SharedOwned<Projection>, ReadFailure>>;
+
+/// Preserve the caller's session; the caller's read allowance still requires
+/// separate driver and detached-cleanup qualification.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "enabled recording awaits driver resource custody")
+)]
+pub(in crate::store) fn read_admitted<'a>(
+    store: &'a MongoSandboxStore,
+    agent: &'a Agent,
+    head: &'a Head,
+    session: &'a mut ClientSession,
+    policy: &'a IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+) -> Result<ProjectionRead<'a>, AdmittedError> {
+    AdmittedOperation::from_owned(
+        policy,
+        IngressClass::Transformation,
+        AllocationPlan::checked(
+            "projection read result",
+            &[128, shared_owner_bytes::<ReadFailure>()],
+        )?,
+        move |scope| async move {
+            let result =
+                row::load_with_error::<ProjectionSchema, _, _>(policy, read_plan, || async {
+                    let rows =
+                        collection(store, PROJECTIONS).clone_with_type::<bson::RawDocumentBuf>();
+                    let find = rows.find_one(doc! {"_id": &head.agent_id});
+                    let find = if session.snapshot_time().is_some() {
+                        find.read_concern(ReadConcern::snapshot())
+                    } else {
+                        find
+                    };
+                    find.session(session).await
+                })
+                .await;
+            let value = match result {
+                Ok(Some(value)) => value,
+                Ok(None) => {
+                    return Ok(scope.initialize_owned(|| Err(ReadFailure::Domain(corrupt()))))
+                }
+                Err(error) => return error::finish(Err(error), &scope),
+            };
+            let validation = policy.admit(
+                IngressClass::Transformation,
+                projection_validation_plan(agent, &value)?,
+            )?;
+            Ok(IngressWorkScope::new(validation).initialize_owned(|| {
+                validate_projection(&value, agent, head).map_err(ReadFailure::Domain)?;
+                Ok(value)
+            }))
+        },
+    )
+}
+
+fn projection_validation_plan(
+    agent: &Agent,
+    projection: &Projection,
+) -> Result<AllocationPlan, AdmittedError> {
+    // Aggregate validation builds recovery request strings and the initial-open
+    // proof. Their sizes come from this Agent and this returned projection.
+    let mut lengths = std::iter::once(agent.id.as_str().len())
+        .chain(
+            projection
+                .record
+                .open_completion
+                .iter()
+                .map(|(_, at)| at.len()),
+        )
+        .chain(agent.work.worktree_recoveries.iter().flat_map(|attempt| {
+            let original = &attempt.original_worktree;
+            [
+                original.name.len(),
+                original.path.len(),
+                original.base_commit.len(),
+            ]
+        }));
+    let bytes = lengths
+        .try_fold(0usize, |sum, len| sum.checked_add(len))
+        .and_then(|bytes| bytes.checked_mul(16))
+        .ok_or(AdmittedError::Unsupported(
+            "projection validation layout overflow",
+        ))?;
+    Ok(AllocationPlan::checked(
+        "projection aggregate validation",
+        &[
+            bytes,
+            8192,
+            4 * size_of::<layer2_core::sandbox::AgentLogEntry>(),
+            shared_owner_bytes::<ReadFailure>(),
+        ],
+    )?)
+}
+
+struct ProjectionSchema;
+
+impl RowSchema for ProjectionSchema {
+    type Value = Projection;
+    const INVALID_RAW: &'static str = "invalid raw log projection";
+
+    fn plan(layout: BsonLayout) -> Result<ConversionPlan, LayoutError> {
+        // Turn facts and usage are inline; only queued references need vector
+        // storage. Count actual raw members before the aggregate limit is known.
+        let retained = layout.domain_bytes(
+            size_of::<layer2_core::sandbox::AgentLogQueuedReference>(),
+            shared_owner_bytes::<Projection>(),
+        )?;
+        let temporary = layout
+            .bson_bytes()?
+            .checked_mul(3)
+            .and_then(|bytes| retained.checked_mul(2)?.checked_add(bytes))
+            .and_then(|bytes| layout.wire_bytes.checked_mul(4)?.checked_add(bytes))
+            .and_then(|bytes| bytes.checked_add(4096))
+            .ok_or(LayoutError::Structure)?;
+        Ok(ConversionPlan {
+            temporary_bytes: temporary,
+            retained_bytes: retained,
+        })
+    }
+
+    fn decode(row: Document) -> Result<Projection, SandboxStoreError> {
+        bson::deserialize_from_document(row).map_err(|_| corrupt())
+    }
 }
 
 pub(in crate::store) async fn evidence(

@@ -135,3 +135,264 @@ fn predecessor_bson_rejects_runtime_state_at_each_owned_boundary() {
         assert!(mongodb::bson::deserialize_from_document::<PredecessorCheckpoint>(row).is_err());
     }
 }
+
+use super::{
+    fixture::{projection_fixture, Fixture},
+    gate_plan, policy,
+};
+use crate::store::agent_log_segments::projection::{self, read_admitted as read};
+use crate::store::ingress_reads::error::ReadFailure;
+use layer2_core::sandbox::{
+    ingress_ownership::{AdmittedError, AllocationPlan, IngressClass},
+    store::SandboxStoreError,
+};
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn projection_read_keeps_transaction_replacement_and_independent_retention() {
+    let fixture = Fixture::new("projection_retention").await;
+    let store = &fixture.store;
+    let rows = &store.segment_logs.projections;
+    let (agent, head, small) = projection_fixture(&fixture.agent, 1);
+    let (grown_agent, _, grown) = projection_fixture(&fixture.agent, 64);
+    rows.insert_one(mongodb::bson::serialize_to_document(&small).unwrap())
+        .await
+        .unwrap();
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    let legacy = projection::read(store, &agent, &head, &mut session)
+        .await
+        .unwrap();
+    let result = read(store, &agent, &head, &mut session, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(result.record, legacy);
+    let retained = (*result).clone();
+    drop(result);
+    let small_available = policy.budget(IngressClass::Data).available_bytes();
+    assert_eq!(
+        policy
+            .budget(IngressClass::Transformation)
+            .available_bytes(),
+        policy.bounds().transformation_bytes()
+    );
+    rows.replace_one(
+        doc! {"_id":&head.agent_id},
+        mongodb::bson::serialize_to_document(&grown).unwrap(),
+    )
+    .session(&mut session)
+    .await
+    .unwrap();
+    let changed = read(
+        store,
+        &grown_agent,
+        &head,
+        &mut session,
+        &policy,
+        gate_plan(),
+    )
+    .unwrap()
+    .await
+    .unwrap()
+    .transpose()
+    .unwrap();
+    assert_eq!(changed.record, grown.record);
+    assert_eq!(retained.record, small.record);
+    assert!(retained.belongs_to(&policy));
+    assert!(policy.budget(IngressClass::Data).available_bytes() < small_available);
+    drop(changed);
+    assert_eq!(
+        policy.budget(IngressClass::Data).available_bytes(),
+        small_available
+    );
+    session.abort_transaction().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    let restored = read(store, &agent, &head, &mut session, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(restored.record, small.record);
+    drop((restored, retained));
+    assert_eq!(root.available_bytes(), idle);
+    session.abort_transaction().await.unwrap();
+    drop(session);
+    fixture.finish().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn projection_read_preserves_validation_failures_and_outer_preflight_refusal() {
+    let fixture = Fixture::new("projection_errors").await;
+    let store = &fixture.store;
+    let rows = &store.segment_logs.projections;
+    let (agent, head, valid) = projection_fixture(&fixture.agent, 1);
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    for fault in [
+        "missing",
+        "incarnation",
+        "generation",
+        "through",
+        "revision",
+        "aggregate",
+        "nullable",
+        "unknown",
+        "deep",
+    ] {
+        rows.delete_many(doc! {}).await.unwrap();
+        let mut row = mongodb::bson::serialize_to_document(&valid).unwrap();
+        match fault {
+            "incarnation" => {
+                row.insert("incarnation", "1".repeat(64));
+            }
+            "generation" => {
+                row.insert("evidence_generation", "replaced");
+            }
+            "through" => {
+                row.insert("through_seq", 127_i64);
+            }
+            "revision" => {
+                row.insert("head_revision", 2_i64);
+            }
+            "aggregate" => {
+                row.get_document_mut("record")
+                    .unwrap()
+                    .insert("latest_task_status", 0_i64);
+            }
+            "nullable" => {
+                row.get_document_mut("record")
+                    .unwrap()
+                    .remove("latest_turn");
+            }
+            "unknown" => {
+                row.insert("unexpected", "x".repeat(64 * 1024));
+            }
+            "deep" => {
+                let mut nested = doc! {"leaf":true};
+                for _ in 0..66 {
+                    nested = doc! {"nested":nested};
+                }
+                row.insert("unexpected", nested);
+            }
+            _ => {}
+        }
+        if fault != "missing" {
+            rows.insert_one(row.clone()).await.unwrap();
+        }
+        assert!(projection::read(store, &agent, &head, &mut session)
+            .await
+            .is_err());
+        let result = read(store, &agent, &head, &mut session, &policy, gate_plan())
+            .unwrap()
+            .await;
+        if fault == "deep" {
+            assert!(matches!(result, Err(AdmittedError::Unsupported(_))));
+        } else {
+            let error = result.unwrap().transpose().unwrap_err();
+            assert!(
+                matches!(&*error, ReadFailure::Domain(SandboxStoreError::Corrupt(_))),
+                "{fault}"
+            );
+            assert!(error.belongs_to(&policy));
+            assert!(root.available_bytes() < idle);
+            drop(error);
+        }
+        assert_eq!(root.available_bytes(), idle);
+        if fault != "missing" {
+            assert_eq!(
+                rows.find_one(doc! {"_id": &head.agent_id}).await.unwrap(),
+                Some(row)
+            );
+        }
+    }
+    drop(session);
+    fixture.finish().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn projection_read_pins_snapshot_and_sizes_each_actual_response_under_pressure() {
+    let fixture = Fixture::new("projection_snapshot").await;
+    let store = &fixture.store;
+    let rows = &store.segment_logs.projections;
+    let (agent, head, small) = projection_fixture(&fixture.agent, 1);
+    let (grown_agent, _, grown) = projection_fixture(&fixture.agent, 64);
+    rows.insert_one(mongodb::bson::serialize_to_document(&small).unwrap())
+        .await
+        .unwrap();
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().snapshot(true).await.unwrap();
+    // Establish the same server snapshot the caller's preceding head read owns.
+    rows.find_one(doc! {"_id":&head.agent_id})
+        .read_concern(mongodb::options::ReadConcern::snapshot())
+        .session(&mut session)
+        .await
+        .unwrap();
+    let timestamp = session.snapshot_time();
+    let result = read(store, &agent, &head, &mut session, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    let charge = policy.bounds().data_bytes() - policy.budget(IngressClass::Data).available_bytes();
+    drop(result);
+    let pressure = policy
+        .admit(
+            IngressClass::Data,
+            AllocationPlan::checked(
+                "projection small allowance",
+                &[policy.bounds().data_bytes() - charge],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let held = root.available_bytes();
+    rows.replace_one(
+        doc! {"_id":&head.agent_id},
+        mongodb::bson::serialize_to_document(&grown).unwrap(),
+    )
+    .await
+    .unwrap();
+    let pinned = read(store, &agent, &head, &mut session, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(pinned.record, small.record);
+    assert_eq!(session.snapshot_time(), timestamp);
+    drop(pinned);
+    let mut later = store.client.start_session().await.unwrap();
+    assert!(matches!(
+        read(store, &grown_agent, &head, &mut later, &policy, gate_plan())
+            .unwrap()
+            .await,
+        Err(AdmittedError::Refused(_))
+    ));
+    assert_eq!(root.available_bytes(), held);
+    drop(pressure);
+    let changed = read(store, &grown_agent, &head, &mut later, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(changed.record, grown.record);
+    drop((changed, session, later));
+    assert_eq!(root.available_bytes(), idle);
+    fixture.finish().await;
+}
