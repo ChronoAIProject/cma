@@ -1,5 +1,5 @@
 import { Presence } from '../ui/Presence';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   repeatChoiceFrom,
   type ExistingLaunchAgent,
@@ -88,7 +88,12 @@ function Entry({
   const [error, setError] = useState<string | undefined>(
     intent?.credentialRecovery === undefined ? undefined : credentialSetupMessage,
   );
-  const [busy, setBusy] = useState(false);
+  const [signingInBusy, setSigningInBusy] = useState(false);
+  const [pending, setPending] = useState<{
+    owner: string;
+    client: PublicClient;
+    signal: AbortSignal;
+  }>();
   const [automatic, setAutomatic] = useState(false);
   const entryRequest = useRef<ReturnType<PublicClient['requests']['entryIntent']> | undefined>(
     undefined,
@@ -103,23 +108,39 @@ function Entry({
   const allowed =
     state.status === 'authenticated' && state.user.capabilities.includes('launch_triggers');
   const attempted = useRef(new Set<string>());
+  const submission = useRef<AbortController | undefined>(undefined);
+  const busy =
+    signingInBusy ||
+    (pending !== undefined &&
+      pending.owner === owner &&
+      pending.client === client &&
+      allowed &&
+      !pending.signal.aborted);
+  useLayoutEffect(() => () => submission.current?.abort(), [allowed, client, owner]);
   useEffect(() => {
     document.title = preview === undefined ? 'CMA' : publicCopy.pageTitle(preview.title);
   }, [preview]);
   const submit = useCallback(
     async (selected: BrowserIntent) => {
       if (owner === undefined || !allowed) return;
-      setBusy(true);
+      submission.current?.abort();
+      const controller = new AbortController();
+      submission.current = controller;
+      setPending({ owner, client, signal: controller.signal });
       setError(undefined);
       try {
         const subject = selected.owner ?? owner;
         await checkCredentialRecoveryOwner(
           selected.credentialRecovery === undefined ? undefined : subject,
+          controller.signal,
         );
+        if (controller.signal.aborted) return;
         const result = await admit(client, selected, subject);
+        if (controller.signal.aborted) return;
         forgetIntent(selected.id);
         onNavigate({ kind: 'launch', launchId: result.id }, { replace: true });
       } catch (cause) {
+        if (controller.signal.aborted) return;
         let repeat: ExistingLaunchAgent | undefined;
         try {
           repeat = repeatChoiceFrom(cause);
@@ -155,7 +176,7 @@ function Entry({
           }
         }
       } finally {
-        setBusy(false);
+        if (!controller.signal.aborted) setPending(undefined);
       }
     },
     [allowed, client, onNavigate, owner],
@@ -226,8 +247,15 @@ function Entry({
     void Promise.resolve().then(() => {
       const slot = `${owner}:${intent.key}`;
       if (!live || attempted.current.has(slot)) return;
+      const saved = readIntent(intent.path);
+      if (
+        saved?.id !== intent.id ||
+        saved.key !== intent.key ||
+        (saved.owner !== undefined && saved.owner !== owner)
+      )
+        return;
       attempted.current.add(slot);
-      void submit(intent);
+      void submit(saved);
     });
     return () => {
       live = false;
@@ -259,8 +287,8 @@ function Entry({
     }
     setIntent(selected);
     if (state.status === 'anonymous') {
-      setBusy(true);
-      void signIn(selected.path, options).finally(() => setBusy(false));
+      setSigningInBusy(true);
+      void signIn(selected.path, options).finally(() => setSigningInBusy(false));
     } else {
       attempted.current.add(`${owner}:${selected.key}`);
       void submit(selected);
