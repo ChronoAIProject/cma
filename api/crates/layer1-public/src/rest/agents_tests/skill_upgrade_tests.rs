@@ -58,19 +58,23 @@ async fn settle(store: &InMemorySandboxStore, id: &AgentId, version: &str, fail:
         next.revision += 1;
         next.updated_at = stamp.clone();
         next.conversation.last_seq += logs.len() as u64;
-        store
-            .commit_agent_work(AgentWorkMutation {
-                agent: next.clone(),
-                expected_agent_revision: current.revision,
-                holder: "worker".into(),
-                fence: current.work.lease.as_ref().unwrap().fence,
-                worktree: None,
-                appended_at: stamp.clone(),
-                sandbox_event: None,
-                agent_logs: logs,
-            })
-            .await
-            .unwrap();
+        let mutation = AgentWorkMutation {
+            agent: next.clone(),
+            expected_agent_revision: current.revision,
+            holder: "worker".into(),
+            fence: current.work.lease.as_ref().unwrap().fence,
+            worktree: None,
+            appended_at: stamp.clone(),
+            sandbox_event: None,
+            agent_logs: logs,
+        };
+        if pin {
+            store.commit_agent_work(mutation).await
+        } else {
+            let guard = skill_result_fixture::capture(store, &current).await;
+            store.commit_agent_skill_result(mutation, guard).await
+        }
+        .unwrap();
         current = next;
     }
 }
@@ -88,6 +92,7 @@ async fn upgrade_routes_keep_one_effective_row_replay_keys_and_name_runtime_and_
         .await
         .unwrap();
     fixture.store.create_agent(agent.clone()).await.unwrap();
+    skill_result_fixture::prepare_parents(&fixture.store, &agent).await;
     let old = agent_router(
         fixture
             .state
@@ -312,6 +317,7 @@ async fn upgrade_gate_closure_preserves_reads_settlement_and_global_exact_replay
         .await
         .unwrap();
     fixture.store.create_agent(agent.clone()).await.unwrap();
+    skill_result_fixture::prepare_parents(&fixture.store, &agent).await;
     let closed = agent_router(fixture.state.clone().with_skill_support(Arc::new(Upgrades)));
     let mut state = fixture.state.clone().with_skill_support(Arc::new(Upgrades));
     state.agent_operations = state.agent_operations.with_skill_upgrades_enabled(true);

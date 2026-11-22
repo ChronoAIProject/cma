@@ -4,7 +4,7 @@
 // Independent SDKs replay the same boundary; the web imports the TS SDK constant.
 pub(super) const MAX_LOGIN_URL_BYTES: usize = 4096;
 
-pub(super) fn app_return_target(value: &str) -> Result<String, ()> {
+pub(in crate::auth) fn app_return_target(value: &str) -> Result<String, ()> {
     let (path, query) = value
         .split_once('?')
         .map_or((value, None), |(path, query)| (path, Some(query)));
