@@ -28,12 +28,7 @@ export async function navigation(page: Page, open: boolean) {
 
 export async function environments(page: Page) {
   await navigation(page, true);
-  const filter = page.getByRole('button', { name: 'Filter', exact: true });
-  if ((await filter.getAttribute('aria-expanded')) !== 'true') await filter.click();
-  await page
-    .getByRole('group', { name: 'Navigation filters' })
-    .getByRole('button', { name: 'Manage environments', exact: true })
-    .click();
+  await page.getByRole('button', { name: 'Environments', exact: true }).click();
 }
 
 export function resourceRow(page: Page, kind: string, id: string) {

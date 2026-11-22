@@ -27,6 +27,9 @@ impl TransportAuthority for ObservedAuthority {
     fn register_receiver(&self, receiver: Arc<dyn ReceiverRevocation>) -> crate::Result<()> {
         self.inner.register_receiver(receiver)
     }
+    fn begin_receiver_confirmation(&self, identity: &str) -> crate::Result<()> {
+        self.inner.begin_receiver_confirmation(identity)
+    }
     async fn check(&self) -> crate::Result<()> {
         self.inner.check().await
     }

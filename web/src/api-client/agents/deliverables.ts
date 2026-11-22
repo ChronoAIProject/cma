@@ -1,6 +1,8 @@
 import type { ResolvedConfig } from '../config.js';
 import type { DocumentAccessOptions } from '../documents.js';
 import { ProtocolError } from '../errors.js';
+import { deliverableResource as resource, type DeliverableResource } from './delivery-resource.js';
+import { taskAcceptance } from '../task-acceptance.js';
 import {
   readBytes,
   requestResponse,
@@ -15,7 +17,6 @@ import {
   integer,
   object,
   positiveInteger,
-  tagged,
   text,
   type Output,
 } from '../schema.js';
@@ -48,14 +49,6 @@ function nativeMedia(path: string): string | undefined {
     : Object.entries(nativeMediaTypes).find(([suffix]) => suffix === extension)?.[1];
 }
 
-const resource = tagged(
-  {
-    agent_artifact: object({ kind: enumeration('agent_artifact'), id: text }),
-    document: object({ kind: enumeration('document'), id: text, revision: positiveInteger }),
-    live_file: object({ kind: enumeration('live_file'), path: text }),
-  },
-  'kind',
-);
 const reference = object({
   agent_id: text,
   resource,
@@ -93,7 +86,7 @@ const reading = object({
 });
 const description = object({ reference, marker: text });
 
-export type DeliverableResource = Output<typeof resource>;
+export type { DeliverableResource } from './delivery-resource.js';
 export type DeliverableReference = Output<typeof reference>;
 export type AnswerDeliverable = Output<typeof delivery>;
 export type AnswerDeliverables = Output<typeof collection>;
@@ -319,6 +312,27 @@ export function readAnswerDeliverable(
   );
 }
 
+export function confirmTaskDelivery(
+  config: ResolvedConfig,
+  agentId: string,
+  answerId: string,
+  id: string,
+  taskId: string,
+  options: DocumentAccessOptions = {},
+) {
+  input(deliveryId, id);
+  return read(
+    config,
+    `${path(agentId, answerId)}/${segment(id)}/confirmation`,
+    (value) => {
+      const task = taskAcceptance(value);
+      if (task.task_id !== taskId) throw new ProtocolError('task confirmation changed identity');
+      return task;
+    },
+    { ...access(options), method: 'POST', body: { task_id: taskId } },
+  );
+}
+
 export class DeliverableUnavailable extends ProtocolError {
   constructor(readonly status: AnswerDeliverable['status']) {
     super(`delivery is unavailable (${status})`);
@@ -390,4 +404,45 @@ function downloadMediaMatches(reference: DeliverableReference, mediaType: string
   if (reference.media_type === mediaType) return true;
   // Earlier markers only stored octet-stream. The server can now identify their exact bytes.
   return reference.media_type === opaque && mediaType === nativeMedia(reference.resource.path);
+}
+
+export class AgentDeliverables {
+  constructor(protected readonly config: ResolvedConfig) {}
+
+  answerDeliverables(id: string, answerId: string, options: DocumentAccessOptions = {}) {
+    return listAnswerDeliverables(this.config, id, answerId, options);
+  }
+  describeDeliverable(
+    id: string,
+    selected: DeliverableResource,
+    options: DocumentAccessOptions = {},
+  ) {
+    return describeDeliverable(this.config, id, selected, options);
+  }
+  readAnswerDeliverable(
+    id: string,
+    answerId: string,
+    deliveryId: string,
+    options: DeliverableReadOptions = {},
+  ) {
+    return readAnswerDeliverable(this.config, id, answerId, deliveryId, options);
+  }
+  downloadAnswerDeliverable(
+    id: string,
+    answerId: string,
+    expected: AnswerDeliverable,
+    options: DocumentAccessOptions = {},
+  ) {
+    return downloadAnswerDeliverable(this.config, id, answerId, expected, options);
+  }
+
+  confirmTaskDelivery(
+    id: string,
+    answerId: string,
+    deliveryId: string,
+    taskId: string,
+    options: DocumentAccessOptions = {},
+  ) {
+    return confirmTaskDelivery(this.config, id, answerId, deliveryId, taskId, options);
+  }
 }

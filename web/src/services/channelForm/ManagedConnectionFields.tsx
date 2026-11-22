@@ -10,7 +10,7 @@ import { Choice, Section, Toggle } from './Fields';
 import { defaultSource, optional, type Fields } from './model';
 
 type ConnectionList = { items: readonly ConnectionView[] } & (
-  | { status: 'idle' | 'loading' | 'denied' }
+  | { status: 'idle' | 'denied' }
   | { status: 'loaded'; next?: string }
   | { status: 'failed'; after?: string }
 );
@@ -18,10 +18,12 @@ type ConnectionList = { items: readonly ConnectionView[] } & (
 /** Existing CMA-owned Telegram connections only; does not create upstream bots. */
 export function ManagedConnectionFields({
   value,
+  active = true,
   onChange,
   hideAdmission = false,
   denied,
 }: {
+  active?: boolean;
   hideAdmission?: boolean;
   value: Fields;
   onChange: (value: Fields) => void;
@@ -32,30 +34,40 @@ export function ManagedConnectionFields({
   const [savedRef, setSavedRef] = useState(value.connection_ref);
   const [savedAdmission, setSavedAdmission] = useState(value.connection_admission);
   const [list, setList] = useState<ConnectionList>({ status: 'idle', items: [] });
+  const [loading, setLoading] = useState(false);
   const pending = useRef<AbortController | undefined>(undefined);
-  // Event Gateway remounts on an identity change. Old replies must not call denied for the new owner.
-  useLayoutEffect(() => () => pending.current?.abort(), []);
+
+  if (!active && loading) setLoading(false);
+  // End the read when the retained editor hides or its owner changes.
+  useLayoutEffect(
+    () => () => {
+      const request = pending.current;
+      pending.current = undefined;
+      request?.abort();
+    },
+    [active],
+  );
 
   async function loadConnections(after?: string) {
-    if (pending.current) return;
+    if (!active || pending.current) return;
     const request = new AbortController();
     pending.current = request;
     const signal = AbortSignal.any([request.signal, AbortSignal.timeout(15000)]);
-    setList({ status: 'loading', items: list.items });
+    setLoading(true);
     try {
-      const page = ConnectionPageSchema(
-        await serviceRequest<unknown>(
-          'event-gateway',
-          `/v1/channel-connections${after === undefined ? '' : `?after=${encodeURIComponent(after)}`}`,
-          { signal },
-        ),
+      const response = await serviceRequest<unknown>(
+        'event-gateway',
+        `/v1/channel-connections${after === undefined ? '' : `?after=${encodeURIComponent(after)}`}`,
+        { signal },
       );
+      if (pending.current !== request) return;
       signal.throwIfAborted();
+      const page = ConnectionPageSchema(response);
       const items = new Map(list.items.map((item) => [item.connection_ref, item]));
       for (const item of page.items) items.set(item.connection_ref, item);
       setList({ status: 'loaded', items: [...items.values()], next: page.next_after ?? undefined });
     } catch (error) {
-      if (request.signal.aborted) return;
+      if (pending.current !== request) return;
       if (error instanceof ServiceError && (error.status === 401 || error.status === 403)) {
         setList({ status: 'denied', items: [] });
         denied(error.status);
@@ -63,7 +75,10 @@ export function ManagedConnectionFields({
         setList({ status: 'failed', items: list.items, after });
       }
     } finally {
-      pending.current = undefined;
+      if (pending.current === request) {
+        pending.current = undefined;
+        setLoading(false);
+      }
     }
   }
   return (
@@ -126,8 +141,12 @@ export function ManagedConnectionFields({
             ]}
             onChange={(connection_ref) => onChange({ ...value, connection_ref })}
           />
-          {list.status === 'loading' ? <p role="status">Loading your connections…</p> : null}
-          {list.status === 'loaded' &&
+          {loading ? <p role="status">Loading your connections…</p> : null}
+          {!loading && list.status === 'idle' ? (
+            <Button onClick={() => void loadConnections()}>Load connections</Button>
+          ) : null}
+          {!loading &&
+          list.status === 'loaded' &&
           list.next === undefined &&
           list.items.every((item) => item.status !== 'ready') ? (
             <p className="channel-field-hint">
@@ -135,18 +154,19 @@ export function ManagedConnectionFields({
               relay or direct Telegram bot.
             </p>
           ) : null}
-          {list.status === 'failed' ? (
+          {!loading && list.status === 'failed' ? (
             <p role="alert">
               Saved Telegram connections could not be loaded. Your draft is retained. You can retry
               or switch this option off for a NyxID relay or direct Telegram bot.{' '}
               <Button onClick={() => void loadConnections(list.after)}>Retry connections</Button>
             </p>
           ) : null}
-          {list.status === 'loaded' && list.next !== undefined ? (
+          {!loading && list.status === 'loaded' && list.next !== undefined ? (
             <Button onClick={() => void loadConnections(list.next)}>Load more connections</Button>
           ) : null}
           {!hideAdmission ? (
             <AdmissionFields
+              path="/connection_admission"
               label="Connection admission"
               value={value.connection_admission}
               onChange={(connection_admission) => onChange({ ...value, connection_admission })}

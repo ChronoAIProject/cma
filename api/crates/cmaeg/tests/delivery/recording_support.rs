@@ -183,6 +183,7 @@ impl Recording {
             .send(DeliveryCommand::StreamOutcome {
                 turn: turn.clone(),
                 outcome,
+                answer_response_id: None,
             })
             .await
             .unwrap();

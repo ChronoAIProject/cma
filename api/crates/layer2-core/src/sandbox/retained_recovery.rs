@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     store::{SandboxStore, SandboxStoreError},
-    Agent, AgentStatus, RuntimeBinding, Sandbox, SandboxStatus, SandboxWorkStep, Workspace,
+    Agent, AgentStatus, RetainedReopenService, RuntimeBinding, Sandbox, SandboxStatus,
+    SandboxWorkStep, Workspace,
 };
 use crate::{Caller, Capability, SandboxId};
 
@@ -63,6 +64,14 @@ pub struct RetainedRecoverySource<'a> {
 
 impl RetainedRecoverySnapshot {
     pub fn source(&self) -> Result<RetainedRecoverySource<'_>, RetainedRecoveryDisposition> {
+        let source = self.native_source()?;
+        self.validate_children(source.generation)?;
+        Ok(source)
+    }
+
+    pub(super) fn native_source(
+        &self,
+    ) -> Result<RetainedRecoverySource<'_>, RetainedRecoveryDisposition> {
         use RetainedRecoveryDisposition as D;
         let sandbox = &self.sandbox;
         sandbox.validate().map_err(|_| D::AuthorityChanged)?;
@@ -132,7 +141,6 @@ impl RetainedRecoverySnapshot {
         {
             return Err(D::AuthorityChanged);
         }
-        self.validate_children(generation)?;
         Ok(RetainedRecoverySource {
             binding,
             generation,
@@ -225,6 +233,15 @@ pub struct RetainedRecoveryAssessment {
     pub admission_enabled: bool,
 }
 
+impl RetainedRecoveryAssessment {
+    pub(super) fn inspection(disposition: RetainedRecoveryDisposition) -> Self {
+        Self {
+            disposition,
+            admission_enabled: false,
+        }
+    }
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum RetainedRecoveryError {
     #[error("forbidden")]
@@ -245,13 +262,14 @@ struct AssessmentObservation {
     started: tokio::time::Instant,
     outcome: &'static str,
     completed: bool,
+    admission_enabled: bool,
 }
 
 impl Drop for AssessmentObservation {
     fn drop(&mut self) {
         tracing::info!(parent: None, outcome = self.outcome,
             elapsed_ms = self.started.elapsed().as_millis() as u64,
-            completed = self.completed, admission_enabled = false,
+            completed = self.completed, admission_enabled = self.admission_enabled,
             "retained recovery assessment");
     }
 }
@@ -273,6 +291,15 @@ impl RetainedRecoveryService {
         caller: &Caller,
         id: &SandboxId,
     ) -> Result<RetainedRecoveryAssessment, RetainedRecoveryError> {
+        self.assess_with_reopening(caller, id, None).await
+    }
+
+    pub async fn assess_with_reopening(
+        &self,
+        caller: &Caller,
+        id: &SandboxId,
+        reopening: Option<&RetainedReopenService>,
+    ) -> Result<RetainedRecoveryAssessment, RetainedRecoveryError> {
         if !caller.authorization.allows(Capability::UseOwnSandboxes) {
             return Err(RetainedRecoveryError::Forbidden);
         }
@@ -284,8 +311,10 @@ impl RetainedRecoveryService {
             started: tokio::time::Instant::now(),
             outcome: "cancelled",
             completed: false,
+            admission_enabled: false,
         };
-        let disposition = tokio::time::timeout(Duration::from_secs(20), async {
+        use RetainedRecoveryDisposition as D;
+        let assessment = tokio::time::timeout(Duration::from_secs(20), async {
             // Bound the initial authorization read too. No child/log/native
             // evidence is loaded before ownership has been established.
             self.store
@@ -302,7 +331,13 @@ impl RetainedRecoveryService {
             if snapshot.sandbox.owner != caller.subject {
                 return Err(RetainedRecoveryError::NotFound);
             }
-            let disposition = match snapshot.source() {
+            let source = snapshot.source();
+            if let Some(reopening) = reopening {
+                if let Some(assessment) = reopening.assess_admission(&snapshot, &source).await? {
+                    return Ok(assessment);
+                }
+            }
+            let disposition = match source {
                 Ok(_) => self.inspector.inspect(&snapshot).await,
                 Err(reason) => reason,
             };
@@ -314,29 +349,33 @@ impl RetainedRecoveryService {
             if current.sandbox.owner != caller.subject {
                 return Err(RetainedRecoveryError::NotFound);
             }
-            Ok(if snapshot == current {
-                disposition
-            } else {
-                RetainedRecoveryDisposition::AuthorityChanged
-            })
+            Ok(RetainedRecoveryAssessment::inspection(
+                if snapshot == current {
+                    disposition
+                } else {
+                    D::AuthorityChanged
+                },
+            ))
         })
         .await
-        .unwrap_or(Ok(RetainedRecoveryDisposition::EvidenceUnavailable));
+        .unwrap_or(Ok(RetainedRecoveryAssessment::inspection(
+            D::EvidenceUnavailable,
+        )));
         observation.completed = true;
-        observation.outcome = match &disposition {
-            Ok(disposition) => disposition.as_str(),
+        observation.outcome = match &assessment {
+            Ok(assessment) => {
+                observation.admission_enabled = assessment.admission_enabled;
+                assessment.disposition.as_str()
+            }
             Err(RetainedRecoveryError::Forbidden) => "forbidden",
             Err(RetainedRecoveryError::NotFound) => "not_found",
             Err(RetainedRecoveryError::Unavailable) => "evidence_unavailable",
         };
-        Ok(RetainedRecoveryAssessment {
-            disposition: disposition?,
-            admission_enabled: false,
-        })
+        assessment
     }
 }
 
-fn store_error(error: SandboxStoreError) -> RetainedRecoveryError {
+pub(super) fn store_error(error: SandboxStoreError) -> RetainedRecoveryError {
     match error {
         SandboxStoreError::NotFound => RetainedRecoveryError::NotFound,
         _ => RetainedRecoveryError::Unavailable,

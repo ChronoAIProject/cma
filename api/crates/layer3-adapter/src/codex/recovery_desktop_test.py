@@ -66,6 +66,15 @@ class DesktopRecovery(unittest.TestCase):
         self.source = "c03e804c28de395c7501001f390346f2c2ad29349eab2e17cf9929e7902bcf99"
         self.assertTrue(m.absent(self.plan(), self.live))
 
+    def test_retained_pre_supervision_launchers_keep_recovery_authority(self):
+        for source in (
+            "6910bdac6a24cc971f95bc0d2d10f19635a225e6a9f04b333d3555b4cec7ed7e",
+            "7b290d8bcf9d95de46c43d069d8b1e73def32f55cfc2ede3e04b7720bc6e439e",
+        ):
+            with self.subTest(source=source):
+                self.source = source
+                self.assertTrue(m.absent(self.plan(), self.live))
+
     def test_children_and_adopted_helpers_are_admitted_by_ancestry(self):
         # A crash helper can have its own session after double-forking. It is
         # still adopted by the launcher subreaper, never the runtime root.

@@ -43,7 +43,9 @@ pub use rate_limits::RateLimitConfig;
 mod relay_capacity;
 mod runtime;
 mod runtime_capacity;
+mod shell_settings;
 pub(crate) use relay_capacity::RelayCapacityConfig;
+pub(crate) use shell_settings::BackendFreeConfig;
 
 mod features;
 mod quiet_output;
@@ -200,26 +202,57 @@ pub struct Config {
     pub document_storage: Option<DocumentStorageConfig>,
 }
 
+pub(crate) enum StartupConfig {
+    Execution(Box<Config>),
+    BackendFree(Box<BackendFreeConfig>),
+}
+
+impl StartupConfig {
+    pub(crate) fn from_env() -> Result<Self, String> {
+        Self::from_lookup(strict_env)
+    }
+
+    pub(crate) fn from_lookup(
+        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+    ) -> Result<Self, String> {
+        match runtime::RuntimeMode::from_lookup(&mut lookup)? {
+            runtime::RuntimeMode::Execution(provider) => Config::with_provider(lookup, provider)
+                .map(|config| Self::Execution(Box::new(config))),
+            runtime::RuntimeMode::BackendFree => BackendFreeConfig::from_lookup(lookup)
+                .map(|config| Self::BackendFree(Box::new(config))),
+        }
+    }
+}
+
 impl Config {
     /// Read and validate configuration exactly once at process startup.
+    #[cfg(test)]
     pub fn from_env() -> Result<Self, String> {
         Self::from_lookup(strict_env)
     }
 
+    #[cfg(test)]
     fn from_lookup(
         mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
     ) -> Result<Self, String> {
-        let bind = value_or(&mut lookup, "CHRONO_SERVER_BIND", DEFAULT_BIND)?
-            .parse::<SocketAddr>()
-            .map_err(|error| format!("CHRONO_SERVER_BIND is not a socket address: {error}"))?;
-        let metrics_bind = value_or(&mut lookup, "CHRONO_METRICS_BIND", "0.0.0.0:9091")?
-            .parse::<SocketAddr>()
-            .map_err(|error| format!("CHRONO_METRICS_BIND is not a socket address: {error}"))?;
-        if metrics_bind == bind && bind.port() != 0 {
-            return Err("CHRONO_METRICS_BIND must differ from CHRONO_SERVER_BIND".into());
-        }
-        let public_url = value_or(&mut lookup, "CHRONO_SERVER_PUBLIC_URL", DEFAULT_PUBLIC_URL)?;
-        validate_origin("CHRONO_SERVER_PUBLIC_URL", &public_url)?;
+        let runtime::RuntimeMode::Execution(provider) =
+            runtime::RuntimeMode::from_lookup(&mut lookup)?
+        else {
+            return Err("an execution backend is required for runtime configuration".into());
+        };
+        Self::with_provider(lookup, provider)
+    }
+
+    fn with_provider(
+        mut lookup: impl FnMut(&str) -> Result<Option<String>, String>,
+        provider: runtime::Provider,
+    ) -> Result<Self, String> {
+        let shell_settings::ServerSettings {
+            bind,
+            metrics_bind,
+            public_url,
+            cors_origins,
+        } = shell_settings::server(&mut lookup)?;
         let agent_access_retained_origins = access_origins::retained(&mut lookup)?;
         let agent_access_transport_migration = access_migration::parse(&mut lookup)?;
         let provider_tool_relay = provider_tool_relay::parse(&mut lookup, &public_url)?;
@@ -239,26 +272,10 @@ impl Config {
                 &format!("{}/api/image-manager", public_url.trim_end_matches('/')),
             )?,
         )?;
-        let cors_origins = value_or(
-            &mut lookup,
-            "CHRONO_SERVER_CORS_ORIGIN",
-            DEFAULT_CORS_ORIGIN,
-        )?
-        .split(',')
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| {
-            validate_origin("CHRONO_SERVER_CORS_ORIGIN", value)?;
-            HeaderValue::from_str(value).map_err(|error| {
-                format!("CHRONO_SERVER_CORS_ORIGIN contains an invalid header value: {error}")
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-        if cors_origins.is_empty() {
-            return Err("CHRONO_SERVER_CORS_ORIGIN must contain at least one origin".into());
-        }
-
         let features = FeatureFlags::from_lookup(&mut lookup)?;
+        if features.home_backup_expiry_enabled {
+            return Err("CHRONO_HOME_BACKUP_EXPIRY_ENABLED requires a qualified deletion provider; retention preparation cannot be enabled".into());
+        }
         let home_backup = HomeBackupConfig::from_lookup(&mut lookup, features.home_backup_enabled)?;
         let account_deletion_enabled = account_deletion::enabled(&mut lookup)?;
         let account_erasure_transaction_drain_seconds =
@@ -269,20 +286,13 @@ impl Config {
             admission_log::fleet_percent(&mut lookup, &bounded_admission_agents)?;
         let rate_limits = RateLimitConfig::from_lookup(&mut lookup)?;
         let trusted_proxies = TrustedProxyConfig::from_lookup(&mut lookup)?;
-        let mongodb_uri = required(&mut lookup, "CHRONO_MONGODB_URI")?;
-        validate_mongodb_uri(&mongodb_uri)?;
-        let mongodb_database = value_or(&mut lookup, "CHRONO_MONGODB_DATABASE", DEFAULT_DATABASE)?;
-        if mongodb_database.is_empty()
-            || mongodb_database.len() > 63
-            || mongodb_database
-                .bytes()
-                .any(|byte| byte.is_ascii_whitespace() || b"/\\.\"$".contains(&byte))
-        {
-            return Err("CHRONO_MONGODB_DATABASE is not a valid MongoDB database name".into());
-        }
-
-        let deployment_id = runtime::deployment_id_from_lookup(&mut lookup)?;
-        let runtime = RuntimeConfig::from_lookup(&mut lookup)?;
+        let shell_settings::DatabaseSettings {
+            mongodb_uri,
+            mongodb_database,
+            mongodb_authority,
+            deployment_id,
+        } = shell_settings::database(&mut lookup)?;
+        let runtime = RuntimeConfig::from_lookup(&mut lookup, provider)?;
         let execution = execution::from_lookup(&mut lookup)?;
         let mut baseline_services = parse_service_ids(
             "CHRONO_BASELINE_SERVICES",
@@ -301,58 +311,14 @@ impl Config {
         baseline_services.dedup();
         let auth_encryption_key =
             AuthEncryptionKey::from_base64(&required(&mut lookup, "CHRONO_AUTH_ENCRYPTION_KEY")?)?;
-        let activity_retention_days = parse_u64(
-            "CHRONO_ACTIVITY_RETENTION_DAYS",
-            &value_or(
-                &mut lookup,
-                "CHRONO_ACTIVITY_RETENTION_DAYS",
-                &DEFAULT_ACTIVITY_RETENTION_DAYS.to_string(),
-            )?,
-            1,
-            3_650,
-        )?;
-        let activity_retention = Duration::from_secs(
-            activity_retention_days
-                .checked_mul(86_400)
-                .expect("the validated day count fits in seconds"),
-        );
+        let activity_retention = shell_settings::activity_retention(&mut lookup)?;
         let default_profiles = DefaultProfileConfig::from_lookup(&mut lookup)?;
         let agent_manager_sandbox_capacity = profiles::agent_manager_capacity(&mut lookup)?;
 
-        let (auth_mode, nyxid_public_url) =
-            match value_or(&mut lookup, "CHRONO_AUTH_MODE", "provider")?.as_str() {
-                "trusted" => (
-                    AuthMode::Trusted {
-                        subject: value_or(
-                            &mut lookup,
-                            "CHRONO_TRUSTED_SUBJECT",
-                            "local-developer",
-                        )?,
-                    },
-                    None,
-                ),
-                "provider" => (
-                    AuthMode::Provider {
-                        base_url: required(&mut lookup, "CHRONO_NYXID_BASE_URL")?,
-                        client_id: required(&mut lookup, "CHRONO_NYXID_CLIENT_ID")?,
-                        client_secret: required(&mut lookup, "CHRONO_NYXID_CLIENT_SECRET")?,
-                        public_url: public_url.clone(),
-                    },
-                    Some(parse_canonical_https_origin(
-                        "CHRONO_NYXID_PUBLIC_URL",
-                        &required(&mut lookup, "CHRONO_NYXID_PUBLIC_URL")?,
-                    )?),
-                ),
-                value => {
-                    return Err(format!(
-                        "CHRONO_AUTH_MODE must be \"provider\" or \"trusted\", got {value:?}"
-                    ))
-                }
-            };
-        if let AuthMode::Provider { base_url, .. } = &auth_mode {
-            validate_origin("CHRONO_NYXID_BASE_URL", base_url)?;
-        }
-
+        let shell_settings::AuthenticationSettings {
+            auth_mode,
+            nyxid_public_url,
+        } = shell_settings::authentication(&mut lookup, &public_url)?;
         let document_storage = DocumentStorageConfig::from_lookup(&mut lookup)?;
         if agent_access_transport_migration.is_some() && document_storage.is_none() {
             return Err(
@@ -389,10 +355,7 @@ impl Config {
             trusted_proxies,
             mongodb_uri,
             mongodb_database,
-            mongodb_authority: cma_service_auth::mongodb_authority::MongoAuthorityMode::parse(
-                lookup("CHRONO_MONGODB_AUTHORITY_MODE")?.as_deref(),
-            )
-            .map_err(str::to_owned)?,
+            mongodb_authority,
             deployment_id,
             runtime,
             execution,

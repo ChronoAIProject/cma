@@ -3,7 +3,7 @@ use futures_util::future::join_all;
 use super::*;
 
 impl Fixture {
-    async fn block_verification(&self) -> Arc<Semaphore> {
+    pub(super) async fn block_verification(&self) -> Arc<Semaphore> {
         let mut metadata = self.auth.metadata.write().await;
         let metadata = metadata.as_mut().unwrap();
         metadata.introspection_endpoint =

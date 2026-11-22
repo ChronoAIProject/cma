@@ -22,9 +22,11 @@ from staging_cd_reservations import Reservations, SourceAlreadyFinal, validate_r
 from staging_cd_publication_diagnostics import PublicationDiagnostics, run_publication
 from staging_cd_versions import DEPLOYABLES
 from staging_cd_timing import Timings
-from staging_cd_build_cache import BuildCache
+from staging_cd_build_cache import SCOPES, BuildCache
+from staging_cd_cache_save import report_layers
 from staging_cd_runtime_smoke import CleanupIncomplete, qualify as qualify_runtime
 from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS, TARGETS
+from staging_cd_test_failures import annotate as annotate_failed_tests, public_summary
 from staging_cd_contract import GROUP, from_source
 
 
@@ -211,6 +213,7 @@ def main():
     timings = Timings()
     build_metrics = []
     cache_metrics = []
+    layer_exports = []
     skip = {"disposition": "reservation_superseded"}
     def operation(_masker, diagnostics):
         event_identity(env)
@@ -263,8 +266,11 @@ def main():
                         with timings.stage("build"):
                             progress: dict = {}
                             build_metrics.append(progress)
+                            started = time.time()
                             archive, release = build(root, reservation, directory, source=source, cache=cache,
                                                      progress=progress)
+                        if cache is not None and cache.exports_layers() is True:
+                            layer_exports.append((started, progress))
                     require(release["component"] == reservation["component"], "Built release component differs")
                     try:
                         receipt = publish(archive, release, directory, registry, env.get("GH_TOKEN"),
@@ -305,23 +311,43 @@ def main():
         require(env.get("CD_COMPONENT") in DEPLOYABLES, "Unexpected superseded component")
         step_output(env, "disposition", skip["disposition"])
 
-    result = run_publication(operation, on_superseded=superseded, component=env.get("CD_COMPONENT"))
+    outcome = {}
+    result = run_publication(operation, on_superseded=superseded, component=env.get("CD_COMPONENT"), outcome=outcome)
     # run_private has restored the public descriptors; only fixed stage records
     # cross that boundary, including the failing phase on an unsuccessful run.
     component = env.get("CD_COMPONENT")
     if component in TARGETS:
         timings.emit(sys.stdout, scan_only=component in RUNTIME_TARGETS)
     # Every image reports its build summary, so a failed runtime build also
-    # names the Dockerfile step where it stopped.
+    # names the Dockerfile step where it stopped. BuildKit can mark a vertex
+    # failed in a build that still completes (an optional cache import, for
+    # example), so the error annotation is reserved for a publication that
+    # actually stopped in its build stage.
     label = component if component in DEPLOYABLES else "image"
+    stopped_in_build = bool(result) and outcome.get("stage") == "build"
     for metrics in build_metrics:
-        value = metrics or {"complete": False, "reason": "progress-unavailable"}
+        # Failing test names are re-checked here too, like their annotations.
+        value = public_summary(metrics) if metrics else {"complete": False, "reason": "progress-unavailable"}
         print(json.dumps({"event": "publication-build", **value}, sort_keys=True), flush=True)
-        for step in value.get("failed_steps", ())[:1]:
+        for step in value.get("failed_steps", ())[:1] if stopped_in_build else ():
             print(f"::error title=Image build step failed::{label} stopped at Dockerfile step {step}; "
                   "its output is withheld. Reproduce that step locally from the same source.", flush=True)
+    if stopped_in_build and build_metrics:
+        # The last build started is the one that stopped. A failed test stage
+        # in it names its failing tests: names matched by fixed failure
+        # patterns and re-validated here, never raw build output.
+        annotate_failed_tests(label, build_metrics[-1], sys.stdout)
     if component in APP_TARGETS:
         emit_cache_metrics(component, cache_metrics, sys.stdout)
+    if layer_exports and component in SCOPES:
+        # Diagnostic only, after publication: did the last export reach the
+        # Actions cache, or will the next build of this component start cold?
+        started, progress = layer_exports[-1]
+        try:
+            report_layers(component, SCOPES[component], progress, started, env)
+        except Exception:  # noqa: BLE001 - by construction, the check never changes the outcome.
+            print(f"CACHE-SAVE cache=build-layers component={component} result=unknown reason=unreadable",
+                  flush=True)
     return result
 
 

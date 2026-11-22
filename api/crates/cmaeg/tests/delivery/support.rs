@@ -304,6 +304,7 @@ impl App {
             .send(DeliveryCommand::StreamOutcome {
                 turn: self.turn.clone(),
                 outcome,
+                answer_response_id: None,
             })
             .await
             .unwrap();

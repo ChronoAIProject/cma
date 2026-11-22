@@ -13,6 +13,75 @@ pub(super) enum ProviderVerificationError {
     RateLimited(super::identity_throttle::RetryAfter),
 }
 
+/// Travels with an unfinished flight's result, so each consumer retains the
+/// selected cause without borrowing the verification leader's request context.
+#[derive(Debug, Clone)]
+pub(super) struct VerificationFailure {
+    pub error: ProviderVerificationError,
+    pub cause: VerificationCause,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum VerificationCause {
+    Provider,
+    Capacity,
+    FenceCapacity,
+    VerificationDeadline,
+    CallerDeadline,
+    PublicationEpochChanged,
+    ReceiptExpired,
+    ExpiryClockBounds,
+    ConsumptionExpired,
+    ConsumptionEpochChanged,
+}
+
+impl VerificationFailure {
+    pub(super) fn new(error: ProviderVerificationError, cause: VerificationCause) -> Self {
+        Self { error, cause }
+    }
+
+    pub(super) fn reason(&self) -> &'static str {
+        match self.cause {
+            VerificationCause::Provider => match &self.error {
+                ProviderVerificationError::Rejected(_) => "rejected",
+                ProviderVerificationError::Unavailable(_) => "unknown",
+                ProviderVerificationError::RateLimited(_) => "rate_limited",
+                ProviderVerificationError::Transient(reason) => match *reason {
+                    "timeout" => "timeout",
+                    "connection" => "connection",
+                    "http_502" | "http_503" => "http_status",
+                    "deadline" => "verification_deadline",
+                    _ => "unknown",
+                },
+            },
+            VerificationCause::Capacity => "verification_capacity",
+            VerificationCause::FenceCapacity => "verification_fence_capacity",
+            VerificationCause::VerificationDeadline => "verification_deadline",
+            VerificationCause::CallerDeadline => "caller_deadline",
+            VerificationCause::PublicationEpochChanged => "publication_epoch_changed",
+            VerificationCause::ReceiptExpired => "receipt_expired",
+            VerificationCause::ExpiryClockBounds => "expiry_clock_bounds",
+            VerificationCause::ConsumptionExpired => "consumption_expired",
+            VerificationCause::ConsumptionEpochChanged => "consumption_epoch_changed",
+        }
+    }
+
+    pub(super) fn status(&self) -> Option<u16> {
+        match &self.error {
+            ProviderVerificationError::Transient("http_502") => Some(502),
+            ProviderVerificationError::Transient("http_503") => Some(503),
+            ProviderVerificationError::RateLimited(_) => Some(429),
+            _ => None,
+        }
+    }
+}
+
+impl From<ProviderVerificationError> for VerificationFailure {
+    fn from(error: ProviderVerificationError) -> Self {
+        Self::new(error, VerificationCause::Provider)
+    }
+}
+
 impl ProviderVerificationError {
     pub(super) fn reason(&self) -> &'static str {
         match self {

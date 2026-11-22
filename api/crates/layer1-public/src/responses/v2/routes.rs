@@ -35,6 +35,7 @@ pub(super) struct CreateV2ResponseRequest {
     metadata: Option<BTreeMap<String, String>>,
     event_context: Option<super::event_context::EventContext>,
     answer_context: Option<crate::conversation::AnswerContextRequest>,
+    task_acceptance: Option<crate::rest::task_acceptance_shapes::TaskAcceptanceRequestView>,
     /// Exact provider binding generation; valid only with a binding credential.
     #[schema(minimum = 1)]
     binding_generation: Option<u64>,

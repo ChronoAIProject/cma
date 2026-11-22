@@ -6,6 +6,23 @@ pub(super) async fn callback(
     Query(params): Query<CallbackParams>,
     headers: HeaderMap,
 ) -> Response {
+    callback_for_scope(auth, params, headers, true).await
+}
+
+pub(super) async fn account_callback(
+    State(auth): State<Arc<AuthState>>,
+    Query(params): Query<CallbackParams>,
+    headers: HeaderMap,
+) -> Response {
+    callback_for_scope(auth, params, headers, false).await
+}
+
+async fn callback_for_scope(
+    auth: Arc<AuthState>,
+    params: CallbackParams,
+    headers: HeaderMap,
+    actor_links: bool,
+) -> Response {
     if !matches!(auth.mode, AuthMode::Provider { .. }) {
         return Redirect::to("/").into_response();
     }
@@ -45,7 +62,11 @@ pub(super) async fn callback(
             return silent::fallback(state.starts_with("s."), None, store_failure());
         }
     };
-    let mut response = complete_callback(&auth, &params, &headers, &attempt, binding).await;
+    let mut response = if !actor_links && attempt.actor_link_intent.is_some() {
+        layer1_public::rest::HttpProblem::SandboxBackendUnavailable.into_response()
+    } else {
+        complete_callback(&auth, &params, &headers, &attempt, binding).await
+    };
     if !response.headers().contains_key(header::SET_COOKIE) {
         if let Err(error) = auth.revoke_browser_binding(binding).await {
             tracing::error!(error = %error, "could not cancel browser login");

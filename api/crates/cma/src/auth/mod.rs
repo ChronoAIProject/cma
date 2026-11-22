@@ -35,6 +35,7 @@ mod identity_lifetime;
 mod identity_observations;
 mod identity_retry;
 mod identity_throttle;
+pub(crate) use identity_throttle::RetryAfter as ProviderRetryAfter;
 #[allow(dead_code, reason = "the aggregate-neutral issuer is consumed by #809")]
 pub mod keys;
 mod middleware;
@@ -56,6 +57,7 @@ pub(crate) mod registration;
 pub(crate) mod relay;
 mod resource_request;
 mod sandbox_prerequisite;
+pub(crate) mod service_authorization;
 pub(crate) mod service_portal;
 mod session_routes;
 mod signup_options;
@@ -69,6 +71,7 @@ mod verification_diagnostics;
 mod verification_error;
 mod worker_credentials;
 
+pub(crate) use flow::account_router;
 pub use flow::router;
 pub use middleware::attach_subject;
 pub use records::SignInRecords;
@@ -138,6 +141,7 @@ pub struct AuthState {
     resource_request_enabled: bool,
     silent_sign_in_enabled: bool,
     browser_session_join_enabled: bool,
+    service_authorization: Option<Arc<dyn service_authorization::GrantAuthority>>,
     #[cfg(test)]
     preference_clock: fn() -> SystemTime,
     identity_proxy: Option<nyxid_proxy::jwt::Verifier>,
@@ -156,7 +160,7 @@ pub struct AuthState {
     pub(in crate::auth) signup_options_cache: signup_options::SignupOptionsCache,
     pub(super) store: Arc<dyn AuthStore>,
     pub(super) records: Option<SignInRecords>,
-    spend: Option<Arc<dyn layer2_core::budget::PlatformSpendLedger>>,
+    spend: Option<Arc<dyn registration::RegistrationPolicy>>,
     registration_capacity: Option<Arc<dyn registration::RegistrationCapacity>>,
 }
 
@@ -219,6 +223,7 @@ impl AuthState {
             resource_request_enabled: false,
             silent_sign_in_enabled: false,
             browser_session_join_enabled: false,
+            service_authorization: None,
             #[cfg(test)]
             preference_clock: SystemTime::now,
             identity_proxy: None,

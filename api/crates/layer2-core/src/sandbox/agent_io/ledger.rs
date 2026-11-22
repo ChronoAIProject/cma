@@ -372,7 +372,15 @@ pub fn validate_command_reservation(
     }
     // A closed Agent cannot become eligible by refreshing an observation. Exact
     // accepted-key replay has already returned before this new-admission check.
-    if !agent.status.is_live() {
+    if !agent.status.is_live()
+        || request
+            .envelope
+            .command
+            .task_acceptance()
+            .is_some_and(|intent| {
+                !intent.eligible(agent.conversation.observations.task_acceptance.as_ref())
+            })
+    {
         return Err(CommandLedgerError::NotAdmissible);
     }
     if request.expected_agent_revision != agent.revision

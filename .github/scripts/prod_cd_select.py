@@ -9,6 +9,12 @@ controller-verified by staging: a staging deployment evidence artifact,
 written by staging-cd.yml or redeploy-staging.yml on develop, must record it
 as controller-verified. The set is then rebuilt and re-verified by the same
 dispatch_set path staging redeploys use.
+
+Production selects only the application components (am, eg, web). It has no
+reviewed runtime-promotion design, so the runtime images stay pinned in
+Agent Manager's private configuration and are never selected, and an
+approved set that holds one is refused. Staging still deploys runtime images
+with Agent Manager; that rule lives in staging_cd_policy and is unchanged.
 """
 
 import io
@@ -17,6 +23,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import zipfile
 from pathlib import Path
 
@@ -27,8 +34,19 @@ EVIDENCE_PREFIX = "staging-deployment-"
 EVIDENCE_WORKFLOWS = (".github/workflows/staging-cd.yml", ".github/workflows/redeploy-staging.yml")
 EVIDENCE_SCHEMA = "cma-component-deployment-v1"
 VERIFIED = "controller-verified"
-MAX_ARTIFACT_PAGES = 10
-MAX_DOWNLOADS = 40
+# Evidence is found through the staging deployment workflows' own runs, not
+# the repository-wide artifact list: CI uploads hundreds of artifacts a day,
+# so ten pages of that list covered about two hours, and a component staging
+# had verified earlier could never be released. Runs are listed newest first.
+EVIDENCE_RUN_PAGES = 5
+MAX_RUN_LISTINGS = 300
+# Each staging run keeps one evidence archive per lane, so a component last
+# verified a few hours ago sits behind several archives per newer run.
+MAX_DOWNLOADS = 200
+DOWNLOAD_ATTEMPTS = 3
+# staging-promote.yml names each lane's evidence after the lane; a lane that
+# is not exactly one component (contract) or no suffix is always read.
+COMPONENT_LANES = frozenset({"am", "eg", "web", "runtime", "runtime-omarchy"})
 MAX_EVIDENCE_BYTES = 65536
 MAIN = "refs/heads/main"
 
@@ -92,8 +110,14 @@ def release_bounds(env, root, *, head=main_head, runner=subprocess.run):
 
 
 def enabled_components(policy, targets, runtime_targets):
-    """Runtime images are Agent Manager settings, so they follow the AM switch."""
-    return sorted(c for c in targets if policy["am" if c in runtime_targets else c])
+    """Enabled applications, plus runtime images only under an explicit promotion switch.
+
+    Production's private controller has no "runtime" switch, so it never
+    selects a runtime image. Runtime images are Agent Manager settings, so
+    even an explicit switch promotes them only together with AM.
+    """
+    runtimes = policy.get("runtime") is True and policy["am"]
+    return sorted(c for c in targets if (runtimes if c in runtime_targets else policy[c]))
 
 
 def select_versions(released, components, tags, history):
@@ -123,42 +147,64 @@ def evidence_rows(archive):
     return value["components"]
 
 
-def trusted_run(request, run_id):
-    run = request(f"actions/runs/{run_id}")
-    return (isinstance(run, dict) and run.get("id") == run_id and run.get("head_branch") == "develop"
+def trusted_view(run):
+    return (isinstance(run, dict) and isinstance(run.get("id"), int) and run.get("head_branch") == "develop"
             and run.get("event") in ("push", "workflow_dispatch") and run.get("path") in EVIDENCE_WORKFLOWS
             and run.get("conclusion") in ("success", "failure")
             and isinstance(run.get("repository"), dict)
             and run["repository"].get("full_name") == "ChronoAIProject/cma")
 
 
+def trusted_run(request, run_id):
+    run = request(f"actions/runs/{run_id}")
+    return trusted_view(run) and run.get("id") == run_id
+
+
+def evidence_lane(name, run_id):
+    """Return the lane suffix of this run's evidence artifact, '' for none, or None if foreign."""
+    prefix = f"{EVIDENCE_PREFIX}{run_id}-"
+    if not isinstance(name, str) or not name.startswith(prefix):
+        return None
+    attempt, _, lane = name[len(prefix):].partition("-")
+    if not attempt.isdigit() or attempt.startswith("0"):
+        return None
+    return lane
+
+
 def staging_verified(images, request, download):
     """Return the components whose exact image staging recorded as controller-verified."""
-    pending, verified, downloads, trusted = dict(images), set(), 0, {}
-    for page in range(1, MAX_ARTIFACT_PAGES + 1):
-        listing = request(f"actions/artifacts?per_page=100&page={page}")
-        require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list),
-                "Staging deployment evidence inventory is unavailable")
-        for artifact in listing["artifacts"]:
-            name, run = artifact.get("name"), artifact.get("workflow_run") or {}
-            if (not isinstance(name, str) or not name.startswith(EVIDENCE_PREFIX) or artifact.get("expired")
-                    or run.get("head_branch") != "develop" or not isinstance(run.get("id"), int)):
-                continue
-            if run["id"] not in trusted:
-                trusted[run["id"]] = trusted_run(request, run["id"])
-            if not trusted[run["id"]]:
-                continue
-            require(downloads < MAX_DOWNLOADS, "Staging deployment evidence search exceeded its bound")
-            downloads += 1
-            for component, row in evidence_rows(download(artifact)).items():
-                if (component in pending and isinstance(row, dict) and row.get("state") == VERIFIED
-                        and row.get("image") == pending[component]):
-                    verified.add(component)
-                    del pending[component]
-            if not pending:
-                return verified
-        if len(listing["artifacts"]) < 100:
-            break
+    pending, verified, downloads, listings = dict(images), set(), 0, 0
+    for workflow in EVIDENCE_WORKFLOWS:
+        name = workflow.rsplit("/", 1)[1]
+        for page in range(1, EVIDENCE_RUN_PAGES + 1):
+            runs = request(f"actions/workflows/{name}/runs?branch=develop&status=completed&per_page=100&page={page}")
+            require(isinstance(runs, dict) and isinstance(runs.get("workflow_runs"), list),
+                    "Staging deployment evidence inventory is unavailable")
+            for run in runs["workflow_runs"]:
+                if not trusted_view(run) or run.get("path") != workflow:
+                    continue
+                require(listings < MAX_RUN_LISTINGS, "Staging deployment evidence search exceeded its bound")
+                listings += 1
+                listing = request(f"actions/runs/{run['id']}/artifacts?per_page=100")
+                require(isinstance(listing, dict) and isinstance(listing.get("artifacts"), list),
+                        "Staging deployment evidence inventory is unavailable")
+                for artifact in listing["artifacts"]:
+                    lane = evidence_lane(artifact.get("name"), run["id"])
+                    if lane is None or artifact.get("expired"):
+                        continue
+                    if lane in COMPONENT_LANES and lane not in pending:
+                        continue
+                    require(downloads < MAX_DOWNLOADS, "Staging deployment evidence search exceeded its bound")
+                    downloads += 1
+                    for component, row in evidence_rows(download(artifact)).items():
+                        if (component in pending and isinstance(row, dict) and row.get("state") == VERIFIED
+                                and row.get("image") == pending[component]):
+                            verified.add(component)
+                            del pending[component]
+                    if not pending:
+                        return verified
+            if len(runs["workflow_runs"]) < 100:
+                break
     return verified
 
 
@@ -169,10 +215,16 @@ def gh_download(token):
         env.update(GH_TOKEN=token, GH_HOST="github.com", GH_PROMPT_DISABLED="1")
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "evidence.zip"
-            with path.open("wb") as stream:
-                result = subprocess.run(
-                    ["gh", "api", f"repos/ChronoAIProject/cma/actions/artifacts/{artifact['id']}/zip"],
-                    env=env, stdout=stream, stderr=subprocess.DEVNULL, timeout=60, check=False)
+            for attempt in range(DOWNLOAD_ATTEMPTS):
+                # A transient download failure is retried a bounded number of
+                # times; a persistent one still refuses the whole selection.
+                with path.open("wb") as stream:
+                    result = subprocess.run(
+                        ["gh", "api", f"repos/ChronoAIProject/cma/actions/artifacts/{artifact['id']}/zip"],
+                        env=env, stdout=stream, stderr=subprocess.DEVNULL, timeout=60, check=False)
+                if result.returncode == 0 or attempt == DOWNLOAD_ATTEMPTS - 1:
+                    break
+                time.sleep(2 * (attempt + 1))
             require(result.returncode == 0 and path.stat().st_size <= 4 * MAX_EVIDENCE_BYTES,
                     "Staging deployment evidence could not be downloaded")
             return path.read_bytes()
@@ -216,6 +268,8 @@ def main():
     re-selection reproduces the identical set, not when the run was created.
     The re-selection covers exactly the approved components; the controller
     invocation then applies production's deploy switches as the final word.
+    Selection never yields a runtime image, so an approved set holding one is
+    refused before anything is re-selected, never silently narrowed.
     """
     from staging_cd_clock import timestamp
     from staging_cd_github import GitHub
@@ -224,7 +278,7 @@ def main():
     from staging_cd_resolve import output
     from staging_cd_runtime import run_private
     from staging_cd_set import document
-    from staging_cd_targets import RUNTIME_TARGETS
+    from staging_cd_targets import APP_TARGETS, RUNTIME_TARGETS
     from staging_cd_versions import DEPLOYABLES
 
     env = os.environ
@@ -237,8 +291,9 @@ def main():
             policy = switches(Path(env["CD_PRIVATE_CONTROLLER"]) / "scripts" / "deploy_set.py")
         else:
             components = set(document(approved)["receipts"])
-            policy = {"am": "am" in components or bool(components & RUNTIME_TARGETS),
-                      "eg": "eg" in components, "web": "web" in components}
+            require(not components & RUNTIME_TARGETS,
+                    "An approved production release set must not hold a runtime image")
+            policy = {key: key in components for key in sorted(APP_TARGETS)}
         api, registry = GitHub(env.get("GH_TOKEN")), Registry()
         value, released = plan(env, api, registry, policy, root=Path.cwd(),
                                download=gh_download(env["GH_TOKEN"]), deployables=DEPLOYABLES)
@@ -254,7 +309,7 @@ def main():
         output(env, "mode", "release")
         return True
 
-    return run_private(operation, None)
+    return run_private(operation, None, subject="production-release")
 
 
 if __name__ == "__main__":

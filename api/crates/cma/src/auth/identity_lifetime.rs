@@ -7,7 +7,9 @@ use tokio::time::Instant;
 use super::{
     identity::VerifiedSubject,
     identity_flight::{Epoch, TokenHash},
-    verification_error::ProviderVerificationError as Error,
+    verification_error::{
+        ProviderVerificationError as Error, VerificationCause, VerificationFailure,
+    },
     AuthState, RequestAuth,
 };
 
@@ -23,14 +25,20 @@ impl VerificationLifetime {
         key: TokenHash,
         epoch: Epoch,
         expiry: Option<SystemTime>,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, VerificationFailure> {
         let deadline = expiry
             .map(|expiry| {
                 let remaining = expiry.duration_since(SystemTime::now()).map_err(|_| {
-                    Error::Rejected("identity evidence expired during verification".into())
+                    VerificationFailure::new(
+                        Error::Rejected("identity evidence expired during verification".into()),
+                        VerificationCause::ReceiptExpired,
+                    )
                 })?;
                 Instant::now().checked_add(remaining).ok_or_else(|| {
-                    Error::Unavailable("identity expiry exceeds monotonic clock bounds".into())
+                    VerificationFailure::new(
+                        Error::Unavailable("identity expiry exceeds monotonic clock bounds".into()),
+                        VerificationCause::ExpiryClockBounds,
+                    )
                 })
             })
             .transpose()?;
@@ -48,24 +56,39 @@ impl VerificationLifetime {
         self
     }
 
-    fn current(&self, auth: &AuthState) -> bool {
-        self.expires_at
-            .is_none_or(|expiry| expiry > SystemTime::now())
-            && self
+    fn failure(&self, auth: &AuthState) -> Option<VerificationCause> {
+        if self
+            .expires_at
+            .is_some_and(|expiry| expiry <= SystemTime::now())
+            || self
                 .deadline
-                .is_none_or(|deadline| Instant::now() < deadline)
-            && auth.identity_store.token_current(&self.key, &self.epoch)
+                .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            Some(VerificationCause::ConsumptionExpired)
+        } else if !auth.identity_store.token_current(&self.key, &self.epoch) {
+            Some(VerificationCause::ConsumptionEpochChanged)
+        } else {
+            None
+        }
     }
 }
 
 pub(super) fn current(auth: &AuthState, evidence: &VerifiedSubject) -> bool {
-    evidence
+    failure(auth, evidence).is_none()
+}
+
+pub(super) fn failure(auth: &AuthState, evidence: &VerifiedSubject) -> Option<VerificationCause> {
+    if evidence
         .token_expires_at
-        .is_none_or(|expiry| expiry > SystemTime::now())
-        && evidence
+        .is_some_and(|expiry| expiry <= SystemTime::now())
+    {
+        Some(VerificationCause::ConsumptionExpired)
+    } else {
+        evidence
             .verification
             .as_ref()
-            .is_none_or(|proof| proof.current(auth))
+            .and_then(|proof| proof.failure(auth))
+    }
 }
 
 tokio::task_local! { static CURRENT: RefCell<Vec<Arc<VerifiedSubject>>>; }

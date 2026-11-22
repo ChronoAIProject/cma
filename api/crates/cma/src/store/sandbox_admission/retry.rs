@@ -87,6 +87,7 @@ impl MongoSandboxStore {
                 &mut session,
                 &observe,
                 wait_for_lease,
+                failures > 0,
                 catalogue,
             )
             .await

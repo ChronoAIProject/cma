@@ -126,6 +126,51 @@ fn startup_accepts_one_spare_only_for_current_observed_durable_binding() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn startup_awaits_only_the_default_pool_even_with_a_cold_positive_machine_target() {
+    let store = Arc::new(resize::Targets::default());
+    let machine_image = resize::pinned("omarchy", '1');
+    let pools = resize::deployment(
+        store.clone(),
+        resize::Planner::default(),
+        &resize::pinned("agent", 'a'),
+        Some((&machine_image, 3)),
+    );
+    pools.ensure_default().await.unwrap();
+    let machine = resize::only(store.machine(&machine_image));
+    assert_eq!(machine.target_replicas, 3);
+    let inventory = {
+        let mut rows = store.rows.lock().unwrap();
+        let default = rows.iter_mut().find(|row| !row.machine).unwrap();
+        let binding = resize::Planner::binding(&default.plan);
+        default.binding = Some(binding.clone());
+        default.applied_revision = default.revision;
+        vec![NativePoolStatus {
+            binding,
+            desired_replicas: default.target_replicas,
+            ready_replicas: 1,
+            observed: true,
+        }]
+    };
+    let planner = resize::Planner {
+        inventory: Mutex::new(inventory),
+    };
+    // The machine pool is still pulling its image: absent from inventory.
+    let pools = resize::deployment(
+        store.clone(),
+        planner,
+        &resize::pinned("agent", 'a'),
+        Some((&machine_image, 3)),
+    );
+    let began = tokio::time::Instant::now();
+    pools.await_default_ready().await.unwrap();
+    assert_eq!(began.elapsed(), Duration::ZERO);
+    assert!(store.claims.lock().unwrap().is_empty());
+    let machine = resize::only(store.machine(&machine_image));
+    assert_eq!(machine.target_replicas, 3);
+    assert!(machine.binding.is_none());
+}
+
+#[tokio::test(start_paused = true)]
 async fn startup_drain_never_claims_or_zeroes_a_prewarmed_default() {
     // The same prewarmed, unbound default as above, but through the full
     // startup wait with superseded-pool draining running alongside it.

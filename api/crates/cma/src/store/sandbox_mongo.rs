@@ -69,6 +69,7 @@ use collections::SANDBOX_COLLECTIONS;
 #[derive(Clone)]
 pub struct MongoSandboxStore {
     pub(super) usage_capture: Option<super::sandbox_usage_export::CaptureStore>,
+    pub(super) initial_settings: super::settings_defaults::InitialSettings,
     pub(super) ownership_retry_hints_enabled: bool,
     #[cfg(test)]
     pub(super) ownership_retry_hint_now: Option<mongodb::bson::DateTime>,
@@ -216,6 +217,7 @@ impl MongoSandboxStore {
             MongoCheckpointObjectStore::open_with_storage(client, name, objects).await?;
         let store = Self {
             usage_capture: None,
+            initial_settings,
             empty_discovery: Default::default(),
             agent_connection_observations: None,
             segment_logs: super::agent_log_segments::SegmentCollections::new(&database),

@@ -1,6 +1,26 @@
 use super::*;
 use std::os::unix::fs::{symlink, PermissionsExt as _};
 
+#[cfg(target_os = "linux")]
+#[path = "agent_filesystem/file_mode_tests.rs"]
+mod file_mode;
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn a_platform_without_verified_acl_inspection_refuses_to_replace() {
+    let mut fixture = Fixture::new();
+    fixture.0.preserve_file_mode = true;
+    let original = fixture.write("edit", b"before", None).unwrap();
+    let error = fixture
+        .write("edit", b"after", Some(original.sha256))
+        .unwrap_err();
+    assert_eq!(error.detail, "cannot preserve existing file access policy");
+    assert_eq!(
+        fixture.read("edit", 20).unwrap().content().unwrap(),
+        b"before"
+    );
+}
+
 struct Fixture(RuntimeConfig);
 impl Fixture {
     fn new() -> Self {
@@ -15,20 +35,20 @@ impl Fixture {
         bytes: &[u8],
         expected: Option<String>,
     ) -> Result<AgentFileWriteReceipt> {
-        write(
-            &self.0,
-            AgentFileWriteRequest {
-                owner_access: true,
-                protected_paths: Vec::new(),
-                sandbox_id: self.0.sandbox_id.clone(),
-                runtime_generation: self.0.generation,
-                boot_id: "a".repeat(32),
-                path: path.into(),
-                expected_sha256: expected,
-                content_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
-                directory: false,
-            },
-        )
+        write(&self.0, self.request(path, bytes, expected))
+    }
+    fn request(&self, path: &str, bytes: &[u8], expected: Option<String>) -> AgentFileWriteRequest {
+        AgentFileWriteRequest {
+            owner_access: true,
+            protected_paths: Vec::new(),
+            sandbox_id: self.0.sandbox_id.clone(),
+            runtime_generation: self.0.generation,
+            boot_id: "a".repeat(32),
+            path: path.into(),
+            expected_sha256: expected,
+            content_base64: base64::engine::general_purpose::STANDARD.encode(bytes),
+            directory: false,
+        }
     }
     fn read(&self, path: &str, max_bytes: u64) -> Result<AgentFileReadReceipt> {
         read(
