@@ -107,9 +107,10 @@ async fn changed_cursor_retries_retained_custody_and_wrong_validated_head_still_
     let legacy = json!({"stream_id":stream,"contiguous_sequence":"2","validated_sequence":"2",
         "highest_sequence":"2","head_digest":last.get_str("digest").unwrap(),
         "missing_ranges":[],"snapshot":"retained-observation","next_cursor":null});
+    let legacy = mongodb::bson::serialize_to_bson(&legacy).unwrap();
     rows.update_one(
         filter.clone(),
-        doc! {"$set":{"delivery.cursor":mongodb::bson::serialize_to_bson(&legacy).unwrap(),
+        doc! {"$set":{"delivery.cursor":legacy.clone(),
         "delivery.due_at":mongodb::bson::DateTime::from_millis(0)}},
     )
     .await
@@ -120,6 +121,7 @@ async fn changed_cursor_retries_retained_custody_and_wrong_validated_head_still_
     assert_eq!(delivery.get_str("status").unwrap(), "pending");
     assert_eq!(delivery.get_str("reason").unwrap(), "cursor_changed");
     assert_eq!(delivery.get("receipt"), Some(&receipt));
+    assert_eq!(delivery.get("cursor"), Some(&legacy));
     for (mode, expected) in [(1, "accepted"), (2, "held")] {
         state.mode.store(mode, Ordering::SeqCst);
         rows.update_one(
@@ -152,6 +154,7 @@ async fn changed_cursor_retries_retained_custody_and_wrong_validated_head_still_
             delivery.as_document().unwrap().get("receipt"),
             Some(&receipt)
         );
+        assert_eq!(delivery.as_document().unwrap().get("cursor"), Some(&legacy));
         assert_eq!(&observed, last);
     }
     assert_eq!(state.posts.load(Ordering::SeqCst), 0);

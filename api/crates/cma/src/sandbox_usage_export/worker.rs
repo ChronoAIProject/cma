@@ -95,10 +95,9 @@ impl UsageExporter {
                     continue;
                 }
             };
-            let (result, cursor) =
-                tokio::time::timeout(Duration::from_secs(60), self.deliver(&attempt))
-                    .await
-                    .unwrap_or((Err(TransportError::Unavailable), None));
+            let result = tokio::time::timeout(Duration::from_secs(60), self.deliver(&attempt))
+                .await
+                .unwrap_or(Err(TransportError::Unavailable));
             let result = result.and_then(|receipt| {
                 receipt.validate(&attempt.event)?;
                 if attempt
@@ -132,9 +131,7 @@ impl UsageExporter {
                     DeliveryOutcome::Retry { seconds, reason }
                 }
             };
-            self.store
-                .finish_delivery(&attempt, outcome, cursor.as_ref())
-                .await?;
+            self.store.finish_delivery(&attempt, outcome).await?;
             if forbidden {
                 break;
             }
@@ -142,49 +139,33 @@ impl UsageExporter {
         Ok(())
     }
 
-    async fn deliver(
-        &self,
-        attempt: &DeliveryAttempt,
-    ) -> (Result<Receipt, TransportError>, Option<Cursor>) {
+    async fn deliver(&self, attempt: &DeliveryAttempt) -> Result<Receipt, TransportError> {
         let event = &attempt.event;
-        match self.transport.receipt(&event.event_id).await {
-            Ok(Some(receipt)) if !attempt.audit => {
-                return (receipt.validate(event).map(|()| receipt), None)
+        match self.transport.receipt(&event.event_id).await? {
+            Some(receipt) if !attempt.audit => {
+                receipt.validate(event)?;
+                return Ok(receipt);
             }
-            Ok(Some(receipt)) => {
-                if let Err(error) = receipt.validate(event) {
-                    return (Err(error), None);
+            Some(receipt) => {
+                receipt.validate(event)?;
+                let cursor = self
+                    .transport
+                    .cursor(&event.stream_id)
+                    .await?
+                    .ok_or(TransportError::Conflict)?;
+                reconcile::inspect_cursor(&self.store, event, &cursor).await?;
+                if contract::integer(&cursor.contiguous_sequence)? < event.sequence {
+                    return Err(TransportError::Conflict);
                 }
-                let cursor = match self.transport.cursor(&event.stream_id).await {
-                    Ok(Some(cursor)) => cursor,
-                    Ok(None) => return (Err(TransportError::Conflict), None),
-                    Err(error) => return (Err(error), None),
-                };
-                let checked = reconcile::inspect_cursor(&self.store, event, &cursor)
-                    .await
-                    .and_then(|()| {
-                        if contract::integer(&cursor.contiguous_sequence)? < event.sequence {
-                            Err(TransportError::Conflict)
-                        } else {
-                            Ok(receipt)
-                        }
-                    });
-                return (checked, Some(cursor));
+                return Ok(receipt);
             }
-            Ok(None) => {}
-            Err(error) => return (Err(error), None),
+            None => {}
         }
-        let cursor = match self.transport.cursor(&event.stream_id).await {
-            Ok(cursor) => cursor,
-            Err(error) => return (Err(error), None),
-        };
-        if let Some(cursor) = &cursor {
-            if let Err(error) = reconcile::inspect_cursor(&self.store, event, cursor).await {
-                return (Err(error), None);
-            }
+        if let Some(cursor) = self.transport.cursor(&event.stream_id).await? {
+            reconcile::inspect_cursor(&self.store, event, &cursor).await?;
         }
         // Absence and cursor observations never acknowledge an individual event.
         // A concurrent acceptance is recovered by the same event ID and bytes.
-        (self.transport.submit(event).await, cursor)
+        self.transport.submit(event).await
     }
 }

@@ -21,7 +21,6 @@ async fn paginated_holes_require_consistent_heads_and_progressing_pages() {
         .unwrap()
         .unwrap();
     assert_eq!(cursor.missing_ranges.len(), 2);
-    assert!(cursor.next_cursor.is_none());
     assert!(server.calls.lock().unwrap()[2]
         .0
         .ends_with("?page=opaque+page%2F2"));

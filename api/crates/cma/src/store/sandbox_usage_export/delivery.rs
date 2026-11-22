@@ -1,5 +1,10 @@
 use super::*;
-use crate::sandbox_usage_export::{Cursor, Receipt};
+use crate::sandbox_usage_export::Receipt;
+
+mod cursor_v1;
+use cursor_v1::StoredCursorV1;
+#[cfg(test)]
+pub(super) mod compatibility_tests;
 use futures_util::TryStreamExt;
 use mongodb::{
     bson::{Bson, DateTime},
@@ -38,7 +43,7 @@ struct State {
     status: Status,
     reason: Option<String>,
     receipt: Option<Receipt>,
-    cursor: Option<Cursor>,
+    cursor: Option<StoredCursorV1>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -197,7 +202,6 @@ impl CaptureStore {
         &self,
         attempt: &DeliveryAttempt,
         outcome: DeliveryOutcome,
-        cursor: Option<&Cursor>,
     ) -> Result<bool, SandboxStoreError> {
         let (status, reason, receipt, seconds) = match outcome {
             DeliveryOutcome::Accepted(receipt) => {
@@ -225,11 +229,6 @@ impl CaptureStore {
                 )
             }
         };
-        if let Some(cursor) = cursor {
-            cursor
-                .validate(&attempt.event.stream_id)
-                .map_err(|_| corrupt())?;
-        }
         let updated = self.collection(OUTBOX).update_one(doc! {
             "_id":&attempt.event.event_id,"digest":&attempt.event.digest,
             "delivery.version":1_i32,"delivery.destination":&attempt.destination,
@@ -241,7 +240,6 @@ impl CaptureStore {
             "delivery.receipt": if receipt.is_some() {
                 Bson::Document(doc! {"$literal":mongodb::bson::serialize_to_bson(&receipt).map_err(|_| corrupt())?})
             } else { Bson::String("$delivery.receipt".into()) },
-            "delivery.cursor":{"$literal":mongodb::bson::serialize_to_bson(&cursor).map_err(|_| corrupt())?},
             "delivery.lease_until":"$$NOW",
             "delivery.due_at":{"$dateAdd":{"startDate":"$$NOW","unit":"second","amount":seconds as i64}}
         }}]).await.map_err(unavailable)?;

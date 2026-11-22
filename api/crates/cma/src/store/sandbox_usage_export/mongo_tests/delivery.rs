@@ -57,7 +57,7 @@ async fn lease_takeover_rejects_stale_ack_and_keeps_frozen_bytes() {
         .is_none());
     expire(&f, &first).await;
     assert!(!capture
-        .finish_delivery(&first, DeliveryOutcome::Accepted(receipt(&first)), None)
+        .finish_delivery(&first, DeliveryOutcome::Accepted(receipt(&first)))
         .await
         .unwrap());
     let peer = Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
@@ -76,11 +76,11 @@ async fn lease_takeover_rejects_stale_ack_and_keeps_frozen_bytes() {
     assert!(next.generation > first.generation);
     assert_ne!(first.attempt_id, next.attempt_id);
     assert!(!capture
-        .finish_delivery(&first, DeliveryOutcome::Accepted(receipt(&first)), None)
+        .finish_delivery(&first, DeliveryOutcome::Accepted(receipt(&first)))
         .await
         .unwrap());
     assert!(reopened
-        .finish_delivery(&next, DeliveryOutcome::Accepted(receipt(&next)), None)
+        .finish_delivery(&next, DeliveryOutcome::Accepted(receipt(&next)))
         .await
         .unwrap());
     assert_eq!(
@@ -111,7 +111,7 @@ async fn destination_change_and_invalid_receipt_cannot_reassign_or_ack_retained_
     let mut wrong = receipt(&first);
     wrong.payload_digest = "b".repeat(64);
     assert!(capture
-        .finish_delivery(&first, DeliveryOutcome::Accepted(wrong), None)
+        .finish_delivery(&first, DeliveryOutcome::Accepted(wrong))
         .await
         .is_err());
     expire(&f, &first).await;
@@ -148,8 +148,7 @@ async fn retry_and_quarantine_block_only_their_stream_and_forbidden_holds_produc
             DeliveryOutcome::Retry {
                 seconds: 60,
                 reason: "rate_limited"
-            },
-            None
+            }
         )
         .await
         .unwrap());
@@ -164,7 +163,7 @@ async fn retry_and_quarantine_block_only_their_stream_and_forbidden_holds_produc
         .unwrap()
         .unwrap();
     assert!(capture
-        .finish_delivery(&second, DeliveryOutcome::Hold("identity_conflict"), None)
+        .finish_delivery(&second, DeliveryOutcome::Hold("identity_conflict"))
         .await
         .unwrap());
     expire(&f, &second).await;
@@ -180,7 +179,7 @@ async fn retry_and_quarantine_block_only_their_stream_and_forbidden_holds_produc
         .unwrap()
         .unwrap();
     assert!(capture
-        .finish_delivery(&first, DeliveryOutcome::ProducerForbidden, None)
+        .finish_delivery(&first, DeliveryOutcome::ProducerForbidden)
         .await
         .unwrap());
     let reopened = CaptureStore::open(&f.client, f.db.name(), config())

@@ -77,8 +77,6 @@ pub(super) fn cursor(
                 through: range.last,
             })
             .collect(),
-        snapshot: None,
-        next_cursor: None,
     };
     cursor.validate(stream)?;
     Ok((cursor, page.next_page))

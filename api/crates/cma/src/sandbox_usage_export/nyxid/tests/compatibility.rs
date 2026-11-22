@@ -76,7 +76,6 @@ async fn cursor_validation_keeps_custody_and_validation_heads_distinct() {
     assert_eq!(observed.contiguous_sequence, "2");
     assert_eq!(observed.validated_sequence, "1");
     assert_eq!(observed.validated_head_digest, Some("b".repeat(64)));
-    assert!(observed.snapshot.is_none());
     for (field, value) in [
         ("validated_chain_head", serde_json::Value::Null),
         ("validated_chain_head", "wrong".into()),
