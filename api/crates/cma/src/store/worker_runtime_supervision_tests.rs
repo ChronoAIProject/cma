@@ -1,5 +1,6 @@
 //! Opt-in continuity proof with actual runtime/ACP/Codex and disposable Mongo.
 //! Kept outside the Mongo-only CI filter: the pinned native tools are required.
+use std::future::IntoFuture;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -46,15 +47,96 @@ async fn completed(store: &MongoSandboxStore, id: &AgentCommandId) -> AdmittedAg
     .unwrap()
 }
 
+#[derive(Default)]
+struct Tasks {
+    recording: Option<tokio::task::JoinHandle<()>>,
+    scheduler: Option<tokio::task::JoinHandle<()>>,
+    stop: Option<tokio::sync::watch::Sender<bool>>,
+}
+
+async fn stop_task(task: &mut Option<tokio::task::JoinHandle<()>>) -> bool {
+    if let Some(task) = task.take() {
+        task.abort();
+        match task.await {
+            Ok(()) => true,
+            Err(error) => error.is_cancelled(),
+        }
+    } else {
+        true
+    }
+}
+
 async fn recover(stall: bool) {
-    let mut native = Native::start().await;
+    use futures_util::FutureExt;
     let client = mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
         .await
         .unwrap();
     let database_name = format!("cma_native_supervision_{}", uuid::Uuid::new_v4().simple());
+    let mut native = Native::start().await;
+    let result_path =
+        std::path::Path::new(native.manifest["root"].as_str().unwrap()).join("result.json");
+    let mut tasks = Tasks::default();
+    let assertions = std::panic::AssertUnwindSafe(tokio::time::timeout(
+        Duration::from_secs(240),
+        recover_inner(stall, &mut native, &client, &database_name, &mut tasks),
+    ))
+    .catch_unwind()
+    .await;
+    if let Some(stop) = tasks.stop.take() {
+        let _ = stop.send(true);
+    }
+    let fixture_exited = native.close().await;
+    let scheduler_stopped = if let Some(mut scheduler) = tasks.scheduler.take() {
+        match tokio::time::timeout(Duration::from_secs(15), &mut scheduler).await {
+            Ok(result) => result.is_ok(),
+            Err(_) => {
+                scheduler.abort();
+                let _ = scheduler.await;
+                false
+            }
+        }
+    } else {
+        true
+    };
+    let recorder_stopped = stop_task(&mut tasks.recording).await;
+    let database_dropped = matches!(
+        tokio::time::timeout(
+            Duration::from_secs(10),
+            client.database(&database_name).drop().into_future()
+        )
+        .await,
+        Ok(Ok(()))
+    );
+    let cleanup = serde_json::json!({"scheduler_stopped":scheduler_stopped,
+        "fixture_exited":fixture_exited,"recorder_stopped":recorder_stopped,"database_dropped":database_dropped});
+    let cleaned = scheduler_stopped && fixture_exited && recorder_stopped && database_dropped;
+    let mut evidence = match &assertions {
+        Ok(Ok(evidence)) => evidence.clone(),
+        _ => serde_json::json!({"stall":stall}),
+    };
+    evidence["passed"] = (matches!(assertions, Ok(Ok(_))) && cleaned).into();
+    evidence["cleanup"] = cleanup;
+    tokio::fs::write(result_path, serde_json::to_vec_pretty(&evidence).unwrap())
+        .await
+        .unwrap();
+    println!("NATIVE_SUPERVISION_RESULT={evidence}");
+    match assertions {
+        Err(panic) => std::panic::resume_unwind(panic),
+        Ok(Err(_)) => panic!("native continuity deadline"),
+        Ok(Ok(_)) => assert!(cleaned, "native cleanup incomplete"),
+    }
+}
+
+async fn recover_inner(
+    stall: bool,
+    native: &mut Native,
+    client: &mongodb::Client,
+    database_name: &str,
+    tasks: &mut Tasks,
+) -> serde_json::Value {
     let (store, agent, parent, execution, sends) = composed_with_input(
-        &client,
-        &database_name,
+        client,
+        database_name,
         native.channel.input.clone(),
         native.channel.conversation_id.clone().unwrap(),
     )
@@ -92,7 +174,7 @@ async fn recover(stall: bool) {
     let (stop, signal) = tokio::sync::watch::channel(false);
     let reservation = live_request(&agent, &parent, "native-original");
     let original = record(store.reserve_command(reservation.clone()).await.unwrap());
-    let recording = tokio::spawn(async move {
+    tasks.recording = Some(tokio::spawn(async move {
         let mut assembly = AgentMessageAssembly::default();
         while let Some(update) = updates.recv().await {
             recorder
@@ -106,9 +188,12 @@ async fn recover(stall: bool) {
                 .await
                 .unwrap();
         }
-    });
-    let scheduler = crate::commands::CommandScheduler::new(worker.clone())
-        .spawn_supervised(signal, activity.clone());
+    }));
+    tasks.stop = Some(stop);
+    tasks.scheduler = Some(
+        crate::commands::CommandScheduler::new(worker.clone())
+            .spawn_supervised(signal, activity.clone()),
+    );
     let id = &original.receipt.envelope.command_id;
     let started = tokio::time::timeout(Duration::from_secs(40), async {
         loop {
@@ -116,7 +201,10 @@ async fn recover(stall: bool) {
             if observed["started"] == true {
                 break observed;
             }
-            assert!(!recording.is_finished(), "runtime recorder failed");
+            assert!(
+                !tasks.recording.as_ref().unwrap().is_finished(),
+                "runtime recorder failed"
+            );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
@@ -155,7 +243,10 @@ async fn recover(stall: bool) {
     native.release("task").await;
     tokio::time::timeout(Duration::from_secs(30), async {
         while native.state().await["thinking"] != true {
-            assert!(!recording.is_finished(), "runtime recorder failed");
+            assert!(
+                !tasks.recording.as_ref().unwrap().is_finished(),
+                "runtime recorder failed"
+            );
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
@@ -167,7 +258,10 @@ async fn recover(stall: bool) {
     let waiting_seconds = if stall { 10 } else { 65 };
     while quiet.elapsed() < Duration::from_secs(waiting_seconds) {
         assert_eq!(activity.snapshot().state, "running");
-        assert!(!recording.is_finished(), "runtime recorder failed");
+        assert!(
+            !tasks.recording.as_ref().unwrap().is_finished(),
+            "runtime recorder failed"
+        );
         let current = store.get_command(id).await.unwrap().unwrap();
         assert_eq!(current.status, AgentResponseStatus::InProgress);
         assert_eq!(current.work.dispatch, Some(dispatch.clone()));
@@ -234,10 +328,10 @@ async fn recover(stall: bool) {
     )
     .await
     .unwrap();
-    stop.send(true).unwrap();
-    scheduler.await.unwrap();
+    tasks.stop.as_ref().unwrap().send(true).unwrap();
+    tasks.scheduler.take().unwrap().await.unwrap();
     assert_eq!(activity.snapshot().state, "stopped");
-    let reopened = MongoSandboxStore::open(&client, &database_name)
+    let reopened = MongoSandboxStore::open(client, database_name)
         .await
         .unwrap();
     assert_eq!(
@@ -269,31 +363,51 @@ async fn recover(stall: bool) {
     let rendered = serde_json::to_string(&logs).unwrap();
     assert!(rendered.contains("ORIGINAL_RUNTIME_RESULT"));
     assert!(rendered.contains("CONTINUED_SAME_CONVERSATION"));
-    let evidence = serde_json::json!({"passed":true,"stall":stall,"detection_ms":detection.as_millis(),"scheduling_ms":scheduling.as_millis(),"healthy_native_wait_seconds":waiting_seconds,"completion_after_model_release_ms":work.as_millis(),"completion_after_fault_ms":fault.elapsed().as_millis(),"runtime":final_status,"conversation_id":original_conversation,"native_shell_effects":1,"durable_commands":2,"dispatches":2,"state":observed});
-    tokio::fs::write(
-        std::path::Path::new(native.manifest["root"].as_str().unwrap()).join("result.json"),
-        serde_json::to_vec_pretty(&evidence).unwrap(),
-    )
-    .await
-    .unwrap();
-    println!("NATIVE_SUPERVISION_RESULT={evidence}");
-    native.close().await;
-    recording.abort();
-    client.database(&database_name).drop().await.unwrap();
+    serde_json::json!({"stall":stall,"detection_ms":detection.as_millis(),"scheduling_ms":scheduling.as_millis(),"healthy_native_wait_seconds":waiting_seconds,"completion_after_model_release_ms":work.as_millis(),"completion_after_fault_ms":fault.elapsed().as_millis(),"runtime":final_status,"conversation_id":original_conversation,"native_shell_effects":1,"durable_commands":2,"dispatches":2,"state":observed})
 }
 
 #[tokio::test]
 #[ignore = "requires disposable Mongo and pinned real runtime/Codex/ACP; see worker-runtime-supervision.sh"]
 async fn scheduler_panic_preserves_native_task_home_and_conversation() {
-    tokio::time::timeout(Duration::from_secs(240), recover(false))
-        .await
-        .expect("native continuity deadline");
+    recover(false).await;
 }
 
 #[tokio::test]
 #[ignore = "requires disposable Mongo and pinned real runtime/Codex/ACP; see worker-runtime-supervision.sh"]
 async fn scheduler_stall_preserves_native_task_home_and_conversation() {
-    tokio::time::timeout(Duration::from_secs(240), recover(true))
-        .await
-        .expect("native continuity deadline");
+    recover(true).await;
+}
+
+#[tokio::test]
+async fn aborted_recorder_is_awaited_before_cleanup_receipt() {
+    struct Dropped(std::sync::Arc<std::sync::atomic::AtomicBool>);
+    impl Drop for Dropped {
+        fn drop(&mut self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+    let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let guard = Dropped(dropped.clone());
+    let (ready, started) = tokio::sync::oneshot::channel();
+    let mut task = Some(tokio::spawn(async move {
+        let _guard = guard;
+        ready.send(()).unwrap();
+        std::future::pending::<()>().await;
+    }));
+    started.await.unwrap();
+    assert!(stop_task(&mut task).await);
+    assert!(dropped.load(Ordering::SeqCst));
+    assert!(task.is_none());
+}
+
+#[tokio::test]
+async fn panicked_recorder_cannot_produce_successful_cleanup() {
+    let mut task = Some(tokio::spawn(async {
+        panic!("controlled recorder failure")
+    }));
+    while !task.as_ref().unwrap().is_finished() {
+        tokio::task::yield_now().await;
+    }
+    assert!(!stop_task(&mut task).await);
+    assert!(task.is_none());
 }

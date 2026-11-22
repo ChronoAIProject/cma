@@ -5,16 +5,23 @@ import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createServer as tcpServer } from 'node:net';
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, openSync, realpathSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, existsSync, openSync, closeSync, realpathSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { setTimeout as delay } from 'node:timers/promises';
+import { cohort, verifyArtifacts } from './worker-runtime-cohort.mjs';
 
 const binary = process.env.CMA_CODEX_TEST_BINARY;
 const bridge = process.env.CMA_ACP_TEST_BRIDGE;
-assert.equal(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli 0.147.0');
-assert.equal(createHash('sha256').update(readFileSync(bridge)).digest('hex'),
-  'ac50122023f18cec80c4ef543dfbcffe8029de4206cb2692c2f5df51341c2c66');
+const pins = cohort();
+const identity = JSON.parse(readFileSync(process.env.CMA_NATIVE_IDENTITY, 'utf8'));
+verifyArtifacts(identity);
+assert.deepEqual(identity.pins, pins);
+assert.equal(identity.runtime.path, realpathSync(process.env.CMA_TEST_RUNTIME_BINARY));
+assert.equal(identity.codex.path, realpathSync(binary));
+assert.equal(identity.bridge.path, realpathSync(bridge));
+assert.equal(execFileSync(binary, ['--version'], { encoding: 'utf8' }).trim(), 'codex-cli ' + pins.codex);
+assert.equal(createHash('sha256').update(readFileSync(bridge)).digest('hex'), pins.bridge);
 const evidence = process.env.CMA_SUPERVISION_EVIDENCE_DIR ?? tmpdir();
 mkdirSync(evidence, { recursive: true });
 const root = mkdtempSync(join(realpathSync(evidence), 'runtime-'));
@@ -152,6 +159,7 @@ runtime = spawn(resolve(process.env.CMA_TEST_RUNTIME_BINARY), [], {
     CHRONO_RUNTIME_GENERATION: '1', CHRONO_RUNTIME_HOME_IDENTITY: 'a'.repeat(43), TMPDIR: transfer,
     CODEX_PATH: binary }, stdio: ['ignore', log, log],
 });
+closeSync(log);
 runtime.on('exit', (code, signal) => {
   writeFileSync(join(root, 'runtime-exit.json'), JSON.stringify({ code, signal }));
   if (!stopping) { error = new Error('runtime exited unexpectedly'); process.exitCode = 1; }
@@ -190,10 +198,20 @@ async function close() {
   }
   runtime?.kill('SIGTERM');
   const end = Date.now() + 5000;
-  while (runtime && runtime.exitCode === null && runtime.signalCode === null && Date.now() < end) await delay(50);
-  if (runtime && runtime.exitCode === null && runtime.signalCode === null) runtime.kill('SIGKILL');
+  while (runtime?.pid && runtime.exitCode === null && runtime.signalCode === null && Date.now() < end) await delay(50);
+  if (runtime?.pid && runtime.exitCode === null && runtime.signalCode === null) {
+    runtime.kill('SIGKILL');
+    await new Promise(resolve => runtime.once('exit', resolve));
+  }
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  const taskPid = existsSync(join(root, 'task.pid')) ? Number(readFileSync(join(root, 'task.pid'), 'utf8')) : null;
+  const taskDeadline = Date.now() + 5000;
+  while (taskPid && alive(taskPid) && Date.now() < taskDeadline) await delay(50);
   for (const response of responses) response.destroy();
   server.closeAllConnections();
   await new Promise(resolve => server.close(resolve));
-  process.exit(error ? 1 : 0);
+  const cleanup = { runtime_exited: !runtime?.pid || runtime.exitCode !== null || runtime.signalCode !== null,
+    task_exited: !taskPid || !alive(taskPid), server_closed: !server.listening };
+  writeFileSync(join(root, 'cleanup.json'), JSON.stringify(cleanup));
+  process.exit(error || !Object.values(cleanup).every(Boolean) ? 1 : 0);
 }

@@ -15,7 +15,7 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 pub(super) struct Native {
-    child: tokio::process::Child,
+    child: Option<tokio::process::Child>,
     pub manifest: serde_json::Value,
     pub transport: ProviderHostedControlTransport,
     pub handle: RuntimeHandle,
@@ -27,12 +27,31 @@ pub(super) struct Native {
 
 impl Native {
     pub async fn start() -> Self {
-        tokio::time::timeout(Duration::from_secs(60), Self::start_inner())
-            .await
-            .expect("native setup deadline")
+        use futures_util::FutureExt;
+        let mut child = Self::spawn();
+        let result = std::panic::AssertUnwindSafe(tokio::time::timeout(
+            Duration::from_secs(60),
+            Self::start_inner(&mut child),
+        ))
+        .catch_unwind()
+        .await;
+        match result {
+            Ok(Ok(mut native)) => {
+                native.child = Some(child);
+                native
+            }
+            failure => {
+                let exited = Self::stop_fixture(&mut child).await;
+                eprintln!("native setup cleanup: fixture_exited={exited}");
+                match failure {
+                    Err(panic) => std::panic::resume_unwind(panic),
+                    _ => panic!("native setup deadline"),
+                }
+            }
+        }
     }
 
-    async fn start_inner() -> Self {
+    fn spawn() -> tokio::process::Child {
         let script = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../../.github/scripts/worker-runtime-fixture.mjs");
         let mut command = tokio::process::Command::new("node");
@@ -45,18 +64,22 @@ impl Native {
             "CMA_ACP_TEST_BRIDGE",
             "CMA_TEST_RUNTIME_BINARY",
             "CMA_SUPERVISION_EVIDENCE_DIR",
+            "CMA_NATIVE_IDENTITY",
         ] {
             if let Some(value) = std::env::var_os(key) {
                 command.env(key, value);
             }
         }
-        let mut child = command
+        command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .kill_on_drop(false)
             .spawn()
-            .unwrap();
+            .unwrap()
+    }
+
+    async fn start_inner(child: &mut tokio::process::Child) -> Self {
         let mut stdout = BufReader::new(child.stdout.take().unwrap());
         let mut line = String::new();
         tokio::time::timeout(Duration::from_secs(40), stdout.read_line(&mut line))
@@ -187,7 +210,7 @@ impl Native {
             .await
             .unwrap();
         Self {
-            child,
+            child: None,
             manifest,
             transport,
             handle,
@@ -254,7 +277,7 @@ impl Native {
         status
     }
 
-    pub async fn close(mut self) {
+    pub async fn close(&mut self) -> bool {
         let closed = tokio::time::timeout(
             Duration::from_secs(5),
             self.transport.exchange(
@@ -279,19 +302,28 @@ impl Native {
             ))
             .send()
             .await;
-        self.child.stdin.take();
-        let exited = tokio::time::timeout(Duration::from_secs(10), self.child.wait()).await;
-        assert!(
-            matches!(closed, Ok(Ok(ResponseFrame::CloseAgent(_)))),
-            "close agent: {closed:?}"
-        );
-        assert!(exited.unwrap().unwrap().success());
+        let exited = Self::stop_fixture(self.child.as_mut().unwrap()).await;
+        matches!(closed, Ok(Ok(ResponseFrame::CloseAgent(_)))) && exited
+    }
+
+    async fn stop_fixture(child: &mut tokio::process::Child) -> bool {
+        child.stdin.take();
+        match tokio::time::timeout(Duration::from_secs(20), child.wait()).await {
+            Ok(Ok(status)) => status.success(),
+            _ => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                false
+            }
+        }
     }
 }
 
 impl Drop for Native {
     fn drop(&mut self) {
         // EOF asks the fixture to close its runtime and release only its own work.
-        self.child.stdin.take();
+        if let Some(child) = self.child.as_mut() {
+            child.stdin.take();
+        }
     }
 }

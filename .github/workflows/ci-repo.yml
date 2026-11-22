@@ -49,6 +49,9 @@ jobs:
         name: "Synthetic home restore evidence regressions"
         run: "node --test .github/scripts/home-backup/*.test.mjs"
       -
+        name: "Native worker fixture mechanics"
+        run: "node --test .github/scripts/worker-runtime-supervision.test.mjs"
+      -
         name: "Audit exception policy regressions"
         run: "node --test .github/scripts/audit-policy.test.mjs"
       -
