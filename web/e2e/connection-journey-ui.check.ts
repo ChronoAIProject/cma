@@ -114,7 +114,7 @@ for (const [caseId, variant] of [
   });
 }
 
-for (const changed of ['owner', 'intent'] as const) {
+for (const changed of ['owner', 'intent', 'service'] as const) {
   test(`LOCAL compiled ConnectionWizard and helper reject wrong ${changed}`, async ({
     browser,
     baseURL,

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { extname, join, relative, sep } from 'node:path';
-import type { Browser, Page, Route } from '@playwright/test';
+import type { Browser, Page } from '@playwright/test';
 import type { Launch as LaunchDocument } from '@cma/client';
 import { LocalStartup, recorded } from './agent-startup-fixtures';
 import { fixtureDocument } from './environment.fixture';
@@ -12,8 +12,10 @@ import {
   identityDigest,
   readConnectionIntent,
   type ConnectionIntent,
+  type ConnectionMode,
   type ConnectionObservationInput,
 } from './connection-journey-contract';
+import { wizardProvider } from './connection-journey-ui-provider.fixture';
 import { publicApiPath } from './public-api-path';
 
 // Only HTTP and provider observations are synthetic. Harness, Journal and the
@@ -23,6 +25,7 @@ export async function connectionWizardFixture(
   preview: string,
   caseId: string,
   buildDirectory: unknown,
+  mode: ConnectionMode = 'oauth',
 ) {
   assert.ok(['127.0.0.1', 'localhost'].includes(new URL(preview).hostname));
   assert.equal(typeof buildDirectory, 'string');
@@ -46,6 +49,7 @@ export async function connectionWizardFixture(
     '.json': 'application/json',
   };
   const fixture = fixtureDocument();
+  const selectedService = fixture.document.connectionJourneys.services[mode]!;
   const owner = `visitor-${caseId}`;
   fixture.document.visitors[caseId]!.subject = owner;
   fixture.document.provenance.nyxidCommit = 'c'.repeat(40);
@@ -62,17 +66,22 @@ export async function connectionWizardFixture(
     id: `launch-${caseId}`,
     public_id: 'public-fixture',
     placement_id: 'placement-fixture',
-    review: { can_start_now: false, needs: [{ type: 'connection', service: 'service-oauth' }] },
+    review: {
+      can_start_now: false,
+      needs: [{ type: 'connection', service: selectedService.serviceId }],
+    },
     trust: { version: 1, disclosures: [] },
   };
   const target = { type: 'launch' as const, id: launch.id };
+  let upstreamUnavailable = false;
+  const startRequests: { bytes: string; intent: ConnectionIntent }[] = [];
   const admissions: { bytes: string; intent: ConnectionIntent }[] = [];
   const links = new Map<string, 'pending' | 'completed'>();
   const checks: Record<string, unknown>[] = [];
   const unexpected: string[] = [];
   let creates = 0;
   let starts = 0;
-  let invalidReply: 'owner' | 'intent' | undefined;
+  let invalidReply: 'owner' | 'intent' | 'service' | undefined;
   const session = {
     authenticated: true,
     subject: owner,
@@ -107,12 +116,14 @@ export async function connectionWizardFixture(
       if (path === '/auth/session') return reply(session);
       if (path === '/auth/connections/start') {
         const intent = readConnectionIntent(body, launch.id);
-        assert.equal(intent.service_id, 'service-oauth');
+        assert.equal(intent.service_id, selectedService.serviceId);
+        startRequests.push({ bytes, intent });
+        if (upstreamUnavailable) return reply({ code: 'upstream_unavailable' }, 503);
         admissions.push({ bytes, intent });
         if (!links.has(intent.intent_id)) links.set(intent.intent_id, 'pending');
         return reply({
           owner: invalidReply === 'owner' ? 'another-owner' : owner,
-          service_id: intent.service_id,
+          service_id: invalidReply === 'service' ? 'another-service' : intent.service_id,
           intent_id:
             invalidReply === 'intent' ? '24681357-1357-2468-1357-246813572468' : intent.intent_id,
           hosted_url: `https://identity.example.test/connect/${intent.intent_id}`,
@@ -128,7 +139,7 @@ export async function connectionWizardFixture(
         }
         assert.deepEqual(body.target, target);
         const active = body.active as ConnectionIntent | undefined;
-        if (active) assert.equal(active.service_id, 'service-oauth');
+        if (active) assert.equal(active.service_id, selectedService.serviceId);
         const complete = active !== undefined && links.get(active.intent_id) === 'completed';
         return reply({
           owner,
@@ -137,8 +148,8 @@ export async function connectionWizardFixture(
           active_state: active === undefined ? undefined : complete ? 'satisfied' : 'pending',
           services: [
             {
-              service: 'service-oauth',
-              display_name: 'Fixture account',
+              service: selectedService.serviceId,
+              display_name: `Fixture ${mode} account`,
               kind: 'nyxid',
               state: complete ? 'satisfied' : 'missing',
               connection_mode: 'hosted',
@@ -213,7 +224,10 @@ export async function connectionWizardFixture(
   const observeConnection = async (input: ConnectionObservationInput) => {
     assert.equal(input.owner, owner);
     assert.deepEqual(input.target, target);
-    const service = fixture.document.connectionJourneys.services.oauth!;
+    assert.equal(input.mode, mode);
+    assert.equal(input.serviceId, selectedService.serviceId);
+    assert.equal(input.caseId, caseId);
+    const service = selectedService;
     return {
       schema: 'cma-j4-provider-observation-v1',
       run: input.run,
@@ -251,24 +265,13 @@ export async function connectionWizardFixture(
   }
   h.config.baseURL = origin;
   let page: Page | undefined;
-  const provider = async (route: Route) => {
-    const url = new URL(route.request().url());
-    const intent = url.pathname.split('/').at(-1)!;
-    assert.ok(links.has(intent));
-    if (url.pathname.startsWith('/complete/')) {
-      links.set(intent, 'completed');
-      const returnPath = '/connection-return?status=completed';
-      return route.fulfill({ status: 302, headers: { location: origin + returnPath } });
-    }
-    return route.fulfill({
-      contentType: 'text/html',
-      body: `<!doctype html><title>Local provider fixture</title><a href="/complete/${intent}">Complete connection</a>`,
-    });
-  };
+  const provider = wizardProvider(mode, links, origin);
   return {
     h,
     boundary,
     admissions,
+    startRequests,
+    providerSubmissions: provider.submissions,
     links,
     checks,
     unexpected,
@@ -279,7 +282,10 @@ export async function connectionWizardFixture(
     get starts() {
       return starts;
     },
-    set invalidReply(value: 'owner' | 'intent') {
+    set upstreamUnavailable(value: boolean) {
+      upstreamUnavailable = value;
+    },
+    set invalidReply(value: 'owner' | 'intent' | 'service') {
       invalidReply = value;
     },
     async open(blockPopup = false) {
@@ -295,8 +301,8 @@ export async function connectionWizardFixture(
           ? route.continue()
           : route.fallback();
       });
-      await page.context().route('https://identity.example.test/**', provider);
-      await page.route('https://identity.example.test/**', provider);
+      await page.context().route('https://identity.example.test/**', provider.route);
+      await page.route('https://identity.example.test/**', provider.route);
       await page.route('**/api/v1/resource-access/agent/agt_contract', (route) =>
         route.fulfill({
           json: {
