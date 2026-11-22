@@ -35,7 +35,33 @@ it.each([
   { owner: 'owner', command: { key: 'key', body: { acknowledgements: [42] } } },
 ])('rejects malformed stored Draft recovery %j', (value) => {
   sessionStorage.setItem('cma:draft-credential-recovery:launch-one', JSON.stringify(value));
+  expect(() => readDraftRecovery('launch-one')).toThrow('Saved request could not be read');
+});
+
+it('distinguishes an absent record from malformed JSON and a denied storage getter', () => {
   expect(readDraftRecovery('launch-one')).toBeUndefined();
+  sessionStorage.setItem('cma:draft-credential-recovery:launch-one', '{');
+  expect(() => readDraftRecovery('launch-one')).toThrow('Saved request could not be read');
+  expect(sessionStorage.getItem('cma:draft-credential-recovery:launch-one')).toBe('{');
+  vi.spyOn(window, 'sessionStorage', 'get').mockImplementation(() => {
+    throw new DOMException('Synthetic storage denial', 'SecurityError');
+  });
+  expect(() => readDraftRecovery('launch-one')).toThrow('Saved request could not be read');
+  vi.restoreAllMocks();
+});
+
+it('preserves the original body property order through a storage round trip', () => {
+  const original = {
+    ...recovery,
+    command: {
+      ...recovery.command,
+      body: { acknowledgements: ['reviewed'], trust_confirmed_digest: 'approved-one' },
+    },
+  };
+  writeDraftRecovery('launch-one', original);
+  expect(JSON.stringify(readDraftRecovery('launch-one')?.command?.body)).toBe(
+    JSON.stringify(original.command.body),
+  );
 });
 
 it('reports an unavailable write before dispatch and never hides an accepted result on cleanup', () => {

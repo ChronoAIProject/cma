@@ -18,6 +18,7 @@ use std::{
 use tokio::sync::Mutex;
 #[derive(Clone)]
 pub struct ManagementState {
+    pub managed_telegram_setup_enabled: bool,
     pub github_enabled: bool,
     pub github: Arc<OnceLock<Arc<crate::github::Gateway>>>,
     pub native_lark_controls_enabled: bool,
@@ -197,6 +198,7 @@ impl ManagementState {
             tools_nyxid_slug: config.tools_nyxid_slug,
             cma_service_token: config.cma_service_token,
             telegram: None,
+            managed_telegram_setup_enabled: false,
             native_bot_mentions_writes_enabled: false,
             thread_contract_writes_enabled: false,
             media_enabled: false,
