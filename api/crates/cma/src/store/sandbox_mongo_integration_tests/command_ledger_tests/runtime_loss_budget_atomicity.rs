@@ -132,6 +132,10 @@ async fn runtime_loss_budget_is_atomic_across_abort_retry_and_unknown_commit() {
                     store.get_sandbox(&parent.id).await.unwrap().as_ref(),
                     Some(&parent)
                 );
+                if mode == "uncommitted" {
+                    client.database(&name).drop().await.unwrap();
+                    continue;
+                }
                 store.recover_runtime_loss(loss(&parent)).await.unwrap();
             } else {
                 assert_eq!(

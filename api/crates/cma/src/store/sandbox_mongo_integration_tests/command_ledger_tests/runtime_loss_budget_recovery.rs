@@ -64,7 +64,7 @@ async fn runtime_loss_closes_budget_with_mixed_children_and_concurrent_observers
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
-async fn runtime_loss_keeps_retained_cleanup_hold_when_publication_is_refused() {
+async fn runtime_loss_preserves_cleanup_hold_until_a_later_terminal_recovery() {
     for segmented in [false, true] {
         let (client, name) = database("budget_runtime_retained_cleanup").await;
         let (store, mut agent, parent, _) =
@@ -114,17 +114,48 @@ async fn runtime_loss_keeps_retained_cleanup_hold_when_publication_is_refused() 
         .unwrap();
         session.commit_transaction().await.unwrap();
         assert_eq!(ledger(&store).await, before);
-        // Existing projection rules refuse retirement while the turn is active.
-        // The accounting hook must preserve the hold on both paths.
-        assert!(matches!(
-            store.recover_runtime_loss(request).await,
-            Err(store::SandboxStoreError::Corrupt(_))
-        ));
-        assert_eq!(
-            store.get_agent(&agent.id).await.unwrap().as_ref(),
-            Some(&agent)
-        );
+        let outcome = store.recover_runtime_loss(request).await;
+        if segmented {
+            // Segmented projection refuses retirement while a turn is active.
+            assert!(
+                matches!(outcome, Err(store::SandboxStoreError::Corrupt(_))),
+                "{outcome:?}"
+            );
+            assert_eq!(
+                store.get_agent(&agent.id).await.unwrap().as_ref(),
+                Some(&agent)
+            );
+        } else {
+            assert_eq!(
+                outcome.unwrap(),
+                store::SandboxRuntimeLossOutcome::RecoveryScheduled
+            );
+            let next = store.get_agent(&agent.id).await.unwrap().unwrap();
+            assert_eq!(
+                next.conversation.active_turn,
+                agent.conversation.active_turn
+            );
+            assert!(next.conversation.runtime_generation > agent.conversation.runtime_generation);
+        }
         assert_eq!(ledger(&store).await, before);
+        if !segmented {
+            let obligation = turn(&store, &agent).await;
+            let mut retiring = store.get_sandbox(&parent.id).await.unwrap().unwrap();
+            let revision = retiring.revision;
+            retiring
+                .begin_retirement(layer2_core::now_rfc3339())
+                .unwrap();
+            store
+                .save_sandbox(revision, retiring.clone())
+                .await
+                .unwrap();
+            let request = loss(&retiring);
+            store.recover_runtime_loss(request.clone()).await.unwrap();
+            settled(&store, &agent, &obligation).await;
+            let after = ledger(&store).await;
+            store.recover_runtime_loss(request).await.unwrap();
+            assert_eq!(ledger(&store).await, after);
+        }
         client.database(&name).drop().await.unwrap();
     }
 }
