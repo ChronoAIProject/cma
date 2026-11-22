@@ -12,6 +12,7 @@ use mongodb::{
 use std::sync::{Arc, Mutex};
 
 mod capture;
+mod erasure;
 mod inventory;
 mod projection;
 mod safety;

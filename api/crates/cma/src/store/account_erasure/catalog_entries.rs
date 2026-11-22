@@ -64,6 +64,13 @@ pub(crate) const ERASURE: &[Entry] = &[
     entry!("sandbox_metric_bindings", Linked(Sandboxes, &["sandbox_id"]) => true),
     entry!("sandbox_metric_rollups", Linked(Sandboxes, &["sandbox_id"]) => true),
     entry!("sandbox_usage_rollups", Linked(Sandboxes, &["sandbox_id"]) => true),
+    // Ordinary erasure cannot retire billing evidence without proven custody
+    // and an explicit retention deadline; an ACK alone is insufficient.
+    entry!("sandbox_usage_captures_v1", Retained("financial-usage-source") => true),
+    entry!("sandbox_usage_evidence_v1", Retained("financial-usage-evidence") => true),
+    entry!("sandbox_usage_outbox_v1", Retained("financial-usage-delivery") => true),
+    entry!("sandbox_usage_streams_v1", Retained("financial-usage-lineage") => true),
+    entry!("sandbox_usage_inventory_v1", Retained("usage-discovery-checkpoint") => true),
     entry!("sandbox_usage_allocation_buckets_v1", Linked(Sandboxes, &["sandbox_id"]) => true, Owner(&["owner"]) => false),
     entry!("sandbox_usage_reports", Owner(&["principal"]) => true),
     entry!("sandbox_usage_report_rows", Linked(Reports, &["report_id"]) => true, Owner(&["owner"]) => false),
