@@ -99,25 +99,37 @@ where
         policy,
         IngressClass::Transformation,
         AllocationPlan::checked("integrity scan row operation", &[])?,
-        move |scope| async move {
-            if let Err(error) = require_head(last_seq) {
-                return Ok(scope.initialize_owned(|| Err(ReadFailure::Domain(error))));
-            }
-            let entry = match row::decode::<proof::ingress::TailSchema>(raw, policy) {
-                Ok(entry) => entry,
-                Err(error) => return error::finish(Err(ReadError::Row(error)), &scope),
-            };
-            let expected = match state.prepare(entry.seq, last_seq, raw.as_bytes().len()) {
-                Ok(expected) => expected,
-                Err(error) => return Ok(scope.initialize_owned(|| Err(ReadFailure::Domain(error)))),
-            };
-            if let Err(error) = visit(entry) {
-                return Ok(error.map(|error| Err(ReadFailure::Domain(error))));
-            }
-            state.advance(expected, raw);
-            Ok(scope.initialize_owned(|| Ok(())))
-        },
+        move |scope| async move { consume_row_owned(state, last_seq, raw, policy, &scope, visit) },
     )
+}
+
+pub(super) fn consume_row_owned<F>(
+    state: &mut ScanState,
+    last_seq: u64,
+    raw: &mongodb::bson::RawDocument,
+    policy: &IngressOwnershipPolicy,
+    scope: &layer2_core::sandbox::ingress_ownership::IngressWorkScope,
+    visit: F,
+) -> Result<OwnedWork<Result<(), ReadFailure>>, AdmittedError>
+where
+    F: FnOnce(SharedOwned<AgentLogEntry>) -> Result<(), OwnedWork<SandboxStoreError>>,
+{
+    if let Err(error) = require_head(last_seq) {
+        return Ok(scope.initialize_owned(|| Err(ReadFailure::Domain(error))));
+    }
+    let entry = match row::decode::<proof::ingress::TailSchema>(raw, policy) {
+        Ok(entry) => entry,
+        Err(error) => return error::finish(Err(ReadError::Row(error)), scope),
+    };
+    let expected = match state.prepare(entry.seq, last_seq, raw.as_bytes().len()) {
+        Ok(expected) => expected,
+        Err(error) => return Ok(scope.initialize_owned(|| Err(ReadFailure::Domain(error)))),
+    };
+    if let Err(error) = visit(entry) {
+        return Ok(error.map(|error| Err(ReadFailure::Domain(error))));
+    }
+    state.advance(expected, raw);
+    Ok(scope.initialize_owned(|| Ok(())))
 }
 
 #[cfg(test)]

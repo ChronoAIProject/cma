@@ -4,10 +4,10 @@ use crate::store::{
     cooperative_budget::Policy,
     execution_sections::{Clock, MonotonicClock},
 };
-use futures_util::TryStreamExt;
 use mongodb::options::ReadConcern;
-use std::future::IntoFuture;
 
+#[path = "scan_cursor_ingress.rs"]
+pub(super) mod cursor;
 #[path = "scan_ingress.rs"]
 pub(super) mod ingress;
 #[path = "scan_rows_ingress.rs"]
@@ -323,16 +323,6 @@ where
     );
     rows::require_head(last_seq).map_err(TransactionLogError::Domain)?;
     let mut read = crate::store::mongo_read_telemetry::Read::find(collection.name());
-    let raw_log = collection.clone_with_type::<RawDocumentBuf>();
-    let find = raw_log
-        .find(mongodb::bson::doc! { "agent_id": agent_id.as_str() })
-        .sort(mongodb::bson::doc! { "seq": 1 })
-        .limit(i64::try_from(PHYSICAL_AGENT_LOG_ENTRIES + 1).unwrap_or(i64::MAX));
-    let find = if mode.options.snapshot {
-        find.read_concern(ReadConcern::snapshot())
-    } else {
-        find
-    };
     let mut state = rows::ScanState::default();
     // Keep row validation independent of cursor delivery so every path retains
     // the same sequence, capacity, hash and visitor failure boundaries.
@@ -353,40 +343,20 @@ where
         state.advance(expected, raw);
         Ok(())
     };
-    // Both paths observe initial-find suspension, but only cursor advancement
-    // contributes to driver-poll timing. Keep the session and query unchanged.
-    if mode.options.raw_batches {
-        let mut cursor = observation
-            .observe(find.session(&mut *session).batch(), false)
-            .await
-            .map_err(TransactionLogError::Driver)?;
-        while let Some(batch) = observation
-            .observe(cursor.stream(session).try_next(), true)
-            .await
-            .map_err(TransactionLogError::Driver)?
-        {
-            // The ordinary cursor copies every document in a ready batch before
-            // returning a row. Borrowing lets checkpoints separate that work;
-            // it needs neither smaller server batches nor additional checkouts.
-            for item in batch.doc_slices().map_err(TransactionLogError::Driver)? {
-                consume(batch_document(item)?, &mut observation)?;
-                observation.checkpoint().await;
-            }
-        }
-    } else {
-        let mut cursor = observation
-            .observe(find.session(&mut *session).into_future(), false)
-            .await
-            .map_err(TransactionLogError::Driver)?;
-        while let Some(raw) = observation
-            .observe(cursor.stream(session).try_next(), true)
-            .await
-            .map_err(TransactionLogError::Driver)?
-        {
-            consume(raw.as_ref(), &mut observation)?;
-            observation.checkpoint().await;
-        }
-    }
+    cursor::visit_raw_rows(
+        cursor::ScanInput {
+            collection,
+            agent_id,
+            last_seq,
+        },
+        session,
+        mode.options.snapshot,
+        mode.options.raw_batches,
+        &mut observation,
+        &mut consume,
+        TransactionLogError::Driver,
+    )
+    .await?;
     let summary = state
         .finish(last_seq)
         .map_err(TransactionLogError::Domain)?;
@@ -401,17 +371,12 @@ where
 
 fn batch_document(
     item: Result<mongodb::bson::RawBsonRef<'_>, mongodb::bson::error::Error>,
-) -> Result<&mongodb::bson::RawDocument, TransactionLogError> {
-    let item = item
-        .map_err(mongodb::error::Error::from)
-        .map_err(TransactionLogError::Driver)?;
+) -> Result<&mongodb::bson::RawDocument, mongodb::error::Error> {
+    let item = item.map_err(mongodb::error::Error::from)?;
     // A malformed wire batch is a driver failure, not stored-history corruption
     // eligible for quarantine. Stored row validation still happens in consume.
-    item.as_document().ok_or_else(|| {
-        TransactionLogError::Driver(mongodb::error::Error::custom(
-            "invalid document in cursor batch",
-        ))
-    })
+    item.as_document()
+        .ok_or_else(|| mongodb::error::Error::custom("invalid document in cursor batch"))
 }
 
 #[cfg(test)]
@@ -428,7 +393,7 @@ mod tests {
             <mongodb::bson::error::Error as serde::de::Error>::custom("malformed wire item");
         for item in [Ok(RawBsonRef::Null), Err(decode_error)] {
             assert!(matches!(
-                batch_document(item),
+                batch_document(item).map_err(TransactionLogError::Driver),
                 Err(TransactionLogError::Driver(_))
             ));
         }
