@@ -199,6 +199,7 @@ async fn router_with_support(
         None => lifecycle,
     };
     let drain = lifecycle.drain_handle();
+    lifecycle.resume_pending();
     let mut routes = services
         .with_lifecycle(lifecycle.clone())
         .with_lifecycle_operations(lifecycle)
