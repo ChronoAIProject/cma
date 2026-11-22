@@ -8,10 +8,18 @@ pub(super) fn unavailable() -> StoreError {
 pub(super) async fn read<T: DeserializeOwned>(
     request: reqwest::RequestBuilder,
 ) -> Result<T, StoreError> {
-    let mut response = request.send().await.map_err(|_| unavailable())?;
-    if !response.status().is_success() {
+    let (status, bytes) = response(request).await?;
+    if !status.is_success() {
         return Err(unavailable());
     }
+    serde_json::from_slice(&bytes).map_err(|_| unavailable())
+}
+
+async fn response(
+    request: reqwest::RequestBuilder,
+) -> Result<(reqwest::StatusCode, Vec<u8>), StoreError> {
+    let mut response = request.send().await.map_err(|_| unavailable())?;
+    let status = response.status();
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(|_| unavailable())? {
         if bytes.len() + chunk.len() > 1024 * 1024 {
@@ -19,7 +27,44 @@ pub(super) async fn read<T: DeserializeOwned>(
         }
         bytes.extend_from_slice(&chunk);
     }
-    serde_json::from_slice(&bytes).map_err(|_| unavailable())
+    Ok((status, bytes))
+}
+
+pub(super) enum ConsentRead {
+    Available(Option<Consent>),
+    UnsupportedCredential,
+}
+
+pub(super) async fn read_consent(
+    request: reqwest::RequestBuilder,
+    client: &str,
+) -> Result<ConsentRead, StoreError> {
+    let (status, bytes) = response(request).await?;
+    if status == reqwest::StatusCode::FORBIDDEN {
+        let error: serde_json::Value = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
+        if error["error"] == "forbidden"
+            && error["details"]["reason"] == "credential_type_unsupported"
+            && error["details"]["credential_type"] == "oauth_client"
+        {
+            return Ok(ConsentRead::UnsupportedCredential);
+        }
+    }
+    if !status.is_success() {
+        return Err(unavailable());
+    }
+    let listing: Consents = serde_json::from_slice(&bytes).map_err(|_| unavailable())?;
+    let mut matches = listing
+        .consents
+        .into_iter()
+        .filter(|row| row.client_id == client);
+    let consent = matches.next();
+    if matches.next().is_some() {
+        return Err(unavailable());
+    }
+    if let Some(consent) = &consent {
+        consent.validate()?;
+    }
+    Ok(ConsentRead::Available(consent))
 }
 
 #[derive(Deserialize)]

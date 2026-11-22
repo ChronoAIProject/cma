@@ -16,6 +16,27 @@ const user = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe('account menu', () => {
+  it('keeps a management credential refusal separate from the grant and does not loop sign-in', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        Response.json({
+          owner: user.id,
+          status: 'unknown',
+          management_access: 'unsupported_credential',
+        }),
+      ),
+    );
+    const actor = userEvent.setup();
+    render(<ProfileMenu user={{ ...user, serviceAuthorization: true }} onSignOut={vi.fn()} />);
+    await actor.click(screen.getByRole('button', { name: /account menu/i }));
+    await actor.click(screen.getByRole('menuitem', { name: 'Service authorization' }));
+    await screen.findByText(/Signing in again will not change that access/);
+    expect(screen.queryByRole('link', { name: 'Sign in again' })).toBeNull();
+    expect(
+      within(screen.getByRole('dialog', { name: 'Service authorization' })).getByRole('status'),
+    ).toHaveTextContent('The account grant status could not be verified.');
+  });
   it('keeps the original tab when its query cannot be restored through ordinary sign-in', async () => {
     window.history.replaceState(null, '', '/event-gateway?unsupported=state');
     try {

@@ -45,6 +45,7 @@ impl GrantAuthority for SyntheticGrants {
             .await
             .map(|authorized| VerifiedAccountGrant {
                 subject: subject.clone(),
+                management_credential_unsupported: false,
                 status: if authorized {
                     GrantStatus::Authorized
                 } else {
@@ -278,7 +279,10 @@ async fn partial_grant_requests_only_missing_scope_and_redeems_once_across_repli
     assert!(!accepted.headers().contains_key(header::SET_COOKIE));
     assert_eq!(accepted.headers()[header::REFERRER_POLICY], "no-referrer");
     let page = body(accepted).await;
-    assert!(page.contains("Consent saved. Sign in again"));
+    assert!(page.contains("Application consent confirmed"));
+    assert!(
+        page.contains("does not update an existing Sandbox key or resolve a pending key request")
+    );
     assert!(page.contains("href=\"/auth/login?return_to=%2F\">Sign in again"));
     assert!(page.contains("href=\"/\">Return to draft"));
     assert!(!page.contains("<form"));
@@ -286,7 +290,7 @@ async fn partial_grant_requests_only_missing_scope_and_redeems_once_across_repli
 }
 
 #[tokio::test]
-async fn a_complete_grant_offers_explicit_sign_in_without_another_consent_attempt() {
+async fn a_complete_grant_does_not_start_another_consent_or_force_sign_in() {
     let f = Fixture::new().await;
     f.grants.missing.lock().await.clear();
     let response = start(
@@ -297,12 +301,8 @@ async fn a_complete_grant_offers_explicit_sign_in_without_another_consent_attemp
         "/agents/original",
     )
     .await;
-    assert_eq!(response.status(), StatusCode::OK);
-    let result: serde_json::Value = serde_json::from_str(&body(response).await).unwrap();
-    assert_eq!(
-        result["hosted_url"],
-        "https://app.example/auth/login?return_to=%2Fagents%2Foriginal"
-    );
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(!body(response).await.contains("hosted_url"));
     assert!(f.grants.challenge.lock().await.is_empty());
     assert_eq!(f.grants.redemptions.load(Ordering::SeqCst), 0);
 }

@@ -3,7 +3,7 @@ use super::*;
 use std::collections::BTreeMap;
 
 mod protocol;
-use protocol::{Consent, Discovery, Service};
+use protocol::{Consent, ConsentRead, Discovery, Service};
 #[cfg(test)]
 mod tests;
 
@@ -72,26 +72,15 @@ impl Nyxid {
         &self,
         auth: &AuthState,
         token: &SecretValue,
-    ) -> Result<Option<Consent>, StoreError> {
+    ) -> Result<ConsentRead, StoreError> {
         let (base, client, _) = self.client(auth)?;
-        let listing: protocol::Consents = protocol::read(
+        protocol::read_consent(
             auth.http
                 .get(format!("{base}/api/v1/users/me/consents"))
                 .bearer_auth(token.expose()),
+            client,
         )
-        .await?;
-        let mut matches = listing
-            .consents
-            .into_iter()
-            .filter(|row| row.client_id == client);
-        let consent = matches.next();
-        if matches.next().is_some() {
-            return Err(protocol::unavailable());
-        }
-        if let Some(consent) = &consent {
-            consent.validate()?;
-        }
-        Ok(consent)
+        .await
     }
 
     async fn evidence(
@@ -113,7 +102,9 @@ impl Nyxid {
             return Err(protocol::unavailable());
         }
         let (base, _, _) = self.client(auth)?;
-        let consent = self.consent(auth, token).await?;
+        let ConsentRead::Available(consent) = self.consent(auth, token).await? else {
+            return Err(protocol::unavailable());
+        };
         let services: protocol::Services = protocol::read(
             auth.http
                 .get(format!("{base}/api/v1/user-services"))
@@ -144,7 +135,14 @@ impl GrantAuthority for Nyxid {
     ) -> Result<Option<VerifiedAccountGrant>, StoreError> {
         self.discovery(auth).await?;
         let token = self.token(auth, subject).await?;
-        let consent = self.consent(auth, &token).await?;
+        let ConsentRead::Available(consent) = self.consent(auth, &token).await? else {
+            return Ok(Some(VerifiedAccountGrant {
+                subject: subject.clone(),
+                status: GrantStatus::Unknown,
+                management_credential_unsupported: true,
+                management_url: Some(self.management_url.clone()),
+            }));
+        };
         let status = match consent {
             None => GrantStatus::NotGranted,
             Some(grant) if !grant.live()? => GrantStatus::Expired,
@@ -155,6 +153,7 @@ impl GrantAuthority for Nyxid {
         Ok(Some(VerifiedAccountGrant {
             subject: subject.clone(),
             status,
+            management_credential_unsupported: false,
             management_url: Some(self.management_url.clone()),
         }))
     }

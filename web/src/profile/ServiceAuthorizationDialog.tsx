@@ -43,15 +43,23 @@ export function ServiceAuthorizationDialog({
   return (
     <Modal open title="Service authorization" onClose={onClose}>
       <p role="status">{grant === undefined ? 'Checking account grant…' : STATUS[grant.status]}</p>
-      {grant?.status === 'sign_in_required' && (
-        <a
-          href={signInPath(destination.kind === 'reject' ? undefined : destination.target)}
-          target="_blank"
-          rel="noreferrer"
-        >
-          Sign in again
-        </a>
+      {grant?.managementAccess === 'unsupported_credential' && (
+        <p>
+          NyxID does not allow CMA to read authorization details with this sign-in. Signing in again
+          will not change that access.
+        </p>
       )}
+      {grant !== undefined &&
+        grant.status !== 'unknown' &&
+        grant.managementAccess !== 'unsupported_credential' && (
+          <a
+            href={signInPath(destination.kind === 'reject' ? undefined : destination.target)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            Sign in again
+          </a>
+        )}
       {grant?.managementUrl !== undefined && (
         <a href={grant.managementUrl} target="_blank" rel="noreferrer">
           Manage authorized apps in NyxID

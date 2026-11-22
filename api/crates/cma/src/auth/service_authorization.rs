@@ -44,12 +44,14 @@ pub(crate) struct RecoveryIntent {
 pub(crate) struct VerifiedAccountGrant {
     pub subject: SubjectId,
     pub status: GrantStatus,
+    pub management_credential_unsupported: bool,
     pub management_url: Option<Url>,
 }
 
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum GrantStatus {
+    Unknown,
     Authorized,
     Partial,
     Expired,
@@ -329,17 +331,7 @@ pub(crate) async fn begin(
         .filter(|missing| missing.is_subset(&intent.required))
         .ok_or(RecoveryError::Unknown)?;
     if missing.is_empty() {
-        // Consent may cover the services while the retained token still has
-        // its original narrower scope. Only ordinary sign-in replaces custody.
-        live_session(auth, &key, subject).await?;
-        return Ok((
-            [(header::CACHE_CONTROL, "private, no-store")],
-            Json(serde_json::json!({
-                "owner": subject.as_str(),
-                "hosted_url": format!("{origin}{}", login_path(&intent.return_to)),
-            })),
-        )
-            .into_response());
+        return Err(RecoveryError::Changed);
     }
     intent.requested = missing;
     let state = random_token();

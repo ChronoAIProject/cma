@@ -380,6 +380,30 @@ async fn changed_or_legacy_grant_does_not_emit_a_stale_incremental_request() {
 }
 
 #[tokio::test]
+async fn unsupported_management_credentials_do_not_mean_revoked_or_permit_recovery() {
+    let f = Fixture::new().await;
+    *f.peer.status.lock().await = StatusCode::FORBIDDEN;
+    *f.peer.consents.lock().await = json!({"error":"forbidden","details":{
+        "reason":"credential_type_unsupported","credential_type":"oauth_client",
+        "accepted":["user_session"]}});
+    let account = f
+        .authority()
+        .account(&f.auth, &SubjectId::new("owner"))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(account.management_credential_unsupported);
+    assert_eq!(serde_json::to_value(account.status).unwrap(), "unknown");
+    assert!(f.authority().missing(&f.auth, &f.intent()).await.is_err());
+    assert!(f
+        .authority()
+        .consent_url(&f.auth, &f.intent(), "state", "challenge")
+        .await
+        .is_err());
+    assert!(f.peer.exchange.lock().await.is_empty());
+}
+
+#[tokio::test]
 async fn discovery_cannot_redirect_consent_or_exchange_outside_the_pinned_origins() {
     let f = Fixture::new().await;
     let original = f.peer.discovery.lock().await.clone();

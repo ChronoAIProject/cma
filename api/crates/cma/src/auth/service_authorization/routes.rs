@@ -65,6 +65,12 @@ async fn account(
         "status": grant.as_ref().map(|grant| serde_json::json!(grant.status))
             .unwrap_or_else(|| serde_json::json!("unknown")),
     });
+    if grant
+        .as_ref()
+        .is_some_and(|grant| grant.management_credential_unsupported)
+    {
+        body["management_access"] = "unsupported_credential".into();
+    }
     if let Some(url) = grant
         .and_then(|grant| grant.management_url)
         .filter(|url| provider_url(&auth, url))
@@ -159,14 +165,14 @@ async fn complete(
         return Err(RecoveryError::Forbidden);
     }
     match identity.missing {
-        missing if missing.is_empty() => Ok(Outcome::SignInRequired),
+        missing if missing.is_empty() => Ok(Outcome::ConsentConfirmed),
         missing if missing.is_subset(&intent.required) => Ok(Outcome::Incomplete),
         _ => Ok(Outcome::Unknown),
     }
 }
 
 enum Outcome {
-    SignInRequired,
+    ConsentConfirmed,
     Incomplete,
     Cancelled,
     Unknown,
@@ -174,11 +180,11 @@ enum Outcome {
 
 impl Outcome {
     fn page(self, return_to: &str) -> Response {
-        let sign_in = matches!(self, Self::SignInRequired);
+        let sign_in = matches!(self, Self::ConsentConfirmed);
         let (code, message) = match self {
-            Self::SignInRequired => (
-                "sign_in_required",
-                "Consent saved. Sign in again to use the authorized services.",
+            Self::ConsentConfirmed => (
+                "consent_confirmed",
+                "Application consent confirmed. Check service access from your draft.",
             ),
             Self::Incomplete => ("incomplete", "Required services still need authorization"),
             Self::Cancelled => ("cancelled", "Service authorization cancelled"),
@@ -192,7 +198,7 @@ impl Outcome {
             .replace('>', "&gt;");
         let login = if sign_in {
             let path = login_path(return_to);
-            format!("<p>Your draft has not been submitted. Sign in with the same account, then review and submit it.</p><a href=\"{path}\">Sign in again</a> ")
+            format!("<p>Your draft has not been submitted. Connections and Sandbox access must still be checked. Signing in again refreshes account access; it does not update an existing Sandbox key or resolve a pending key request.</p><a href=\"{path}\">Sign in again</a> ")
         } else {
             String::new()
         };

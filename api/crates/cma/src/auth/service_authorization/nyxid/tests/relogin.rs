@@ -84,7 +84,7 @@ async fn explicit_sign_in(f: &Fixture) {
 }
 
 #[tokio::test]
-async fn expanded_consent_and_refresh_do_not_replace_explicit_sign_in_for_service_access() {
+async fn expanded_consent_and_refresh_leave_owner_proxy_token_restricted_until_sign_in() {
     let f = Fixture::new().await;
     assert_eq!(access_b(&f).await, StatusCode::FORBIDDEN);
     *f.peer.consents.lock().await = json!({"consents":[grant(&[DRIVE, GITHUB], None)]});

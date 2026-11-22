@@ -11,6 +11,7 @@ type AccountGrant = {
     | 'unknown'
     | 'sign_in_required';
   readonly managementUrl?: string;
+  readonly managementAccess?: 'unsupported_credential';
 };
 
 export async function accountGrant(owner: string, signal: AbortSignal): Promise<AccountGrant> {
@@ -33,7 +34,13 @@ export async function accountGrant(owner: string, signal: AbortSignal): Promise<
       : 'unknown';
   const managementUrl =
     typeof body.management_url === 'string' ? connectionUrl(body.management_url) : undefined;
-  return { status, managementUrl };
+  return {
+    status,
+    managementUrl,
+    ...(body.management_access === 'unsupported_credential'
+      ? { managementAccess: 'unsupported_credential' as const }
+      : {}),
+  };
 }
 
 export async function startServiceAuthorization(
