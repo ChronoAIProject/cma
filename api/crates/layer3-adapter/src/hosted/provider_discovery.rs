@@ -129,7 +129,7 @@ impl ProviderHostedControlTransport {
                         .with_native_binding(handle.clone(), binding)
                         .with_native_identity(identity)
                 } else {
-                    endpoint
+                    endpoint.with_direct_receiver(handle, &binding)
                 })
             }
         }

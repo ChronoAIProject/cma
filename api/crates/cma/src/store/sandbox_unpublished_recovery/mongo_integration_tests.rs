@@ -330,6 +330,7 @@ async fn mongo_no_agent_stalled_revival_keeps_retained_source_and_reserved_gener
             sandbox_id: sandbox.id.clone(),
             expected_revision: sandbox.revision,
             expected_runtime: sandbox.runtime.clone(),
+            native_retirement_finality: false,
             retain_runtime: true,
             interruption_cause: Default::default(),
             observed_at: NOW.into(),

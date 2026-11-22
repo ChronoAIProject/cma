@@ -241,6 +241,7 @@ impl ProviderHostedControlTransport {
             let status = reply.status.as_u16();
             observed_status.record_status(status);
             if !reply.status.is_success() {
+                self.record_failed_challenge(endpoint, owner, phase, reply.status);
                 return Err(OwnershipFailure::http(phase, status).into());
             }
             (
@@ -264,6 +265,7 @@ impl ProviderHostedControlTransport {
             let status = reply.status().as_u16();
             observed_status.record_status(status);
             if !reply.status().is_success() {
+                self.record_failed_challenge(endpoint, owner, phase, reply.status());
                 return Err(OwnershipFailure::http(phase, status).into());
             }
             let mut bytes = Vec::new();
@@ -481,3 +483,6 @@ mod tests {
         }
     }
 }
+
+#[path = "provider_ownership_retirement.rs"]
+mod retirement;

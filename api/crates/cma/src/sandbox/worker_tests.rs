@@ -58,6 +58,7 @@ mod lifecycle_queue_tests;
 mod lifecycle_recovery_tests;
 mod native_pool_tests;
 mod native_suspension_tests;
+pub(crate) use native_suspension_tests::exercise_native_retirement_finality;
 mod owned_reopen_tests;
 mod pause_cancellation_tests;
 mod provided_credential_tests;
