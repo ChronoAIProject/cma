@@ -1,5 +1,5 @@
 import { chooseOptionValue } from '../test/select';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, expect, it, vi } from 'vitest';
 import {
@@ -35,6 +35,46 @@ function show() {
   );
   return fixture;
 }
+
+it('keeps the resolved image when an edit lands before the resolution renders', async () => {
+  let finish!: (image: ResolvedAgentImage) => void;
+  vi.mocked(resolveAgentImage).mockReturnValue(
+    new Promise((resolve) => {
+      finish = resolve;
+    }),
+  );
+  const fixture = show();
+  const user = userEvent.setup();
+  await waitFor(() => expect(vi.mocked(listAgentImages)).toHaveBeenCalled());
+  const image = screen.getByRole('button', { name: 'Image' });
+  await waitFor(() => expect(image).toBeEnabled());
+  await chooseOptionValue(user, image, 'img_custom');
+  const model = screen.getByRole('textbox', { name: 'Model' });
+  await waitFor(() => expect(model).toBeEnabled());
+  const resolved = {
+    id: 'img_custom',
+    version: 'build_one',
+    reference: `registry.example/runtime@sha256:${'b'.repeat(64)}`,
+  };
+  // The resolution's update is queued before React re-renders; an edit handled
+  // in that window still holds the pre-resolution target and must not drop it.
+  await act(async () => {
+    finish(resolved);
+    await Promise.resolve();
+    await Promise.resolve();
+    fireEvent.change(model, { target: { value: 'late-model' } });
+  });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled());
+  await user.click(screen.getByRole('button', { name: 'Next' }));
+  expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  expect(await screen.findByRole('radiogroup', { name: 'sandbox reuse' })).toBeInTheDocument();
+  await user.click(screen.getByRole('button', { name: 'Save draft' }));
+  await waitFor(() => expect(fixture.triggers.save).toHaveBeenCalledOnce());
+  expect(fixture.triggers.save.mock.calls[0]?.[1].content.target.inline).toMatchObject({
+    image: resolved,
+    agent: { model: 'late-model' },
+  });
+});
 
 it('waits for the selected image and preserves edits made while its immutable version resolves', async () => {
   let finish!: (image: ResolvedAgentImage) => void;
