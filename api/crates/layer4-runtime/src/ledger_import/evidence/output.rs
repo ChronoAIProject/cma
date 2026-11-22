@@ -78,7 +78,7 @@ pub(super) fn encode(
         "auxiliary_recovery": "UNQUALIFIED",
         "sandbox_id": config.sandbox_id,
         "home_identity": config.home_identity,
-        "generation": config.generation,
+        "generation": config.generation.to_string(),
         "inventory_sha256": inventory.digest,
         "source_records": inventory.entries.len(),
         "source_directories": inventory.roots.len(),
