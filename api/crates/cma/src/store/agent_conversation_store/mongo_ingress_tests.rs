@@ -219,3 +219,160 @@ async fn corrupt_raw_checkpoint_retains_error_custody_until_final_drop() {
     );
     fixture.finish().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn seal_read_preserves_missing_and_corrupt_domains_without_quarantining_preflight() {
+    use crate::store::{agent_log_segments::Seal, ingress_reads::error::ReadFailure};
+    use layer2_core::sandbox::ingress_ownership::AdmittedError;
+    use mongodb::bson::{self, Bson};
+    let fixture = fixture::Fixture::new("seal_errors").await;
+    let store = &fixture.store;
+    let (head, valid) = read_ports::seal_fixture(1);
+    let valid = bson::serialize_to_document(&valid).unwrap();
+    let rows = &store.segment_logs.seals;
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let plan = || AllocationPlan::checked("seal error read", &[50 * 1024 * 1024]).unwrap();
+    let mut session = store.client.start_session().await.unwrap();
+    let absent = Seal::read_at_admitted(store, &head, 0, &mut session, false, &policy, plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap_err();
+    assert!(matches!(
+        &*absent,
+        ReadFailure::Domain(SandboxStoreError::Corrupt(_))
+    ));
+    drop(absent);
+    for (field, replacement) in [
+        ("format_version", Bson::Int64(2)),
+        ("entry_count", Bson::Int32(1)),
+        ("previous_seal", Bson::Null),
+        ("digest_version", Bson::String("unknown".into())),
+        ("unexpected", Bson::String("x".repeat(64 * 1024))),
+        ("unexpected", Bson::String("x".repeat(1024 * 1024))),
+    ] {
+        let mut row = valid.clone();
+        if field == "previous_seal" {
+            row.remove(field);
+        } else {
+            row.insert(field, replacement);
+        }
+        let expected = Seal::read(row.clone()).unwrap_err();
+        rows.replace_one(doc! {"_id": valid.get_str("_id").unwrap()}, row.clone())
+            .upsert(true)
+            .await
+            .unwrap();
+        let error = Seal::read_at_admitted(store, &head, 0, &mut session, false, &policy, plan())
+            .unwrap()
+            .await
+            .unwrap()
+            .transpose()
+            .unwrap_err();
+        let ReadFailure::Domain(actual) = &*error else {
+            panic!("domain classification changed")
+        };
+        assert_eq!(actual, &expected);
+        assert!(error.belongs_to(&policy));
+        assert!(root.available_bytes() < idle);
+        assert_eq!(
+            policy.budget(IngressClass::Data).available_bytes(),
+            policy.bounds().data_bytes()
+        );
+        drop(error);
+        assert_eq!(root.available_bytes(), idle);
+        assert_eq!(
+            rows.find_one(doc! {"_id":valid.get_str("_id").unwrap()})
+                .await
+                .unwrap(),
+            Some(row)
+        );
+    }
+    let mut row = valid.clone();
+    let mut nested = doc! {"value":true};
+    for _ in 0..66 {
+        nested = doc! {"nested":nested};
+    }
+    row.insert("unsupported", nested);
+    rows.replace_one(doc! {"_id":valid.get_str("_id").unwrap()}, row.clone())
+        .await
+        .unwrap();
+    assert!(matches!(
+        Seal::read_at_admitted(store, &head, 0, &mut session, false, &policy, plan())
+            .unwrap()
+            .await,
+        Err(AdmittedError::Unsupported(_))
+    ));
+    assert_eq!(
+        rows.find_one(doc! {"_id":valid.get_str("_id").unwrap()})
+            .await
+            .unwrap(),
+        Some(row)
+    );
+    assert_eq!(root.available_bytes(), idle);
+    drop(session);
+    fixture.finish().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn seal_read_keeps_driver_error_identity_and_transaction_label() {
+    use crate::store::{agent_log_segments::Seal, ingress_reads::error::ReadFailure};
+    let mut options =
+        mongodb::options::ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+    let app_name = "cma-ingress-seal-error";
+    options.app_name = Some(app_name.into());
+    let fixture = fixture::Fixture::with_client(
+        mongodb::Client::with_options(options).unwrap(),
+        "seal_driver",
+    )
+    .await;
+    let store = &fixture.store;
+    let admin = store.client.database("admin");
+    let (head, _) = read_ports::seal_fixture(1);
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    admin
+        .run_command(
+            doc! {"configureFailPoint":"failCommand", "mode":{"times":1}, "data":{
+                "failCommands":["find"], "appName":app_name, "errorCode":112,
+                "errorLabels":["TransientTransactionError"],
+            }},
+        )
+        .await
+        .unwrap();
+    let plan = AllocationPlan::checked("seal driver read", &[50 * 1024 * 1024]).unwrap();
+    let result = Seal::read_at_admitted(store, &head, 0, &mut session, false, &policy, plan)
+        .unwrap()
+        .await;
+    admin
+        .run_command(doc! {"configureFailPoint":"failCommand", "mode":"off"})
+        .await
+        .unwrap();
+    let error = result.unwrap().transpose().unwrap_err();
+    let ReadFailure::Driver(driver) = &*error else {
+        panic!("driver classification changed")
+    };
+    assert!(driver.contains_label("TransientTransactionError"));
+    let pointer = std::ptr::from_ref(driver.kind.as_ref());
+    let moved = error.map(|error| match error {
+        ReadFailure::Driver(driver) => driver,
+        _ => unreachable!(),
+    });
+    assert_eq!(std::ptr::from_ref(moved.kind.as_ref()), pointer);
+    assert!(moved.belongs_to(&policy));
+    assert!(root.available_bytes() < idle);
+    drop(moved);
+    assert_eq!(root.available_bytes(), idle);
+    let _ = session.abort_transaction().await;
+    drop((session, admin));
+    fixture.finish().await;
+}

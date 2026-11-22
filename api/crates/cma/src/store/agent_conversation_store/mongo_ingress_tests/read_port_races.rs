@@ -344,3 +344,82 @@ async fn gate_read_keeps_absence_strict_validation_and_preflight_refusal_distinc
     drop((session, rows, database));
     fixture.finish().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn seal_read_keeps_snapshot_time_and_replacement_rows_independent() {
+    use super::read_ports::seal_fixture;
+    use crate::store::agent_log_segments::Seal;
+    let fixture = Fixture::new("seal_snapshot").await;
+    let store = &fixture.store;
+    let (head, original) = seal_fixture(1);
+    let (_, grown) = seal_fixture(10_128);
+    store
+        .segment_logs
+        .seals
+        .insert_one(bson::serialize_to_document(&original).unwrap())
+        .await
+        .unwrap();
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().snapshot(true).await.unwrap();
+    let result = Seal::read_at_admitted(store, &head, 0, &mut session, true, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(**result, original);
+    let timestamp = session.snapshot_time().expect("server snapshot timestamp");
+    let other = mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    other
+        .database(&fixture.database)
+        .collection::<Document>(crate::store::agent_log_segments::SEGMENTS)
+        .replace_one(
+            doc! {"_id":&original.id},
+            bson::serialize_to_document(&grown).unwrap(),
+        )
+        .write_concern(mongodb::options::WriteConcern::majority())
+        .await
+        .unwrap();
+    let same = Seal::read_at_admitted(store, &head, 0, &mut session, true, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(**same, original);
+    assert_eq!(session.snapshot_time(), Some(timestamp));
+    drop((same, result, session));
+    let pressure = policy
+        .admit(
+            IngressClass::Data,
+            AllocationPlan::checked("limited seal data", &[policy.bounds().data_bytes() - 8192])
+                .unwrap(),
+        )
+        .unwrap();
+    let held = root.available_bytes();
+    let mut later = store.client.start_session().await.unwrap();
+    assert!(matches!(
+        Seal::read_at_admitted(store, &head, 0, &mut later, false, &policy, gate_plan())
+            .unwrap()
+            .await,
+        Err(AdmittedError::Refused(_))
+    ));
+    assert_eq!(root.available_bytes(), held);
+    drop(pressure);
+    let current = Seal::read_at_admitted(store, &head, 0, &mut later, false, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(**current, grown);
+    assert!(later.snapshot_time().is_none());
+    drop((current, later));
+    assert_eq!(root.available_bytes(), idle);
+    other.shutdown().await;
+    fixture.finish().await;
+}

@@ -367,3 +367,74 @@ async fn gate_read_keeps_driver_labels_and_error_allocation_identity() {
     drop((session, admin, database));
     fixture.finish().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn seal_read_admission_and_unpolled_cancellation_issue_no_queries() {
+    use crate::store::agent_log_segments::{Seal, SEGMENTS};
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let mut options =
+        mongodb::options::ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+    options.command_event_handler = Some(mongodb::event::EventHandler::callback(move |event| {
+        if let mongodb::event::command::CommandEvent::Started(event) = event {
+            if event.command_name == "find" && event.command.get_str("find").ok() == Some(SEGMENTS)
+            {
+                observed.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }));
+    let fixture = Fixture::with_client(
+        mongodb::Client::with_options(options).unwrap(),
+        "seal_refusal",
+    )
+    .await;
+    let store = &fixture.store;
+    let (head, original) = super::read_ports::seal_fixture(1);
+    store
+        .segment_logs
+        .seals
+        .insert_one(bson::serialize_to_document(&original).unwrap())
+        .await
+        .unwrap();
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    let occupied = policy
+        .admit(
+            IngressClass::Transformation,
+            AllocationPlan::checked("occupied work", &[policy.bounds().transformation_bytes()])
+                .unwrap(),
+        )
+        .unwrap();
+    assert!(matches!(
+        Seal::read_at_admitted(store, &head, 0, &mut session, false, &policy, gate_plan()),
+        Err(AdmittedError::Refused(_))
+    ));
+    drop(occupied);
+    drop(
+        Seal::read_at_admitted(store, &head, 0, &mut session, false, &policy, gate_plan()).unwrap(),
+    );
+    let plan = AllocationPlan::checked("unavailable read", &[root.capacity_bytes()]).unwrap();
+    assert!(matches!(
+        Seal::read_at_admitted(store, &head, 0, &mut session, false, &policy, plan)
+            .unwrap()
+            .await,
+        Err(AdmittedError::Refused(_))
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(root.available_bytes(), idle);
+    let result = Seal::read_at_admitted(store, &head, 0, &mut session, false, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(**result, original);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    drop((result, session));
+    assert_eq!(root.available_bytes(), idle);
+    fixture.finish().await;
+}

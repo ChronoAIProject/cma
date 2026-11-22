@@ -276,3 +276,126 @@ async fn transaction_read_keeps_original_driver_labels_and_error_allocation() {
     drop((session, admin));
     fixture.finish().await;
 }
+
+use crate::store::agent_log_segments::{Head, Seal, MIGRATION, READER};
+use mongodb::bson::{self, Binary};
+
+pub(super) fn seal_fixture(count: i64) -> (Head, Seal) {
+    let binary = |bytes| Binary {
+        subtype: bson::spec::BinarySubtype::Generic,
+        bytes,
+    };
+    let mut seal = Seal {
+        id: Seal::identity("synthetic-seal", &"0".repeat(64), 0),
+        format_version: 1,
+        agent_id: "synthetic-seal".into(),
+        incarnation: "0".repeat(64),
+        ordinal: 0,
+        start_seq: 1,
+        end_seq: count,
+        entry_count: count,
+        encoded_bytes: count,
+        previous_seal: None,
+        prefix_count: count,
+        prefix_bytes: count,
+        leaf_digests: binary(vec![1; count as usize * 32]),
+        seal_digest: binary(Vec::new()),
+        digest_version: "sha256_raw_bson_v1".into(),
+        sealing_operation: "synthetic-seal-read".into(),
+        source_format: "legacy_v1".into(),
+        storage_kind: "mongo".into(),
+    };
+    seal.seal_digest = seal.digest();
+    seal.validate().unwrap();
+    let head = Head {
+        agent_id: seal.agent_id.clone(),
+        format_version: 1,
+        incarnation: seal.incarnation.clone(),
+        revision: 1,
+        active_ordinal: 1,
+        active_start_seq: count + 1,
+        last_seq: count,
+        active_count: 0,
+        active_bytes: 0,
+        previous_seal: Some(seal.seal_digest.clone()),
+        lifetime_count: count,
+        lifetime_bytes: count,
+        projection_format: 1,
+        evidence_generation: "synthetic".into(),
+        projection_through: count,
+        migration_id: MIGRATION.into(),
+        required_reader: READER.into(),
+    };
+    head.validate().unwrap();
+    (head, seal)
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn seal_read_retains_its_exact_row_across_transaction_replacement_and_rollback() {
+    let fixture = Fixture::new("seal_transaction").await;
+    let store = &fixture.store;
+    let rows = &store.segment_logs.seals;
+    let (head, original) = seal_fixture(1);
+    let (_, grown) = seal_fixture(10_128);
+    rows.insert_one(bson::serialize_to_document(&original).unwrap())
+        .await
+        .unwrap();
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    let result = Seal::read_at_admitted(store, &head, 0, &mut session, false, &policy, read_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(**result, original);
+    let retained = (*result).clone();
+    drop(result);
+    assert!(retained.belongs_to(&policy));
+    assert_eq!(
+        policy
+            .budget(IngressClass::Transformation)
+            .available_bytes(),
+        policy.bounds().transformation_bytes()
+    );
+    let held = root.available_bytes();
+    rows.replace_one(
+        doc! {"_id":&original.id},
+        bson::serialize_to_document(&grown).unwrap(),
+    )
+    .session(&mut session)
+    .await
+    .unwrap();
+    let result = Seal::read_at_admitted(store, &head, 0, &mut session, false, &policy, read_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(**result, grown);
+    assert_eq!(*retained, original);
+    assert!(held - root.available_bytes() >= grown.leaf_digests.bytes.len());
+    drop(result);
+    assert_eq!(root.available_bytes(), held);
+    session.abort_transaction().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    let later = Seal::read_at_admitted(store, &head, 0, &mut session, false, &policy, read_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(**later, original);
+    drop((later, retained));
+    session.abort_transaction().await.unwrap();
+    assert_eq!(root.available_bytes(), idle);
+    drop(session);
+    fixture.finish().await;
+}
