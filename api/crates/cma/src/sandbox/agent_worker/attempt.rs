@@ -24,6 +24,19 @@ impl AgentWorker {
         })
     }
 
+    #[cfg(test)]
+    pub(in crate::sandbox) fn run_one_diagnostic(
+        &self,
+        id: &AgentId,
+        now: SystemTime,
+    ) -> Pin<Box<dyn Future<Output = Result<bool, LifecycleTaskFailure>> + Send + '_>> {
+        let id = id.clone();
+        Box::pin(async move {
+            let attempt = LifecycleAttempt::new(Phase::Execution, Some(&id));
+            self.run_one_observed(&id, now, &attempt).await
+        })
+    }
+
     async fn run_one_observed(
         &self,
         id: &AgentId,

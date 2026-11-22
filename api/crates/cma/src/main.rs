@@ -34,6 +34,7 @@ mod health;
 mod home_backup_expiry;
 mod media_continuations;
 mod permissions;
+mod producer_token;
 mod profile_authoring;
 mod profile_policy;
 mod projections;
@@ -45,6 +46,7 @@ mod readiness_diagnostics;
 mod retirement_archive;
 mod sandbox;
 mod sandbox_metrics;
+mod sandbox_usage_export;
 mod shutdown;
 mod startup;
 mod startup_timing;
@@ -104,6 +106,16 @@ fn main() {
 #[tokio::main]
 async fn run() {
     let arguments: Vec<_> = std::env::args().skip(1).collect();
+    if store::home_backups::evidence_export::cli::is_command(&arguments) {
+        match store::home_backups::evidence_export::cli::command(&arguments).await {
+            Ok(receipt) => println!("{receipt}"),
+            Err(reason) => {
+                eprintln!("{reason}");
+                std::process::exit(2);
+            }
+        }
+        return;
+    }
     if retirement_archive::is_command(&arguments) {
         match retirement_archive::command(&arguments).await {
             Ok(summary) => println!("{summary}"),
@@ -210,7 +222,7 @@ async fn run() {
         return;
     }
     if !arguments.is_empty() && arguments != ["--agent-manager-drain"] {
-        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE | --allocator-self-test]");
+        eprintln!("usage: cma [--index-catalog | --index-preflight NAMES | --index-size NAMES | --index-verify NAMES | --index-build NAME CHECKSUM IMAGE [SECONDS] | --index-status NAME | --index-abort NAME CHECKSUM IMAGE FENCE | --activity-index-size | --activity-index-build CHECKSUM IMAGE [TIMEOUT_SECONDS] | --print-runtime-role | --agent-manager-drain | --migration-plan | --migration-status | --migration-apply CHECKSUM IMAGE | --print-migration-role | --ledger-retirement-snapshot SANDBOX PRIVATE_NEW_FILE | --ledger-census PRIVATE_REQUEST PRIVATE_NEW_FILE | --home-backup-catalog-export PRIVATE_NEW_FILE | --allocator-self-test]");
         std::process::exit(2)
     }
     if let Err(error) = serve().await {

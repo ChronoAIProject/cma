@@ -75,6 +75,7 @@ impl MarkerPause {
         harness: &Harness<MongoSandboxStore>,
         worker: &SandboxWorker,
         code: &str,
+        retry: &super::store_retry::StoreRetry,
     ) -> SandboxId {
         tokio::time::timeout(Duration::from_secs(15), self.entered.notified())
             .await
@@ -100,7 +101,6 @@ impl MarkerPause {
             .find(|sandbox| sandbox.origin == origin)
             .expect("find the original Sandbox before its operation marker")
             .id;
-        let retry = super::store_retry::StoreRetry::default();
         let status = tokio::time::timeout(Duration::from_secs(40), async {
             loop {
                 let current = harness.store.get_sandbox(&id).await.unwrap().unwrap();
@@ -120,7 +120,7 @@ impl MarkerPause {
                         "fixture refusal",
                     );
                 }
-                retry.should_retry(worker.run_one(&id, SystemTime::now()).await);
+                retry.sandbox(harness, worker, &id).await;
                 tokio::time::sleep(Duration::from_millis(20)).await;
             }
         })
