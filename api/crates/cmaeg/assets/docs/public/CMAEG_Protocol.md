@@ -2550,6 +2550,14 @@ Native Telegram, interactive/edit and legacy relay chunking preserves UTF-16
 boundaries and complete escape atoms. Complete ordinary relay rendering applies
 the same escaping and block degradation without chunking.
 
+Lark, Feishu and Discord text, native or through `nyxid_relay`, keeps Markdown
+punctuation and backslashes literal instead of escaping them: Lark and Feishu
+show plain text, and Discord parses its own Markdown, so link labels and URL
+destinations arrive intact. Mention neutralization (`@` followed by a zero-width
+space, `<` and `>` replaced by `‹` and `›`) and control/bidi filtering still
+apply; inside an `http(s)://` destination an `@` stays literal unless it starts
+`@everyone` or `@here`. Chunking and block degradation are unchanged.
+
 A reply/update receipt is `{message_ref?,rendering,delivery}`. Rendering is
 `{outcome:"rendered|degraded|unsupported",blocks:[{index,outcome}]}`, where each
 block outcome is `{type:"exact"}`, `{type:"degraded",how}` or
@@ -3596,8 +3604,8 @@ deployed counterpart checks (maintainer guidance).
 With CommonMark disabled, `CMAEG_NYXID_COMPLETE_REPLIES` selects the ordinary
 relay deployment mode:
 
-- **`false` (default, legacy compatibility).** CMAEG escapes and chunks ordinary
-  relay text at 4000 UTF-16 units and sends each part independently. A bare 429
+- **`false` (default, legacy compatibility).** CMAEG escapes (Lark, Feishu and
+  Discord: keeps literal, as above) and chunks ordinary relay text at 4000 UTF-16 units and sends each part independently. A bare 429
   can be retried once with the channel key after a bounded wait. This preserves
   existing behavior, including its limitations: a URL may cross parts, a
   reply-token-only route cannot send later parts, and NyxID cannot detect absent
