@@ -33,6 +33,9 @@ jobs:
           "$RUNNER_TEMP/staging-cd-tests/bin/python" -B .github/scripts/image-secret-gate-tests.py
           ruby .github/scripts/staging_cd_workflows_tests.rb
       -
+        name: "Omarchy package bundle regressions"
+        run: "python3 -B .github/scripts/omarchy-package-bundle-tests.py"
+      -
         name: "Source file size validator regressions"
         run: ".github/scripts/check-file-size-tests.sh"
       -
