@@ -69,7 +69,8 @@
       "source": "topographic-field.ts",
       "lines": "1-293,407-525",
       "target": "topographic-contours.ts",
-      "changes": "License reference header and import of createElevationField from extracted module."
+      "changes": "License reference header and import of createElevationField from extracted module.",
+      "final_status": "Removed after static SVG generation; never included in the application runtime graph."
     },
     {
       "source": "topographic-surface.ts",
@@ -84,5 +85,61 @@
     "topographic-renderer.ts": "Canvas2D animated fallback is outside the selected behavior.",
     "topographic-grain.ts": "Selected effect has grain=0.",
     "topographic-flow.css": "Application owns clipped presentation and static fallback."
+  },
+  "extraction_commit": "94e47b5874",
+  "adaptations": [
+    {
+      "target": "topographic-field.ts",
+      "source": "topographic-field.ts:294-405",
+      "changes": "Preserve seeded field arithmetic; add non-null assertions for bounded permutation/gradient array indices under CMA strict TypeScript."
+    },
+    {
+      "target": "topographic-surface-shaders.ts",
+      "source": "topographic-surface.ts:66-235",
+      "changes": "Preserve flat Flow vertex, cubic B-spline surface sampling and solid contour coverage. Specialize density=5, lineWidth=1.1, opacity=.85. Remove unselected cuts, grain, gradients, pointer and Terrain paths."
+    },
+    {
+      "target": "topographic-surface-resources.ts",
+      "source": "topographic-surface.ts:555-634",
+      "changes": "Extract transactional program/shader/buffer/height-texture allocation and idempotent independent disposal; fixed fault messages, no driver logs. Omit unselected cut/grain resources."
+    },
+    {
+      "target": "topographic-surface.ts",
+      "source": "topographic-surface.ts:672-758,760-871",
+      "changes": "Adapt flat field texture preparation and draw to synchronous renderFrame/dispose. Preserve scale=270, distortion=2.4, seed=42, speed=.32. No timers, observers, pointer or context-restoration lifecycle; caller grants each actual draw and rechecks deadline after preparation. Include the full RCL text in a retained bundle license comment."
+    },
+    {
+      "target": "../../assets/topographic-{dark,light}.svg",
+      "source": "topographic-field.ts:1-36,294-405,407-525",
+      "changes": "Generate fixed synthetic contours and cubic spline paths at 560x220, seed42, scale270, density5, distortion2.4, 143x58 field grid, scale*.45 overscan. Both theme assets are alpha masks; resolved CMA CSS tokens supply colors. Standalone runtime contour helpers are omitted after generation."
+    }
+  ],
+  "omitted_surface_modes": [
+    "Terrain/relief",
+    "Canvas2D fallback",
+    "pointer hover",
+    "grain",
+    "color gradient",
+    "dashed/mixed lines",
+    "reset",
+    "context restoration",
+    "autonomous lifecycle"
+  ],
+  "selected_configuration": {
+    "seed": 42,
+    "scale": 270,
+    "density": 5,
+    "distortion": 2.4,
+    "lineWidth": 1.1,
+    "opacity": 0.85,
+    "speed": 0.32,
+    "grain": 0,
+    "hover": 0,
+    "gradientColors": [],
+    "lineStyle": "solid"
+  },
+  "assets": {
+    "topographic-light.svg": "ea6a7a0252801d9d5c9c36d8816ef0914fd13dea3210e0047dc9c6265f958f9c",
+    "topographic-dark.svg": "ea6a7a0252801d9d5c9c36d8816ef0914fd13dea3210e0047dc9c6265f958f9c"
   }
 }

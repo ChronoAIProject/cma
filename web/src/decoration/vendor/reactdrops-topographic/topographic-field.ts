@@ -18,9 +18,9 @@ export function createElevationField(seed: number) {
   };
   for (let i = 255; i > 0; i--) {
     const j = Math.floor(random() * (i + 1));
-    [values[i], values[j]] = [values[j], values[i]];
+    [values[i], values[j]] = [values[j]!, values[i]!];
   }
-  for (let i = 0; i < 512; i++) permutation[i] = values[i & 255];
+  for (let i = 0; i < 512; i++) permutation[i] = values[i & 255]!;
   const gradientX = new Float64Array(256),
     gradientY = new Float64Array(256);
   for (let i = 0; i < 256; i++) {
@@ -29,8 +29,8 @@ export function createElevationField(seed: number) {
     gradientY[i] = Math.sin(angle);
   }
   const gradient = (hash: number, x: number, y: number, cosine: number, sine: number) => {
-    const gx = gradientX[hash],
-      gy = gradientY[hash];
+    const gx = gradientX[hash]!,
+      gy = gradientY[hash]!;
     return (gx * cosine - gy * sine) * x + (gx * sine + gy * cosine) * y;
   };
   const noise = (x: number, y: number, cosine: number, sine: number) => {
@@ -38,17 +38,17 @@ export function createElevationField(seed: number) {
       iy = Math.floor(y);
     const fx = x - ix,
       fy = y - iy;
-    const a = permutation[ix & 255] + (iy & 255);
-    const b = permutation[(ix + 1) & 255] + (iy & 255);
+    const a = permutation[ix & 255]! + (iy & 255);
+    const b = permutation[(ix + 1) & 255]! + (iy & 255);
     return lerp(
       lerp(
-        gradient(permutation[a], fx, fy, cosine, sine),
-        gradient(permutation[b], fx - 1, fy, cosine, sine),
+        gradient(permutation[a]!, fx, fy, cosine, sine),
+        gradient(permutation[b]!, fx - 1, fy, cosine, sine),
         fade(fx),
       ),
       lerp(
-        gradient(permutation[a + 1], fx, fy - 1, cosine, sine),
-        gradient(permutation[b + 1], fx - 1, fy - 1, cosine, sine),
+        gradient(permutation[a + 1]!, fx, fy - 1, cosine, sine),
+        gradient(permutation[b + 1]!, fx - 1, fy - 1, cosine, sine),
         fade(fx),
       ),
       fade(fy),
@@ -114,5 +114,3 @@ export function createElevationField(seed: number) {
     );
   };
 }
-
-/** Stitch shared grid edges so dashes follow entire curves, never individual cells. */

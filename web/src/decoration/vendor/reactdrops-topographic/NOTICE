@@ -13,3 +13,15 @@ Mechanical extraction: topographic-field.ts is split into seeded elevation
 noise and contour helpers. The flat Flow shaders are extracted from
 topographic-surface.ts with export declarations. Application lifetime, theme,
 and rendering-budget adaptations are recorded separately in source-map.json.
+
+CMA adaptation selects only ordinary solid Flow: fixed seed 42, scale 270,
+density 5, distortion 2.4, line width 1.1, opacity .85, speed .32. Grain,
+hover, gradients, dashed lines, Terrain and animated Canvas2D fallback are
+omitted. The surface is synchronous; CMA owns bounded playback and theme
+policy. Resource acquisition/disposal is transactional and faults use fixed
+categories. No runtime asset, shader or package is fetched from upstream.
+
+The static SVG masks in ../../assets are derived from the same seeded field
+and contour algorithms. Their alpha masks use CMA theme tokens for color.
+The full RCL text is also retained in the browser surface module's license
+comment. See source-map.json for exact source spans and adaptation details.
