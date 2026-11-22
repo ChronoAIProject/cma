@@ -2,6 +2,7 @@ use super::*;
 use layer2_core::resource_access::{ResourceAccessStore, ResourceCapability};
 
 mod budget;
+mod effect_budget;
 mod effects;
 mod fixture;
 mod http;

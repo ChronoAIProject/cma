@@ -29,6 +29,7 @@ pub(crate) trait EffectStatusProvider: Send + Sync {
 pub(crate) struct EffectReconciler {
     store: Arc<dyn ResourceExecutionStore>,
     provider: Arc<dyn EffectStatusProvider>,
+    status_slots: tokio::sync::Semaphore,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -50,7 +51,11 @@ impl EffectReconciler {
         store: Arc<dyn ResourceExecutionStore>,
         provider: Arc<dyn EffectStatusProvider>,
     ) -> Self {
-        Self { store, provider }
+        Self {
+            store,
+            provider,
+            status_slots: tokio::sync::Semaphore::new(STATUS_CONCURRENCY),
+        }
     }
 
     /// Reconcile the bounded ledger captured for a known durable registration.
@@ -102,9 +107,7 @@ impl EffectReconciler {
         // Validate the full captured ledger before querying any external status.
         let mut results = stream::iter(effects.into_iter().map(|effect| async move {
             let id = effect.permission.intent.effect_id.clone();
-            let result = tokio::time::timeout(STATUS_TIMEOUT, self.observe(effect))
-                .await
-                .unwrap_or(Err(ExecutionError::Unknown));
+            let result = self.observe(effect).await;
             (id, result)
         }))
         .buffer_unordered(STATUS_CONCURRENCY);
@@ -126,11 +129,26 @@ impl EffectReconciler {
         Ok(progress)
     }
 
-    async fn observe(&self, mut effect: EffectRecordV1) -> ExecutionResult<bool> {
-        let previous = effect.observations.last();
-        if previous.is_some_and(|old| terminal(old.outcome)) {
+    async fn observe(&self, effect: EffectRecordV1) -> ExecutionResult<bool> {
+        if effect
+            .observations
+            .last()
+            .is_some_and(|old| terminal(old.outcome))
+        {
             return Ok(true);
         }
+        let _slot = self
+            .status_slots
+            .acquire()
+            .await
+            .map_err(|_| ExecutionError::Unavailable)?;
+        tokio::time::timeout(STATUS_TIMEOUT, self.refresh(effect))
+            .await
+            .unwrap_or(Err(ExecutionError::Unknown))
+    }
+
+    async fn refresh(&self, mut effect: EffectRecordV1) -> ExecutionResult<bool> {
+        let previous = effect.observations.last();
         let status = self
             .provider
             .status(&effect.permission.intent)

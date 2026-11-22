@@ -1,5 +1,69 @@
 use super::*;
 use sha2::{Digest, Sha256};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+pub(crate) struct GatedProvider {
+    pub calls: Mutex<Vec<wire::EffectIntentV1>>,
+    pub active: AtomicUsize,
+    pub peak: AtomicUsize,
+    pub unavailable: AtomicBool,
+    pub gate: tokio::sync::Semaphore,
+    entered: tokio::sync::Notify,
+}
+
+impl GatedProvider {
+    pub fn new() -> Arc<Self> {
+        Arc::new(Self {
+            calls: Mutex::new(Vec::new()),
+            active: AtomicUsize::new(0),
+            peak: AtomicUsize::new(0),
+            unavailable: AtomicBool::new(false),
+            gate: tokio::sync::Semaphore::new(0),
+            entered: tokio::sync::Notify::new(),
+        })
+    }
+
+    pub async fn wait_for_call(&self) {
+        loop {
+            let entered = self.entered.notified();
+            if !self.calls.lock().unwrap().is_empty() {
+                return;
+            }
+            entered.await;
+        }
+    }
+}
+
+struct ActiveStatus<'a>(&'a AtomicUsize);
+
+impl Drop for ActiveStatus<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+#[async_trait::async_trait]
+impl EffectStatusProvider for GatedProvider {
+    async fn status(
+        &self,
+        intent: &wire::EffectIntentV1,
+    ) -> ExecutionResult<Option<ProviderEffectObservation>> {
+        let active = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+        let _active = ActiveStatus(&self.active);
+        self.peak.fetch_max(active, Ordering::SeqCst);
+        self.calls.lock().unwrap().push(intent.clone());
+        self.entered.notify_one();
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(ExecutionError::Unavailable);
+        }
+        self.gate.acquire().await.unwrap().forget();
+        Ok(Some(ProviderEffectObservation {
+            intent: intent.clone(),
+            outcome: wire::EffectOutcome::CommitConfirmed,
+            evidence_digest: digest('c'),
+        }))
+    }
+}
 
 pub(crate) struct Provider {
     pub calls: Mutex<Vec<wire::EffectIntentV1>>,

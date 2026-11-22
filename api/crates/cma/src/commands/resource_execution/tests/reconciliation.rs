@@ -3,6 +3,7 @@ use super::super::reconciliation::{
 };
 use super::*;
 
+mod budget;
 pub(super) mod fixture;
 use fixture::{append, setup};
 use wire::EffectOutcome as Outcome;
