@@ -27,6 +27,28 @@ impl SandboxAdmissionName {
     }
 }
 
+/// The authority whose mutable Sandbox cap applies to this new admission.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SandboxLimitClass {
+    #[default]
+    Owner,
+    Visitor,
+}
+
+impl SandboxLimitClass {
+    pub fn current_limit(
+        self,
+        settings: &crate::PlatformSettings,
+    ) -> Result<u16, SandboxStoreError> {
+        let limit = match self {
+            Self::Owner => settings.limits.max_sandboxes_per_user,
+            Self::Visitor => settings.limits.visitor_max_sandboxes,
+        };
+        u16::try_from(limit)
+            .map_err(|_| SandboxStoreError::Corrupt("Sandbox limit is out of range".into()))
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct SandboxAdmission {
     pub binding: Option<crate::sandbox::binding::BindingAdmissionFence>,
@@ -34,6 +56,7 @@ pub struct SandboxAdmission {
     pub name: SandboxAdmissionName,
     pub admission_fingerprint: String,
     pub live_limit: u16,
+    pub limit_class: SandboxLimitClass,
     pub event_at: String,
 }
 
@@ -51,6 +74,7 @@ impl SandboxAdmission {
             name,
             admission_fingerprint,
             live_limit,
+            limit_class: SandboxLimitClass::Owner,
             event_at,
         };
         admission.validate()?;
@@ -298,6 +322,14 @@ pub trait SandboxAdmissionStore: Send + Sync {
         &self,
         admission: SandboxAdmission,
     ) -> Result<SandboxAdmissionResult, SandboxStoreError>;
+
+    /// Catalogue-backed callers require exact pin admission with the new resource.
+    async fn admit_catalogue_sandbox(
+        &self,
+        admission: SandboxAdmission,
+    ) -> Result<SandboxAdmissionResult, SandboxStoreError> {
+        self.admit_sandbox(admission).await
+    }
 }
 
 #[cfg(test)]

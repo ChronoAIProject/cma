@@ -1,11 +1,13 @@
 """Resolve existing immutable versions for deployment without publication rights."""
 import os
+from pathlib import Path
 
 from staging_cd_admission import event_identity, maintainer_dispatch
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHub
 from staging_cd_receipts import canonical, validate_receipt
 from staging_cd_registry import Registry
+from staging_cd_release_tags import local_tag_reader
 from staging_cd_runtime import SKIPPED, run_private
 from staging_cd_targets import RUNTIME_TARGETS, TARGETS
 from staging_cd_versions import DEPLOYABLES, version_tuple
@@ -91,7 +93,8 @@ def main():
     env = os.environ
     overtaken = []
     def operation(_masker):
-        api, registry = GitHub(env.get("GH_TOKEN")), Registry()
+        # Admission and verification re-read live refs, then their objects from the checkout.
+        api, registry = GitHub(env.get("GH_TOKEN"), local_tags=local_tag_reader(Path.cwd())), Registry()
         event_identity(env)
         command = env.get("CD_RESOLVE_MODE")
         if command == "dispatch":
@@ -157,7 +160,7 @@ def main():
         output(env, "mode", mode)
         output(env, "started_at", started)
         return True
-    status = run_private(operation, None)
+    status = run_private(operation, None, subject="release-set")
     if status == 0 and overtaken:
         # Fixed component tokens only; this run deploys nothing for them.
         stage = "admission" if env.get("CD_RESOLVE_MODE") == "automatic" else "deployment"

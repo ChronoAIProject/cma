@@ -8,6 +8,8 @@ use layer2_core::sandbox::store::{SandboxStore, SandboxWorkerStore};
 use layer2_core::sandbox::{SandboxEvent, SandboxEventKind, SandboxHome, SandboxWorkStep};
 use layer3_adapter::{permanent_custody::PermanentCustody, HomeVolumePolicy, HomeVolumeReceipt};
 
+#[path = "backup_compatibility_tests.rs"]
+mod backup_compatibility_tests;
 #[path = "census_tests.rs"]
 mod census_tests;
 #[path = "commit_test_support.rs"]

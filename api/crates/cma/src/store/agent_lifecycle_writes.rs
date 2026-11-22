@@ -200,6 +200,37 @@ impl MongoAgentLifecycleStore {
         .await
     }
 
+    /// Pin the original probe result before allocating or building profiles.
+    pub(crate) async fn pin_repository_commit(
+        &self,
+        lease: &LifecycleLease,
+        commit: &str,
+    ) -> Result<(), StoreError> {
+        let mut filter = lease.filter();
+        filter.insert("sandbox_id", Bson::Null);
+        filter.insert(
+            "repository_commit",
+            doc! { "$in": [Bson::Null, Bson::String(commit.into())] },
+        );
+        let result = self
+            .operations
+            .update_one(
+                filter,
+                doc! {
+                    "$set": { "repository_commit": commit, "updated_at": DateTime::now() },
+                },
+            )
+            .await
+            .map_err(driver)?;
+        if result.matched_count != 1 {
+            return Err(StoreError::RevisionConflict {
+                expected: 0,
+                actual: 1,
+            });
+        }
+        Ok(())
+    }
+
     pub(crate) async fn mark_agent(
         &self,
         lease: &LifecycleLease,

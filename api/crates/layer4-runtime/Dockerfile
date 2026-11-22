@@ -1,6 +1,31 @@
 # syntax=docker/dockerfile:1@sha256:4edf897a3ffa55b89f906fc8cc78afdb3f1834cc9c7083565e611a8a7d5fe99e
 ARG SOURCE_DATE_EPOCH=0
 ARG OMARCHY_CMA_BASE=runtime-tools
+# Every Debian stage derives from debian-snapshot, which replaces the base
+# image's live deb.debian.org sources with snapshot.debian.org at this one
+# timestamp for trixie, trixie-updates and trixie-security. The same source
+# therefore installs the same OS packages and rebuilds the OpenSSL CLI from
+# the same Debian source. The snapshot's signed indexes are still verified
+# against the archive keyring; only Valid-Until is waived, since an archived
+# index outlives it by design.
+#
+# Security updates arrive only by bumping this value, deliberately:
+#  1. Choose a time after the wanted archive state. Each archive serves its
+#     latest snapshot at or before that time, so the time must already have
+#     passed and snapshot.debian.org must list the debian and debian-security
+#     snapshots it selects.
+#  2. Rebuild linux/amd64. Exact version pins (chromium in install-os.sh,
+#     BUBBLEWRAP_*) fail the build until they move with the snapshot. Diff
+#     every Debian stage's dpkg status and the rebuilt binaries against the
+#     previous build to list what moved.
+#  3. A bump changes this file, so rebind its sha256 wherever it is pinned:
+#     every build_inputs of .github/scripts/image-package-evidence.json and
+#     image-omarchy-package-evidence.json, and dockerfile_sha256 in
+#     deployables.json. Rebind each catalog row whose package or derived
+#     output moved, from the signed indexes.
+#  4. Land it only with an independent review of both catalogs, which sets
+#     APPROVED_PACKAGE_EVIDENCE and APPROVED_OMARCHY_PACKAGE_EVIDENCE.
+ARG DEBIAN_SNAPSHOT=20261121T100000Z
 # CMA_MODEL_PROXY_PLACEHOLDER is supplied only in managed Agent launch plans,
 # not in the Sandbox environment, so existing runtime identities stay stable.
 # The sandbox provider schedules this image and starts the kernel-neutral Layer
@@ -18,10 +43,31 @@ RUN --mount=type=cache,id=cma-runtime-registry,target=/usr/local/cargo/registry,
     cargo build --jobs 2 --release --locked --bin layer4-runtime \
     && mkdir /out \
     && cp /build/target/release/layer4-runtime /out/layer4-runtime
+# The base image carries only debian.sources; any other apt source is refused
+# so no stage can resolve a package from a live mirror. Plain HTTP serves the
+# image before ca-certificates exists; apt still verifies the signed indexes.
+# A failed index download fails the build instead of silently resolving a
+# smaller package set.
+FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS debian-snapshot
+ARG DEBIAN_SNAPSHOT
+RUN set -eu; \
+    printf '%s\n' "${DEBIAN_SNAPSHOT}" | grep -Eqx '[0-9]{8}T[0-9]{6}Z'; \
+    test ! -e /etc/apt/sources.list; \
+    test "$(ls -A /etc/apt/sources.list.d)" = debian.sources; \
+    archive=http://snapshot.debian.org/archive; \
+    keyring=/usr/share/keyrings/debian-archive-keyring.pgp; \
+    printf '%s\n' \
+        'Types: deb' "URIs: ${archive}/debian/${DEBIAN_SNAPSHOT}" 'Suites: trixie trixie-updates' \
+        'Components: main' "Signed-By: ${keyring}" 'Check-Valid-Until: no' '' \
+        'Types: deb' "URIs: ${archive}/debian-security/${DEBIAN_SNAPSHOT}" 'Suites: trixie-security' \
+        'Components: main' "Signed-By: ${keyring}" 'Check-Valid-Until: no' \
+        > /etc/apt/sources.list.d/debian.sources; \
+    printf '%s\n' 'Acquire::Retries "5";' 'APT::Update::Error-Mode "any";' \
+        > /etc/apt/apt.conf.d/80cma-debian-snapshot
 # Build the upstream GitHub release with patched Go and indirect modules.
 # The toolchain includes the CVE-2026-111943 crypto/x509 fix.
 # No CLI source or transport code is patched.
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS github-build
+FROM debian-snapshot AS github-build
 ARG TARGETARCH
 ARG GH_VERSION=2.100.0
 ARG GH_SOURCE_COMMIT=45437bc7eeeb3359bbfddd1742f79de7652fd3e2
@@ -68,7 +114,8 @@ RUN --mount=type=cache,id=cma-gh-modules,target=/root/go/pkg/mod,sharing=locked 
 # baseline and hardening. Configure the already-present gVisor loopback
 # idempotently and use upstream contained descriptor resolution only when
 # openat2 is absent; guarded filesystem and network policies remain enforced.
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS bubblewrap-build
+FROM debian-snapshot AS bubblewrap-build
+ARG DEBIAN_SNAPSHOT
 ARG BUBBLEWRAP_VERSION=0.12.0
 ARG BUBBLEWRAP_DEBIAN_VERSION=0.12.0-1~deb13u1
 ARG BUBBLEWRAP_SOURCE_SHA256=9760d007363e3abba7c747489910f9f82d9fca53ba3bd3282e396fa3c97a3314
@@ -83,7 +130,7 @@ WORKDIR /build
 COPY .github/scripts/bubblewrap-loopback.patch .github/scripts/bubblewrap-loopback-test.c \
     .github/scripts/bubblewrap-openat2.patch .github/scripts/bubblewrap-openat2-test.c /build/
 RUN set -eux; \
-    base=https://security.debian.org/debian-security/pool/updates/main/b/bubblewrap; \
+    base="https://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}/pool/updates/main/b/bubblewrap"; \
     curl -fsSL -o source.tar.xz "${base}/bubblewrap_${BUBBLEWRAP_VERSION}.orig.tar.xz"; \
     curl -fsSL -o debian.tar.xz "${base}/bubblewrap_${BUBBLEWRAP_DEBIAN_VERSION}.debian.tar.xz"; \
     curl -fsSL -o source.dsc "${base}/bubblewrap_${BUBBLEWRAP_DEBIAN_VERSION}.dsc"; \
@@ -126,7 +173,7 @@ RUN set -eux; \
     printf '%s\n' "${BUBBLEWRAP_DEBIAN_VERSION}" > /out/debian-version; \
     test "$(/out/bwrap --version)" = "bubblewrap ${BUBBLEWRAP_VERSION}"
 
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS openssl-cli-build
+FROM debian-snapshot AS openssl-cli-build
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential dpkg-dev libzstd-dev patch perl zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 ARG OS_SECURITY_REFRESH=local
@@ -136,7 +183,7 @@ RUN --mount=type=bind,source=api/crates/layer4-runtime/image/build-debian-openss
     test -n "${OS_SECURITY_REFRESH}" && sh /tmp/build-cli.sh /build /out /tmp/openssl.patch /tmp/verify-cli.sh
 
 # The NyxID CLI is published as a *-unknown-linux-gnu binary.
-FROM debian:trixie-slim@sha256:d7e12182ce18b85b93007c1dedf31f2d29e01ccf3182cc4017c709b6259bc132 AS runtime-system
+FROM debian-snapshot AS runtime-system
 ARG RUNTIME_DESKTOP=0
 RUN --mount=type=bind,source=api/crates/layer4-runtime/image/install-os.sh,target=/tmp/install-os.sh,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-id.py,target=/tmp/normalize-machine-id.py,readonly \
@@ -337,9 +384,11 @@ RUN mkdir -p /payload/usr/share /payload/usr /payload/etc \
     && find /payload -exec touch -h -d '@0' '{}' +
 
 FROM runtime-system AS runtime-refreshed
-# Refresh OS files independently of the pinned tool payload. CI and release
-# builds vary this value so cached packages cannot hide a new security update;
-# unchanged tool bytes remain reusable even when the OS branch is rebuilt.
+# Refresh OS files independently of the pinned tool payload; unchanged tool
+# bytes remain reusable even when the OS branch is rebuilt. CI and release
+# builds vary this value, so this branch and the OpenSSL CLI rebuild never come
+# from a cached layer; they re-resolve the same DEBIAN_SNAPSHOT and reproduce
+# the same bytes. Security updates arrive only by bumping DEBIAN_SNAPSHOT.
 ARG OS_SECURITY_REFRESH=local
 RUN --mount=type=bind,source=api/crates/layer4-runtime/image/install-os.sh,target=/tmp/install-os.sh,readonly \
     --mount=type=bind,source=api/crates/layer4-runtime/image/normalize-machine-id.py,target=/tmp/normalize-machine-id.py,readonly \

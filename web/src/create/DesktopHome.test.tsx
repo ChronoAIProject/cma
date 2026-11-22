@@ -9,6 +9,7 @@ import { WIRE_AGENT, WIRE_SANDBOX_DETAIL } from '../test/rest';
 import { ArtifactPublicationScope } from '../resources/artifactRecovery';
 import { AgentSidePanel } from '../agent/AgentSidePanel';
 import { TaskHome } from './TaskHome';
+import { taskDraftStorageKey } from './taskDraft';
 import { taskExperience } from '../test/taskExperience';
 
 afterEach(() => {
@@ -60,9 +61,7 @@ it('drops a legacy desktop draft choice without changing its task or blocking su
     "We couldn't confirm your task was received. Use Recover original task to resend the same request.",
   );
   expect(writes).toEqual([{ name: 'New task', initial_message: 'Retain my draft' }]);
-  const saved = sessionStorage.getItem(
-    `cma:task-draft:${JSON.stringify([location.origin, 'owner', null, null])}`,
-  );
+  const saved = sessionStorage.getItem(taskDraftStorageKey('owner'));
   expect(JSON.parse(saved!)).not.toHaveProperty('desktop');
 });
 

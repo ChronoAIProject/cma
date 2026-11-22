@@ -2,6 +2,8 @@ use super::*;
 use cma_service_auth::mongodb_authority::MongoAuthorityMode;
 use mongodb::bson::{doc, Document};
 
+mod abort_barrier;
+mod abort_handoff;
 mod candidates;
 
 #[test]

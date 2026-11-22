@@ -3,11 +3,13 @@ import { useEffect, useState } from 'react';
 import type { CmaWebClient } from '../api/client';
 import type { SandboxSummary } from '../api/types';
 import { routePath } from '../routing/routes';
+import { DocsLink } from '../services/DocsLink';
 import { allSandboxes } from '../shell/navigation';
 import { Button } from '../ui/Button';
 import { Modal } from '../ui/Modal';
 import { Table, TableCell } from '../ui/Table';
 import { statusLabel } from '../vocabulary/status';
+import { sandboxLifecycleLabel } from './lifecycle';
 import type { useSandboxCapacity } from './useSandboxCapacity';
 import './SandboxCapacityPanel.css';
 
@@ -63,6 +65,7 @@ export function SandboxCapacityPanel({
         <Button size="sm" disabled={capacity.loading} onClick={() => void capacity.refresh()}>
           Refresh Sandbox capacity
         </Button>
+        <DocsLink view="environments-and-capacity">Help with environments and capacity</DocsLink>
       </div>
       {manage ? <EnvironmentInventory client={client} onClose={() => setManage(false)} /> : null}
     </section>
@@ -129,7 +132,7 @@ function EnvironmentInventory({
               <TableCell>
                 {sandbox.status === 'retiring'
                   ? 'Deleting — still uses one Sandbox slot'
-                  : statusLabel(sandbox.status)}
+                  : sandboxLifecycleLabel(sandbox)}
               </TableCell>
             </tr>
           ))}

@@ -30,6 +30,7 @@ use crate::{shutdown::ShutdownCoordinator, store::MongoSandboxStore};
 
 pub(crate) struct SandboxLifecycleDependencies {
     pub store: Arc<MongoSandboxStore>,
+    pub pending_homes: Arc<crate::store::pending_launch_homes::PendingLaunchHomes>,
     pub adapter: Arc<dyn SandboxAdapter>,
     pub credentials: Arc<dyn SandboxCredentialController>,
     pub registry: Arc<LiveAgentRegistry>,
@@ -48,6 +49,7 @@ pub(crate) struct SandboxLifecycleConfig {
     pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
     pub runtime_loss_bounded_proof_enabled: bool,
     pub parent_not_ready_pacing_enabled: bool,
+    pub startup_sibling_hold_enabled: bool,
     pub retry_single_marker_enabled: bool,
     pub work_retry_policy_enabled: bool,
     pub native_create_retry_enabled: bool,
@@ -146,6 +148,11 @@ impl SandboxLifecycleComposition {
                 ),
             )),
         ));
+        let reconciliation = if dependencies.pending_homes.enabled() {
+            reconciliation.with_pending_homes(dependencies.pending_homes.clone())
+        } else {
+            reconciliation
+        };
         let updates = DurableAgentUpdateRecorder::with_output_policy(
             dependencies.store.clone(),
             dependencies.store.writer_policy.clone(),
@@ -205,6 +212,7 @@ impl SandboxLifecycleComposition {
             .with_ownership(config.ownership)
             .with_ownership_retry_hints(dependencies.store.ownership_retry_hints())
             .with_parent_not_ready_pacing(config.parent_not_ready_pacing_enabled)
+            .with_startup_sibling_hold(config.startup_sibling_hold_enabled)
             .with_cleanup_continuation(config.cleanup_continuation_enabled)
             .with_retry_single_marker(config.retry_single_marker_enabled)
             .with_work_retry_policy(config.work_retry_policy_enabled)

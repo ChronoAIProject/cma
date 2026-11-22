@@ -51,6 +51,30 @@ const snapshot = (state: 'queued' | 'produced' = 'queued'): ActivityPage => ({
   ],
 });
 
+it('labels the bound from confirmed delivery and replaces it when exact production arrives', () => {
+  vi.stubGlobal('EventSource', Feed);
+  render(<ChannelActivity owner="owner" channelId="channel" active />);
+  const page = snapshot('produced');
+  const consumer = page.items[0]!.consumers[0]!;
+  const exact = consumer.produced_at;
+  consumer.state = 'completed';
+  consumer.produced_at = null;
+  consumer.produced_by = '2026-10-27T00:00:07Z';
+  act(() => Feed.instances[0]!.snapshot(page));
+  expect(
+    screen.getByText('Response produced by').parentElement?.querySelector('time'),
+  ).toHaveAttribute('datetime', consumer.produced_by);
+  expect(screen.getByText(/Confirmed answer delivery/)).toBeVisible();
+
+  consumer.produced_at = exact;
+  act(() => Feed.instances[0]!.snapshot({ ...page, cursor: 'exact' }));
+  expect(
+    screen.getByText('Response produced').parentElement?.querySelector('time'),
+  ).toHaveAttribute('datetime', exact);
+  expect(screen.queryByText('Response produced by')).not.toBeInTheDocument();
+  expect(screen.queryByText(/Confirmed answer delivery/)).not.toBeInTheDocument();
+});
+
 it.each(['lark', 'telegram'])(
   'explains an unreported provider Agent on a completed %s delivery',
   (platform) => {
@@ -78,6 +102,7 @@ it.each(['lark', 'telegram'])(
       act(() => Feed.instances[0]!.snapshot(page));
       const identity = screen.getByText('Provider Agent', { selector: 'dt' }).parentElement!;
       expect(within(identity).getByText('Provider Agent identity was not reported')).toBeVisible();
+      expect(screen.queryByText('Provider execution reference')).not.toBeInTheDocument();
       expect(screen.queryByText('Produced by')).not.toBeInTheDocument();
       expect(screen.getByText('Agent completed')).toBeVisible();
       expect(screen.getByText('Delivery confirmed')).toBeVisible();
@@ -96,10 +121,16 @@ it.each(['lark', 'telegram'])(
     const page = snapshot('produced');
     page.items[0]!.source = { type: 'nyxid_relay', platform };
     page.items[0]!.consumers[0]!.agent_id = 'agt_provider';
+    page.items[0]!.consumers[0]!.execution_reference = 'exec_terminal_worker';
     act(() => Feed.instances[0]!.snapshot(page));
     const identity = () =>
       within(screen.getByText('Provider Agent', { selector: 'dt' }).parentElement!);
     expect(identity().getByText('agt_provider')).toBeVisible();
+    expect(
+      within(screen.getByText('Provider execution reference').parentElement!).getByText(
+        'exec_terminal_worker',
+      ),
+    ).toBeVisible();
     expect(screen.queryByText('Provider Agent identity was not reported')).not.toBeInTheDocument();
     act(() => Feed.instances[0]!.snapshot(page, 'reset'));
     expect(identity().getByText('agt_provider')).toBeVisible();
@@ -110,6 +141,7 @@ it.each(['lark', 'telegram'])(
     await userEvent.setup().click(screen.getByRole('button', { name: 'Reconnect activity' }));
     act(() => Feed.instances[1]!.snapshot(page));
     expect(identity().getByText('agt_provider')).toBeVisible();
+    expect(screen.getByText('exec_terminal_worker')).toBeVisible();
     expect(Feed.instances[0]!.closed).toBe(true);
   },
 );

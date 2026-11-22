@@ -24,6 +24,13 @@ pub(super) struct Fixture {
 
 impl Fixture {
     pub async fn new() -> Self {
+        Self::with_request(request(
+            json!({"name":"Early Agent", "profile":{"model":"model"}}),
+        ))
+        .await
+    }
+
+    pub async fn with_request(request: AgentLifecycleCreateRequest) -> Self {
         let uri = std::env::var("CHRONO_TEST_MONGODB_URI")
             .expect("disposable local Mongo URI is required");
         assert!(
@@ -43,6 +50,11 @@ impl Fixture {
         );
         let store = Arc::new(InMemorySandboxStore::default());
         let service = existing::facade(store.clone(), profiles.clone(), operations.clone());
+        let service = if request.initial_message.is_some() {
+            service.with_task_experience(existing::task_policy())
+        } else {
+            service
+        };
         let slots = service
             .worker_slots
             .clone()
@@ -52,7 +64,6 @@ impl Fixture {
         let mut owner = existing::context("owner");
         owner.caller.authorization =
             Authorization::new([Capability::UseOwnSandboxes, Capability::CreateSandbox]);
-        let request = request(json!({"name":"Early Agent", "profile":{"model":"model"}}));
         let receipt = service
             .create(&owner.caller, Some(&owner), None, request, "early-request")
             .await

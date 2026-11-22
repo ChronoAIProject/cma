@@ -142,16 +142,25 @@ class CacheTests(unittest.TestCase):
         from staging_cd_publish import emit_cache_metrics
         for metric, warning in (({"operation": "export", "result": "accepted"}, None),
                                 ({"operation": "export", "result": "accepted", "headroom": "low"}, "above 75% of"),
-                                ({"operation": "export", "result": "withheld", "reason": "oversize-compressed"}, "over"),
-                                ({"operation": "export", "result": "withheld", "reason": "transfer-failed"}, None),
+                                ({"operation": "export", "result": "withheld", "reason": "oversize-compressed"},
+                                 "WITHHELD build-cache reason=oversize-compressed component=am cause=change"),
+                                ({"operation": "export", "result": "withheld", "reason": "transfer-failed"},
+                                 "WITHHELD build-cache reason=transfer-failed component=am cause=transient"),
                                 ({"operation": "restore", "result": "hit"}, None)):
             with self.subTest(metric=metric):
                 stream = io.StringIO()
-                emit_cache_metrics("am", [metric], stream)
+                with patch.dict(os.environ, {}, clear=True):
+                    emit_cache_metrics("am", [metric], stream)
                 lines = stream.getvalue().splitlines()
                 self.assertEqual(json.loads(lines[0]), {"event": "publication-cache", **metric})
                 if warning is None:
                     self.assertEqual(len(lines), 1)
+                elif warning.startswith("WITHHELD "):
+                    # Every withheld export explains its reason and next step.
+                    self.assertEqual(lines[1], warning)
+                    self.assertTrue(lines[2].startswith("::warning title=build-cache%3A "))
+                    self.assertIn("Next step: ", lines[2])
+                    self.assertEqual(len(lines), 3)
                 else:
                     self.assertEqual(lines[1], "::warning title=Cargo cache bound::am Cargo bundle is "
                                      f"{warning} its bound in staging_cd_cargo_artifact.py")
@@ -175,6 +184,35 @@ class CacheTests(unittest.TestCase):
             (cache.accepted / 'target.tar.gz').write_bytes(b'changed')
             self.assertFalse(self.cache().restore())
             self.assertEqual(transfer.call_count, 2)
+
+    def test_yesterdays_bundle_seeds_only_incremental_state_after_midnight(self):
+        import staging_cd_build_cache
+        tool = bridge()
+        yesterday, today = date(2026, 11, 20), date(2026, 11, 21)
+        with patch.object(staging_cd_build_cache, 'identity',
+                          side_effect=lambda root, component: identity(root, component, day=yesterday)):
+            producer = self.cache()
+        self.populate(producer.accepted)
+        tool.seal(producer.accepted, producer.key.prefix, family=producer.key.family)
+        with patch.object(staging_cd_build_cache, 'identity',
+                          side_effect=lambda root, component: identity(root, component, day=today)):
+            cache = self.cache()
+        self.assertEqual(cache.key.family, producer.key.family)
+        self.assertNotEqual(cache.key.prefix, producer.key.prefix)
+        with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
+            self.assertTrue(cache.restore())
+        self.assertEqual(cache.restore_result, "partial")
+        # The registry and every non-incremental target member stay behind.
+        transfer.assert_called_once_with("inject-target", cache.accepted, namespace=cache.namespace,
+                                         timeout=360, max_content=6 * 1024 ** 3)
+        shutil = __import__('shutil')
+        shutil.rmtree(producer.accepted)
+        self.populate(producer.accepted, target_member="release/deps/libsynthetic.rlib")
+        tool.seal(producer.accepted, producer.key.prefix)
+        with patch.object(tool, 'transfer') as transfer, patch('staging_cd_build_cache.bridge', return_value=tool):
+            self.assertFalse(cache.restore())
+        transfer.assert_not_called()
+        self.assertEqual(cache.restore_result, "miss")
 
     def test_partial_restore_seeds_current_graph_only_after_qualification(self):
         cache = self.cache()
@@ -345,8 +383,12 @@ class CacheTests(unittest.TestCase):
             target.write_bytes((ROOT / relative).read_bytes())
         base = identity(fake, 'eg')
         day = date(2026, 10, 1)
-        self.assertNotEqual(identity(fake, 'eg', day=day).family,
-                            identity(fake, 'eg', day=date(2026, 10, 2)).family)
+        # Midnight turns over the exact key, so the registry and anything beyond
+        # incremental state refresh, but keeps the family: the next day's first
+        # build is seeded with the previous day's incremental state.
+        before, after = identity(fake, 'eg', day=day), identity(fake, 'eg', day=date(2026, 10, 2))
+        self.assertEqual(before.family, after.family)
+        self.assertNotEqual(before.graph, after.graph)
         dockerfile = fake / 'api/crates/cmaeg/Dockerfile'
         original = dockerfile.read_text()
         consumed = original.replace("FROM rust:1.96.1-alpine AS build", "FROM rust:1.96.1-alpine AS build\n"
@@ -472,6 +514,79 @@ class TimingTests(unittest.TestCase):
         for name in ('dependency-compile', 'go-compile', 'media-compile'):
             self.assertEqual(result['category_seconds'][name], 4)
         self.assertNotIn('private-value', json.dumps(result))
+
+    def test_a_failed_build_names_only_the_stage_and_step_where_it_stopped(self):
+        rows = [
+            {'id': '1', 'name': '[runtime-base 3/12] RUN apt-get install private-value',
+             'started': '2026-01-01T00:00:00Z', 'completed': '2026-01-01T00:00:09Z',
+             'error': 'exit code: 100 private-error'},
+            {'id': '2', 'name': '[codex 2/4] RUN curl private-value',
+             'started': '2026-01-01T00:00:00Z', 'completed': '2026-01-01T00:00:10Z',
+             'error': 'context canceled'},
+            {'id': '3', 'name': '[internal] load metadata for docker.io/library/private:tag',
+             'started': '2026-01-01T00:00:00Z', 'completed': '2026-01-01T00:00:01Z'},
+            {'id': '4', 'name': '[build 9/9] RUN cargo build private-value',
+             'started': '2026-01-01T00:00:00Z', 'completed': '2026-01-01T00:00:02Z'},
+        ]
+        result = summarize(b'\n'.join(json.dumps(row).encode() for row in rows))
+        self.assertEqual(result['failed_steps'], ['runtime-base 3/12', 'codex 2/4'])
+        self.assertNotIn('private', json.dumps(result))
+        metadata = [{'id': '5', 'name': '[internal] load metadata for ghcr.io/private/image:tag',
+                     'started': '2026-01-01T00:00:00Z', 'completed': '2026-01-01T00:00:03Z',
+                     'error': 'failed to resolve: private'},
+                    {'id': '6', 'name': 'unnamed private vertex', 'error': 'private'}]
+        result = summarize(b'\n'.join(json.dumps(row).encode() for row in metadata))
+        self.assertEqual(result['failed_steps'], ['other', 'base-image-metadata'])
+        self.assertNotIn('private', json.dumps(result))
+        self.assertNotIn('failed_steps', summarize(b'\n'.join(json.dumps(row).encode() for row in rows[2:])))
+        # BuildKit pads the position to the width of the total in longer stages.
+        padded = [{'id': '7', 'name': '[media-self-test  7/11] RUN private-value', 'error': 'private'},
+                  {'id': '8', 'name': '[build   9/120] RUN private-value', 'error': 'private',
+                   'completed': '2026-01-01T00:00:01Z'}]
+        result = summarize(b'\n'.join(json.dumps(row).encode() for row in padded))
+        self.assertEqual(result['failed_steps'], ['media-self-test 7/11', 'build 9/120'])
+        self.assertNotIn('private', json.dumps(result))
+
+    def test_an_ignored_cache_export_failure_is_cache_evidence_not_a_failed_step(self):
+        # BuildKit keeps an ignore-error export failure on its exporter vertex,
+        # with the cache service's refusal as go-actions-cache relays it.
+        budget = ('error writing layer blob: failed to reserve cache: You have reached your configured budget, '
+                  'your cache is now read only to prevent additional charges. private-value')
+        step = {'id': '1', 'name': '[build 3/9] RUN cargo build private-value',
+                'started': '2026-01-01T00:00:00Z', 'completed': '2026-01-01T00:00:09Z'}
+        image = {'id': '2', 'name': 'exporting to oci image format',
+                 'started': '2026-01-01T00:00:09Z', 'completed': '2026-01-01T00:00:12Z'}
+        export = {'id': '3', 'name': 'exporting to GitHub Actions Cache',
+                  'started': '2026-01-01T00:00:12Z', 'completed': '2026-01-01T00:00:22Z'}
+
+        def summary(*rows):
+            return summarize(b'\n'.join(json.dumps({'vertexes': [row]}).encode() for row in rows))
+        result = summary(step, image, dict(export, error=budget))
+        self.assertEqual(result['cache_export_error'], 'read-only')
+        self.assertNotIn('failed_steps', result)
+        self.assertEqual(result['category_seconds']['cache-export'], 10)
+        self.assertEqual(result['category_seconds']['archive-export'], 3)
+        for withheld in ('private', 'budget', 'reserve'):
+            self.assertNotIn(withheld, json.dumps(result))
+        # Another export failure is not explained, and a real step failure still reports.
+        result = summary(dict(step, error='exit code: 101'), dict(export, error='maximum timeout reached private'))
+        self.assertEqual((result['cache_export_error'], result['failed_steps']), ('failed', ['build 3/9']))
+        self.assertNotIn('private', json.dumps(result))
+        self.assertNotIn('cache_export_error', summary(step, image, export))
+
+    def test_a_failed_test_stage_keeps_its_names_beside_a_failed_cache_export(self):
+        # The export vertex is cache evidence, never a second failed step or a
+        # source of test names; the failed test stage still names its tests.
+        import staging_cd_test_failures_tests as failures
+        raw = failures.progress(
+            (1, failures.QUALIFICATION, 'process did not complete successfully: private', {1: failures.SPEC}),
+            (2, 'exporting to GitHub Actions Cache',
+             'failed to reserve cache: You have reached your configured budget, private', {}))
+        result = summarize(raw, dockerfile=failures.RUNTIME)
+        self.assertEqual(result['failed_steps'], [failures.STEP])
+        self.assertEqual(result['failed_tests'], failures.SPEC_NAMES)
+        self.assertEqual(result['cache_export_error'], 'read-only')
+        self.assertNotIn('private', json.dumps(result))
 
 
 if __name__ == '__main__':

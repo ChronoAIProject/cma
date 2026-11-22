@@ -74,3 +74,57 @@ pub(super) fn document() -> StoredDocument {
     value.validate().unwrap();
     value
 }
+pub(super) fn revision() -> (Document, TriggerRevision, TriggerId) {
+    let content:TriggerContent = serde_json::from_value(serde_json::json!({
+        "presentation":{"title":"Publisher secret","description":"Private description","button_label":"run_with_cma","theme":"auto","signup_hint":"Private display"},
+        "target":{"inline":{"agent":{"reasoning_effort":"high","permission_mode":"autonomous","system_prompt":"Publisher prompt"}}},
+        "reuse":{"sandbox":"always_new","workspace":"always_new","agent":"always_new"},
+        "first_message":"Publisher first message","quick_messages":[{"name":"Private name","description":"Private description","text":"Private body"}],"consent":{"always_review":true}
+    })).unwrap();
+    let revision = TriggerRevision::new(1, content, AT.into()).unwrap();
+    let id = TriggerId("trg_erasure".into());
+    let row = doc! {"_id":"trg_erasure:0000000001","document_schema_version":1_i64,"trigger_id":id.as_str(),"public_id":"pub_erasure","owner":"erased","revision":1_i64,"sandbox_profile_id":"","workspace_profile_id":"","agent_profile_id":"","published_at":AT,"record":mongodb::bson::serialize_to_bson(&revision).unwrap()};
+    (row, revision, id)
+}
+pub(super) fn launch(trigger_id: &TriggerId, revision_digest: &str) -> Launch {
+    Launch::new(LaunchSeed {
+        trigger_id: trigger_id.clone(),
+        revision_digest: revision_digest.into(),
+        public_id: PublicTriggerId("pub_erasure".into()),
+        owner: SubjectId::new("survivor"),
+        authority: LaunchAuthorityClass::Visitor,
+        placement_id: None,
+        referrer_origin: None,
+        requirements: RequirementsSnapshot {
+            services: vec![],
+            checked_at: AT.into(),
+        },
+        review: ReviewRequirements {
+            needs: vec![],
+            can_start_now: true,
+        },
+        trust: LaunchTrustManifest::none(),
+        resolution: LaunchResolution::pending(),
+        has_first_message: true,
+        command_key_hash: digest(b"launch-key"),
+        command_fingerprint: digest(b"launch-fingerprint"),
+        created_at: AT.into(),
+    })
+    .unwrap()
+}
+pub(super) fn encode_launch(launch: &Launch) -> Document {
+    let mut row = doc! {"_id":launch.id.as_str(),"document_schema_version":1_i64,"owner":launch.owner.as_str(),"trigger_id":launch.trigger_id.as_str(),"public_id":launch.public_id.as_str(),"command_key_hash":&launch.command_key_hash,"command_fingerprint":&launch.command_fingerprint,"created_at":&launch.created_at,"work_ready_at":&launch.work.ready_at,"work_lease_holder":null,"work_lease_fence":null,"work_lease_expires_at":null,"ready_at":null,"event_head":0_i64,"revision":1_i64,"mutation_version":1_i64,"record":mongodb::bson::serialize_to_bson(launch).unwrap()};
+    row.insert(
+        "state",
+        mongodb::bson::serialize_to_bson(&launch.state).unwrap(),
+    );
+    row.insert(
+        "blocked_reason",
+        mongodb::bson::serialize_to_bson(&launch.blocked_reason).unwrap(),
+    );
+    row.insert(
+        "work_step",
+        mongodb::bson::serialize_to_bson(&launch.work.step).unwrap(),
+    );
+    row
+}

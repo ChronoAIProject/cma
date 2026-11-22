@@ -1,4 +1,4 @@
-import { expect, type Page, type TestInfo } from '@playwright/test';
+import { expect, type Page, type Request, type TestInfo } from '@playwright/test';
 import { writeFile } from 'node:fs/promises';
 import type { AgentEnvironment } from '../src/api-client/index';
 import { LocalAgentV2, binding, cursor } from './agent-v2.fixture';
@@ -44,6 +44,7 @@ export class ComputerRecovery {
   readonly cancelled: string[] = [];
   connectionChecks = 0;
   private readonly holds = new Map<Dependency, Promise<void>>();
+  private readonly pending = new Set<Request>();
   private readonly releases: (() => void)[] = [];
   private readonly started = performance.now();
   phase = 'healthy';
@@ -113,8 +114,28 @@ export class ComputerRecovery {
   }
 
   async advance(page: Page, ms: number) {
-    this.clockMs += ms;
-    await page.clock.fastForward(ms);
+    // Keep healthy polling responses ahead of lifecycle expiry while virtual time advances.
+    await this.settle();
+    while (ms > 0) {
+      const step = Math.min(ms, 1000);
+      this.clockMs += step;
+      await page.clock.runFor(step);
+      await this.settle();
+      ms -= step;
+    }
+  }
+
+  private async settle() {
+    await expect
+      .poll(() =>
+        [...this.pending]
+          .map((request) => new URL(request.url()).pathname)
+          .filter((path) => {
+            const dependency = dependencies.get(path);
+            return dependency === undefined || !this.holds.has(dependency);
+          }),
+      )
+      .toEqual([]);
   }
 
   async foreground(page: Page) {
@@ -140,7 +161,23 @@ export class ComputerRecovery {
     await page.clock.install();
     await page.clock.pauseAt(new Date(Date.now() + 1000));
     await this.base.route(page, baseURL);
-    page.on('requestfailed', (request) => this.cancelled.push(new URL(request.url()).pathname));
+    page.on('request', (request) => {
+      const path = new URL(request.url()).pathname;
+      if (
+        (path.startsWith('/api/') || path.startsWith('/auth/')) &&
+        !/^\/api\/v2\/agents\/[^/]+\/events$/.test(path)
+      )
+        this.pending.add(request);
+    });
+    page.on('response', (response) => {
+      // Some clients reject HTTP errors without consuming their response bodies.
+      if (!response.ok()) this.pending.delete(response.request());
+    });
+    page.on('requestfinished', (request) => this.pending.delete(request));
+    page.on('requestfailed', (request) => {
+      this.pending.delete(request);
+      this.cancelled.push(new URL(request.url()).pathname);
+    });
     await page.route('**/*', async (route) => {
       const request = route.request();
       const url = new URL(request.url());

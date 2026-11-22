@@ -120,6 +120,13 @@
               "null"
             ]
           },
+          "execution_reference": {
+            "description": "Provider-verified execution reference for this response, when available.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "last_non_admission_code": {
             "description": "Last precise retryable provider refusal, retained even after event expiry.",
             "type": [
@@ -135,6 +142,13 @@
             "type": "array"
           },
           "produced_at": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "produced_by": {
+            "description": "Upper bound from the earliest confirmed Answer receipt bound to this\nresponse. Only projected when the exact production time is unavailable.",
             "type": [
               "string",
               "null"
@@ -194,6 +208,13 @@
       },
       "ActivityDelivery": {
         "properties": {
+          "answer_response_id": {
+            "description": "Exact provider response bound to this confirmed Answer at delivery.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
           "confirmed_at": {
             "description": "Present only for a confirmed platform/transport receipt.",
             "type": [

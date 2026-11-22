@@ -63,6 +63,7 @@ jobs:
           python3 .github/scripts/omarchy-close-browser-tests.py
           python3 .github/scripts/omarchy-browser-input-tests.py
           node --test .github/scripts/omarchy-browser-page.test.cjs
+          node --test .github/scripts/desktop-seccomp.test.mjs
       -
         name: "Ledger image qualification regressions"
         run: "node --test .github/scripts/runtime-ledger-evidence.test.mjs .github/scripts/runtime-ledger-downgrade.test.mjs"
@@ -99,6 +100,10 @@ jobs:
         if: "steps.omarchy-cache-restore.outcome != 'success' || steps.omarchy-cache-restore.outputs.cache-hit != 'true'"
         run: "rm -rf \"$RUNNER_TEMP/omarchy-layer-cache\""
       -
+        name: "Resolve OS security refresh key"
+        id: "os-refresh"
+        run: "python3 .github/scripts/os_refresh_key.py runtime-omarchy api/crates/layer4-runtime/Dockerfile \"${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}\" >> \"$GITHUB_OUTPUT\""
+      -
         name: "Build current-source Omarchy image"
         id: "build"
         uses: "docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8"
@@ -116,7 +121,7 @@ jobs:
             RUNTIME_DESKTOP=1
             CHRONO_BUILD=${{ steps.identity.outputs.version }}
             CHRONO_BUILD_SHA=${{ github.sha }}
-            OS_SECURITY_REFRESH=${{ github.run_id }}-${{ github.run_attempt }}
+            OS_SECURITY_REFRESH=${{ steps.os-refresh.outputs.value }}
             SOURCE_DATE_EPOCH=0
           cache-from: |
             ${{ steps.omarchy-cache-restore.outcome == 'success' && steps.omarchy-cache-restore.outputs.cache-hit == 'true' && format('type=local,src={0}/omarchy-layer-cache', runner.temp) || '' }}
@@ -190,12 +195,12 @@ jobs:
           retention-days: 90
       -
         name: "Export tested Omarchy image"
-        if: "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
         run: "python3 .github/scripts/export-ci-native-image.py runtime-omarchy \"$GITHUB_SHA\" \"$RUNNER_TEMP/ci-native-image\""
       -
         name: "Retain tested Omarchy image"
-        if: "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
+        if: "success() && (github.event_name == 'push' || github.event_name == 'merge_group' || github.event.pull_request.head.repo.full_name == github.repository)"
         timeout-minutes: 10
         uses: "actions/upload-artifact@v4"
         with:

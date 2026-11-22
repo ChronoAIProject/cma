@@ -1,4 +1,3 @@
-//! Production control-plane service and router assembly.
 use std::sync::Arc;
 mod access;
 mod account_deletion;
@@ -122,7 +121,7 @@ impl ControlPlaneComposition {
             Arc::new(AdapterSandboxResources::new(Arc::clone(&adapter))),
             runtime_capabilities(adapter.capabilities()),
         )
-        .with_features(config.features)
+        .with_features(config.features, adapters.model_funding.clone())
         .with_connections(connection_prerequisite.clone())
         .with_message_feedback(stores.message_feedback.clone())
         .with_suggestions(stores.sandbox_model.clone())
@@ -242,6 +241,7 @@ impl ControlPlaneComposition {
         let mut sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
                 store: stores.sandbox_model.clone(),
+                pending_homes: Arc::new(stores.admission_ceilings.pending_homes.clone()),
                 title_budget: stores.request_limits.clone(),
                 title_runtime: Arc::new(PlatformTitleEndpoint {
                     platform_base_url: config.runtime.platform_base_url.clone(),
@@ -308,8 +308,9 @@ impl ControlPlaneComposition {
                 context: context.clone(),
             },
             worker_holder.clone(),
-            ownership,
+            ownership.clone(),
             config.features.command_reconcile_pacing,
+            adapters.model_funding.clone(),
         )?;
         let sandbox_control_scheduler = crate::commands::SandboxControlScheduler::new(
             layer2_core::sandbox::control::SandboxControlWorker::new(
@@ -340,6 +341,9 @@ impl ControlPlaneComposition {
             resource_access.clone(),
             worker_holder,
             access::ToolServices {
+                ownership,
+                model_credit_required: config.features.model_credit_required,
+                model_funding: adapters.model_funding,
                 source: access_tools,
                 documents: config.document_storage.as_ref().map(|_| documents.clone()),
                 deliverables: deliverables.clone(),
@@ -347,11 +351,10 @@ impl ControlPlaneComposition {
                 task_experience: config.task_experience.clone(),
             },
         );
-        let command_service = agent_access.commands;
-        let projections = projections.with_commands(command_service.clone());
+        let projections = projections.with_commands(agent_access.commands.clone());
         let responses_v2 = bindings::responses(
             &stores,
-            command_service.clone(),
+            agent_access.commands.clone(),
             projections.reads(),
             agent_page_origin,
             &bindings,
@@ -429,7 +432,7 @@ impl ControlPlaneComposition {
             auth.clone(),
             settings.clone(),
             bots.as_ref(),
-            command_service,
+            agent_access.commands,
             resource_routes.merge(bot_routes),
         )?;
         let provenance_backfill =

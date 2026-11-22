@@ -36,6 +36,7 @@ async fn deletion_preflight_returns_typed_problem_without_owner_lookup() {
         ("GET", "models"),
         ("POST", "files"),
         ("POST", "attachments"),
+        ("PATCH", "preferences"),
     ] {
         let mut request = Request::builder()
             .method(method)

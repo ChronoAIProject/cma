@@ -16,19 +16,23 @@ use mongodb::bson::Document;
 use mongodb::{Client, Collection};
 
 use super::durability::majority_collection;
-use super::sandbox_mongo::{is_duplicate_key, require_transaction_topology, MongoProfileStore};
+use super::sandbox_mongo::{require_transaction_topology, MongoProfileStore};
 use super::schema::initialize_collections;
 
 pub(in crate::store) use launches::decode_launch_aggregate;
 pub(in crate::store) use launches::input_protocol::require_document as require_input_protocol_document;
 
 pub(in crate::store) use launches::due_filter;
-mod documents;
+mod admission;
+pub(in crate::store) use admission::{fence_new_agent_publisher, surviving_launch_revision};
+pub(in crate::store) mod documents;
+mod draft_admission;
 mod indexes;
 mod launches;
 mod mutations;
 mod profile_resolution;
 mod publication;
+mod publisher_erasure;
 mod queries;
 
 pub(super) const TRIGGER_DEFINITIONS: &str = "trigger_definitions";
@@ -37,6 +41,7 @@ pub(super) const MUTATION_ATTEMPTS: usize = 8;
 
 #[derive(Clone)]
 pub struct MongoTriggerDefinitionStore {
+    pub(super) initial_settings: super::settings_defaults::InitialSettings,
     pub(super) empty_discovery: super::empty_discovery::Policy,
     pub(super) client: Client,
     pub(super) definitions: Collection<Document>,
@@ -48,6 +53,14 @@ pub struct MongoTriggerDefinitionStore {
 }
 
 impl MongoTriggerDefinitionStore {
+    pub(crate) fn with_initial_settings(
+        mut self,
+        initial: super::settings_defaults::InitialSettings,
+    ) -> Self {
+        self.initial_settings = initial;
+        self
+    }
+
     pub(crate) fn with_launch_admission_policy(
         mut self,
         policy: layer2_core::trigger_domain::LaunchAdmissionPolicy,
@@ -81,6 +94,7 @@ impl MongoTriggerDefinitionStore {
         .await?;
         let launch_data = launches::LaunchCollections::open(&database).await?;
         let store = Self {
+            initial_settings: Default::default(),
             empty_discovery: Default::default(),
             client: client.clone(),
             definitions: majority_collection(&database, TRIGGER_DEFINITIONS),
@@ -109,17 +123,7 @@ impl TriggerStore for MongoTriggerDefinitionStore {
         {
             return Err(TriggerError::new("invalid_trigger_state", "availability").into());
         }
-        self.definitions
-            .insert_one(documents::trigger_document(&trigger, 1)?)
-            .await
-            .map(|_| ())
-            .map_err(|error| {
-                if is_duplicate_key(&error) {
-                    TriggerStoreError::Duplicate
-                } else {
-                    driver_error("create Trigger definition", error)
-                }
-            })
+        draft_admission::create(self, &trigger).await
     }
 
     async fn trigger(
@@ -149,6 +153,15 @@ impl TriggerStore for MongoTriggerDefinitionStore {
         queries::revision(self, id, digest).await
     }
 
+    async fn trigger_publisher_erased(
+        &self,
+        id: &TriggerId,
+        digest: &str,
+        public_id: &PublicTriggerId,
+    ) -> Result<bool, TriggerStoreError> {
+        publisher_erasure::prove(self, id, digest, public_id).await
+    }
+
     async fn save_draft(
         &self,
         id: &TriggerId,
@@ -157,17 +170,7 @@ impl TriggerStore for MongoTriggerDefinitionStore {
         draft: TriggerContent,
         updated_at: String,
     ) -> Result<Trigger, TriggerStoreError> {
-        mutations::owned(self, id, owner, |trigger| {
-            if trigger.draft_version != expected {
-                return Err(TriggerStoreError::Conflict {
-                    expected,
-                    actual: trigger.draft_version,
-                });
-            }
-            trigger.replace_draft(expected, draft.clone(), updated_at.clone())?;
-            Ok(trigger.clone())
-        })
-        .await
+        draft_admission::save(self, id, owner, expected, draft, updated_at).await
     }
 
     async fn publish_trigger(
@@ -364,7 +367,7 @@ pub(super) fn driver_error(context: &str, error: mongodb::error::Error) -> Trigg
 }
 
 #[cfg(test)]
-mod integration_tests;
+pub(in crate::store) mod integration_tests;
 #[cfg(test)]
 mod launch_mongo_integration_tests;
 #[cfg(test)]

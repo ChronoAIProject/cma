@@ -65,6 +65,7 @@ export function Console(props: ConsoleProps) {
 function ConsoleContent({
   user,
   authEpoch = 0,
+  visible = true,
   route,
   onSignOut,
   onNavigate,
@@ -252,6 +253,7 @@ function ConsoleContent({
           viewPosition={viewPosition}
           accessUncertain={accessUncertain}
           accessAuthorized={agentAccess.personalReady && !accessUncertain}
+          firstSendContext={{ authEpoch, visible: visible && !user.visitor }}
           filesOpen={panel !== undefined && panel !== 'details'}
           onFilesOpenChange={(open) => setPanel(open ? 'browser' : undefined)}
           detailsOpen={detailsOpen}
@@ -435,6 +437,11 @@ function ConsoleContent({
                 navigation={navigation}
                 currentAgent={ready?.detail}
                 currentActivity={ready?.activityStatus}
+                currentTurnId={
+                  ready?.historyLoading || ready?.historyUnavailable
+                    ? undefined
+                    : ready?.conversation.latestTurnId
+                }
                 permissions={permissions}
                 pending={actions.pending}
                 busySandboxIds={actions.busySandboxIds}
@@ -444,6 +451,7 @@ function ConsoleContent({
                   if (next.kind !== 'usage') onSidebarNavigate();
                   onNavigate(next);
                 }}
+                onRestoreTaskRoute={onNavigate}
                 onAgentIntent={navigationScope === '' ? onAgentIntent : undefined}
                 onAction={actions.select}
               />

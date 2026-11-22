@@ -11,6 +11,9 @@ use tokio::sync::mpsc;
 #[path = "complete_relay_tests.rs"]
 mod complete_relay;
 
+#[path = "delivery_replay_activity_tests.rs"]
+mod replay_activity;
+
 pub(super) fn lane(setup: &Setup) -> (RoutedDelivery, mpsc::Receiver<DeliveryCommand>) {
     let (tx, rx) = mpsc::channel(1);
     (
@@ -49,7 +52,7 @@ pub(super) async fn command(rx: &mut mpsc::Receiver<DeliveryCommand>) -> Box<Dur
     };
     reply
 }
-pub(super) async fn stored(setup: &Setup) -> TargetState {
+pub(crate) async fn stored(setup: &Setup) -> TargetState {
     setup
         .journal()
         .read::<TargetState>(&setup.target().id)

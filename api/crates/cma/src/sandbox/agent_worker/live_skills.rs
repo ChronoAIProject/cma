@@ -10,6 +10,10 @@ use layer2_core::{
         WorkspaceStatus, WorktreeStatus,
     },
 };
+#[path = "skill_publication.rs"]
+mod publication;
+use publication::SkillPublication;
+
 #[path = "skill_request.rs"]
 mod skill_request;
 use std::time::SystemTime;
@@ -134,71 +138,54 @@ impl AgentWorker {
         };
         let request = skill_request::request(&agent, runtime_skills[0].clone(), previous);
         let fence = claimed_fence(&agent, &self.config.holder)?;
-        match self
+        let observed = SkillPublication::capture(&agent, &context);
+        let error = match self
             .dependencies
             .adapter
             .install_agent_skill(&context.runtime, fence, &request)
             .await
         {
-            Ok(()) => {
-                self.finish_skill(agent, None, now + started.elapsed())
-                    .await
-            }
-            Err(layer3_adapter::AdapterError::Unsupported(_)) => {
-                self.finish_skill(
-                    agent,
-                    Some(if request.upgrade.is_some() {
-                        "runtime_skill_version_upgrade_unsupported"
-                    } else {
-                        "runtime_skill_install_unsupported"
-                    }),
-                    now + started.elapsed(),
-                )
-                .await
-            }
+            Ok(()) => None,
+            Err(layer3_adapter::AdapterError::Unsupported(_)) => Some(
+                if request.upgrade.is_some() {
+                    "runtime_skill_version_upgrade_unsupported"
+                } else {
+                    "runtime_skill_install_unsupported"
+                }
+                .to_owned(),
+            ),
             Err(layer3_adapter::AdapterError::SkillUpgradeRefused(reason)) => {
-                self.finish_skill(
-                    agent,
-                    Some(&format!("{}: {reason}", reason.code())),
-                    now + started.elapsed(),
-                )
-                .await
+                Some(format!("{}: {reason}", reason.code()))
             }
-            Err(layer3_adapter::AdapterError::Rejected(_)) => {
-                self.finish_skill(
-                    agent,
-                    Some(if request.upgrade.is_some() {
-                        "runtime_skill_upgrade_rejected"
-                    } else {
-                        "runtime_skill_install_rejected"
-                    }),
-                    now + started.elapsed(),
-                )
-                .await
-            }
+            Err(layer3_adapter::AdapterError::Rejected(_)) => Some(
+                if request.upgrade.is_some() {
+                    "runtime_skill_upgrade_rejected"
+                } else {
+                    "runtime_skill_install_rejected"
+                }
+                .to_owned(),
+            ),
             Err(layer3_adapter::AdapterError::OperationIdentityConflict(_))
                 if request.upgrade.is_some() =>
             {
-                self.finish_skill(
-                    agent,
-                    Some("runtime_skill_upgrade_conflict"),
-                    now + started.elapsed(),
-                )
-                .await
+                Some("runtime_skill_upgrade_conflict".to_owned())
             }
             Err(
                 error @ (layer3_adapter::AdapterError::RuntimeLedgerHold(_)
                 | layer3_adapter::AdapterError::RuntimeStartupHold(_)),
             ) => {
-                self.handle_failure(
-                    agent,
-                    super::support::adapter_failure(error),
-                    now + started.elapsed(),
-                )
-                .await
+                return self
+                    .handle_failure(
+                        agent,
+                        super::support::adapter_failure(error),
+                        now + started.elapsed(),
+                    )
+                    .await;
             }
-            Err(_) => self.retry_skill(agent, now + started.elapsed()).await,
-        }
+            Err(_) => return self.retry_skill(agent, now + started.elapsed()).await,
+        };
+        self.publish_skill_result(observed, error.as_deref(), now + started.elapsed())
+            .await
     }
     async fn retry_skill(&self, agent: Agent, now: SystemTime) -> Result<(), SandboxStoreError> {
         // Lifecycle reconnection can reset work-step attempts; the admitted skill

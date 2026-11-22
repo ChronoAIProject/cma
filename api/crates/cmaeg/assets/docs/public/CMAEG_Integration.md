@@ -97,7 +97,10 @@ they do not load or decrypt the complete snapshots. No client polling is require
 
 Activity names the source, actor, source conversation/thread, selected consumer,
 provider and provider conversation. Consumer display names and native agent IDs
-are present only when recorded authority supplies them. `occurred_at` is the
+are present only when recorded authority supplies them. An optional
+`execution_reference` identifies the executor for that response through a
+verified provider receipt. It is independent of the native provider Agent ID
+and any worker that delivered the reply. `occurred_at` is the
 normalized event timestamp: the source timestamp when supplied, or the gateway
 time at normalization for custom CloudEvents without `time`. The fallback leaves
 the original CloudEvent's `time` absent; `occurred_at` alone does not establish
@@ -106,6 +109,12 @@ timestamp.
 `dispatched_at` starts an attempt, `accepted_at` records actual provider
 acceptance, `produced_at` records committed response output, and `completed_at`
 records terminal response observation or recovered processing completion.
+When exact production time is unavailable, `produced_by` gives the earliest
+confirmation time for an Answer receipt bound to the consumer's current
+`response_id`. The receipt records that binding as `answer_response_id`.
+`produced_by` is an upper bound on production time. Leave it out of exact
+processing and delivery latency calculations. Older receipts without a verified
+response binding may have neither production time.
 `failed` means a provider reported failure or incomplete output. A completed
 processing checkpoint alone never proves a successful response: recovery retains
 the recorded terminal outcome, or reports `unknown` when that evidence is absent.

@@ -2,7 +2,8 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { expect, it } from 'vitest';
 import type { AgentUsage } from '../api/types';
-import { ContextRing, contextFraction } from './ContextRing';
+import { ContextRing } from './ContextRing';
+import { contextFraction, usageDescription } from './usageDescription';
 
 const usage: AgentUsage = {
   agentId: 'agt_1',
@@ -16,24 +17,44 @@ const usage: AgentUsage = {
 
 const ring = () => screen.getByRole('button', { name: 'Context usage' });
 
-it('draws the arc to scale and lists context, totals and the current turn', () => {
-  const { container } = render(<ContextRing usage={usage} />);
+it('shows provider token provenance and uses only the latest context for the arc', () => {
+  const multiRequest: AgentUsage = {
+    ...usage,
+    inputTokens: 237000,
+    outputTokens: 3300,
+    contextUsed: 83100,
+    contextWindow: 128000,
+    currentTurn: { turnSequence: 3, inputTokens: 82000, outputTokens: 1100 },
+  };
+  const { container } = render(<ContextRing usage={multiRequest} />);
   const arc = container.querySelector('.context-ring__arc')!;
   const circumference = 2 * Math.PI * 8;
   const [drawn] = arc.getAttribute('stroke-dasharray')!.split(' ').map(Number);
-  expect(drawn).toBeCloseTo(circumference * 0.27105, 3);
+  expect(drawn).toBeCloseTo((circumference * 83100) / 128000, 3);
+  fireEvent.focus(ring());
+  const tooltip = screen.getByRole('tooltip');
+  expect(tooltip).toBeVisible();
+  expect(tooltip).toHaveTextContent('Latest provider observation for one context window.');
+  expect(tooltip).toHaveTextContent('Provider-reported usage attributed to this CMA turn.');
+  expect(tooltip).toHaveTextContent('Cache breakdown and billed usage are unavailable here.');
   expect(ring()).toHaveAccessibleDescription(
-    'Context54,210 / 200,000 (27%)Total tokens1,5001,200 input · 300 outputThis turn900 input · 40 output',
+    /Context 83,100 \/ 128,000 \(65%\).*Total tokens 240,300 237,000 input · 3,300 output.*This turn 82,000 input · 1,100 output.*Input includes any cache reads/,
+  );
+  expect(usageDescription(multiRequest)).toContain(
+    'Total tokens: 240,300 (237,000 input · 3,300 output). Provider-reported input and output accumulated for this Agent.',
   );
 });
 
 it('says not reported instead of drawing zero when usage or its ceiling is missing', () => {
   const { container, rerender } = render(<ContextRing />);
   expect(container.querySelector('.context-ring__arc')).toBeNull();
-  expect(ring()).toHaveAccessibleDescription('Contextnot reportedTotal tokensnot reported');
+  expect(ring()).toHaveAccessibleDescription(/Context not reported.*Total tokens not reported/);
+  expect(usageDescription()).toContain('Total tokens: not reported.');
+  expect(usageDescription()).not.toContain('This turn');
   rerender(<ContextRing usage={{ ...usage, contextWindow: undefined, currentTurn: undefined }} />);
   expect(container.querySelector('.context-ring__arc')).toBeNull();
-  expect(ring()).toHaveAccessibleDescription(/^Context54,210Total tokens/);
+  expect(ring()).toHaveAccessibleDescription(/^Context 54,210 Latest provider/);
+  expect(ring()).not.toHaveAccessibleDescription(/This turn/);
   expect(contextFraction({ ...usage, contextWindow: 0 })).toBeUndefined();
   expect(contextFraction({ ...usage, contextUsed: 300000 })).toBe(1);
 });

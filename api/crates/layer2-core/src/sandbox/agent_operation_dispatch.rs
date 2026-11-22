@@ -103,7 +103,9 @@ impl AgentOperationService {
         text: String,
         parent: SandboxMutationGuard,
         metadata: std::collections::BTreeMap<String, String>,
+        task_acceptance: Option<&super::task_acceptance::TaskAcceptanceIntent>,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
+        self.check_model_funding(&current).await?;
         if current.conversation.active_turn.is_some() {
             return Err(AgentOperationError::Corrupt(
                 "ready agent already has an active turn".into(),
@@ -127,6 +129,19 @@ impl AgentOperationService {
             &at,
         )?);
         next.conversation.active_turn = Some(turn_sequence);
+        if let Some(intent) = task_acceptance {
+            let claim = self
+                .command_claim
+                .as_ref()
+                .ok_or(AgentOperationError::Conflict)?;
+            let acceptance = &mut next.conversation.observations.task_acceptance;
+            *acceptance = Some(super::task_acceptance::TaskAcceptance::bind(
+                acceptance.as_ref(),
+                intent,
+                &claim.command_id,
+                turn_sequence,
+            )?);
+        }
         next.transition(AgentStatus::Working, at.clone(), None)
             .map_err(|error| AgentOperationError::Corrupt(error.to_string()))?;
         let mut logs = vec![
@@ -199,6 +214,7 @@ impl AgentOperationService {
         text: String,
         parent: SandboxMutationGuard,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
+        self.require_model_credit()?;
         let turn_sequence = active_turn(&current)?;
         let target = runtime_target(&current)?;
         let required = vec![RuntimeCapability::Conversation, RuntimeCapability::Steer];
@@ -288,6 +304,9 @@ impl AgentOperationService {
         decision: super::AgentApprovalDecision,
         parent: SandboxMutationGuard,
     ) -> Result<PreparedAgentOperation, AgentOperationError> {
+        if decision != super::AgentApprovalDecision::Abort {
+            self.require_model_credit()?;
+        }
         let turn_sequence = active_turn(&current)?;
         let pending =
             AgentConversationStore::pending_agent_approvals(self.store.as_ref(), &current.id)

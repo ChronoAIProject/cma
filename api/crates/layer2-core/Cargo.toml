@@ -11,11 +11,13 @@ test-support = []
 [dependencies]
 async-trait = { workspace = true }
 base64 = { workspace = true }
+csv = "1.4"
 futures-util = { workspace = true }
 jiff = { workspace = true }
 moka = { workspace = true }
 metrics = { workspace = true }
 layer3-adapter = { workspace = true }
+quick-xml = "0.41"
 ring = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true, features = ["float_roundtrip"] }
@@ -28,6 +30,7 @@ unicode-normalization = { workspace = true }
 url = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }
+zip = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }

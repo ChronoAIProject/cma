@@ -4,7 +4,7 @@ use futures_util::TryStreamExt;
 use layer2_core::ids::SubjectId;
 use layer2_core::trigger_domain::{
     PublicTrigger, PublicTriggerId, Trigger, TriggerAvailability, TriggerId, TriggerPage,
-    TriggerPageRequest, TriggerRevision, TriggerStoreError,
+    TriggerPageRequest, TriggerReferenceError, TriggerRevision, TriggerStoreError,
 };
 use mongodb::bson::{doc, Bson, Document};
 use mongodb::ClientSession;
@@ -19,6 +19,23 @@ pub(super) async fn owned(
     id: &TriggerId,
     owner: &SubjectId,
 ) -> Result<Option<StoredTrigger>, TriggerStoreError> {
+    owned_checked(store, id, owner, false).await
+}
+
+pub(super) async fn mutable_owned(
+    store: &MongoTriggerDefinitionStore,
+    id: &TriggerId,
+    owner: &SubjectId,
+) -> Result<Option<StoredTrigger>, TriggerStoreError> {
+    owned_checked(store, id, owner, true).await
+}
+
+async fn owned_checked(
+    store: &MongoTriggerDefinitionStore,
+    id: &TriggerId,
+    owner: &SubjectId,
+    mutating: bool,
+) -> Result<Option<StoredTrigger>, TriggerStoreError> {
     let document = store
         .definitions
         .find_one(doc! { "_id": id.as_str(), "owner": owner.as_str(), "archived_at": Bson::Null })
@@ -27,6 +44,12 @@ pub(super) async fn owned(
     let Some(document) = document else {
         return Ok(None);
     };
+    if mutating && document.get_bool("account_erasure_fenced").ok() == Some(true) {
+        return Err(TriggerReferenceError::Unavailable {
+            field: "trigger publisher",
+        }
+        .into());
+    }
     let stored = read_trigger(&document)?;
     verify_revisions(store, std::slice::from_ref(&stored.trigger)).await?;
     Ok(Some(stored))
@@ -62,7 +85,12 @@ pub(super) async fn public(
         return Ok(None);
     };
     let stored = read_trigger(&document)?;
-    verify_revisions(store, std::slice::from_ref(&stored.trigger)).await?;
+    match verify_revisions(store, std::slice::from_ref(&stored.trigger)).await {
+        Err(TriggerStoreError::Reference(TriggerReferenceError::Unavailable { .. })) => {
+            return Ok(None)
+        }
+        result => result?,
+    }
     project_public(stored.trigger).map(Some)
 }
 
@@ -185,15 +213,35 @@ pub(super) async fn guard(
     embedded_path: &str,
     referenced: impl Fn(&TriggerRevision) -> bool,
 ) -> Result<(), TriggerStoreError> {
+    guard_collections(
+        &store.definitions,
+        &store.revisions,
+        id,
+        latest_field,
+        revision_field,
+        embedded_path,
+        referenced,
+    )
+    .await
+}
+
+pub(super) async fn guard_collections(
+    definitions: &mongodb::Collection<Document>,
+    revisions: &mongodb::Collection<Document>,
+    id: &str,
+    latest_field: &str,
+    revision_field: &str,
+    embedded_path: &str,
+    referenced: impl Fn(&TriggerRevision) -> bool,
+) -> Result<(), TriggerStoreError> {
     let mut candidates = BTreeSet::new();
     let mut revision_filter = Document::new();
     revision_filter.insert(revision_field, id);
-    let mut revisions = store
-        .revisions
+    let mut revision_rows = revisions
         .find(revision_filter)
         .await
         .map_err(|error| driver_error("scan Trigger profile references", error))?;
-    while let Some(document) = revisions
+    while let Some(document) = revision_rows
         .try_next()
         .await
         .map_err(|error| driver_error("read Trigger profile reference", error))?
@@ -205,12 +253,11 @@ pub(super) async fn guard(
     latest.insert(latest_field, id);
     let mut embedded = Document::new();
     embedded.insert(embedded_path, id);
-    let mut definitions = store
-        .definitions
+    let mut definition_rows = definitions
         .find(doc! { "$or": [latest, embedded] })
         .await
         .map_err(|error| driver_error("scan Trigger aggregate references", error))?;
-    while let Some(document) = definitions
+    while let Some(document) = definition_rows
         .try_next()
         .await
         .map_err(|error| driver_error("read Trigger aggregate reference", error))?
@@ -221,11 +268,18 @@ pub(super) async fn guard(
     let mut blocking = Vec::new();
     for candidate in candidates {
         let trigger_id = TriggerId(candidate.clone());
-        let Some(stored) = by_id(store, &trigger_id).await? else {
-            return Err(TriggerStoreError::Corrupt(format!(
-                "Trigger revision {candidate} has no aggregate"
-            )));
+        let Some(document) = definitions
+            .find_one(doc! {"_id":trigger_id.as_str()})
+            .await
+            .map_err(|error| driver_error("read Profile guard Trigger", error))?
+        else {
+            return Err(TriggerReferenceError::Unavailable {
+                field: "target profile",
+            }
+            .into());
         };
+        let stored = read_trigger(&document)?;
+        verify_collection(revisions, std::slice::from_ref(&stored.trigger)).await?;
         if stored.trigger.availability == TriggerAvailability::Published
             && stored.trigger.latest_revision().is_some_and(&referenced)
         {
@@ -246,6 +300,13 @@ pub(super) async fn verify_revisions(
     store: &MongoTriggerDefinitionStore,
     triggers: &[Trigger],
 ) -> Result<(), TriggerStoreError> {
+    verify_collection(&store.revisions, triggers).await
+}
+
+async fn verify_collection(
+    revisions: &mongodb::Collection<Document>,
+    triggers: &[Trigger],
+) -> Result<(), TriggerStoreError> {
     if triggers.is_empty() {
         return Ok(());
     }
@@ -253,8 +314,7 @@ pub(super) async fn verify_revisions(
         .iter()
         .map(|trigger| Bson::String(trigger.id.to_string()))
         .collect::<Vec<_>>();
-    let mut cursor = store
-        .revisions
+    let mut cursor = revisions
         .find(doc! { "trigger_id": { "$in": ids } })
         .sort(doc! { "trigger_id": 1_i32, "revision": 1_i32 })
         .await
@@ -268,20 +328,33 @@ pub(super) async fn verify_revisions(
         let row = read_revision(&document)?;
         rows.entry(row.trigger_id.clone()).or_default().push(row);
     }
+    let mut unavailable = false;
     for trigger in triggers {
-        compare_revisions(
+        match compare_revisions(
             trigger,
             rows.remove(trigger.id.as_str())
                 .as_deref()
                 .unwrap_or_default(),
-        )?;
+        ) {
+            Err(TriggerStoreError::Reference(TriggerReferenceError::Unavailable { .. })) => {
+                unavailable = true
+            }
+            result => result?,
+        }
     }
     if !rows.is_empty() {
         return Err(TriggerStoreError::Corrupt(
             "immutable Trigger revision query crossed its ID boundary".into(),
         ));
     }
-    Ok(())
+    if unavailable {
+        Err(TriggerReferenceError::Unavailable {
+            field: "trigger publisher",
+        }
+        .into())
+    } else {
+        Ok(())
+    }
 }
 
 fn compare_revisions(trigger: &Trigger, rows: &[StoredRevision]) -> Result<(), TriggerStoreError> {
@@ -291,7 +364,18 @@ fn compare_revisions(trigger: &Trigger, rows: &[StoredRevision]) -> Result<(), T
             trigger.id
         )));
     }
+    let mut unavailable = false;
     for (expected, stored) in trigger.revisions.iter().zip(rows) {
+        if stored.revision.publisher_deleted
+            && stored.trigger_id == trigger.id.as_str()
+            && Some(&stored.public_id) == trigger.public_id.as_ref()
+            && stored.revision.digest == expected.digest
+            && stored.revision.revision == expected.revision
+            && stored.revision.published_at == expected.published_at
+        {
+            unavailable = true;
+            continue;
+        }
         if stored.trigger_id != trigger.id.as_str()
             || stored.owner != trigger.owner.as_str()
             || Some(&stored.public_id) != trigger.public_id.as_ref()
@@ -303,7 +387,14 @@ fn compare_revisions(trigger: &Trigger, rows: &[StoredRevision]) -> Result<(), T
             )));
         }
     }
-    Ok(())
+    if unavailable {
+        Err(TriggerReferenceError::Unavailable {
+            field: "trigger publisher",
+        }
+        .into())
+    } else {
+        Ok(())
+    }
 }
 
 fn project_public(trigger: Trigger) -> Result<PublicTrigger, TriggerStoreError> {

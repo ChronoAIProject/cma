@@ -1,25 +1,30 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
+import {
+  ConnectionPageSchema,
+  type ConnectionView,
+} from '../../api-client/cmaeg/types/connections';
 import { Button } from '../../ui/Button';
 import { ServiceError, serviceRequest, type Denied } from '../client';
 import { AdmissionFields } from './AdmissionFields';
 import { Choice, Section, Toggle } from './Fields';
 import { defaultSource, optional, type Fields } from './model';
-interface Connection {
-  connection_ref: string;
-  status: string;
-  label?: string | null;
-}
-interface Page {
-  items: Connection[];
-  next_after?: string | null;
-}
+
+type ConnectionList = { items: readonly ConnectionView[] } & (
+  | { status: 'idle' | 'denied' }
+  | { status: 'loaded'; next?: string }
+  | { status: 'failed'; after?: string }
+);
 
 /** Existing CMA-owned Telegram connections only; does not create upstream bots. */
 export function ManagedConnectionFields({
   value,
+  active = true,
   onChange,
+  hideAdmission = false,
   denied,
 }: {
+  active?: boolean;
+  hideAdmission?: boolean;
   value: Fields;
   onChange: (value: Fields) => void;
   denied: Denied;
@@ -28,25 +33,52 @@ export function ManagedConnectionFields({
   const [manualSources, setManualSources] = useState(value.sources);
   const [savedRef, setSavedRef] = useState(value.connection_ref);
   const [savedAdmission, setSavedAdmission] = useState(value.connection_admission);
-  const [items, setItems] = useState<Connection[]>();
-  const [cursor, setCursor] = useState<string | null>();
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string>();
-  async function load(after?: string) {
-    setBusy(true);
-    setError(undefined);
+  const [list, setList] = useState<ConnectionList>({ status: 'idle', items: [] });
+  const [loading, setLoading] = useState(false);
+  const pending = useRef<AbortController | undefined>(undefined);
+
+  if (!active && loading) setLoading(false);
+  // End the read when the retained editor hides or its owner changes.
+  useLayoutEffect(
+    () => () => {
+      const request = pending.current;
+      pending.current = undefined;
+      request?.abort();
+    },
+    [active],
+  );
+
+  async function loadConnections(after?: string) {
+    if (!active || pending.current) return;
+    const request = new AbortController();
+    pending.current = request;
+    const signal = AbortSignal.any([request.signal, AbortSignal.timeout(15000)]);
+    setLoading(true);
     try {
-      const page = await serviceRequest<Page>(
+      const response = await serviceRequest<unknown>(
         'event-gateway',
-        `/v1/channel-connections${after ? `?after=${encodeURIComponent(after)}` : ''}`,
+        `/v1/channel-connections${after === undefined ? '' : `?after=${encodeURIComponent(after)}`}`,
+        { signal },
       );
-      setItems((old) => (after ? [...(old ?? []), ...page.items] : page.items));
-      setCursor(page.next_after);
+      if (pending.current !== request) return;
+      signal.throwIfAborted();
+      const page = ConnectionPageSchema(response);
+      const items = new Map(list.items.map((item) => [item.connection_ref, item]));
+      for (const item of page.items) items.set(item.connection_ref, item);
+      setList({ status: 'loaded', items: [...items.values()], next: page.next_after ?? undefined });
     } catch (error) {
-      if (error instanceof ServiceError && [401, 403].includes(error.status)) denied(error.status);
-      setError(error instanceof Error ? error.message : 'Connections could not be loaded.');
+      if (pending.current !== request) return;
+      if (error instanceof ServiceError && (error.status === 401 || error.status === 403)) {
+        setList({ status: 'denied', items: [] });
+        denied(error.status);
+      } else {
+        setList({ status: 'failed', items: list.items, after });
+      }
     } finally {
-      setBusy(false);
+      if (pending.current === request) {
+        pending.current = undefined;
+        setLoading(false);
+      }
     }
   }
   return (
@@ -64,7 +96,7 @@ export function ManagedConnectionFields({
               connection_ref: savedRef ?? '',
               connection_admission: savedAdmission ?? { type: 'allowlist', sender_ids: [] },
             });
-            if (items === undefined && !busy) void load();
+            if (list.status === 'idle') void loadConnections();
           } else {
             setSavedRef(value.connection_ref);
             setSavedAdmission(value.connection_admission);
@@ -99,7 +131,7 @@ export function ManagedConnectionFields({
                 label: 'Choose a connection',
                 unavailable: 'Select a ready connection.',
               },
-              ...(items ?? []).map((item) => ({
+              ...list.items.map((item) => ({
                 value: item.connection_ref,
                 label: item.label || item.connection_ref,
                 ...(item.status !== 'ready'
@@ -109,31 +141,36 @@ export function ManagedConnectionFields({
             ]}
             onChange={(connection_ref) => onChange({ ...value, connection_ref })}
           />
-          {busy ? <p role="status">Loading your connections…</p> : null}
-          {items?.length === 0 ? (
+          {loading ? <p role="status">Loading your connections…</p> : null}
+          {!loading && list.status === 'idle' ? (
+            <Button onClick={() => void loadConnections()}>Load connections</Button>
+          ) : null}
+          {!loading &&
+          list.status === 'loaded' &&
+          list.next === undefined &&
+          list.items.every((item) => item.status !== 'ready') ? (
             <p className="channel-field-hint">
-              No saved CMA connections. Switch this option off to configure a NyxID relay or direct
-              Telegram bot.
+              No saved CMA connections are available. Switch this option off to configure a NyxID
+              relay or direct Telegram bot.
             </p>
           ) : null}
-          {error ? (
+          {!loading && list.status === 'failed' ? (
             <p role="alert">
-              {error}{' '}
-              <Button disabled={busy} onClick={() => void load()}>
-                Retry connections
-              </Button>
+              Saved Telegram connections could not be loaded. Your draft is retained. You can retry
+              or switch this option off for a NyxID relay or direct Telegram bot.{' '}
+              <Button onClick={() => void loadConnections(list.after)}>Retry connections</Button>
             </p>
           ) : null}
-          {cursor ? (
-            <Button disabled={busy} onClick={() => void load(cursor)}>
-              Load more connections
-            </Button>
+          {!loading && list.status === 'loaded' && list.next !== undefined ? (
+            <Button onClick={() => void loadConnections(list.next)}>Load more connections</Button>
           ) : null}
-          <AdmissionFields
-            label="Connection admission"
-            value={value.connection_admission}
-            onChange={(connection_admission) => onChange({ ...value, connection_admission })}
-          />
+          {!hideAdmission ? (
+            <AdmissionFields
+              label="Connection admission"
+              value={value.connection_admission}
+              onChange={(connection_admission) => onChange({ ...value, connection_admission })}
+            />
+          ) : null}
         </>
       ) : (
         <p className="channel-field-hint">

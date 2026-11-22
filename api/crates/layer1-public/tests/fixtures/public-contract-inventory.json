@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "openapi_operations": 300,
+  "openapi_operations": 305,
   "operations": {
     "GET /api/v1/agents/{id}/environment": {
       "classification": "openapi",
@@ -1117,6 +1117,14 @@
         "store_failed"
       ]
     },
+    "POST /api/v1/agui/run/receipt": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/agui/run.rs# Current authorization and the exact original input identify a retained command without admission.",
+      "required_problems": [
+        "thread_not_found",
+        "not_authenticated"
+      ]
+    },
     "POST /api/v1/agui/run": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/agui/mod.rs# Public handler and typed error projection define the operation contract. Agent turn failures use the fixed public_agent_turn_failure allowlist; unknown retained classes map to agent_turn_failed.",
@@ -2008,6 +2016,14 @@
       ],
       "required_protocol_failures": [
         "agent_command_authority_revoked"
+      ]
+    },
+    "POST /api/v2/agents/{agent_id}/responses/receipt": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/responses/v2/input_receipt.rs# Current authorization and the exact original input identify a retained command without admission.",
+      "required_problems": [
+        "response_not_found",
+        "authentication_required"
       ]
     },
     "POST /api/v2/agents/{agent_id}/responses": {
@@ -3145,6 +3161,18 @@
         "not_authenticated"
       ]
     },
+    "GET /api/v1/documents/{id}/share-recipients": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/documents/reads.rs# Owner-authorized bounded search returns public document recipient identities.",
+      "required_problems": [
+        "account_deletion_in_progress",
+        "document_not_found",
+        "document_unavailable",
+        "invalid_document_request",
+        "not_authenticated",
+        "recipient_directory_unavailable"
+      ]
+    },
     "PUT /api/v1/documents/{id}/shares/{subject}": {
       "classification": "openapi",
       "source": "api/crates/layer1-public/src/rest/documents/writes.rs# Authenticated persistent document operation, bounded policy and source access.",
@@ -3156,9 +3184,11 @@
         "idempotency_key_reused",
         "invalid_idempotency_key",
         "invalid_json",
+        "invalid_share_recipient",
         "json_content_type_required",
         "missing_idempotency_key",
         "not_authenticated",
+        "recipient_directory_unavailable",
         "share_recipient_unavailable"
       ]
     },
@@ -3341,6 +3371,14 @@
         "agent_not_found",
         "deliverable_not_found",
         "invalid_deliverable_reference",
+        "not_authenticated"
+      ]
+    },
+    "POST /api/v1/agents/{id}/answers/{answer_id}/deliverables/{delivery_id}/confirmation": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/answer_deliverables.rs# Verify a required output against its bound turn and current owner.",
+      "required_problems": [
+        "agent_not_found",
         "not_authenticated"
       ]
     },
@@ -4103,6 +4141,18 @@
         "account_deletion_requires_owner_session",
         "account_deletion_not_found",
         "store_failed"
+      ]
+    },
+    "POST /api/v1/admin/admission/pending-homes/reconcile": {
+      "classification": "openapi",
+      "source": "api/crates/layer1-public/src/rest/admin/pending_homes.rs# ConfigurePlatform and the ceilings write gate protect preview and audited correction; observed counter CAS rejects stale apply commands.",
+      "required_problems": [
+        "forbidden",
+        "not_authenticated",
+        "pending_homes_unavailable",
+        "admission_ceilings_writes_unavailable",
+        "invalid_request",
+        "pending_homes_conflict"
       ]
     }
   },

@@ -2,6 +2,7 @@ import { Presence } from '../ui/Presence';
 import { useConversationFocus } from './environment/useConversationFocus';
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { AgentStatus } from '../api/types';
+import type { ConnectionReport } from '../connections/client';
 import { Button } from '../ui/Button';
 import { IconSendOutline16 } from '../ui/icons';
 import type { SandboxInputAvailability } from './sandboxInput';
@@ -9,6 +10,8 @@ import type { TriggerQuickMessage } from '@cma/client';
 import { QuickMessages } from './QuickMessages';
 import type { AgentDraft } from './draft';
 import { ComposerDraftNotice } from './ComposerDraftNotice';
+import { canMessage, placeholder, FirstTextSendNotice } from './composerPresentation';
+import type { FirstTextSend } from './useFirstTextSend';
 import {
   attachmentMessage,
   transferredFiles,
@@ -53,27 +56,15 @@ interface ComposerProps {
   readonly busy: boolean;
   readonly quickMessages?: readonly TriggerQuickMessage[];
   readonly uploadAttachment?: UploadAttachment;
-  readonly onSend: (content: string, onAccepted: () => void) => Promise<void> | void;
+  readonly firstTextSend?: FirstTextSend;
+  readonly onSend: (
+    content: string,
+    onAccepted: () => void,
+    verified?: ConnectionReport,
+  ) => Promise<void> | void;
   readonly onStop: () => Promise<void> | void;
   /** The interrupt request is pending; the active turn remains server-authoritative. */
   readonly stopping?: boolean;
-}
-
-function canMessage(status: AgentStatus): boolean {
-  return status === 'ready' || status === 'working' || status === 'paused';
-}
-
-function placeholder(status: AgentStatus): string {
-  if (status === 'paused') return 'Reply to Chrono Agent…';
-  // Startup is represented by the lifecycle progress surface and the
-  // disabled/queued controls. Keep the composer quiet so it never adds a
-  // second visible "starting" notification to the conversation area.
-  if (status === 'starting') return 'Message Agent';
-  if (status === 'waiting_approval') return 'Resolve the approval to continue.';
-  if (status === 'stopped') return 'This Agent has stopped.';
-  if (status === 'deleted') return 'This Agent was deleted.';
-  if (status === 'failed') return 'This Agent is unavailable.';
-  return 'Reply to Chrono Agent…';
 }
 
 export function Composer({
@@ -100,6 +91,7 @@ export function Composer({
   busy,
   quickMessages = [],
   uploadAttachment,
+  firstTextSend,
   onSend,
   onStop,
   stopping = false,
@@ -138,8 +130,7 @@ export function Composer({
   const attachmentEnabled =
     (status === 'ready' || status === 'working') && !inputBlocked && !starting && !busy;
   const attachments = useComposerAttachments(draft, uploadAttachment, attachmentEnabled);
-  // Retain the original draft while its outgoing row owns the presentation.
-  // A failed/uncertain request reveals it again unless the owner has edited.
+  // Hide the draft during handoff and retain it if sending fails.
   const visibleContent = handoff === undefined ? content : '';
   const visibleAttachments =
     handoff === undefined
@@ -148,9 +139,19 @@ export function Composer({
           (item) => !handoff.attachments.some(({ key }) => key === item.key),
         );
   const messageContent = attachmentMessage(visibleContent, visibleAttachments);
+  const canPrepareFirstSend =
+    firstTextSend?.available === true &&
+    attachments.items.length === 0 &&
+    !messageContent.startsWith('/') &&
+    draft?.recoveryBlocked !== true;
   // Outside a turn both steering modes send ordinary input, so the choice is
   // only offered while there is a turn to queue behind or interrupt.
   const steering = running && queueWhileRunning && onSteeringModeChange !== undefined;
+  const sendLabel = running
+    ? steeringMode === 'queue'
+      ? 'Queue message'
+      : 'Interrupt with message'
+    : 'Send message';
   const canEdit = usable && !inputBlocked && !busy && !submitting && !requestPending;
   const controlsBlocked =
     running && (!queueWhileRunning || (steeringMode === 'interrupt' && controlsUnavailable));
@@ -212,9 +213,9 @@ export function Composer({
   }, [usable]);
 
   useComposerResize(inputRef, visibleContent);
-
   const submit = (quickMessage?: string) => {
     const message = quickMessage ?? messageContent;
+    const prepare = quickMessage === undefined && canPrepareFirstSend;
     if (
       message === '' ||
       composing.current ||
@@ -223,7 +224,7 @@ export function Composer({
       (running && !queueWhileRunning) ||
       (running && steeringMode === 'interrupt' && controlsUnavailable) ||
       starting ||
-      inputBlocked ||
+      (inputBlocked && !prepare) ||
       requestPending ||
       (quickMessage === undefined && attachments.blocked) ||
       sending.current
@@ -236,40 +237,51 @@ export function Composer({
     const originalContent = content;
     const submittedAttachments = attachments.items;
     const version = editVersion.current;
-    const pending = { attachments: submittedAttachments };
-    const submission = quickMessage === undefined ? draft?.beginSubmission?.(message) : undefined;
-    submitted.current = {
-      message,
-      version,
-      clearsDraft: quickMessage === undefined,
-    };
-    sending.current = true;
-    setSubmitting(true);
-    if (quickMessage === undefined) setHandoff(pending);
-    const finish = () => {
-      submission?.settled();
-      setHandoff((current) => (current === pending ? undefined : current));
-      sending.current = false;
-      setSubmitting(false);
-    };
-    try {
-      const sendingRequest = onSend(message, () => {
-        if (quickMessage === undefined) {
-          if (editVersion.current === version) {
-            if (submission) submission.accepted();
-            else {
-              setContent((current) => (current === originalContent ? '' : current));
-              attachments.accept(submittedAttachments);
+    const send = (verified?: ConnectionReport) => {
+      const pending = { attachments: submittedAttachments };
+      const submission = quickMessage === undefined ? draft?.beginSubmission?.(message) : undefined;
+      submitted.current = {
+        message,
+        version,
+        clearsDraft: quickMessage === undefined,
+      };
+      sending.current = true;
+      setSubmitting(true);
+      if (quickMessage === undefined) setHandoff(pending);
+      const finish = () => {
+        submission?.settled();
+        setHandoff((current) => (current === pending ? undefined : current));
+        sending.current = false;
+        setSubmitting(false);
+      };
+      try {
+        const accepted = () => {
+          if (quickMessage === undefined) {
+            if (editVersion.current === version) {
+              if (submission) submission.accepted();
+              else {
+                setContent((current) => (current === originalContent ? '' : current));
+                attachments.accept(submittedAttachments);
+              }
             }
+            setHandoff((current) => (current === pending ? undefined : current));
           }
-          setHandoff((current) => (current === pending ? undefined : current));
-        }
-      });
-      void Promise.resolve(sendingRequest).then(finish, finish);
-    } catch {
-      // The parent owns delivery errors; never lose a draft to a synchronous refusal.
-      finish();
-    }
+        };
+        const sendingRequest = verified
+          ? onSend(message, accepted, verified)
+          : onSend(message, accepted);
+        void Promise.resolve(sendingRequest).then(finish, finish);
+      } catch {
+        // The parent owns delivery errors; never lose a draft to a synchronous refusal.
+        finish();
+      }
+    };
+    if (prepare)
+      firstTextSend.start(
+        () => editVersion.current === version && inputRef.current?.value === originalContent,
+        send,
+      );
+    else send();
   };
 
   return (
@@ -301,6 +313,7 @@ export function Composer({
         hasAttachments={attachments.items.length > 0}
         restoreDisabled={!usable || inputBlocked || submitting || requestPending}
         onChange={(text) => {
+          firstTextSend?.cancel();
           editVersion.current += 1;
           setCommandError(undefined);
           setHandoff(undefined);
@@ -322,6 +335,7 @@ export function Composer({
       />
       {commands.panel}
       <ComposerDraftNotice draft={draft} />
+      {firstTextSend?.pending && <FirstTextSendNotice onCancel={firstTextSend.cancel} />}
       <Presence>
         {commandError ? (
           <p className="agent-composer__notice" role="alert">
@@ -384,6 +398,7 @@ export function Composer({
                   : placeholder(status)
             }
             onChange={(event) => {
+              firstTextSend?.cancel();
               editorRef?.current?.discardUndo();
               editVersion.current += 1;
               setCommandError(undefined);
@@ -429,10 +444,6 @@ export function Composer({
               }
             }}
           />
-          {/*
-            Every control lives in one row inside the box, placed by grid area
-            so a row that wraps on a narrow screen keeps Send at the far end.
-          */}
           <div className="agent-composer__controls" data-steering={steering ? '' : undefined}>
             {uploadAttachment === undefined ? null : (
               <span className="agent-composer__attach">
@@ -454,27 +465,15 @@ export function Composer({
                   variant="primary"
                   type="submit"
                   icon={<IconSendOutline16 />}
-                  aria-label={
-                    running
-                      ? steeringMode === 'queue'
-                        ? 'Queue message'
-                        : 'Interrupt with message'
-                      : 'Send message'
-                  }
-                  title={
-                    running
-                      ? steeringMode === 'queue'
-                        ? 'Queue message'
-                        : 'Interrupt with message'
-                      : 'Send message'
-                  }
+                  aria-label={sendLabel}
+                  title={sendLabel}
                   disabled={
                     !usable ||
                     (running && !queueWhileRunning) ||
                     busy ||
                     submitting ||
                     starting ||
-                    inputBlocked ||
+                    (inputBlocked && !canPrepareFirstSend) ||
                     requestPending ||
                     messageContent === '' ||
                     attachments.blocked ||

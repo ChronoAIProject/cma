@@ -41,6 +41,7 @@ pub use agent_filesystem::agent_filesystem_router;
 mod agent_list_shapes;
 mod agent_observation_shapes;
 mod agent_openapi_shapes;
+pub(crate) mod task_acceptance_shapes;
 pub use agent_artifacts::agent_artifacts_router;
 #[cfg(test)]
 mod agent_artifacts_tests;
@@ -200,6 +201,7 @@ pub use agent_lifecycle::{
     AgentLifecycleOperationReadError, AgentLifecycleOperationReader, AgentLifecycleOperationView,
     AgentLifecyclePermissions, AgentLifecycleProfile, AgentLifecycleProvisioner,
     AgentLifecycleProvisioningError, AgentLifecycleRepository, AgentLifecycleSkill,
+    AgentLifecycleTitleMode,
 };
 pub use agent_source::agent_source_router;
 pub use agents::{agent_router, AgentRoutesState};
@@ -492,7 +494,6 @@ mod tests {
 }
 
 pub mod event_workers;
-
 pub use agent_models::{
     agent_models_router, AgentModelCatalog, AgentModelCatalogError, AgentModelRuntimeSupport,
     AgentModelView, AgentModelsView,

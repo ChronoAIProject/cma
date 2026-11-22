@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Button } from '../../ui/Button';
 import { Modal } from '../../ui/Modal';
+import { DocsLink } from '../../services/DocsLink';
 
 export function ComputerToolsHelp() {
   const [open, setOpen] = useState(false);
@@ -35,6 +36,9 @@ export function ComputerToolsHelp() {
           When the conversation is available, you can return to it without enabling Computer tools.
           Temporary availability problems offer a check or retry action when it can help.
         </p>
+        <DocsLink view="environments-and-capacity">
+          Guide to environments and Computer tools
+        </DocsLink>
       </Modal>
     </span>
   );

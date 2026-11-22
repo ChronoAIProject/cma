@@ -19,6 +19,7 @@ from staging_cd_publication_diagnostics import ImageCommandRefusal, run_publicat
 import staging_cd_publish as publication
 import staging_cd_publish_tests as fixtures
 from staging_cd_receipts_tests import fixture_identity, fixture_receipt
+from staging_cd_outcome_tests import legacy
 
 
 class PublicationDiagnosticTests(unittest.TestCase):
@@ -26,7 +27,7 @@ class PublicationDiagnosticTests(unittest.TestCase):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             status = run_publication(operation)
-        return status, output.getvalue()
+        return status, legacy(output.getvalue())
 
     def test_command_denials_classify_without_releasing_bytes(self):
         cases = [(b'DENIED: permission_denied: write_package private', 'registry_denied'),
@@ -41,7 +42,7 @@ class PublicationDiagnosticTests(unittest.TestCase):
                     diagnostics.mark('registry_copy')
                     command(['skopeo', 'copy', 'private-source', 'private-target'])
                 self.assertEqual(self.observe(operation),
-                                 (1, f'FAIL\nFAIL publication stage=registry_copy reason={reason}\n'))
+                                 (1, f'FAIL publication\nFAIL publication stage=registry_copy reason={reason}\n'))
                 runner.assert_called_once()
 
     def test_build_timeout_and_failure_are_distinct_from_registry_denial(self):
@@ -53,7 +54,7 @@ class PublicationDiagnosticTests(unittest.TestCase):
                     diagnostics.mark('build')
                     raise error
                 self.assertEqual(self.observe(operation),
-                                 (1, f'FAIL\nFAIL publication stage=build reason={reason}\n'))
+                                 (1, f'FAIL publication\nFAIL publication stage=build reason={reason}\n'))
 
     def test_http_reads_distinguish_denial_from_other_failures(self):
         for status, reason in [(401, 'registry_denied'), (403, 'registry_denied'), (503, 'registry_read_failed')]:
@@ -63,7 +64,7 @@ class PublicationDiagnosticTests(unittest.TestCase):
                     raise Refusal('private') from urllib.error.HTTPError('https://example.invalid', status,
                                                                          'private', {}, None)
                 self.assertEqual(self.observe(operation),
-                                 (1, f'FAIL\nFAIL publication stage=registry_preflight reason={reason}\n'))
+                                 (1, f'FAIL publication\nFAIL publication stage=registry_preflight reason={reason}\n'))
 
     def test_actual_publish_scan_refusal_never_logs_in_or_copies(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -73,7 +74,7 @@ class PublicationDiagnosticTests(unittest.TestCase):
                                            reservation_check=lambda: True, scanner=Mock(side_effect=ScanRefusal('private finding')),
                                            runner=runner, diagnostics=diagnostics)
             with patch.object(publication, 'inspect', return_value=digest):
-                self.assertEqual(self.observe(operation), (1, 'FAIL\nFAIL publication stage=scan reason=scan_refused\n'))
+                self.assertEqual(self.observe(operation), (1, 'FAIL publication\nFAIL publication stage=scan reason=scan_refused\n'))
             runner.assert_not_called()
 
     def test_actual_publish_copy_denial_is_one_attempt_and_cleans_auth(self):
@@ -90,7 +91,7 @@ class PublicationDiagnosticTests(unittest.TestCase):
                                            reservation_check=lambda: True, scanner=scanner, runner=runner, diagnostics=diagnostics)
             with patch.object(publication, 'inspect', return_value=digest):
                 self.assertEqual(self.observe(operation),
-                                 (1, 'FAIL\nFAIL publication stage=registry_copy reason=registry_denied\n'))
+                                 (1, 'FAIL publication\nFAIL publication stage=registry_copy reason=registry_denied\n'))
             self.assertEqual(runner.call_count, 2)
             registry.exists.assert_not_called()
             self.assertFalse((Path(directory) / 'registry-auth.json').exists())
@@ -110,8 +111,8 @@ class PublicationDiagnosticTests(unittest.TestCase):
                 self.assertEqual(publication.main(), 1)
             snapshot.assert_not_called()
             self.assertFalse(Path(env['CD_RECEIPTS_PATH']).exists())
-            self.assertEqual(output.getvalue(),
-                             'FAIL\nFAIL publication stage=validate reason=reservation_owner_mismatch\n')
+            self.assertEqual(legacy(output.getvalue()),
+                             'FAIL publication\nFAIL publication stage=validate reason=reservation_owner_mismatch\n')
 
     def test_entrypoint_reports_build_timeout_and_persists_only_success(self):
         identity = fixture_identity()
@@ -140,7 +141,7 @@ class PublicationDiagnosticTests(unittest.TestCase):
                     stack.enter_context(contextlib.redirect_stdout(output))
                     status = publication.main()
                 lines = output.getvalue().splitlines()
-                summary = '\n'.join(line for line in lines if not line.startswith('{')) + '\n'
+                summary = legacy('\n'.join(line for line in lines if not line.startswith('{')) + '\n')
                 metrics = [json.loads(line) for line in lines if line.startswith('{')]
                 self.assertEqual(len(metrics), 4)
                 self.assertEqual([row['stage'] for row in metrics[:3]], ['source', 'reuse', 'build'])
@@ -154,15 +155,69 @@ class PublicationDiagnosticTests(unittest.TestCase):
                                               'reason': 'progress-unavailable'})
                 self.assertNotIn('private', output.getvalue())
                 if mode == 'success':
-                    self.assertEqual((status, summary), (0, 'PASS\n'))
+                    self.assertEqual((status, summary), (0, 'PASS publication\n'))
                     self.assertEqual(json.loads(receipt_path.read_text()), [fixture_receipt()])
                 else:
                     stage, reason = ('build', 'build_timeout') if mode == 'timeout' else ('receipt', 'io_failed')
                     self.assertEqual((status, summary),
-                                     (1, f'FAIL\nFAIL publication stage={stage} reason={reason}\n'))
+                                     (1, f'FAIL publication\nFAIL publication stage={stage} reason={reason}\n'))
                     self.assertFalse(receipt_path.exists())
                 if mode == 'timeout':
                     publish.assert_not_called()
+
+    def test_build_step_annotation_only_when_publication_stopped_in_build(self):
+        identity = fixture_identity()
+        reservation = {k: v for k, v in identity.items() if k != 'build'}
+        reservation['schema'] = 'cma-version-reservation-v1'
+        summary = {'complete': True, 'vertices': 9, 'cached_vertices': 2, 'failed_steps': ['other']}
+        stopped = {'complete': True, 'vertices': 9, 'cached_vertices': 2,
+                   'failed_steps': ['runtime-qualification 1/1']}
+        # mode -> (build progress, build raises, publish raises, annotation expected)
+        cases = {'success-with-nonfatal-vertex': (summary, False, False, None),
+                 'stopped-in-build': (stopped, True, False, 'runtime-qualification 1/1'),
+                 'failed-after-build': (summary, False, True, None)}
+        for mode, (progress_value, build_fails, publish_fails, expected) in cases.items():
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
+                env = {'GITHUB_EVENT_NAME': 'push', 'GITHUB_RUN_ID': '100', 'GITHUB_RUN_ATTEMPT': '1',
+                       'RUNNER_TEMP': directory, 'CD_COMPONENT': 'web',
+                       'CD_RECEIPTS_PATH': str(Path(directory) / 'receipts.json'),
+                       'CD_TASKS': json.dumps([{'component': 'web', 'mode': 'publish', 'reservation': reservation}])}
+
+                def fake_build(*_args, progress, **_kwargs):
+                    progress.update(progress_value)
+                    if build_fails:
+                        raise subprocess.CalledProcessError(1, 'private build')
+                    return Path(directory) / 'image.tar', identity
+
+                def fake_publish(*_args, diagnostics, **_kwargs):
+                    if publish_fails:
+                        diagnostics.mark('scan')  # as the real publish() does before scanning
+                        raise OSError('private')
+                    return fixture_receipt()
+
+                output = io.StringIO()
+                with contextlib.ExitStack() as stack:
+                    stack.enter_context(patch.dict(os.environ, env, clear=True))
+                    for name in ('event_identity', 'Registry', 'GitHub', 'Reservations', 'snapshot'):
+                        stack.enter_context(patch.object(publication, name))
+                    stack.enter_context(patch.object(publication, 'identity', return_value=(identity, {}, {})))
+                    stack.enter_context(patch.object(publication, 'try_reuse', return_value=None))
+                    stack.enter_context(patch.object(publication, 'build', side_effect=fake_build))
+                    stack.enter_context(patch.object(publication, 'publish', side_effect=fake_publish))
+                    stack.enter_context(contextlib.redirect_stdout(output))
+                    status = publication.main()
+                text = output.getvalue()
+                self.assertEqual(status, 1 if (build_fails or publish_fails) else 0)
+                builds = [json.loads(line) for line in text.splitlines()
+                          if line.startswith('{') and '"publication-build"' in line]
+                self.assertEqual(builds, [{'event': 'publication-build', **progress_value}])
+                annotations = [line for line in text.splitlines() if 'Image build step failed' in line]
+                if expected is None:
+                    self.assertEqual(annotations, [], mode)
+                else:
+                    self.assertEqual(len(annotations), 1)
+                    self.assertIn(f'web stopped at Dockerfile step {expected};', annotations[0])
+                self.assertNotIn('private', text)
 
     def test_closed_fallbacks_and_success(self):
         cases = [(Refusal('private\n::warning::injected'), 'validation_refused'),
@@ -174,11 +229,11 @@ class PublicationDiagnosticTests(unittest.TestCase):
                     diagnostics.mark('receipt')
                     raise error
                 self.assertEqual(self.observe(operation),
-                                 (1, f'FAIL\nFAIL publication stage=receipt reason={reason}\n'))
-        self.assertEqual(self.observe(lambda _masker, _diagnostics: True), (0, 'PASS\n'))
+                                 (1, f'FAIL publication\nFAIL publication stage=receipt reason={reason}\n'))
+        self.assertEqual(self.observe(lambda _masker, _diagnostics: True), (0, 'PASS publication\n'))
         def invalid(_masker, diagnostics):
             diagnostics.mark('private\n::warning::injected')
-        self.assertEqual(self.observe(invalid), (1, 'FAIL\nFAIL publication stage=validate reason=validation_refused\n'))
+        self.assertEqual(self.observe(invalid), (1, 'FAIL publication\nFAIL publication stage=validate reason=validation_refused\n'))
 
     def test_native_and_child_outputs_remain_private(self):
         program = """
@@ -196,7 +251,7 @@ raise SystemExit(run_publication(operation))
         result = subprocess.run([sys.executable, '-B', '-c', program], cwd=Path(__file__).parent,
                                 capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, 'FAIL\nFAIL publication stage=registry_copy reason=registry_denied\n')
+        self.assertEqual(legacy(result.stdout), 'FAIL publication\nFAIL publication stage=registry_copy reason=registry_denied\n')
         self.assertEqual(result.stderr, '')
 
 

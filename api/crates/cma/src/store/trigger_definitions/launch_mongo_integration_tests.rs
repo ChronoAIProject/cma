@@ -29,6 +29,8 @@ mod home_capacity;
 mod initiation;
 #[path = "launch_observation_mongo_tests.rs"]
 mod observation_tests;
+#[path = "launch_mongo_integration_tests/pending_home_reconciliation_tests.rs"]
+mod pending_home_reconciliation;
 mod platform_spend;
 mod visitor_contention;
 mod visitor_quota;
@@ -742,3 +744,5 @@ async fn ready_admission_handoffs_indexes_and_corruption_are_strict() {
 
 #[path = "launch_deletion_mongo_tests.rs"]
 mod account_deletion;
+
+mod cutoff;

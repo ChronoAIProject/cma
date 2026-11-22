@@ -89,6 +89,7 @@ async fn handle(
                         .default_destination
                         .as_ref()
                         .map(|(destination, _)| destination),
+                    reply.answer_response_id.as_deref(),
                 )
                 .await;
             let _ = reply.receipt.send(result);
@@ -151,7 +152,7 @@ async fn handle(
                 ReplySource::Tool => DeliveryStep::ToolReply,
                 ReplySource::Stream => DeliveryStep::Answer,
             };
-            let result = reply(sender, state, &message, step).await;
+            let result = reply(sender, state, &message, step, None).await;
             if matches!(
                 result.delivery,
                 DeliveryOutcome::Confirmed { .. } | DeliveryOutcome::Unknown { .. }
@@ -163,7 +164,11 @@ async fn handle(
             }
             let _ = receipt.send(result);
         }
-        DeliveryCommand::StreamOutcome { turn, outcome } => {
+        DeliveryCommand::StreamOutcome {
+            turn,
+            outcome,
+            answer_response_id,
+        } => {
             tracing::info!(outcome = outcome.kind(), "provider turn outcome");
             // This is an already-admitted internal turn. Tool ingress separately enforces
             // ref expiry; a long turn may still deliver with its retained channel key.
@@ -267,21 +272,33 @@ async fn handle(
                 }
                 if let Some(delivered) = sender
                     .custom
-                    .outcome(&state.channel, &state.event, &outcome)
+                    .outcome(
+                        &state.channel,
+                        &state.event,
+                        &outcome,
+                        answer_response_id.as_deref(),
+                    )
                     .await
                 {
                     let step = match outcome {
                         TurnOutcome::Completed { .. } => DeliveryStep::Answer,
                         _ => DeliveryStep::Failure,
                     };
-                    sender.observe(&state.event, step, &delivered).await;
+                    sender.observe(&state.event, step, &delivered, None).await;
                 }
                 if outcome.terminal() {
                     finish(state);
                 }
                 return;
             }
-            outcome_event(state, outcome, sender, config).await;
+            outcome_event(
+                state,
+                outcome,
+                answer_response_id.as_deref(),
+                sender,
+                config,
+            )
+            .await;
         }
     }
 }

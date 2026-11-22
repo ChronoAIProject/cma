@@ -34,4 +34,5 @@ def prepare(root, env):
 
 
 if __name__ == '__main__':
-    raise SystemExit(run_private(lambda _masker: prepare(Path.cwd(), os.environ), None))
+    raise SystemExit(run_private(lambda _masker: prepare(Path.cwd(), os.environ), None,
+                                 subject='selection-cache'))

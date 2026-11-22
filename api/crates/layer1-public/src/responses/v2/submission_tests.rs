@@ -1,6 +1,35 @@
 use super::*;
 
 #[tokio::test]
+async fn task_acceptance_admission_defaults_off_without_changing_ordinary_input() {
+    let f = fixture().await;
+    let mut body = json!({"input":"Prepare the report", "stream":true,
+        "task_acceptance":{"version":1,"action":{"type":"declare","requirements":[
+            {"id":"report","required":true,"evidence":{"kind":"deliverable", "resource":{"kind":"live_file","path":"out/report.csv"}}}
+        ]}}
+    });
+    let path = "/api/v2/agents/agt_fixture/responses";
+    let (status, error) =
+        read_json(&f.router, Method::POST, path, "owner-a", Some(body.clone())).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(error["error"]["code"], "response_forbidden");
+    body.as_object_mut().unwrap().remove("task_acceptance");
+    let ordinary = f
+        .router
+        .clone()
+        .oneshot(request(
+            Method::POST,
+            path,
+            "owner-a",
+            Some("same-key"),
+            Some(body),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(ordinary.status(), StatusCode::OK);
+}
+
+#[tokio::test]
 async fn canonical_alias_disconnect_and_retrieval_keep_one_durable_receipt() {
     let f = fixture().await;
     let before = f

@@ -29,6 +29,9 @@ pub(super) struct AccessComposition {
     pub tool_routes: Router,
 }
 pub(super) struct ToolServices {
+    pub ownership: Option<Arc<layer2_core::agent_ownership::OwnershipCoordinator>>,
+    pub model_credit_required: bool,
+    pub model_funding: Option<Arc<layer2_core::sandbox::model_credit::AgentTurnFunding>>,
     pub source: Arc<MongoAgentAccessToolSource>,
     pub documents: Option<Arc<layer2_core::document_artifacts::DocumentService>>,
     pub deliverables: Arc<layer2_core::sandbox::answer_deliverables::AnswerDeliverableService>,
@@ -49,6 +52,7 @@ pub(super) fn deliverables(
     )
     .with_documents(documents)
     .with_files(AgentFileService::new(access, adapter))
+    .with_task_store(stores.sandbox_model.clone())
 }
 
 pub(super) fn compose(
@@ -62,7 +66,10 @@ pub(super) fn compose(
 ) -> AccessComposition {
     let commands =
         AgentCommandService::new(stores.sandbox_model.clone(), resource_access, auth.clone())
-            .with_task_experience(tools.task_experience);
+            .with_task_experience(tools.task_experience)
+            .with_ownership(tools.ownership)
+            .with_model_credit_required(tools.model_credit_required)
+            .with_model_funding(tools.model_funding);
     let service = AgentAccessService::new(stores.sandbox_model.clone(), auth.clone(), policy);
     let worker = AgentAccessWorker::new(
         stores.sandbox_model.clone(),

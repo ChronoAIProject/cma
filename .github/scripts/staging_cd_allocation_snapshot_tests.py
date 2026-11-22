@@ -2,12 +2,14 @@
 import json
 from pathlib import Path
 import subprocess
+from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
 
 from staging_cd_allocate import allocate_queue
 from staging_cd_allocation_fixture import AllocationServer
-from staging_cd_allocation_io import ALLOCATION_SECONDS, AllocationIO
+from staging_cd_allocation_io import (ALLOCATION_SECONDS, PUSH_RESERVE_SECONDS, PUSH_SECONDS, SETTLE_WAITS,
+                                      VERIFY_RESERVE_SECONDS, AllocationIO)
 from staging_cd_allocation_snapshot import AllocationSnapshot, SnapshotAPI
 from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
@@ -154,30 +156,137 @@ class AllocationSnapshotTests(unittest.TestCase):
         self.assertEqual(server.refs, {})
         self.assertFalse(any(args[1] == "push" for args in server.commands))
 
+    def uncertain_push(self, seen, *, left=ALLOCATION_SECONDS, latency=0.0):
+        """Five reservations whose atomic push times out after its whole client bound.
+
+        The server holds the pushed refs back. For the n-th read attempt after
+        the push, `seen(n)` returns "absent", "commit" (the whole push becomes
+        visible), "partial" (one claim stays absent), "foreign" (one claim holds
+        another object), or an exception or process result that replaces the
+        read. The push starts with `left` seconds of allocation budget, and each
+        read takes `latency` seconds.
+        """
+        server, store = self.fixture(14, reserved=False, components=tuple(DEPLOYABLES))
+        case = SimpleNamespace(server=server, store=store, now=[0.0], held={}, reads=0, waits=[], marks=[])
+
+        def runner(args, **kwargs):
+            if args[1] == "push":
+                server.command(args, **kwargs)
+                case.held.update((name, server.refs.pop(name)) for name in list(server.refs))
+                case.now[0] += kwargs["timeout"]
+                raise subprocess.TimeoutExpired("git", kwargs["timeout"])
+            if args[1] == "ls-remote" and case.held:
+                case.reads += 1
+                case.now[0] += latency
+                effect = seen(case.reads)
+                if isinstance(effect, BaseException):
+                    raise effect
+                if isinstance(effect, subprocess.CompletedProcess):
+                    return effect
+                claim = next(name for name in case.held if name.startswith("cma-allocation/"))
+                visible = {"absent": {}, "commit": case.held, "foreign": {**case.held, claim: "0" * 40},
+                           "partial": {name: oid for name, oid in case.held.items() if name != claim}}[effect]
+                server.refs = dict(visible)
+            return server.command(args, **kwargs)
+
+        def sleep(seconds):
+            case.waits.append(seconds)
+            case.now[0] += seconds
+        store.io = AllocationIO(runner, clock=lambda: case.now[0], sleep=sleep, rand=lambda: 1.0, seconds=left)
+        store.progress = lambda _component, phase: case.marks.append(phase)
+        return case
+
+    def assert_settlement(self, case, *, settled, waits, polls, reads=None):
+        server, store = case.server, case.store
+        if settled:
+            self.allocate(server, store)
+            self.assertEqual(len(store.list()), 5)
+            self.assertEqual(server.refs, case.held)
+        else:
+            with self.assertRaisesRegex(Refusal, "settlement is uncertain"):
+                self.allocate(server, store)
+            self.assertEqual(store.list(), [])
+        self.assertEqual(case.waits, waits)
+        self.assertEqual((case.marks.count("settle-poll"), case.reads), (polls, polls if reads is None else reads))
+        self.assertEqual([mark for mark in case.marks if mark in ("settled", "settle-refused")],
+                         ["settled" if settled else "settle-refused"])
+        # Only a settled batch reads its owners back; the push is never replayed.
+        self.assertEqual(len([p for p in server.calls if p.startswith("git/ref/tags/")]), 5 if settled else 0)
+        self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
+        self.assertLess(case.now[0], store.io.deadline)
+
     def test_timed_out_atomic_push_settles_only_the_exact_batch_without_replay(self):
-        for damaged in (None, "missing", "wrong"):
-            server, store = self.fixture(14, reserved=False, components=tuple(DEPLOYABLES))
-            def runner(args, **kwargs):
-                result = server.command(args, **kwargs)
-                if args[1] == "push":
-                    claim = next(name for name in server.refs if name.startswith("cma-allocation/"))
-                    if damaged == "missing":
-                        del server.refs[claim]
-                    if damaged == "wrong":
-                        server.refs[claim] = "0" * 40
-                    raise subprocess.TimeoutExpired("git", kwargs["timeout"])
-                return result
-            store.io.runner = runner
-            with self.subTest(damaged=damaged):
-                if damaged:
-                    with self.assertRaisesRegex(Refusal, "settlement is uncertain"):
-                        self.allocate(server, store)
-                    self.assertEqual(store.list(), [])
-                else:
-                    self.allocate(server, store)
-                    self.assertEqual(len(store.list()), 5)
-                    self.assertEqual(len([p for p in server.calls if p.startswith("git/ref/tags/")]), 5)
-                self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
+        # "late" is the hosted failure of run 44948149418: the client timed out,
+        # then the server committed the whole atomic push a few seconds later.
+        # A push that starts early has 120 - 30 - 5 s to settle: waits of 1, 2,
+        # 4 and 8 s, then 8 s each, and a last wait that ends at the reserve.
+        until_reserve = [1, 2, 4] + [8] * 9 + [6]
+        self.assertEqual(sum(until_reserve), ALLOCATION_SECONDS - PUSH_SECONDS - VERIFY_RESERVE_SECONDS)
+        for name, seen, settled, waits in (
+                ("committed", lambda _poll: "commit", True, []),
+                ("late", lambda poll: "commit" if poll >= 4 else "absent", True, [1, 2, 4]),
+                ("79 s late", lambda poll: "commit" if poll >= 13 else "absent", True, until_reserve[:12]),
+                ("partial", lambda _poll: "partial", False, until_reserve),
+                ("never", lambda _poll: "absent", False, until_reserve),
+                ("foreign", lambda _poll: "foreign", False, []),
+                ("foreign after waiting", lambda poll: "foreign" if poll >= 3 else "absent", False, [1, 2])):
+            with self.subTest(case=name):
+                self.assert_settlement(self.uncertain_push(seen), settled=settled, waits=waits,
+                                       polls=len(waits) + 1)
+
+    def test_settlement_with_slow_reads_stops_at_the_verification_reserve(self):
+        # The push starts at the latest allowed moment and uses its whole bound.
+        # Each 1 s read eats into the waits, so the fourth wait is cut to what
+        # leaves the reserve, and no fifth wait starts: refused before the deadline.
+        case = self.uncertain_push(lambda _poll: "absent", left=PUSH_RESERVE_SECONDS, latency=1.0)
+        self.assert_settlement(case, settled=False, waits=[1, 2, 4, 4], polls=5)
+        self.assertEqual(case.store.io.deadline - case.now[0], VERIFY_RESERVE_SECONDS - 1)
+
+    def test_push_at_the_latest_allowed_moment_still_gets_every_wait(self):
+        for settled in (True, False):
+            with self.subTest(settled=settled):
+                case = self.uncertain_push(lambda poll: "commit" if settled and poll == 5 else "absent",
+                                           left=PUSH_RESERVE_SECONDS)
+                self.assert_settlement(case, settled=settled, waits=list(SETTLE_WAITS), polls=5)
+                # The last read starts with exactly the verification reserve left.
+                self.assertEqual(case.store.io.deadline - case.now[0], VERIFY_RESERVE_SECONDS)
+
+    def test_transient_settlement_reads_keep_polling_until_the_push_is_seen(self):
+        outage = "fatal: unable to access 'https://github.com/ChronoAIProject/cma.git/': The requested URL returned error: 502\n"
+        hangup = "fatal: the remote end hung up unexpectedly\n"
+        for name, failure, left, waits, reads in (
+                # Late in the budget each poll is a single read attempt.
+                ("http 502", subprocess.CompletedProcess([], 128, "", outage), PUSH_RESERVE_SECONDS, [1, 2], 3),
+                ("hung up", subprocess.CompletedProcess([], 128, "", hangup), PUSH_RESERVE_SECONDS, [1, 2], 3),
+                # Earlier, the middle poll repeats its read twice before it fails.
+                ("three timeouts", subprocess.TimeoutExpired("git", 5), ALLOCATION_SECONDS, [1, 0.5, 1.0, 2], 5)):
+            with self.subTest(failure=name):
+                case = self.uncertain_push(
+                    lambda read: failure if 1 < read < reads else ("commit" if read == reads else "absent"), left=left)
+                self.assert_settlement(case, settled=True, waits=waits, polls=3, reads=reads)
+                self.assertEqual(case.marks.count("settle-transient"), 1)
+
+    def test_permanent_settlement_read_failure_refuses_at_once(self):
+        missing = "fatal: repository 'https://github.com/ChronoAIProject/cma.git/' not found\n"
+        failure = subprocess.CompletedProcess([], 128, "", missing)
+        case = self.uncertain_push(lambda poll: failure if poll == 2 else "absent")
+        with self.assertRaisesRegex(Refusal, "inventory is incomplete"):
+            self.allocate(case.server, case.store)
+        self.assertEqual((case.waits, case.reads), ([1], 2))
+        self.assertNotIn("settle-transient", case.marks)
+        self.assertEqual(len([args for args in case.server.commands if args[1] == "push"]), 1)
+
+    def test_transient_inventory_read_is_repeated_instead_of_refused(self):
+        outage = "fatal: unable to access 'https://github.com/ChronoAIProject/cma.git/': The requested URL returned error: 502\n"
+        server, store = self.fixture()
+        failures = [subprocess.CompletedProcess([], 128, "", outage)]
+        def runner(args, **kwargs):
+            if args[1] == "ls-remote" and failures:
+                return failures.pop()
+            return server.command(args, **kwargs)
+        store.io = AllocationIO(runner, sleep=Mock(), rand=lambda: 1.0)
+        self.assertIs(store.load(), store)
+        store.io.sleep.assert_called_once_with(0.5)
 
     def test_missing_readbacks_retry_only_the_exact_ref_then_settle_or_refuse(self):
         for misses in (2, 3):

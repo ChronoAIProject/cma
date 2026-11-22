@@ -147,6 +147,7 @@ impl AgentOperationService {
                 .map_err(operation_store_error)?
                 .filter(|agent| agent.id == *id && agent.owner == caller.subject)
                 .ok_or(AgentOperationError::NotFound)?;
+            self.require_model_credit()?;
             self.store
                 .require_legacy_first_message(&current)
                 .await
@@ -204,6 +205,7 @@ impl AgentOperationService {
         current: Agent,
         authority: AgentWorkAuthority,
     ) -> Result<PreparedFirstMessage, AgentOperationError> {
+        self.require_model_credit()?;
         if current.status != AgentStatus::Ready {
             return Err(AgentOperationError::StatusConflict {
                 status: current.status,

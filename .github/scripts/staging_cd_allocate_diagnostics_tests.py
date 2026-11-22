@@ -4,6 +4,7 @@ import io
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import Mock, patch
 
@@ -11,20 +12,34 @@ import staging_cd_allocate as allocation
 from staging_cd_common import Refusal
 import staging_cd_queue_tests
 from staging_cd_reservations import next_reservation
+from staging_cd_outcome_tests import legacy
 
 
 class AllocationDiagnosticsTests(unittest.TestCase):
+    def allocate_privately(self, operation):
+        """Run allocation; return its status, its public log and the step outputs it wrote."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "output"
+            path.touch()
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = allocation.run_allocation(operation, {"GITHUB_OUTPUT": str(path)})
+            return status, legacy(output.getvalue()), path.read_text()
+
     def test_known_refusals_emit_only_fixed_codes(self):
         for message, code in allocation.REFUSAL_CODES.items():
             with self.subTest(code=code):
-                output = io.StringIO()
                 def operation(_masker):
                     print("private response")
                     raise Refusal(message)
-                with contextlib.redirect_stdout(output):
-                    status = allocation.run_allocation(operation)
-                self.assertEqual(status, 1)
-                self.assertEqual(output.getvalue(), "FAIL\nFAIL allocation " + code + "\n")
+                status, log, outputs = self.allocate_privately(operation)
+                if code in allocation.TRANSIENT_CODES:
+                    # The step records the code and succeeds; its settlement gate reports it.
+                    self.assertEqual((status, log), (0, "FAIL allocation\n"))
+                    self.assertRegex(outputs, rf"\Atransient=true\nrefused={code}\n"
+                                              r"site=staging_cd_allocate_diagnostics_tests\.py:\d+\n\Z")
+                else:
+                    self.assertEqual((status, log, outputs), (1, "FAIL allocation\nFAIL allocation " + code + "\n", ""))
 
     def test_unknown_text_never_becomes_a_public_reason(self):
         for error, code in ((Refusal("private\n::warning::fixture"), "UNCLASSIFIED_REFUSAL"),
@@ -34,16 +49,17 @@ class AllocationDiagnosticsTests(unittest.TestCase):
                 raise error
             with contextlib.redirect_stdout(output):
                 self.assertEqual(allocation.run_allocation(operation), 1)
-            self.assertEqual(output.getvalue(), "FAIL\nFAIL allocation " + code + "\n")
+            self.assertEqual(legacy(output.getvalue()), "FAIL allocation\nFAIL allocation " + code + "\n")
 
     def test_success_preserves_pass_and_entrypoint_uses_boundary(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):
             self.assertEqual(allocation.run_allocation(lambda _: True), 0)
-        self.assertEqual(output.getvalue(), "PASS\n")
+        self.assertEqual(output.getvalue(), "PASS allocation\n")
         with patch.object(allocation, "run_allocation", return_value=23) as boundary:
             self.assertEqual(allocation.main(), 23)
         boundary.assert_called_once()
+        self.assertIs(boundary.call_args.args[1], allocation.os.environ)
 
     def test_unreadable_owner_refuses_before_new_reservations(self):
         fixture = staging_cd_queue_tests.QueueTests()
@@ -52,11 +68,11 @@ class AllocationDiagnosticsTests(unittest.TestCase):
         owned = next_reservation("web", change["source"], change["tree"], 1, "patch", 9, 1, [], [])
         reservations.list.return_value = [owned]
         api.request.side_effect = Refusal("GitHub API request failed")
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
-            status = allocation.run_allocation(lambda _: allocation.allocate_queue(queue, api, reservations, 10, 1))
-        self.assertEqual(status, 1)
-        self.assertEqual(output.getvalue(), "FAIL\nFAIL allocation RESERVATION_OWNER_UNREADABLE\n")
+        status, log, outputs = self.allocate_privately(
+            lambda _: allocation.allocate_queue(queue, api, reservations, 10, 1))
+        # An unreadable owner is transient: the settlement gate fails the job.
+        self.assertEqual((status, log), (0, "FAIL allocation\n"))
+        self.assertRegex(outputs, r"\Atransient=true\nrefused=RESERVATION_OWNER_UNREADABLE\nsite=staging_cd_allocate\.py:\d+\n\Z")
         reservations.insert.assert_not_called()
         api.request.assert_called_once_with("actions/runs/9/attempts/1", allow_not_found=True)
 
@@ -69,13 +85,13 @@ def operation(_masker):
     os.write(1, b'private native fixture')
     os.write(2, b'private native error')
     subprocess.run([sys.executable, '-c', "print('private child fixture')"], check=True)
-    raise Refusal('Reservation owner run could not be read')
+    raise Refusal('Reservation run identity is invalid')
 raise SystemExit(run_allocation(operation))
 """
         result = subprocess.run([sys.executable, "-B", "-c", program], cwd=Path(__file__).parent,
                                 capture_output=True, text=True, check=False)
         self.assertEqual(result.returncode, 1)
-        self.assertEqual(result.stdout, "FAIL\nFAIL allocation RESERVATION_OWNER_UNREADABLE\n")
+        self.assertEqual(legacy(result.stdout), "FAIL allocation\nFAIL allocation RESERVATION_OWNER_INVALID\n")
         self.assertEqual(result.stderr, "")
 
 

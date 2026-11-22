@@ -4,6 +4,9 @@ import type { AgentStatus } from '../api/types';
 import { statusLabel } from '../vocabulary/status';
 import { activityWords, type ActivityStatus } from './activityStatus';
 import { Button } from '../ui/Button';
+import { Badge } from '../ui/Badge';
+import type { TaskAcceptance } from '@cma/client';
+import { acceptanceForTurn, taskAcceptanceLabel, taskAcceptanceReason } from './taskAcceptance';
 import { Menu, type MenuEntry } from '../ui/Menu';
 import type { Crumb } from '../ui/PageHeader';
 import {
@@ -15,6 +18,7 @@ import {
 } from '../ui/icons';
 import './AgentHeader.css';
 import { SETUP_ENVIRONMENT_NOTICE } from './setupEnvironment';
+import { OPEN_SANDBOX_TO_RESUME } from '../shell/treeActions';
 
 export const AGENT_DETAILS = 'agent-details';
 
@@ -23,6 +27,8 @@ export function AgentHeader({
   title,
   status,
   activityStatus,
+  turnId,
+  taskAcceptance,
   headingRef,
   detailsOpen,
   detailsUnavailable = false,
@@ -40,6 +46,8 @@ export function AgentHeader({
   readonly title: string;
   readonly status: AgentStatus;
   readonly activityStatus?: ActivityStatus;
+  readonly turnId?: string;
+  readonly taskAcceptance?: TaskAcceptance;
   readonly breadcrumb: readonly Crumb[];
   readonly branch?: string;
   readonly headingRef?: Ref<HTMLHeadingElement>;
@@ -59,10 +67,14 @@ export function AgentHeader({
   readonly onViewDeletionStatus?: () => void;
   readonly onReviewEnvironment?: () => void;
 }) {
+  const acceptance = status === 'ready' ? acceptanceForTurn(taskAcceptance, turnId) : undefined;
+  const acceptanceLabel = taskAcceptanceLabel(acceptance);
+  const acceptanceReason = taskAcceptanceReason(acceptance);
   const [open, setOpen] = useState(false);
   const sidebar = useContext(SidebarContext);
   const remove = moreActions.find((item) => item.id === 'delete_agent');
   const stop = moreActions.find((item) => item.id === 'stop_agent' && !('type' in item));
+  const resume = moreActions.find((item) => item.id === OPEN_SANDBOX_TO_RESUME);
   const action = (id: string, label: string, reason: string): MenuEntry => {
     const item = [...menu, ...moreActions].find((item) => item.id === id && !('type' in item));
     return item ? { ...item, label } : { id, label, disabled: true, reason };
@@ -75,27 +87,29 @@ export function AgentHeader({
       'Only the task owner can update its system prompt.',
     ),
     action('update-skills', 'Update skills', 'Only the task owner can update its skills.'),
-    action('export_history', 'Export history', 'History export is unavailable with this access.'),
+    action(
+      'export_retained_conversation',
+      'Export retained conversation',
+      'Conversation export is unavailable with this access.',
+    ),
+    action(
+      'export_history',
+      'Export raw history',
+      'History export is unavailable with this access.',
+    ),
     ...(onReviewEnvironment
       ? [{ id: 'view_environment', label: 'Review environment', reason: SETUP_ENVIRONMENT_NOTICE }]
       : []),
+    ...(resume ? [resume] : []),
     {
       id: 'deletion-status',
       label: 'View deletion status',
       disabled: !onViewDeletionStatus,
       reason: !onViewDeletionStatus ? 'No deletion is in progress.' : undefined,
     },
-    { type: 'separator', id: 'before-delete' },
+    ...(stop || remove ? [{ type: 'separator', id: 'before-delete' } as const] : []),
     ...(stop ? [stop] : []),
-    remove && !('type' in remove)
-      ? { ...remove, label: 'Delete task', danger: true }
-      : {
-          id: 'delete_agent',
-          label: 'Delete task',
-          danger: true,
-          disabled: true,
-          reason: 'Task deletion is unavailable with this access.',
-        },
+    ...(remove && !('type' in remove) ? [{ ...remove, label: 'Delete task', danger: true }] : []),
   ];
   return (
     <header className="agent-toolbar">
@@ -122,6 +136,11 @@ export function AgentHeader({
             <IconChevronDownOutline14 />
           </button>
         </h1>
+        {acceptanceLabel ? (
+          <span title={acceptanceReason}>
+            <Badge tone={acceptanceReason ? 'warning' : 'neutral'}>{acceptanceLabel}</Badge>
+          </span>
+        ) : null}
       </div>
       <div className="agent-toolbar__actions">
         {onShare ? (
@@ -164,7 +183,13 @@ export function AgentHeader({
             setOpen(false);
             if (id === 'deletion-status') onViewDeletionStatus?.();
             else if (id === 'view_environment') onReviewEnvironment?.();
-            else if (id === 'stop_agent' || id === 'delete_agent' || id === 'export_history')
+            else if (
+              id === 'stop_agent' ||
+              id === 'delete_agent' ||
+              id === OPEN_SANDBOX_TO_RESUME ||
+              id === 'export_history' ||
+              id === 'export_retained_conversation'
+            )
               onMoreAction?.(id);
             else onMenuSelect?.(id);
           }}

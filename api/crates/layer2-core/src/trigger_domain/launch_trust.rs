@@ -2,7 +2,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::profiles::{
-    EnvironmentVariable, SandboxProfileStore, WorkspaceProfileRef, WorkspaceProfileStore,
+    EnvironmentVariable, ProfileVisibility, SandboxProfileStore, WorkspaceProfileRef,
+    WorkspaceProfileStore,
 };
 use crate::SubjectId;
 
@@ -191,7 +192,15 @@ async fn sandbox_trust(
     if outer_requires_trust {
         disclosures.push(LaunchTrustDisclosure {
             resource: LaunchTrustResource::Sandbox,
-            name: profile.name,
+            name: disclosure_name(
+                &profile.name,
+                &profile.description,
+                &profile.owner,
+                profile.visibility,
+                profile.retired_at.as_deref(),
+                profile.forked_from.is_some(),
+                LaunchTrustResource::Sandbox,
+            ),
             commands_digest: profiles.sandbox.digest.clone(),
             commands: profiles.sandbox.content.software_install_commands.clone(),
             environment_variables: profiles.sandbox.content.environment_variables.clone(),
@@ -253,12 +262,46 @@ async fn workspace_trust(
         Some(profiles.workspace.digest.clone()),
         Some(LaunchTrustDisclosure {
             resource: LaunchTrustResource::Workspace,
-            name: profile.name,
+            name: disclosure_name(
+                &profile.name,
+                &profile.description,
+                &profile.owner,
+                profile.visibility,
+                profile.retired_at.as_deref(),
+                profile.forked_from.is_some(),
+                LaunchTrustResource::Workspace,
+            ),
             commands_digest: profiles.workspace.digest.clone(),
             commands: profiles.workspace.content.setup_commands.clone(),
             environment_variables: Vec::new(),
         }),
     ))
+}
+
+fn disclosure_name(
+    name: &str,
+    description: &str,
+    owner: &SubjectId,
+    visibility: ProfileVisibility,
+    retired_at: Option<&str>,
+    has_fork_attribution: bool,
+    resource: LaunchTrustResource,
+) -> String {
+    if name.is_empty()
+        && description.is_empty()
+        && owner.as_str() == crate::DELETED_ACCOUNT_SUBJECT
+        && visibility == ProfileVisibility::Private
+        && retired_at.is_some_and(|at| crate::seconds_from_rfc3339(at).is_some())
+        && !has_fork_attribution
+    {
+        // Display text never restores authoring metadata or grants pin authority.
+        return match resource {
+            LaunchTrustResource::Sandbox => "Sandbox",
+            LaunchTrustResource::Workspace => "Workspace",
+        }
+        .into();
+    }
+    name.to_owned()
 }
 
 fn manifest_digest(
@@ -335,3 +378,7 @@ fn invalid_disclosure(disclosure: &LaunchTrustDisclosure) -> bool {
 fn corrupt(detail: &str) -> LaunchServiceError {
     LaunchServiceError::Corrupt(detail.into())
 }
+
+#[cfg(test)]
+#[path = "launch_trust_retained_label_tests.rs"]
+mod retained_label_tests;

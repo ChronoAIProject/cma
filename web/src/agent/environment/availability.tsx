@@ -35,7 +35,15 @@ export function useAgentEnvironment(
           },
     [scope, active],
   );
-  return useAuthorizedRead(read);
+  return useAuthorizedRead(read, false, { scope, applies: ownerRetryDeadline });
+}
+
+function ownerRetryDeadline(error: ApiError): boolean {
+  return (
+    error.status === 503 &&
+    error.code === 'agent_owner_unavailable' &&
+    error.retryAfterMs !== undefined
+  );
 }
 
 export function EnvironmentAvailability({

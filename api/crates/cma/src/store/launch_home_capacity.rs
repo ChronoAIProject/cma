@@ -11,6 +11,9 @@ use mongodb::{ClientSession, Collection};
 use super::sandbox_mongo::require_version;
 use super::schema::DOCUMENT_SCHEMA_VERSION;
 
+mod room;
+pub(in crate::store) use room::precheck_fresh_home;
+
 pub(in crate::store) enum Error {
     Domain(LaunchStoreError),
     Driver(mongodb::error::Error),
@@ -62,42 +65,24 @@ pub(in crate::store) async fn reserve(
         return Ok(false);
     }
     let ceilings = ceilings.as_ref().map_err(|_| refused())?;
-    let Some(mut limit) = ceilings.effective_retained_homes(deployment_limit) else {
+    let Some(limit) = ceilings.effective_retained_homes(deployment_limit) else {
         return Ok(false);
     };
     let reused = matches!(launch.resolution.sandbox, ResolvedResource::Reused(_));
     if !reused {
-        let reserve = ceilings.existing_reserve.retained_homes.unwrap_or(0);
-        if reserve > 0
-            && super::registration_capacity::is_public(admissions, &launch.owner, session)
-                .await
-                .map_err(Error::Driver)?
+        match room::check(
+            admissions,
+            sandboxes,
+            limit,
+            ceilings.existing_reserve.retained_homes.unwrap_or(0),
+            &launch.owner,
+            session,
+        )
+        .await
+        .map_err(Error::Driver)?
         {
-            limit = limit.saturating_sub(reserve);
-        }
-        if limit == 0 {
-            return Err(refused());
-        }
-        let row = admissions
-            .find_one(fence_key())
-            .session(&mut *session)
-            .await
-            .map_err(Error::Driver)?;
-        let pending = pending_homes(row.as_ref()).map_err(|_| refused())?;
-        let available = u64::from(limit).saturating_sub(pending);
-        if available == 0 {
-            return Err(refused());
-        }
-        let live = sandboxes
-            .count_documents(doc! {"retired_at": Bson::Null})
-            .hint(mongodb::options::Hint::Name("sandboxes_global_live".into()))
-            .limit(available)
-            .max_time(Duration::from_secs(3))
-            .session(&mut *session)
-            .await
-            .map_err(Error::Driver)?;
-        if live >= available {
-            return Err(refused());
+            room::Room::Available => {}
+            room::Room::Full | room::Room::Unreadable => return Err(refused()),
         }
         // Only candidates with room write the shared fence. A concurrent
         // admission invalidates this transaction's older snapshot at that write.
@@ -180,7 +165,7 @@ pub(in crate::store) async fn release(
     Ok(())
 }
 
-async fn fence(
+pub(in crate::store) async fn fence(
     admissions: &Collection<Document>,
     session: &mut ClientSession,
 ) -> Result<(), Error> {

@@ -119,6 +119,112 @@ async fn unattributable_gate_corruption_permanently_blocks_the_cohort_and_repair
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn observed_lifetime_above_qualification_is_a_permanent_cohort_block() {
+    let db = database().await;
+    let admin = db.client().database("admin");
+    let previous = admin
+        .run_command(doc! {"getParameter":1,"transactionLifetimeLimitSeconds":1})
+        .await
+        .unwrap();
+    let lifetime = previous
+        .get_i32("transactionLifetimeLimitSeconds")
+        .map(i64::from)
+        .or_else(|_| previous.get_i64("transactionLifetimeLimitSeconds"))
+        .unwrap() as u64;
+    assert!(lifetime > 1);
+    let qualification =
+        TransactionDrainQualification::from_verified_limits([2; 32], lifetime - 1, lifetime * 2)
+            .unwrap();
+    let subject = SubjectId::new("a");
+    let inventory = ErasureInventory::default();
+    let mut cursor = Cursor::default();
+    let result = barrier::ready(
+        &db,
+        &[Target {
+            subject: &subject,
+            inventory: &inventory,
+        }],
+        &mut cursor,
+        Options {
+            allocation_rollups_enabled: Some(false),
+            agent_shared_observation: Some(false),
+            drain_qualification: Some(qualification),
+            billing_enabled: false,
+            transaction_drain_minimum_secs: 120,
+        },
+        &mut Batch::default(),
+    )
+    .await;
+    assert!(
+        matches!(
+            result,
+            Err(Error::CohortBlocked(
+                CohortBlock::InvalidTransactionDrain { .. }
+            ))
+        ),
+        "a lifetime above the qualified bound must require operator intervention: {result:?}"
+    );
+    assert!(cursor.drain_until.is_none());
+    assert!(barrier::ready(
+        &db,
+        &[Target {
+            subject: &subject,
+            inventory: &inventory
+        }],
+        &mut cursor,
+        Options {
+            allocation_rollups_enabled: Some(false),
+            agent_shared_observation: Some(false),
+            drain_qualification: Some(TransactionDrainQualification::fixture()),
+            billing_enabled: false,
+            transaction_drain_minimum_secs: 120
+        },
+        &mut Batch::default()
+    )
+    .await
+    .is_ok());
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
+async fn absurd_configured_drain_is_permanent_instead_of_an_infinite_retry() {
+    let db = database().await;
+    let subject = SubjectId::new("a");
+    let inventory = ErasureInventory::default();
+    let mut cursor = Cursor::default();
+    let result = barrier::ready(
+        &db,
+        &[Target {
+            subject: &subject,
+            inventory: &inventory,
+        }],
+        &mut cursor,
+        Options {
+            allocation_rollups_enabled: Some(false),
+            agent_shared_observation: Some(false),
+            drain_qualification: Some(TransactionDrainQualification::fixture()),
+            billing_enabled: false,
+            transaction_drain_minimum_secs: u64::MAX,
+        },
+        &mut Batch::default(),
+    )
+    .await;
+    assert!(
+        matches!(
+            result,
+            Err(Error::CohortBlocked(
+                CohortBlock::InvalidTransactionDrain { .. }
+            ))
+        ),
+        "an impossible configured deadline requires operator intervention: {result:?}"
+    );
+    assert!(cursor.drain_until.is_none());
+    db.drop().await.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
 async fn permanent_cohort_corruption_returns_the_completed_redaction_count() {
     let db = database().await;
     put(
