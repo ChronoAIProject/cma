@@ -13,14 +13,21 @@ from staging_cd_versions import DEPLOYABLES, version_tuple
 
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
 # GitHub's own answer to a push, which a repeat meets again: a tag ruleset or
-# hook declined the refs (a porcelain rejection line), or HTTP 401 or 403 for a
-# token that may not write. Any other failed push proves nothing durable.
+# hook declined the refs (a porcelain rejection line), or a 403 alone whose
+# message names the missing write permission. A 403 also answers a secondary
+# rate limit, and git prints no status for a bad credential ("Authentication
+# failed"), so neither is durable. Any other failed push proves nothing.
 DECLINED = re.compile(r"^!\t[^\t\n]*\t\[remote rejected\] \([^)\n]*\bdeclined\b", re.MULTILINE)
+DENIED = re.compile(r"\bPermission to \S+ denied to\b|\bWrite access to repository not granted\b", re.IGNORECASE)
+THROTTLED = re.compile(r"\brate[ -]?limit", re.IGNORECASE)
 
 
 def declined(pushed):
-    statuses = {int(code) for code in ci_retry.STATUS.findall(pushed.stderr or "")}
-    return bool(DECLINED.search(pushed.stdout or "")) or (bool(statuses) and statuses <= {401, 403})
+    stdout, stderr = pushed.stdout or "", pushed.stderr or ""
+    if THROTTLED.search(stdout + stderr):
+        return False
+    statuses = {int(code) for code in ci_retry.STATUS.findall(stderr)}
+    return bool(DECLINED.search(stdout)) or (statuses == {403} and bool(DENIED.search(stderr)))
 
 
 class AllocationConflict(Refusal):

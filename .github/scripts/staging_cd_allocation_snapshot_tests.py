@@ -15,7 +15,7 @@ from staging_cd_common import Refusal
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts_tests import fixture_receipt
 from staging_cd_receipts import canonical
-from staging_cd_reservations import next_reservation
+from staging_cd_reservations import next_reservation, pending_name
 from staging_cd_versions import DEPLOYABLES
 
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
@@ -145,11 +145,24 @@ class AllocationSnapshotTests(unittest.TestCase):
                   f"fatal: unable to access '{REMOTE}/': The requested URL returned error: 403\n")
         outage = f"fatal: unable to access '{REMOTE}/': The requested URL returned error: 502\n"
         reset = "error: RPC failed; curl 56 Recv failure: Connection reset by peer\n"
+        forbidden = f"fatal: unable to access '{REMOTE}/': The requested URL returned error: 403\n"
         for name, rejection, message in (
                 ("ruleset", (1, porcelain("[remote rejected] (push declined due to repository rule violations)"),
                              "remote: error: GH013: Repository rule violations found\n"), "push was rejected"),
                 ("hook", (1, porcelain("[remote rejected] (pre-receive hook declined)"), ""), "push was rejected"),
                 ("permission", (128, "", denied), "push was rejected"),
+                ("write access", (128, "", "remote: Write access to repository not granted.\n" + forbidden),
+                 "push was rejected"),
+                # A 403 is durable only alone and with the permission it lacks.
+                ("secondary rate limit", (128, "", "remote: You have exceeded a secondary rate limit.\n" + forbidden),
+                 "readback differs"),
+                ("rate limit and permission", (128, "", "remote: API rate limit exceeded.\n" + denied),
+                 "readback differs"),
+                ("bare 403", (128, "", forbidden), "readback differs"),
+                ("permission without its 403", (128, "", denied.splitlines()[0] + "\n"), "readback differs"),
+                ("403 then 502", (128, "", denied + outage), "readback differs"),
+                ("authentication", (128, "", "remote: Invalid username or token.\n"
+                                    f"fatal: Authentication failed for '{REMOTE}/'\n"), "readback differs"),
                 # Without GitHub's own refusal, a failed push proves nothing durable.
                 ("outage", (128, "", outage), "readback differs"),
                 ("reset", (128, "", reset), "readback differs"),
@@ -166,6 +179,18 @@ class AllocationSnapshotTests(unittest.TestCase):
                                  if message == "push was rejected" else "RESERVATION_VERIFY_FAILED")
                 self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
                 self.assertEqual(server.refs, server.original)
+
+    def test_a_declined_push_with_anything_listed_is_not_a_clean_rejection(self):
+        # GitHub declined, but a planned ref already holds another object:
+        # that is not "nothing landed", so it stays a readback refusal.
+        server, store = self.fixture()
+        server.rejection = (1, porcelain("[remote rejected] (pre-receive hook declined)"), "")
+        store.load()
+        allocate_queue(server.queue(), SnapshotAPI(server, store), store, 999, 1)
+        server.refs[pending_name(store.planned[0])] = "0" * 40
+        with self.assertRaisesRegex(Refusal, "readback differs") as raised:
+            store.commit()
+        self.assertEqual(refusal_code(raised.exception), "RESERVATION_VERIFY_FAILED")
 
     def test_an_oversized_inventory_is_refused_apart_from_an_incomplete_read(self):
         for output, returncode, message, code in (
