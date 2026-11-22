@@ -245,7 +245,7 @@ def validate(documents, actions)
   serialized = JSON.generate(documents)
   require_check(!serialized.include?('continue-on-error":true,"run'), 'product gate bypass')
   synthetic = structure.select { |s| s['name'] == 'Synthetic authority and observer regressions' }
-  command = 'node --test .github/scripts/staging-authority.test.mjs .github/scripts/deployment-observer.test.mjs'
+  command = 'node --test .github/scripts/staging-authority.test.mjs .github/scripts/public-journey-evidence.test.mjs .github/scripts/deployment-observer.test.mjs'
   require_check(synthetic.size == 1 && synthetic.first['run'] == command &&
     !synthetic.first.key?('if') && !synthetic.first.key?('continue-on-error'), 'synthetic authority and observer suites must run')
   repo_job = documents.fetch('ci-repo').fetch('jobs').fetch('structure')
@@ -409,7 +409,7 @@ mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'].delete_at(restor
  {'run' => 'node .github/scripts/home-backup/inventory.mjs fixture'}].each do |bypass|
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][restore_index].merge!(bypass) }
 end
-%w[staging-authority deployment-observer].each do |suite|
+%w[staging-authority public-journey-evidence deployment-observer].each do |suite|
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'].sub!(" .github/scripts/#{suite}.test.mjs", '') }
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]['run'].sub!("#{suite}.test.mjs", "#{suite}.mjs") }
 end

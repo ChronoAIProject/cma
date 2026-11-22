@@ -48,6 +48,24 @@ function fixtureDocument() {
     origin: 'https://staging.example.test',
     fixtureOwner: 'fixture-owner',
     baselineServices: ['model'],
+    publicJourneys: {
+      repository: { url: 'https://github.com/example/repository', reference: 'f'.repeat(40) },
+      owners: Object.fromEntries(
+        ['owner', 'secondOwner'].map((role) => [
+          role,
+          {
+            image: {
+              id: `image-${role}`,
+              name: `Public ${role}`,
+              version: 'version-one',
+              reference: `registry.example.test/image@sha256:${'a'.repeat(64)}`,
+            },
+            model: 'fixture-model',
+            embedUrl: `https://embed.example.test/j5/${role}`,
+          },
+        ]),
+      ),
+    },
     accounts: {
       owner: { subject: 'fixture-owner', storageState: state },
       secondOwner: { subject: 'second-owner', storageState: state },
@@ -85,7 +103,11 @@ function fixtureDocument() {
     embeds: Object.fromEntries(
       ['markdown', 'html', 'javascript', 'react'].map((kind) => [
         kind,
-        { url: `https://embed.example.test/${kind}`, placementId: 'placement-fixture' },
+        {
+          url: `https://embed.example.test/${kind}`,
+          placementId: 'placement-fixture',
+          triggerId: 'trigger-fixture',
+        },
       ]),
     ),
     provenance: {
@@ -219,6 +241,7 @@ describe('complete mutation fixtures', () => {
       'embeds',
       'provenance',
       'baselineServices',
+      'publicJourneys',
     ]) {
       const body: Record<string, unknown> = { ...fixture.document };
       delete body[key];
@@ -238,6 +261,32 @@ describe('complete mutation fixtures', () => {
     fixture.document.provenance.runtimeImage = 'registry.example.test/runtime:latest';
     writeFileSync(fixture.manifest, JSON.stringify(fixture.document));
     expect(() => fixtures(fixture.env)).toThrow('pinned provenance');
+  });
+  it('requires pinned public inputs and dedicated embedding pages for each publisher', () => {
+    const fixture = fixtureDocument();
+    for (const mutate of [
+      (value: typeof fixture.document) => {
+        value.publicJourneys.owners.owner!.image.reference = 'image:latest';
+      },
+      (value: typeof fixture.document) => {
+        value.publicJourneys.repository.reference = 'main';
+      },
+      (value: typeof fixture.document) => {
+        value.publicJourneys.repository.url = 'https://example.test/private';
+      },
+      (value: typeof fixture.document) => {
+        value.publicJourneys.owners.secondOwner!.embedUrl =
+          value.publicJourneys.owners.owner!.embedUrl;
+      },
+      (value: typeof fixture.document) => {
+        value.publicJourneys.owners.owner!.embedUrl = value.embeds.html!.url;
+      },
+    ]) {
+      const value = structuredClone(fixture.document);
+      mutate(value);
+      writeFileSync(fixture.manifest, JSON.stringify(value));
+      expect(() => fixtures(fixture.env)).toThrow();
+    }
   });
   it('refuses group-readable auth state and symlinks into the checkout', () => {
     const fixture = fixtureDocument();
