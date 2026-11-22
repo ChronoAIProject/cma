@@ -156,3 +156,7 @@ CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
 
 contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
   -E 'package(=cma) and test(=auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure)'
+
+CHRONO_TEST_MONGODB_URI="$CMA_IM_TEST_MONGODB_URI" \
+  contract_nextest am run --run-ignored only --test-threads 1 --no-fail-fast \
+  -E 'package(=cma) and test(=store::account_deletions::tests::worker_authority::legacy_role_keeps_non_enrolled_writes_and_journal_role_cannot_index_or_delete)'

@@ -5,6 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpat
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+const journalPermission = 'store::account_deletions::tests::worker_authority::legacy_role_keeps_non_enrolled_writes_and_journal_role_cannot_index_or_delete';
 const standingPermission = 'auth::account_standing::mongo_tests::replicas::fresh_snapshot_cannot_mask_real_database_permission_failure';
 
 // Independent inventory of every invocation, including replica delivery and
@@ -40,6 +41,7 @@ const selections = [
   ['package(=cma) and test(~sender_context_tests::)', 'only', true],
   ['package(=cma) and test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors)', 'only', true],
   [`package(=cma) and test(=${standingPermission})`, 'only', true],
+  [`package(=cma) and test(=${journalPermission})`, 'only', true],
 ];
 
 function fixture(reuse, scenario = 'success') {
@@ -94,7 +96,7 @@ for (const reuse of [false, true]) {
       f.run();
       const calls = f.calls();
       const cargo = calls.filter(row => row.command === 'cargo');
-      assert.equal(selections.length, 30);
+      assert.equal(selections.length, 31);
       assert.equal(cargo.length, selections.length, 'no cargo build/test or hidden recompilation in archive mode');
       for (const [index, row] of cargo.entries()) {
         const [selection, ignored, converted] = selections[index];
@@ -106,8 +108,8 @@ for (const reuse of [false, true]) {
         assert.match(row.uri, /^mongodb:\/\/contract-admin:[a-f0-9]+@127\.0\.0\.1:32778\/admin\?directConnection=true$/);
       }
       for (const row of calls) {
-        const needsStore = row.command === 'cargo' && (row.args.includes('package(=cma) and test(~sender_context_tests::)') || row.args.includes('package(=cma) and test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors)'));
-        assert.equal(row.caller, needsStore ? row.uri : undefined, 'only sender and reset contracts receive the owned M1 fixture URI');
+        const needsStore = row.command === 'cargo' && (row.args.includes(`package(=cma) and test(=${journalPermission})`) || row.args.includes('package(=cma) and test(~sender_context_tests::)') || row.args.includes('package(=cma) and test(=store::bindings::reset_tests::gateway_reset_tests::configured_gateway_replays_real_m1_reset_and_preserves_both_scope_floors)'));
+        assert.equal(row.caller, needsStore ? row.uri : undefined, 'only contracts opening the M1 store receive its owned fixture URI');
         assert.equal(row.failpoint, undefined);
       }
       assert.ok(calls.filter(row => row.command === 'docker' && row.args[0] !== 'rm' && row.args[0] !== 'container' && row.args[0] !== 'inspect').every(row => row.uri === undefined));
