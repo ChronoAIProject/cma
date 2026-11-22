@@ -18,7 +18,11 @@ export function journeyEvidenceFixture() {
       ['sandboxes', `sandbox-${suffix}`, visitor], ['agents', `agent-${suffix}`, visitor],
     ]) own(kind, id, subject);
     return {
-      publisher, observedPublisher: publisher, targetKind: 'inline', legacyProfileIds: [],
+      publisher, observedPublisher: publisher, targetKind: 'inline', submittedProfileIds: [],
+      submittedTargetHash: suffix === 'second' ? 'd'.repeat(64) : 'e'.repeat(64),
+      publishedProfiles: Object.fromEntries(['sandbox', 'workspace', 'agent'].map((kind) => [kind, { id: `generated-${kind}-${suffix}`, revision: 1 }])),
+      revisionProfiles: Object.fromEntries(['sandbox', 'workspace', 'agent'].map((kind) => [kind, { id: `generated-${kind}-${suffix}`, revision: 1 }])),
+      authoringCommands: [command('/api/v1/triggers'), command(`/api/v1/triggers/trigger-${suffix}/placements`), command(`/api/v1/triggers/trigger-${suffix}/publish`)],
       requestedTargetHash: suffix === 'second' ? 'd'.repeat(64) : 'e'.repeat(64),
       publishedTargetHash: suffix === 'second' ? 'd'.repeat(64) : 'e'.repeat(64),
       revisionTargetHash: suffix === 'second' ? 'd'.repeat(64) : 'e'.repeat(64),

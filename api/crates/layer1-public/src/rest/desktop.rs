@@ -71,7 +71,8 @@ async fn describe(
     }
 }
 
-fn permitted_origin(headers: &HeaderMap, origins: &[String]) -> bool {
+/// Apply the desktop browser origin policy before any upgrade.
+pub fn permitted_origin(headers: &HeaderMap, origins: &[String]) -> bool {
     match headers.get(header::ORIGIN) {
         Some(value) => {
             headers.get_all(header::ORIGIN).iter().count() == 1

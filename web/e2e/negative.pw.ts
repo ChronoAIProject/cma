@@ -1,3 +1,4 @@
+import { currentTriggerTarget } from './current-trigger-target';
 import { randomUUID } from 'node:crypto';
 import { test, expect } from './harness';
 import { object } from './environment';
@@ -83,18 +84,7 @@ test('SECURITY-negative visitor cannot create Sandboxes, profiles or Triggers', 
             theme: 'auto',
           },
           target: {
-            inline: {
-              image,
-              agent: {
-                model: h.fixture.publicJourneys.owners.owner.model,
-                reasoning_effort: 'high',
-                permission_mode: 'guarded',
-                skills: [],
-                system_prompt: '',
-                services: h.fixture.baselineServices,
-              },
-              workspace: { repository: h.fixture.publicJourneys.repository },
-            },
+            inline: currentTriggerTarget(h.fixture, 'owner'),
           },
           reuse: { sandbox: 'always_new', workspace: 'always_new', agent: 'always_new' },
           first_message: 'Reply once.',

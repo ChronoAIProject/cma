@@ -5,11 +5,37 @@ import { identifier, object } from './environment';
 export function assertInlineTarget(value: unknown, expected: TriggerInlineTarget) {
   const target = object(value, 'current inline target');
   assert.deepEqual(target.inline, expected, 'Published inline configuration must match selection');
-  for (const kind of ['sandbox', 'workspace', 'agent']) {
+  generatedProfileReferences(target);
+}
+
+export function submittedProfileIds(value: unknown) {
+  const target = object(value);
+  return ['sandbox', 'workspace', 'agent'].flatMap((kind) => {
     const profile = target[`${kind}_profile`];
-    if (profile !== undefined)
-      assert.equal(object(profile).id, '', 'Historical profiles cannot satisfy current journeys');
-  }
+    return profile && object(profile).id ? [object(profile).id] : [];
+  });
+}
+
+export function assertInlineRequest(value: unknown, expected: TriggerInlineTarget) {
+  const target = object(value);
+  assert.deepEqual(target.inline, expected, 'Submitted inline configuration must match selection');
+  assert.deepEqual(
+    submittedProfileIds(target),
+    [],
+    'Current authoring cannot select historical profiles',
+  );
+}
+
+export function generatedProfileReferences(value: unknown) {
+  const target = object(value);
+  return Object.fromEntries(
+    ['sandbox', 'workspace', 'agent'].map((kind) => {
+      const reference = object(target[`${kind}_profile`], 'materialized profile reference');
+      identifier(reference.id, 'generated profile ID');
+      assert.ok(Number.isSafeInteger(reference.revision) && Number(reference.revision) > 0);
+      return [kind, { id: reference.id, revision: reference.revision }];
+    }),
+  );
 }
 
 export function assertPublisherIdentity(value: unknown, subject: string) {
@@ -34,6 +60,11 @@ export function assertPublishedTarget(
   assert.ok(typeof revision.digest === 'string' && revision.digest.length > 0);
   assertInlineTarget(object(document.draft).target, target);
   assertInlineTarget(object(revision.content).target, target);
+  assert.deepEqual(
+    generatedProfileReferences(object(document.draft).target),
+    generatedProfileReferences(object(revision.content).target),
+    'Published generated references must match the immutable revision',
+  );
 }
 
 export function assertPublishedLaunch(

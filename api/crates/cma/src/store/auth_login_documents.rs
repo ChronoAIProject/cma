@@ -24,6 +24,16 @@ impl MongoAuthStore {
                         .seal(LOGIN_KIND, &id, "actor_link_intent", &serialized)
                 })
                 .transpose()?,
+            service_authorization: attempt
+                .service_authorization
+                .map(|intent| {
+                    let serialized = serde_json::to_string(&intent).map_err(|_| {
+                        StoreError::Malformed("service authorization intent".into())
+                    })?;
+                    self.cipher
+                        .seal(LOGIN_KIND, &id, "service_authorization", &serialized)
+                })
+                .transpose()?,
             silent: attempt.silent,
             consent_requested: attempt.consent_requested,
             custody_reserved: attempt.custody_reserved,
@@ -66,12 +76,26 @@ impl MongoAuthStore {
                     .map_err(|_| StoreError::Malformed("actor login intent".into()))
             })
             .transpose()?;
+        let service_authorization = document
+            .service_authorization
+            .map(|envelope| {
+                let plaintext = self.cipher.open(
+                    LOGIN_KIND,
+                    id.as_bytes(),
+                    "service_authorization",
+                    envelope,
+                )?;
+                serde_json::from_str(&plaintext)
+                    .map_err(|_| StoreError::Malformed("service authorization intent".into()))
+            })
+            .transpose()?;
         Ok(LoginAttempt {
             id,
             browser_binding,
             verifier: SecretValue::new(verifier),
             return_to: document.return_to,
             actor_link_intent,
+            service_authorization,
             silent: document.silent,
             consent_requested: document.consent_requested,
             custody_reserved: document.custody_reserved,

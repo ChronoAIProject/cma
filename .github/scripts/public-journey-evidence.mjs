@@ -35,14 +35,32 @@ function stats(value, placement) {
   return [value.totals, rows[0]];
 }
 function publication(entry, proof, journal, visitor, managed) {
-  keys(entry, ['publisher', 'observedPublisher', 'targetKind', 'legacyProfileIds', 'requestedTargetHash', 'publishedTargetHash', 'revisionTargetHash', 'expectedImage', 'observedImage', 'triggerId', 'publicId', 'placementId', 'revision', 'revisionDigest', 'launch', 'commands', 'stats']);
+  keys(entry, ['publisher', 'observedPublisher', 'targetKind', 'submittedProfileIds', 'submittedTargetHash', 'publishedProfiles', 'revisionProfiles', 'authoringCommands', 'requestedTargetHash', 'publishedTargetHash', 'revisionTargetHash', 'expectedImage', 'observedImage', 'triggerId', 'publicId', 'placementId', 'revision', 'revisionDigest', 'launch', 'commands', 'stats']);
   keys(entry.stats, ['before', 'after']);
   id(entry.publisher);
   assert.equal(entry.observedPublisher, entry.publisher);
   assert.equal(entry.targetKind, 'inline');
-  assert.deepEqual(entry.legacyProfileIds, []);
-  for (const key of ['requestedTargetHash', 'publishedTargetHash', 'revisionTargetHash'])
+  assert.deepEqual(entry.submittedProfileIds, []);
+  keys(entry.publishedProfiles, ['sandbox', 'workspace', 'agent']);
+  for (const reference of Object.values(entry.publishedProfiles)) {
+    keys(reference, ['id', 'revision']); id(reference.id);
+    assert.ok(Number.isSafeInteger(reference.revision) && reference.revision > 0);
+  }
+  assert.deepEqual(entry.revisionProfiles, entry.publishedProfiles);
+  const required = ['/api/v1/triggers', `/api/v1/triggers/${entry.triggerId}/placements`, `/api/v1/triggers/${entry.triggerId}/publish`];
+  for (const path of required) {
+    const matches = entry.authoringCommands.filter((row) => row.path === path);
+    assert.equal(matches.length, 1); command(matches[0], path);
+  }
+  for (const row of entry.authoringCommands) {
+    if (required.includes(row.path)) continue;
+    keys(row, ['method', 'path', 'bodyHash', 'keyHash']);
+    assert.equal(row.method, 'PUT'); assert.equal(row.path, `/api/v1/triggers/${entry.triggerId}`);
+    digest(row.bodyHash); digest(row.keyHash);
+  }
+  for (const key of ['requestedTargetHash', 'submittedTargetHash', 'publishedTargetHash', 'revisionTargetHash'])
     digest(entry[key]);
+  assert.equal(entry.submittedTargetHash, entry.requestedTargetHash);
   assert.equal(entry.publishedTargetHash, entry.requestedTargetHash);
   assert.equal(entry.revisionTargetHash, entry.requestedTargetHash);
   if (managed) {

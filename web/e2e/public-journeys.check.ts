@@ -1,3 +1,4 @@
+import { auditSyntheticPublications } from './public-journey-audit.fixture';
 import { test, expect } from '@playwright/test';
 import { publisherFixture } from './public-journeys.fixture';
 import { publishCurrentTrigger } from './publisher-current';
@@ -10,6 +11,9 @@ for (const role of ['owner', 'secondOwner'] as const) {
     const { harness, boundary } = await publisherFixture(page, baseURL!, role);
     const result = await publishCurrentTrigger(harness, page, role);
     expect(result.revision.content.target.inline).toEqual(result.target);
+    expect(result.revision.content.target.agent_profile.id).toBe(`generated-agent-${role}`);
+    expect(result.document.draft.target).toEqual(result.revision.content.target);
+    expect(result.target.workspace?.repository?.ref).toBe('b'.repeat(40));
     expect(boundary.unexpected).toEqual([]);
     expect(boundary.errors).toEqual([]);
   });
@@ -66,4 +70,23 @@ test('LOCAL contextual task recovery keeps the exact request and key after respo
   expect(harness.commands[1]).toEqual(harness.commands[0]);
   expect(boundary.unexpected).toEqual([]);
   expect(boundary.errors).toEqual([]);
+});
+
+test('LOCAL compiled publications produce evidence accepted by the final auditor', async ({
+  browser,
+  baseURL,
+}) => {
+  const publications = [];
+  for (const role of ['owner', 'secondOwner'] as const) {
+    const page = await browser.newPage();
+    try {
+      const { harness, boundary } = await publisherFixture(page, baseURL!, role);
+      publications.push(await publishCurrentTrigger(harness, page, role));
+      expect(boundary.unexpected).toEqual([]);
+      expect(boundary.errors).toEqual([]);
+    } finally {
+      await page.close();
+    }
+  }
+  auditSyntheticPublications(publications);
 });
