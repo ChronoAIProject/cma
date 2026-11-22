@@ -217,3 +217,217 @@ async fn blocked_read(admitted: bool) {
         "returned data must release read work capacity"
     );
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn parent_read_refuses_before_queries_and_sizes_each_replacement() {
+    use crate::store::agent_conversation_store::reopen::read_parent_admitted as read;
+    use layer2_core::sandbox::ingress_ownership::AdmittedError;
+    use mongodb::bson::doc;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let mut options = ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+        .await
+        .unwrap();
+    options.command_event_handler = Some(EventHandler::callback(move |event| {
+        if let CommandEvent::Started(event) = event {
+            if event.command_name == "find"
+                && event.command.get_str("find").ok() == Some("sandboxes")
+            {
+                observed.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }));
+    let fixture =
+        Fixture::with_client(Client::with_options(options).unwrap(), "parent_pressure").await;
+    calls.store(0, Ordering::SeqCst);
+    let store = &fixture.store;
+    let (root, policy) = super::policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    let full = AllocationPlan::checked(
+        "parent full work",
+        &[policy.bounds().transformation_bytes()],
+    )
+    .unwrap();
+    let occupied = policy.admit(IngressClass::Transformation, full).unwrap();
+    assert!(matches!(
+        read(
+            store,
+            &fixture.agent,
+            &mut session,
+            &policy,
+            super::gate_plan()
+        ),
+        Err(AdmittedError::Refused(_))
+    ));
+    drop(occupied);
+    drop(
+        read(
+            store,
+            &fixture.agent,
+            &mut session,
+            &policy,
+            super::gate_plan(),
+        )
+        .unwrap(),
+    );
+    assert!(matches!(
+        read(store, &fixture.agent, &mut session, &policy, full)
+            .unwrap()
+            .await,
+        Err(AdmittedError::Refused(_))
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(root.available_bytes(), idle);
+    let small = read(
+        store,
+        &fixture.agent,
+        &mut session,
+        &policy,
+        super::gate_plan(),
+    )
+    .unwrap()
+    .await
+    .unwrap()
+    .transpose()
+    .unwrap();
+    let charge = policy.bounds().data_bytes() - policy.budget(IngressClass::Data).available_bytes();
+    drop(small);
+    let pressure = policy
+        .admit(
+            IngressClass::Data,
+            AllocationPlan::checked(
+                "small parent allowance",
+                &[policy.bounds().data_bytes() - charge],
+            )
+            .unwrap(),
+        )
+        .unwrap();
+    let held = root.available_bytes();
+    drop(
+        read(
+            store,
+            &fixture.agent,
+            &mut session,
+            &policy,
+            super::gate_plan(),
+        )
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap(),
+    );
+    let mut grown = fixture.parent.clone();
+    grown.profile.content.software_install_commands = vec!["synthetic".repeat(8192); 32];
+    store
+        .sandboxes
+        .update_one(
+            doc! {"_id":fixture.parent.id.as_str()},
+            doc! {"$set":crate::store::sandboxes::sandbox_replacement_fields(&grown).unwrap()},
+        )
+        .await
+        .unwrap();
+    assert!(matches!(
+        read(
+            store,
+            &fixture.agent,
+            &mut session,
+            &policy,
+            super::gate_plan()
+        )
+        .unwrap()
+        .await,
+        Err(AdmittedError::Refused(_))
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 3);
+    assert_eq!(root.available_bytes(), held);
+    drop(pressure);
+    let result = read(
+        store,
+        &fixture.agent,
+        &mut session,
+        &policy,
+        super::gate_plan(),
+    )
+    .unwrap()
+    .await
+    .unwrap()
+    .transpose()
+    .unwrap();
+    assert_eq!(**result, grown);
+    drop((result, session));
+    assert_eq!(root.available_bytes(), idle);
+    fixture.finish().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn owned_parent_read_still_requires_reopen_guard_and_actual_write_fence() {
+    use crate::store::agent_conversation_store::{reopen, ApplyError};
+    use crate::store::sandbox_mongo::start_transaction;
+    use mongodb::bson::doc;
+    let mut fixture = Fixture::new("parent_fence").await;
+    let guard = fixture.prepare_reopen().await;
+    let store = &fixture.store;
+    let (root, policy) = super::policy();
+    let idle = root.available_bytes();
+    let mut stale = store.client.start_session().await.unwrap();
+    start_transaction(&mut stale).await.unwrap();
+    let parent = reopen::read_parent_admitted(
+        store,
+        &fixture.agent,
+        &mut stale,
+        &policy,
+        super::gate_plan(),
+    )
+    .unwrap()
+    .await
+    .unwrap()
+    .transpose()
+    .unwrap();
+    assert_eq!(**parent, fixture.parent);
+    let row = store
+        .sandboxes
+        .find_one(doc! {"_id":fixture.parent.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!row.contains_key("agent_conversation_reopen_fence"));
+    let mut current = store.client.start_session().await.unwrap();
+    start_transaction(&mut current).await.unwrap();
+    let mut wrong = guard.clone();
+    wrong.agent_fence += 1;
+    assert!(matches!(
+        reopen::validate_and_fence(store, &fixture.agent, &wrong, &mut current).await,
+        Err(ApplyError::Domain(SandboxStoreError::InvalidTransaction(_)))
+    ));
+    reopen::validate_and_fence(store, &fixture.agent, &guard, &mut current)
+        .await
+        .unwrap();
+    current.commit_transaction().await.unwrap();
+    let row = store
+        .sandboxes
+        .find_one(doc! {"_id":fixture.parent.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.get_i64("agent_conversation_reopen_fence").unwrap(), 1);
+    let conflict = store
+        .sandboxes
+        .update_one(
+            doc! {"_id":fixture.parent.id.as_str()},
+            doc! {"$inc":{"agent_conversation_reopen_fence":1_i64}},
+        )
+        .session(&mut stale)
+        .await
+        .unwrap_err();
+    assert!(conflict.contains_label("TransientTransactionError"));
+    assert_eq!(**parent, fixture.parent);
+    assert!(parent.belongs_to(&policy));
+    let _ = stale.abort_transaction().await;
+    drop((parent, stale, current));
+    assert_eq!(root.available_bytes(), idle);
+    fixture.finish().await;
+}

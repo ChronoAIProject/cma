@@ -13,7 +13,7 @@ pub(super) struct Fixture {
     pub(super) database: String,
     pub(super) store: MongoSandboxStore,
     pub(super) agent: Agent,
-    parent: Sandbox,
+    pub(super) parent: Sandbox,
 }
 
 impl Fixture {
@@ -174,4 +174,94 @@ pub(super) fn projection_fixture(
         record,
     };
     (agent, head, projection)
+}
+
+impl Fixture {
+    pub(super) async fn prepare_reopen(&mut self) -> layer2_core::sandbox::store::AgentReopenGuard {
+        use layer2_core::sandbox::{
+            SandboxCheckpointConversation, SandboxCheckpointRef, SandboxImageRotationPhase,
+            SandboxLifecycleOperation, SandboxRotationIdentity,
+        };
+        use layer3_adapter::{CheckpointReceipt, ConversationSnapshot, WriterState};
+        use sha2::{Digest, Sha256};
+        let at = layer2_core::now_rfc3339();
+        let native = self.agent.conversation.conversation_id.clone().unwrap();
+        let archive = b"synthetic reopen archive".to_vec();
+        let conversation = SandboxCheckpointConversation::new(
+            self.agent.id.clone(),
+            native.clone(),
+            ConversationSnapshot {
+                conversation_id: native.clone(),
+                archive_sha256: format!("{:x}", Sha256::digest(&archive)),
+                archive,
+            },
+        )
+        .unwrap();
+        let checkpoint = SandboxCheckpointRef::seal(
+            &CheckpointReceipt {
+                epoch: 1,
+                object_reference: "synthetic/reopen".into(),
+                sha256: "e".repeat(64),
+                writers: WriterState::Resumed,
+            },
+            &[conversation],
+            &at,
+        )
+        .unwrap();
+        self.parent
+            .lifecycle
+            .checkpoints
+            .publish(checkpoint)
+            .unwrap();
+        let identity =
+            SandboxRotationIdentity::capture(&self.parent, std::slice::from_ref(&self.agent))
+                .unwrap();
+        self.parent
+            .begin_image_rotation("image-v2".into(), identity, at.clone())
+            .unwrap();
+        let Some(SandboxLifecycleOperation::ImageRotation {
+            phase,
+            checkpoint_epoch,
+            ..
+        }) = self.parent.lifecycle.operation.as_mut()
+        else {
+            unreachable!()
+        };
+        *phase = SandboxImageRotationPhase::ConversationReopen;
+        *checkpoint_epoch = Some(1);
+        self.parent.runtime.as_mut().unwrap().provision_generation = Some(2);
+        self.parent.runtime.as_mut().unwrap().runtime_version = "image-v2".into();
+        self.parent.lifecycle.runtime_generation_high_water = 2;
+        self.parent
+            .work
+            .claim(
+                "synthetic-reopen-worker".into(),
+                &at,
+                layer2_core::rfc3339_at(
+                    std::time::SystemTime::now() + std::time::Duration::from_secs(300),
+                ),
+            )
+            .unwrap();
+        self.parent.validate().unwrap();
+        self.agent.status = AgentStatus::Paused;
+        self.store.sandboxes.update_one(mongodb::bson::doc! {"_id":self.parent.id.as_str()}, mongodb::bson::doc! {
+            "$set": crate::store::sandboxes::sandbox_replacement_fields(&self.parent).unwrap(),
+        }).await.unwrap();
+        self.store
+            .agents
+            .update_one(
+                mongodb::bson::doc! {"_id":self.agent.id.as_str()},
+                mongodb::bson::doc! {
+                    "$set":crate::store::agents::agent_replacement_fields(&self.agent).unwrap(),
+                },
+            )
+            .await
+            .unwrap();
+        layer2_core::sandbox::store::AgentReopenGuard {
+            sandbox: SandboxMutationGuard::capture(&self.parent),
+            agent_fence: self.agent.work.next_fence,
+            native_conversation_id: native,
+            runtime_generation: 2,
+        }
+    }
 }

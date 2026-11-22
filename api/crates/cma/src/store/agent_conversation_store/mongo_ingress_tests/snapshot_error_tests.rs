@@ -240,3 +240,170 @@ async fn missing_snapshot_returns_all_read_capacity() {
     );
     fixture.finish().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn parent_read_preserves_missing_corrupt_and_unsupported_outcomes() {
+    use crate::store::{
+        agent_conversation_store::reopen::read_parent_admitted as read,
+        ingress_reads::error::ReadFailure,
+    };
+    use layer2_core::sandbox::ingress_ownership::AdmittedError;
+    let fixture = super::fixture::Fixture::new("parent_errors").await;
+    let store = &fixture.store;
+    let rows = &store.sandboxes;
+    let original = rows
+        .find_one(doc! {"_id":fixture.parent.id.as_str()})
+        .await
+        .unwrap()
+        .unwrap();
+    let (root, policy) = super::policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    for fault in [
+        "missing",
+        "query",
+        "version",
+        "record",
+        "admission",
+        "finalization",
+        "deep",
+    ] {
+        rows.delete_one(doc! {"_id":fixture.parent.id.as_str()})
+            .await
+            .unwrap();
+        let mut row = original.clone();
+        match fault {
+            "query" => {
+                row.insert("revision", 99_i64);
+            }
+            "version" => {
+                row.insert("document_schema_version", 99_i64);
+            }
+            "record" => {
+                row.get_document_mut("record")
+                    .unwrap()
+                    .insert("unexpected", "x".repeat(65536));
+            }
+            "admission" => {
+                row.insert("admission_fingerprint", "a".repeat(64));
+            }
+            "finalization" => {
+                row.insert("channel_retirement_finalization", doc! {"schema_version":1});
+            }
+            "deep" => {
+                let mut deep = doc! {"leaf":true};
+                for _ in 0..66 {
+                    deep = doc! {"nested":deep};
+                }
+                row.insert("sidecar", deep);
+            }
+            _ => {}
+        }
+        if fault != "missing" {
+            rows.insert_one(row.clone()).await.unwrap();
+        }
+        let result = read(
+            store,
+            &fixture.agent,
+            &mut session,
+            &policy,
+            super::gate_plan(),
+        )
+        .unwrap()
+        .await;
+        if fault == "deep" {
+            assert!(matches!(result, Err(AdmittedError::Unsupported(_))));
+            assert!(crate::store::sandboxes::read_sandbox(&row).is_ok());
+        } else {
+            let error = result.unwrap().transpose().unwrap_err();
+            assert!(error.belongs_to(&policy));
+            if fault == "missing" {
+                assert!(matches!(
+                    &*error,
+                    ReadFailure::Domain(SandboxStoreError::Conflict)
+                ));
+            } else {
+                assert!(matches!(
+                    &*error,
+                    ReadFailure::Domain(SandboxStoreError::Corrupt(_))
+                ));
+                assert!(crate::store::sandboxes::read_sandbox(&row).is_err());
+            }
+            drop(error);
+        }
+        assert_eq!(root.available_bytes(), idle);
+        if fault != "missing" {
+            assert_eq!(
+                rows.find_one(doc! {"_id":fixture.parent.id.as_str()})
+                    .await
+                    .unwrap(),
+                Some(row)
+            );
+        }
+    }
+    drop(session);
+    fixture.finish().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn parent_read_keeps_original_driver_error_and_transaction_label() {
+    use crate::store::{
+        agent_conversation_store::reopen::read_parent_admitted as read,
+        ingress_reads::error::ReadFailure,
+    };
+    let mut options =
+        mongodb::options::ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+    let app_name = "cma-ingress-parent-error";
+    options.app_name = Some(app_name.into());
+    let fixture = super::fixture::Fixture::with_client(
+        mongodb::Client::with_options(options).unwrap(),
+        "parent_driver",
+    )
+    .await;
+    let store = &fixture.store;
+    let admin = store.client.database("admin");
+    let (root, policy) = super::policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    admin.run_command(doc! {"configureFailPoint":"failCommand", "mode":{"times":1}, "data":{
+        "failCommands":["find"], "appName":app_name, "errorCode":112, "errorLabels":["TransientTransactionError"],
+    }}).await.unwrap();
+    let result = read(
+        store,
+        &fixture.agent,
+        &mut session,
+        &policy,
+        super::gate_plan(),
+    )
+    .unwrap()
+    .await;
+    admin
+        .run_command(doc! {"configureFailPoint":"failCommand", "mode":"off"})
+        .await
+        .unwrap();
+    let error = result.unwrap().transpose().unwrap_err();
+    let ReadFailure::Driver(driver) = &*error else {
+        panic!("expected driver error")
+    };
+    assert!(driver.contains_label("TransientTransactionError"));
+    let address = std::ptr::from_ref(driver.kind.as_ref());
+    let error = error.map(|error| match error {
+        ReadFailure::Driver(driver) => driver,
+        _ => unreachable!(),
+    });
+    assert_eq!(std::ptr::from_ref(error.kind.as_ref()), address);
+    assert!(error.belongs_to(&policy));
+    assert!(root.available_bytes() < idle);
+    drop(error);
+    assert_eq!(root.available_bytes(), idle);
+    let _ = session.abort_transaction().await;
+    drop((session, admin));
+    fixture.finish().await;
+}

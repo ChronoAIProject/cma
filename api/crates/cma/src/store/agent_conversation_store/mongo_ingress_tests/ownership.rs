@@ -396,3 +396,74 @@ async fn projection_read_pins_snapshot_and_sizes_each_actual_response_under_pres
     assert_eq!(root.available_bytes(), idle);
     fixture.finish().await;
 }
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn parent_read_retains_exact_transaction_rows_and_restores_after_rollback() {
+    use crate::store::agent_conversation_store::reopen::read_parent_admitted as read;
+    let fixture = Fixture::new("parent_retention").await;
+    let store = &fixture.store;
+    let rows = &store.sandboxes;
+    let mut grown = fixture.parent.clone();
+    grown.profile.content.software_install_commands = vec!["synthetic".repeat(8192); 32];
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = store.client.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    let result = read(store, &fixture.agent, &mut session, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(**result, fixture.parent);
+    let retained = (*result).clone();
+    drop(result);
+    let small_available = policy.budget(IngressClass::Data).available_bytes();
+    assert_eq!(
+        policy
+            .budget(IngressClass::Transformation)
+            .available_bytes(),
+        policy.bounds().transformation_bytes()
+    );
+    rows.update_one(
+        doc! {"_id":fixture.parent.id.as_str()},
+        doc! {"$set":crate::store::sandboxes::sandbox_replacement_fields(&grown).unwrap()},
+    )
+    .session(&mut session)
+    .await
+    .unwrap();
+    let changed = read(store, &fixture.agent, &mut session, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(**changed, grown);
+    assert_eq!(*retained, fixture.parent);
+    assert!(retained.belongs_to(&policy));
+    assert!(policy.budget(IngressClass::Data).available_bytes() < small_available);
+    drop(changed);
+    assert_eq!(
+        policy.budget(IngressClass::Data).available_bytes(),
+        small_available
+    );
+    session.abort_transaction().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    let restored = read(store, &fixture.agent, &mut session, &policy, gate_plan())
+        .unwrap()
+        .await
+        .unwrap()
+        .transpose()
+        .unwrap();
+    assert_eq!(**restored, fixture.parent);
+    drop((restored, retained));
+    assert_eq!(root.available_bytes(), idle);
+    session.abort_transaction().await.unwrap();
+    drop(session);
+    fixture.finish().await;
+}
