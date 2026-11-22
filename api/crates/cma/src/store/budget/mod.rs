@@ -15,6 +15,7 @@ mod counter_accounting;
 #[cfg(test)]
 mod counter_tests;
 mod counters;
+pub(crate) mod inventory;
 mod period;
 mod period_storage;
 mod requests;
