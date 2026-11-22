@@ -45,7 +45,7 @@ def records(output, name):
     return result
 
 
-def cleanup(rows):
+def fixture_cleanup(rows):
     roots = [value for marker, value in rows if marker == "DESKTOP_FIXTURE_ROOT"]
     children = [value for marker, value in rows if marker == "DESKTOP_FIXTURE_CHILD"]
     completed = [value for marker, value in rows if marker == "DESKTOP_FIXTURE_CLEANUP"]
@@ -95,6 +95,20 @@ def cleanup(rows):
     require(markers[0] == "DESKTOP_FIXTURE_ROOT" and markers[-2:] == ["DESKTOP_FIXTURE_ROOT", "DESKTOP_FIXTURE_CLEANUP"],
             "Cleanup order is incomplete")
     return {"id": identity, "children": len(started), "database_inventory_preserved": True}
+
+
+def cleanup(rows, name):
+    fixtures = [(marker, value) for marker, value in rows if marker.startswith("DESKTOP_FIXTURE_")]
+    identities = [value.get("id") for marker, value in fixtures
+                  if marker == "DESKTOP_FIXTURE_ROOT" and value.get("event") == "created"]
+    expected = 2 if name.endswith("::retained_legacy_rows_block_until_close_or_expiry_and_cannot_release_successor") else 1
+    require(all(isinstance(value, str) for value in identities), "Invalid receiver identity")
+    require(len(identities) == expected and len(set(identities)) == expected,
+            "Missing or duplicate owned fixture")
+    groups = [[row for row in fixtures if row[1].get("id") == identity] for identity in identities]
+    require([row for group in groups for row in group] == fixtures,
+            "Unmatched or interleaved fixture cleanup")
+    return [fixture_cleanup(group) for group in groups]
 
 
 def measurement(rows, mode, diagnostics):
@@ -158,13 +172,13 @@ def validate(path, names, mode, diagnostics):
         output = case.findall("system-out")
         require(len(output) == 1 and output[0].text, "Missing retained parent output")
         rows = records(output[0].text, case.get("name"))
-        result["cleanup"].append(cleanup(rows))
+        result["cleanup"].extend(cleanup(rows, case.get("name")))
         if mode != "contracts":
             result["measurement"] = measurement(rows, mode, diagnostics)
         else:
             require(not any(marker.startswith("DESKTOP_PUBLIC_") for marker, _ in rows), "Measurement entered correctness run")
         result["executed"].append(case.get("name"))
-    require(len({item["id"] for item in result["cleanup"]}) == len(names), "Reused fixture identity")
+    require(len({item["id"] for item in result["cleanup"]}) == len(result["cleanup"]), "Reused fixture identity")
     return result
 
 
@@ -178,7 +192,7 @@ def cleanup_receipts(path, names):
                 continue
             record = {"test": name, "verified": False}
             try:
-                record["details"] = cleanup(records(case.findtext("system-out") or "", name))
+                record["details"] = cleanup(records(case.findtext("system-out") or "", name), name)
                 record["verified"] = True
             except (ValueError, OSError, TypeError, KeyError) as error:
                 record["error"] = str(error)

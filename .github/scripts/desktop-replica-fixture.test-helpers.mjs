@@ -26,6 +26,10 @@ export function cleanupOutput(index = 1) {
     line('DESKTOP_FIXTURE_CLEANUP', {schema: 1, id, before: ['a'.repeat(64)], after: ['a'.repeat(64)], owned: ['b'.repeat(64), 'c'.repeat(64)], owned_absent: true});
 }
 
+export function parentOutput(name, index) {
+  return cleanupOutput(index + 1) + (name === parents[1] ? cleanupOutput(6) : '');
+}
+
 export function measurementOutput(mode = 'one', diagnostics = false, mutate = () => {}) {
   const samples = [];
   const starts = [];
@@ -75,7 +79,7 @@ export function fixture({mode = 'one', diagnostics = false, output = measurement
   writeFileSync(join(directory, 'inventory.json'), JSON.stringify({'rust-build-meta': {'target-directory': target},
     'rust-suites': {cma: suite('cma::bin/cma', 'cma', binaries.cma, names), runtime: suite('layer4-runtime::bin/layer4-runtime', 'layer4-runtime', binaries.runtime, [child])}}));
   writeFileSync(join(directory, 'cargo-metadata.json'), JSON.stringify({workspace_root: api, target_directory: target, packages: [], workspace_members: []}));
-  writeFileSync(join(directory, 'results.xml'), xml ?? report(mode === 'contracts' ? parents.map((name, i) => ({name, output: cleanupOutput(i + 1)})) : [{name: measurement, output}]));
+  writeFileSync(join(directory, 'results.xml'), xml ?? report(mode === 'contracts' ? parents.map((name, i) => ({name, output: parentOutput(name, i)})) : [{name: measurement, output}]));
   writeFileSync(join(directory, 'output.txt'), output);
   writeFileSync(join(root, '.gitignore'), '/api/target/\n');
   writeFileSync(join(api, 'Cargo.toml'), '[workspace]\n');

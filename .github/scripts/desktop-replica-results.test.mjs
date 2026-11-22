@@ -3,7 +3,7 @@ import {createHash} from 'node:crypto';
 import {mkdirSync, writeFileSync, readFileSync, copyFileSync} from 'node:fs';
 import {join} from 'node:path';
 import test from 'node:test';
-import {cleanupOutput, fixture, measurement, measurementOutput, parents, report} from './desktop-replica-fixture.test-helpers.mjs';
+import {cleanupOutput, fixture, measurement, measurementOutput, parentOutput, parents, report} from './desktop-replica-fixture.test-helpers.mjs';
 
 function check(options, expected, pattern) {
   const f = fixture(options);
@@ -31,6 +31,22 @@ for (const mode of ['contracts', 'one', 'two']) {
     assert.equal(receipt.cleanup.roots_empty, true);
     assert.ok(receipt.cleanup.parents.every(row => row.verified));
     if (mode !== 'contracts') assert.equal(receipt.results.measurement.samples, 315);
+  });
+}
+
+test('correctness verifies both sequential fixtures in the legacy parent', () => {
+  const cases = parents.map((name, i) => ({name, output: cleanupOutput(i + 1) +
+    (i === 1 ? cleanupOutput(6) : '')}));
+  const receipt = check({mode: 'contracts', xml: report(cases)}, 0);
+  assert.equal(receipt.results.cleanup.length, 6);
+});
+
+for (const fault of ['missing', 'incomplete', 'reused']) {
+  test(`legacy parent refuses ${fault} second-fixture cleanup`, () => {
+    const cases = parents.map((name, i) => ({name, output: parentOutput(name, i)}));
+    cases[1].output = cleanupOutput(2) + (fault === 'missing' ? '' : fault === 'reused' ? cleanupOutput(2) :
+      cleanupOutput(6).replace(/DESKTOP_FIXTURE_CHILD=.*"exited".*\n/, ''));
+    check({mode: 'contracts', xml: report(cases)}, 1);
   });
 }
 
@@ -92,12 +108,12 @@ for (const [name, change] of Object.entries({
 }
 
 for (const [name, cases] of Object.entries({
-  missing: parents.slice(1).map((name, i) => ({name, output: cleanupOutput(i + 1)})),
-  duplicate: parents.map((name, i) => ({name: i === 4 ? parents[0] : name, output: cleanupOutput(i + 1)})),
-  extra: [...parents, 'unexpected'].map((name, i) => ({name, output: cleanupOutput(i + 1)})),
-  failed: parents.map((name, i) => ({name, output: cleanupOutput(i + 1), failure: i === 2 ? '<failure/>' : ''})),
-  retried: parents.map((name, i) => ({name, output: cleanupOutput(i + 1), failure: i === 2 ? '<flakyFailure/>' : ''})),
-  skipped: parents.map((name, i) => ({name, output: cleanupOutput(i + 1), failure: i === 2 ? '<skipped/>' : ''})),
+  missing: parents.slice(1).map((name, i) => ({name, output: parentOutput(name, i + 1)})),
+  duplicate: parents.map((name, i) => ({name: i === 4 ? parents[0] : name, output: parentOutput(name, i)})),
+  extra: [...parents, 'unexpected'].map((name, i) => ({name, output: parentOutput(name, i)})),
+  failed: parents.map((name, i) => ({name, output: parentOutput(name, i), failure: i === 2 ? '<failure/>' : ''})),
+  retried: parents.map((name, i) => ({name, output: parentOutput(name, i), failure: i === 2 ? '<flakyFailure/>' : ''})),
+  skipped: parents.map((name, i) => ({name, output: parentOutput(name, i), failure: i === 2 ? '<skipped/>' : ''})),
 })) {
   test(`correctness receipts refuse ${name} parents`, () => check({mode: 'contracts', xml: report(cases)}, 1));
 }
