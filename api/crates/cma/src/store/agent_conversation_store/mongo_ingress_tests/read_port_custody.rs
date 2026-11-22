@@ -204,3 +204,166 @@ fn stored_corruption_and_allocation_refusal_have_different_error_channels() {
         root.capacity_bytes() - root.metadata_bytes()
     );
 }
+
+use super::fixture::Fixture;
+use crate::store::agent_log_segments::writer_gate::{self, GateName, GateRecord, Policy};
+use layer2_core::sandbox::ingress_ownership::AdmittedError;
+use mongodb::bson::{self, Document};
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Arc,
+};
+
+fn gate_plan() -> AllocationPlan {
+    AllocationPlan::checked("gate read custody", &[50 * 1024 * 1024]).unwrap()
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn gate_read_refuses_before_queries_and_releases_cancelled_and_data_refused_work() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let observed = calls.clone();
+    let mut options =
+        mongodb::options::ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+    options.command_event_handler = Some(mongodb::event::EventHandler::callback(move |event| {
+        if let mongodb::event::command::CommandEvent::Started(event) = event {
+            if event.command_name == "find"
+                && event.command.get_str("find").ok() == Some(writer_gate::COLLECTION)
+            {
+                observed.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }));
+    let fixture = Fixture::with_client(
+        mongodb::Client::with_options(options).unwrap(),
+        "gate_refusal",
+    )
+    .await;
+    let database = fixture.store.client.database(&fixture.database);
+    let rows = database.collection::<Document>(writer_gate::COLLECTION);
+    let name = GateName::Segments;
+    let valid = bson::serialize_to_document(&GateRecord {
+        name,
+        format_version: 1,
+        revision: 1,
+        admission_fence: 0,
+        policy: Policy::default(),
+        slots: Vec::new(),
+    })
+    .unwrap();
+    rows.insert_one(valid.clone()).await.unwrap();
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = fixture.store.client.start_session().await.unwrap();
+    let occupied = policy
+        .admit(
+            IngressClass::Transformation,
+            AllocationPlan::checked("occupied work", &[policy.bounds().transformation_bytes()])
+                .unwrap(),
+        )
+        .unwrap();
+    assert!(matches!(
+        writer_gate::read_admitted(&database, name, &mut session, &policy, gate_plan()),
+        Err(AdmittedError::Refused(_))
+    ));
+    drop(occupied);
+    drop(writer_gate::read_admitted(&database, name, &mut session, &policy, gate_plan()).unwrap());
+    assert_eq!(root.available_bytes(), idle);
+    let oversized = AllocationPlan::checked("unavailable read", &[root.capacity_bytes()]).unwrap();
+    assert!(matches!(
+        writer_gate::read_admitted(&database, name, &mut session, &policy, oversized)
+            .unwrap()
+            .await,
+        Err(AdmittedError::Refused(_))
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    let occupied = policy
+        .admit(
+            IngressClass::Data,
+            AllocationPlan::checked("occupied data", &[policy.bounds().data_bytes()]).unwrap(),
+        )
+        .unwrap();
+    let held = root.available_bytes();
+    assert!(matches!(
+        writer_gate::read_admitted(&database, name, &mut session, &policy, gate_plan())
+            .unwrap()
+            .await,
+        Err(AdmittedError::Refused(_))
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(root.available_bytes(), held);
+    drop(occupied);
+    assert_eq!(
+        rows.find_one(doc! {"_id":name.as_str()}).await.unwrap(),
+        Some(valid)
+    );
+    assert_eq!(root.available_bytes(), idle);
+    drop((session, rows, database));
+    fixture.finish().await;
+}
+
+#[tokio::test]
+#[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
+async fn gate_read_keeps_driver_labels_and_error_allocation_identity() {
+    let mut options =
+        mongodb::options::ClientOptions::parse(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
+            .await
+            .unwrap();
+    let app_name = "cma-ingress-gate-error";
+    options.app_name = Some(app_name.into());
+    let fixture = Fixture::with_client(
+        mongodb::Client::with_options(options).unwrap(),
+        "gate_driver",
+    )
+    .await;
+    let database = fixture.store.client.database(&fixture.database);
+    let admin = fixture.store.client.database("admin");
+    let (root, policy) = policy();
+    let idle = root.available_bytes();
+    let mut session = fixture.store.client.start_session().await.unwrap();
+    crate::store::sandbox_mongo::start_transaction(&mut session)
+        .await
+        .unwrap();
+    admin
+        .run_command(
+            doc! {"configureFailPoint":"failCommand", "mode":{"times":1}, "data":{
+                "failCommands":["find"], "appName":app_name, "errorCode":112,
+                "errorLabels":["TransientTransactionError"],
+            }},
+        )
+        .await
+        .unwrap();
+    let result = writer_gate::read_admitted(
+        &database,
+        GateName::Segments,
+        &mut session,
+        &policy,
+        gate_plan(),
+    )
+    .unwrap()
+    .await;
+    admin
+        .run_command(doc! {"configureFailPoint":"failCommand", "mode":"off"})
+        .await
+        .unwrap();
+    let error = result.unwrap().transpose().unwrap_err();
+    let ReadFailure::Driver(driver) = &*error else {
+        panic!("driver classification changed")
+    };
+    assert!(driver.contains_label("TransientTransactionError"));
+    let pointer = std::ptr::from_ref(driver.kind.as_ref());
+    let moved = error.map(|error| match error {
+        ReadFailure::Driver(driver) => driver,
+        _ => unreachable!(),
+    });
+    assert_eq!(std::ptr::from_ref(moved.kind.as_ref()), pointer);
+    assert!(moved.belongs_to(&policy));
+    assert!(root.available_bytes() < idle);
+    drop(moved);
+    assert_eq!(root.available_bytes(), idle);
+    let _ = session.abort_transaction().await;
+    drop((session, admin, database));
+    fixture.finish().await;
+}

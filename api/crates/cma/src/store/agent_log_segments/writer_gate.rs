@@ -1,8 +1,12 @@
 //! Durable, independent rollout cohorts. Publication admission writes the same
 //! gate document as closure, so a stale process cannot admit through an old read.
+use layer2_core::sandbox::ingress_ownership::{
+    sizing::shared_owner_bytes, AdmittedError, AdmittedOperation, AllocationPlan, IngressClass,
+    IngressOwnershipPolicy, SharedOwned,
+};
 use layer2_core::sandbox::{store::SandboxStoreError, Agent};
 use mongodb::{
-    bson::{self, doc, Document},
+    bson::{self, doc, Document, RawDocumentBuf},
     ClientSession, Database,
 };
 use serde::{Deserialize, Serialize};
@@ -10,6 +14,11 @@ use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 
 use crate::store::agent_log_integrity::TransactionLogError;
+use crate::store::ingress_reads::{
+    error::{self, ReadFailure},
+    layout::{BsonLayout, LayoutError},
+    row::{self, ConversionPlan, RowSchema},
+};
 use crate::store::sandbox_mongo::is_duplicate_key;
 
 pub(in crate::store) const COLLECTION: &str = "agent_log_gates";
@@ -173,6 +182,87 @@ pub(in crate::store) async fn read(
         .map(|row| GateRecord::read(name, row))
         .transpose()
         .map_err(Into::into)
+}
+
+type GateRead<'a> = AdmittedOperation<'a, Result<Option<SharedOwned<GateRecord>>, ReadFailure>>;
+
+/// The read plan covers query/raw response/driver storage. Driver bounds and
+/// detached cleanup require their separately qualified port.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "enabled recording awaits driver resource custody")
+)]
+pub(in crate::store) fn read_admitted<'a>(
+    database: &'a Database,
+    name: GateName,
+    session: &'a mut ClientSession,
+    policy: &'a IngressOwnershipPolicy,
+    read_plan: AllocationPlan,
+) -> Result<GateRead<'a>, AdmittedError> {
+    AdmittedOperation::from_owned(
+        policy,
+        IngressClass::Transformation,
+        AllocationPlan::checked("gate read result", &[shared_owner_bytes::<ReadFailure>()])?,
+        move |scope| async move {
+            let read = || async {
+                database
+                    .collection::<RawDocumentBuf>(COLLECTION)
+                    .find_one(doc! {"_id":name.as_str()})
+                    .session(session)
+                    .await
+            };
+            let result = match name {
+                GateName::Segments => {
+                    row::load_with_error::<GateSchema<false>, _, _>(policy, read_plan, read).await
+                }
+                GateName::CapacityRecovery => {
+                    row::load_with_error::<GateSchema<true>, _, _>(policy, read_plan, read).await
+                }
+            };
+            error::finish(result, &scope)
+        },
+    )
+}
+
+struct GateSchema<const RECOVERY: bool>;
+
+impl<const RECOVERY: bool> RowSchema for GateSchema<RECOVERY> {
+    type Value = GateRecord;
+    const INVALID_RAW: &'static str = "invalid raw rollout gate";
+
+    fn plan(layout: BsonLayout) -> Result<ConversionPlan, LayoutError> {
+        // Domain arrays hold Strings or Slots. The layout includes their growth
+        // overlap and all string/binary storage, even before validation fails.
+        let retained = layout.domain_bytes(
+            size_of::<String>().max(size_of::<slots::Slot>()),
+            shared_owner_bytes::<GateRecord>(),
+        )?;
+        // BSON/serde copies, partial output and diagnostics overlap. Validation
+        // sets hold at most 64 cohort references or two holders/fences; 8192
+        // covers their old/new hash tables, control bytes and minimum buckets.
+        let temporary = layout
+            .bson_bytes()?
+            .checked_mul(3)
+            .and_then(|bytes| retained.checked_mul(2)?.checked_add(bytes))
+            .and_then(|bytes| layout.wire_bytes.checked_mul(4)?.checked_add(bytes))
+            .and_then(|bytes| bytes.checked_add(8192))
+            .ok_or(LayoutError::Structure)?;
+        Ok(ConversionPlan {
+            temporary_bytes: temporary,
+            retained_bytes: retained,
+        })
+    }
+
+    fn decode(row: Document) -> Result<GateRecord, SandboxStoreError> {
+        GateRecord::read(
+            if RECOVERY {
+                GateName::CapacityRecovery
+            } else {
+                GateName::Segments
+            },
+            row,
+        )
+    }
 }
 
 /// Absence is closed. A successfully selected gate must be write-fenced in the

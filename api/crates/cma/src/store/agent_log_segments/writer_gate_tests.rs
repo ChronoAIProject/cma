@@ -184,3 +184,68 @@ fn persisted_slots_are_bounded_unique_and_fenced() {
     gate.slots[0].fence = 0;
     assert!(slots::validate(&gate).is_err());
 }
+
+#[test]
+fn admitted_gate_schema_keeps_expected_name_and_container_storage() {
+    use layer2_core::sandbox::ingress_ownership::{ClassBounds, IngressBudget};
+    let root = IngressBudget::new(128 * 1024 * 1024);
+    let plan = |bytes| AllocationPlan::checked("gate test", &[bytes]).unwrap();
+    let policy = IngressOwnershipPolicy::new(
+        root.clone(),
+        ClassBounds::new(
+            root.capacity_bytes(),
+            plan(1024 * 1024),
+            plan(96 * 1024 * 1024),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let idle = root.available_bytes();
+    for count in [0, 1, 4, 8, 32, 64] {
+        let gate = GateRecord {
+            name: GateName::Segments,
+            format_version: 1,
+            revision: 1,
+            admission_fence: 2,
+            policy: Policy {
+                agents: (0..count).map(|n| format!("{n:0512}")).collect(),
+                ..Policy::default()
+            },
+            slots: (1..=2)
+                .map(|fence| slots::Slot {
+                    holder: format!("{fence:01200}"),
+                    fingerprint: super::super::digest::binary(vec![1; 32]),
+                    fence,
+                    expires_at: bson::DateTime::from_millis(1),
+                })
+                .collect(),
+        };
+        let raw = RawDocumentBuf::try_from(&bson::serialize_to_document(&gate).unwrap()).unwrap();
+        let value = row::decode::<GateSchema<false>>(&raw, &policy).unwrap();
+        assert_eq!(*value, gate);
+        let owned_bytes = shared_owner_bytes::<GateRecord>()
+            + value.policy.agents.capacity() * size_of::<String>()
+            + value.policy.owners.capacity() * size_of::<String>()
+            + value
+                .policy
+                .agents
+                .iter()
+                .map(String::capacity)
+                .sum::<usize>()
+            + value.policy.cohort_seed.capacity()
+            + value.slots.capacity() * size_of::<slots::Slot>()
+            + value
+                .slots
+                .iter()
+                .map(|slot| slot.holder.capacity() + slot.fingerprint.bytes.capacity())
+                .sum::<usize>();
+        assert!(
+            policy.bounds().data_bytes() - policy.budget(IngressClass::Data).available_bytes()
+                >= owned_bytes
+        );
+        let wrong_name = row::decode::<GateSchema<true>>(&raw, &policy).unwrap_err();
+        assert!(matches!(wrong_name, row::RowError::Domain(_)));
+        drop((wrong_name, value));
+        assert_eq!(root.available_bytes(), idle);
+    }
+}
