@@ -319,3 +319,42 @@ fn evidence_export_refuses_writable_sources_without_output_or_recovery() {
         b"unpublished authority"
     );
 }
+
+#[test]
+fn evidence_verification_requires_artifact_and_pin_without_runtime_configuration() {
+    let fixture = Fixture::new();
+    for args in [
+        vec!["--verify-ledger-v1-evidence"],
+        vec!["--verify-ledger-v1-evidence", "one"],
+        vec!["--verify-ledger-v1-evidence", "one", "two", "three"],
+    ] {
+        let result = fixture.run(&args, false);
+        assert_eq!(result.status.code(), Some(2));
+        assert!(result.stdout.is_empty());
+        assert!(String::from_utf8(result.stderr)
+            .unwrap()
+            .contains("ledger_evidence_verification_arguments_invalid"));
+    }
+    let result = fixture.run(
+        &[
+            "--verify-ledger-v1-evidence",
+            fixture.0.to_str().unwrap(),
+            "invalid",
+        ],
+        false,
+    );
+    assert_eq!(result.status.code(), Some(2));
+    assert!(result.stdout.is_empty());
+    let diagnostic = String::from_utf8(result.stderr).unwrap();
+    assert!(diagnostic.contains("ledger_evidence_verification_invalid"));
+    assert!(!diagnostic.contains(fixture.0.to_str().unwrap()));
+    assert!(!diagnostic.contains("configuration"));
+    assert_eq!(
+        std::fs::read(fixture.0.join("home/wanted-file")).unwrap(),
+        b"preserved home bytes"
+    );
+    assert_eq!(
+        std::fs::read(fixture.0.join("state/mutation-authority/.authority-1.tmp")).unwrap(),
+        b"unpublished authority"
+    );
+}
