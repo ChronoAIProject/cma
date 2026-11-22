@@ -92,7 +92,8 @@ export function TriggerWizard({
   }, [command.locked, placementLocked, imageResolving, onLock]);
   const targetsKey = JSON.stringify(content.target);
   const profileRequestKey = `${targetsKey}:${String(profileReload)}`;
-  const profileBusy = reconciling || profilesKey !== profileRequestKey;
+  const profileBusy =
+    reconciling || (content.target.inline === undefined && profilesKey !== profileRequestKey);
   useEffect(() => {
     const request = new AbortController();
     activeProfile.current?.abort();
