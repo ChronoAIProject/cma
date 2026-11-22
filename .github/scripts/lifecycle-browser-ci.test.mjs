@@ -140,3 +140,93 @@ for (const suite of suites) {
       assert.throws(() => verify(workflow, config.replace(from, to), suite));
   });
 }
+
+const documentConfig = readFileSync(
+  new URL("../../web/e2e/documents.config.ts", import.meta.url),
+  "utf8",
+);
+const documentFiles = [
+  "documents-unsaved.check.ts",
+  "documents-legacy-history.check.ts",
+  "documents-creation.check.ts",
+];
+const documentCommand = `npx playwright test --config e2e/documents.config.ts ${documentFiles.join(" ")}`;
+
+function verifyDocuments(job, config) {
+  const step = job
+    .split('name: "Document navigation and creation recovery"')[1]
+    ?.split("\n      -")[0];
+  assert.ok(step, "Web must execute the document recovery browser contracts");
+  assert.equal(step.match(/^\s*run: "([^"\n]+)"\s*$/m)?.[1], documentCommand);
+  assert.doesNotMatch(step, /continue-on-error|\bif:/);
+  assert.match(step, /timeout-minutes: 5/);
+  const build = job.indexOf('name: "Production build"');
+  assert.ok(build >= 0 && build < job.indexOf(documentCommand));
+  const selection = config.match(/testMatch:\s*\[([\s\S]*?)\]/)?.[1] ?? "";
+  const selected = [...selection.matchAll(/'([^']+)'/g)].map(
+    (match) => match[1],
+  );
+  for (const file of documentFiles)
+    assert.ok(selected.includes(file), `Document config must discover ${file}`);
+  for (const contract of [
+    /workers: 1/,
+    /retries: 0/,
+    /forbidOnly: true/,
+    /reuseExistingServer: false/,
+    /--strictPort/,
+  ])
+    assert.match(config, contract);
+}
+
+test("Web executes every selected document recovery file after the production build", () =>
+  verifyDocuments(workflow, documentConfig));
+test("document recovery cannot be omitted, filtered, masked or retried", () => {
+  for (const file of documentFiles) {
+    assert.throws(() =>
+      verifyDocuments(workflow.replace(` ${file}`, ""), documentConfig),
+    );
+    assert.throws(() =>
+      verifyDocuments(
+        workflow,
+        documentConfig.replace(`'${file}'`, "'omitted.check.ts'"),
+      ),
+    );
+  }
+  for (const suffix of [
+    " --grep subset",
+    " --project subset",
+    " --shard 1/2",
+    " --retries=1",
+    " --pass-with-no-tests",
+    " --list",
+    " || true",
+  ])
+    assert.throws(() =>
+      verifyDocuments(
+        workflow.replace(documentCommand, documentCommand + suffix),
+        documentConfig,
+      ),
+    );
+  assert.throws(() =>
+    verifyDocuments(workflow.replace(documentCommand, ""), documentConfig),
+  );
+  for (const modifier of ["if: false", "continue-on-error: true"])
+    assert.throws(() =>
+      verifyDocuments(
+        workflow.replace(
+          `run: "${documentCommand}"`,
+          `${modifier}\n        run: "${documentCommand}"`,
+        ),
+        documentConfig,
+      ),
+    );
+  for (const [from, to] of [
+    ["workers: 1", "workers: 4"],
+    ["retries: 0", "retries: 1"],
+    ["forbidOnly: true", "forbidOnly: false"],
+    ["reuseExistingServer: false", "reuseExistingServer: true"],
+  ])
+    assert.throws(() =>
+      verifyDocuments(workflow, documentConfig.replace(from, to)),
+    );
+});
