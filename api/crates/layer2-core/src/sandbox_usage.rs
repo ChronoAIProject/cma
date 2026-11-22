@@ -218,6 +218,16 @@ pub fn observe_funded_checkpoint(
     observe_inner(previous, sandbox, source_seq, at, true, true)
 }
 
+/// Retained evidence includes observed zero allocation for every owner.
+pub fn observe_capture_checkpoint(
+    previous: Option<&SandboxUsage>,
+    sandbox: &Sandbox,
+    source_seq: u64,
+    at: &str,
+) -> Result<Option<(SandboxUsage, UsageEvent)>, UsageError> {
+    observe_inner(previous, sandbox, source_seq, at, true, true)
+}
+
 fn observe_inner(
     previous: Option<&SandboxUsage>,
     sandbox: &Sandbox,
