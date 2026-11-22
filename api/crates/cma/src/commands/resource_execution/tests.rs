@@ -4,6 +4,7 @@ use layer2_core::resource_access::execution::*;
 use std::sync::Mutex;
 
 mod fixtures;
+mod mongo;
 mod participants;
 mod store;
 use fixtures::*;
