@@ -4,6 +4,12 @@ import { Modal } from '../ui/Modal';
 
 const STATUS = {
   authorized: 'NyxID confirms the account grant is active.',
+  partial:
+    'The account grant is limited to selected services. Other services may need authorization.',
+  expired:
+    'The account grant has expired. Authorize required services from your draft to continue.',
+  not_granted:
+    'No current account grant was found. It may not have been granted or may have been revoked.',
   revoked: 'NyxID confirms the account grant was revoked.',
   unknown: 'The account grant status could not be verified.',
 } as const;

@@ -1,7 +1,7 @@
 import { connectionUrl, type ConnectionTarget } from '../connections/client';
 
 type AccountGrant = {
-  readonly status: 'authorized' | 'revoked' | 'unknown';
+  readonly status: 'authorized' | 'partial' | 'expired' | 'not_granted' | 'revoked' | 'unknown';
   readonly managementUrl?: string;
 };
 
@@ -15,7 +15,13 @@ export async function accountGrant(owner: string, signal: AbortSignal): Promise<
   const body = await response.json();
   if (body?.owner !== owner) return { status: 'unknown' };
   const status =
-    body.status === 'authorized' || body.status === 'revoked' ? body.status : 'unknown';
+    body.status === 'authorized' ||
+    body.status === 'partial' ||
+    body.status === 'expired' ||
+    body.status === 'not_granted' ||
+    body.status === 'revoked'
+      ? body.status
+      : 'unknown';
   const managementUrl =
     typeof body.management_url === 'string' ? connectionUrl(body.management_url) : undefined;
   return { status, managementUrl };

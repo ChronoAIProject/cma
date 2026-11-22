@@ -24,6 +24,7 @@ use super::{
     AuthMode, AuthState, AUTH_COOKIE, AUTH_COOKIE_DOMAIN, LOGIN_ATTEMPT_LIFETIME,
 };
 
+mod nyxid;
 mod routes;
 pub(crate) use routes::router;
 pub(crate) const CALLBACK_PATH: &str = "/auth/service-authorization/callback";
@@ -42,9 +43,19 @@ pub(crate) struct RecoveryIntent {
 
 pub(crate) struct VerifiedAccountGrant {
     pub subject: SubjectId,
-    /// False requires a verified revocation, even if no active grant is present.
-    pub authorized: bool,
+    pub status: GrantStatus,
     pub management_url: Option<Url>,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum GrantStatus {
+    Authorized,
+    Partial,
+    Expired,
+    NotGranted,
+    #[cfg(test)]
+    Revoked,
 }
 
 pub(crate) struct ConsentIdentity {
@@ -59,19 +70,26 @@ pub(crate) struct ConsentIdentity {
 pub(crate) trait GrantAuthority: Send + Sync {
     fn issuer(&self) -> Option<&Url>;
 
+    fn authorization_origin(&self) -> Option<&Url> {
+        self.issuer()
+    }
+
     async fn account(
         &self,
+        auth: &AuthState,
         subject: &SubjectId,
     ) -> Result<Option<VerifiedAccountGrant>, StoreError>;
 
     /// Authoritative, complete missing subset for this issuer, subject and set.
     async fn missing(
         &self,
+        auth: &AuthState,
         intent: &RecoveryIntent,
     ) -> Result<Option<BTreeSet<ServiceId>>, StoreError>;
 
     async fn consent_url(
         &self,
+        auth: &AuthState,
         intent: &RecoveryIntent,
         state: &str,
         s256_challenge: &str,
@@ -81,6 +99,7 @@ pub(crate) trait GrantAuthority: Send + Sync {
     /// never replaces identity credentials belonging to the original session.
     async fn redeem(
         &self,
+        auth: &AuthState,
         intent: &RecoveryIntent,
         code: &str,
         verifier: &SecretValue,
@@ -95,16 +114,25 @@ impl GrantAuthority for Unsupported {
         None
     }
 
-    async fn account(&self, _: &SubjectId) -> Result<Option<VerifiedAccountGrant>, StoreError> {
+    async fn account(
+        &self,
+        _: &AuthState,
+        _: &SubjectId,
+    ) -> Result<Option<VerifiedAccountGrant>, StoreError> {
         Ok(None)
     }
 
-    async fn missing(&self, _: &RecoveryIntent) -> Result<Option<BTreeSet<ServiceId>>, StoreError> {
+    async fn missing(
+        &self,
+        _: &AuthState,
+        _: &RecoveryIntent,
+    ) -> Result<Option<BTreeSet<ServiceId>>, StoreError> {
         Ok(None)
     }
 
     async fn consent_url(
         &self,
+        _: &AuthState,
         _: &RecoveryIntent,
         _: &str,
         _: &str,
@@ -114,6 +142,7 @@ impl GrantAuthority for Unsupported {
 
     async fn redeem(
         &self,
+        _: &AuthState,
         _: &RecoveryIntent,
         _: &str,
         _: &SecretValue,
@@ -123,12 +152,19 @@ impl GrantAuthority for Unsupported {
 }
 
 impl AuthState {
-    pub(crate) fn with_service_authorization(mut self: Arc<Self>, enabled: bool) -> Arc<Self> {
+    pub(crate) fn with_service_authorization(
+        mut self: Arc<Self>,
+        enabled: bool,
+        config: Option<&crate::config::ServiceAuthorizationConfig>,
+    ) -> Arc<Self> {
         if enabled && matches!(self.mode, AuthMode::Provider { .. }) {
-            // Live NyxID capability stays unavailable until its contract is verified.
+            let provider: Arc<dyn GrantAuthority> = config
+                .and_then(|config| nyxid::Nyxid::new(&self, config))
+                .map(|provider| Arc::new(provider) as Arc<dyn GrantAuthority>)
+                .unwrap_or_else(|| Arc::new(Unsupported));
             Arc::get_mut(&mut self)
                 .expect("configure before sharing")
-                .service_authorization = Some(Arc::new(Unsupported));
+                .service_authorization = Some(provider);
         }
         self
     }
@@ -280,7 +316,7 @@ pub(crate) async fn begin(
     if intent.required.is_empty() {
         return Err(RecoveryError::Changed);
     }
-    let missing = provider_evidence("required_grant", provider.missing(&intent))
+    let missing = provider_evidence("required_grant", provider.missing(auth, &intent))
         .await
         .filter(|missing| missing.is_subset(&intent.required))
         .ok_or(RecoveryError::Unknown)?;
@@ -293,10 +329,17 @@ pub(crate) async fn begin(
     let challenge = code_challenge(&verifier);
     let url = provider_evidence(
         "incremental_consent",
-        provider.consent_url(&intent, &state, &challenge),
+        provider.consent_url(auth, &intent, &state, &challenge),
     )
     .await
-    .filter(|url| provider_url(auth, url))
+    .filter(|url| {
+        url.scheme() == "https"
+            && url.username().is_empty()
+            && url.password().is_none()
+            && provider
+                .authorization_origin()
+                .is_some_and(|origin| origin.origin() == url.origin())
+    })
     .ok_or(RecoveryError::Unknown)?;
     live_session(auth, &key, subject).await?;
     let now = SystemTime::now();

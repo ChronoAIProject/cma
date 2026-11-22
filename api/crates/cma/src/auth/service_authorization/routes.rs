@@ -56,15 +56,14 @@ async fn account(
     let subject = &context.caller.subject;
     let key = browser_key(&headers)?;
     live_session(&auth, &key, subject).await?;
-    let grant = provider_evidence("account_grant", provider.account(subject))
+    let grant = provider_evidence("account_grant", provider.account(&auth, subject))
         .await
         .filter(|grant| &grant.subject == subject);
     live_session(&auth, &key, subject).await?;
     let mut body = serde_json::json!({
         "owner": subject.as_str(),
-        "status": grant.as_ref().map_or("unknown", |grant| {
-            if grant.authorized { "authorized" } else { "revoked" }
-        }),
+        "status": grant.as_ref().map(|grant| serde_json::json!(grant.status))
+            .unwrap_or_else(|| serde_json::json!("unknown")),
     });
     if let Some(url) = grant
         .and_then(|grant| grant.management_url)
@@ -108,7 +107,7 @@ async fn callback(
         || callback
             .iss
             .as_deref()
-            .is_some_and(|iss| iss != issuer.as_str())
+            .is_some_and(|iss| Url::parse(iss).ok().as_ref() != Some(issuer))
     {
         return Err(RecoveryError::Invalid);
     }
@@ -133,7 +132,7 @@ async fn callback(
     }
     live_session(&auth, &key, &intent.subject).await?;
     let outcome = match callback.code {
-        Some(code) => complete(provider.as_ref(), &attempt.verifier, &intent, &code).await?,
+        Some(code) => complete(&auth, provider.as_ref(), &attempt.verifier, &intent, &code).await?,
         None if callback.error.as_deref() == Some("access_denied") => Outcome::Cancelled,
         None => Outcome::Unknown,
     };
@@ -142,20 +141,24 @@ async fn callback(
 }
 
 async fn complete(
+    auth: &AuthState,
     provider: &dyn GrantAuthority,
     verifier: &SecretValue,
     intent: &RecoveryIntent,
     code: &str,
 ) -> Result<Outcome, RecoveryError> {
-    let Some(identity) =
-        provider_evidence("redeem_consent", provider.redeem(intent, code, verifier)).await
+    let Some(identity) = provider_evidence(
+        "redeem_consent",
+        provider.redeem(auth, intent, code, verifier),
+    )
+    .await
     else {
         return Ok(Outcome::Unknown);
     };
     if identity.subject != intent.subject || identity.issuer != intent.issuer {
         return Err(RecoveryError::Forbidden);
     }
-    match provider_evidence("required_grant_readback", provider.missing(intent)).await {
+    match provider_evidence("required_grant_readback", provider.missing(auth, intent)).await {
         Some(missing) if missing.is_empty() => Ok(Outcome::Verified),
         Some(missing) if missing.is_subset(&intent.required) => Ok(Outcome::Incomplete),
         _ => Ok(Outcome::Unknown),

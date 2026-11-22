@@ -38,6 +38,18 @@ describe('account menu', () => {
   });
 
   it.each([
+    {
+      status: 'partial',
+      text: 'The account grant is limited to selected services. Other services may need authorization.',
+    },
+    {
+      status: 'expired',
+      text: 'The account grant has expired. Authorize required services from your draft to continue.',
+    },
+    {
+      status: 'not_granted',
+      text: 'No current account grant was found. It may not have been granted or may have been revoked.',
+    },
     { status: 'unknown', text: 'The account grant status could not be verified.' },
     { status: 'revoked', text: 'NyxID confirms the account grant was revoked.' },
   ])(
