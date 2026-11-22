@@ -33,6 +33,20 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 const SILENT_SIGN_IN_TIMEOUT_MS = 10000;
+const MAX_RETRY_DELAY_MS = 2_147_483_647;
+
+function serverRetryFloor(state: AuthState): number {
+  const retry = state.status === 'error' ? state.retry : undefined;
+  const delay = retry?.kind === 'http' ? retry.retryAfterMs : undefined;
+  return retry?.kind === 'http' &&
+    [429, 502, 503, 504].includes(retry.status) &&
+    typeof delay === 'number' &&
+    Number.isSafeInteger(delay) &&
+    delay > 0 &&
+    delay <= MAX_RETRY_DELAY_MS
+    ? delay
+    : 0;
+}
 
 interface AuthProviderProps {
   readonly provider: AuthProvider;
@@ -44,6 +58,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
   const currentRead = useRef(0);
   const [outage, setOutage] = useState<Extract<AuthState, { status: 'error' }>>();
   const refreshRef = useRef<() => void>(() => {});
+  const suspendRecoveryRef = useRef<() => (next?: AuthState) => void>(() => () => {});
   const retry = useCallback(() => refreshRef.current(), []);
 
   useEffect(() => {
@@ -53,19 +68,47 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
     let inFlight = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let failures = 0;
+    let retryNotBefore = 0;
+    let suspended = false;
     let last: AuthState = { status: 'checking' };
     let pendingNavigation = false;
     let leaving: ReturnType<typeof setTimeout> | undefined;
 
-    const refresh = (mayNavigate = false) => {
-      if (!live || inFlight || leaving !== undefined) return;
+    suspendRecoveryRef.current = () => {
+      suspended = true;
       clearTimeout(timer);
+      clearTimeout(leaving);
+      leaving = undefined;
+      retryNotBefore = 0;
+      failures = 0;
+      pendingNavigation = false;
+      last = { status: 'checking' };
+      return (next) => {
+        if (next !== undefined) {
+          retryNotBefore = performance.now() + serverRetryFloor(next);
+          if (next.status !== 'error') last = next;
+        }
+        suspended = false;
+      };
+    };
+    const refresh = (mayNavigate = false) => {
+      if (!live || inFlight || suspended || leaving !== undefined) return;
+      clearTimeout(timer);
+      const remaining = retryNotBefore - performance.now();
+      if (remaining > 0) {
+        timer = setTimeout(
+          () => refresh(mayNavigate),
+          Math.min(MAX_RETRY_DELAY_MS, Math.ceil(remaining)),
+        );
+        return;
+      }
       inFlight = true;
       const version = ++currentRead.current;
       void provider
         .current()
         .then((next) => {
           if (live && version === currentRead.current) {
+            retryNotBefore = performance.now() + serverRetryFloor(next);
             if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
             else if (next.status === 'anonymous') {
               releaseNavigationGuard();
@@ -95,11 +138,17 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
               setOutage(next);
               // Retain mounted views and drafts. This is presentation only;
               // every protected operation still requires server authorization.
-              setState((previous) => (previous.status === 'authenticated' ? previous : next));
+              setState(last.status === 'authenticated' ? last : next);
               const delay = Math.min(3000 * 2 ** Math.min(failures++, 4), 30000);
               timer = setTimeout(
                 () => refresh(mayNavigate),
-                delay + Math.floor(Math.random() * 501),
+                Math.min(
+                  MAX_RETRY_DELAY_MS,
+                  Math.max(
+                    delay + Math.floor(Math.random() * 501),
+                    Math.ceil(retryNotBefore - performance.now()),
+                  ),
+                ),
               );
             } else {
               failures = 0;
@@ -121,7 +170,7 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
         })
         .finally(() => {
           inFlight = false;
-          if (live && pendingNavigation) {
+          if (live && version === currentRead.current && pendingNavigation) {
             pendingNavigation = false;
             refresh(true);
           }
@@ -149,9 +198,11 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
 
     return () => {
       live = false;
+      currentRead.current += 1;
       clearTimeout(timer);
       clearTimeout(leaving);
       refreshRef.current = () => {};
+      suspendRecoveryRef.current = () => () => {};
       window.removeEventListener('popstate', navigation);
       window.removeEventListener('cma:navigate', navigation);
       window.removeEventListener('focus', backgroundRefresh);
@@ -162,7 +213,9 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
 
   const signIn = useCallback(
     async (returnTo?: string, options?: SignInOptions) => {
+      const resume = suspendRecoveryRef.current();
       const version = ++currentRead.current;
+      let next: AuthState | undefined;
       try {
         const current = parseRoute(window.location.pathname);
         if (current.kind === 'agent_share') {
@@ -174,7 +227,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
           returnTo = routePath(current);
         }
         await provider.signIn(returnTo, options);
-        const next = await provider.current();
+        if (version !== currentRead.current) return;
+        next = await provider.current();
         if (version !== currentRead.current) return;
         if (next.status === 'authenticated') retainTaskViewer(next.user.id);
         if (next.status === 'authenticated') retainAgentDraftOwner(next.user.id);
@@ -187,6 +241,8 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
           status: 'error',
           message: error instanceof Error ? error.message : 'Sign-in could not be started.',
         });
+      } finally {
+        if (version === currentRead.current) resume(next);
       }
     },
     [provider],
@@ -194,7 +250,9 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
 
   const signOut = useCallback(async () => {
     releaseNavigationGuard();
+    const resume = suspendRecoveryRef.current();
     const version = ++currentRead.current;
+    let next: AuthState | undefined;
     try {
       retainTaskViewer();
       retainAgentDraftOwner();
@@ -202,13 +260,16 @@ export function AuthContextProvider({ provider, children }: AuthProviderProps) {
       await provider.signOut();
       if (version !== currentRead.current) return;
       setOutage(undefined);
-      setState({ status: 'anonymous' });
+      next = { status: 'anonymous' };
+      setState(next);
     } catch (error: unknown) {
       if (version !== currentRead.current) return;
       setState({
         status: 'error',
         message: error instanceof Error ? error.message : 'Sign-out did not complete.',
       });
+    } finally {
+      if (version === currentRead.current) resume(next);
     }
   }, [provider]);
 
