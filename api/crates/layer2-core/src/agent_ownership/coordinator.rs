@@ -90,6 +90,8 @@ impl OwnershipCoordinator {
         self.failed.subscribe()
     }
 
+    /// Returns existing current authority. A new acquisition is declined with
+    /// None, without a store call, while the latest heartbeat tick was skipped.
     pub async fn acquire(&self, id: &AgentId) -> Result<Option<Arc<Authority>>, OwnershipError> {
         if !self.is_ready() {
             return Err(OwnershipError::Stale);
@@ -107,6 +109,11 @@ impl OwnershipCoordinator {
             Some(_) => return Err(OwnershipError::Stale),
             None => None,
         };
+        // A skipped heartbeat may begin an outage that ends in failure: adopt
+        // nothing new until a heartbeat succeeds. Existing authority stays.
+        if self.skipped_heartbeats.load(Ordering::Acquire) > 0 {
+            return Ok(None);
+        }
         let started = Instant::now();
         let membership = bounded(self.store.membership()).await?;
         let Some(lease) = bounded(self.store.acquire(id, &self.instance_id)).await? else {

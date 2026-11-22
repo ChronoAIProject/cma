@@ -84,6 +84,33 @@ async fn skipped_ticks_extend_neither_membership_nor_any_authority_then_fail_as_
 }
 
 #[tokio::test(start_paused = true)]
+async fn skipped_heartbeat_declines_new_acquisition_until_a_heartbeat_succeeds() {
+    for mode in [1, 6, 7] {
+        let fixture = renewing_fixture().await;
+        let new = AgentId("agent-new".into());
+        tokio::time::advance(TICK).await;
+        fixture.store.heartbeat_mode.store(mode, Ordering::SeqCst);
+        assert!(fixture.manager.maintain().await.unwrap().is_empty());
+        // Existing authority is still returned; nothing new is adopted.
+        let existing = fixture.owners[0].clone();
+        let held = fixture.manager.acquire(&existing.token.agent_id).await;
+        assert!(Arc::ptr_eq(&held.unwrap().unwrap(), &existing));
+        assert!(fixture.manager.acquire(&new).await.unwrap().is_none());
+        assert_eq!(fixture.store.owner(&new).await.unwrap(), None);
+        assert!(fixture.manager.local(&new).await.is_none());
+        assert_serving(&fixture);
+
+        fixture.store.heartbeat_mode.store(0, Ordering::SeqCst);
+        tokio::time::advance(TICK).await;
+        fixture.manager.maintain().await.unwrap();
+        let adopted = fixture.manager.acquire(&new).await.unwrap().unwrap();
+        assert!(adopted.is_current());
+        let lease = fixture.store.owner(&new).await.unwrap().unwrap();
+        assert_eq!(lease.token, adopted.token);
+    }
+}
+
+#[tokio::test(start_paused = true)]
 async fn heartbeat_failure_at_or_after_the_established_deadline_is_fatal() {
     // The bounded call ends 2 s after it starts; membership ends at 15 s.
     for start_ms in [12_999, 13_000, 13_001] {
