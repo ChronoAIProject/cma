@@ -9,7 +9,18 @@ import { readDraftRecovery } from './draftRecovery';
 import { ReviewCard } from './ReviewCard';
 import '../test/connectedAccounts';
 
-type Outcome = 'lost' | 'setup_required' | 'unavailable_setup' | 'accepted' | 401 | 403 | 404 | 503;
+type Outcome =
+  | 'lost'
+  | 'setup_required'
+  | 'unavailable_setup'
+  | 'store_failed'
+  | 'idempotency_in_flight'
+  | 'idempotency_recovery_required'
+  | 'accepted'
+  | 401
+  | 403
+  | 404
+  | 503;
 const unexpected: string[] = [];
 
 function fixture(outcomes: Outcome[]) {
@@ -51,6 +62,15 @@ function fixture(outcomes: Outcome[]) {
         return json({ title: 'Sign in again.', code: 'sandbox_credential_setup_required' }, 409);
       if (outcome === 'unavailable_setup')
         return json({ title: 'Unavailable', code: 'sandbox_credential_setup_required' }, 503);
+      if (
+        outcome === 'store_failed' ||
+        outcome === 'idempotency_in_flight' ||
+        outcome === 'idempotency_recovery_required'
+      )
+        return json(
+          { title: 'Command receipt unavailable', code: outcome },
+          outcome === 'store_failed' ? 503 : 409,
+        );
       if (typeof outcome === 'number')
         return json(
           {
@@ -232,4 +252,50 @@ it('control: remount and a different account alone do not discard an unresolved 
   await waitFor(() => expect(test.completed).toHaveBeenCalledOnce());
   expect(test.sent[2]).toEqual(test.sent[1]);
   expect(readDraftRecovery(PUBLIC_TRUST.id)).toBeUndefined();
+});
+
+it('retains an unwritten Start receipt through pending recovery and a Resolving state read', async () => {
+  const test = fixture(['store_failed', 'idempotency_in_flight', 'idempotency_recovery_required']);
+  const actor = userEvent.setup();
+  test.mount();
+  await actor.click(screen.getByRole('checkbox'));
+  await clickStart(actor);
+  const retained = readDraftRecovery(PUBLIC_TRUST.id)!;
+  expect(retained.owner).toBe(PUBLIC_USER.id);
+  expect(retained.confirmedDigest).toBe('approved-one');
+  expect(retained.command?.key).toBe(test.sent[0]?.key);
+  expect(JSON.stringify(retained.command?.body)).toBe(test.sent[0]?.body);
+  expect(test.completed).not.toHaveBeenCalled();
+  await clickStart(actor);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Try again' })).toBeEnabled());
+  expect(test.sent[1]).toEqual(test.sent[0]);
+  expect(readDraftRecovery(PUBLIC_TRUST.id)).toEqual(retained);
+  expect(test.completed).not.toHaveBeenCalled();
+  const advanced = { ...PUBLIC_RECORD, revision: 2, event_head: 3 };
+  vi.mocked(test.client.requests.read).mockResolvedValueOnce(advanced);
+  await clickStart(actor);
+  await waitFor(() => expect(test.completed).toHaveBeenCalledWith(advanced));
+  expect(test.client.requests.read).toHaveBeenCalledWith(PUBLIC_TRUST.id);
+  expect(test.sent[2]).toEqual(test.sent[0]);
+  expect(test.sent).toHaveLength(3);
+  expect(readDraftRecovery(PUBLIC_TRUST.id)).toEqual(retained);
+  expect(screen.getByRole('checkbox')).toBeChecked();
+  expect(screen.getByRole('checkbox')).toBeDisabled();
+  expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
+});
+
+it('replays the original Start after a receipt acknowledgement error without replacing its key', async () => {
+  const test = fixture(['store_failed', 'accepted']);
+  const actor = userEvent.setup();
+  test.mount();
+  await actor.click(screen.getByRole('checkbox'));
+  await clickStart(actor);
+  expect(readDraftRecovery(PUBLIC_TRUST.id)?.command?.key).toBe(test.sent[0]?.key);
+  expect(test.completed).not.toHaveBeenCalled();
+  await clickStart(actor);
+  await waitFor(() => expect(test.completed).toHaveBeenCalledWith(PUBLIC_RECORD));
+  expect(test.sent).toHaveLength(2);
+  expect(test.sent[1]).toEqual(test.sent[0]);
+  expect(readDraftRecovery(PUBLIC_TRUST.id)).toBeUndefined();
+  expect(test.client.requests.createOrResume).not.toHaveBeenCalled();
 });

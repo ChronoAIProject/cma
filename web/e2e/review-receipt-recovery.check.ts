@@ -158,3 +158,125 @@ test('LOCAL Launch receipt recovery retains the original command through auth an
     contentType: 'application/json',
   });
 });
+
+for (const receipt of ['unwritten', 'saved'] as const) {
+  test(`LOCAL ${receipt} Launch receipt preserves command identity after a completion error`, async ({
+    page,
+    baseURL,
+  }, info) => {
+    const boundary = new LocalStartup();
+    await boundary.route(page, baseURL!);
+    let launch: Launch = {
+      ...recorded<Launch>('launches.json', 'launch-ready-create'),
+      review: {
+        needs: [
+          { type: 'owner_requires_review' },
+          { type: 'trust_confirmation', commands_digest: 'reviewed-commands' },
+        ],
+        can_start_now: false,
+      },
+    };
+    const commands: { key?: string; body: string | null }[] = [];
+    const statesRead: string[] = [];
+    await page.route('**/*', async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      if (url.origin !== baseURL) return route.fallback();
+      const reply = (body: unknown, status = 200) =>
+        route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+      if (url.pathname === '/auth/session')
+        return reply({
+          authenticated: true,
+          subject: 'local-owner',
+          display_name: 'Local owner',
+          visitor: false,
+          capabilities: ['use_own_sandboxes', 'launch_triggers'],
+        });
+      if (url.pathname === `/api/v1/launches/${launch.id}/start` && request.method() === 'POST') {
+        commands.push({ key: request.headers()['idempotency-key'], body: request.postData() });
+        if (commands.length === 1) {
+          launch = recorded<Launch>('launches.json', 'launch-ready-start');
+          return reply({ title: 'Receipt completion unavailable', code: 'store_failed' }, 503);
+        }
+        if (receipt === 'saved') return reply(launch, 202);
+        return reply(
+          {
+            title: 'Command receipt unavailable',
+            code: commands.length === 2 ? 'idempotency_in_flight' : 'idempotency_recovery_required',
+          },
+          409,
+        );
+      }
+      if (url.pathname === `/api/v1/launches/${launch.id}`) {
+        statesRead.push(launch.state);
+        return reply(launch);
+      }
+      if (url.pathname === '/api/v1/triggers/public/public_contract')
+        return reply({
+          ...recorded<TriggerPreview>('triggers.json', 'triggers-preview'),
+          always_review: true,
+        });
+      if (url.pathname === `/api/v1/launches/${launch.id}/requirements`)
+        return reply(launch.requirements);
+      if (url.pathname === `/api/v1/agui/launches/${launch.id}/events`)
+        return route.fulfill({ contentType: 'text/event-stream', body: ': local progress\n\n' });
+      return route.fallback();
+    });
+    await page.goto(`/launches/${launch.id}`);
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    const retry = page.getByRole('button', { name: 'Try again', exact: true });
+    await expect(retry).toBeEnabled();
+    expect(commands).toHaveLength(1);
+    const storageKey = `cma:draft-credential-recovery:${launch.id}`;
+    const retained = await page.evaluate((key) => sessionStorage.getItem(key), storageKey);
+    const packet = JSON.parse(retained!);
+    expect(packet.owner).toBe('local-owner');
+    expect(packet.command.key).toBe(commands[0]?.key);
+    expect(JSON.stringify(packet.command.body)).toBe(commands[0]?.body);
+    await expect(page.getByRole('checkbox')).toBeChecked();
+    await expect(page.getByRole('checkbox')).toBeDisabled();
+    await retry.click();
+    if (receipt === 'unwritten') {
+      await expect(retry).toBeEnabled();
+      expect(commands).toHaveLength(2);
+      expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBe(retained);
+      await retry.click();
+    }
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await expect(page.locator('.public-progress')).toBeVisible();
+    expect(commands).toHaveLength(receipt === 'unwritten' ? 3 : 2);
+    expect(commands.every((command) => command.key === commands[0]?.key)).toBe(true);
+    expect(commands.every((command) => command.body === commands[0]?.body)).toBe(true);
+    await expect.poll(() => statesRead.includes('resolving')).toBe(true);
+    const expectedStored = receipt === 'unwritten' ? retained : null;
+    expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBe(
+      expectedStored,
+    );
+    await page.reload();
+    await expect(page.locator('.public-progress')).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    expect(commands).toHaveLength(receipt === 'unwritten' ? 3 : 2);
+    expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBe(
+      expectedStored,
+    );
+    expect(boundary.writes).toEqual([]);
+    expect(boundary.unexpected).toEqual([]);
+    expect(boundary.errors).toEqual([]);
+    await info.attach('local-receipt-completion-boundary', {
+      body: JSON.stringify({
+        mocked: true,
+        boundary: 'built_browser_public_http',
+        receipt,
+        mongoExecuted: false,
+        processRestartExecuted: false,
+        firstResponse: '503 store_failed',
+        recoveredReceipt: receipt === 'saved',
+        unresolvedIdentityRetained: receipt === 'unwritten',
+        distinctCommands: 1,
+        writes: commands.length,
+      }),
+      contentType: 'application/json',
+    });
+  });
+}
