@@ -1,6 +1,10 @@
 use super::*;
 #[path = "capture_tests.rs"]
 mod capture_tests;
+#[path = "evidence_export_snapshot_tests.rs"]
+mod evidence_export_snapshot_tests;
+#[path = "evidence_export_tests.rs"]
+mod evidence_export_tests;
 use mongodb::options::{Acknowledgment, ReadConcernLevel};
 use std::time::{Duration, SystemTime};
 
