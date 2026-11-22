@@ -1,4 +1,6 @@
 import { previewDeadline } from './previewDeadline';
+import { readBusinessProblem } from './businessReadProblem';
+import { readGate } from '../readRetry';
 import { ProtocolError } from '@cma/client';
 import { AgentFileError, MAX_FILE_BYTES, PREVIEW_BYTES } from '../agentFiles';
 import type {
@@ -42,7 +44,7 @@ function decodedSize(value: string): number {
   return (value.length / 4) * 3 - padding;
 }
 export function agentFilesClient(): AgentFilesClient {
-  return {
+  const client: AgentFilesClient = {
     async list(agent, path, options) {
       const response = await request(route(agent, '/tree', path), { signal: options?.signal });
       const value = (await response.json()) as { path: string; entries: AgentFileEntry[] };
@@ -67,25 +69,45 @@ export function agentFilesClient(): AgentFilesClient {
       return value.entries;
     },
     async read(agent, path, options) {
-      return previewDeadline(async (signal) => {
-        const response = await request(
-          `${route(agent, '/content', path)}&max_bytes=${PREVIEW_BYTES}`,
-          { signal },
-        );
-        const value = (await response.json()) as AgentFileContent;
-        if (
-          value.path !== path ||
-          !validDigest(value.sha256) ||
-          !Number.isSafeInteger(value.size_bytes) ||
-          value.size_bytes < 0 ||
-          value.size_bytes > PREVIEW_BYTES ||
-          typeof value.content_base64 !== 'string' ||
-          value.content_base64.length > Math.ceil(PREVIEW_BYTES / 3) * 4 ||
-          decodedSize(value.content_base64) !== value.size_bytes
-        )
-          throw new ProtocolError('Agent Manager returned an invalid file preview.');
-        return value;
-      }, options?.signal);
+      return previewDeadline(
+        (signal) =>
+          readGate(client, agent).run(signal, async (signal) => {
+            const response = await fetch(
+              `${route(agent, '/content', path)}&max_bytes=${PREVIEW_BYTES}`,
+              { signal, credentials: 'same-origin', cache: 'no-store' },
+            );
+            signal.throwIfAborted();
+            if (!response.ok) {
+              const problem = await readBusinessProblem(response, signal);
+              throw new AgentFileError(
+                'Files could not be accessed. Try again.',
+                response.status,
+                problem.code,
+                problem,
+              );
+            }
+            const value = (await response.json().catch((error: unknown) => {
+              if (error instanceof SyntaxError)
+                throw new ProtocolError('Agent Manager returned an invalid file preview.');
+              throw error;
+            })) as AgentFileContent;
+            if (
+              !value ||
+              typeof value !== 'object' ||
+              value.path !== path ||
+              !validDigest(value.sha256) ||
+              !Number.isSafeInteger(value.size_bytes) ||
+              value.size_bytes < 0 ||
+              value.size_bytes > PREVIEW_BYTES ||
+              typeof value.content_base64 !== 'string' ||
+              value.content_base64.length > Math.ceil(PREVIEW_BYTES / 3) * 4 ||
+              decodedSize(value.content_base64) !== value.size_bytes
+            )
+              throw new ProtocolError('Agent Manager returned an invalid file preview.');
+            return value;
+          }),
+        options?.signal,
+      );
     },
     async download(agent, path, options) {
       const response = await request(route(agent, '/download', path), { signal: options?.signal });
@@ -121,4 +143,5 @@ export function agentFilesClient(): AgentFilesClient {
         throw new ProtocolError('Agent Manager did not confirm this file deletion.');
     },
   };
+  return client;
 }
