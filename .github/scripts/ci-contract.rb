@@ -251,6 +251,37 @@ module CIContract
       "package bundle must prove its tag absent immediately before pushing")
   end
 
+  KEY_EXPIRY_STEPS = [
+    { "uses" => "actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09", "with" => { "persist-credentials" => false } },
+    { "name" => "Check Arch packager key expiry",
+      "run" => "python3 -B .github/scripts/omarchy_key_expiry.py --verify-record --fail-days 30" },
+  ].freeze
+
+  # The weekly key expiry check fails by name once a key that signs a pinned
+  # Omarchy package expires within 30 days, so the failed-run notification
+  # reaches someone (#3040), and fails when the committed signing-key record
+  # no longer matches the one derived from the locked URLs. It only reads the
+  # repository and public package servers, runs on its schedule or an explicit
+  # dispatch, and every step runs so that its failure fails the run.
+  def self.omarchy_key_expiry_authority(inputs)
+    workflow = inputs.fetch("omarchy-key-expiry")
+    events = workflow["on"] || workflow[true]
+    schedule = events.is_a?(Hash) ? events["schedule"] : nil
+    require!(events.is_a?(Hash) && events.keys.sort == %w[schedule workflow_dispatch] && events["workflow_dispatch"] == {} &&
+      schedule.is_a?(Array) && schedule.length == 1 && schedule.first.keys == ["cron"] &&
+      schedule.first["cron"].to_s.match?(/\A[0-5]?[0-9] (?:1?[0-9]|2[0-3]) \* \* [0-6]\z/),
+      "key expiry check runs only weekly or on dispatch")
+    require!(workflow["permissions"] == { "contents" => "read" } && workflow.fetch("jobs").keys == ["expiry"],
+      "key expiry check authority changed")
+    check = job(workflow, "expiry", "Arch packager key expiry")
+    require!(check.keys.sort == %w[if name permissions runs-on steps timeout-minutes] &&
+      check["if"] == "github.repository == 'ChronoAIProject/cma'" && check["permissions"] == { "contents" => "read" } &&
+      check["runs-on"] == "ubuntu-24.04" && check["timeout-minutes"].is_a?(Integer) && check["timeout-minutes"].between?(1, 30),
+      "key expiry check must stay read-only, bounded and on a hosted runner")
+    require!(check.fetch("steps") == KEY_EXPIRY_STEPS,
+      "key expiry check must run exactly the pinned checkout and the unconditional check")
+  end
+
   def self.provider(inputs)
     ci = inputs.fetch("ci")
     require_relative "omarchy-ci-contract"

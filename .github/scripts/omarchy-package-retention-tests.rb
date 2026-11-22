@@ -75,6 +75,84 @@ class OmarchyPackageRetentionTests < Minitest::Test
     end
   end
 
+  def test_ruby_net_http_deletes_are_refused
+    {
+      "request class" => %(Net::HTTP::Delete.new(URI("#{API}/packages/container/cma-omarchy-packages/versions/1"))),
+      "computed name" => %(request = Net::HTTP::Delete.new("/orgs/x/packages/container/\#{name}/versions/\#{id}")),
+      "literal path" => %(http.delete("/orgs/chronoaiproject/packages/container/cma-omarchy-packages")),
+      "client session" => %(require "net/http"\npath = "/user/packages/container/\#{name}"\n) +
+        %(Net::HTTP.start("api.github.com", 443, use_ssl: true) { |http| http.delete(path, headers) }),
+    }.each { |label, source| refused(".github/scripts/prune.rb", source, label) }
+  end
+
+  def test_python_client_deletes_are_refused
+    {
+      "requests helper" => %(requests.delete(f"#{API}/packages/container/cma-omarchy-packages/versions/{vid}")),
+      "httpx helper" => %(httpx.delete(f"{API}/orgs/{org}/packages/container/{name}")),
+      "requests method" => %(requests.request("delete", f"#{API}/packages/container/cma-omarchy-packages")),
+      "requests session" => %(import requests\nsession = requests.Session()\n) +
+        %(url = f"{API}/user/packages/container/{name}"\nsession.delete(url)),
+      "httpx client" => %(import httpx\nwith httpx.Client(base_url=API) as client:\n) +
+        %(    client.delete(f"/orgs/x/packages/container/{name}")),
+    }.each do |label, source|
+      refused(".github/scripts/prune.py", source, label)
+      refused(SWEEP, real(SWEEP) + "\n#{source}\n", "#{label} beside the cache sweep")
+    end
+  end
+
+  def test_any_case_fetch_methods_are_refused
+    {
+      "lowercase" => %(await fetch(`/orgs/x/packages/container/${name}`, { method: 'delete' })),
+      "capitalised" => %(await fetch("#{API}/packages/container/cma-omarchy-packages", { method: "Delete" })),
+      "mixed" => %(const url = "/user/packages/npm/" + pkg;\nawait fetch(url, {method:`dElEtE`})),
+      "axios helper" => %(await axios.delete(`/orgs/x/packages/container/${name}`)),
+      "axios config" => %(await axios({ url: `/user/packages/container/${name}`, method: 'delete' })),
+      "urllib lowercase" => %(Request(f"{API}/orgs/x/packages/container/{name}", method="delete")),
+    }.each do |label, source|
+      refused(".github/scripts/prune.mjs", source, label)
+      step = { "uses" => "actions/github-script@" + "a" * 40, "with" => { "script" => source } }
+      refused(BUNDLE, bundle_with(step), "#{label} in github-script")
+    end
+  end
+
+  def test_field_listings_driving_deletes_are_refused
+    each_url = "--jq '.[].url' | xargs -n1 gh api -X DELETE"
+    ["gh api --method GET /orgs/x/packages -f package_type=container #{each_url}",
+     "gh api --method GET /orgs/x/packages -F package_type=container #{each_url}",
+     "gh api --method GET \"/users/$OWNER/packages\" --field package_type=docker #{each_url}",
+     "gh api --method GET --raw-field \"package_type=container\" user/packages #{each_url}"].each do |command|
+      refused(BUNDLE, bundle_with("name" => "Prune", "run" => command), command)
+      refused(".github/scripts/prune.sh", command, "script #{command}")
+    end
+    refused(".github/scripts/prune.py", %(rows = requests.get("#{API}/packages", params={"package_type": "container"}).json()\n) +
+      %(for row in rows:\n    requests.delete(row["url"])), "requests listing")
+    refused(".github/scripts/prune.mjs", <<~JS, "Octokit listing")
+      const all = await github.paginate("GET /orgs/{org}/packages", { org, package_type: "container" });
+      for (const p of all) await github.request("DELETE " + p.url);
+    JS
+  end
+
+  def test_registry_client_deletes_are_refused
+    image = "ghcr.io/chronoaiproject/cma-omarchy-packages"
+    ["skopeo delete docker://#{image}:2026-10-22-abc",
+     "skopeo delete --authfile /auth/config.json \"docker://ghcr.io/$REPOSITORY:$TAG\"",
+     "skopeo --insecure-policy delete --creds \"$USER:$TOKEN\" docker://#{image}@sha256:#{'c' * 64}",
+     "skopeo delete docker://ghcr.io/${{ env.REPOSITORY }}:old",
+     "skopeo delete \"$IMAGE\" || true",
+     "skopeo list-tags docker://#{image} | jq -r '.Tags[]' | xargs -I{} skopeo delete docker://#{image}:{}",
+     "crane delete #{image}@sha256:#{'d' * 64}",
+     "gcrane delete \"$REFERENCE\"",
+     "oras manifest delete --force #{image}:old",
+     "regctl tag delete #{image}:old"].each do |command|
+      refused(BUNDLE, bundle_with("name" => "Prune", "run" => command), command)
+      refused(".github/scripts/prune.sh", command, "script #{command}")
+    end
+    refused(".github/scripts/prune.sh", "skopeo delete \\\n  docker://#{image}:old\n", "continued line")
+    refused(".github/scripts/prune.py", %(subprocess.run(["skopeo", "delete", f"docker://ghcr.io/{repository}:{tag}"])),
+      "argument list")
+    refused(".github/scripts/prune.py", %(command = ["skopeo", "delete"]\ncommand.append(reference)), "reference from elsewhere")
+  end
+
   def test_cleanup_actions_pointed_at_the_bundle_every_package_or_a_computed_name_are_refused
     pin = "@" + "b" * 40
     [["actions/delete-package-versions#{pin}", { "package-name" => "cma-omarchy-packages", "package-type" => "container" }],
@@ -111,6 +189,29 @@ class OmarchyPackageRetentionTests < Minitest::Test
     permitted(BUNDLE, real(BUNDLE) + "\n# uses: actions/delete-package-versions@v5\n", "comment is not a step")
     permitted(".github/scripts/example.yml", YAML.dump("steps" => [{ "uses" => "snok/container-retention-policy@v3" }]),
       "YAML outside workflows and actions never runs")
+  end
+
+  def test_client_deletes_of_other_endpoints_and_registry_reads_are_permitted
+    {
+      "Actions cache through requests" => %(requests.delete(f"https://api.github.com/repos/x/actions/caches/{cache_id}")),
+      "Agent through an httpx client" => %(import httpx\nclient = httpx.Client()\nclient.delete(f"{CMA}/api/agents/{agent_id}")),
+      "Sandbox through fetch" => %(await fetch(`${base}/api/sandboxes/${id}`, { method: "delete" })),
+      "Workspace through Net::HTTP" => %(Net::HTTP::Delete.new(URI("https://cma.example/api/workspaces/\#{id}"))),
+      "another package" => %(requests.delete(f"#{API}/packages/container/cma-ci-scratch/versions/{vid}")),
+      "Set delete beside a read" => %(const versions = await fetch(`/orgs/x/packages/container/${name}/versions`);\n) +
+        %(seen.delete(name);),
+      "Hash delete beside a read" => %(versions = get("/orgs/x/packages/container/\#{name}/versions")\n) +
+        %(headers.delete("Authorization")),
+      "listing without a delete" => "gh api /orgs/x/packages -f package_type=container --jq '.[].name'",
+      "packages page beside a cache delete" => %(curl -X DELETE "$API/repos/x/actions/caches/1"\n) +
+        "# Packages: https://github.com/orgs/chronoaiproject/packages\n",
+      "registry delete of another package" => "skopeo delete --authfile \"$AUTH\" --creds=\"$USER:$TOKEN\" " \
+        "docker://ghcr.io/chronoaiproject/cma-ci-scratch:pr-1",
+      "crane delete of another package" => "crane delete ghcr.io/chronoaiproject/cma-ci-scratch@sha256:#{'e' * 64}",
+      "continued delete of another package" => "skopeo delete \\\n  docker://ghcr.io/chronoaiproject/cma-ci-scratch:pr-1\n",
+      "registry reads" => %(skopeo copy "docker://ghcr.io/$REPOSITORY:$TAG" oci:/tmp/layout\n) +
+        %(skopeo inspect --raw "docker://ghcr.io/$REPOSITORY:$TAG"\ncrane digest "$IMAGE"),
+    }.each { |label, source| permitted(".github/scripts/cleanup.sh", source, label) }
   end
 
   def test_unreadable_workflow_is_refused

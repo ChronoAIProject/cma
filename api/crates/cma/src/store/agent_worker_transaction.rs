@@ -185,10 +185,26 @@ async fn apply_publication_observed(
         None
     };
     let session = scope.release();
+    if super::native_retirement_action::adds_obligation(&current, &mutation.agent)
+        && !super::native_retirement_action::fence_obligation(store, &current.sandbox_id, session)
+            .await
+            .map_err(|error| {
+                if error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT) {
+                    ApplyError::Domain(SandboxStoreError::Unavailable(error.to_string()))
+                } else {
+                    ApplyError::Driver(error)
+                }
+            })?
+    {
+        return Err(ApplyError::Domain(SandboxStoreError::Conflict));
+    }
     store
-        .fence_agent_effect(&mutation.agent.id, session)
+        .fence_agent_effect_transaction(&mutation.agent.id, session)
         .await
-        .map_err(ApplyError::Domain)?;
+        .map_err(|error| match error {
+            crate::store::agent_ownership::FenceError::Domain(error) => ApplyError::Domain(error),
+            crate::store::agent_ownership::FenceError::Driver(error) => ApplyError::Driver(error),
+        })?;
     // Decide eligibility in the publication's own snapshot. The same consumed
     // preparation revision is fenced below; no independent preflight can turn
     // a different snapshot into an unnecessary ordinary startup fallback.

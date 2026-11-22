@@ -33,6 +33,7 @@ impl GrantAuthority for SyntheticGrants {
 
     async fn account(
         &self,
+        _auth: &AuthState,
         subject: &SubjectId,
     ) -> Result<Option<VerifiedAccountGrant>, StoreError> {
         if self.unavailable.load(Ordering::SeqCst) {
@@ -44,13 +45,19 @@ impl GrantAuthority for SyntheticGrants {
             .await
             .map(|authorized| VerifiedAccountGrant {
                 subject: subject.clone(),
-                authorized,
+                management_credential_unsupported: false,
+                status: if authorized {
+                    GrantStatus::Authorized
+                } else {
+                    GrantStatus::Revoked
+                },
                 management_url: Some(self.issuer.join("/settings/consents").unwrap()),
             }))
     }
 
     async fn missing(
         &self,
+        _auth: &AuthState,
         intent: &RecoveryIntent,
     ) -> Result<Option<BTreeSet<ServiceId>>, StoreError> {
         assert_eq!(intent.subject.as_str(), "owner");
@@ -67,6 +74,7 @@ impl GrantAuthority for SyntheticGrants {
 
     async fn consent_url(
         &self,
+        _auth: &AuthState,
         intent: &RecoveryIntent,
         state: &str,
         s256_challenge: &str,
@@ -89,10 +97,14 @@ impl GrantAuthority for SyntheticGrants {
 
     async fn redeem(
         &self,
+        _auth: &AuthState,
         intent: &RecoveryIntent,
         code: &str,
         verifier: &SecretValue,
     ) -> Result<Option<ConsentIdentity>, StoreError> {
+        if self.unavailable.load(Ordering::SeqCst) {
+            return Err(StoreError::Unavailable("synthetic outage".into()));
+        }
         assert_eq!(
             *self.challenge.lock().await,
             code_challenge(verifier.expose())
@@ -103,6 +115,7 @@ impl GrantAuthority for SyntheticGrants {
             self.missing.lock().await.clear();
         }
         Ok(Some(ConsentIdentity {
+            missing: self.missing.lock().await.clone(),
             subject: if code == "different-account" {
                 SubjectId::new("someone-else")
             } else {
@@ -251,7 +264,8 @@ async fn body(response: Response) -> String {
 async fn partial_grant_requests_only_missing_scope_and_redeems_once_across_replicas() {
     let f = Fixture::new().await;
     let state = f.start().await;
-    let path = format!("{CALLBACK_PATH}?state={state}&code=allow");
+    let path =
+        format!("{CALLBACK_PATH}?state={state}&code=allow&iss=https%3A%2F%2Fprovider.example");
     let switched = get(&f.b, &f.other_cookie, &path).await;
     assert_eq!(switched.status(), StatusCode::CONFLICT);
     assert!(!body(switched).await.contains("Return to draft"));
@@ -265,10 +279,32 @@ async fn partial_grant_requests_only_missing_scope_and_redeems_once_across_repli
     assert!(!accepted.headers().contains_key(header::SET_COOKIE));
     assert_eq!(accepted.headers()[header::REFERRER_POLICY], "no-referrer");
     let page = body(accepted).await;
-    assert!(page.contains("Service authorization verified"));
+    assert!(page.contains("Application consent confirmed"));
+    assert!(
+        page.contains("does not update an existing Sandbox key or resolve a pending key request")
+    );
+    assert!(page.contains("href=\"/auth/login?return_to=%2F\">Sign in again"));
     assert!(page.contains("href=\"/\">Return to draft"));
     assert!(!page.contains("<form"));
     assert_eq!(f.grants.redemptions.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_complete_grant_does_not_start_another_consent_or_force_sign_in() {
+    let f = Fixture::new().await;
+    f.grants.missing.lock().await.clear();
+    let response = start(
+        &f.a,
+        &f.cookie,
+        "https://app.example",
+        "agent",
+        "/agents/original",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    assert!(!body(response).await.contains("hosted_url"));
+    assert!(f.grants.challenge.lock().await.is_empty());
+    assert_eq!(f.grants.redemptions.load(Ordering::SeqCst), 0);
 }
 
 #[tokio::test]
@@ -328,7 +364,7 @@ async fn disabled_unsupported_unavailable_and_absent_are_conservative() {
     let f = Fixture::new().await;
     let disabled = app(auth(f.store.clone()), CredentialSource::Retained);
     let unsupported = app(
-        auth(f.store.clone()).with_service_authorization(true),
+        auth(f.store.clone()).with_service_authorization(true, None),
         CredentialSource::Retained,
     );
     assert_eq!(

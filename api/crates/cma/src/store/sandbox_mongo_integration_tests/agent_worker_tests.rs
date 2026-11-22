@@ -289,3 +289,5 @@ mod rollback_tests;
 mod sign_in_tests;
 
 mod bounded_close_retries;
+
+mod typed_fence;

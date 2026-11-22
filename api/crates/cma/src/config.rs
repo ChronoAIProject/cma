@@ -18,6 +18,8 @@ mod lifecycle_failure;
 mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
 mod account_deletion;
+mod control_admission;
+pub(crate) use control_admission::ControlAdmissionConfig;
 mod admission_log;
 mod anonymous_public;
 mod auth_mode;
@@ -53,7 +55,9 @@ mod quiet_output;
 mod task_experience;
 pub(crate) use features::home_backup::HomeBackupConfig;
 pub(crate) use features::FeatureFlags;
+mod service_authorization;
 pub(crate) use gateway::GatewayConfig;
+pub(crate) use service_authorization::ServiceAuthorizationConfig;
 mod bot_father;
 mod browser_session;
 mod documents;
@@ -168,6 +172,7 @@ pub struct Config {
     pub nyxid_proxy_audience: Option<String>,
     pub cors_origins: Vec<HeaderValue>,
     pub rate_limits: RateLimitConfig,
+    pub(crate) control_admission: ControlAdmissionConfig,
     pub(crate) public_stream_limit: usize,
     pub(crate) relay_capacity: RelayCapacityConfig,
     pub trusted_proxies: TrustedProxyConfig,
@@ -191,6 +196,7 @@ pub struct Config {
     pub browser_session_join_enabled: bool,
     pub features: FeatureFlags,
     pub(crate) home_backup: HomeBackupConfig,
+    pub(crate) service_authorization: Option<ServiceAuthorizationConfig>,
     pub(crate) agent_manager_replicas: Option<AgentManagerReplicas>,
     pub task_experience:
         std::sync::Arc<layer2_core::sandbox::task_experience::TaskExperiencePolicy>,
@@ -279,6 +285,8 @@ impl Config {
             return Err("CHRONO_HOME_BACKUP_EXPIRY_ENABLED requires a qualified deletion provider; retention preparation cannot be enabled".into());
         }
         let home_backup = HomeBackupConfig::from_lookup(&mut lookup, features.home_backup_enabled)?;
+        let service_authorization =
+            ServiceAuthorizationConfig::from_lookup(&mut lookup, features.service_authorization)?;
         let account_deletion_enabled = account_deletion::enabled(&mut lookup)?;
         let account_erasure_transaction_drain_seconds =
             account_deletion::transaction_drain(&mut lookup)?;
@@ -355,6 +363,7 @@ impl Config {
             nyxid_proxy_audience: lookup("CHRONO_NYXID_PROXY_AUDIENCE")?,
             cors_origins,
             rate_limits,
+            control_admission: ControlAdmissionConfig::from_lookup(&mut lookup)?,
             trusted_proxies,
             mongodb_uri,
             mongodb_database,
@@ -377,6 +386,7 @@ impl Config {
             browser_session_join_enabled: browser_session::from_lookup(&mut lookup)?,
             features,
             home_backup,
+            service_authorization,
             agent_manager_replicas,
             task_experience: task_experience::from_lookup(&mut lookup)?,
             bounded_admission_agents,

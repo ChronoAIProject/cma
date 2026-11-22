@@ -3198,6 +3198,15 @@ malformed/truncated bodies and contradictory admission headers remain `Unknown`
 and use existing uncertain-submission recovery; they never authorize a blind
 transport retry. The provider transport itself never retries a POST.
 
+A 400 is a definite pre-admission refusal in two dialects only. One is CMA's
+`invalid_json`, which stays `invalid_json`. The other is NyxID's documented
+validation refusal, which is recorded as `provider_validation_refused`. NyxID
+answers an event it cannot accept with a body of exactly `error:
+"validation_error"`, `error_code: 1008` and a string `message`, as
+`application/json` and with no `x-cma-response-id`. Either refusal settles the
+consumer as refused, so the conversation's next queued event can start. Any
+other 400 remains `Unknown`.
+
 Exact replay of admitted input never contacts the gateway. CMA compares the
 complete request, including its ExternalEvent, to the retained command using
 local deterministic prefix rendering. Only new admissions call attestation;

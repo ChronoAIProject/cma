@@ -79,7 +79,8 @@ export function NodeFields({
             part={create ? 'identity' : 'all'}
           />
         ) : null}
-        {create ? (
+        {create &&
+        (discovery.managedTelegramSetup === true || draft.connection_ref !== undefined) ? (
           <ManagedConnectionFields
             active={active}
             value={draft}

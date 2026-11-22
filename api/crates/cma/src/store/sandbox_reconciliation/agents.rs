@@ -183,6 +183,14 @@ pub(super) async fn publish_agents(
                     AppendCapacity::StopOrFailure,
                 )
                 .map_err(ApplyError::Domain)?;
+                crate::store::budget::settle_runtime_loss(
+                    store,
+                    &current,
+                    change,
+                    &request.observed_at,
+                    session,
+                )
+                .await?;
                 encoded_logs.extend(integrity.documents);
                 fields.insert("agent_log_integrity_v1", integrity.integrity);
                 fields.insert(

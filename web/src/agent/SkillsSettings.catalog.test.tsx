@@ -198,3 +198,33 @@ it('clears an uncertain install error when installed-state refresh confirms that
   expect(screen.queryByRole('button', { name: 'Retry installation' })).not.toBeInTheDocument();
   expect(f.install).toHaveBeenCalledTimes(1);
 });
+
+it('retains search and a chosen version across catalog page failure and retry', async () => {
+  const f = fixture();
+  const versions = { ...skill, versions: ['1.2', '1.1'] };
+  f.search.mockResolvedValue({ items: [versions], next: 'page-two' });
+  render(f.view());
+  await open();
+  const search = screen.getByRole('textbox', { name: 'Search available Ornn skills' });
+  await waitFor(() => expect(search).toBeEnabled());
+  await userEvent.type(search, 'typescript');
+  await waitFor(() => expect(f.search).toHaveBeenLastCalledWith('typescript', expect.anything()));
+  const picker = await screen.findByRole('button', { name: 'Version for TypeScript' });
+  await waitFor(() => expect(picker).toBeEnabled());
+  await userEvent.click(picker);
+  await userEvent.click(screen.getByRole('menuitemradio', { name: '1.1' }));
+  f.search.mockRejectedValueOnce(new ApiError(503, privateBody));
+  await userEvent.click(screen.getByRole('button', { name: 'More Ornn skills' }));
+  expect(
+    await screen.findByRole('heading', { name: 'Couldn’t load the skills catalog' }),
+  ).toBeVisible();
+  expect(picker).toHaveTextContent('1.1');
+  expect(search).toHaveValue('typescript');
+  expect(screen.getByRole('button', { name: 'Install TypeScript' })).toBeDisabled();
+  f.search.mockResolvedValue({ items: [], next: undefined });
+  await userEvent.click(screen.getByRole('button', { name: 'Retry skill page' }));
+  await waitFor(() => expect(picker).toBeEnabled());
+  expect(picker).toHaveTextContent('1.1');
+  expect(search).toHaveValue('typescript');
+  expect(f.install).not.toHaveBeenCalled();
+});

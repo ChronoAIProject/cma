@@ -108,7 +108,8 @@ export function OwnerAgentHeader({
           ) : null}
           <Modal
             open={dialog === 'skills'}
-            title="Update skills installed"
+            title="Choose skills"
+            description="Add skills to this Agent. Each installation uses the version you choose."
             onClose={() => setDialog(undefined)}
           >
             {dialog === 'skills' ? (
@@ -116,6 +117,8 @@ export function OwnerAgentHeader({
                 agentId={detail.id}
                 viewerId={header.viewerId}
                 active
+                catalogOpen
+                onClose={() => setDialog(undefined)}
                 busy={configBusy}
               />
             ) : null}

@@ -440,6 +440,9 @@ mod binding_execution;
 
 mod operation_lookup_tests;
 
+#[path = "runtime_loss_budget_tests.rs"]
+mod runtime_loss_budget;
+
 #[path = "budget_execution_tests.rs"]
 mod budget_execution;
 

@@ -14,8 +14,17 @@ pub(in crate::store) async fn save(
 ) -> Result<(), SandboxStoreError> {
     let at = sandbox.updated_at.clone();
     for _ in 0..TRANSACTION_ATTEMPTS {
-        let mut session = store.client.start_session().await.map_err(unavailable)?;
-        start_transaction(&mut session).await.map_err(unavailable)?;
+        let mut session = match store.client.start_session().await {
+            Ok(session) => session,
+            Err(error) if is_transient(&error) => continue,
+            Err(error) => return Err(unavailable(error)),
+        };
+        if let Err(error) = start_transaction(&mut session).await {
+            if is_transient(&error) {
+                continue;
+            }
+            return Err(unavailable(error));
+        }
         match apply(store, &mut session, expected, sandbox, &at, acquisition).await {
             Ok(()) => {}
             Err(TransactionEventError::Driver(error)) if is_transient(&error) => {
@@ -53,9 +62,12 @@ async fn apply(
     acquisition: Option<&Document>,
 ) -> Result<(), TransactionEventError> {
     use TransactionEventError::{Domain, Driver};
-    crate::store::work_publication::fence(store, session)
+    crate::store::work_publication::fence_transaction(store, session)
         .await
-        .map_err(Domain)?;
+        .map_err(|error| match error {
+            crate::store::work_publication::FenceError::Domain(error) => Domain(error),
+            crate::store::work_publication::FenceError::Driver(error) => Driver(error),
+        })?;
     if acquisition.is_some() && sandbox.work.authority_protocol.is_some() {
         crate::store::work_schema::floor::retain(store, session)
             .await
@@ -68,16 +80,15 @@ async fn apply(
         .await
         .map_err(Driver)?
         .ok_or(Domain(SandboxStoreError::NotFound))?;
-    crate::store::sandboxes::read_sandbox(&current)
-        .map_err(Domain)?
+    let parent = crate::store::sandboxes::read_sandbox(&current).map_err(Domain)?;
+    crate::store::native_retirement_action::preserve_custody(&current, &parent, sandbox)
+        .map_err(Domain)?;
+    parent
         .validate_retirement_archive_successor(sandbox)
         .map_err(|_| Domain(SandboxStoreError::Conflict))?;
     if acquisition.is_some() {
         crate::store::sandbox_credentials::issuance::legacy::preserve(
-            store,
-            &crate::store::sandboxes::read_sandbox(&current).map_err(Domain)?,
-            sandbox,
-            session,
+            store, &parent, sandbox, session,
         )
         .await
         .map_err(Driver)?;
