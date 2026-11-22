@@ -14,7 +14,12 @@ for (const [caseId, variant] of [
     browser,
     baseURL,
   }, info) => {
-    const fixture = await connectionWizardFixture(browser, baseURL!, caseId);
+    const fixture = await connectionWizardFixture(
+      browser,
+      baseURL!,
+      caseId,
+      info.config.metadata.connectionWizardBuild,
+    );
     const { h } = fixture;
     try {
       const page = await fixture.open(variant === 'popup_blocked');
@@ -106,7 +111,12 @@ for (const changed of ['owner', 'intent'] as const) {
     browser,
     baseURL,
   }, info) => {
-    const fixture = await connectionWizardFixture(browser, baseURL!, 'J4-oauth');
+    const fixture = await connectionWizardFixture(
+      browser,
+      baseURL!,
+      'J4-oauth',
+      info.config.metadata.connectionWizardBuild,
+    );
     try {
       fixture.invalidReply = changed;
       const page = await fixture.open();

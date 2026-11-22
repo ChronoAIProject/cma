@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { extname, join, relative, sep } from 'node:path';
 import type { Browser, Page, Route } from '@playwright/test';
 import type { Launch as LaunchDocument } from '@cma/client';
 import { LocalStartup, recorded } from './agent-startup-fixtures';
@@ -17,8 +18,33 @@ import { publicApiPath } from './public-api-path';
 
 // Only HTTP and provider observations are synthetic. Harness, Journal and the
 // compiled application run unchanged, including the browser request recorder.
-export async function connectionWizardFixture(browser: Browser, preview: string, caseId: string) {
+export async function connectionWizardFixture(
+  browser: Browser,
+  preview: string,
+  caseId: string,
+  buildDirectory: unknown,
+) {
   assert.ok(['127.0.0.1', 'localhost'].includes(new URL(preview).hostname));
+  assert.equal(typeof buildDirectory, 'string');
+  const directory = buildDirectory as string;
+  const assets = new Map<string, Buffer>();
+  for (const file of readdirSync(directory, { recursive: true, withFileTypes: true })) {
+    if (!file.isFile()) continue;
+    const path = join(file.parentPath, file.name);
+    assets.set('/' + relative(directory, path).split(sep).join('/'), readFileSync(path));
+  }
+  assert.ok(assets.has('/index.html'), 'The compiled product entry must exist');
+  const contentTypes: Record<string, string> = {
+    '.html': 'text/html',
+    '.js': 'text/javascript',
+    '.css': 'text/css',
+    '.svg': 'image/svg+xml',
+    '.png': 'image/png',
+    '.webp': 'image/webp',
+    '.ico': 'image/x-icon',
+    '.woff2': 'font/woff2',
+    '.json': 'application/json',
+  };
   const fixture = fixtureDocument();
   const owner = `visitor-${caseId}`;
   fixture.document.visitors[caseId]!.subject = owner;
@@ -52,8 +78,23 @@ export async function connectionWizardFixture(browser: Browser, preview: string,
     subject: owner,
     capabilities: ['launch_triggers', 'use_own_sandboxes'],
   };
+  const appRoutes = new Set([
+    '/',
+    '/connection-return',
+    '/t/public-fixture/placement-fixture',
+    `/launches/${launch.id}`,
+    `/agents/${boundary.agent.id}`,
+  ]);
   const server = createServer(async (request, response) => {
     try {
+      if (
+        !request.url?.startsWith('/') ||
+        request.url.startsWith('//') ||
+        request.url.includes('\\')
+      ) {
+        response.writeHead(400).end();
+        return;
+      }
       const path = publicApiPath(new URL(request.url!, 'http://127.0.0.1').pathname);
       const chunks: Buffer[] = [];
       for await (const chunk of request) chunks.push(Buffer.from(chunk));
@@ -150,12 +191,16 @@ export async function connectionWizardFixture(browser: Browser, preview: string,
         unexpected.push(`${request.method} ${path}`);
         return reply({ code: 'unexpected_fixture_request' }, 500);
       }
-      // Serve only the locally built product bundle, never a substitute page.
-      const upstream = await fetch(new URL(request.url!, preview));
-      response.writeHead(upstream.status, {
-        'Content-Type': upstream.headers.get('content-type') ?? 'text/plain',
+      const assetPath = appRoutes.has(path) ? '/index.html' : path;
+      const asset = assets.get(assetPath);
+      if (asset === undefined) {
+        response.writeHead(404).end();
+        return;
+      }
+      response.writeHead(200, {
+        'Content-Type': contentTypes[extname(assetPath)] ?? 'application/octet-stream',
       });
-      response.end(Buffer.from(await upstream.arrayBuffer()));
+      response.end(asset);
     } catch (error) {
       unexpected.push(String(error));
       response.writeHead(500).end();
