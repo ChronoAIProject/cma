@@ -1,6 +1,23 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
 import { activityPage, receipt, responseConsumer, setupActivity } from './redesign-channel.fixture';
+
+function nativeLayoutDiagnostic(page: Page) {
+  return page.evaluate(() => {
+    const target = document.createElement('div');
+    target.style.width = '100px';
+    document.body.append(target);
+    let deliveries = 0;
+    const observer = new ResizeObserver(() => {
+      if (deliveries++ === 0) target.style.width = '101px';
+      else {
+        observer.disconnect();
+        target.remove();
+      }
+    });
+    observer.observe(target);
+  });
+}
 
 export function registerRedesignChannelCases() {
   for (const theme of ['dark', 'light'] as const) {
@@ -147,20 +164,7 @@ export function registerRedesignChannelCases() {
       page,
       baseURL!,
     );
-    await page.evaluate(() => {
-      const target = document.createElement('div');
-      target.style.width = '100px';
-      document.body.append(target);
-      let deliveries = 0;
-      const observer = new ResizeObserver(() => {
-        if (deliveries++ === 0) target.style.width = '101px';
-        else {
-          observer.disconnect();
-          target.remove();
-        }
-      });
-      observer.observe(target);
-    });
+    await nativeLayoutDiagnostic(page);
     await expect
       .poll(() => browserErrors)
       .toEqual([
@@ -182,30 +186,68 @@ export function registerRedesignChannelCases() {
       page,
       baseURL,
     }) => {
-      const { browserErrors, boundary, state, layoutDiagnostics, layoutTelemetry } =
+      const { browserErrors, boundary, state, layoutDiagnostics, layoutTelemetry, setPhase } =
         await setupActivity(page, baseURL!);
-      await page.evaluate(async () => {
-        await fetch('/api/v1/telemetry/browser', {
+      if (layoutDiagnostics.length === 0) {
+        await setPhase('selecting channel');
+        await nativeLayoutDiagnostic(page);
+      }
+      await expect.poll(() => layoutDiagnostics).toHaveLength(1);
+      await expect.poll(() => layoutTelemetry).toHaveLength(1);
+      expect(layoutDiagnostics[0]).toMatchObject({
+        trusted: true,
+        hasError: false,
+        phase: 'selecting channel',
+      });
+      expect(browserErrors).toEqual([]);
+      expect(boundary.unexpected).toEqual([]);
+
+      await setPhase('reading Activity');
+      await page.evaluate(() =>
+        fetch('/api/v1/telemetry/browser', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ kind: 'uncaught_error' }),
-        });
-        const script = document.createElement('script');
-        script.textContent = 'throw new Error("Synthetic error after channel selection")';
-        document.head.append(script);
-      });
+        }),
+      );
+      await expect.poll(() => boundary.unexpected).toEqual(['POST /api/v1/telemetry/browser']);
+      expect(layoutTelemetry).toHaveLength(1);
+
+      await setPhase('selecting channel');
+      await nativeLayoutDiagnostic(page);
       await expect
         .poll(() => browserErrors)
         .toEqual([
           expect.objectContaining({
-            message: 'Uncaught Error: Synthetic error after channel selection',
-            phase: 'reading Activity',
+            message: 'ResizeObserver loop completed with undelivered notifications.',
+            trusted: true,
+            hasError: false,
+            phase: 'selecting channel',
           }),
         ]);
+      expect(layoutDiagnostics).toHaveLength(1);
+      expect(layoutTelemetry).toHaveLength(1);
+      expect(boundary.unexpected).toEqual(['POST /api/v1/telemetry/browser']);
+
+      await setPhase('reading Activity');
+      await page.evaluate(() => {
+        const script = document.createElement('script');
+        script.textContent = 'throw new Error("Synthetic error after channel selection")';
+        document.head.append(script);
+      });
+      await expect.poll(() => browserErrors).toHaveLength(2);
+      expect(browserErrors[1]).toMatchObject({
+        message: 'Uncaught Error: Synthetic error after channel selection',
+        phase: 'reading Activity',
+      });
       await expect.poll(() => boundary.errors).toEqual(['Synthetic error after channel selection']);
-      expect(boundary.unexpected).toContain('POST /api/v1/telemetry/browser');
-      expect(layoutTelemetry).toHaveLength(layoutDiagnostics.length);
+      expect(boundary.unexpected).toEqual(['POST /api/v1/telemetry/browser']);
+      expect(layoutDiagnostics).toHaveLength(1);
+      expect(layoutTelemetry).toHaveLength(1);
       expect(state.writes).toEqual([]);
+      expect(boundary.writes).toEqual([
+        { path: '/api/v1/telemetry/browser', body: { kind: 'uncaught_error' }, key: undefined },
+      ]);
     });
   });
 
