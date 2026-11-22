@@ -306,11 +306,14 @@ end
 
 # Every artifact download ends within a bound. Composite steps accept no
 # timeout-minutes (the runner's action schema, actions/runner#1979), so no
-# composite may use actions/download-artifact: the shared Rust archive is
-# restored by a script that stops, repeats and digest-checks each attempt.
-# A workflow download is an optional bounded attempt, one identical bounded
-# repeat that can fail the job, and a step that names what was not downloaded.
-DOWNLOAD_ACTION = 'actions/download-artifact@'
+# composite may use any download-artifact action or `gh run download`: the
+# shared Rust archive is restored by a script that stops, repeats and
+# digest-checks each attempt. A workflow download action is an optional
+# bounded attempt, one identical bounded repeat that can fail the job, and a
+# step that names what was not downloaded; `gh run download` in a workflow
+# step needs that step's timeout-minutes.
+DOWNLOAD_ACTION = /download-artifact@/
+RUN_DOWNLOAD = /\bgh\s+run\s+download\b/
 ARCHIVE_ACTION = './.github/actions/rust-archive'
 ARCHIVE_RESTORE = {
   'name' => 'Download Backend test archive', 'shell' => 'bash', 'working-directory' => '.',
@@ -329,7 +332,8 @@ def check_artifact_downloads(workflows, actions)
   actions.each do |reference, action|
     next unless action.fetch('runs')['using'] == 'composite'
     action.fetch('runs').fetch('steps').each do |step|
-      require_check(!step.fetch('uses', '').start_with?(DOWNLOAD_ACTION), "#{reference}: composite downloads cannot be bounded")
+      require_check(!step.fetch('uses', '').match?(DOWNLOAD_ACTION) && !step.fetch('run', '').match?(RUN_DOWNLOAD),
+        "#{reference}: composite downloads cannot be bounded")
       allowed = COMPOSITE_KEYS.fetch(step.key?('uses') ? 'uses' : 'run')
       require_check((step.keys - allowed).empty?, "#{reference}: composite step key the runner rejects")
     end
@@ -339,6 +343,11 @@ def check_artifact_downloads(workflows, actions)
   require_check(restore && archive[restore] == ARCHIVE_RESTORE &&
     archive[restore + 1]&.fetch('name', nil) == 'Extract Backend test archive once',
     'Rust archive must be restored by the bounded, digest-checked script before extraction')
+  # The restore verifies the digest the upload recorded, so the uploader may not float.
+  uploads = workflows.values.flat_map { |w| w.fetch('jobs').values.flat_map { |job| job.fetch('steps', []) } }
+    .select { |s| s.dig('with', 'name') == ARCHIVE_RESTORE.dig('env', 'ARTIFACT_NAME') }
+  require_check(uploads.length == 1 && uploads[0]['uses'].to_s.match?(%r{\Aactions/upload-artifact@[0-9a-f]{40}\z}),
+    'Rust archive upload must stay pinned: its consumers verify the digest it records')
   # The restore reads this run's artifacts; a called workflow holds that only when its caller grants it.
   archive_jobs = ->(job) { job.fetch('steps', []).any? { |s| s['uses'] == ARCHIVE_ACTION } }
   consumers = workflows.select { |_, w| w.fetch('jobs').values.any?(&archive_jobs) }
@@ -358,7 +367,11 @@ def check_artifact_downloads(workflows, actions)
       while index < steps.length
         first = steps[index]
         index += 1
-        next unless first.fetch('uses', '').start_with?(DOWNLOAD_ACTION)
+        if first.fetch('run', '').match?(RUN_DOWNLOAD)
+          require_check(DOWNLOAD_MINUTES.cover?(first['timeout-minutes']),
+            "#{name}/#{id}: gh run download must be bounded by its step's timeout-minutes")
+        end
+        next unless first.fetch('uses', '').match?(DOWNLOAD_ACTION)
         unless first.key?('timeout-minutes') || first.key?('continue-on-error')
           unbounded[name] += 1
           next
@@ -415,38 +428,60 @@ check_artifact_downloads(workflows, actions)
 restore_step = ->(a) { a[ARCHIVE_ACTION]['runs']['steps'].find { |s| s['name'] == ARCHIVE_RESTORE['name'] } }
 receipt_steps = ->(w) { w['staging-release']['jobs']['finalize']['steps'] }
 receipt = ->(w, id) { receipt_steps.call(w).find { |s| s['id'] == id } }
+report_steps = ->(w) { w['staging-deploy']['jobs']['report']['steps'] }
+archive_upload = ->(w) { w['ci-rust-archive']['jobs']['build']['steps'].find { |s| s['name'] == 'Upload Backend test archive' } }
 pinned = 'actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333'
-[->(_, a) { a[ARCHIVE_ACTION]['runs']['steps'].insert(3, {'uses' => pinned, 'with' => {'name' => 'rust-tests-${{ github.sha }}'}}) },
- ->(_, a) { restore_step.call(a)['timeout-minutes'] = 6 },
- ->(_, a) { restore_step.call(a)['continue-on-error'] = true },
- ->(_, a) { restore_step.call(a)['run'] = 'true' },
- ->(_, a) { restore_step.call(a)['env'].delete('GH_TOKEN') },
- ->(_, a) { a[ARCHIVE_ACTION]['runs']['steps'].reverse! },
- ->(w, _) { w['ci-rust']['jobs']['tests'].delete('permissions') },
- ->(w, _) { w['ci-rust']['jobs']['mongo-eg']['permissions']['actions'] = 'write' },
- ->(w, _) { w['ci']['jobs']['eg'].delete('permissions') },
- ->(w, _) { receipt.call(w, 'receipts-download').delete('timeout-minutes') },
- ->(w, _) { receipt.call(w, 'receipts-download')['timeout-minutes'] = 30 },
- ->(w, _) { receipt.call(w, 'receipts-download-retry').delete('timeout-minutes') },
- ->(w, _) { receipt.call(w, 'receipts-download-retry')['continue-on-error'] = true },
- ->(w, _) { receipt.call(w, 'receipts-download-retry')['with']['path'] = '${{ runner.temp }}' },
- ->(w, _) { receipt.call(w, 'receipts-download-retry')['if'] = 'always()' },
- ->(w, _) { receipt_steps.call(w).delete(receipt.call(w, 'receipts-download-retry')) },
- ->(w, _) { receipt_steps.call(w).reject! { |s| s['name'] == 'Explain the unavailable receipt artifact' } },
- ->(w, _) { receipt_steps.call(w).find { |s| s['name'] == 'Explain the unavailable receipt artifact' }['run'].sub!('exit 1', 'exit 0') },
- ->(w, _) { w['staging-deploy']['jobs']['report']['steps'] << {'uses' => pinned, 'with' => {'name' => 'evidence'}} },
- ->(w, _) { w['publish']['jobs']['release']['steps'] << {'uses' => pinned, 'with' => {'name' => 'evidence'}} },
- ->(w, _) { w['publish']['jobs'].each_value { |job| job.fetch('steps', []).reject! { |s| s.fetch('uses', '').start_with?(DOWNLOAD_ACTION) } } },
- ->(w, _) { w['ci-repo']['jobs']['structure']['steps'].find { |s| s['name'] == 'Staging publication and deployment contracts' }['run'].sub!(/^.*ci_artifact_download_tests.*\n/, '') }].each do |mutate|
+third_party = 'example-owner/action-download-artifact@' + 'b' * 40
+composite = 'composite downloads cannot be bounded'
+restore_rule = 'Rust archive must be restored by the bounded, digest-checked script'
+first_rule = 'staging-release/finalize: the first download attempt must be optional and bounded'
+repeat_rule = 'staging-release/finalize: the download repeat must be identical, bounded and able to fail the job'
+explain_rule = 'staging-release/finalize: an exhausted download must explain itself'
+count_rule = 'every new artifact download must be bounded'
+run_rule = "staging-deploy/report: gh run download must be bounded by its step's timeout-minutes"
+[[composite, ->(_, a) { a[ARCHIVE_ACTION]['runs']['steps'].insert(3, {'uses' => pinned, 'with' => {'name' => 'x'}}) }],
+ [composite, ->(_, a) { a[ARCHIVE_ACTION]['runs']['steps'].insert(3, {'uses' => third_party, 'with' => {'name' => 'x'}}) }],
+ [composite, ->(_, a) { a[ARCHIVE_ACTION]['runs']['steps'].insert(3, {'run' => 'gh run download "$GITHUB_RUN_ID" -n x', 'shell' => 'bash'}) }],
+ ['composite step key the runner rejects', ->(_, a) { restore_step.call(a)['timeout-minutes'] = 6 }],
+ [restore_rule, ->(_, a) { restore_step.call(a)['continue-on-error'] = true }],
+ [restore_rule, ->(_, a) { restore_step.call(a)['run'] = 'true' }],
+ [restore_rule, ->(_, a) { restore_step.call(a)['env'].delete('GH_TOKEN') }],
+ [restore_rule, ->(_, a) { a[ARCHIVE_ACTION]['runs']['steps'].reverse! }],
+ ['Rust archive upload must stay pinned', ->(w, _) { archive_upload.call(w)['uses'] = 'actions/upload-artifact@v4' }],
+ ['ci-rust/tests: archive restore needs exactly actions: read', ->(w, _) { w['ci-rust']['jobs']['tests'].delete('permissions') }],
+ ['ci-rust/mongo-eg: archive restore needs exactly actions: read', ->(w, _) { w['ci-rust']['jobs']['mongo-eg']['permissions']['actions'] = 'write' }],
+ ['ci-rust: every caller must grant actions: read', ->(w, _) { w['ci']['jobs']['eg'].delete('permissions') }],
+ [first_rule, ->(w, _) { receipt.call(w, 'receipts-download').delete('timeout-minutes') }],
+ [first_rule, ->(w, _) { receipt.call(w, 'receipts-download')['timeout-minutes'] = 30 }],
+ [repeat_rule, ->(w, _) { receipt.call(w, 'receipts-download-retry').delete('timeout-minutes') }],
+ [repeat_rule, ->(w, _) { receipt.call(w, 'receipts-download-retry')['continue-on-error'] = true }],
+ [repeat_rule, ->(w, _) { receipt.call(w, 'receipts-download-retry')['with']['path'] = '${{ runner.temp }}' }],
+ [repeat_rule, ->(w, _) { receipt.call(w, 'receipts-download-retry')['if'] = 'always()' }],
+ [repeat_rule, ->(w, _) { receipt_steps.call(w).delete(receipt.call(w, 'receipts-download-retry')) }],
+ [explain_rule, ->(w, _) { receipt_steps.call(w).reject! { |s| s['name'] == 'Explain the unavailable receipt artifact' } }],
+ [explain_rule, ->(w, _) { receipt_steps.call(w).find { |s| s['name'] == 'Explain the unavailable receipt artifact' }['run'].sub!('exit 1', 'exit 0') }],
+ [count_rule, ->(w, _) { report_steps.call(w) << {'uses' => pinned, 'with' => {'name' => 'evidence'}} }],
+ [count_rule, ->(w, _) { report_steps.call(w) << {'uses' => third_party, 'with' => {'name' => 'evidence'}} }],
+ [count_rule, ->(w, _) { w['publish']['jobs']['release']['steps'] << {'uses' => pinned, 'with' => {'name' => 'evidence'}} }],
+ [count_rule, ->(w, _) { w['publish']['jobs'].each_value { |job| job.fetch('steps', []).reject! { |s| s.fetch('uses', '').match?(DOWNLOAD_ACTION) } } }],
+ [run_rule, ->(w, _) { report_steps.call(w) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n evidence'} }],
+ [run_rule, ->(w, _) { report_steps.call(w) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n evidence', 'timeout-minutes' => 60} }],
+ ['bounded download regressions must run in Repository checks',
+  ->(w, _) { w['ci-repo']['jobs']['structure']['steps'].find { |s| s['name'] == 'Staging publication and deployment contracts' }['run'].sub!(/^.*ci_artifact_download_tests.*\n/, '') }]].each do |expected, mutate|
   copy, actions_copy = Marshal.load(Marshal.dump(workflows)), Marshal.load(Marshal.dump(actions))
   mutate.call(copy, actions_copy)
   begin
     check_artifact_downloads(copy, actions_copy)
-  rescue RuntimeError
+  rescue RuntimeError => error
+    raise "download mutation refused for another reason: #{error.message} (expected #{expected})" unless error.message.include?(expected)
     next
   end
-  abort 'unbounded artifact download accepted'
+  abort "unbounded artifact download accepted: #{expected}"
 end
+# A gh run download bounded by its step's timeout is accepted.
+copy = Marshal.load(Marshal.dump(workflows))
+report_steps.call(copy) << {'run' => 'gh run download "$GITHUB_RUN_ID" -n evidence', 'timeout-minutes' => 5}
+check_artifact_downloads(copy, actions)
 before_queue = "success() && (github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository)"
 mutations = [
   ->(d) { d['ci-rust']['jobs']['timing']['steps'].reject! { |s| s['name'] == 'API allocator qualification' } },
