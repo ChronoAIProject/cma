@@ -2,6 +2,9 @@ import { test, expect, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { LocalUsageMetrics } from './usage-metrics.fixture';
 import { expectReadableText } from './themeContrast';
+import { registerTopographicFlowCases } from './topographic-flow.cases';
+
+registerTopographicFlowCases();
 
 async function settle(page: Page, width: number) {
   await expect
