@@ -50,6 +50,7 @@ struct HealthState {
     store: CheckState,
     workers: Option<crate::worker_supervision::Workers>,
     diagnostics: Option<Arc<Recorder>>,
+    backend_free: bool,
 }
 
 #[cfg(test)]
@@ -61,7 +62,16 @@ pub(crate) fn router_with_workers(
     probe: Arc<dyn ReadinessProbe>,
     workers: crate::worker_supervision::Workers,
 ) -> Router {
-    monitored(probe, Some(workers), readiness_diagnostics::configured())
+    monitored(
+        probe,
+        Some(workers),
+        false,
+        readiness_diagnostics::configured(),
+    )
+}
+
+pub(crate) fn backend_free_router(probe: Arc<dyn ReadinessProbe>) -> Router {
+    monitored(probe, None, true, readiness_diagnostics::configured())
 }
 
 #[cfg(test)]
@@ -69,12 +79,13 @@ fn router_with_diagnostics(
     probe: Arc<dyn ReadinessProbe>,
     diagnostics: Option<Arc<Recorder>>,
 ) -> Router {
-    monitored(probe, None, diagnostics)
+    monitored(probe, None, false, diagnostics)
 }
 
 fn monitored(
     probe: Arc<dyn ReadinessProbe>,
     workers: Option<crate::worker_supervision::Workers>,
+    backend_free: bool,
     diagnostics: Option<Arc<Recorder>>,
 ) -> Router {
     let (result, state) = watch::channel(None);
@@ -91,6 +102,7 @@ fn monitored(
         store: state,
         workers,
         diagnostics,
+        backend_free,
     })
 }
 
@@ -100,6 +112,7 @@ fn routes(state: CheckState, diagnostics: Option<Arc<Recorder>>) -> Router {
         store: state,
         workers: None,
         diagnostics,
+        backend_free: false,
     })
 }
 
@@ -206,23 +219,27 @@ async fn readiness(State(state): State<HealthState>) -> impl IntoResponse {
             }),
         );
     }
+    let mut body = serde_json::json!({
+        "status": if ready { "ready" } else { "not-ready" },
+        "reason": if failure.is_some() { Some("store") } else if !execution_available { Some("workers") } else { None },
+        "workers": workers,
+        "dependency": {
+            "checked_at": check.as_ref().map(|check| &check.checked_at),
+            "age_ms": age.map(|age| age.as_millis()),
+            "duration_ms": check.as_ref().map(|check| check.duration_ms),
+            "reason": failure,
+        },
+    });
+    if state.backend_free {
+        body["sandbox"] = serde_json::json!({ "available": false });
+    }
     (
         if ready {
             StatusCode::OK
         } else {
             StatusCode::SERVICE_UNAVAILABLE
         },
-        Json(serde_json::json!({
-            "status": if ready { "ready" } else { "not-ready" },
-            "reason": if failure.is_some() { Some("store") } else if !execution_available { Some("workers") } else { None },
-            "workers": workers,
-            "dependency": {
-                "checked_at": check.as_ref().map(|check| &check.checked_at),
-                "age_ms": age.map(|age| age.as_millis()),
-                "duration_ms": check.as_ref().map(|check| check.duration_ms),
-                "reason": failure,
-            },
-        })),
+        Json(body),
     )
 }
 

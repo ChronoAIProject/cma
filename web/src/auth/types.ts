@@ -45,6 +45,7 @@ export interface User {
   readonly avatarUrl?: string;
   readonly capabilities: readonly Capability[];
   readonly visitor: boolean;
+  readonly serviceAuthorization?: boolean;
 }
 
 /** Failure disposition only: no response headers, credentials or identity data. */

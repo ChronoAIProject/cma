@@ -371,7 +371,7 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(line, "FAIL verification=pod-restarts recovery=unreported cause=operator")
         self.assertIn("What changed: Staging may have changed", annotation)
         self.assertIn("title=deploy%3A Deployment unverified%3A Pods restarted", annotation)
-        self.assertIn("Next step: An operator reconciles staging first. Then: Check the released components'", annotation)
+        self.assertIn("Next step: An operator reconciles staging first. Then: Check the restarted pods' logs", annotation)
         self.assertIn("if this change caused it", annotation)
         self.assertIn("| operator | An operator reconciles staging first.", row)
         self.assertTrue(render("deploy-precondition", "mode", subject="deploy")[0].endswith(" cause=operator"))
