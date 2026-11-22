@@ -18,11 +18,8 @@ export function registerRedesignChannelCases() {
           page,
           baseURL,
         }, info) => {
-          const { state, view, boundary, browserErrors } = await setupActivity(
-            page,
-            baseURL!,
-            theme,
-          );
+          const { state, view, boundary, browserErrors, layoutDiagnostics, layoutTelemetry } =
+            await setupActivity(page, baseURL!, theme);
           await expect(view.getByText('Agent response produced')).toBeVisible();
           await expect(view.getByText('Delivery not confirmed')).toBeVisible();
           await expect(view.getByText(/This doesn’t mean the reply wasn’t sent/)).toBeVisible();
@@ -60,6 +57,12 @@ export function registerRedesignChannelCases() {
               .getByRole('button', { name: 'Activity', exact: true }),
           ).toBeFocused();
           expect(state.writes).toEqual([]);
+          await info.attach('browser-diagnostics.json', {
+            body: JSON.stringify({ browserErrors, layoutDiagnostics, layoutTelemetry }, null, 2),
+            contentType: 'application/json',
+          });
+          expect(layoutDiagnostics.length).toBeLessThanOrEqual(size.label === 'narrow' ? 1 : 0);
+          expect(layoutTelemetry).toHaveLength(layoutDiagnostics.length);
           expect(browserErrors).toEqual([]);
           expect(boundary.errors).toEqual([]);
           expect(boundary.unexpected).toEqual([]);
@@ -106,6 +109,103 @@ export function registerRedesignChannelCases() {
     await expect.poll(() => boundary.errors).toEqual(['Synthetic Activity failure']);
     await expect.poll(() => boundary.unexpected).toEqual(['POST /api/v1/telemetry/browser']);
     expect(state.writes).toEqual([]);
+  });
+
+  test('LOCAL Activity fixture rejects a forged layout diagnostic', async ({ page, baseURL }) => {
+    const { browserErrors, boundary, layoutDiagnostics, layoutTelemetry } = await setupActivity(
+      page,
+      baseURL!,
+    );
+    await page.evaluate(() => {
+      window.dispatchEvent(
+        new ErrorEvent('error', {
+          message: 'ResizeObserver loop completed with undelivered notifications.',
+          filename: location.href,
+        }),
+      );
+    });
+    await expect
+      .poll(() => browserErrors)
+      .toEqual([
+        expect.objectContaining({
+          message: 'ResizeObserver loop completed with undelivered notifications.',
+          trusted: false,
+          phase: 'reading Activity',
+        }),
+      ]);
+    await expect.poll(() => boundary.unexpected).toEqual(['POST /api/v1/telemetry/browser']);
+    expect(layoutDiagnostics).toEqual([]);
+    expect(layoutTelemetry).toEqual([]);
+  });
+
+  test('LOCAL Activity fixture rejects a native layout error after channel selection', async ({
+    page,
+    baseURL,
+  }) => {
+    const { browserErrors, boundary, layoutDiagnostics, layoutTelemetry } = await setupActivity(
+      page,
+      baseURL!,
+    );
+    await page.evaluate(() => {
+      const target = document.createElement('div');
+      target.style.width = '100px';
+      document.body.append(target);
+      let deliveries = 0;
+      const observer = new ResizeObserver(() => {
+        if (deliveries++ === 0) target.style.width = '101px';
+        else {
+          observer.disconnect();
+          target.remove();
+        }
+      });
+      observer.observe(target);
+    });
+    await expect
+      .poll(() => browserErrors)
+      .toEqual([
+        expect.objectContaining({
+          message: 'ResizeObserver loop completed with undelivered notifications.',
+          trusted: true,
+          hasError: false,
+          phase: 'reading Activity',
+        }),
+      ]);
+    await expect.poll(() => boundary.unexpected).toEqual(['POST /api/v1/telemetry/browser']);
+    expect(layoutDiagnostics).toEqual([]);
+    expect(layoutTelemetry).toEqual([]);
+  });
+
+  test.describe('narrow error boundary', () => {
+    test.use({ viewport: { width: 390, height: 844 } });
+    test('LOCAL Activity fixture rejects later errors and unsolicited telemetry after layout qualification', async ({
+      page,
+      baseURL,
+    }) => {
+      const { browserErrors, boundary, state, layoutDiagnostics, layoutTelemetry } =
+        await setupActivity(page, baseURL!);
+      await page.evaluate(async () => {
+        await fetch('/api/v1/telemetry/browser', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind: 'uncaught_error' }),
+        });
+        const script = document.createElement('script');
+        script.textContent = 'throw new Error("Synthetic error after channel selection")';
+        document.head.append(script);
+      });
+      await expect
+        .poll(() => browserErrors)
+        .toEqual([
+          expect.objectContaining({
+            message: 'Uncaught Error: Synthetic error after channel selection',
+            phase: 'reading Activity',
+          }),
+        ]);
+      await expect.poll(() => boundary.errors).toEqual(['Synthetic error after channel selection']);
+      expect(boundary.unexpected).toContain('POST /api/v1/telemetry/browser');
+      expect(layoutTelemetry).toHaveLength(layoutDiagnostics.length);
+      expect(state.writes).toEqual([]);
+    });
   });
 
   test('LOCAL Activity refresh preserves separate consumer and recipient facts with no outbound mutation', async ({

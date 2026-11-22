@@ -65,42 +65,88 @@ interface ActivityBrowserError {
   lineno?: number;
   colno?: number;
   stack?: string;
+  trusted: boolean;
+  hasError: boolean;
+  phase: string;
 }
 
-async function captureActivityErrors(page: Page) {
+async function captureActivityErrors(page: Page, baseURL: string, phase: () => string) {
   const errors: ActivityBrowserError[] = [];
+  const layoutDiagnostics: ActivityBrowserError[] = [];
+  const layoutTelemetry: string[] = [];
   await page.exposeBinding(
     '__recordActivityBrowserError',
-    (_source, error: ActivityBrowserError) => {
-      errors.push(error);
+    (_source, error: Omit<ActivityBrowserError, 'phase'>) => {
+      const observed = { ...error, phase: phase() };
+      // Chromium also emits this native diagnostic on the pre-redesign channel map.
+      // Qualify only the observed narrow selection; later or repeated errors still fail.
+      if (
+        observed.phase === 'selecting channel' &&
+        page.viewportSize()?.width === 390 &&
+        observed.type === 'error' &&
+        observed.message === 'ResizeObserver loop completed with undelivered notifications.' &&
+        observed.trusted &&
+        !observed.hasError &&
+        observed.filename === new URL('/event-gateway', baseURL).href &&
+        observed.lineno === 0 &&
+        observed.colno === 0 &&
+        observed.stack === undefined &&
+        layoutDiagnostics.length === 0
+      ) {
+        layoutDiagnostics.push(observed);
+      } else errors.push(observed);
     },
   );
   await page.addInitScript(() => {
-    const record = (error: ActivityBrowserError) =>
+    const record = (error: Omit<ActivityBrowserError, 'phase'>) =>
       (
         window as unknown as {
-          __recordActivityBrowserError: (error: ActivityBrowserError) => Promise<void>;
+          __recordActivityBrowserError: (
+            error: Omit<ActivityBrowserError, 'phase'>,
+          ) => Promise<void>;
         }
       ).__recordActivityBrowserError(error);
-    window.addEventListener('error', (event) => {
-      void record({
-        type: event.type,
-        message: event.message,
-        filename: event.filename,
-        lineno: event.lineno,
-        colno: event.colno,
-        stack: event.error instanceof Error ? event.error.stack : undefined,
-      });
-    });
+    window.addEventListener(
+      'error',
+      (event) => {
+        void record({
+          type: event.type,
+          trusted: event.isTrusted,
+          hasError: event.error != null,
+          message: event.message,
+          filename: event.filename,
+          lineno: event.lineno,
+          colno: event.colno,
+          stack: event.error instanceof Error ? event.error.stack : undefined,
+        });
+      },
+      true,
+    );
     window.addEventListener('unhandledrejection', (event) => {
       void record({
         type: event.type,
+        trusted: event.isTrusted,
+        hasError: true,
         message: event.reason instanceof Error ? event.reason.message : String(event.reason),
         stack: event.reason instanceof Error ? event.reason.stack : undefined,
       });
     });
   });
-  return errors;
+  await page.route('**/api/v1/telemetry/browser', (route) => {
+    const request = route.request();
+    if (
+      request.method() === 'POST' &&
+      request.postData() === '{"kind":"uncaught_error"}' &&
+      layoutDiagnostics.length === 1 &&
+      errors.length === 0 &&
+      layoutTelemetry.length === 0
+    ) {
+      layoutTelemetry.push(request.postData()!);
+      return route.fulfill({ status: 204 });
+    }
+    return route.fallback();
+  });
+  return { browserErrors: errors, layoutDiagnostics, layoutTelemetry };
 }
 
 // Keep each synthetic stream open after its HTTP snapshot, without native reconnect timers.
@@ -150,7 +196,7 @@ async function localStreams(page: Page) {
 }
 
 export async function setupActivity(page: Page, baseURL: string, theme: 'dark' | 'light' = 'dark') {
-  const browserErrors = await captureActivityErrors(page);
+  let phase = 'startup';
   await page.clock.install({ time: new Date('2026-11-22T02:26:00Z') });
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.addInitScript(
@@ -160,6 +206,7 @@ export async function setupActivity(page: Page, baseURL: string, theme: 'dark' |
   await localStreams(page);
   const boundary = new LocalStartup();
   await boundary.route(page, baseURL);
+  const diagnostics = await captureActivityErrors(page, baseURL, () => phase);
   const state = {
     snapshot: activityPage(),
     reads: [] as string[],
@@ -213,18 +260,22 @@ export async function setupActivity(page: Page, baseURL: string, theme: 'dark' |
   });
   await page.goto('/event-gateway');
   await expect(page.getByRole('region', { name: 'Channel workspace', exact: true })).toBeVisible();
+  phase = 'opening navigation';
   const showNavigation = page.getByRole('button', { name: 'Show navigation', exact: true });
   if (await showNavigation.isVisible()) await showNavigation.click();
+  phase = 'selecting channel';
   await page
     .getByRole('region', { name: 'Channels', exact: true })
     .getByRole('treeitem', { name: /^Example team/ })
     .click();
+  phase = 'opening Activity';
   await page
     .getByRole('region', { name: 'Delivery map' })
     .getByRole('button', { name: 'Activity', exact: true })
     .click();
+  phase = 'reading Activity';
   const view = page.getByRole('dialog').locator('.channel-activity');
   await expect(view.getByText('demo-event-01')).toBeVisible();
   await expect(view.getByText('Live activity', { exact: true })).toBeVisible();
-  return { state, boundary, view, browserErrors };
+  return { state, boundary, view, ...diagnostics };
 }
