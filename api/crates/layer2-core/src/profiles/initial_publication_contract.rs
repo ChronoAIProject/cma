@@ -344,8 +344,30 @@ where
             String::new(),
             content.clone()
         ),
-        b.create_workspace_for_owner(&owner, &key, "Workspace".into(), String::new(), content),
+        b.create_workspace_for_owner(
+            &owner,
+            &key,
+            "Workspace".into(),
+            String::new(),
+            content.clone()
+        ),
     );
+    let left = retry_unavailable(
+        left,
+        a.create_workspace_for_owner(
+            &owner,
+            &key,
+            "Workspace".into(),
+            String::new(),
+            content.clone(),
+        ),
+    )
+    .await;
+    let right = retry_unavailable(
+        right,
+        b.create_workspace_for_owner(&owner, &key, "Workspace".into(), String::new(), content),
+    )
+    .await;
     let workspace = left.unwrap();
     assert_eq!(right.unwrap(), workspace);
     assert_eq!(
@@ -378,8 +400,30 @@ where
             String::new(),
             content.clone()
         ),
-        b.create_sandbox_for_owner(&owner, &key, "Sandbox".into(), String::new(), content),
+        b.create_sandbox_for_owner(
+            &owner,
+            &key,
+            "Sandbox".into(),
+            String::new(),
+            content.clone()
+        ),
     );
+    let left = retry_unavailable(
+        left,
+        a.create_sandbox_for_owner(
+            &owner,
+            &key,
+            "Sandbox".into(),
+            String::new(),
+            content.clone(),
+        ),
+    )
+    .await;
+    let right = retry_unavailable(
+        right,
+        b.create_sandbox_for_owner(&owner, &key, "Sandbox".into(), String::new(), content),
+    )
+    .await;
     let sandbox = left.unwrap();
     assert_eq!(right.unwrap(), sandbox);
     assert_eq!(
@@ -391,6 +435,19 @@ where
             .len(),
         1
     );
+}
+
+/// A transactional draft insert that loses a write conflict to its concurrent
+/// twin reports bounded unavailability and never replays itself. The caller's
+/// ordinary retry with the same creation key then returns the twin's creation.
+async fn retry_unavailable<T>(
+    result: Result<T, ProfileCreationError>,
+    retry: impl std::future::Future<Output = Result<T, ProfileCreationError>>,
+) -> Result<T, ProfileCreationError> {
+    match result {
+        Err(ProfileCreationError::Store(ProfileStoreError::Unavailable(_))) => retry.await,
+        other => other,
+    }
 }
 
 #[cfg(test)]

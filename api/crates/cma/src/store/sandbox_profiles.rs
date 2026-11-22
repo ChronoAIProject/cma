@@ -263,9 +263,7 @@ impl MongoProfileStore {
     ) -> Result<SandboxProfileRevision, ProfileStoreError> {
         let mut last_transient = None;
         for attempt in 0..TRANSACTION_ATTEMPTS {
-            if attempt > 0 {
-                tokio::task::yield_now().await;
-            }
+            super::profiles::retry_pause(attempt, initial.is_some()).await;
             let mut session = match self.client.start_session().await {
                 Ok(session) => session,
                 Err(error) if is_transient(&error) => {
@@ -367,7 +365,8 @@ impl MongoProfileStore {
                 CommitOutcome::Committed => return Ok(revision),
                 CommitOutcome::Retry(error) => last_transient = Some(error.to_string()),
                 CommitOutcome::Unknown(error) => {
-                    return match get_revision(
+                    return match super::profiles::get_revision_after_unknown_commit(
+                        &mut session,
                         &self.sandbox_revisions,
                         id.as_str(),
                         number,
