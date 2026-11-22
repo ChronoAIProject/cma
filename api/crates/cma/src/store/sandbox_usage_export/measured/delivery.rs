@@ -2,7 +2,7 @@ use super::*;
 use futures_util::TryStreamExt;
 
 impl CaptureStore {
-    pub(super) async fn measured_delivery_page(
+    pub(in crate::store::sandbox_usage_export) async fn measured_delivery_page(
         &self,
         after: &str,
     ) -> Result<Vec<String>, SandboxStoreError> {

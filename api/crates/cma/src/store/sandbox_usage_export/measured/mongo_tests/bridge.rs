@@ -6,7 +6,9 @@ use layer3_adapter::{HomeVolumePolicy, HomeVolumeReceipt};
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a disposable replica set"]
 async fn observer_bridge_is_atomic_and_disabled_capture_gap_is_never_certified() {
     let f = Fixture::new().await;
-    let candidate = f.bind().await;
+    let mut candidate = f.bind().await;
+    candidate.valid_until = None;
+    candidate.observed_at = f.minute;
     f.store
         .collection(sandbox_metric_bindings::COLLECTION)
         .delete_many(doc! {})

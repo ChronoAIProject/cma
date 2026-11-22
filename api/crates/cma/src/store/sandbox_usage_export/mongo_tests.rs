@@ -12,11 +12,11 @@ use mongodb::{
 use std::sync::{Arc, Mutex};
 
 mod capture;
-mod erasure;
 mod delivery;
 mod delivery_contract;
 mod delivery_recovery;
 mod delivery_worker;
+mod erasure;
 mod inventory;
 mod projection;
 mod safety;
