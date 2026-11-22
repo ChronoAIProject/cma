@@ -409,6 +409,24 @@ async fn degraded_start_is_noted_once_when_its_plan_first_reports_ready() {
     let mut ready = failing;
     ready.error = None;
     ready.applied_revision = ready.revision;
-    service.note_default_recovery(std::slice::from_ref(&ready), &inventory);
+    let output = Output::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .without_time()
+        .with_writer(output.clone())
+        .finish();
+    tracing::subscriber::with_default(subscriber, || {
+        // Later samples of the same ready plan stay quiet.
+        for _ in 0..2 {
+            service.note_default_recovery(std::slice::from_ref(&ready), &inventory);
+        }
+    });
     assert!(service.degraded_start.lock().unwrap().is_none());
+    let text = String::from_utf8(output.0.lock().unwrap().clone()).unwrap();
+    let notes: Vec<_> = text
+        .lines()
+        .filter(|row| row.contains("default native pool became ready after a degraded start"))
+        .collect();
+    assert_eq!(notes.len(), 1, "{text}");
+    assert!(notes[0].contains("INFO "), "{}", notes[0]);
 }
