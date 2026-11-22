@@ -20,6 +20,7 @@ mod retirement;
 mod startup;
 mod supervision;
 mod telemetry;
+pub(crate) use startup::StartupReadiness;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct PoolTarget {

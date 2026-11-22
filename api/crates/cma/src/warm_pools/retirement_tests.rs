@@ -285,10 +285,11 @@ async fn startup_wait_retires_superseded(already_retiring: bool) {
         1,
         None,
     );
-    assert!(matches!(
+    // The bound elapses without a default target; startup serves degraded.
+    assert_eq!(
         service.await_default_ready().await,
-        Err(WarmPoolError::Unavailable)
-    ));
+        Ok(StartupReadiness::Degraded)
+    );
     let calls = store.calls.lock().unwrap().clone();
     let claim = format!("claim-retire:{}", current.id);
     for step in [claim.as_str(), "mark-provider", "resize:0", "finish:true"] {

@@ -23,14 +23,16 @@ fn fixture() -> (Memory, Provider) {
 #[tokio::test(start_paused = true)]
 async fn startup_adopts_prewarmed_binding_without_zeroing_capacity_before_readiness() {
     let (store, provider) = fixture();
-    await_ready(
-        &store,
-        &provider,
-        &provider.original,
-        Duration::from_secs(120),
-    )
-    .await
-    .unwrap();
+    assert_eq!(
+        await_ready(
+            &store,
+            &provider,
+            &provider.original,
+            Duration::from_secs(120),
+        )
+        .await,
+        Ok(StartupReadiness::Ready),
+    );
     assert_eq!(
         *store.calls.lock().unwrap(),
         [
@@ -46,14 +48,16 @@ async fn startup_adopts_prewarmed_binding_without_zeroing_capacity_before_readin
     assert_eq!(target.binding, Some(provider.binding()));
     assert_eq!(target.applied_revision, target.revision);
     store.calls.lock().unwrap().clear();
-    await_ready(
-        &store,
-        &provider,
-        &provider.original,
-        Duration::from_secs(120),
-    )
-    .await
-    .unwrap();
+    assert_eq!(
+        await_ready(
+            &store,
+            &provider,
+            &provider.original,
+            Duration::from_secs(120),
+        )
+        .await,
+        Ok(StartupReadiness::Ready),
+    );
     assert_eq!(*store.calls.lock().unwrap(), ["inventory"]);
 }
 
@@ -62,24 +66,26 @@ async fn startup_respects_durable_zero_target_without_provider_mutation_or_inven
     let (store, provider) = fixture();
     store.target.lock().unwrap().target_replicas = 0;
     assert_eq!(store.target.lock().unwrap().requested.target_replicas, 3);
-    await_ready(
-        &store,
-        &provider,
-        &provider.original,
-        Duration::from_secs(120),
-    )
-    .await
-    .unwrap();
+    assert_eq!(
+        await_ready(
+            &store,
+            &provider,
+            &provider.original,
+            Duration::from_secs(120),
+        )
+        .await,
+        Ok(StartupReadiness::Ready),
+    );
     assert!(store.calls.lock().unwrap().is_empty());
     assert!(store.target.lock().unwrap().binding.is_none());
 }
 
 #[tokio::test(start_paused = true)]
-async fn startup_fails_within_deadline_when_target_cannot_be_warmed() {
+async fn startup_degrades_at_deadline_when_target_cannot_be_warmed() {
     let (store, provider) = fixture();
     provider.refuse_replaced_uid.store(true, Ordering::SeqCst);
     let began = tokio::time::Instant::now();
-    assert!(matches!(
+    assert_eq!(
         await_ready(
             &store,
             &provider,
@@ -87,11 +93,38 @@ async fn startup_fails_within_deadline_when_target_cannot_be_warmed() {
             Duration::from_secs(120)
         )
         .await,
-        Err(WarmPoolError::Unavailable),
-    ));
+        Ok(StartupReadiness::Degraded),
+    );
     assert_eq!(began.elapsed(), Duration::from_secs(120));
+    // Degrading leaves the durable target for the supervisor to keep filling.
     assert_eq!(store.target.lock().unwrap().applied_revision, 0);
     assert_eq!(store.target.lock().unwrap().target_replicas, 3);
+    assert!(!store.target.lock().unwrap().retiring);
+}
+
+#[tokio::test(start_paused = true)]
+async fn startup_refuses_a_retiring_or_retired_default_without_waiting() {
+    for retired in [false, true] {
+        let (store, provider) = fixture();
+        {
+            let mut target = store.target.lock().unwrap();
+            target.retiring = true;
+            target.retired = retired;
+        }
+        let began = tokio::time::Instant::now();
+        assert_eq!(
+            await_ready(
+                &store,
+                &provider,
+                &provider.original,
+                Duration::from_secs(120)
+            )
+            .await,
+            Err(WarmPoolError::Conflict),
+        );
+        assert_eq!(began.elapsed(), Duration::ZERO);
+        assert!(store.calls.lock().unwrap().is_empty());
+    }
 }
 
 #[test]
@@ -162,7 +195,10 @@ async fn startup_awaits_only_the_default_pool_even_with_a_cold_positive_machine_
         Some((&machine_image, 3)),
     );
     let began = tokio::time::Instant::now();
-    pools.await_default_ready().await.unwrap();
+    assert_eq!(
+        pools.await_default_ready().await,
+        Ok(StartupReadiness::Ready)
+    );
     assert_eq!(began.elapsed(), Duration::ZERO);
     assert!(store.claims.lock().unwrap().is_empty());
     let machine = resize::only(store.machine(&machine_image));
@@ -198,7 +234,10 @@ async fn startup_drain_never_claims_or_zeroes_a_prewarmed_default() {
         1,
         None,
     );
-    service.await_default_ready().await.unwrap();
+    assert_eq!(
+        service.await_default_ready().await,
+        Ok(StartupReadiness::Ready)
+    );
     assert_eq!(
         *store.calls.lock().unwrap(),
         [
@@ -210,4 +249,37 @@ async fn startup_drain_never_claims_or_zeroes_a_prewarmed_default() {
             "inventory",
         ]
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn startup_refuses_an_unusable_default_plan_without_waiting() {
+    // Without a home policy no default plan exists to wait for; this stays an
+    // error rather than a degraded start.
+    let (store, provider) = fixture();
+    let store = Arc::new(store);
+    let capacity = layer3_adapter::SandboxCapacity {
+        cpu_millis: provider.original.spec.cpu_millis,
+        memory_mib: provider.original.spec.memory_mib,
+    };
+    let uri = provider.original.spec.image.uri.clone();
+    let adapter = layer3_adapter::codex::CodexAdapter::with_backend(
+        resize::PoolBackend(provider),
+        layer3_adapter::codex::CodexSandboxSpec::default(),
+    );
+    let service = NativeWarmPools::new(
+        store.clone(),
+        Arc::new(adapter),
+        uri,
+        None,
+        capacity,
+        1,
+        None,
+    );
+    let began = tokio::time::Instant::now();
+    assert_eq!(
+        service.await_default_ready().await,
+        Err(WarmPoolError::Unavailable)
+    );
+    assert_eq!(began.elapsed(), Duration::ZERO);
+    assert!(store.calls.lock().unwrap().is_empty());
 }

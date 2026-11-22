@@ -1,6 +1,6 @@
-//! Start serving only after warm-pool and retained-runtime authority are ready.
+//! Start serving once retained-runtime authority is ready; warm capacity gets a bounded head start.
 use std::{
-    future::IntoFuture,
+    future::{Future, IntoFuture},
     net::SocketAddr,
     time::{Duration, Instant},
 };
@@ -12,7 +12,9 @@ use crate::{
     read_telemetry,
     shutdown::{self, signalled, ShutdownCoordinator},
     startup_timing::{observe, Phase},
-    telemetry, with_cors, with_request_context,
+    telemetry,
+    warm_pools::StartupReadiness,
+    with_cors, with_request_context,
 };
 
 // Match the Gateway's longest accepted connection before draining workers.
@@ -40,8 +42,13 @@ pub(crate) async fn serve() -> Result<(), String> {
         )),
     );
 
-    // Do not admit allocations against a newly promoted runtime until its
-    // exact default pool has ready capacity (unless an operator disabled it).
+    // Give a newly promoted runtime's exact default pool a bounded chance to
+    // report ready capacity before admitting allocations (unless an operator
+    // disabled it); during a rolling update the previous pods keep serving.
+    // An elapsed bound degrades instead of exiting: an allocation without a
+    // ready member starts cold and retries durably until assigned, and the
+    // pool supervisor started below keeps filling the pool. An unusable
+    // default or a retiring default target still stops startup.
     // The shared desktop pool is seeded here but fills in the background.
     observe(
         "default_warm_pool_configuration",
@@ -50,13 +57,7 @@ pub(crate) async fn serve() -> Result<(), String> {
     )
     .await
     .map_err(|error| format!("native warm pool default is not usable: {error:?}"))?;
-    observe(
-        "default_warm_pool_readiness",
-        composition.native_warm_pools.await_default_ready(),
-        |_| None,
-    )
-    .await
-    .map_err(|error| format!("native warm pool startup readiness failed: {error:?}"))?;
+    default_pool_gate(composition.native_warm_pools.await_default_ready()).await?;
 
     let listener = observe(
         "socket_bind",
@@ -179,3 +180,33 @@ pub(crate) async fn serve() -> Result<(), String> {
         )),
     }
 }
+
+/// Record how the bounded default-pool wait ended. Only an error stops
+/// startup; a bound that elapsed is observed as `degraded` and serving goes on.
+async fn default_pool_gate<E: std::fmt::Debug>(
+    wait: impl Future<Output = Result<StartupReadiness, E>>,
+) -> Result<StartupReadiness, String> {
+    let phase = Phase::new("default_warm_pool_readiness");
+    match wait.await {
+        Ok(readiness) => {
+            phase.finish(
+                match readiness {
+                    StartupReadiness::Ready => "ok",
+                    StartupReadiness::Degraded => "degraded",
+                },
+                None,
+            );
+            Ok(readiness)
+        }
+        Err(error) => {
+            phase.finish("error", None);
+            Err(format!(
+                "native warm pool startup readiness failed: {error:?}"
+            ))
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "startup_tests.rs"]
+mod tests;

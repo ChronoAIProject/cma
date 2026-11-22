@@ -1,4 +1,9 @@
-//! Prevent the first allocation after promotion from taking an avoidable cold path.
+//! Give a promoted default pool a bounded head start; warm capacity never gates serving.
+//!
+//! A ready member only spares the first allocation after promotion a cold
+//! start. An allocation against a pool without one still works: the controller
+//! creates the claimed Sandbox from the pool's template, and the allocation's
+//! durable work retries until the claim is assigned.
 use super::{
     reconcile_claimed, NativePoolConfiguration, NativePoolSpec, NativePoolStatus, NativeWarmPools,
     PoolTarget, PoolTargetStore, WarmPoolError,
@@ -6,23 +11,43 @@ use super::{
 use layer3_adapter::agent_sandbox::NativePoolControl;
 use std::time::Duration;
 
-// Outlast the release settle window plus drain, scheduling and image pull:
-// with 120 s each, a promotion onto a full node pool always gave up exactly
-// when older capacity first became eligible to drain, so every runtime
-// promotion restarted the Agent Manager once. The 240 s total leaves time for
-// socket bind and sandbox initialization inside the default 300 s startup probe.
+// Outlast the release settle window plus drain, scheduling and image pull, so a
+// promotion onto a full node pool usually finds warm capacity before serving.
+// An earlier 120 s bound gave up exactly when older capacity first became
+// eligible to drain. Elapsing is not a failure: startup serves `Degraded` and
+// the supervisor keeps filling the pool, since a new image's pull, scheduling
+// and spare drain can take longer than any bound that fits the probe. The 240 s
+// total leaves time for socket bind and sandbox initialization inside the
+// default 300 s startup probe.
 const STARTUP_WARMUP_LIMIT: Duration = Duration::from_secs(super::RELEASE_SETTLE.as_secs() + 120);
 
+/// How the bounded startup wait for the default runtime pool ended.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StartupReadiness {
+    /// The exact plan reported ready capacity, or an operator's durable target is zero.
+    Ready,
+    /// The bound elapsed first. Serving continues and allocations may start cold.
+    Degraded,
+}
+
 impl NativeWarmPools {
-    /// Release preparation should prewarm this plan before the Recreate rollout.
-    /// This bounded guard never serves allocations before readiness and does not
-    /// imply that the old API remains available during a Recreate deployment.
+    /// Wait, bounded, for the exact default runtime plan to report ready
+    /// capacity. During a rolling update the previous Agent Manager keeps
+    /// serving while this waits. Release preparation may have prewarmed the
+    /// plan, but nothing guarantees it, so a new image's pull, scheduling and
+    /// spare drain can outlast the bound. That returns `Degraded` and the
+    /// caller serves anyway: the pool supervisor keeps filling the pool, and
+    /// allocations meanwhile take the cold path.
+    ///
+    /// Only a retiring or retired default target (`Conflict`) or an unusable
+    /// plan is an error. A retiring pool refuses every new admission, so
+    /// serving against it would turn allocations into failures.
     ///
     /// Only the default runtime plan gates startup. The shared desktop pool
     /// merely shortens machine startup, which still works cold, and a new
     /// machine image's first pull alone can outlast this guard; the supervisor
     /// fills that pool in the background.
-    pub async fn await_default_ready(&self) -> Result<(), WarmPoolError> {
+    pub async fn await_default_ready(&self) -> Result<StartupReadiness, WarmPoolError> {
         // The supervisor that retires superseded pools starts only after this
         // gate, yet on a full node pool the new default schedules only once
         // their spare capacity drains. Retire superseded targets while waiting,
@@ -63,7 +88,7 @@ impl NativeWarmPools {
         Ok(())
     }
 
-    async fn await_default_plan_ready(&self) -> Result<(), WarmPoolError> {
+    async fn await_default_plan_ready(&self) -> Result<StartupReadiness, WarmPoolError> {
         let provider = self
             .adapter
             .native_pools()
@@ -93,7 +118,7 @@ pub(super) async fn await_ready(
     provider: &dyn NativePoolControl,
     plan: &NativePoolConfiguration,
     limit: Duration,
-) -> Result<(), WarmPoolError> {
+) -> Result<StartupReadiness, WarmPoolError> {
     await_ready_with_fencing(store, provider, plan, limit, false).await
 }
 
@@ -103,11 +128,12 @@ async fn await_ready_with_fencing(
     plan: &NativePoolConfiguration,
     limit: Duration,
     target_fencing: bool,
-) -> Result<(), WarmPoolError> {
-    tokio::time::timeout(limit, async {
+) -> Result<StartupReadiness, WarmPoolError> {
+    let started = tokio::time::Instant::now();
+    let waited = tokio::time::timeout(limit, async {
         loop {
             match step(store, provider, plan, target_fencing).await {
-                Ok(true) => return Ok(()),
+                Ok(true) => return Ok(StartupReadiness::Ready),
                 Ok(false) => {}
                 Err(WarmPoolError::Conflict) => return Err(WarmPoolError::Conflict),
                 Err(_) => tracing::warn!("default native pool startup readiness will retry"),
@@ -115,8 +141,18 @@ async fn await_ready_with_fencing(
             tokio::time::sleep(Duration::from_secs(1)).await;
         }
     })
-    .await
-    .map_err(|_| WarmPoolError::Unavailable)?
+    .await;
+    // Dropping an in-flight step here is the same interruption as a process
+    // exit at that point; the durable lease and target record cover both.
+    waited.unwrap_or_else(|_| {
+        tracing::warn!(
+            config_sha256 = %plan.config_sha256,
+            image = %plan.spec.image.uri,
+            elapsed_ms = started.elapsed().as_millis(),
+            "default native pool not ready within startup limit; serving while the supervisor fills it"
+        );
+        Ok(StartupReadiness::Degraded)
+    })
 }
 
 async fn step(
