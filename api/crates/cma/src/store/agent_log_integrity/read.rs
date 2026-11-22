@@ -28,25 +28,30 @@ pub(in crate::store) async fn scan_complete_log_with_session(
         agent.conversation.last_seq,
         session,
         crate::store::agent_log_integrity::ScanOptions::new(false, store.scan_cooperation),
-        |entry| {
-            if let layer2_core::sandbox::AgentLogKind::Created {
-                workspace_id,
-                worktree_id,
-            } = &entry.kind
-            {
-                if entry.seq != 1
-                    || workspace_id != &agent.workspace_id
-                    || worktree_id != agent.creation_worktree_id()
-                {
-                    return Err(SandboxStoreError::Corrupt(
-                        "Agent creation log lineage does not match".into(),
-                    ));
-                }
-            }
-            Ok(())
-        },
+        |entry| validate_creation_lineage(agent, &entry),
     )
     .await
+}
+
+fn validate_creation_lineage(
+    agent: &Agent,
+    entry: &AgentLogEntry,
+) -> Result<(), SandboxStoreError> {
+    if let layer2_core::sandbox::AgentLogKind::Created {
+        workspace_id,
+        worktree_id,
+    } = &entry.kind
+    {
+        if entry.seq != 1
+            || workspace_id != &agent.workspace_id
+            || worktree_id != agent.creation_worktree_id()
+        {
+            return Err(SandboxStoreError::Corrupt(
+                "Agent creation log lineage does not match".into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[derive(Debug, PartialEq, Eq)]
