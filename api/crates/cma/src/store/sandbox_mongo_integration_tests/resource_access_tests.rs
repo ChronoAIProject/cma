@@ -18,6 +18,8 @@ mod observation_leases;
 mod personal_inventory;
 #[path = "resource_access_tests/provenance.rs"]
 mod provenance;
+#[path = "resource_access_tests/qualification.rs"]
+mod qualification;
 #[path = "resource_access_tests/sandbox_inventory.rs"]
 mod sandbox_inventory;
 #[path = "resource_access_tests/sandbox_snapshot.rs"]

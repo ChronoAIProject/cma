@@ -26,8 +26,23 @@ async fn personal_agent_provenance_phase_profile() {
 }
 
 async fn readers(path: &'static str, provenance: bool, profiling: bool) {
+    let route = if provenance { "provenance" } else { "agents" };
+    let subject = if provenance { "provenance" } else { "list" };
+    let variant = if profiling {
+        "phase_profile"
+    } else {
+        "one_hundred_concurrent_public_readers_meet_budgets"
+    };
+    let case = format!("personal_inventory::concurrency::personal_agent_{subject}_{variant}");
     let mut percentiles = Vec::new();
     for distinct in [false, true] {
+        let mut record = qualification::Record::new(
+            &case,
+            if distinct { "distinct" } else { "shared" },
+            serde_json::json!({"kind":"readers", "route":route, "mode":"batch", "distinct":distinct,
+                "instrumentation":if profiling { "phase-and-mongo-profiler" } else { "command-observer" },
+                "expected_readers":100, "expected_warmup":100}),
+        );
         let f = if profiling {
             fixture::Fixture::readers_without_command_observer(100, 201, distinct).await
         } else {
@@ -41,6 +56,7 @@ async fn readers(path: &'static str, provenance: bool, profiling: bool) {
             assert_eq!(expected.0, StatusCode::OK, "reader {reader}");
             assert_eq!(expected.1["items"].as_array().unwrap().len(), 200);
             expected_pages.push((cookie, expected));
+            record.set("warmup_completed", reader + 1);
         }
         if profiling {
             profile::server(&f, true).await;
@@ -48,7 +64,7 @@ async fn readers(path: &'static str, provenance: bool, profiling: bool) {
         f.meter.take();
         let barrier = Arc::new(tokio::sync::Barrier::new(101));
         let mut readers = tokio::task::JoinSet::new();
-        for (cookie, expected) in expected_pages {
+        for (reader, (cookie, expected)) in expected_pages.into_iter().enumerate() {
             let (app, barrier) = (app.clone(), barrier.clone());
             readers.spawn(async move {
                 barrier.wait().await;
@@ -61,25 +77,28 @@ async fn readers(path: &'static str, provenance: bool, profiling: bool) {
                 } else {
                     work.await
                 };
-                assert_eq!(
-                    result.0,
-                    expected.0,
-                    "{}",
-                    result.1.get("code").unwrap_or(&serde_json::Value::Null)
-                );
-                assert!(
-                    result.1 == expected.1,
-                    "concurrent page differs from its owner's reference"
-                );
-                (start.elapsed().as_micros(), phases.take())
+                let semantic_match = result == expected;
+                (
+                    qualification::Sample {
+                        reader,
+                        status: result.0.as_u16(),
+                        elapsed_us: start.elapsed().as_micros(),
+                        deadline: false,
+                        semantic_match,
+                    },
+                    phases.take(),
+                )
             });
         }
         barrier.wait().await;
         let mut times = Vec::new();
         let mut phases = Vec::new();
         while let Some(result) = readers.join_next().await {
-            let (time, phase) = result.unwrap();
-            times.push(time);
+            let (sample, phase) = result.unwrap();
+            let valid = sample.status == 200 && sample.semantic_match;
+            times.push(sample.elapsed_us);
+            record.sample(sample);
+            assert!(valid, "concurrent page differs from its owner's reference");
             phases.push(phase);
         }
         times.sort_unstable();
@@ -96,6 +115,8 @@ async fn readers(path: &'static str, provenance: bool, profiling: bool) {
             "AGENT_LIST_CONCURRENT path={path} readers=100 limit=200 distinct={distinct} p95_us={} p99_us={} stats={stats:?}",
             times[94], times[98]
         );
+        record.set("commands", &stats.commands);
+        record.set("failed_commands", stats.failed);
         // Every successful request requires exactly this complete set of commands;
         // any retry or getMore makes the total exceed the asserted eight or nine per read.
         let mut expected_commands = std::collections::BTreeMap::from([
@@ -115,6 +136,7 @@ async fn readers(path: &'static str, provenance: bool, profiling: bool) {
         assert_eq!(stats.count(), stats.checkouts);
         percentiles.push((distinct, times[94], times[98]));
         f.close().await;
+        record.complete(true);
     }
     assert!(
         percentiles.iter().all(|(_, p95, _)| *p95 <= 500_000),

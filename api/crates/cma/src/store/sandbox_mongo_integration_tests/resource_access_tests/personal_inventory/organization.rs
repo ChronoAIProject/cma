@@ -147,6 +147,11 @@ async fn organization_public_pages_preserve_redaction_cursors_and_complete_comma
 async fn organization_one_hundred_concurrent_public_readers_meet_budgets() {
     let mut percentiles = Vec::new();
     for distinct in [false, true] {
+        let mut record = qualification::Record::new(
+            "personal_inventory::organization::organization_one_hundred_concurrent_public_readers_meet_budgets",
+            if distinct { "distinct" } else { "shared" },
+            serde_json::json!({"kind":"readers", "route":"organization", "mode":"batch", "distinct":distinct,
+                "instrumentation":"mongo-profiler", "expected_readers":100, "expected_warmup":101}));
         // Match production observation: count actual server commands without
         // adding eager full-reply BSON decoding to every measured request.
         let f = owned_with_command_observer(201, distinct, false).await;
@@ -157,11 +162,13 @@ async fn organization_one_hundred_concurrent_public_readers_meet_budgets() {
         let expected = request(&app, PATH).await;
         assert_eq!(expected.0, StatusCode::OK, "{expected:?}");
         assert_eq!(expected.1["items"].as_array().unwrap().len(), 200);
+        record.set("warmup_completed", 1);
         for reader in 1..101 {
             assert_eq!(
                 public::request_cookie(&app, PATH, &identity::cookie(reader)).await,
                 expected
             );
+            record.set("warmup_completed", reader + 1);
         }
         profile::server(&f, true).await;
         f.meter.take();
@@ -172,17 +179,25 @@ async fn organization_one_hundred_concurrent_public_readers_meet_budgets() {
             readers.spawn(async move {
                 barrier.wait().await;
                 let start = Instant::now();
-                assert_eq!(
-                    public::request_cookie(&app, PATH, &identity::cookie(reader)).await,
-                    expected
-                );
-                start.elapsed().as_micros()
+                let result = public::request_cookie(&app, PATH, &identity::cookie(reader)).await;
+                let semantic_match = result == expected;
+                qualification::Sample {
+                    reader: reader - 1,
+                    status: result.0.as_u16(),
+                    elapsed_us: start.elapsed().as_micros(),
+                    deadline: false,
+                    semantic_match,
+                }
             });
         }
         barrier.wait().await;
         let mut times = Vec::new();
         while let Some(result) = readers.join_next().await {
-            times.push(result.unwrap());
+            let sample = result.unwrap();
+            let valid = sample.status == 200 && sample.semantic_match;
+            times.push(sample.elapsed_us);
+            record.sample(sample);
+            assert!(valid, "organization page differs from its reference");
         }
         times.sort_unstable();
         let mut stats = f.meter.take();
@@ -190,6 +205,8 @@ async fn organization_one_hundred_concurrent_public_readers_meet_budgets() {
         let server = profile::server_report(&f).await;
         stats.commands = server.commands;
         stats.failed = server.failed;
+        record.set("commands", &stats.commands);
+        record.set("failed_commands", stats.failed);
         println!("ORGANIZATION_CONCURRENT readers=100 limit=200 distinct={distinct} p95_us={} p99_us={} commands={} map={:?}", times[94], times[98], stats.count(), stats.commands);
         assert!(stats.count() <= 2000, "{stats:?}");
         assert_eq!(stats.count(), stats.checkouts);
@@ -210,6 +227,7 @@ async fn organization_one_hundred_concurrent_public_readers_meet_budgets() {
         );
         percentiles.push((distinct, times[94], times[98]));
         f.close().await;
+        record.complete(true);
     }
     assert!(
         percentiles.iter().all(|(_, p95, _)| *p95 < 1_000_000),

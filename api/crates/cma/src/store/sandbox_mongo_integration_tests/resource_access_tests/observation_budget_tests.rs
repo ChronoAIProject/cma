@@ -21,6 +21,23 @@ mod observation_refresh;
 mod response_shared;
 
 async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::Stats {
+    let mut record = qualification::Record::new(
+        if seconds == 1800 {
+            "history_measurement::observation_budget::observation_one_hundred_observers_on_two_replicas_for_thirty_minutes"
+        } else {
+            "history_measurement::observation_budget::observation_two_serving_replicas_keep_idle_work_independent_of_history"
+        },
+        if distinct {
+            "distinct-owners"
+        } else if many {
+            "many-agents"
+        } else {
+            "one-agent"
+        },
+        serde_json::json!({"kind":"observation", "history":rows, "many":many, "distinct":distinct,
+            "instrumentation":"command-observer", "expected_observers":100, "replicas":2,
+            "required_seconds":seconds, "opening_concurrency":16}),
+    );
     let mut f = Fixture::semantic(rows).await;
     let agents = agents(&mut f, many, distinct).await;
     let replicas = budget_servers(&f).await;
@@ -69,16 +86,23 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
                 let body = response.text().await.unwrap();
                 panic!("observer {index}: status={status} history={rows} elapsed={:?} available_slots={slots:?} body={body}", started.elapsed());
             }
-            (response, started.elapsed())
+            (index, response, started.elapsed())
         }
     });
     let mut longest_open = Duration::ZERO;
-    for (response, elapsed) in futures_util::stream::iter(opening)
+    for (reader, response, elapsed) in futures_util::stream::iter(opening)
         .buffer_unordered(16)
         .collect::<Vec<_>>()
         .await
     {
         longest_open = longest_open.max(elapsed);
+        record.sample(qualification::Sample {
+            reader,
+            status: 200,
+            elapsed_us: elapsed.as_micros(),
+            deadline: false,
+            semantic_match: true,
+        });
         consumers.push(tokio::spawn(async move {
             let mut body = response.bytes_stream();
             while let Some(chunk) = body.next().await {
@@ -88,6 +112,8 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
         }));
     }
     let cold = f.meter.stats.lock().unwrap().clone();
+    record.set("opening_commands", &cold.commands);
+    record.set("agents", agents.len());
     eprintln!(
         "shared_open agents={} observers=100 history={rows} distinct={distinct} commands={} longest_open={longest_open:?}",
         agents.len(),
@@ -129,8 +155,14 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
     tokio::time::sleep(Duration::from_secs(2)).await;
     f.meter.clear();
     let started = Instant::now();
+    record.set("stable_started_ms", qualification::now_ms());
     for _ in 0..seconds {
         tokio::time::sleep(Duration::from_secs(1)).await;
+        record.set("stable_elapsed_us", started.elapsed().as_micros());
+        record.set(
+            "active_observers",
+            consumers.iter().filter(|task| !task.is_finished()).count(),
+        );
         assert!(
             consumers.iter().all(|task| !task.is_finished()),
             "all 100 observers must remain connected"
@@ -139,6 +171,33 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
     let elapsed = started.elapsed().as_secs_f64();
     let stats = f.meter.stats.lock().unwrap().clone();
     let commands = stats.commands.values().sum::<u64>();
+    record.set("stable_finished_ms", qualification::now_ms());
+    record.set("stable_elapsed_us", started.elapsed().as_micros());
+    record.set("commands", &stats.commands);
+    record.set("snapshots", stats.snapshots);
+    record.set("bytes", stats.bytes);
+    record.set("head_agents", stats.per_agent_heads.len());
+    record.set(
+        "max_head_refreshes",
+        stats
+            .per_agent_heads
+            .values()
+            .map(Vec::len)
+            .max()
+            .unwrap_or(0),
+    );
+    record.set(
+        "minimum_refresh_gap_us",
+        stats
+            .per_agent_heads
+            .values()
+            .flat_map(|times| {
+                times
+                    .windows(2)
+                    .map(|pair| pair[1].duration_since(pair[0]).as_micros())
+            })
+            .min(),
+    );
     assert!(
         (commands as f64 / elapsed) <= 100.0,
         "{commands} commands/{elapsed}s: {:?}",
@@ -172,10 +231,12 @@ async fn measure(rows: u64, many: bool, distinct: bool, seconds: u64) -> meter::
     eprintln!("shared_idle agents={} observers=100 replicas=2 distinct={distinct} history={rows} seconds={elapsed:.3} commands={commands} commands_per_second={:.3} head_cohort_refreshes={} bytes={} details={:?}", agents.len(), commands as f64 / elapsed, stats.snapshots, stats.bytes, stats.commands);
     for consumer in consumers {
         consumer.abort();
+        let _ = consumer.await;
     }
     drop(replicas);
     tokio::time::sleep(Duration::from_millis(50)).await;
     f.client.database(&f.name).drop().await.unwrap();
+    record.complete(true);
     stats
 }
 
