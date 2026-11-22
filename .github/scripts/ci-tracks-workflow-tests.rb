@@ -130,6 +130,23 @@ OMARCHY_RETENTION_STEPS = {
   'Omarchy package bundle is never deleted' => 'ruby .github/scripts/omarchy-package-retention.rb'
 }.freeze
 
+# pacman refuses a pinned package once the key that signed it has expired, so
+# each Omarchy build first warns before, and fails by name after, that date
+# (#3040). The step stays offline, reading the committed signing-key record,
+# and warn-only until expiry; the weekly omarchy-key-expiry workflow fails
+# earlier and re-derives the record from the locked URLs.
+KEY_EXPIRY_STEP = {
+  'name' => 'Arch packager key expiry',
+  'run' => "python3 -B .github/scripts/omarchy_key_expiry_tests.py\npython3 -B .github/scripts/omarchy_key_expiry.py\n"
+}.freeze
+
+def check_key_expiry(steps)
+  found = steps.select { |s| s['name'] == KEY_EXPIRY_STEP['name'] }
+  build = steps.index { |s| s['id'] == 'build' }
+  require_check(found == [KEY_EXPIRY_STEP] && build && steps.index(found.first) < build,
+    'Omarchy must check its packager key expiry offline, warn-only, unconditionally and before building')
+end
+
 def validate(documents, actions)
   require_runtime_inventory(documents)
   check_component_cache_writers(documents)
@@ -265,6 +282,7 @@ def validate(documents, actions)
   require_check(!serialized.match?(%r{ci-contract\.rb|staging-authority\.mjs|deployment-observer\.mjs|gh workflow run|gh api[^\n]*dispatches|kubectl}),
     'live authority, observer or mutation tooling retained')
   check_omarchy_archive(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
+  check_key_expiry(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'))
   check_os_refresh(documents.fetch('ci-omarchy').fetch('jobs').fetch('omarchy').fetch('steps'), 'Omarchy')
   check_os_refresh(documents.fetch('ci-images').fetch('jobs').fetch('images').fetch('steps'), 'Images')
 end
@@ -596,6 +614,20 @@ mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'][synthetic_index]
 %w[staging-authority.mjs deployment-observer.mjs].each do |tool|
   mutations << ->(d) { d['ci-repo']['jobs']['structure']['steps'] << {'run' => "node .github/scripts/#{tool}"} }
 end
+omarchy_steps = ->(d) { d['ci-omarchy']['jobs']['omarchy']['steps'] }
+key_expiry = ->(d) { omarchy_steps.call(d).find { |s| s['name'] == KEY_EXPIRY_STEP['name'] } }
+[->(d) { omarchy_steps.call(d).delete(key_expiry.call(d)) },
+ ->(d) { omarchy_steps.call(d).insert(omarchy_steps.call(d).index { |s| s['id'] == 'build' }, key_expiry.call(d).dup) },
+ ->(d) { step = omarchy_steps.call(d).delete(key_expiry.call(d)); omarchy_steps.call(d).insert(omarchy_steps.call(d).index { |s| s['id'] == 'build' } + 1, step) },
+ ->(d) { key_expiry.call(d)['continue-on-error'] = true },
+ ->(d) { key_expiry.call(d)['if'] = 'false' },
+ ->(d) { key_expiry.call(d)['run'] = 'true' },
+ ->(d) { key_expiry.call(d)['run'].sub!('omarchy_key_expiry.py', 'omarchy_key_expiry.py || true') },
+ ->(d) { key_expiry.call(d)['run'].sub!(/^.*_tests\.py\n/, '') },
+ ->(d) { key_expiry.call(d)['run'].sub!("omarchy_key_expiry.py\n", "omarchy_key_expiry.py --verify-record\n") },
+ ->(d) { key_expiry.call(d)['run'].sub!("omarchy_key_expiry.py\n", "omarchy_key_expiry.py --refresh\n") },
+ ->(d) { key_expiry.call(d)['run'].sub!("omarchy_key_expiry.py\n", "omarchy_key_expiry.py --fail-days 30\n") },
+ ->(d) { key_expiry.call(d)['env'] = {'GITHUB_STEP_SUMMARY' => '/dev/null'} }].each { |mutate| mutations << mutate }
 [['ci-images', 'images'], ['ci-omarchy', 'omarchy']].each do |file, job|
   ['removed', 'optional', 'skipped', 'fake-success', 'late'].each do |change|
     mutations << lambda do |d|

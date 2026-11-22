@@ -73,6 +73,13 @@ jobs:
           CD_COMPONENT: ${{ inputs.component }}
           CD_TASKS: ${{ inputs.tasks }}
         run: python3 -B .github/scripts/staging_cd_release_ownership.py
+      # An expired pinned Arch signing key fails the Omarchy build with a generic
+      # signature error late in the build. Name the key, its date and the
+      # snapshot-bump issue before any build work; warn 14 days ahead.
+      - name: Check pinned Omarchy signing keys
+        if: inputs.component == 'runtime-omarchy' && steps.ownership.outputs.superseded != 'true'
+        timeout-minutes: 2
+        run: python3 -B .github/scripts/omarchy_key_expiry.py --warn-days 14
       - name: Prepare component Cargo cache
         if: inputs.component == 'am' || inputs.component == 'eg'
         id: build-cache

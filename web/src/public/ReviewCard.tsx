@@ -27,6 +27,14 @@ import {
   type DraftStartCommand,
 } from './draftRecovery';
 
+function loadRecovery(id: string) {
+  try {
+    return { recovery: readDraftRecovery(id), blocked: false };
+  } catch {
+    return { recovery: undefined, blocked: true };
+  }
+}
+
 export function ReviewCard({
   client,
   record,
@@ -42,7 +50,8 @@ export function ReviewCard({
   readonly onChanged: (value: Launch) => void;
   readonly onClose: () => void;
 }) {
-  const [recovery, setRecovery] = useState(() => readDraftRecovery(record.id));
+  const [saved, setSaved] = useState(() => loadRecovery(record.id));
+  const { recovery, blocked: storageBlocked } = saved;
   const [confirmed, setConfirmed] = useState(
     recovery?.confirmedDigest !== undefined &&
       record.review.needs.some(
@@ -54,10 +63,15 @@ export function ReviewCard({
   const [connectionRevision, setConnectionRevision] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(
-    recovery === undefined ? undefined : credentialSetupMessage,
+    storageBlocked
+      ? publicCopy.storageReadUnavailable
+      : recovery === undefined
+        ? undefined
+        : credentialSetupMessage,
   );
   const active = useRef(false);
   const command = useRef<DraftStartCommand | undefined>(recovery?.command);
+  const unresolved = useRef(recovery?.command !== undefined);
   const [uncertain, setUncertain] = useState(recovery?.command !== undefined);
   const [needsSignIn, setNeedsSignIn] = useState(recovery !== undefined);
   const [credentialOwner, setCredentialOwner] = useState(recovery?.owner ?? expectedSubject);
@@ -69,8 +83,34 @@ export function ReviewCard({
   const missing = needs.flatMap((need) => (need.type === 'connection' ? [need.service] : []));
   const connectionsOnly = missing.length > 0 && missing.length === needs.length;
 
+  const retryRead = () => {
+    const next = loadRecovery(record.id);
+    setSaved(next);
+    if (next.blocked) {
+      setError(publicCopy.storageReadUnavailable);
+      return;
+    }
+    command.current = next.recovery?.command;
+    unresolved.current = command.current !== undefined;
+    setUncertain(unresolved.current);
+    setConfirmed(
+      next.recovery?.confirmedDigest !== undefined &&
+        next.recovery.confirmedDigest === trust?.commands_digest,
+    );
+    setCredentialOwner(next.recovery?.owner ?? expectedSubject);
+    setNeedsSignIn(next.recovery !== undefined);
+    explicitRetryRequired.current = true;
+    setError(next.recovery === undefined ? undefined : credentialSetupMessage);
+  };
+
   const start = async (explicit = false) => {
-    if (active.current || needsSignIn || (!explicit && explicitRetryRequired.current)) return;
+    if (
+      active.current ||
+      storageBlocked ||
+      needsSignIn ||
+      (!explicit && explicitRetryRequired.current)
+    )
+      return;
     if (explicit) explicitRetryRequired.current = false;
     active.current = true;
     command.current ??= {
@@ -91,24 +131,31 @@ export function ReviewCard({
       });
       command.current = undefined;
       clearDraftRecovery(record.id);
+      unresolved.current = false;
       setUncertain(false);
       onChanged(result);
     } catch (cause) {
-      const unknown = isUnsettledCommand(cause);
+      const credentialRefusal = needsSandboxCredentialSetup(cause);
+      const unknown = !credentialRefusal && (unresolved.current || isUnsettledCommand(cause));
+      unresolved.current = unknown;
       setUncertain(unknown);
-      const required =
-        needsSandboxCredentialSetup(cause) || cause instanceof CredentialAccountError;
+      const required = credentialRefusal || cause instanceof CredentialAccountError;
       setNeedsSignIn(required);
-      if (required || recovery !== undefined) explicitRetryRequired.current = true;
+      if (unknown || required || recovery !== undefined) explicitRetryRequired.current = true;
       if (!unknown) command.current = undefined;
       setError(refusalSentence(cause));
-      if ((required || recovery !== undefined) && credentialOwner !== undefined) {
+      if ((unknown || required || recovery !== undefined) && credentialOwner !== undefined) {
         const retained: DraftCredentialRecovery = {
           owner: recovery?.owner ?? credentialOwner,
-          confirmedDigest: confirmed ? trust?.commands_digest : undefined,
+          confirmedDigest:
+            command.current === undefined
+              ? confirmed
+                ? trust?.commands_digest
+                : undefined
+              : command.current.body.trust_confirmed_digest,
           command: command.current,
         };
-        setRecovery(retained);
+        setSaved({ recovery: retained, blocked: false });
         try {
           writeDraftRecovery(record.id, retained);
         } catch {
@@ -122,6 +169,7 @@ export function ReviewCard({
           'trust_confirmation_mismatch',
           'launch_not_startable',
           'launch_changed',
+          'idempotency_recovery_required',
         ].includes(cause.code ?? '')
       ) {
         if (cause.code === 'launch_requirements_not_met') {
@@ -154,10 +202,10 @@ export function ReviewCard({
       footer={
         <Button
           variant="primary"
-          disabled={busy || needsSignIn || (!uncertain && !canStart)}
-          onClick={() => void start(true)}
+          disabled={busy || (!storageBlocked && (needsSignIn || (!uncertain && !canStart)))}
+          onClick={() => (storageBlocked ? retryRead() : void start(true))}
         >
-          {uncertain
+          {storageBlocked || uncertain
             ? publicCopy.retry
             : connectionsOnly
               ? connectionCopy.verifyAll
@@ -183,7 +231,7 @@ export function ReviewCard({
                     <input
                       type="checkbox"
                       checked={confirmed}
-                      disabled={busy || uncertain}
+                      disabled={busy || uncertain || storageBlocked}
                       onChange={(event) => setConfirmed(event.target.checked)}
                     />
                     {publicCopy.confirmation}
