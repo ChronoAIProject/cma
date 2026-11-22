@@ -48,7 +48,7 @@ async fn readers(path: &'static str, provenance: bool, profiling: bool) {
         f.meter.take();
         let barrier = Arc::new(tokio::sync::Barrier::new(101));
         let mut readers = tokio::task::JoinSet::new();
-        for (cookie, expected) in expected_pages {
+        for (reader, (cookie, expected)) in expected_pages.into_iter().enumerate() {
             let (app, barrier) = (app.clone(), barrier.clone());
             readers.spawn(async move {
                 barrier.wait().await;
@@ -57,10 +57,16 @@ async fn readers(path: &'static str, provenance: bool, profiling: bool) {
                 let work = public::request_cookie(&app, path, &cookie);
                 let result = if profiling {
                     use tracing::instrument::WithSubscriber;
-                    work.with_subscriber(phases.dispatch()).await
+                    phases
+                        .measure(work.with_subscriber(phases.dispatch()))
+                        .await
                 } else {
                     work.await
                 };
+                let body_matches = result.1 == expected.1;
+                if profiling && (result.0 != expected.0 || !body_matches) {
+                    profile::record(path, distinct, reader, result.0.as_u16(), &phases.take());
+                }
                 assert_eq!(
                     result.0,
                     expected.0,
@@ -68,10 +74,15 @@ async fn readers(path: &'static str, provenance: bool, profiling: bool) {
                     result.1.get("code").unwrap_or(&serde_json::Value::Null)
                 );
                 assert!(
-                    result.1 == expected.1,
+                    body_matches,
                     "concurrent page differs from its owner's reference"
                 );
-                (start.elapsed().as_micros(), phases.take())
+                let elapsed = start.elapsed().as_micros();
+                let sample = phases.take();
+                if profiling {
+                    profile::record(path, distinct, reader, result.0.as_u16(), &sample);
+                }
+                (elapsed, sample)
             });
         }
         barrier.wait().await;

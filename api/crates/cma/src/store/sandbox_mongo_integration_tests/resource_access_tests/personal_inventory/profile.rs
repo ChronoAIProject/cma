@@ -12,8 +12,24 @@ use tracing_subscriber::{
 };
 
 type Phases = BTreeMap<String, (u128, u128)>;
+#[path = "profile/identity.rs"]
+mod identity;
+#[path = "profile/request.rs"]
+mod request;
+#[cfg(test)]
+#[path = "profile/tests.rs"]
+mod tests;
+
 #[derive(Clone, Default)]
-pub(super) struct Profile(Arc<Mutex<Phases>>);
+pub(super) struct Profile {
+    phases: Arc<Mutex<Phases>>,
+    request: Arc<Mutex<Option<request::Sample>>>,
+}
+#[derive(serde::Serialize)]
+pub(super) struct Sample {
+    phases: Phases,
+    request: Option<request::Sample>,
+}
 struct SpanTime {
     started: Instant,
     entered: Option<Instant>,
@@ -47,7 +63,7 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Profile {
         let span = ctx.span(&id).unwrap();
         let extensions = span.extensions();
         let time = extensions.get::<SpanTime>().unwrap();
-        let mut totals = self.0.lock().unwrap();
+        let mut totals = self.phases.lock().unwrap();
         let entry = totals.entry(span.name().to_owned()).or_default();
         entry.0 += time.started.elapsed().as_micros();
         entry.1 += time.busy;
@@ -61,14 +77,33 @@ impl Profile {
             )),
         )
     }
-    pub fn take(&self) -> Phases {
-        std::mem::take(&mut *self.0.lock().unwrap())
+    pub fn measure<F: std::future::Future>(
+        &self,
+        future: F,
+    ) -> impl std::future::Future<Output = F::Output> {
+        request::Measured::new(future, self.request.clone())
+    }
+    pub fn take(&self) -> Sample {
+        Sample {
+            phases: std::mem::take(&mut *self.phases.lock().unwrap()),
+            request: self.request.lock().unwrap().take(),
+        }
     }
 }
-pub(super) fn report(requests: &[Phases]) {
+pub(super) fn report(requests: &[Sample]) {
     let mut grouped: BTreeMap<String, Vec<(u128, u128)>> = BTreeMap::new();
     for request in requests {
-        for (name, times) in request {
+        let timing = request.request.as_ref().expect("profiled request timing");
+        assert!(timing.completed && !timing.identity.invalid);
+        assert_eq!(
+            timing.identity.resolutions, 1,
+            "one ambient identity resolution per request"
+        );
+        assert_eq!(
+            timing.identity.resolved, 1,
+            "successful identity resolution required"
+        );
+        for (name, times) in &request.phases {
             grouped.entry(name.clone()).or_default().push(*times);
         }
     }
@@ -79,6 +114,15 @@ pub(super) fn report(requests: &[Phases]) {
         let busy = times.iter().map(|t| t.1).sum::<u128>() / n as u128;
         println!("AGENT_LIST_PHASE phase={phase} requests={n} mean_wall_us={mean} mean_active_us={busy} p95_wall_us={}",times[(n*95).div_ceil(100)-1].0);
     }
+}
+pub(super) fn record(path: &str, distinct: bool, index: usize, status: u16, sample: &Sample) {
+    println!(
+        "AGENT_LIST_REQUEST_TIMING {}",
+        serde_json::json!({
+            "schema":1, "path":path, "distinct":distinct, "sample":index,
+            "status":status, "timing":sample
+        })
+    );
 }
 pub(super) async fn server(f: &fixture::Fixture, enable: bool) {
     if enable {
