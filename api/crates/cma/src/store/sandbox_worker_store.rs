@@ -269,9 +269,12 @@ async fn purge_in_transaction(
     expected_revision: u64,
     session: &mut mongodb::ClientSession,
 ) -> Result<(), PurgeError> {
-    super::work_publication::fence(store, session)
+    super::work_publication::fence_transaction(store, session)
         .await
-        .map_err(|_| PurgeError::Conflict)?;
+        .map_err(|error| match error {
+            super::work_publication::FenceError::Driver(error) => PurgeError::Driver(error),
+            super::work_publication::FenceError::Domain(_) => PurgeError::Conflict,
+        })?;
     let aggregate = store
         .sandboxes
         .find_one(crate::store::work_schema::query(doc! {

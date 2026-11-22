@@ -2,7 +2,7 @@
 use super::{
     gate::expired,
     intents::{ConfirmedMessagePart, DeliveryOutcome, IntentReceipt},
-    render::{LiteralText, RenderedPart, Renderer},
+    render::{RelayText, RenderedPart, Renderer},
     send::{unsupported, SendContext, SendEffects, Sender},
 };
 use crate::{
@@ -78,7 +78,7 @@ impl Sender {
         {
             return (unsupported(), effects);
         }
-        let (mut parts, rendering) = LiteralText.render(message, &Capabilities::native_discord());
+        let (mut parts, rendering) = RelayText.render(message, &Capabilities::native_discord());
         let mut receipt = IntentReceipt {
             message_parts: vec![],
             message_ref: None,

@@ -113,14 +113,14 @@ for (const width of [1440, 390]) {
     await expect(page).toHaveURL(`${baseURL}/agent-manager`);
     await navigation(page, false);
     await expect(
-      page.getByRole('heading', { name: 'What should your Agent work on?' }),
+      page.getByRole('heading', { name: /^Good (morning|afternoon|evening)\.$/ }),
     ).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Get Started', exact: true })).toHaveCount(0);
     await page.screenshot({ path: info.outputPath(`home-${width}.png`), fullPage: true });
     await page.goto('/');
     await expect(
-      page.getByRole('heading', { name: 'What should your Agent work on?' }),
+      page.getByRole('heading', { name: /^Good (morning|afternoon|evening)\.$/ }),
     ).toBeVisible();
     noEffects(boundary);
   });

@@ -3,7 +3,7 @@ use super::{
     gate::expired,
     intents::{DeliveryOutcome, IntentReceipt},
     relay_client::unknown,
-    render::{LiteralText, RelayText, Renderer},
+    render::{RelayText, Renderer},
     send::{refused, unsupported, SendContext, SendEffects, Sender},
     telegram::replaces_telegram_cards,
 };
@@ -375,13 +375,11 @@ impl Sender {
             return unsupported();
         };
         let commonmark = self.relay.commonmark_for_platform(destination.platform);
-        let capabilities = Capabilities::relay(destination.platform);
-        let (part, rendering) =
-            if !commonmark && super::render::literal_platform(destination.platform) {
-                LiteralText.whole(message, &capabilities)
-            } else {
-                RelayText.whole_with_commonmark(message, &capabilities, commonmark)
-            };
+        let (part, rendering) = RelayText.whole_with_commonmark(
+            message,
+            &Capabilities::relay(destination.platform),
+            commonmark,
+        );
         if part.text.is_empty()
             || (!commonmark
                 && text_limit(destination.platform)
