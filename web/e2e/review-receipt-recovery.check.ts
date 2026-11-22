@@ -240,7 +240,10 @@ for (const receipt of ['unwritten', 'saved'] as const) {
     if (receipt === 'unwritten') {
       await expect(retry).toBeEnabled();
       expect(commands).toHaveLength(2);
-      expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBe(retained);
+      const retried = await page.evaluate((key) => sessionStorage.getItem(key), storageKey);
+      expect(JSON.parse(retried!)).toEqual({ ...packet, generation: expect.any(String) });
+      expect(JSON.stringify(JSON.parse(retried!).command.body)).toBe(commands[0]?.body);
+      expect(retried).not.toBe(retained);
       await retry.click();
     }
     await expect(page.getByRole('dialog')).toHaveCount(0);
@@ -249,10 +252,11 @@ for (const receipt of ['unwritten', 'saved'] as const) {
     expect(commands.every((command) => command.key === commands[0]?.key)).toBe(true);
     expect(commands.every((command) => command.body === commands[0]?.body)).toBe(true);
     await expect.poll(() => statesRead.includes('resolving')).toBe(true);
-    const expectedStored = receipt === 'unwritten' ? retained : null;
-    expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBe(
-      expectedStored,
-    );
+    const expectedStored = await page.evaluate((key) => sessionStorage.getItem(key), storageKey);
+    if (receipt === 'unwritten') {
+      expect(JSON.parse(expectedStored!)).toEqual({ ...packet, generation: expect.any(String) });
+      expect(JSON.stringify(JSON.parse(expectedStored!).command.body)).toBe(commands[0]?.body);
+    } else expect(expectedStored).toBeNull();
     await page.reload();
     await expect(page.locator('.public-progress')).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0);
