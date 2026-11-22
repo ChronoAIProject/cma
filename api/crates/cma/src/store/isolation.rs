@@ -145,6 +145,11 @@ pub(crate) const COLLECTIONS: &[&str] = &[
     "sandbox_events",
     super::sandbox_usage::STATES,
     super::sandbox_usage::EVENTS,
+    super::sandbox_usage_export::CAPTURES,
+    super::sandbox_usage_export::EVIDENCE,
+    super::sandbox_usage_export::OUTBOX,
+    super::sandbox_usage_export::STREAMS,
+    super::sandbox_usage_export::INVENTORY,
     "sandbox_profile_revisions",
     "sandbox_profiles",
     "sandbox_retained_availability",
@@ -169,6 +174,11 @@ pub(crate) const COLLECTIONS: &[&str] = &[
 // These derived stores are activated separately. Existing credentials must
 // still start while the feature is disabled; partial grants remain invalid.
 pub(crate) const OPTIONAL_COLLECTIONS: &[&str] = &[
+    super::sandbox_usage_export::CAPTURES,
+    super::sandbox_usage_export::EVIDENCE,
+    super::sandbox_usage_export::OUTBOX,
+    super::sandbox_usage_export::STREAMS,
+    super::sandbox_usage_export::INVENTORY,
     super::home_backups::SCHEDULES_COLLECTION,
     super::home_backups::BACKUPS_COLLECTION,
     super::allocation_buckets::COLLECTION,
