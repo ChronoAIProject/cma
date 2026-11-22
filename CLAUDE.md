@@ -524,21 +524,14 @@ That section, and only that section, becomes the annotated tag message and the r
 
 The merge is the release. Nothing is tagged or published before it, and nothing further is required after it:
 
-- The five images are built, scanned and pushed to `ghcr.io/chronoaiproject/cma-{agent-manager,web,runtime,event-gateway,runtime-omarchy}`, tagged with the version and with the short commit SHA. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk; matching labels and platform shape are validation, not provenance.
-- After all five current GHCR digests pass the writer/history verification, each exact root digest is exported as
-  an OCI archive plus JSON metadata in a one-day Actions transfer artifact.
-  These unencrypted archives are an additional, ephemeral distribution
-  surface: anyone who can download this internal repository's Actions
-  artifacts can receive the private images, and that audience is not assumed
-  to equal the GHCR package ACL. Retention limits duration, not readership.
-  The artifacts are not release assets, are never committed, and contain no
-  standalone client package.
+- Nothing is rebuilt. For each of the five images, `ghcr.io/chronoaiproject/cma-{agent-manager,web,runtime,event-gateway,runtime-omarchy}`, the release selects the newest published component version whose source is the merged `develop` commit or one of its ancestors on `develop`'s first-parent history, and only if staging deployment evidence recorded that exact digest as controller-verified. This is the same selection `prod-cd.yml` makes, so each image is built and scanned once, by the reviewed staging publication gate, and a release holding an image staging never verified is refused.
+- Each selected digest receives the version tag and the release merge's short commit SHA tag through a digest-preserving copy; the image still records the `develop` commit it was built from. The intended contract is one assignment per tag, backed by an audited exclusive-writer ACL and package history. A tag that already names the selected digest is reused and one that names anything else refuses the release. GHCR exposes no tag compare-and-swap, so stale absence reads on a sequential rerun remain a residual overwrite risk. The runtime image contract is executed again against the promoted runtime digest before the tag is written. No image is exported as an Actions artifact.
 - An annotated tag `vX.Y.Z` and a GitHub release are created. An active, GET-verified `v*` tag ruleset must reject updates and deletions without a bypass. The release carries the notes under their version heading, the image references and their GHCR package links, and the source archives GitHub generates for the tag.
 
 The tag is the version of record. `api/Cargo.toml` and `web/package.json` are not bumped: a bot writing to `main` would put it ahead of `develop` for no gain, and the version those files carry is not what anything deploys.
 
 Publishing is not deploying. `prod-cd.yml` deploys a release, and only after a required
-approval in the `production` environment. It never deploys an image rebuilt for the tag:
+approval in the `production` environment. Neither it nor the release rebuilds an image:
 for each component production enables, it promotes the newest published version whose
 source is the merged `develop` commit or one of its ancestors, and only if staging deployment
 evidence recorded that exact image as controller-verified. The same deployment helpers and
