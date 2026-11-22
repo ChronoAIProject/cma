@@ -2,6 +2,11 @@ import { existsSync, lstatSync, readFileSync, realpathSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import type { Page } from '@playwright/test';
+import {
+  parseConnectionJourneyFixtures,
+  type ConnectionJourneyFixtures,
+  type ConnectionObservationInput,
+} from './connection-journey-contract';
 
 export const faultNames = [
   'install_failure',
@@ -74,6 +79,7 @@ export interface StagingFixtures {
   fixtureOwner: string;
   baselineServices: string[];
   publicJourneys: PublicJourneyFixtures;
+  connectionJourneys: ConnectionJourneyFixtures;
   accounts: Record<Role, Account>;
   visitors: Record<string, Account>;
   triggers: Record<
@@ -98,6 +104,7 @@ export interface Hooks {
   // Hooks are audited operator-provided ordinary UI and scoped fault drivers, never NyxID admin.
   completeSignup(page: Page): Promise<void>;
   completeConnection(page: Page, mode: 'oauth' | 'api_key' | 'device_code'): Promise<void>;
+  observeConnection(input: ConnectionObservationInput): Promise<unknown>;
   // The reviewed fixture host installs this run's snippet only in its allocated
   // page and restores that page before returning from the restore phase.
   publishEmbed(input: PublishedEmbedInput): Promise<void>;
@@ -371,6 +378,10 @@ export function fixtures(env = process.env): StagingFixtures {
     fixtureOwner,
     baselineServices,
     publicJourneys: journeys,
+    connectionJourneys: parseConnectionJourneyFixtures(
+      document.connectionJourneys,
+      parsedProvenance.nyxidCommit,
+    ),
     accounts: parsedAccounts,
     visitors: parsedVisitors,
     triggers: parsedTriggers,
@@ -388,6 +399,7 @@ export async function hooks(fixture: StagingFixtures): Promise<Hooks> {
   for (const name of [
     'completeSignup',
     'completeConnection',
+    'observeConnection',
     'publishEmbed',
     'controlFault',
     'verifyRuntime',
