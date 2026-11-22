@@ -255,9 +255,14 @@ export function AppFrame({
     },
     [workspaceDetails, viewport, solved.sidebar],
   );
-  const detailsInline = detailsOpen && columns.details === 0 && compactDetailsInline;
-  const detailsOverlay =
-    detailsOpen && columns.details === 0 && compactDetailsOverlay && !detailsInline;
+  /*
+   * An unmeasured frame solves every column for a zero-wide box, where the
+   * details column has no room. That is not a compact frame: treating it as one
+   * moved focus into the panel and made the page inert on a wide screen.
+   */
+  const compactDetails = viewport > 0 && detailsOpen && columns.details === 0;
+  const detailsInline = compactDetails && compactDetailsInline;
+  const detailsOverlay = compactDetails && compactDetailsOverlay && !detailsInline;
   usePlateFocus(
     detailsRef,
     onDetailsClose ?? (() => {}),

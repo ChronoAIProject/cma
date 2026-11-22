@@ -409,6 +409,36 @@ describe('the page frame', () => {
     expect(screen.getByText('surface')).toBe(center);
   });
 
+  it('does not treat an unmeasured frame as compact or move focus into its details', () => {
+    let width = 0;
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(
+      () => ({ width, height: 800 }) as DOMRect,
+    );
+    render(
+      <AppFrame
+        detailsOpen
+        compactDetailsOverlay
+        onDetailsClose={() => {}}
+        sidebar={<p>navigation</p>}
+        center={<p>surface</p>}
+        details={<button type="button">panel action</button>}
+      />,
+    );
+    const frame = document.querySelector('.frame');
+    const action = screen.getByRole('button', { name: 'panel action' });
+    expect(frame).not.toHaveAttribute('data-details-overlay');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(action).not.toHaveFocus();
+
+    width = 900;
+    act(() => {
+      observed?.();
+      vi.advanceTimersByTime(20);
+    });
+    expect(frame).toHaveAttribute('data-details-overlay');
+    expect(action).toHaveFocus();
+  });
+
   it('offers no details handle when there is no details column', () => {
     renderFrame(false);
     measure(1600);
