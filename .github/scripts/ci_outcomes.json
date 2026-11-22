@@ -956,6 +956,12 @@
           "meaning": "The controller reported a refusal reason that this repository does not know; the token is withheld.",
           "cause": "operator",
           "next": "Add the controller's new reason to REASONS in staging_cd_refusal.py and to this catalogue."
+        },
+        "am-replicas": {
+          "title": "Agent Manager scaled beyond the release budget",
+          "meaning": "Agent Manager runs more replicas than the production release budget is sized for (2). A rollout at that count could outlast the deployment window, so the controller refused before any write.",
+          "cause": "operator",
+          "next": "Wait until Agent Manager scales back to its steady-state count, then re-run the deployment. Nothing was changed."
         }
       }
     },
@@ -1244,6 +1250,12 @@
           "meaning": "The controller reported a reason that this repository does not know; the token is withheld.",
           "cause": "operator",
           "next": "Add the controller's new reason to VERIFICATION_REASONS in staging_cd_refusal.py and to this catalogue."
+        },
+        "am-replicas": {
+          "title": "Agent Manager scaled beyond the release budget",
+          "meaning": "Agent Manager ran more replicas than the production release budget is sized for (2), so the rollout could not be proven inside its window.",
+          "cause": "operator",
+          "next": "An operator confirms the deployment state, waits until Agent Manager scales back to its steady-state count, then re-runs the deployment."
         }
       },
       "cause": "operator",
