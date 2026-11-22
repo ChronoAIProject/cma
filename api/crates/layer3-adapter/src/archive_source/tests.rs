@@ -1,5 +1,6 @@
 use super::*;
 use std::os::unix::fs::PermissionsExt;
+mod publication;
 struct Temp(std::path::PathBuf);
 impl Temp {
     fn new() -> Self {
