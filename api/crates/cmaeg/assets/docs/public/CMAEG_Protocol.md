@@ -3167,6 +3167,13 @@ precise retryable refusal (for example `verified_sender_context_unavailable` or
 and restored to Activity on expiry, including after restart. The Feishu
 user receives **no reply** for these refusals or expiry: no Agent ran, and no
 platform failure message is invented. Channel Activity shows the recorded reason.
+A target whose binding, conversation or media preparation fails stays `queued`
+and retries; Activity names the latest preparation failure in
+`last_non_admission_code`: `preparation_provider_busy`,
+`preparation_provider_unavailable`, `preparation_outcome_uncertain`,
+`preparation_authority_changed`, `preparation_event_expired`,
+`preparation_unsupported` or `preparation_failed`. These are observations, not
+receipts; a later precise refusal replaces them.
 If a temporary outage recovers before expiry, the original turn admits once and
 normal automatic-final reply delivery resumes.
 

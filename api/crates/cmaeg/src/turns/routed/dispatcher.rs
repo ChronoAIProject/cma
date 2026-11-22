@@ -14,6 +14,11 @@ use cmaeg_core::channel::{ProviderBinding, Secret};
 use futures_util::future::BoxFuture;
 use std::sync::Arc;
 
+#[path = "dispatcher_preparation.rs"]
+mod preparation;
+#[cfg(test)]
+pub(super) use preparation::preparation_failure_code;
+
 /// A direct, awaited transport: it must not spawn a detached start or re-render
 /// any frozen field. Exact-body idempotency is opt-in only after provider proof.
 pub trait ExecutionPort: Send + Sync {
@@ -306,32 +311,20 @@ impl Dispatcher {
             return Ok(RunResult::Done(DispatchOutcome::Unknown));
         }
         if lease.state.phase == Phase::Pending {
-            let generation = if plan.prepares_binding(target) {
-                self.prepare_binding(plan, target, lease).await?
-            } else {
-                None
-            };
-            let current = if plan.prepares_binding(target) {
-                let current = self.current(plan, target).await?;
-                self.journal.renew(lease).await?;
-                self.journal.guard(lease).await?;
-                current
-            } else {
-                current
-            };
-            let body = self
-                .port
-                .prepare_at_generation(plan, target, &current, generation)
-                .await?;
-            validate_delivery(&body, &current, target)?;
-            self.journal.freeze(lease, plan, target, &body).await?;
+            if let Err(error) = self.prepare_pending(plan, target, lease, current).await {
+                self.observe_preparation_failure(plan, target, &error).await;
+                return Err(error);
+            }
         }
         let body = self.journal.body(lease).await?;
         body.validate(plan, target, &self.journal.keys, (self.journal.clock)())?;
         // Media/conversation preparation has its own bound. Renew the still
         // owned lease so it cannot consume the subsequent acceptance budget.
         self.journal.renew(lease).await?;
-        self.port.prepare_continuations(plan, target, &body).await?;
+        if let Err(error) = self.port.prepare_continuations(plan, target, &body).await {
+            self.observe_preparation_failure(plan, target, &error).await;
+            return Err(error);
+        }
         self.journal.guard(lease).await?;
         // The durable start marker precedes any network effect. If either CAS
         // confirmation or the fresh authority check fails, no POST is made.
