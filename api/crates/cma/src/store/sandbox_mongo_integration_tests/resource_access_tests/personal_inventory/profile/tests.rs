@@ -97,9 +97,11 @@ async fn wake_delay_excludes_unready_wait_and_does_not_restart_for_repeated_wake
     assert_eq!((sample.polls, sample.woken_polls), (2, 1));
 }
 
-struct Parent;
+struct Parent(Arc<std::sync::atomic::AtomicUsize>);
 impl Wake for Parent {
-    fn wake(self: Arc<Self>) {}
+    fn wake(self: Arc<Self>) {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
 }
 
 #[tokio::test]
@@ -116,13 +118,21 @@ async fn cancelling_records_the_real_identity_guard_drop_and_releases_the_parent
         })
         .await;
     }));
-    let parent = Arc::new(Parent);
+    let wakes = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let parent = Arc::new(Parent(wakes.clone()));
     let weak = Arc::downgrade(&parent);
     let waker = Waker::from(parent);
     assert!(future
         .as_mut()
         .poll(&mut Context::from_waker(&waker))
         .is_pending());
+    retained_waker
+        .lock()
+        .unwrap()
+        .as_ref()
+        .unwrap()
+        .wake_by_ref();
+    assert_eq!(wakes.load(std::sync::atomic::Ordering::SeqCst), 1);
     drop(future);
     drop(waker);
     assert!(
@@ -135,6 +145,7 @@ async fn cancelling_records_the_real_identity_guard_drop_and_releases_the_parent
         .as_ref()
         .unwrap()
         .wake_by_ref();
+    assert_eq!(wakes.load(std::sync::atomic::Ordering::SeqCst), 1);
     let sample = profile.take().request.unwrap();
     assert!(!sample.completed);
     assert_eq!(sample.identity.resolutions, 1);
