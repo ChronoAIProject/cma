@@ -1,5 +1,5 @@
-import { Presence } from '../ui/Presence';
-import { useRef, useState } from 'react';
+import { Presence, usePresenceExiting } from '../ui/Presence';
+import { useEffect, useRef, useState } from 'react';
 import { ApiError, type Launch, type TriggerPreview } from '@cma/client';
 import { Button } from '../ui/Button';
 import {
@@ -50,6 +50,14 @@ export function ReviewCard({
   readonly onChanged: (value: Launch) => void;
   readonly onClose: () => void;
 }) {
+  const exiting = usePresenceExiting();
+  const lifetime = useRef<AbortController | undefined>(undefined);
+  useEffect(() => {
+    if (exiting) return;
+    const controller = new AbortController();
+    lifetime.current = controller;
+    return () => controller.abort();
+  }, [exiting, expectedSubject, record.id]);
   const [saved, setSaved] = useState(() => loadRecovery(record.id));
   const { recovery, blocked: storageBlocked } = saved;
   const [confirmed, setConfirmed] = useState(
@@ -104,7 +112,11 @@ export function ReviewCard({
   };
 
   const start = async (explicit = false) => {
+    const controller = lifetime.current;
     if (
+      controller === undefined ||
+      controller.signal.aborted ||
+      exiting ||
       active.current ||
       storageBlocked ||
       needsSignIn ||
@@ -122,10 +134,13 @@ export function ReviewCard({
     };
     setBusy(true);
     setError(undefined);
+    let dispatched = false;
     try {
       if (recovery !== undefined)
         writeDraftRecovery(record.id, { ...recovery, command: command.current });
-      await checkCredentialRecoveryOwner(recovery?.owner);
+      await checkCredentialRecoveryOwner(recovery?.owner, controller.signal);
+      if (controller.signal.aborted) return;
+      dispatched = true;
       const result = await client.requests.start(record.id, command.current.body, {
         idempotencyKey: command.current.key,
       });
@@ -135,6 +150,7 @@ export function ReviewCard({
       setUncertain(false);
       onChanged(result);
     } catch (cause) {
+      if (!dispatched && controller.signal.aborted) return;
       const credentialRefusal = needsSandboxCredentialSetup(cause);
       const unknown = !credentialRefusal && (unresolved.current || isUnsettledCommand(cause));
       unresolved.current = unknown;
