@@ -1,5 +1,5 @@
 import { useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { AnswerDeliverable } from '@cma/client';
+import type { AnswerDeliverable, DeliverableResource, TaskAcceptance } from '@cma/client';
 import { ApiError, DeliverableUnavailable } from '@cma/client';
 import { AnswerDeliveryContext, type AnswerDeliveryAccess } from './answerDeliveries';
 import { Button } from '../ui/Button';
@@ -65,14 +65,18 @@ function DeliveryRow({
   access,
   answerId,
   initial,
+  taskId,
+  onTaskDeliveryConfirmed,
 }: {
   readonly access: AnswerDeliveryAccess;
   readonly answerId: string;
   readonly initial: AnswerDeliverable;
+  readonly taskId?: string;
+  readonly onTaskDeliveryConfirmed?: () => void;
 }) {
   const preview = useContext(DeliverablePreviewContext);
   const [item, setItem] = useState(initial);
-  const [busy, setBusy] = useState<'download' | 'retry'>();
+  const [busy, setBusy] = useState<'download' | 'retry' | 'confirm'>();
   const [error, setError] = useState<string>();
   const pending = useRef<AbortController | undefined>(undefined);
   useEffect(() => () => pending.current?.abort(), [access, answerId]);
@@ -101,13 +105,20 @@ function DeliveryRow({
       }
     }
   }
-  async function retry() {
+  async function verify(confirm: boolean) {
     if (pending.current) return;
     const abort = new AbortController();
     pending.current = abort;
-    setBusy('retry');
+    setBusy(confirm ? 'confirm' : 'retry');
     setError(undefined);
     try {
+      if (confirm && taskId && access.client.confirmTaskDelivery) {
+        await access.client.confirmTaskDelivery(access.agentId, answerId, item.id, taskId, {
+          signal: abort.signal,
+        });
+        if (!abort.signal.aborted) onTaskDeliveryConfirmed?.();
+        return;
+      }
       const result = await access.client.readAnswerDeliverable(access.agentId, answerId, item.id, {
         signal: abort.signal,
         verify: true,
@@ -159,12 +170,19 @@ function DeliveryRow({
           {error ??
             (busy === 'download'
               ? 'Downloading…'
-              : busy === 'retry'
+              : busy === 'retry' || busy === 'confirm'
                 ? 'Verifying…'
                 : statusText[item.status])}
         </span>
       </div>
       <div className="answer-deliveries__actions">
+        {taskId &&
+        access.client.confirmTaskDelivery &&
+        ['ready', 'unchecked', 'version_changed', 'unavailable'].includes(item.status) ? (
+          <Button size="sm" disabled={busy !== undefined} onClick={() => void verify(true)}>
+            Verify required output
+          </Button>
+        ) : null}
         <Button
           variant="outline"
           size="sm"
@@ -180,7 +198,7 @@ function DeliveryRow({
             size="sm"
             aria-label={`Retry ${item.reference.name}`}
             disabled={busy !== undefined}
-            onClick={() => void retry()}
+            onClick={() => void verify(false)}
           >
             Retry
           </Button>
@@ -193,9 +211,13 @@ function DeliveryRow({
 export function AnswerDeliverables({
   answerId,
   references,
+  taskAcceptance,
+  onTaskDeliveryConfirmed,
 }: {
   readonly answerId: string;
   readonly references: number;
+  readonly taskAcceptance?: TaskAcceptance;
+  readonly onTaskDeliveryConfirmed?: () => void;
 }) {
   const access = useContext(AnswerDeliveryContext);
   const invalidate = useContext(DeliverablePreviewContext)?.invalidate;
@@ -213,6 +235,7 @@ export function AnswerDeliverables({
     answerId: string;
     attempt: number;
     items: readonly AnswerDeliverable[];
+    turnSequence: number;
   }>();
   const [failed, setFailed] = useState<AnswerDeliveryAccess>();
   const [attempt, setAttempt] = useState(0);
@@ -242,7 +265,13 @@ export function AnswerDeliverables({
       .then((result) => {
         if (!abort.signal.aborted) {
           restorePosition.current = preserveFollowingMessage(container.current);
-          setLoaded({ access, answerId, attempt, items: result.items });
+          setLoaded({
+            access,
+            answerId,
+            attempt,
+            items: result.items,
+            turnSequence: result.turn_sequence,
+          });
         }
       })
       .catch(() => {
@@ -253,6 +282,12 @@ export function AnswerDeliverables({
   if (!access || !references) return null;
   const items =
     loaded?.access === access && loaded.answerId === answerId ? loaded.items : undefined;
+  const task =
+    taskAcceptance?.verdict.status === 'needs_attention' &&
+    taskAcceptance.verdict.reason === 'required_deliverables_missing' &&
+    taskAcceptance.turn_sequence === loaded?.turnSequence
+      ? taskAcceptance
+      : undefined;
   return (
     <div ref={container} className="answer-deliveries">
       {items?.length ? <h3 className="answer-deliveries__heading">Files from this task</h3> : null}
@@ -263,7 +298,20 @@ export function AnswerDeliverables({
         items.length ? (
           <ul aria-label="Answer deliverables" className="answer-deliveries__list">
             {items.map((item) => (
-              <DeliveryRow key={item.id} access={access} answerId={answerId} initial={item} />
+              <DeliveryRow
+                key={item.id}
+                access={access}
+                answerId={answerId}
+                initial={item}
+                taskId={
+                  task?.unconfirmed_outputs.some((output) =>
+                    sameOutput(output, item.reference.resource),
+                  )
+                    ? task.task_id
+                    : undefined
+                }
+                onTaskDeliveryConfirmed={onTaskDeliveryConfirmed}
+              />
             ))}
           </ul>
         ) : null
@@ -289,4 +337,11 @@ export function AnswerDeliverables({
       )}
     </div>
   );
+}
+
+function sameOutput(left: DeliverableResource, right: DeliverableResource): boolean {
+  if (left.kind === 'live_file') return right.kind === left.kind && left.path === right.path;
+  if (left.kind === 'document')
+    return right.kind === left.kind && left.id === right.id && left.revision === right.revision;
+  return right.kind === left.kind && left.id === right.id;
 }

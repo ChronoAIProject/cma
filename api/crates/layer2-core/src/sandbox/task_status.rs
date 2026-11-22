@@ -50,6 +50,14 @@ impl AgentTaskStatus {
     }
 
     pub fn from_log(agent: &Agent, entries: &[AgentLogEntry], pending_work: bool) -> Self {
+        Self::observe_log(agent, entries, pending_work).0
+    }
+
+    pub(super) fn observe_log(
+        agent: &Agent,
+        entries: &[AgentLogEntry],
+        pending_work: bool,
+    ) -> (Self, Option<u64>) {
         let latest = entries
             .iter()
             .rev()
@@ -58,7 +66,23 @@ impl AgentTaskStatus {
             .iter()
             .rev()
             .find(|entry| matches!(entry.kind, AgentLogKind::ConversationGap { .. }));
-        Self::from_latest(agent, latest, gap, pending_work)
+        (
+            Self::from_latest(agent, latest, gap, pending_work),
+            Self::observed_turn(agent, latest),
+        )
+    }
+
+    pub fn observed_turn(agent: &Agent, latest: Option<&AgentLogEntry>) -> Option<u64> {
+        let entry = latest.filter(|entry| {
+            entry.agent_id == agent.id && entry.seq <= agent.conversation.last_seq
+        })?;
+        match entry.kind {
+            AgentLogKind::TurnStarted { turn_sequence, .. }
+            | AgentLogKind::TurnCompleted { turn_sequence }
+            | AgentLogKind::TurnFailed { turn_sequence, .. }
+            | AgentLogKind::TurnInterrupted { turn_sequence } => Some(turn_sequence),
+            _ => None,
+        }
     }
 
     pub fn from_latest(

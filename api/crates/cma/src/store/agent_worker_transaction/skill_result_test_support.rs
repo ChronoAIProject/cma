@@ -144,8 +144,11 @@ pub(crate) async fn snapshot_conflict(
         None,
         None,
         &mut publication_history::AttemptHistory::default(),
+        PublicationGuards {
+            skill_result: Some(guard),
+            ..Default::default()
+        },
         scope,
-        Some(guard),
     )
     .await;
     let _ = session.abort_transaction().await;
@@ -175,8 +178,11 @@ pub(crate) async fn rollback_and_reconcile_after_pause(
         None,
         None,
         &mut publication_history::AttemptHistory::default(),
+        PublicationGuards {
+            skill_result: Some(guard),
+            ..Default::default()
+        },
         scope,
-        Some(guard),
     )
     .await
     .unwrap_or_else(|_| panic!("valid original publication"));
@@ -198,8 +204,11 @@ pub(crate) async fn rollback_and_reconcile_after_pause(
         None,
         None,
         &mut publication_history::AttemptHistory::default(),
+        PublicationGuards {
+            skill_result: Some(guard),
+            ..Default::default()
+        },
         scope,
-        Some(guard),
     )
     .await
     .unwrap_or_else(|_| panic!("fresh original publication"));

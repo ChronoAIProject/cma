@@ -1,4 +1,11 @@
 use super::*;
+use layer2_core::{sandbox::store::SandboxLimitClass, PlatformSettingsStore};
+
+fn visitor_admission(id: &str, launch: &str, limit: u16) -> SandboxAdmission {
+    let mut candidate = admission(id, launch, limit);
+    candidate.limit_class = SandboxLimitClass::Visitor;
+    candidate
+}
 
 #[tokio::test]
 #[ignore = "requires CHRONO_TEST_MONGODB_URI pointing at a replica set"]
@@ -6,11 +13,20 @@ async fn visitor_limit_admits_two_and_refuses_third_across_replicas() {
     let (client, database) = database("visitor_limit").await;
     let left = MongoSandboxStore::open(&client, &database).await.unwrap();
     let right = MongoSandboxStore::open(&client, &database).await.unwrap();
+    let settings = crate::store::MongoPlatformSettingsStore::open(&client, &database)
+        .await
+        .unwrap();
+    let mut policy = settings.read().await.unwrap();
+    policy.settings.limits.visitor_max_sandboxes = 2;
+    settings
+        .replace(policy.revision, &policy.settings)
+        .await
+        .unwrap();
     let results = futures_util::future::join_all((0..6).map(|index| {
         let store = if index % 2 == 0 { &left } else { &right };
         async move {
             store
-                .admit_sandbox(admission(
+                .admit_sandbox(visitor_admission(
                     &format!("sbx_visitor_{index}"),
                     &format!("launch-visitor-{index}"),
                     2,
@@ -50,7 +66,7 @@ async fn visitor_limit_admits_two_and_refuses_third_across_replicas() {
         .unwrap();
     assert!(matches!(
         right
-            .admit_sandbox(admission(
+            .admit_sandbox(visitor_admission(
                 "sbx_visitor_retiring",
                 "launch-visitor-retiring",
                 2
@@ -67,7 +83,7 @@ async fn visitor_limit_admits_two_and_refuses_third_across_replicas() {
         .unwrap();
     assert!(matches!(
         right
-            .admit_sandbox(admission(
+            .admit_sandbox(visitor_admission(
                 "sbx_visitor_replacement",
                 "launch-visitor-replacement",
                 2
@@ -87,7 +103,7 @@ async fn visitor_limit_admits_two_and_refuses_third_across_replicas() {
         .unwrap();
     assert!(matches!(
         right
-            .admit_sandbox(admission(
+            .admit_sandbox(visitor_admission(
                 "sbx_visitor_lowered",
                 "launch-visitor-lowered",
                 1

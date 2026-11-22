@@ -1,7 +1,17 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, expect, it, vi } from 'vitest';
 import { useAgentController } from '../controller';
-import { accepted, at, binding, cursor, harness, item, json, page } from './controller.fixture';
+import {
+  accepted,
+  at,
+  binding,
+  cursor,
+  harness,
+  item,
+  json,
+  page,
+  completedInputReceipt,
+} from './controller.fixture';
 
 beforeEach(() => sessionStorage.clear());
 
@@ -50,9 +60,12 @@ it.each(['pending', 'accepted'] as const)(
     if (admission === 'pending') {
       expect(onAccepted).not.toHaveBeenCalled();
       expect(result.current.pendingMessage).toBe('Exact retained input');
+      await waitFor(() => expect(result.current.checkingInputReceipt).toBe(false));
+      h.inputReceipt.mockImplementationOnce(async () => completedInputReceipt());
       await act(() => result.current.recoverPending!());
-      expect(h.post).toHaveBeenCalledTimes(2);
-      const [original, recovered] = h.post.mock.calls.map(([request]) => request!);
+      expect(h.post).toHaveBeenCalledOnce();
+      const original = h.post.mock.lastCall![0]!;
+      const recovered = h.inputReceipt.mock.lastCall![0]!;
       expect(recovered!.body).toBe(original!.body);
       expect(new Headers(recovered!.headers).get('idempotency-key')).toBe(
         new Headers(original!.headers).get('idempotency-key'),
@@ -152,10 +165,12 @@ it('recovers an uncertain input across controller reload using the same request 
   const second = renderHook(() => useAgentController(h.client, 'agt_1'));
   await waitFor(() => expect(second.result.current.state.status).toBe('ready'));
   expect(second.result.current.pendingMessage).toBe('Exact original message');
+  await waitFor(() => expect(second.result.current.checkingInputReceipt).toBe(false));
+  h.inputReceipt.mockImplementationOnce(async () => completedInputReceipt());
   await act(() => second.result.current.recoverPending!());
-  expect(h.post).toHaveBeenCalledTimes(2);
+  expect(h.post).toHaveBeenCalledOnce();
   const original = h.post.mock.calls[0]![0]!;
-  const recovered = h.post.mock.calls[1]![0]!;
+  const recovered = h.inputReceipt.mock.lastCall![0]!;
   expect(recovered.body).toBe(original.body);
   expect(new Headers(recovered.headers).get('idempotency-key')).toBe(
     new Headers(original.headers).get('idempotency-key'),

@@ -56,8 +56,8 @@ def check_component_cache_writers(documents)
   require_check(builds.size == 2 && builds.all? { |s| s.dig('with', 'cache-from') == "type=gha,version=2,scope=${{ #{scope} }}" },
     'both image builds must restore the component cache')
   exports = builds.map { |s| s.dig('with', 'cache-to') }.compact
-  require_check(exports == ["${{ #{develop} && format('type=gha,version=2,mode=max,scope={0}', #{scope}) || '' }}"],
-    'image layers may be exported only on develop pushes')
+  require_check(exports == ["${{ #{develop} && format('type=gha,version=2,mode=max,ignore-error=true,scope={0}', #{scope}) || '' }}"],
+    'image layers may be exported only on develop pushes, and a failed export must never fail the build')
   {'docker/setup-qemu-action' => 'cache-image', 'docker/setup-buildx-action' => 'cache-binary',
    'aquasecurity/trivy-action' => 'cache'}.each do |action, option|
     step = images.find { |s| s.fetch('uses', '').start_with?(action + '@') }
@@ -347,6 +347,7 @@ mutations = [
   ->(d) { d['ci-repo']['jobs']['structure']['if'] = 'false' },
   ->(d) { d['ci-repo']['jobs']['structure']['continue-on-error'] = true },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-to') }['with']['cache-to'].sub!("|| ''", "|| 'type=gha'") },
+  ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s.dig('with', 'cache-to') }['with']['cache-to'].sub!('ignore-error=true,', '') },
   ->(d) { d['ci-web']['jobs']['web']['steps'].find { |s| s['name'] == 'Restore npm download cache' }['uses'] = 'actions/cache@v4' },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Restore Trivy databases' }['with'].delete('restore-keys') },
   ->(d) { d['ci-images']['jobs']['images']['steps'].find { |s| s['name'] == 'Vulnerability scan' }['with'].delete('cache') },

@@ -98,6 +98,7 @@ impl IngressState {
                     outcome: "read".into(),
                     observed_at: crate::activity::now(),
                     confirmed_at: Some(occurred.clone()),
+                    answer_response_id: None,
                     platform_message_id: Some(receipt.message_id.clone()),
                     recipients: vec![ActivityRecipient {
                         kind: "native_lark_chat".into(),

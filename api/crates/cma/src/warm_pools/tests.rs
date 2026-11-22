@@ -67,6 +67,7 @@ pub(crate) fn target() -> PoolTarget {
         lease: Some("lease".into()),
         lease_until: mongodb::bson::DateTime::from_millis(i64::MAX),
         reconcile_after: mongodb::bson::DateTime::from_millis(0),
+        operator_replicas: None,
     }
 }
 
@@ -137,10 +138,13 @@ impl PoolTargetStore for Memory {
         &self,
         id: &str,
         body: &ResizeWarmPoolBody,
+        operator_choice: bool,
     ) -> Result<PoolTarget, WarmPoolError> {
         self.calls.lock().unwrap().push(format!(
-            "store-resize:{id}:{}:{}",
-            body.expected_revision, body.target_replicas,
+            "store-resize:{id}:{}:{}{}",
+            body.expected_revision,
+            body.target_replicas,
+            if operator_choice { ":choice" } else { "" },
         ));
         let mut target = self.target.lock().unwrap();
         assert_eq!(id, target.id);

@@ -77,6 +77,10 @@ impl Drop for Replica {
 
 impl Replica {
     pub async fn open(name: &str, coordinated: bool) -> Self {
+        Self::open_as(name, coordinated, OWNER).await
+    }
+
+    pub async fn open_as(name: &str, coordinated: bool, subject: &str) -> Self {
         let client =
             mongodb::Client::with_uri_str(std::env::var("CHRONO_TEST_MONGODB_URI").unwrap())
                 .await
@@ -95,7 +99,7 @@ impl Replica {
         let address = format!("http://{}", listener.local_addr().unwrap());
         let auth = crate::auth::AuthState::in_memory(
             crate::auth::AuthMode::Trusted {
-                subject: OWNER.into(),
+                subject: subject.into(),
             },
             None,
         );
@@ -133,7 +137,8 @@ impl Replica {
                 let observed = observed.clone();
                 async move {
                     if request.method() == Method::PATCH
-                        && request.uri().path().ends_with("/preferences")
+                        && (request.uri().path().ends_with("/preferences")
+                            || request.uri().path().ends_with("/settings"))
                     {
                         observed
                             .lock()

@@ -149,7 +149,7 @@ export function useResourceActions(
       restored: true,
     });
   };
-  const select = (action: TreeAction) => {
+  const select = (action: TreeAction, eligibility?: AbortSignal) => {
     if (!enabled) return;
     if (action.kind === 'new_agent' || action.kind === 'new_workspace') {
       onCreate?.(action);
@@ -183,11 +183,20 @@ export function useResourceActions(
           : { request: retained, restored: true },
       );
     } else if (action.kind === 'revive_sandbox') {
+      if (eligibility?.aborted) return;
       setError(undefined);
+      const cancel = connections.cancel;
+      const release = () => eligibility?.removeEventListener('abort', cancel);
+      eligibility?.addEventListener('abort', cancel, { once: true });
       void connections.checkAndRun(
         { type: 'sandbox', id: action.sandboxId },
         viewerId,
-        () => void execute(action),
+        () => {
+          release();
+          if (!eligibility?.aborted) void execute(action);
+        },
+        undefined,
+        release,
       );
     } else {
       void execute(action);

@@ -1,0 +1,78 @@
+▶ outer suite
+  ✖ nested literal failure (3.738875ms)
+  ✔ nested pass (0.128292ms)
+✖ outer suite (4.540625ms)
+✖ multi-line error content (0.214916ms)
+✖ timeout case (20.327833ms)
+/w/d.test.cjs:1
+throw new Error('load failure');
+^
+
+Error: load failure
+    at Object.<anonymous> (/w/d.test.cjs:1:7)
+    at Module._compile (node:internal/modules/cjs/loader:1872:14)
+    at Object..js (node:internal/modules/cjs/loader:2003:10)
+    at Module.load (node:internal/modules/cjs/loader:1594:32)
+    at Module._load (node:internal/modules/cjs/loader:1396:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:154:5)
+    at node:internal/main/run_main_module:33:47
+
+Node.js v24.19.0
+✖ /w/d.test.cjs (18.461958ms)
+ℹ tests 5
+ℹ suites 1
+ℹ pass 1
+ℹ fail 3
+ℹ cancelled 1
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 244.878042
+
+✖ failing tests:
+
+test at ../w/c.test.cjs:4:3
+✖ nested literal failure (3.738875ms)
+  AssertionError [ERR_ASSERTION]: The expression evaluated to a falsy value:
+  
+    assert.ok(false)
+  
+      at TestContext.<anonymous> (/w/c.test.cjs:4:49)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.start (node:internal/test_runner/test:1242:17)
+      at node:internal/test_runner/test:1867:71
+      at node:internal/per_context/primordials:504:82
+      at new Promise (<anonymous>)
+      at new SafePromise (node:internal/per_context/primordials:478:3)
+      at node:internal/per_context/primordials:504:9
+      at Array.map (<anonymous>) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: false,
+    expected: true,
+    operator: '==',
+    diff: 'simple'
+  }
+
+test at ../w/c.test.cjs:7:1
+✖ multi-line error content (0.214916ms)
+  Error: bridge said:
+  not ok 1 - TAP-SHAPED-ERROR-CONTENT
+    ---
+    ...
+      at TestContext.<anonymous> (/w/c.test.cjs:8:9)
+      at Test.runInAsyncScope (node:async_hooks:227:14)
+      at Test.run (node:internal/test_runner/test:1382:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:960:18)
+      at Suite.postRun (node:internal/test_runner/test:1522:19)
+      at Suite.run (node:internal/test_runner/test:1885:10)
+      at async startSubtestAfterBootstrap (node:internal/test_runner/harness:387:3)
+
+test at ../w/c.test.cjs:10:1
+✖ timeout case (20.327833ms)
+  'test timed out after 20ms'
+
+test at ../w/d.test.cjs:1:1
+✖ /w/d.test.cjs (18.461958ms)
+  'test failed'

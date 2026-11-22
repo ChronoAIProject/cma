@@ -42,6 +42,19 @@ export function deliverableDispatch(corpus: ContractCase[]): Record<string, Disp
         ...(options as DocumentAccessOptions),
         verify: query.has('verify') ? query.get('verify') === 'true' : undefined,
       }),
+    [`POST ${root}/answers/{answer_id}/deliverables/{delivery_id}/confirmation`]: ({
+      client,
+      param,
+      body,
+      options,
+    }) =>
+      client.agents.confirmTaskDelivery(
+        param('id'),
+        param('answer_id'),
+        param('delivery_id'),
+        (body as { readonly task_id: string }).task_id,
+        options,
+      ),
     [download]: async ({ client, param, fixture, options }) => {
       const expected = metadata(fixture, corpus).response.body as AnswerDeliverableReading;
       const bytes = await client.agents.downloadAnswerDeliverable(

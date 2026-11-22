@@ -5,17 +5,16 @@
 //! same authenticated stream through CMA.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use axum::extract::{ws::WebSocket, State, WebSocketUpgrade};
 use axum::response::{IntoResponse, Response};
 use futures_util::{SinkExt as _, StreamExt as _};
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::tungstenite::protocol::WebSocketConfig;
 use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 
 use super::{protocol_failure, runtime_failure};
 use crate::desktop_ownership::Session;
+use crate::desktop_process::transport::{connect, Display, DISPLAY_URL};
+use crate::desktop_process::DesktopGeneration;
 use crate::supervisor::Supervisor;
 
 pub(super) async fn websocket(
@@ -23,7 +22,7 @@ pub(super) async fn websocket(
     State(supervisor): State<Arc<Supervisor>>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    let Some(token) = supervisor.desktop_websocket_token() else {
+    let Some(generation) = supervisor.desktop_generation() else {
         return protocol_failure(
             axum::http::StatusCode::NOT_FOUND,
             "desktop_unavailable",
@@ -31,11 +30,15 @@ pub(super) async fn websocket(
             false,
         );
     };
+    let generation = match generation {
+        Ok(generation) => generation,
+        Err(error) => return unavailable(error.retryable),
+    };
     upgrade(
         ws,
         supervisor.desktop_ownership.clone(),
-        token.to_owned(),
-        "ws://127.0.0.1:6080/websockify".into(),
+        generation,
+        DISPLAY_URL.into(),
         headers,
     )
     .await
@@ -44,7 +47,7 @@ pub(super) async fn websocket(
 async fn upgrade(
     ws: WebSocketUpgrade,
     receiver: Arc<crate::desktop_ownership::DesktopReceiver>,
-    token: String,
+    generation: DesktopGeneration,
     display: String,
     headers: axum::http::HeaderMap,
 ) -> Response {
@@ -54,33 +57,41 @@ async fn upgrade(
     };
     let (socket_tx, socket_rx) = tokio::sync::oneshot::channel();
     let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
+    let registered_generation = generation.clone();
     // Register before connecting or exposing the upgrade. The receiver keeps
     // the entire task, including a pending upgrade, until it has been joined.
     if let Err(error) = receiver
         .register(owner, move |session| async move {
-            let upstream = session.run(connect(&token, &display)).await;
-            let Ok(Ok(upstream)) = upstream else {
-                return;
+            let transfer = async {
+                let upstream = session.run(connect(&registered_generation, &display)).await;
+                let Ok(Ok(upstream)) = upstream else {
+                    return;
+                };
+                if ready_tx.send(()).is_err() {
+                    return;
+                }
+                let Ok(Ok(socket)) = session.run(socket_rx).await else {
+                    return;
+                };
+                relay(socket, upstream, session).await;
             };
-            if ready_tx.send(()).is_err() {
-                return;
+            tokio::select! {
+                biased;
+                () = registered_generation.invalidated() => {}
+                () = transfer => {}
             }
-            let Ok(Ok(socket)) = session.run(socket_rx).await else {
-                return;
-            };
-            relay(socket, upstream, session).await;
         })
         .await
     {
         return runtime_failure(error);
     }
-    if ready_rx.await.is_err() {
-        return protocol_failure(
-            axum::http::StatusCode::SERVICE_UNAVAILABLE,
-            "desktop_unavailable",
-            "the desktop display service is unavailable",
-            true,
-        );
+    let ready = tokio::select! {
+        biased;
+        () = generation.invalidated() => false,
+        result = ready_rx => result.is_ok(),
+    };
+    if !ready || !generation.active() {
+        return unavailable(true);
     }
     ws.max_message_size(8 * 1024 * 1024)
         .max_frame_size(8 * 1024 * 1024)
@@ -88,6 +99,15 @@ async fn upgrade(
             let _ = socket_tx.send(socket);
         })
         .into_response()
+}
+
+fn unavailable(retryable: bool) -> Response {
+    protocol_failure(
+        axum::http::StatusCode::SERVICE_UNAVAILABLE,
+        "desktop_unavailable",
+        "the desktop display service is unavailable",
+        retryable,
+    )
 }
 
 fn ownership(
@@ -113,29 +133,6 @@ fn invalid() -> crate::failure::RuntimeError {
         "desktop_ownership_stale",
         "desktop ownership header is invalid",
     )
-}
-
-type Display =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
-async fn connect(token: &str, display: &str) -> Result<Display, ()> {
-    let config = WebSocketConfig {
-        max_message_size: Some(8 * 1024 * 1024),
-        max_frame_size: Some(8 * 1024 * 1024),
-        ..WebSocketConfig::default()
-    };
-    let mut request = display.into_client_request().map_err(|_| ())?;
-    let mut credential: axum::http::HeaderValue = token.parse().map_err(|_| ())?;
-    credential.set_sensitive(true);
-    request.headers_mut().insert("host", credential);
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        tokio_tungstenite::connect_async_with_config(request, Some(config), true),
-    )
-    .await
-    .map_err(|_| ())?
-    .map(|(upstream, _)| upstream)
-    .map_err(|_| ())
 }
 
 #[cfg(test)]

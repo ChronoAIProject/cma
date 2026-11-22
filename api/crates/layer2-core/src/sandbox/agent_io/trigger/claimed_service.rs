@@ -85,7 +85,7 @@ impl AgentOperationService {
             runtimes: self.runtimes.clone(),
         };
         let prepared = service
-            .fence_message(current, text, parent, metadata.clone())
+            .fence_message(current, text, parent, metadata.clone(), None)
             .await?;
         service
             .dispatch_prepared(prepared)
