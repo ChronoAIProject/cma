@@ -91,8 +91,21 @@ pub(super) async fn range_with_snapshot(
     through: u64,
     snapshot: bool,
 ) -> Result<Option<Vec<AgentLogEntry>>, SandboxStoreError> {
+    range_transaction(store, expected, session, after, through, snapshot)
+        .await
+        .map_err(segment_error)
+}
+
+pub(super) async fn range_transaction(
+    store: &MongoSandboxStore,
+    expected: &Agent,
+    session: &mut ClientSession,
+    after: u64,
+    through: u64,
+    snapshot: bool,
+) -> Result<Option<Vec<AgentLogEntry>>, super::agent_log_integrity::TransactionLogError> {
     if after > through {
-        return Err(SandboxStoreError::InvalidPage);
+        return Err(SandboxStoreError::InvalidPage.into());
     }
     let find = store.agents.find_one(doc! {"_id": expected.id.as_str()});
     let find = if snapshot {
@@ -103,23 +116,22 @@ pub(super) async fn range_with_snapshot(
     let Some(row) = find
         .session(&mut *session)
         .await
-        .map_err(|error| SandboxStoreError::Unavailable(error.to_string()))?
+        .map_err(super::agent_log_integrity::TransactionLogError::Driver)?
     else {
-        return Err(SandboxStoreError::NotFound);
+        return Err(SandboxStoreError::NotFound.into());
     };
     let agent = crate::store::agents::read_agent(&row)?;
     if agent.id != expected.id || agent.conversation.last_seq != expected.conversation.last_seq {
-        return Err(SandboxStoreError::SequenceConflict);
+        return Err(SandboxStoreError::SequenceConflict.into());
     }
     let Some(()) = crate::store::agent_log_segments::read_format(&row)?.map(|_| ()) else {
         return Ok(None);
     };
-    let segmented = crate::store::agent_log_segments::read_head(store, &row, session, snapshot)
-        .await
-        .map_err(segment_error)?;
+    let segmented =
+        crate::store::agent_log_segments::read_head(store, &row, session, snapshot).await?;
     let through = through.min(agent.conversation.last_seq);
     if through < after {
-        return Err(SandboxStoreError::SequenceConflict);
+        return Err(SandboxStoreError::SequenceConflict.into());
     }
     let count = through - after;
     let mut entries = Vec::new();
@@ -146,10 +158,9 @@ pub(super) async fn range_with_snapshot(
             Ok(())
         },
     )
-    .await
-    .map_err(segment_error)?;
+    .await?;
     if expected_seq != through + 1 || entries.len() as u64 != count {
-        return Err(SandboxStoreError::SequenceConflict);
+        return Err(SandboxStoreError::SequenceConflict.into());
     }
     Ok(Some(entries))
 }

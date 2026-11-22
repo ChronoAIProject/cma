@@ -21,6 +21,12 @@ import {
 import { Journal } from './journal';
 import { publicApiPath } from './public-api-path';
 import {
+  assertConnectionProof,
+  connectionCaseTitles,
+  identityDigest,
+  type ConnectionProof,
+} from '../../.github/scripts/connection-journey-evidence.mjs';
+import {
   assertCredentialFree,
   assertPageSafe,
   credentialValues,
@@ -58,6 +64,7 @@ export class Harness {
   private readonly observations = new Set<Promise<void>>();
   private identityFlow = false;
   private journeyProof?: Record<string, unknown>;
+  private connectionProof?: ConnectionProof;
   constructor(
     readonly browser: Browser,
     readonly operators: Hooks,
@@ -188,6 +195,43 @@ export class Harness {
         body: JSON.stringify(this.journeyProof),
         contentType: 'application/json',
       });
+    if (this.connectionProof)
+      await info.attach('connection-journey-proof', {
+        body: JSON.stringify(this.connectionProof),
+        contentType: 'application/json',
+      });
+  }
+  proveConnection(proof: unknown) {
+    if (!Object.hasOwn(connectionCaseTitles, this.caseId) || this.connectionProof)
+      throw new Error('Only one connection journey proof is permitted per connection case');
+    const evidence = {
+      ...object(proof),
+      schema: 'cma-connection-journey-v1',
+      execution: 'configured_remote_origin',
+      scope: 'ordinary_service_connection',
+      run: this.journal.run,
+      caseId: this.caseId,
+    };
+    assertCredentialFree(JSON.stringify(evidence), this.forbidden);
+    const verified = assertConnectionProof(evidence, {
+      run: this.journal.run,
+      caseId: this.caseId,
+      providerRevision: this.fixture.provenance.nyxidCommit,
+    });
+    const service = this.fixture.connectionJourneys.services[verified.mode];
+    if (
+      verified.serviceDigest !== identityDigest(service.serviceId) ||
+      verified.fixtureDigest !== service.fixtureDigest ||
+      !this.journal.resources.some(
+        (row) =>
+          row.kind === 'launches' &&
+          row.subject === this.fixture.accounts.visitor.subject &&
+          identityDigest(row.subject) === verified.ownerDigest &&
+          identityDigest({ type: 'launch', id: row.id }) === verified.targetDigest,
+      )
+    )
+      throw new Error('Connection proof does not match the owned Launch and reviewed fixture');
+    this.connectionProof = structuredClone(verified);
   }
   async get<T>(page: Page, path: string): Promise<T> {
     if (

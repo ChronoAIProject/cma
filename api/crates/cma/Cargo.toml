@@ -41,6 +41,9 @@ url = { workspace = true }
 thiserror = { workspace = true }
 tower-http = { workspace = true }
 tower = { version = "0.5", features = ["util"] }
+# Bounded-age HTTP connection serving (startup only; axum::serve otherwise).
+hyper = { workspace = true, features = ["server", "http1", "http2"] }
+hyper-util = { workspace = true, features = ["server-auto", "service", "http1", "http2"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 # For its CSPRNG-backed v4 generator, which is what session cookies, OAuth

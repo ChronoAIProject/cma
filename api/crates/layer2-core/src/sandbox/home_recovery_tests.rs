@@ -218,7 +218,8 @@ fn ready_publication_keeps_the_original_conversation_and_startup_receipts() {
     starting.conversation.first_message =
         Some(FirstMessageRecord::new("launch-original", "First prompt", IDLE_AT).unwrap());
     let (next, logs) =
-        crate::sandbox::runtime_recovery_agents::recover_agent(&value, &starting, NOW).unwrap();
+        crate::sandbox::runtime_recovery_agents::recover_agent(&value, &starting, NOW, false)
+            .unwrap();
     assert_eq!(next.status, AgentStatus::Starting);
     assert_eq!(next.work.step, AgentWorkStep::PublishReady);
     assert_eq!(next.work.receipts, starting.work.receipts);

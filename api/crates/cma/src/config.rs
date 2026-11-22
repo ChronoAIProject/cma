@@ -18,11 +18,14 @@ mod lifecycle_failure;
 mod startup_schema;
 pub(crate) use startup_schema::StartupSchemaMode;
 mod account_deletion;
+mod control_admission;
+pub(crate) use control_admission::ControlAdmissionConfig;
 mod admission_log;
 mod anonymous_public;
 mod auth_mode;
 mod debug;
 mod global_admission;
+mod http_connections;
 mod provider_tool_relay;
 pub(crate) use access_migration::AgentAccessMigration;
 #[cfg(test)]
@@ -149,6 +152,7 @@ pub struct Config {
     pub(crate) agent_log_fleet_percent: u8,
     pub(crate) bounded_admission_agents: Vec<layer2_core::AgentId>,
     pub bind: SocketAddr,
+    pub(crate) http_connection_max_age: Option<std::time::Duration>,
     pub metrics_bind: SocketAddr,
     pub public_url: String,
     /// Explicit prior authorities for credentials already installed in live Agents.
@@ -166,6 +170,7 @@ pub struct Config {
     pub nyxid_proxy_audience: Option<String>,
     pub cors_origins: Vec<HeaderValue>,
     pub rate_limits: RateLimitConfig,
+    pub(crate) control_admission: ControlAdmissionConfig,
     pub(crate) public_stream_limit: usize,
     pub(crate) relay_capacity: RelayCapacityConfig,
     pub trusted_proxies: TrustedProxyConfig,
@@ -334,6 +339,7 @@ impl Config {
             account_deletion_enabled,
             account_erasure_transaction_drain_seconds,
             bind,
+            http_connection_max_age: http_connections::max_age(&mut lookup)?,
             metrics_bind,
             public_stream_limit: public_streams::from_lookup(&mut lookup)?,
             relay_capacity: RelayCapacityConfig::from_lookup(&mut lookup)?,
@@ -352,6 +358,7 @@ impl Config {
             nyxid_proxy_audience: lookup("CHRONO_NYXID_PROXY_AUDIENCE")?,
             cors_origins,
             rate_limits,
+            control_admission: ControlAdmissionConfig::from_lookup(&mut lookup)?,
             trusted_proxies,
             mongodb_uri,
             mongodb_database,

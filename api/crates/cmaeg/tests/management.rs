@@ -235,6 +235,9 @@ mod write_gate;
 #[path = "management/routing.rs"]
 mod routing;
 
+#[path = "management/retained_origins.rs"]
+mod retained_origins;
+
 #[tokio::test]
 async fn channel_endpoints_use_the_advertised_base_in_both_rollout_phases() {
     for (advertise, expected) in [

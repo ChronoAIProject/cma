@@ -3,8 +3,8 @@
 use super::{
     resource_access::{fence_lineage, ReadError},
     sandbox_mongo::{
-        commit_transaction, is_duplicate_key, is_transient, start_transaction, CommitOutcome,
-        MongoSandboxStore, TRANSACTION_ATTEMPTS,
+        commit_transaction, is_confirmed_body_retry, is_transient, start_transaction,
+        CommitOutcome, MongoSandboxStore, TRANSACTION_ATTEMPTS,
     },
 };
 use layer2_core::{
@@ -21,6 +21,7 @@ use mongodb::{
     ClientSession,
 };
 
+mod reconciliation;
 mod records;
 pub(super) use records::ensure_indexes;
 pub(super) use records::read_snapshot as read_inventory_snapshot;
@@ -111,9 +112,7 @@ impl AgentChannelUsageStore for MongoSandboxStore {
                 .map_err(|_| unavailable())?;
             let (event, replay) = match apply(self, &request, &mut session).await {
                 Ok(result) => result,
-                Err(UsageError::Driver(error))
-                    if is_transient(&error) || is_duplicate_key(&error) =>
-                {
+                Err(UsageError::Driver(error)) if is_confirmed_body_retry(&error) => {
                     let _ = session.abort_transaction().await;
                     continue;
                 }
@@ -128,9 +127,11 @@ impl AgentChannelUsageStore for MongoSandboxStore {
             }
             match commit_transaction(&mut session).await {
                 CommitOutcome::Committed => return Ok(event),
-                // An uncertain commit replays the exact immutable event. The
-                // original timestamp is retained and the summary is not applied twice.
-                CommitOutcome::Retry(_) | CommitOutcome::Unknown(_) => continue,
+                CommitOutcome::Retry(_) => continue,
+                CommitOutcome::Unknown(_) => {
+                    return reconciliation::verify(self, &request, event, session.operation_time())
+                        .await;
+                }
                 CommitOutcome::Failed(_) => return Err(unavailable()),
             }
         }
