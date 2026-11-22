@@ -17,7 +17,10 @@ pub(in crate::store) fn is_duplicate_key(error: &Error) -> bool {
 }
 
 pub(in crate::store) fn is_transient(error: &Error) -> bool {
-    error.contains_label(TRANSIENT_TRANSACTION_ERROR)
+    // Only a known abort permits a fresh mutation. Multiple labels do not
+    // erase uncertainty about an earlier transaction result.
+    !error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT)
+        && error.contains_label(TRANSIENT_TRANSACTION_ERROR)
 }
 
 /// A body error with uncertain outcome never permits a new transaction.
