@@ -269,7 +269,31 @@ impl HostedBackend for AgentSandboxBackend {
         // object before exposing a current Running observation.
         timed(
             Stage::NativeIdentity,
-            self.refreshed_adoption_observation(handle, request),
+            self.refreshed_adoption_observation(handle, request, None),
+        )
+        .await
+    }
+    async fn adopt_with_home(
+        &self,
+        handle: &RuntimeHandle,
+        request: &ProviderSandboxRequest,
+        home: &HomeVolumeAttachment,
+    ) -> Result<Option<RuntimeObservation>> {
+        if !home.request.policy.is_native_vct() {
+            return self.adopt(handle, request).await;
+        }
+        let object = timed(
+            Stage::NativeIdentity,
+            self.client
+                .validate_native_request_with_home(handle, request, home),
+        )
+        .await?;
+        self.bind_adopted(handle, request, &object).await?;
+        // Binding may wait or deliver bootstrap. Its earlier observation cannot
+        // authorize the returned runtime after either boundary completes.
+        timed(
+            Stage::NativeIdentity,
+            self.refreshed_adoption_observation(handle, request, Some(home)),
         )
         .await
     }
