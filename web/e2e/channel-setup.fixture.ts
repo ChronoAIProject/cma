@@ -2,11 +2,15 @@ import { expect, type Page } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import { channelCapabilities, cmaSession, gatewaySession } from '../build/fixtures/eventGateway';
 
-export async function setup(page: Page, baseURL: string) {
+/** `identity` holds the CMA sign-in answer until it settles. */
+export async function setup(page: Page, baseURL: string, identity?: Promise<unknown>) {
   const boundary = new LocalStartup();
   const writes: { body: string | null; key: string | undefined; url: string }[] = [];
   await boundary.route(page, baseURL);
-  await page.route('**/auth/session', (route) => route.fulfill({ json: cmaSession }));
+  await page.route('**/auth/session', async (route) => {
+    await identity;
+    return route.fulfill({ json: cmaSession });
+  });
   await page.route('**/api/v1/bots?**', (route) =>
     route.fulfill({ json: { items: [], next_after: null } }),
   );

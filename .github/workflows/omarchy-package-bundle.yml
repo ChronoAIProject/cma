@@ -8,6 +8,10 @@ name: "Omarchy package bundle"
 # The tag is the snapshot plus the lock's hash, so one lock has one tag. A tag
 # that already exists is never overwritten: the run refuses before building
 # and again immediately before pushing.
+#
+# Image builds pin a version by digest, so the package stays public and no
+# version is ever deleted; a snapshot bump only adds one. CI / Repo enforces
+# this with .github/scripts/omarchy-package-retention.rb.
 
 on:
   workflow_dispatch:

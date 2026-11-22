@@ -1,6 +1,6 @@
 //! NyxID OAuth client credentials, confined to one process and one HTTPS origin.
+use super::{ProducerScope, ProducerTokenError};
 use super::{ProducerToken, ProducerTokenProvider};
-use crate::sandbox::funding::FundingError;
 use async_trait::async_trait;
 use serde::Deserialize;
 use std::{
@@ -16,11 +16,12 @@ pub(crate) struct ClientCredentialsProvider {
     client_id: Zeroizing<String>,
     client_secret: Zeroizing<String>,
     cache: Mutex<Cache>,
+    scope: ProducerScope,
 }
 #[derive(Default)]
 struct Cache {
     token: Option<CachedToken>,
-    failure: Option<(Instant, FundingError)>,
+    failure: Option<(Instant, ProducerTokenError)>,
 }
 struct CachedToken {
     value: ProducerToken,
@@ -45,12 +46,12 @@ impl Failure {
             retryable: false,
         }
     }
-    fn funding(self) -> FundingError {
+    fn token_error(self) -> ProducerTokenError {
         let detail = format!("producer token {}", self.category);
         if self.retryable {
-            FundingError::Retryable(detail)
+            ProducerTokenError::Retryable(detail)
         } else {
-            FundingError::Invalid(detail)
+            ProducerTokenError::Invalid(detail)
         }
     }
 }
@@ -59,6 +60,7 @@ impl ClientCredentialsProvider {
         base_url: &reqwest::Url,
         client_id: String,
         client_secret: String,
+        scope: ProducerScope,
     ) -> Result<Arc<Self>, String> {
         let endpoint = base_url
             .join("/oauth/token")
@@ -77,9 +79,13 @@ impl ClientCredentialsProvider {
             client_id: Zeroizing::new(client_id),
             client_secret: Zeroizing::new(client_secret),
             cache: Mutex::new(Cache::default()),
+            scope,
         }))
     }
-    async fn get(&self, rejected: Option<&ProducerToken>) -> Result<ProducerToken, FundingError> {
+    async fn get(
+        &self,
+        rejected: Option<&ProducerToken>,
+    ) -> Result<ProducerToken, ProducerTokenError> {
         // Hold the async mutex across exchange/backoff: waiters share success AND failure.
         let mut cache = self.cache.lock().await;
         let previous_expiry = cache.token.as_ref().map(|token| token.expires_at);
@@ -100,7 +106,7 @@ impl ClientCredentialsProvider {
         // Cancellation must not cause waiting callers to stampede the endpoint.
         cache.failure = Some((
             Instant::now() + Duration::from_secs(1),
-            FundingError::Retryable("producer token refresh interrupted".into()),
+            ProducerTokenError::Retryable("producer token refresh interrupted".into()),
         ));
         for attempt in 0..3 {
             match self.exchange().await {
@@ -128,7 +134,7 @@ impl ClientCredentialsProvider {
                         expires_at = previous_expiry,
                         "Sandbox producer token refresh"
                     );
-                    let error = error.funding();
+                    let error = error.token_error();
                     cache.failure = Some((Instant::now() + Duration::from_secs(1), error.clone()));
                     return Err(error);
                 }
@@ -149,7 +155,7 @@ impl ClientCredentialsProvider {
                 ("grant_type", "client_credentials"),
                 ("client_id", self.client_id.as_str()),
                 ("client_secret", self.client_secret.as_str()),
-                ("scope", "billing:sandbox:write"),
+                ("scope", self.scope.as_str()),
             ])
             .send()
             .await
@@ -212,10 +218,13 @@ impl ClientCredentialsProvider {
 }
 #[async_trait]
 impl ProducerTokenProvider for ClientCredentialsProvider {
-    async fn token(&self) -> Result<ProducerToken, FundingError> {
+    async fn token(&self) -> Result<ProducerToken, ProducerTokenError> {
         self.get(None).await
     }
-    async fn rejected(&self, token: &ProducerToken) -> Result<Option<ProducerToken>, FundingError> {
+    async fn rejected(
+        &self,
+        token: &ProducerToken,
+    ) -> Result<Option<ProducerToken>, ProducerTokenError> {
         self.get(Some(token)).await.map(Some)
     }
 }
