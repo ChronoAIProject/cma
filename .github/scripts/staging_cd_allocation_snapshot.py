@@ -1,7 +1,10 @@
 """One complete ref snapshot and bounded settlement for insert-only tags."""
+import itertools
 import json
+import re
 
-from staging_cd_allocation_io import TransientRead, UncertainPush, parallel_read
+import ci_retry
+from staging_cd_allocation_io import SETTLE_WAITS, VERIFY_RESERVE_SECONDS, TransientRead, UncertainPush, parallel_read
 from staging_cd_common import Refusal, matches, require
 from staging_cd_github import GitHubNotFound
 from staging_cd_receipts import canonical, parse_annotation
@@ -9,6 +12,22 @@ from staging_cd_reservations import Reservations, claim_ref, pending_name, valid
 from staging_cd_versions import DEPLOYABLES, version_tuple
 
 REMOTE = "https://github.com/ChronoAIProject/cma.git"
+# GitHub's own answer to a push, which a repeat meets again: a tag ruleset or
+# hook declined the refs (a porcelain rejection line), or a 403 alone whose
+# message names the missing write permission. A 403 also answers a secondary
+# rate limit, and git prints no status for a bad credential ("Authentication
+# failed"), so neither is durable. Any other failed push proves nothing.
+DECLINED = re.compile(r"^!\t[^\t\n]*\t\[remote rejected\] \([^)\n]*\bdeclined\b", re.MULTILINE)
+DENIED = re.compile(r"\bPermission to \S+ denied to\b|\bWrite access to repository not granted\b", re.IGNORECASE)
+THROTTLED = re.compile(r"\brate[ -]?limit", re.IGNORECASE)
+
+
+def declined(pushed):
+    stdout, stderr = pushed.stdout or "", pushed.stderr or ""
+    if THROTTLED.search(stdout + stderr):
+        return False
+    statuses = {int(code) for code in ci_retry.STATUS.findall(stderr)}
+    return bool(DECLINED.search(stdout)) or (statuses == {403} and bool(DENIED.search(stderr)))
 
 
 class AllocationConflict(Refusal):
@@ -71,6 +90,9 @@ class AllocationSnapshot(Reservations):
                 verify_final_owner(item, tag)
         # A claim may outlive its pending tag, but its burned version must
         # remain visible as either the matching reservation or its final.
+        # One listing is not an atomic snapshot: it can show another job's
+        # claim before that push's reservation, so an unbacked claim is a
+        # transient refusal that a fresh listing settles.
         backed = {claim_ref(tag["receipt"]["identity"]) for tag in self.finals}
         for item in self.pending:
             ref = claim_ref(item)
@@ -83,8 +105,9 @@ class AllocationSnapshot(Reservations):
 
     def ref_oids(self, *patterns):
         result = self.command("ls-remote", "--refs", REMOTE, *(patterns or ("refs/heads/develop", "refs/tags/*")), read=True)
-        require(result.returncode == 0 and len(result.stdout) <= 16 * 1024 * 1024,
-                "Allocation tag inventory is incomplete")
+        require(result.returncode == 0, "Allocation tag inventory is incomplete")
+        # A complete advertisement this large stays as large on every read.
+        require(len(result.stdout) <= 16 * 1024 * 1024, "Allocation tag inventory exceeds 16 MiB")
         refs = {}
         for line in result.stdout.splitlines():
             parts = line.split("\t")
@@ -144,9 +167,11 @@ class AllocationSnapshot(Reservations):
     def insert(self, value):
         require(self.loaded and not self.commit_started, "Allocation planning is closed")
         validate_reservation(value)
-        require(value["component"] in DEPLOYABLES
-                and pending_name(value) not in {pending_name(item) for item in self.pending + self.planned},
-                "Allocation reservation collision")
+        require(value["component"] in DEPLOYABLES, "Unknown reservation component")
+        # The plan is computed from this complete inventory, so a version it
+        # already holds is a planner defect, never a race with another run.
+        require(pending_name(value) not in {pending_name(item) for item in self.pending + self.planned},
+                "Allocation planned a duplicate reservation")
         self.planned.append(value)
         return True
 
@@ -179,17 +204,50 @@ class AllocationSnapshot(Reservations):
         except UncertainPush:
             # Unlike an explicit rejection, a timeout cannot authorize another
             # plan. Accept only exact evidence for every member of this batch.
-            require(self.ref_oids(*refs) == refs, "Allocation write settlement is uncertain")
+            self.settle_uncertain(refs)
         else:
             if pushed.returncode:
-                self.check_conflict(refs)
+                self.check_conflict(refs, pushed)
             else:
                 require(sum(line.startswith("*\t") and "[new tag]" in line for line in pushed.stdout.splitlines())
                         == len(refs), "An up-to-date push is not a new version reservation")
         parallel_read(lambda row: self.verify(*row), objects)
         self.pending.extend(self.planned)
 
-    def check_conflict(self, expected):
+    def settle_uncertain(self, expected):
+        """Wait, within bounds, for a timed-out atomic push the server may still commit.
+
+        The client can give up while the server is still applying the push; it
+        then commits all refs together. Settle once every ref holds exactly its
+        planned object. A ref holding any other object is a foreign or damaged
+        write and is refused at once. Refs that are still absent, or a read that
+        failed transiently, keep the batch uncertain while the allocation budget
+        lasts; the push is never replayed.
+        """
+        waits = itertools.chain(SETTLE_WAITS, itertools.repeat(SETTLE_WAITS[-1]))
+        while True:
+            self.progress("all", "settle-poll")
+            try:
+                actual = self.ref_oids(*expected)
+            except TransientRead:
+                # A failed read proves nothing about the push; poll again.
+                self.progress("all", "settle-transient")
+            else:
+                if actual == expected:
+                    self.progress("all", "settled")
+                    return
+                if any(actual.get(ref) not in (None, oid) for ref, oid in expected.items()):
+                    break
+            # Every poll starts with the verification reserve left, so the last
+            # read and the owner readbacks of a settled batch always have time.
+            wait = min(next(waits), self.io.remaining() - VERIFY_RESERVE_SECONDS)
+            if wait <= 0:
+                break
+            self.io.sleep(wait)
+        self.progress("all", "settle-refused")
+        require(False, "Allocation write settlement is uncertain")
+
+    def check_conflict(self, expected, pushed):
         # Ambiguous success must match the entire transaction. A proven foreign
         # successor allows replanning; absence or malformed evidence never does.
         actual = self.ref_oids(*expected)
@@ -209,6 +267,9 @@ class AllocationSnapshot(Reservations):
                     and tag.get("tag") == pending_name(winner) and tag["object"].get("sha") == winner["source"],
                     "Allocation reservation readback differs")
             raise AllocationConflict("Allocation reservation collision")
+        # None of the batch exists and no winner holds a claim. Only GitHub's
+        # explicit refusal makes that durable; a lost connection does not.
+        require(actual or not declined(pushed), "Reservation push was rejected")
         raise Refusal("Allocation reservation readback differs")
 
     def verify(self, name, oid, component):

@@ -1,4 +1,5 @@
 import { ProtocolError } from '../errors.js';
+import { taskAcceptance } from '../task-acceptance.js';
 import { modelAccess, profileReference } from '../profiles/types.js';
 import { sandboxLifecycle } from './lifecycle.js';
 import { sandboxRuntimeUpdate } from './runtime-update.js';
@@ -159,6 +160,7 @@ export const agentTaskStatus = enumeration(
 export type AgentTaskStatus = Output<typeof agentTaskStatus>;
 
 export const hierarchyAgentSummary = object({
+  task_acceptance: optional(taskAcceptance),
   task_started_at: optional(text),
   task_activity_at: optional(text),
   task_status: optional(agentTaskStatus),

@@ -61,6 +61,18 @@ pub(in crate::store) async fn read_many<'a>(
     agents: impl IntoIterator<Item = &'a Agent>,
     session: &mut ClientSession,
 ) -> Result<HashMap<AgentId, AgentTaskStatus>, SandboxStoreError> {
+    Ok(read_many_with_turns(store, agents, session)
+        .await?
+        .into_iter()
+        .map(|(id, (status, _))| (id, status))
+        .collect())
+}
+
+pub(in crate::store) async fn read_many_with_turns<'a>(
+    store: &MongoSandboxStore,
+    agents: impl IntoIterator<Item = &'a Agent>,
+    session: &mut ClientSession,
+) -> Result<HashMap<AgentId, Observation>, SandboxStoreError> {
     let mut statuses = HashMap::new();
     let mut ready = Vec::new();
     for agent in agents {
@@ -69,7 +81,7 @@ pub(in crate::store) async fn read_many<'a>(
         } else {
             statuses.insert(
                 agent.id.clone(),
-                AgentTaskStatus::from_latest(agent, None, None, false),
+                (AgentTaskStatus::from_latest(agent, None, None, false), None),
             );
         }
     }
@@ -91,7 +103,7 @@ pub(in crate::store) async fn read_many<'a>(
             let agent = remaining.remove(id).ok_or_else(corrupt)?;
             let status = match decode(agent, &row)? {
                 Some(status) => status,
-                None => super::read(store, agent, session).await?,
+                None => super::read_with_turn(store, agent, session).await?,
             };
             statuses.insert(agent.id.clone(), status);
         }
@@ -102,7 +114,7 @@ pub(in crate::store) async fn read_many<'a>(
     Ok(statuses)
 }
 
-fn decode(agent: &Agent, row: &Document) -> Result<Option<AgentTaskStatus>, SandboxStoreError> {
+fn decode(agent: &Agent, row: &Document) -> Result<Option<Observation>, SandboxStoreError> {
     for field in ["latest", "gap", "pending"] {
         if let Some(value) = row.get(field) {
             if value
@@ -121,11 +133,9 @@ fn decode(agent: &Agent, row: &Document) -> Result<Option<AgentTaskStatus>, Sand
     if let Some(document) = pending {
         crate::store::agent_commands::read_command(document).map_err(|_| corrupt())?;
     }
-    Ok(Some(AgentTaskStatus::from_latest(
-        agent,
-        latest.as_ref(),
-        gap.as_ref(),
-        pending.is_some(),
+    Ok(Some((
+        AgentTaskStatus::from_latest(agent, latest.as_ref(), gap.as_ref(), pending.is_some()),
+        AgentTaskStatus::observed_turn(agent, latest.as_ref()),
     )))
 }
 

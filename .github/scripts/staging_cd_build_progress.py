@@ -5,19 +5,30 @@ import json
 import math
 import re
 
+from staging_cd_test_failures import failed_tests
+
 CATEGORIES = ("rust-compile", "dependency-compile", "go-compile", "media-compile",
               "cache-import", "cache-export", "archive-export", "other-build")
 # A Dockerfile step is named "[<stage> <n>/<total>] <instruction>". The bracket
 # holds only the public stage name and position; the instruction is withheld.
-STEP = re.compile(r"\[([A-Za-z0-9][A-Za-z0-9_.-]{0,63}) ([1-9][0-9]{0,3})/([1-9][0-9]{0,3})\] ")
+# BuildKit pads <n> to the width of <total>: "[media-self-test  7/11] ".
+STEP = re.compile(r"\[([A-Za-z0-9][A-Za-z0-9_.-]{0,63}) {1,4}([1-9][0-9]{0,3})/([1-9][0-9]{0,3})\] ")
 # BuildKit's own vertices for base images and the build context carry no command.
 INTERNAL = (("[internal] load metadata for ", "base-image-metadata"),
             ("[internal] load build context", "build-context"),
             ("[internal] load build definition", "build-definition"),
             ("[internal] load .dockerignore", "build-context"))
+# BuildKit names the remote cache export vertex after its exporter and keeps an
+# export failure on it even with ignore-error. That build still succeeded, so
+# the error is evidence that the layers were not saved, never a failed step.
+CACHE_EXPORTERS = frozenset({"exporting to GitHub Actions Cache"})
+# go-actions-cache relays the cache service's refusal text. These fixed phrases
+# mark the read-only state it enters once the organization's budget is reached.
+READ_ONLY = ("configured budget", "cache is now read only")
 
 
-def summarize(raw):
+def summarize(raw, dockerfile=None):
+    """Fixed facts about one build; failing test names need the Dockerfile that was built."""
     if len(raw) > 64 * 1024**2:
         return {"complete": False, "reason": "progress-size-limit"}
     vertices = {}
@@ -43,13 +54,18 @@ def summarize(raw):
     intervals = {name: [] for name in CATEGORIES}
     cached = 0
     failed = []
+    export_errors = set()
     for row in vertices.values():
         name = row.get("name", "")
         if not isinstance(name, str):
             continue
-        if row.get("error"):
+        if row.get("error") and name in CACHE_EXPORTERS:
+            # Only the fixed classification leaves; the error text stays private.
+            text = row["error"].lower() if isinstance(row["error"], str) else ""
+            export_errors.add("read-only" if any(phrase in text for phrase in READ_ONLY) else "failed")
+        elif row.get("error"):
             # Cancelled siblings also carry an error; the earliest one is the cause.
-            failed.append((str(row.get("completed") or ""), failed_step(name)))
+            failed.append((str(row.get("completed") or ""), failed_step(name), row.get("digest")))
         if row.get("cached") is True:
             cached += 1
         try:
@@ -69,7 +85,7 @@ def summarize(raw):
             category = "media-compile"
         elif name.startswith("importing cache"):
             category = "cache-import"
-        elif name.startswith("exporting cache"):
+        elif name.startswith("exporting cache") or name in CACHE_EXPORTERS:
             category = "cache-export"
         elif name.startswith("exporting "):
             category = "archive-export"
@@ -94,8 +110,15 @@ def summarize(raw):
     if failed:
         # Name where the build stopped so its owner can open that Dockerfile
         # step; never the instruction text, its arguments or the error message.
-        ordered = [label for _, label in sorted(failed)]
-        result["failed_steps"] = list(dict.fromkeys(ordered))[:8]
+        ordered = sorted(failed, key=lambda item: item[:2])
+        result["failed_steps"] = list(dict.fromkeys(label for _, label, _ in ordered))[:8]
+        # A failed test stage also names its failing tests: only names matched
+        # by fixed failure patterns, never its log lines or error messages.
+        tests = failed_tests(raw, [(label, digest) for _, label, digest in ordered], dockerfile) if dockerfile else []
+        if tests:
+            result["failed_tests"] = tests
+    if export_errors:
+        result["cache_export_error"] = "read-only" if "read-only" in export_errors else "failed"
     return result
 
 

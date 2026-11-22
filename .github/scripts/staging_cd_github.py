@@ -152,7 +152,9 @@ class GitHub:
                         "GitHub API response is invalid")
                 raise GitHubNotFound("GitHub resource was not found")
             if code != 200:
-                raise Refusal("GitHub API request failed") from ci_retry.status_cause(code, headers)
+                failure = Refusal("GitHub API request failed")
+                failure.status = code  # Lets a caller tell a missing or forbidden object from an outage.
+                raise failure from ci_retry.status_cause(code, headers)
         if result.returncode != 0:
             raise Refusal("GitHub API request failed") from ci_retry.cli_cause(diagnostic)
         try:

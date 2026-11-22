@@ -94,7 +94,8 @@ impl AgentWorker {
                 .await
             }
             Ok(_) => {
-                self.handle_failure(
+                self.handle_context_failure(
+                    &context,
                     agent,
                     WorkerFailure::terminal(
                         "agent_runtime_receipt_invalid",
@@ -105,7 +106,7 @@ impl AgentWorker {
                 .await
             }
             Err(error) => {
-                self.handle_failure(agent, adapter_failure(error), now)
+                self.handle_context_failure(&context, agent, adapter_failure(error), now)
                     .await
             }
         }
@@ -139,7 +140,8 @@ impl AgentWorker {
                     .any(|receipt| receipt.step == AgentWorkStep::MaterializeHome) =>
             {
                 return self
-                    .handle_failure(
+                    .handle_context_failure(
+                        &context,
                         agent,
                         WorkerFailure::terminal(
                             "agent_skill_material_missing",
@@ -156,18 +158,30 @@ impl AgentWorker {
                 .await
             {
                 Ok(material) => material,
-                Err(error) => return self.handle_failure(agent, skill_failure(error), now).await,
+                Err(error) => {
+                    return self
+                        .handle_context_failure(&context, agent, skill_failure(error), now)
+                        .await
+                }
             },
         };
         if let Err(failure) = validate_skills(&agent.profile.content.skills, &material) {
-            return self.handle_failure(agent, failure, now).await;
+            return self
+                .handle_context_failure(&context, agent, failure, now)
+                .await;
         }
         let skills = match self.dependencies.skills.runtime_skills(&material) {
             Ok(skills) => skills,
-            Err(error) => return self.handle_failure(agent, skill_failure(error), now).await,
+            Err(error) => {
+                return self
+                    .handle_context_failure(&context, agent, skill_failure(error), now)
+                    .await
+            }
         };
         if let Err(failure) = validate_runtime_skills(&material, &skills) {
-            return self.handle_failure(agent, failure, now).await;
+            return self
+                .handle_context_failure(&context, agent, failure, now)
+                .await;
         }
         let request = AgentHomeRequest::new(
             format!("agent:{}:home:create:v1", agent.id),
@@ -209,7 +223,7 @@ impl AgentWorker {
                 .await
             }
             Err(error) => {
-                self.handle_failure(agent, adapter_failure(error), now)
+                self.handle_context_failure(&context, agent, adapter_failure(error), now)
                     .await
             }
         }
@@ -248,7 +262,8 @@ impl AgentWorker {
             || agent.conversation.runtime_generation.is_some()
         {
             return self
-                .handle_failure(
+                .handle_context_failure(
+                    &context,
                     agent,
                     WorkerFailure::terminal(
                         "agent_conversation_state_invalid",
@@ -295,11 +310,19 @@ impl AgentWorker {
         let now = now + started.elapsed();
         let (channel, updates) = match opened {
             Ok(opened) => opened,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_context_failure(&context, agent, failure, now)
+                    .await
+            }
         };
         let conversation_id = match valid_conversation_id(channel.conversation_id) {
             Ok(id) => id,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_context_failure(&context, agent, failure, now)
+                    .await
+            }
         };
         let generation = 1;
         let attachment = match self.attach(
@@ -310,7 +333,11 @@ impl AgentWorker {
             updates,
         ) {
             Ok(attachment) => attachment,
-            Err(failure) => return self.handle_failure(agent, failure, now).await,
+            Err(failure) => {
+                return self
+                    .handle_context_failure(&context, agent, failure, now)
+                    .await
+            }
         };
         let result = async {
             let published = self
@@ -387,7 +414,8 @@ impl AgentWorker {
         .await
         {
             return self
-                .handle_failure(
+                .handle_context_failure(
+                    &context,
                     agent,
                     WorkerFailure::retryable("desktop_preparation_unavailable", detail),
                     now + started.elapsed(),
@@ -398,7 +426,7 @@ impl AgentWorker {
             Ok(target) => target,
             Err(failure) => {
                 return self
-                    .handle_failure(agent, failure, now + started.elapsed())
+                    .handle_context_failure(&context, agent, failure, now + started.elapsed())
                     .await
             }
         };
@@ -413,13 +441,18 @@ impl AgentWorker {
                 Ok(attachment) => attachment,
                 Err(failure) => {
                     return self
-                        .handle_failure(agent, failure, now + started.elapsed())
+                        .handle_context_failure(&context, agent, failure, now + started.elapsed())
                         .await
                 }
             },
             Err(error) => {
                 return self
-                    .handle_failure(agent, registry_failure(error), now + started.elapsed())
+                    .handle_context_failure(
+                        &context,
+                        agent,
+                        registry_failure(error),
+                        now + started.elapsed(),
+                    )
                     .await;
             }
         };

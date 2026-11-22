@@ -66,6 +66,9 @@ pub(in crate::store) async fn project(
     if first.state != FirstMessageDelivery::Queued {
         return Ok(None);
     }
+    store
+        .fence_agent_effect(&current.id, scope.session())
+        .await?;
     let mut next = current.clone();
     next.conversation
         .first_message

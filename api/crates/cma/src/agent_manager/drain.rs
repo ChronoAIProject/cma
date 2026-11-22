@@ -15,16 +15,16 @@ async fn handoff(
     authority: &Arc<Authority>,
     revoke: impl Future<Output = Result<(), OwnershipError>>,
 ) -> Result<(), HandoffFailure> {
-    let mut receivers_confirmed = false;
+    let mut receivers_settled = false;
     let result = coordinator
         .handoff(authority, async {
             revoke.await?;
-            receivers_confirmed = true;
+            receivers_settled = true;
             Ok(())
         })
         .await;
     result.map_err(|error| HandoffFailure {
-        phase: if receivers_confirmed {
+        phase: if receivers_settled {
             "durable_release"
         } else {
             "receiver_revocation"
@@ -74,8 +74,12 @@ impl AgentManager {
             .map_err(|error| error.to_string())?;
         let results = stream::iter(owned.into_iter().map(|authority| async move {
             self.registry.detach_owner(&authority.token);
-            let result =
-                handoff(&self.coordinator, &authority, authority.revoke_transports()).await;
+            let result = handoff(
+                &self.coordinator,
+                &authority,
+                authority.revoke_transports_after_local_drain(),
+            )
+            .await;
             if let Err(failure) = &result {
                 tracing::warn!(
                     agent_id = %authority.token.agent_id,

@@ -82,7 +82,9 @@ pub use provider_backend::{HostedControlTransport, ProviderHostedBackend};
 pub use provider_tools::{
     HostedProviderToolBinding, HostedProviderToolSource, HostedToolOpenReceipt,
 };
-pub use provider_transport::{NativeRuntimeTransport, ProviderHostedControlTransport};
+pub use provider_transport::{
+    LegacyReceiverImage, NativeRuntimeTransport, ProviderHostedControlTransport,
+};
 pub use subscriptions::{HostedSubscriptionCredential, HostedSubscriptionSource};
 
 #[cfg(test)]

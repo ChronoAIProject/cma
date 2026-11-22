@@ -4,11 +4,14 @@ import { sameAgent } from '../agent/status';
 import { sandboxChildStatus } from '../sandbox/lifecycle';
 import { toneDot } from '../ui/Badge';
 import { statusTone } from '../vocabulary/status';
+import { acceptanceForTurn, taskAcceptanceStatus } from '../agent/taskAcceptance';
 
 export const taskWords = {
   loading: 'Loading activity',
   not_started: 'Ready to start',
   completed: 'Turn ended',
+  task_accepted: 'Task complete',
+  needs_attention: 'Needs attention',
   working: 'Working',
   waiting_approval: 'Waiting for approval',
   starting: 'Preparing',
@@ -22,7 +25,8 @@ export type TaskStatus = keyof typeof taskWords;
 
 export interface CurrentTask {
   readonly agent: AgentDetail;
-  readonly status: ActivityStatus;
+  readonly status?: ActivityStatus;
+  readonly turnId?: string;
 }
 
 export function observedTaskStatus(
@@ -31,21 +35,40 @@ export function observedTaskStatus(
   current?: CurrentTask,
 ): TaskStatus {
   const status = sandbox === undefined ? agent.status : sandboxChildStatus(sandbox, agent.status);
-  return current !== undefined &&
+  if (
+    current !== undefined &&
     sameAgent(current.agent, agent) &&
     (status === 'ready' || status === 'working' || status === 'waiting_approval')
-    ? current.status
-    : taskStatus(agent, sandbox);
+  ) {
+    const acceptance = acceptanceForTurn(
+      current.agent.taskAcceptance ?? agent.taskAcceptance,
+      current.turnId,
+    );
+    if (current.status !== undefined) {
+      const verdict =
+        status === 'ready' && current.status === 'completed'
+          ? taskAcceptanceStatus(acceptance)
+          : undefined;
+      return verdict ?? current.status;
+    }
+    if (status === 'ready' && current.turnId !== undefined)
+      return taskStatus({ ...agent, taskAcceptance: acceptance }, sandbox);
+  }
+  return taskStatus(agent, sandbox);
 }
 
 export function taskStatus(
-  agent: Pick<AgentSummary, 'status' | 'taskStatus'>,
+  agent: Pick<AgentSummary, 'status' | 'taskStatus' | 'taskAcceptance'>,
   sandbox?: SandboxSummary,
 ): TaskStatus {
   if (agent.status === 'ready' && (agent.taskStatus === 'failed' || agent.taskStatus === 'stopped'))
     return agent.taskStatus;
   const status = sandbox === undefined ? agent.status : sandboxChildStatus(sandbox, agent.status);
-  if (status === 'ready') return agent.taskStatus ?? 'unknown';
+  if (status === 'ready') {
+    const verdict =
+      agent.taskStatus === 'completed' ? taskAcceptanceStatus(agent.taskAcceptance) : undefined;
+    return verdict ?? agent.taskStatus ?? 'unknown';
+  }
   if (status === 'pausing') return 'paused';
   if (
     status === 'working' ||
@@ -70,9 +93,11 @@ export function taskStateMeta(status: TaskStatus, stale = false) {
   const tone =
     status === 'not_started'
       ? 'ready'
-      : status === 'completed'
+      : status === 'completed' || status === 'task_accepted'
         ? 'completed'
-        : statusTone(status === 'unknown' || status === 'loading' ? 'ready' : status);
+        : status === 'needs_attention'
+          ? 'warning'
+          : statusTone(status === 'unknown' || status === 'loading' ? 'ready' : status);
   return (
     <>
       <span className="sr-only">, </span>

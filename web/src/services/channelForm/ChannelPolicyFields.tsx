@@ -61,6 +61,7 @@ export function ChannelPolicyFields({
               />
               {value.connection_admission != null ? (
                 <AdmissionFields
+                  path="/connection_admission"
                   label="Connection admission"
                   value={value.connection_admission}
                   onChange={(v) => set('connection_admission', v)}

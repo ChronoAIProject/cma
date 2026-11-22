@@ -12,6 +12,10 @@ use super::{
     MongoUserDirectoryStore,
 };
 
+#[path = "account_mongo.rs"]
+mod account;
+pub(crate) use account::MongoAccountStores;
+
 pub(crate) struct MongoConnectionPolicy {
     pub authority: cma_service_auth::mongodb_authority::MongoAuthorityMode,
     pub agent_manager_replicas: bool,
@@ -66,8 +70,13 @@ impl MongoStores {
     ) -> Result<Self, StoreError> {
         if writes_enabled {
             self.registration_capacity = Arc::new(
-                super::MongoRegistrationCapacityStore::open(&self.client, &self.database, true)
-                    .await?,
+                super::MongoRegistrationCapacityStore::open_with_defaults(
+                    &self.client,
+                    &self.database,
+                    true,
+                    self.initial_settings,
+                )
+                .await?,
             );
         }
         self.admission_ceilings = Arc::new(
@@ -243,7 +252,8 @@ impl MongoStores {
         );
         let trigger_definitions = Arc::new(
             MongoTriggerDefinitionStore::open(&client, database, Arc::clone(&sandbox_profiles))
-                .await?,
+                .await?
+                .with_initial_settings(startup.initial_settings),
         );
         let auth = Arc::new(
             MongoAuthStore::open(&client, database, deployment, auth_encryption_key).await?,
@@ -278,8 +288,15 @@ impl MongoStores {
             )
             .await?,
         );
-        let registration_capacity =
-            Arc::new(super::MongoRegistrationCapacityStore::open(&client, database, false).await?);
+        let registration_capacity = Arc::new(
+            super::MongoRegistrationCapacityStore::open_with_defaults(
+                &client,
+                database,
+                false,
+                startup.initial_settings,
+            )
+            .await?,
+        );
         let admission_ceilings = Arc::new(
             super::MongoAdmissionCeilingsStore::open_with_defaults(
                 &client,

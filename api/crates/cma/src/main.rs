@@ -23,6 +23,7 @@ mod config;
 mod connections;
 #[cfg(test)]
 mod dependency_test_support;
+mod diagnostic_format;
 mod diagnostic_request;
 mod document_artifacts;
 mod document_storage;
@@ -155,6 +156,7 @@ async fn run() {
             tracing_subscriber::EnvFilter::try_from_env("RUST_LOG")
                 .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER)),
         )
+        .event_format(diagnostic_format::text())
         .init();
 
     if document_artifacts::quota_cli::is_command(&arguments) {

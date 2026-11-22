@@ -9,6 +9,10 @@ web/e2e/.auth/
 web/e2e/test-results/
 web/e2e/playwright-report/
 
+# Python bytecode is generated; it is never committed.
+__pycache__/
+*.pyc
+
 # Editors / OS
 .DS_Store
 .idea/

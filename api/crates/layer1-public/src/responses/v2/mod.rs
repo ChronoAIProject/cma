@@ -20,6 +20,7 @@ mod event_context;
 mod event_context_tests;
 #[cfg(test)]
 mod existing_binding_tests;
+mod input_receipt;
 pub(crate) mod interruption;
 #[cfg(test)]
 mod model_tests;
@@ -42,8 +43,10 @@ mod stream_pages;
 #[cfg(test)]
 pub(crate) mod tests;
 
+pub use error::{missing as resource_not_found, unauthenticated as authentication_required};
 pub use output::{ActivityItem, V2OutputItem};
 pub use projection::{ResponseConversation, V2ResponseObject, V2ResponseStatus};
+pub use queued_cancellation::QueuedCancellationNeedsOwner;
 
 #[derive(Clone)]
 pub struct ResponsesV2State {
@@ -105,6 +108,12 @@ pub fn router(state: ResponsesV2State) -> Router {
             post(routes::create_alias),
         )
         .route(
+            "/api/v2/agents/{agent_id}/responses/receipt",
+            post(input_receipt::lookup).layer(axum::middleware::map_response(
+                crate::conversation::commands::no_store_receipt,
+            )),
+        )
+        .route(
             "/api/v2/agents/{agent_id}/queued-inputs",
             get(queued_input::list),
         )
@@ -161,6 +170,7 @@ pub(super) fn document() -> utoipa::openapi::OpenApi {
             routes::capabilities,
             routes::create,
             routes::create_alias,
+            input_receipt::lookup,
             routes::retrieve,
             routes::output::output_page,
             routes::retained_output::read,

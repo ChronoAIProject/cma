@@ -11,7 +11,7 @@ use mongodb::{
 };
 
 use super::durability::majority_collection;
-use crate::warm_pools::{PoolTarget, PoolTargetStore};
+use crate::warm_pools::{OperatorReplicas, PoolTarget, PoolTargetStore};
 
 pub(super) const COLLECTION: &str = "native_warm_pool_targets";
 mod retirement;
@@ -75,6 +75,9 @@ fn validate(target: PoolTarget) -> Result<PoolTarget, WarmPoolError> {
         || (target.retired && !target.retiring)
         || (target.retiring && target.target_replicas != 0)
         || target.target_replicas > 1000
+        || target
+            .operator_replicas
+            .is_some_and(|choice| choice.replicas > 1000)
         || target.plan.spec.validate().is_err()
         || target.binding.as_ref().is_some_and(|binding| {
             binding.spec != target.plan.spec
@@ -173,11 +176,21 @@ impl PoolTargetStore for MongoNativeWarmPools {
         &self,
         id: &str,
         body: &ResizeWarmPoolBody,
+        operator_choice: bool,
     ) -> Result<PoolTarget, WarmPoolError> {
         let mut filter = self.scope();
         filter.extend(doc! {"_id":id,"revision":body.expected_revision as i64,"retiring":{"$ne":true},"retired":{"$ne":true},"lease_until":{"$lte":DateTime::now()}});
-        let update = doc! {"$set":{"target_replicas":i64::from(body.target_replicas),
-        "error":mongodb::bson::Bson::Null,"reconcile_after":DateTime::from_millis(0)},"$inc":{"revision":1_i64}};
+        let mut fields = doc! {"target_replicas":i64::from(body.target_replicas),
+        "error":mongodb::bson::Bson::Null,"reconcile_after":DateTime::from_millis(0)};
+        if operator_choice {
+            // Same fenced write as the count, so the decision is never ahead of it.
+            filter.insert("machine", true);
+            fields.insert(
+                "operator_replicas",
+                doc! {"replicas":i64::from(body.target_replicas),"at":DateTime::now()},
+            );
+        }
+        let update = doc! {"$set":fields,"$inc":{"revision":1_i64}};
         let updated = self
             .targets
             .find_one_and_update(filter, update)
@@ -194,6 +207,23 @@ impl PoolTargetStore for MongoNativeWarmPools {
                 }
             }
         }
+    }
+
+    async fn latest_machine_operator_replicas(
+        &self,
+    ) -> Result<Option<OperatorReplicas>, WarmPoolError> {
+        // Retired tombstones keep the decision; the scope does not exclude them.
+        let mut filter = self.scope();
+        filter.extend(doc! {"machine":true,"operator_replicas.at":{"$type":"date"}});
+        Ok(self
+            .targets
+            .find_one(filter)
+            .sort(doc! {"operator_replicas.at":-1,"_id":1})
+            .await
+            .map_err(|_| WarmPoolError::Unavailable)?
+            .map(validate)
+            .transpose()?
+            .and_then(|target| target.operator_replicas))
     }
 
     async fn claim(&self) -> Result<Option<PoolTarget>, WarmPoolError> {

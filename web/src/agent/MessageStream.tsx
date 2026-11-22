@@ -1,6 +1,7 @@
 import { useRetainedOutput, type RetainedOutputAccess } from './useRetainedOutput';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
+import type { TaskAcceptance } from '@cma/client';
 import type { ApprovalDecision } from './controller';
 import type { ConversationState } from './conversation';
 import { StreamEntry } from './StreamEntry';
@@ -20,9 +21,12 @@ import { AnswerDeliveryContext, type AnswerDeliveryAccess } from './answerDelive
 import { ConversationEmpty } from './ConversationEmpty';
 import type { ResourceStatus } from '../character/status';
 import { messageStreamKey } from './streamTimeline';
+import { acceptanceForTurn } from './taskAcceptance';
 
 interface MessageStreamProps {
   readonly conversation: ConversationState;
+  readonly taskAcceptance?: TaskAcceptance;
+  readonly onTaskDeliveryConfirmed?: () => void;
   readonly retainedOutput?: RetainedOutputAccess;
   readonly approvalBusy?: boolean;
   readonly approvalReadOnly?: boolean;
@@ -45,6 +49,8 @@ interface MessageStreamProps {
 
 export function MessageStream({
   conversation,
+  taskAcceptance,
+  onTaskDeliveryConfirmed,
   retainedOutput,
   approvalBusy = false,
   approvalReadOnly = false,
@@ -78,6 +84,11 @@ export function MessageStream({
   const [projectTimeline] = useState(createStreamTimeline);
   const retained = useRetainedOutput(retainedOutput, conversation);
   const { items, continued, previousRole } = projectTimeline(retained.conversation);
+  const verdictOnPlan =
+    taskAcceptance !== undefined &&
+    items.some(
+      (entry) => entry.kind === 'plan' && acceptanceForTurn(taskAcceptance, entry.item.runId),
+    );
   const { agentId, files, workingDirectory } = media ?? {};
   const mediaAccess = useMemo(
     () =>
@@ -165,6 +176,13 @@ export function MessageStream({
               approvalReadOnly={approvalReadOnly}
               onApproval={onApproval}
               activeRunId={conversation.activeRunId}
+              taskAcceptance={
+                entry.kind === 'message' || entry.kind === 'plan'
+                  ? acceptanceForTurn(taskAcceptance, entry.item.runId)
+                  : undefined
+              }
+              verdictOnAnswer={!verdictOnPlan}
+              onTaskDeliveryConfirmed={onTaskDeliveryConfirmed}
               planOutcome={
                 entry.kind === 'plan' && entry.item.runId !== undefined
                   ? conversation.turnOutcomes?.[entry.item.runId]

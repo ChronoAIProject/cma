@@ -2,16 +2,32 @@
 
 use std::sync::Arc;
 
+use layer2_core::budget::{BudgetError, PlatformAdmissionState, PlatformSpendLedger};
 use layer2_core::{StoreError, SubjectId};
 
 use super::AuthState;
 
+pub(crate) type RegistrationAdmission = (
+    PlatformAdmissionState,
+    Result<layer2_core::admission::AdmissionCeilings, ()>,
+);
+
+#[async_trait::async_trait]
+pub(crate) trait RegistrationPolicy: Send + Sync {
+    async fn admission_snapshot(&self, now: u64) -> Result<RegistrationAdmission, BudgetError>;
+}
+
+pub(super) struct SpendRegistrationPolicy(pub Arc<dyn PlatformSpendLedger>);
+
+#[async_trait::async_trait]
+impl RegistrationPolicy for SpendRegistrationPolicy {
+    async fn admission_snapshot(&self, now: u64) -> Result<RegistrationAdmission, BudgetError> {
+        self.0.admission_snapshot(now).await
+    }
+}
+
 #[async_trait::async_trait]
 pub(crate) trait RegistrationCapacity: Send + Sync {
-    /// Tracking becomes durable at the first activation, independently of limits.
-    async fn tracking_active(&self) -> Result<bool, StoreError> {
-        Ok(true)
-    }
     /// Includes an exact registration replay and retained existing consumers.
     async fn existing_subject(&self, subject: &SubjectId) -> Result<bool, StoreError>;
     /// Atomically claim one public registration, or refuse without side effects.

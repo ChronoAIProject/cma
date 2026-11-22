@@ -6,6 +6,7 @@ pub(super) mod admission;
 mod authority;
 mod discovery;
 pub(super) mod lineage;
+pub(super) mod observations;
 mod preparation;
 mod receipts;
 mod restart;

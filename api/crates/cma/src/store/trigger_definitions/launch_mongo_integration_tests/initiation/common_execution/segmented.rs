@@ -61,7 +61,7 @@ async fn adopt(f: &Fixture, agent: &Agent) {
     }
 }
 
-async fn accepted() -> Accepted {
+pub(super) async fn accepted() -> Accepted {
     let (f, launch, request) = pending().await;
     let agent = f
         .resources

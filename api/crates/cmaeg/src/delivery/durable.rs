@@ -17,6 +17,7 @@ pub struct DurableReply {
     pub message: OutboundMessage,
     pub gate: Arc<dyn SendGate>,
     pub source: ReplySource,
+    pub(crate) answer_response_id: Option<String>,
     pub default_destination: Option<(super::destination::DefaultDestination, String)>,
     pub receipt: oneshot::Sender<IntentReceipt>,
 }
@@ -66,18 +67,8 @@ impl DeliveryCoordinator {
         gate: Arc<dyn SendGate>,
         source: ReplySource,
     ) -> IntentReceipt {
-        let (receipt, received) = oneshot::channel();
-        let command = DeliveryCommand::DurableReply(Box::new(DurableReply {
-            trace: tracing::Span::current(),
-            channel,
-            event,
-            message,
-            gate,
-            source,
-            default_destination: None,
-            receipt,
-        }));
-        self.enqueue(command, received).await
+        self.reply_observed(channel, event, message, gate, None, (source, None))
+            .await
     }
     pub async fn reply_default(
         &self,
@@ -88,6 +79,44 @@ impl DeliveryCoordinator {
         destination: super::destination::DefaultDestination,
         operation: String,
     ) -> IntentReceipt {
+        self.reply_for_response(
+            channel,
+            event,
+            message,
+            gate,
+            Some((destination, operation)),
+            None,
+        )
+        .await
+    }
+    pub(crate) async fn reply_for_response(
+        &self,
+        channel: Arc<ResolvedChannel>,
+        event: EventRefPayload,
+        message: OutboundMessage,
+        gate: Arc<dyn SendGate>,
+        default_destination: Option<(super::destination::DefaultDestination, String)>,
+        answer_response_id: Option<String>,
+    ) -> IntentReceipt {
+        self.reply_observed(
+            channel,
+            event,
+            message,
+            gate,
+            default_destination,
+            (ReplySource::Stream, answer_response_id),
+        )
+        .await
+    }
+    async fn reply_observed(
+        &self,
+        channel: Arc<ResolvedChannel>,
+        event: EventRefPayload,
+        message: OutboundMessage,
+        gate: Arc<dyn SendGate>,
+        default_destination: Option<(super::destination::DefaultDestination, String)>,
+        (source, answer_response_id): (ReplySource, Option<String>),
+    ) -> IntentReceipt {
         let (receipt, received) = oneshot::channel();
         let command = DeliveryCommand::DurableReply(Box::new(DurableReply {
             trace: tracing::Span::current(),
@@ -95,8 +124,9 @@ impl DeliveryCoordinator {
             event,
             message,
             gate,
-            source: ReplySource::Stream,
-            default_destination: Some((destination, operation)),
+            source,
+            answer_response_id,
+            default_destination,
             receipt,
         }));
         self.enqueue(command, received).await
