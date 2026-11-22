@@ -113,6 +113,22 @@ async fn run_arguments(arguments: Vec<std::ffi::OsString>) -> Result<(), String>
     }
     if arguments
         .first()
+        .is_some_and(|arg| arg == "--verify-ledger-v1-evidence")
+    {
+        if arguments.len() != 3 {
+            return Err("ledger_evidence_verification_arguments_invalid".into());
+        }
+        let expected = arguments[2]
+            .to_str()
+            .ok_or("ledger_evidence_verification_arguments_invalid")?;
+        return ledger_import::evidence::verification::command(
+            arguments[1].clone().into(),
+            expected.into(),
+        )
+        .await;
+    }
+    if arguments
+        .first()
         .is_some_and(|arg| arg == "--cutover-ledger-v1")
     {
         return ledger_import::cutover_command()
