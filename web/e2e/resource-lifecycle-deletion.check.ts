@@ -1,3 +1,4 @@
+import { registerDeletionConfirmationCases } from './redesign-deletion.cases';
 import { test, expect } from '@playwright/test';
 import { LocalStartup } from './agent-startup-fixtures';
 import {
@@ -239,3 +240,5 @@ for (const width of [1440, 390]) {
     });
   }
 }
+
+registerDeletionConfirmationCases();
