@@ -403,7 +403,30 @@ async fn owned_parent_read_still_requires_reopen_guard_and_actual_write_fence() 
         reopen::validate_and_fence(store, &fixture.agent, &wrong, &mut current).await,
         Err(ApplyError::Domain(SandboxStoreError::InvalidTransaction(_)))
     ));
-    reopen::validate_and_fence(store, &fixture.agent, &guard, &mut current)
+    let current_parent = reopen::read_parent_admitted(
+        store,
+        &fixture.agent,
+        &mut current,
+        &policy,
+        super::gate_plan(),
+    )
+    .unwrap()
+    .await
+    .unwrap()
+    .transpose()
+    .unwrap();
+    assert!(matches!(
+        reopen::validate_parent_and_fence(
+            store,
+            &fixture.agent,
+            &wrong,
+            &current_parent,
+            &mut current,
+        )
+        .await,
+        Err(ApplyError::Domain(SandboxStoreError::InvalidTransaction(_)))
+    ));
+    reopen::validate_parent_and_fence(store, &fixture.agent, &guard, &current_parent, &mut current)
         .await
         .unwrap();
     current.commit_transaction().await.unwrap();
@@ -414,20 +437,43 @@ async fn owned_parent_read_still_requires_reopen_guard_and_actual_write_fence() 
         .unwrap()
         .unwrap();
     assert_eq!(row.get_i64("agent_conversation_reopen_fence").unwrap(), 1);
-    let conflict = store
+    let mut successor = fixture.parent.clone();
+    successor.revision += 1;
+    successor.work.lease.as_mut().unwrap().fence += 1;
+    store
         .sandboxes
         .update_one(
-            doc! {"_id":fixture.parent.id.as_str()},
-            doc! {"$inc":{"agent_conversation_reopen_fence":1_i64}},
+            doc! {"_id":successor.id.as_str()},
+            doc! {"$set":crate::store::sandboxes::sandbox_replacement_fields(&successor).unwrap()},
         )
-        .session(&mut stale)
         .await
-        .unwrap_err();
+        .unwrap();
+    start_transaction(&mut current).await.unwrap();
+    assert!(matches!(
+        reopen::validate_parent_and_fence(
+            store,
+            &fixture.agent,
+            &guard,
+            &current_parent,
+            &mut current,
+        )
+        .await,
+        Err(ApplyError::Domain(SandboxStoreError::Conflict))
+    ));
+    current.abort_transaction().await.unwrap();
+    let conflict =
+        reopen::validate_parent_and_fence(store, &fixture.agent, &guard, &parent, &mut stale)
+            .await
+            .unwrap_err();
+    let ApplyError::Driver(conflict) = conflict else {
+        panic!("stale snapshot did not reach the original write conflict");
+    };
     assert!(conflict.contains_label("TransientTransactionError"));
     assert_eq!(**parent, fixture.parent);
     assert!(parent.belongs_to(&policy));
     let _ = stale.abort_transaction().await;
-    drop((parent, stale, current));
+    assert!(current_parent.belongs_to(&policy));
+    drop((parent, current_parent, stale, current));
     assert_eq!(root.available_bytes(), idle);
     fixture.finish().await;
 }
