@@ -81,9 +81,12 @@ impl NativeWarmPools {
     /// fills that pool in the background.
     pub async fn await_default_ready(&self) -> Result<StartupReadiness, WarmPoolError> {
         // The supervisor that retires superseded pools starts only after this
-        // gate, yet on a full node pool the new default schedules only once
-        // their spare capacity drains. Retire superseded targets while waiting,
-        // so a starting pod frees the room it needs.
+        // gate. Retiring while waiting frees room now only for an older release
+        // that has already settled, or a retirement an earlier pod deferred:
+        // the release just superseded becomes eligible RELEASE_SETTLE after
+        // this release was recorded. The first new pod's wait therefore rarely
+        // retires it, and a later replica may retire it while the last
+        // previous pod still serves.
         let drain = async {
             loop {
                 if self.retire_superseded().await.is_err() {
