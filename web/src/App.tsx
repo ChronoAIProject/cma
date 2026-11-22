@@ -1,3 +1,4 @@
+import { ConnectionReturnPage } from './connections/ConnectionReturnPage';
 import { Console } from './Console';
 import { useAuth } from './auth/context';
 import { BrandLoading } from './landing/LandingCharacter';
@@ -226,10 +227,8 @@ function AgentApp({
   }>();
   const [hierarchyRevision, setHierarchyRevision] = useState(0);
 
-  // NyxID hosted connection links redirect their popup here after the
-  // credential is saved. The main CMA window is already polling the durable
-  // connection state. Keep its child window available for the next service;
-  // the main window closes it only after the entire sequence is verified.
+  // Callback parameters never prove readiness. The original target verifies
+  // the durable connection after a popup or explicit same-tab return.
   if (window.location.pathname === '/connection-return') {
     return <ConnectionReturnPage />;
   }
@@ -337,20 +336,5 @@ function AgentApp({
         )}
       </Presence>
     </ReferenceProvider>
-  );
-}
-
-function ConnectionReturnPage() {
-  return (
-    <main className="app-error">
-      <h1 className="app-error__title">Returning to CMA</h1>
-      <p className="app-error__next">
-        CMA is checking your connection. Your next sign-in will open here, or this window will close
-        when all services are ready. If nothing happens, return to the CMA window to continue.
-      </p>
-      <button type="button" onClick={() => window.close()}>
-        Close this window
-      </button>
-    </main>
   );
 }
