@@ -235,7 +235,7 @@ for (const authenticated of [false, true]) {
     await page.goto('/');
     if (authenticated) {
       await expect(
-        page.getByRole('heading', { name: 'What should your Agent work on?' }),
+        page.getByRole('heading', { name: /^Good (morning|afternoon|evening)\.$/ }),
       ).toBeVisible();
       await expect(
         page
@@ -270,7 +270,7 @@ for (const authenticated of [false, true]) {
       ).toBeVisible();
       await page.getByRole('link', { name: 'CMA home' }).click();
       await expect(
-        page.getByRole('heading', { name: 'What should your Agent work on?' }),
+        page.getByRole('heading', { name: /^Good (morning|afternoon|evening)\.$/ }),
       ).toBeVisible();
       await expect(page.getByLabel('Your task')).toHaveValue(
         'Retain this Home draft across screen sizes.',

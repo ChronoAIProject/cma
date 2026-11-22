@@ -252,7 +252,7 @@ for (const theme of ['light', 'dark']) {
           }
           if (state === 'home') {
             await expect(
-              page.getByRole('heading', { name: 'What should your Agent work on?' }),
+              page.getByRole('heading', { name: /^Good (morning|afternoon|evening)\.$/ }),
             ).toBeVisible();
             await expect(page.getByLabel('GitHub repository')).not.toBeVisible();
             await page.getByLabel('Your task').fill('Compare three project management tools');
@@ -462,21 +462,18 @@ for (const theme of ['light', 'dark']) {
       await expect(page.getByRole('button', { name: 'Start task' })).toBeDisabled();
       await expect(page.locator('.task-home__composer')).toHaveCSS(
         'background-color',
-        theme === 'dark' ? 'rgb(19, 19, 21)' : 'rgb(250, 250, 250)',
+        theme === 'dark' ? 'rgb(20, 20, 22)' : 'rgb(255, 255, 255)',
       );
-      await expect(page.locator('.task-home__panel')).toHaveCSS('border-radius', '20px');
+      await expect(page.locator('.task-home__composer')).toHaveCSS('border-radius', '20px');
       await expect(page.locator('.task-home__composer')).toHaveCSS(
         'border-color',
         theme === 'dark' ? 'rgb(38, 38, 42)' : 'rgb(228, 228, 231)',
       );
       await expect(page.locator('.task-home__panel')).toHaveCSS(
         'background-color',
-        theme === 'dark' ? 'rgb(25, 25, 28)' : 'rgb(255, 255, 255)',
+        'rgba(0, 0, 0, 0)',
       );
-      await expect(page.locator('.task-home__panel')).toHaveCSS(
-        'border-color',
-        theme === 'dark' ? 'rgb(42, 42, 46)' : 'rgb(228, 228, 231)',
-      );
+      await expect(page.locator('.task-home__panel')).toHaveCSS('border-width', '0px');
       await expect(page.getByRole('button', { name: 'Start task' })).toHaveCSS(
         'background-color',
         theme === 'dark' ? 'rgb(38, 38, 42)' : 'rgb(228, 228, 231)',
@@ -492,16 +489,19 @@ for (const theme of ['light', 'dark']) {
 
       await expect(input).toHaveCSS('min-height', '128px');
       await expect(
-        page.getByRole('heading', { name: 'What should your Agent work on?' }),
-      ).toHaveCSS('font-size', width === 1440 ? '56px' : '32px');
+        page.getByRole('heading', { name: /^Good (morning|afternoon|evening)\.$/ }),
+      ).toHaveCSS('font-size', width === 1440 ? '36px' : '28px');
+      await input.fill('Research a topic while retaining this independent task draft.');
       await page.getByRole('button', { name: 'Research a topic' }).click();
-      await expect
-        .poll(() =>
-          input.evaluate((element: HTMLTextAreaElement) =>
-            element.value.slice(element.selectionStart, element.selectionEnd),
-          ),
-        )
-        .toBe('[topic]');
+      await expect(page.getByLabel('Topic', { exact: true })).toBeFocused();
+      await expect(page.getByRole('button', { name: 'Start task' })).toBeDisabled();
+      await page.getByRole('button', { name: 'Write a task without a template' }).click();
+      const keepDraft = page.getByRole('dialog', { name: 'Keep this template draft?' });
+      await expect(keepDraft).toBeVisible();
+      await keepDraft.getByRole('button', { name: 'Switch and keep draft' }).click();
+      await expect(input).toHaveValue(
+        'Research a topic while retaining this independent task draft.',
+      );
       await expect(page.getByRole('button', { name: 'Start task' })).toBeEnabled();
       await expect(page.getByRole('button', { name: 'Start task' })).toHaveCSS(
         'background-color',
