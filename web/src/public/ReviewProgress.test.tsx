@@ -1,6 +1,6 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError, type Launch, type LaunchStreamOptions } from '@cma/client';
 import { PUBLIC_PREVIEW, PUBLIC_RECORD, PUBLIC_TRUST, publicClient } from '../test/public';
 import { ReviewCard } from './ReviewCard';
@@ -8,7 +8,27 @@ import { Progress } from './Progress';
 import { readIntent } from './intent';
 import { connectionClient } from '../connections/client';
 
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (input) => {
+      if (input !== '/auth/session') throw new Error('Unexpected external fetch');
+      return new Response(
+        JSON.stringify({
+          authenticated: true,
+          subject: 'owner',
+          visitor: true,
+          capabilities: ['launch_triggers'],
+        }),
+        { headers: { 'Content-Type': 'application/json' } },
+      );
+    }),
+  );
+});
+
 afterEach(() => {
+  expect(vi.mocked(fetch).mock.calls.every(([input]) => input === '/auth/session')).toBe(true);
+  vi.unstubAllGlobals();
   vi.useRealTimers();
   vi.restoreAllMocks();
   sessionStorage.clear();
@@ -52,7 +72,15 @@ describe('minimal review', () => {
       hosted_url: 'https://identity.example.test/connect',
       expires_at: new Date(Date.now() + 600000).toISOString(),
     }));
-    render(<ReviewCard client={client} record={record} onChanged={changed} onClose={vi.fn()} />);
+    render(
+      <ReviewCard
+        expectedSubject="owner"
+        client={client}
+        record={record}
+        onChanged={changed}
+        onClose={vi.fn()}
+      />,
+    );
     await act(async () => undefined);
     fireEvent.click(screen.getByRole('button', { name: 'Connect all' }));
     await act(async () => undefined);
@@ -79,6 +107,7 @@ describe('minimal review', () => {
     const actor = userEvent.setup();
     render(
       <ReviewCard
+        expectedSubject="owner"
         client={client}
         record={PUBLIC_TRUST}
         preview={PUBLIC_PREVIEW}
@@ -116,7 +145,13 @@ describe('minimal review', () => {
         .mockResolvedValue(PUBLIC_RECORD);
       const actor = userEvent.setup();
       render(
-        <ReviewCard client={client} record={PUBLIC_TRUST} onChanged={vi.fn()} onClose={vi.fn()} />,
+        <ReviewCard
+          expectedSubject="owner"
+          client={client}
+          record={PUBLIC_TRUST}
+          onChanged={vi.fn()}
+          onClose={vi.fn()}
+        />,
       );
       await actor.click(screen.getByRole('checkbox'));
       await actor.click(screen.getByRole('button', { name: 'Continue' }));
@@ -162,6 +197,7 @@ describe('minimal review', () => {
     const actor = userEvent.setup();
     render(
       <ReviewCard
+        expectedSubject="owner"
         client={client}
         record={record}
         preview={PUBLIC_PREVIEW}

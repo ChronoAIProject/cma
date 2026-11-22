@@ -3,5 +3,5 @@ import credentialRecovery from './credential-setup.config';
 
 export default defineConfig({
   ...credentialRecovery,
-  testMatch: 'review-receipt-recovery.check.ts',
+  testMatch: ['review-receipt-recovery.check.ts', 'review-recovery-custody.check.ts'],
 });
