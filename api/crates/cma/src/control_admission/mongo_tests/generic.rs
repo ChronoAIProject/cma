@@ -15,6 +15,11 @@ fn limits() -> RateLimitConfig {
         control_per_minute: n(120),
         control_tier_enabled: false,
         response_input_tier_enabled: false,
+        anonymous_public: crate::config::AnonymousPublicConfig {
+            enabled: false,
+            per_minute: n(1200),
+            concurrency: n(16),
+        },
         default_lease_enabled: false,
     }
 }

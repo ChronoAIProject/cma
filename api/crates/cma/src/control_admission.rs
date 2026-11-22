@@ -93,3 +93,17 @@ pub(crate) fn classify(request: &axum::extract::Request) -> Option<(Class, Strin
     }
     Some((class, id.to_owned()))
 }
+
+/// The production request limiters with lifecycle containment installed.
+pub(crate) fn limiters(
+    config: &crate::config::Config,
+    shared: std::sync::Arc<crate::store::request_limits::MongoRequestLimits>,
+) -> std::sync::Arc<crate::rate_limit::RateLimiters> {
+    let limits = crate::rate_limit::RateLimiters::from_config(
+        config.rate_limits,
+        config.trusted_proxies.clone(),
+        shared,
+    );
+    limits.install_lifecycle(config.control_admission);
+    limits
+}

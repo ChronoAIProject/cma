@@ -26,7 +26,6 @@ use crate::{
     profile_authoring::CmaProfileAuthoringSource,
     profile_policy::profile_route_policy,
     projections::{AdapterAgentHistoryExporter, AdapterSandboxResources, AgentProjectionServices},
-    rate_limit::RateLimiters,
     sandbox::{
         runtime_capabilities, LiveAgentRegistry, LiveSandboxPolicy, PlatformTitleEndpoint,
         SandboxLifecycleComposition, SandboxLifecycleDependencies,
@@ -232,13 +231,8 @@ impl ControlPlaneComposition {
             adapter.clone(),
         )?;
         let agent_skills = credentials::agent_skills(config, sandbox_credentials.clone())?;
-        let limits = RateLimiters::from_config(
-            config.rate_limits,
-            config.trusted_proxies.clone(),
-            stores.request_limits.clone(),
-        );
+        let limits = crate::control_admission::limiters(config, stores.request_limits.clone());
         let worker_holder = format!("{}:{}", config.deployment_id, uuid::Uuid::new_v4());
-        limits.install_lifecycle(config.control_admission);
         let mut sandbox_lifecycle = SandboxLifecycleComposition::new(
             SandboxLifecycleDependencies {
                 store: stores.sandbox_model.clone(),
