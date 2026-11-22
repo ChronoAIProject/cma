@@ -138,8 +138,9 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertEqual(len(server.refs), 4)
         self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertNotIn("phase=complete", output)
-        self.assertIn("phase=readback-conflict count=1", output)
-        self.assertTrue(output.endswith("phase=readback-conflict count=1 elapsed_seconds=0\nFAIL allocation\n"))
+        self.assertIn("PROGRESS allocation component=web phase=readback-conflict count=1 elapsed_seconds=0\n", output)
+        # Both readbacks run in parallel, so either one may report last.
+        self.assertTrue(output.endswith(" elapsed_seconds=0\nFAIL allocation\n"))
         self.assertNotIn("fixture", output)
         # The push had started, so allocation is not run again in this job.
         self.assertEqual((retries(output), len(self.stores)), ([], 1))
