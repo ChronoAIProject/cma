@@ -134,3 +134,33 @@ for (const width of [390, 1440]) {
     expect(writes).toEqual([]);
   });
 }
+
+test('LOCAL a channel editor survives a slow CMA sign-in resolving', async ({ page, baseURL }) => {
+  let signedIn!: () => void;
+  const identity = new Promise<void>((resolve) => {
+    signedIn = resolve;
+  });
+  const capabilityReads: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.endsWith('/v1/channel-capabilities'))
+      capabilityReads.push(request.url());
+  });
+  const opened = setup(page, baseURL!, identity);
+  // Whatever the Gateway offers before sign-in resolves must survive it resolving.
+  await expect(
+    page
+      .getByRole('status', { name: 'Signing you in', exact: true })
+      .or(page.getByRole('button', { name: 'Create channel', exact: true })),
+  ).toBeVisible();
+  signedIn();
+  const writes = await opened;
+  await expect(
+    page.getByRole('button', { name: 'Account menu for Local owner', exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create channel', exact: true })).toBeVisible();
+  const name = page.getByLabel('Channel name', { exact: true });
+  await name.fill('Draft across sign-in');
+  await expect(name).toHaveValue('Draft across sign-in');
+  expect(capabilityReads).toHaveLength(1);
+  expect(writes).toEqual([]);
+});

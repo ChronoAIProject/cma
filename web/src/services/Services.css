@@ -217,3 +217,13 @@
 .service-page[data-layout='workspace'] > * {
   max-width: none;
 }
+/*
+ * The session's page lays out as if it were the body's own child. Withheld,
+ * it is removed from layout and the accessibility tree while staying mounted.
+ */
+.service-page__session {
+  display: contents;
+}
+.service-page__session[hidden] {
+  display: none;
+}
