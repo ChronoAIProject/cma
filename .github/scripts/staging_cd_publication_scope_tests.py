@@ -8,6 +8,7 @@ import unittest
 import yaml
 
 from deployables import registry
+from release_promotion import PUBLISHED
 
 ROOT = Path(__file__).resolve().parents[1]
 COMPONENTS = ['api', 'web', 'runtime', 'cmaeg', 'runtime-omarchy']
@@ -21,18 +22,22 @@ def validate(ci, publish):
         raise ValueError('current CI image matrix differs')
     if jobs['omarchy']['uses'] != './.github/workflows/ci-omarchy.yml':
         raise ValueError('Omarchy image qualification missing')
-    if publish['jobs']['images']['strategy']['matrix']['component'] != COMPONENTS:
-        raise ValueError('current publication matrix differs')
+    if sorted(PUBLISHED.values()) != sorted(COMPONENTS):
+        raise ValueError('current publication set differs')
     # A release assigns its tags to the staging-verified digests; only staging builds.
     for job in publish['jobs'].values():
         if any(step.get('uses', '').startswith('docker/build-push-action@') for step in job.get('steps', [])):
             raise ValueError('release must promote staging-verified images, never rebuild')
-    select = publish['jobs']['select']['steps'][-1]
-    promote = publish['jobs']['images']['steps'][-1]
+    jobs = publish['jobs']
+    select, promote = jobs['select']['steps'][-1], jobs['images']['steps'][-1]
     if select.get('run') != 'python3 -B .github/scripts/release_promotion.py select' \
-            or promote.get('run') != 'python3 -B .github/scripts/release_promotion.py promote "${{ matrix.component }}"' \
+            or promote.get('run') != 'python3 -B .github/scripts/release_promotion.py promote' \
             or promote['env']['RELEASE_IMAGES'] != '${{ needs.select.outputs.images }}':
         raise ValueError('release tags must name the selected staging-verified digests')
+    # No tag is assigned before the runtime evidence passed, and nothing is released before the tags.
+    if 'runtime-image-gate' not in jobs['images']['needs'] or 'images' not in jobs['release']['needs'] \
+            or 'images' in jobs['runtime-image-gate']['needs']:
+        raise ValueError('tags must follow the runtime evidence and precede the release')
 
 
 class PublicationScopeTests(unittest.TestCase):
@@ -58,11 +63,6 @@ class PublicationScopeTests(unittest.TestCase):
         self.assertCountEqual(events['push']['paths'], [policy['DOCKERFILE'], *inputs])
 
     def test_retired_matrix_entries_and_missing_omarchy_are_rejected(self):
-        for retired in ('image-manager', 'runtime-desktop'):
-            changed = copy.deepcopy(self.publish)
-            changed['jobs']['images']['strategy']['matrix']['component'][-1] = retired
-            with self.assertRaises(ValueError):
-                validate(self.ci, changed)
         for job in ('am-images', 'runtime-images'):
             changed = copy.deepcopy(self.ci)
             changed['jobs'][job]['with']['components'] = '["runtime-desktop"]'
@@ -78,7 +78,10 @@ class PublicationScopeTests(unittest.TestCase):
         changed['jobs']['images']['steps'][-1]['env']['RELEASE_IMAGES'] = '{}'
         with self.assertRaises(ValueError):
             validate(self.ci, changed)
-
+        changed = copy.deepcopy(self.publish)
+        changed['jobs']['images']['needs'] = ['plan', 'select']
+        with self.assertRaises(ValueError):
+            validate(self.ci, changed)
 
 if __name__ == '__main__':
     unittest.main()

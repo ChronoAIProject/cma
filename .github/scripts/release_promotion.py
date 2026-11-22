@@ -10,10 +10,11 @@ staging, as prod_cd_select requires, so each image is built and scanned once,
 by the reviewed staging publication gate.
 
 ``select`` writes the selected images as one canonical JSON output.
-``promote COMPONENT`` assigns the release's short-SHA and version tags to the
-selected digest with a digest-preserving copy, reuses a tag that already
-names it and refuses one that names anything else. The version tag is what a
-deployment names, so it is assigned last.
+``promote`` assigns the release tags to the selected digests with a
+digest-preserving copy, reuses a tag that already names its digest and
+refuses one that names anything else. Every image's short-SHA tag is assigned
+before any version tag: the version tag is what a deployment names, and a
+release that fails before it leaves no version claimed.
 """
 
 import hashlib
@@ -42,8 +43,10 @@ def select(released, api, registry, download, deployables):
     versions = selection.select_versions(released, components, api.tags, api.history())
     receipts = {}
     for target, version in versions.items():
-        name = components[target] + "/v" + version
-        tags = [tag for tag in api.tags(target) if tag["name"] == name]
+        name, published = components[target] + "/v" + version, api.tags(target)
+        sources = [tag["target"] for tag in published if tag["name"].startswith(components[target] + "/v")]
+        require(len(set(sources)) == len(sources), "Published component sources are duplicated")
+        tags = [tag for tag in published if tag["name"] == name]
         require(len(tags) == 1, "A selected component version is absent or ambiguous")
         receipt = validate_receipt(tags[0]["receipt"])
         require(receipt["tag"] == name and receipt["source"] == tags[0]["target"],
@@ -68,17 +71,16 @@ def image_name(component):
     return name(component)
 
 
-def selected_image(images, component):
-    """Validate the selected image of one release component."""
-    require(component in PUBLISHED.values(), "Release component is invalid")
+def selected_images(images):
+    """Validate the selection: exactly one well-formed image per release component."""
     value = json.loads(images)
     require(isinstance(value, dict) and set(value) == set(PUBLISHED.values()), "Release image selection is malformed")
-    image = value[component]
-    require(isinstance(image, dict) and set(image) == {"repository", "digest", "version", "source"}
-            and image["repository"] == OWNER + image_name(component)
-            and matches(DIGEST, image["digest"]) and matches(SEMVER, image["version"])
-            and matches(r"[0-9a-f]{40}", image["source"]), "Release image selection is malformed")
-    return image
+    for component, image in value.items():
+        require(isinstance(image, dict) and set(image) == {"repository", "digest", "version", "source"}
+                and image["repository"] == OWNER + image_name(component)
+                and matches(DIGEST, image["digest"]) and matches(SEMVER, image["version"])
+                and matches(r"[0-9a-f]{40}", image["source"]), "Release image selection is malformed")
+    return value
 
 
 class Skopeo:
@@ -107,19 +109,26 @@ class Skopeo:
                  f"docker://{repository}@{digest}", f"docker://{repository}:{tag}")
 
 
-def promote(image, version, release, skopeo):
-    """Assign the release tags to the selected digest; return the tags this call assigned."""
+def promote_all(images, version, release, skopeo):
+    """Assign every short-SHA tag, then every version tag; return the tags assigned."""
     require(matches("v" + SEMVER, version) and matches(r"[0-9a-f]{40}", release), "Release identity is invalid")
-    repository, digest = image["repository"], image["digest"]
-    present, assigned = skopeo.tags(repository), []
+    assigned = []
     for tag in (release[:7], version):
-        if tag in present:
-            require(skopeo.digest(repository, tag) == digest, "A release tag already names a different image")
-            continue
-        skopeo.copy(repository, digest, tag)
-        require(skopeo.digest(repository, tag) == digest, "The release tag does not name the promoted image")
-        assigned.append(tag)
+        for component in sorted(images):
+            if promote(images[component], tag, skopeo):
+                assigned.append((component, tag))
     return assigned
+
+
+def promote(image, tag, skopeo):
+    """Assign one release tag to the selected digest; return whether this call assigned it."""
+    repository, digest = image["repository"], image["digest"]
+    if tag in skopeo.tags(repository):
+        require(skopeo.digest(repository, tag) == digest, "A release tag already names a different image")
+        return False
+    skopeo.copy(repository, digest, tag)
+    require(skopeo.digest(repository, tag) == digest, "The release tag does not name the promoted image")
+    return True
 
 
 def main(argv):
@@ -142,10 +151,9 @@ def main(argv):
             output(env, "released", released)
             output(env, "images", canonical(images))
             return True
-        require(len(argv) == 2 and argv[0] == "promote", "Release promotion usage is invalid")
-        image = selected_image(env["RELEASE_IMAGES"], argv[1])
-        promote(image, env["RELEASE_VERSION"], env["GITHUB_SHA"],
-                Skopeo(env["SKOPEO_COMMAND"], env["SKOPEO_AUTHFILE"]))
+        require(argv == ["promote"], "Release promotion usage is invalid")
+        promote_all(selected_images(env["RELEASE_IMAGES"]), env["RELEASE_VERSION"], env["GITHUB_SHA"],
+                    Skopeo(env["SKOPEO_COMMAND"], env["SKOPEO_AUTHFILE"]))
         return True
 
     return run_private(operation, None, subject="release-promotion")

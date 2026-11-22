@@ -35,7 +35,8 @@ on:
 # a queue behind it. Releasing three times inside one build window is not a
 # thing this branch does — every merge into main is a release — but if it
 # happens, the superseded run is re-runnable from the Actions tab and its
-# version is still unclaimed.
+# version is still unclaimed: version image tags are assigned only after the
+# runtime evidence and every short-SHA tag passed.
 concurrency:
   group: publish-release
   cancel-in-progress: false
@@ -150,81 +151,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 -B .github/scripts/release_promotion.py select
 
-  images:
-    name: Images
-    needs: [plan, select]
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    permissions:
-      contents: read
-      packages: write
-    strategy:
-      # One component failing must not strand the others half-tagged; the
-      # release job will not run either way, and a rerun reuses every tag
-      # that already names its promoted digest.
-      fail-fast: false
-      matrix:
-        component: [api, web, runtime, cmaeg, runtime-omarchy]
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Configure pinned Skopeo
-        id: skopeo
-        run: |
-          set -euo pipefail
-          auth_file="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
-          if [ ! -f "$auth_file" ]; then
-            echo "::error::docker login did not create its authentication file"
-            exit 1
-          fi
-
-          wrapper="$RUNNER_TEMP/skopeo-${{ matrix.component }}"
-          cat > "$wrapper" <<'SKOPEO'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          : "${SKOPEO_HOST_AUTHFILE:?}"
-          exec docker run --rm \
-            --user "$(id -u):$(id -g)" \
-            --env HOME=/tmp \
-            --volume "${SKOPEO_HOST_AUTHFILE}:/auth/config.json:ro" \
-            quay.io/skopeo/stable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810 \
-            "$@"
-          SKOPEO
-          chmod 0700 "$wrapper"
-          skopeo_version=$(SKOPEO_HOST_AUTHFILE="$auth_file" "$wrapper" --version)
-          if ! printf '%s\n' "$skopeo_version" \
-            | grep -Eq '^skopeo version 1\.22\.2( commit: [0-9a-f]{7,40})?$'; then
-            echo "::error::unexpected pinned Skopeo version: $skopeo_version"
-            exit 1
-          fi
-          {
-            echo "command=$wrapper"
-            echo "auth_file=$auth_file"
-          } >> "$GITHUB_OUTPUT"
-
-      # These tags are intended to be assigned once. GHCR has no tag CAS, so
-      # a tag that already names the promoted digest is reused and one that
-      # names anything else refuses the release. The short SHA names the
-      # release merge; the version is what a deployment names, so it is
-      # assigned last.
-      - name: Assign the release tags to the staging-verified digest
-        env:
-          RELEASE_IMAGES: ${{ needs.select.outputs.images }}
-          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
-          SKOPEO_COMMAND: ${{ steps.skopeo.outputs.command }}
-          SKOPEO_AUTHFILE: /auth/config.json
-          SKOPEO_HOST_AUTHFILE: ${{ steps.skopeo.outputs.auth_file }}
-        run: python3 -B .github/scripts/release_promotion.py promote "${{ matrix.component }}"
-
   runtime-image-gate:
     name: Runtime image evidence
-    needs: [plan, select, images]
+    needs: [plan, select]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -235,9 +164,10 @@ jobs:
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
           node-version: 26
-      # The digest-pinned reference is content addressed, so the pull below
-      # receives exactly the promoted bytes. The image records the develop
-      # commit staging built it from, not the release merge.
+      # Runs before any tag is assigned. The digest-pinned reference is content
+      # addressed, so the pull below receives exactly the bytes the release
+      # tags. The image records the develop commit staging built it from, not
+      # the release merge.
       - name: Resolve the promoted runtime
         id: runtime
         env:
@@ -293,9 +223,78 @@ jobs:
           RUNTIME_SOURCE: ${{ steps.runtime.outputs.source }}
         run: node .github/scripts/runtime-image-evidence.mjs verify "$RUNTIME_REFERENCE" "$RUNTIME_SOURCE" "$RUNNER_TEMP/runtime-image-evidence.json"
 
+  images:
+    name: Images
+    needs: [plan, select, runtime-image-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The only job that may write packages. One job assigns every tag, so the
+    # version tags wait until all five short-SHA tags exist, and a rerun
+    # reuses every tag that already names its promoted digest.
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure pinned Skopeo
+        id: skopeo
+        run: |
+          set -euo pipefail
+          auth_file="${DOCKER_CONFIG:-$HOME/.docker}/config.json"
+          if [ ! -f "$auth_file" ]; then
+            echo "::error::docker login did not create its authentication file"
+            exit 1
+          fi
+
+          wrapper="$RUNNER_TEMP/skopeo"
+          cat > "$wrapper" <<'SKOPEO'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          : "${SKOPEO_HOST_AUTHFILE:?}"
+          exec docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --env HOME=/tmp \
+            --volume "${SKOPEO_HOST_AUTHFILE}:/auth/config.json:ro" \
+            quay.io/skopeo/stable@sha256:4a16d57b37617a04b3d643079a477a2848efe892dffcdf0ce56df4262b65f810 \
+            "$@"
+          SKOPEO
+          chmod 0700 "$wrapper"
+          skopeo_version=$(SKOPEO_HOST_AUTHFILE="$auth_file" "$wrapper" --version)
+          if ! printf '%s\n' "$skopeo_version" \
+            | grep -Eq '^skopeo version 1\.22\.2( commit: [0-9a-f]{7,40})?$'; then
+            echo "::error::unexpected pinned Skopeo version: $skopeo_version"
+            exit 1
+          fi
+          {
+            echo "command=$wrapper"
+            echo "auth_file=$auth_file"
+          } >> "$GITHUB_OUTPUT"
+
+      # These tags are intended to be assigned once. GHCR has no tag CAS, so
+      # a tag that already names the promoted digest is reused and one that
+      # names anything else refuses the release. Every image first receives
+      # the release merge's short SHA, which no later release shares; only
+      # then does any image receive the version, which is what a deployment
+      # names, so a release that fails earlier claims no version.
+      - name: Assign the release tags to the staging-verified digests
+        env:
+          RELEASE_IMAGES: ${{ needs.select.outputs.images }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          SKOPEO_COMMAND: ${{ steps.skopeo.outputs.command }}
+          SKOPEO_AUTHFILE: /auth/config.json
+          SKOPEO_HOST_AUTHFILE: ${{ steps.skopeo.outputs.auth_file }}
+        run: python3 -B .github/scripts/release_promotion.py promote
+
   release:
     name: Tag and release
-    needs: [plan, select, images, runtime-image-gate]
+    needs: [plan, select, runtime-image-gate, images]
     runs-on: ubuntu-latest
     permissions:
       actions: read

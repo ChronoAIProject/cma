@@ -95,6 +95,11 @@ class SelectionTests(unittest.TestCase):
         with self.verified(TARGETS), self.assertRaises(Refusal):
             promotion.select(RELEASED, self.api, Registry(), Mock(), DEPLOYABLES)
 
+    def test_two_versions_of_one_component_from_the_same_source_are_refused(self):
+        self.tags["web"][0]["target"] = RELEASED
+        with self.verified(TARGETS), self.assertRaisesRegex(Refusal, "duplicated"):
+            promotion.select(RELEASED, self.api, Registry(), Mock(), DEPLOYABLES)
+
 
 def selection(**changes):
     value = {component: {"repository": promotion.OWNER + promotion.image_name(component),
@@ -105,38 +110,49 @@ def selection(**changes):
 
 
 class SelectedImageTests(unittest.TestCase):
-    def test_only_a_complete_well_formed_selection_for_the_component_is_accepted(self):
-        image = promotion.selected_image(selection(), "web")
-        self.assertEqual(image["repository"], promotion.OWNER + "cma-web")
+    def test_only_a_complete_well_formed_selection_is_accepted(self):
+        images = promotion.selected_images(selection())
+        self.assertEqual(images["web"]["repository"], promotion.OWNER + "cma-web")
         for broken in (selection(repository=promotion.OWNER + "cma-agent-manager"),
                        selection(digest="sha256:abc"), selection(version="v0.2.3"), selection(source="main")):
             with self.assertRaises(Refusal):
-                promotion.selected_image(broken, "web")
-        with self.assertRaises(Refusal):
-            promotion.selected_image(selection(), "image-manager")
+                promotion.selected_images(broken)
         partial = json.loads(selection())
         del partial["runtime-omarchy"]
         with self.assertRaises(Refusal):
-            promotion.selected_image(json.dumps(partial), "web")
+            promotion.selected_images(json.dumps(partial))
+        extra = json.loads(selection())
+        extra["image-manager"] = extra["web"]
+        with self.assertRaises(Refusal):
+            promotion.selected_images(json.dumps(extra))
 
 
 class Registry2:
-    """A fake registry behind the Skopeo command line."""
+    """A fake registry behind the Skopeo command line; ``tags`` belong to the web repository."""
 
     def __init__(self, tags):
-        self.tags, self.calls = dict(tags), []
+        self.references = {("ghcr.io/chronoaiproject/cma-web", tag): value for tag, value in tags.items()}
+        self.calls = []
+
+    @property
+    def tags(self):
+        return {tag: value for (repository, tag), value in self.references.items()
+                if repository == "ghcr.io/chronoaiproject/cma-web"}
 
     def __call__(self, args, **_kwargs):
         self.calls.append(args[1:])
         verb = args[1]
         if verb == "list-tags":
-            return Mock(returncode=0, stdout=json.dumps({"Tags": sorted(self.tags)}).encode())
+            repository = args[-1][len("docker://"):]
+            listed = sorted(tag for (name, tag) in self.references if name == repository)
+            return Mock(returncode=0, stdout=json.dumps({"Tags": listed}).encode())
         if verb == "inspect":
-            tag = args[-1].rsplit(":", 1)[1]
-            return Mock(returncode=0, stdout=self.tags[tag].encode())
+            repository, tag = args[-1][len("docker://"):].rsplit(":", 1)
+            return Mock(returncode=0, stdout=self.references[(repository, tag)].encode())
         if verb == "copy":
             source, destination = args[-2], args[-1]
-            self.tags[destination.rsplit(":", 1)[1]] = MANIFEST if source.endswith(DIGEST) else "other"
+            repository, tag = destination[len("docker://"):].rsplit(":", 1)
+            self.references[(repository, tag)] = MANIFEST if source.endswith(DIGEST) else "other"
             return Mock(returncode=0, stdout=b"")
         return Mock(returncode=1, stdout=b"")
 
@@ -150,39 +166,53 @@ class PromotionTests(unittest.TestCase):
     def skopeo(self, registry):
         return promotion.Skopeo("skopeo", "/auth/config.json", runner=registry)
 
-    def test_absent_tags_are_assigned_by_digest_preserving_copy_version_last(self):
-        registry = Registry2({"0.2.3": MANIFEST})
-        self.assertEqual(promotion.promote(IMAGE, VERSION, MERGE, self.skopeo(registry)), [MERGE[:7], VERSION])
-        copies = [call for call in registry.calls if call[0] == "copy"]
-        self.assertEqual(copies, [
-            ["copy", "--all", "--preserve-digests", "--authfile", "/auth/config.json",
-             f"docker://{IMAGE['repository']}@{DIGEST}", f"docker://{IMAGE['repository']}:{tag}"]
-            for tag in (MERGE[:7], VERSION)])
-        self.assertEqual((registry.tags[VERSION], registry.tags[MERGE[:7]]), (MANIFEST, MANIFEST))
+    def test_every_short_sha_tag_precedes_any_version_tag(self):
+        images = {"api": dict(IMAGE, repository=promotion.OWNER + "cma-agent-manager"), "web": IMAGE}
+        registry = Registry2({})
+        self.assertEqual(promotion.promote_all(images, VERSION, MERGE, self.skopeo(registry)),
+                         [("api", MERGE[:7]), ("web", MERGE[:7]), ("api", VERSION), ("web", VERSION)])
+        self.assertFalse(promotion.promote_all(images, VERSION, MERGE, self.skopeo(registry)))
 
-    def test_a_rerun_reuses_tags_that_already_name_the_promoted_digest(self):
-        registry = Registry2({VERSION: MANIFEST, MERGE[:7]: MANIFEST})
-        self.assertEqual(promotion.promote(IMAGE, VERSION, MERGE, self.skopeo(registry)), [])
-        self.assertFalse([call for call in registry.calls if call[0] == "copy"])
-
-    def test_a_tag_naming_another_image_is_refused_before_any_later_tag(self):
+    def test_a_refused_short_sha_tag_claims_no_version(self):
+        images = {"api": dict(IMAGE, repository=promotion.OWNER + "cma-agent-manager"), "web": IMAGE}
         registry = Registry2({MERGE[:7]: "other"})
         with self.assertRaisesRegex(Refusal, "different image"):
-            promotion.promote(IMAGE, VERSION, MERGE, self.skopeo(registry))
+            promotion.promote_all(images, VERSION, MERGE, self.skopeo(registry))
         self.assertNotIn(VERSION, registry.tags)
+
+    def test_invalid_release_identity_is_refused(self):
+        for version, release in (("1.4.0", MERGE), (VERSION, "main")):
+            with self.assertRaises(Refusal):
+                promotion.promote_all({"web": IMAGE}, version, release, self.skopeo(Registry2({})))
+
+    def test_an_absent_tag_is_assigned_by_digest_preserving_copy(self):
+        registry = Registry2({"0.2.3": MANIFEST})
+        self.assertTrue(promotion.promote(IMAGE, VERSION, self.skopeo(registry)))
+        copies = [call for call in registry.calls if call[0] == "copy"]
+        self.assertEqual(copies, [["copy", "--all", "--preserve-digests", "--authfile", "/auth/config.json",
+                                   f"docker://{IMAGE['repository']}@{DIGEST}", f"docker://{IMAGE['repository']}:{VERSION}"]])
+        self.assertEqual(registry.tags[VERSION], MANIFEST)
+
+    def test_a_rerun_reuses_a_tag_that_already_names_the_promoted_digest(self):
+        registry = Registry2({VERSION: MANIFEST})
+        self.assertFalse(promotion.promote(IMAGE, VERSION, self.skopeo(registry)))
+        self.assertFalse([call for call in registry.calls if call[0] == "copy"])
+
+    def test_a_tag_naming_another_image_is_refused_without_copying(self):
+        registry = Registry2({MERGE[:7]: "other"})
+        with self.assertRaisesRegex(Refusal, "different image"):
+            promotion.promote(IMAGE, MERGE[:7], self.skopeo(registry))
+        self.assertFalse([call for call in registry.calls if call[0] == "copy"])
 
     def test_a_copy_that_does_not_land_the_digest_is_refused(self):
         registry = Registry2({})
         with self.assertRaisesRegex(Refusal, "does not name"):
-            promotion.promote(dict(IMAGE, digest="sha256:" + "6" * 64), VERSION, MERGE, self.skopeo(registry))
+            promotion.promote(dict(IMAGE, digest="sha256:" + "6" * 64), VERSION, self.skopeo(registry))
 
-    def test_invalid_release_identity_and_registry_failures_are_refused(self):
-        for version, release in (("1.4.0", MERGE), (VERSION, "main")):
-            with self.assertRaises(Refusal):
-                promotion.promote(IMAGE, version, release, self.skopeo(Registry2({})))
+    def test_registry_failures_are_refused(self):
         failing = promotion.Skopeo("skopeo", "/auth/config.json", runner=lambda *_a, **_k: Mock(returncode=1))
         with self.assertRaisesRegex(Refusal, "registry operation failed"):
-            promotion.promote(IMAGE, VERSION, MERGE, failing)
+            promotion.promote(IMAGE, VERSION, failing)
 
 
 if __name__ == "__main__":
