@@ -2,6 +2,149 @@ import { test, expect } from '@playwright/test';
 import type { Launch, TriggerPreview } from '@cma/client';
 import { LocalStartup, recorded } from './agent-startup-fixtures';
 
+test('LOCAL expired-lease response with Draft retains the Start until its original receipt arrives', async ({
+  page,
+  baseURL,
+}, info) => {
+  const boundary = new LocalStartup();
+  await boundary.route(page, baseURL!);
+  let launch: Launch = {
+    ...recorded<Launch>('launches.json', 'launch-ready-create'),
+    review: {
+      needs: [
+        { type: 'owner_requires_review' },
+        { type: 'trust_confirmation', commands_digest: 'reviewed-commands' },
+      ],
+      can_start_now: false,
+    },
+  };
+  const commands: { key?: string; body: string | null }[] = [];
+  const statesRead: string[] = [];
+  let originalCompleted = false;
+  await page
+    .context()
+    .route('**/auth/login**', (route) =>
+      route.fulfill({ contentType: 'text/html', body: '<title>Local sign-in fixture</title>' }),
+    );
+  await page.addInitScript(() => {
+    window.open = () => null;
+  });
+  await page.route('**/*', async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    if (url.origin !== baseURL) return route.fallback();
+    const reply = (body: unknown, status = 200) =>
+      route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    if (url.pathname === '/auth/session')
+      return reply({
+        authenticated: true,
+        subject: 'local-owner',
+        display_name: 'Local owner',
+        visitor: false,
+        capabilities: ['use_own_sandboxes', 'launch_triggers'],
+      });
+    if (url.pathname === `/api/v1/launches/${launch.id}/start` && request.method() === 'POST') {
+      commands.push({ key: request.headers()['idempotency-key'], body: request.postData() });
+      if (commands.length === 1) return route.abort('connectionfailed');
+      if (originalCompleted) return reply(launch, 202);
+      return reply(
+        {
+          title: 'Command receipt unavailable',
+          code: commands.length === 2 ? 'idempotency_in_flight' : 'idempotency_recovery_required',
+        },
+        409,
+      );
+    }
+    if (url.pathname === `/api/v1/launches/${launch.id}`) {
+      statesRead.push(launch.state);
+      return reply(launch);
+    }
+    if (url.pathname === '/api/v1/triggers/public/public_contract')
+      return reply({
+        ...recorded<TriggerPreview>('triggers.json', 'triggers-preview'),
+        always_review: true,
+      });
+    if (url.pathname === `/api/v1/launches/${launch.id}/requirements`)
+      return reply(launch.requirements);
+    if (url.pathname === `/api/v1/agui/launches/${launch.id}/events`)
+      return route.fulfill({ contentType: 'text/event-stream', body: ': local progress\n\n' });
+    return route.fallback();
+  });
+  await page.clock.install();
+  await page.goto(`/launches/${launch.id}`);
+  await page.getByRole('checkbox').check();
+  await page.getByRole('button', { name: 'Continue', exact: true }).click();
+  const retry = page.getByRole('button', { name: 'Try again', exact: true });
+  await expect(retry).toBeEnabled();
+  expect(commands).toHaveLength(1);
+  const storageKey = `cma:draft-credential-recovery:${launch.id}`;
+  const retained = await page.evaluate((key) => sessionStorage.getItem(key), storageKey);
+  const packet = JSON.parse(retained!);
+  expect(packet.owner).toBe('local-owner');
+  expect(packet.confirmedDigest).toBe('reviewed-commands');
+  expect(packet.command.key).toBeTruthy();
+  expect(packet.command.key).toBe(commands[0]?.key);
+  expect(JSON.stringify(packet.command.body)).toBe(commands[0]?.body);
+  await retry.click();
+  await expect(retry).toBeEnabled();
+  expect(commands).toHaveLength(2);
+  await page.clock.fastForward(120_001);
+  expect(commands).toHaveLength(2);
+  expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBe(retained);
+  const readsBeforeRecovery = statesRead.length;
+  await retry.click();
+  await expect(retry).toBeEnabled();
+  await expect.poll(() => statesRead.length).toBeGreaterThan(readsBeforeRecovery);
+  expect(statesRead.at(-1)).toBe('draft');
+  expect(commands).toHaveLength(3);
+  await expect(page.getByRole('dialog')).toBeVisible();
+  await expect(page.getByRole('checkbox')).toBeChecked();
+  await expect(page.getByRole('checkbox')).toBeDisabled();
+  expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBe(retained);
+  await page.screenshot({ path: info.outputPath('recovery-required-still-draft.png') });
+  await page.reload();
+  await expect(page.getByRole('region', { name: 'CMA sign-in required' })).toBeVisible();
+  await expect(retry).toBeDisabled();
+  await expect(page.getByRole('checkbox')).toBeChecked();
+  await expect(page.getByRole('checkbox')).toBeDisabled();
+  expect(commands).toHaveLength(3);
+  expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBe(retained);
+  await page.getByRole('button', { name: 'Sign in to CMA', exact: true }).click();
+  await page.getByRole('link', { name: 'Open CMA sign-in', exact: true }).click();
+  await page.getByRole('button', { name: 'Check signed-in account', exact: true }).click();
+  await expect(retry).toBeEnabled();
+  expect(commands).toHaveLength(3);
+  expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBe(retained);
+  originalCompleted = true;
+  launch = recorded<Launch>('launches.json', 'launch-ready-start');
+  await retry.click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(page.locator('.public-progress')).toBeVisible();
+  expect(commands).toHaveLength(4);
+  for (const command of commands) expect(command).toEqual(commands[0]);
+  expect(await page.evaluate((key) => sessionStorage.getItem(key), storageKey)).toBeNull();
+  await page.reload();
+  await expect(page.locator('.public-progress')).toBeVisible();
+  expect(commands).toHaveLength(4);
+  expect(boundary.writes).toEqual([]);
+  expect(boundary.unexpected).toEqual([]);
+  expect(boundary.errors).toEqual([]);
+  await info.attach('local-live-lease-recovery-boundary', {
+    body: JSON.stringify({
+      mocked: true,
+      boundary: 'built_browser_public_http',
+      mongoExecuted: false,
+      actualLeaseExpiryExecuted: false,
+      simulatedBrowserElapsedMs: 120_001,
+      recoveryRead: 'draft',
+      distinctCommands: 1,
+      writes: commands.length,
+      recoveredOriginalReceipt: true,
+    }),
+    contentType: 'application/json',
+  });
+});
+
 test('LOCAL Launch receipt recovery retains the original command through auth and storage failures', async ({
   page,
   baseURL,
