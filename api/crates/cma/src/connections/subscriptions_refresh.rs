@@ -13,9 +13,11 @@ use super::{
 
 #[path = "subscriptions_refresh_legacy.rs"]
 mod legacy;
+#[path = "subscriptions_refresh_records.rs"]
+mod records;
 pub(super) struct Legacy<'a>(pub(super) &'a CodexSubscriptions);
 
-pub(super) enum CacheUpdate<'a, T> {
+pub(in crate::connections) enum CacheUpdate<'a, T> {
     Replace(&'a T),
     Clear,
     Keep,

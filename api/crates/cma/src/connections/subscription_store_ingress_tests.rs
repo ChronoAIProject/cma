@@ -52,7 +52,7 @@ fn own(
     policy: &IngressOwnershipPolicy,
 ) -> SharedOwned<SubscriptionRecord> {
     policy
-        .admit(IngressClass::Data, copy_plan(record).unwrap())
+        .admit(IngressClass::Data, record.copy_plan().unwrap())
         .unwrap()
         .initialize(|| record.clone())
 }
@@ -99,7 +99,7 @@ fn admitted_record_copy_preserves_every_optional_field_and_authority() {
                 assert!(copied.belongs_to(&policy));
                 assert_eq!(
                     copied.requested_bytes(),
-                    copy_plan(&raw).unwrap().requested_bytes()
+                    raw.copy_plan().unwrap().requested_bytes()
                 );
                 drop((source, copied));
                 assert_eq!(root.available_bytes(), baseline);

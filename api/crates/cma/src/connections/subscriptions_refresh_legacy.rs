@@ -1,5 +1,5 @@
+use super::records::RecordChange;
 use super::*;
-use crate::connections::subscription_store::RefreshLease;
 
 impl RefreshPort for Legacy<'_> {
     type Record = SubscriptionRecord;
@@ -33,13 +33,11 @@ impl RefreshPort for Legacy<'_> {
         lease_lifetime: Duration,
     ) -> Result<Self::Record, Self::Error> {
         let holder = uuid::Uuid::new_v4().to_string();
-        let mut claimed = record.clone();
-        claimed.revision += 1;
-        claimed.refresh_lease = Some(RefreshLease {
-            holder,
-            expires_at: SystemTime::now() + lease_lifetime,
-        });
-        Ok(claimed)
+        Ok(RecordChange::Claim {
+            holder: &holder,
+            lease_lifetime,
+        }
+        .build(record))
     }
 
     fn finish(
@@ -47,15 +45,7 @@ impl RefreshPort for Legacy<'_> {
         record: &Self::Record,
         cache: CacheUpdate<'_, Self::Cache>,
     ) -> Result<Self::Record, Self::Error> {
-        let mut next = record.clone();
-        next.revision += 1;
-        next.refresh_lease = None;
-        match cache {
-            CacheUpdate::Replace(cache) => next.cache = Some(cache.clone()),
-            CacheUpdate::Clear => next.cache = None,
-            CacheUpdate::Keep => {}
-        }
-        Ok(next)
+        Ok(RecordChange::Finish(cache).build(record))
     }
 
     async fn replace(

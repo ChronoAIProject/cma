@@ -18,7 +18,7 @@ impl SubscriptionRecord {
         policy: &IngressOwnershipPolicy,
     ) -> Result<SharedOwned<Self>, AdmissionRefusal> {
         require_owner(source, policy)?;
-        let storage = policy.admit(IngressClass::Data, copy_plan(source)?)?;
+        let storage = policy.admit(IngressClass::Data, source.copy_plan()?)?;
         Ok(storage.initialize(|| (**source).clone()))
     }
 
@@ -66,32 +66,30 @@ fn require_owner(
     }
 }
 
-fn copy_plan(record: &SubscriptionRecord) -> Result<AllocationPlan, AdmissionRefusal> {
-    // All dynamic fields are String (including SubjectId and SecretValue).
-    // String::clone copies len bytes, not the original spare capacity. Options,
-    // timestamps and the handoff state are inline in the shared payload layout.
-    let pending = record.pending.as_ref();
-    AllocationPlan::checked(
-        "subscription record copy",
-        &[
-            sizing::shared_owner_bytes::<SubscriptionRecord>(),
-            record.owner.as_str().len(),
-            record.incarnation.len(),
-            record
-                .cache
-                .as_ref()
-                .map_or(0, |cache| cache.expose().len()),
-            pending.map_or(0, |pending| pending.intent.len()),
-            pending.map_or(0, |pending| pending.device.login_id.len()),
-            pending.map_or(0, |pending| pending.device.verification_url.len()),
-            pending.map_or(0, |pending| pending.device.user_code.len()),
-            pending.map_or(0, |pending| pending.worker.len()),
-            record
-                .refresh_lease
-                .as_ref()
-                .map_or(0, |lease| lease.holder.len()),
-        ],
-    )
+impl SubscriptionRecord {
+    pub(in crate::connections) fn copy_plan(&self) -> Result<AllocationPlan, AdmissionRefusal> {
+        // All dynamic fields are String (including SubjectId and SecretValue).
+        // String::clone copies len bytes, not the original spare capacity. Options,
+        // timestamps and the handoff state are inline in the shared payload layout.
+        let pending = self.pending.as_ref();
+        AllocationPlan::checked(
+            "subscription record copy",
+            &[
+                sizing::shared_owner_bytes::<SubscriptionRecord>(),
+                self.owner.as_str().len(),
+                self.incarnation.len(),
+                self.cache.as_ref().map_or(0, |cache| cache.expose().len()),
+                pending.map_or(0, |pending| pending.intent.len()),
+                pending.map_or(0, |pending| pending.device.login_id.len()),
+                pending.map_or(0, |pending| pending.device.verification_url.len()),
+                pending.map_or(0, |pending| pending.device.user_code.len()),
+                pending.map_or(0, |pending| pending.worker.len()),
+                self.refresh_lease
+                    .as_ref()
+                    .map_or(0, |lease| lease.holder.len()),
+            ],
+        )
+    }
 }
 
 #[cfg(test)]

@@ -20,7 +20,7 @@ use super::{
 };
 
 #[path = "subscriptions_refresh.rs"]
-mod refresh;
+pub(super) mod refresh;
 
 const HEARTBEAT: Duration = Duration::from_secs(15);
 const STALE_HEARTBEAT: Duration = Duration::from_secs(60);
