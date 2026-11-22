@@ -3,6 +3,7 @@ import { AdmissionFields } from './AdmissionFields';
 import { ChannelPolicyFields } from './ChannelPolicyFields';
 import { Section } from './Fields';
 import { SourceAdmissionFields } from './SourceAdmissionFields';
+import { ValidationScope } from './ValidationPath';
 import { object, records, strings, text, type Fields } from './model';
 
 export function SetupSection({
@@ -40,6 +41,7 @@ export function SetupPolicy({
     >
       {value.connection_ref !== undefined ? (
         <AdmissionFields
+          path="/connection_admission"
           label="Connection admission"
           value={value.connection_admission}
           onChange={(connection_admission) => onChange({ ...value, connection_admission })}
@@ -48,15 +50,17 @@ export function SetupPolicy({
         sources.map((source, index) =>
           source.type !== 'custom' ? (
             <Section key={index} title={`Producer ${index + 1} access`}>
-              <SourceAdmissionFields
-                value={source}
-                onChange={(next) =>
-                  onChange({
-                    ...value,
-                    sources: sources.map((item, i) => (i === index ? next : item)),
-                  })
-                }
-              />
+              <ValidationScope value={`/sources/${index}`}>
+                <SourceAdmissionFields
+                  value={source}
+                  onChange={(next) =>
+                    onChange({
+                      ...value,
+                      sources: sources.map((item, i) => (i === index ? next : item)),
+                    })
+                  }
+                />
+              </ValidationScope>
             </Section>
           ) : null,
         )
