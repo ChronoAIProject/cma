@@ -32,6 +32,7 @@ fn loss(parent: &Sandbox) -> store::SandboxRuntimeLossRequest {
         expected_revision: parent.revision,
         expected_runtime: parent.runtime.clone(),
         retain_runtime: false,
+        native_retirement_finality: false,
         interruption_cause: Default::default(),
         observed_at: layer2_core::now_rfc3339(),
     }
