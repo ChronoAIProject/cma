@@ -74,7 +74,11 @@ pub(in crate::store) fn classify_agent_insert(error: mongodb::error::Error) -> A
 }
 
 pub(in crate::store) fn classify_log_insert(error: mongodb::error::Error) -> ApplyError {
-    if is_duplicate_key(&error) {
+    // An unknown commit outcome dominates a duplicate key: the earlier write may
+    // have applied, so it must reconcile rather than report a sequence conflict.
+    if error.contains_label(mongodb::error::UNKNOWN_TRANSACTION_COMMIT_RESULT) {
+        ApplyError::Driver(error)
+    } else if is_duplicate_key(&error) {
         ApplyError::Domain(SandboxStoreError::SequenceConflict)
     } else {
         ApplyError::Driver(error)
