@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import yaml
+
 import staging_cd_allocate as allocation
 from staging_cd_allocate_progress import allocation_progress
 from staging_cd_allocation_fixture import AllocationServer
@@ -371,11 +373,13 @@ class AllocationEntrypointTests(unittest.TestCase):
                     self.assertIs(plan.call_args.args[2], ios[1])
                 else:
                     retry.assert_not_called()
-        # Both attempts' budgets and the longest wait stay far inside the
-        # allocate job's 25 minute timeout in staging-cd.yml.
-        self.assertEqual(allocation.ALLOCATION_ATTEMPTS, 2)
-        self.assertLessEqual(allocation.ALLOCATION_ATTEMPTS * ALLOCATION_SECONDS + allocation.RETRY_WAIT_SECONDS[1], 260)
-        self.assertLess(260, 25 * 60)
+        # Both attempts' budgets and the longest wait use at most half of the
+        # allocate job's timeout, which checkout and routing also need.
+        workflow = yaml.safe_load((Path(__file__).resolve().parents[1] / "workflows" / "staging-cd.yml").read_text())
+        timeout = workflow["jobs"]["allocate"]["timeout-minutes"] * 60
+        worst = allocation.ALLOCATION_ATTEMPTS * ALLOCATION_SECONDS + allocation.RETRY_WAIT_SECONDS[1]
+        self.assertEqual((allocation.ALLOCATION_ATTEMPTS, worst), (2, 260))
+        self.assertLessEqual(2 * worst, timeout)
 
     def test_replan_keeps_controller_proof_for_current_final(self):
         head = "a" * 40
