@@ -211,30 +211,38 @@ async fn slow_member_heartbeat_skips_one_tick_without_renewing_or_yielding_the_a
 #[ignore = "requires disposable failpoint-enabled Mongo replica set"]
 async fn failing_member_heartbeats_end_at_membership_expiry_before_any_takeover() {
     let fixture = Fixture::new().await;
+    // Ticks are scheduled from before the last good renewal, as production
+    // schedules them, so none of its leases ends before the fifth tick.
+    let started = Instant::now();
     fixture.faulted.maintain().await.unwrap();
     let original = fixture.lease().await.unwrap();
     fixture
         .arm("alwaysOn".into(), doc! {"errorCode": 91_i32})
         .await;
-    let started = Instant::now();
     let tick = Duration::from_millis(HEARTBEAT_INTERVAL_MS);
-    let mut next_tick = started + tick;
+    let mut scheduled = tick;
     let mut skipped = 0;
-    let mut failed_at = None;
+    let mut failed_tick = None;
     let mut observations = Vec::new();
-    let mut successor = None;
-    while successor.is_none() && started.elapsed() < Duration::from_secs(40) {
+    // The successor, when it took over, and the next tick still to run.
+    let mut takeover = None;
+    while (takeover.is_none() || failed_tick.is_none())
+        && started.elapsed() < Duration::from_secs(40)
+    {
         tokio::time::sleep(Duration::from_millis(250)).await;
-        if Instant::now() >= next_tick {
-            next_tick += tick;
+        if started.elapsed() >= scheduled {
             fixture.peer.maintain().await.unwrap();
             match fixture.faulted.maintain().await {
-                Ok(handoffs) if failed_at.is_none() && handoffs.is_empty() => skipped += 1,
+                Ok(handoffs) if failed_tick.is_none() && handoffs.is_empty() => skipped += 1,
                 Ok(_) => observations.push("unexpected maintenance after failure"),
                 Err(_) => {
-                    failed_at.get_or_insert(started.elapsed());
+                    failed_tick.get_or_insert(scheduled);
                 }
             }
+            scheduled += tick;
+        }
+        if takeover.is_some() {
+            continue;
         }
         // The durable lease may expire unrenewed; local authority must end first.
         match fixture.lease().await {
@@ -247,27 +255,38 @@ async fn failing_member_heartbeats_end_at_membership_expiry_before_any_takeover(
             _ => (),
         }
         if let Some(next) = fixture.peer.acquire(&fixture.id).await.unwrap() {
-            if fixture.owner.is_current() || failed_at.is_none() {
+            // Neither the production failure watcher nor the next tick may
+            // have run yet, but the faulted member must have stopped acting.
+            if fixture.owner.is_current() || fixture.faulted.is_ready() {
                 observations.push("successor overlapped the faulted owner");
             }
-            successor = Some(next);
+            if fixture.effect("at-takeover").await != Err("authority is not current".into()) {
+                observations.push("faulted owner was not refused at takeover");
+            }
+            takeover = Some((next, started.elapsed(), scheduled));
         }
     }
     let old_check = fixture.store.check(&original.token).await;
     let late = fixture.effect("after-takeover").await;
     eprintln!(
-        "heartbeat_outage skipped={skipped} failed_at_ms={:?} takeover_ms={} observations={observations:?}",
-        failed_at.map(|at| at.as_millis()),
-        started.elapsed().as_millis(),
+        "heartbeat_outage skipped={skipped} failed_tick_ms={:?} takeover_ms={:?} observations={observations:?}",
+        failed_tick.map(|at| at.as_millis()),
+        takeover.as_ref().map(|(_, at, _)| at.as_millis()),
     );
     fixture.close().await;
 
     assert!(observations.is_empty(), "{observations:?}");
-    let successor = successor.expect("a healthy peer claims the Agent after expiry");
+    let (successor, _, due) = takeover.expect("a healthy peer claims the Agent after expiry");
     assert!(successor.token.epoch > original.token.epoch);
-    let failed_at = failed_at.expect("membership expiry stays process-fatal");
-    assert!((3..=5).contains(&skipped), "skipped={skipped}");
-    assert!(failed_at <= Duration::from_millis(DEFAULT_LEASE_MS + HEARTBEAT_INTERVAL_MS));
+    let failed_tick = failed_tick.expect("membership expiry stays process-fatal");
+    // Failure is observed no later than the first tick after takeover.
+    assert!(
+        failed_tick <= due,
+        "failed_tick={failed_tick:?} due={due:?}"
+    );
+    // Ticks at 3, 6, 9 and 12 s precede the lease end; only one at 15 s can.
+    assert!((4..=5).contains(&skipped), "skipped={skipped}");
+    assert!(failed_tick <= Duration::from_millis(DEFAULT_LEASE_MS + HEARTBEAT_INTERVAL_MS));
     assert_eq!(old_check, Err(OwnershipError::Stale));
     assert!(late.is_err(), "late effect used the expired owner");
 }
