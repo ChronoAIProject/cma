@@ -4,6 +4,7 @@ use std::time::Duration;
 use tokio::time::{timeout, Instant};
 
 mod fixture;
+mod supervision;
 use fixture::{operation_id, Work};
 
 async fn event(sweep: &mut RevocationSweep) -> SweepEvent {

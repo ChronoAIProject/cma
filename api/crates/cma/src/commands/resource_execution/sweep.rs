@@ -4,6 +4,8 @@ use std::time::Duration;
 use tokio::task::{Id, JoinError, JoinSet};
 use tokio::time::Instant;
 
+mod supervision;
+
 const OPERATION_CONCURRENCY: usize = 4;
 const SCAN_INTERVAL: Duration = Duration::from_millis(250);
 const DRAIN_TIMEOUT: Duration = Duration::from_secs(25);
@@ -57,6 +59,9 @@ enum Phase {
 /// Own this driver outside the supervisor's cancellable scheduling future.
 /// Construction starts no tasks; Mongo retains every operation's authority.
 pub(crate) struct RevocationSweep {
+    activity: Option<crate::worker_supervision::Activity>,
+    reconciliation: Option<crate::worker_supervision::Reconciliation>,
+    telemetry: Option<crate::telemetry::worker::Worker>,
     work: Arc<dyn SweepWork>,
     tasks: JoinSet<TaskOutput>,
     kinds: HashMap<Id, TaskKind>,
@@ -76,6 +81,9 @@ impl RevocationSweep {
 
     pub(super) fn with_work(work: Arc<dyn SweepWork>) -> Self {
         Self {
+            activity: None,
+            reconciliation: None,
+            telemetry: None,
             work,
             tasks: JoinSet::new(),
             kinds: HashMap::new(),
@@ -102,10 +110,11 @@ impl RevocationSweep {
         if can_discover && now >= self.next_scan {
             let work = self.work.clone();
             let cursor = self.cursor.clone();
+            let activity = self.activity.clone();
             let task = self.tasks.spawn(async move {
                 TaskOutput::Discovery(
                     crate::worker_supervision::discover(
-                        None,
+                        activity,
                         work.discover(cursor.as_ref()),
                         ExecutionError::Unavailable,
                     )
@@ -145,6 +154,19 @@ impl RevocationSweep {
             self.kinds
                 .insert(task.id(), TaskKind::Reconciliation(operation));
         }
+        if !self.in_flight.is_empty() && self.reconciliation.is_none() {
+            self.reconciliation = self
+                .activity
+                .as_ref()
+                .map(|activity| activity.reconciliation());
+        }
+        self.observe_queue();
+    }
+
+    fn observe_queue(&self) {
+        if let Some(telemetry) = &self.telemetry {
+            telemetry.queue(self.queued.len(), self.in_flight.len());
+        }
     }
 
     fn completed(&mut self, result: Result<(Id, TaskOutput), JoinError>) -> SweepEvent {
@@ -152,7 +174,7 @@ impl RevocationSweep {
             Ok((id, _)) => *id,
             Err(error) => error.id(),
         };
-        match self
+        let event = match self
             .kinds
             .remove(&id)
             .expect("every child retains its identity")
@@ -181,13 +203,18 @@ impl RevocationSweep {
             }
             TaskKind::Reconciliation(operation) => {
                 self.in_flight.remove(&operation);
+                if self.in_flight.is_empty() {
+                    self.reconciliation = None;
+                }
                 let result = match result {
                     Ok((_, TaskOutput::Reconciliation(result))) => result,
                     _ => Err(ExecutionError::Unknown),
                 };
                 SweepEvent::Reconciled { operation, result }
             }
-        }
+        };
+        self.observe_queue();
+        event
     }
 
     /// Stop local admission, drain owned work, then report aborted IDs as Unknown.
@@ -199,6 +226,7 @@ impl RevocationSweep {
                 aborted: false,
             };
             self.queued.clear();
+            self.observe_queue();
         }
         while !self.tasks.is_empty() {
             let Phase::Closing { deadline, aborted } = self.phase else {

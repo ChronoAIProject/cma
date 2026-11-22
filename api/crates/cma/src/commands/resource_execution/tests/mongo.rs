@@ -7,6 +7,7 @@ mod fixture;
 mod http;
 mod process;
 mod public_status;
+mod supervision;
 mod sweep;
 use fixture::Fixture;
 
