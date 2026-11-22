@@ -1,10 +1,26 @@
 use super::*;
-#[path = "capture_tests.rs"]
-mod capture_tests;
 #[path = "evidence_export_snapshot_tests.rs"]
 mod evidence_export_snapshot_tests;
 #[path = "evidence_export_tests.rs"]
 mod evidence_export_tests;
+
+#[path = "expiry_worker_tests.rs"]
+mod expiry_worker;
+
+#[path = "deletion_unknown_tests.rs"]
+mod deletion_unknown;
+#[path = "expiry_race_tests.rs"]
+mod expiry_races;
+
+#[path = "capture_tests.rs"]
+mod capture;
+#[path = "retirement_tests.rs"]
+mod retirement;
+
+#[path = "expiry_tests.rs"]
+mod expiry;
+#[path = "publication_tests.rs"]
+mod publication;
 use mongodb::options::{Acknowledgment, ReadConcernLevel};
 use std::time::{Duration, SystemTime};
 
