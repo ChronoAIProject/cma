@@ -32,12 +32,19 @@ impl MeasuredInput {
     }
 
     pub(crate) fn bindings(&self) -> Vec<Binding> {
+        self.binding_segments()
+            .into_iter()
+            .map(|(_, binding)| binding)
+            .collect()
+    }
+
+    pub(super) fn binding_segments(&self) -> Vec<(String, Binding)> {
         let mut result = Vec::new();
         for binding in &self.bindings {
             if binding.sandbox_id != self.stream.sandbox_id
                 || binding.owner_subject != self.stream.owner
             {
-                result.push(binding.clone());
+                result.push((binding.id.clone(), binding.clone()));
                 continue;
             }
             let proofs: Vec<_> = self
@@ -48,9 +55,10 @@ impl MeasuredInput {
             if proofs.is_empty() {
                 let mut binding = binding.clone();
                 binding.proof_status = ProofStatus::Unattributed;
-                result.push(binding);
+                result.push((binding.id.clone(), binding));
             } else {
                 for proof in proofs {
+                    let original_id = binding.id.clone();
                     let mut binding = binding.clone();
                     binding.id = format!("{}/{:016x}", binding.id, proof.verified_from);
                     binding.valid_from = binding.valid_from.max(proof.verified_from);
@@ -61,7 +69,7 @@ impl MeasuredInput {
                             .min(proof.verified_until)
                             .max(binding.valid_from),
                     );
-                    result.push(binding);
+                    result.push((original_id, binding));
                 }
             }
         }

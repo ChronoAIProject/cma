@@ -15,7 +15,7 @@ async fn stream(f: &Fixture) -> MeasuredStream {
     .unwrap()
 }
 
-async fn head(f: &Fixture) -> FactHead {
+pub(super) async fn head(f: &Fixture) -> FactHead {
     decode(
         &f.store
             .collection(INVENTORY)
@@ -27,7 +27,7 @@ async fn head(f: &Fixture) -> FactHead {
     .unwrap()
 }
 
-async fn retry(f: &Fixture) {
+pub(super) async fn retry(f: &Fixture) {
     f.store
         .collection(INVENTORY)
         .update_one(
@@ -38,7 +38,7 @@ async fn retry(f: &Fixture) {
         .unwrap();
 }
 
-async fn assert_hold(f: &Fixture, reason: &str, before: &FactHead, outbox: &[Document]) {
+pub(super) async fn assert_hold(f: &Fixture, reason: &str, before: &FactHead, outbox: &[Document]) {
     assert_eq!(head(f).await, *before);
     assert_eq!(f.rows(OUTBOX).await, outbox);
     let row = f
