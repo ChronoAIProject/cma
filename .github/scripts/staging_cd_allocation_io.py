@@ -82,7 +82,10 @@ class AllocationIO:
         status = result.stdout.partition("\n")[0]
         code = status.partition(" ")[2].partition(" ")[0] if status.startswith("HTTP/") else ""
         if result.returncode == 1 and (not code or code == "429" or code.startswith("5")):
-            raise TransientRead("Allocation read failed")
+            # Keep the wait a throttled response asked for, for the caller.
+            head = result.stdout.replace("\r\n", "\n").partition("\n\n")[0]
+            raise TransientRead("Allocation read failed") from (
+                ci_retry.status_cause(int(code), head) if code.isdigit() else None)
         # Git exits 128 for every fatal error. Only its diagnostic tells an
         # outage (an HTTP 502, a reset connection) from a refusal that persists.
         if (args[:1] == ["git"] and result.returncode == 128

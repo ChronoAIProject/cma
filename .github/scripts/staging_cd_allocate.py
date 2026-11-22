@@ -75,8 +75,11 @@ TRANSIENT_CODES = frozenset({
 })
 # A transient refusal raised before the reservation push started left nothing
 # on the remote, so the whole allocation runs once more in the same job, with
-# a fresh budget and inventory after a short jittered wait. Two attempts and
-# the wait take at most 260 s of the allocate job's 25 minute timeout.
+# a fresh budget and inventory after a short jittered wait, or longer when
+# GitHub asked for up to the longest wait. A longer request, such as a spent
+# primary rate limit, is left to the gate and catch-up: an early rerun would
+# only repeat every tag read. Two attempts and the wait take at most 260 s of
+# the allocate job's 25 minute timeout.
 ALLOCATION_ATTEMPTS = 2
 RETRY_WAIT_SECONDS = (10, 20)
 # WRITE_UNCERTAIN says a write may have committed. It never reruns
@@ -342,12 +345,14 @@ def allocate_attempts(queue, env, mark, retry, *, sleep=time.sleep, rand=random.
             return matrix
         except Refusal as error:
             code = refusal_code(error)
+            requested = ci_retry.requested_wait(error) or 0
             # Once the push has started, the remote may hold this attempt's
             # refs: settlement and the gate decide, as for every other stop.
-            if attempt == ALLOCATION_ATTEMPTS or io.push_started or code not in RETRIED_CODES:
+            if (attempt == ALLOCATION_ATTEMPTS or io.push_started or code not in RETRIED_CODES
+                    or requested > RETRY_WAIT_SECONDS[1]):
                 raise
         low, high = RETRY_WAIT_SECONDS
-        wait = low + (high - low) * rand()
+        wait = max(low + (high - low) * rand(), requested)
         retry(code, attempt + 1, ALLOCATION_ATTEMPTS, wait)
         sleep(wait)
 

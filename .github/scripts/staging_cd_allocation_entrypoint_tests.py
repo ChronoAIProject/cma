@@ -4,6 +4,7 @@ import io
 import json
 import os
 import subprocess
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -44,6 +45,8 @@ class AllocationEntrypointTests(unittest.TestCase):
         attempt and `failing_read(path)` may return a refusal to raise for an API
         read. Each attempt gets its own budget on the shared fake clock, and the
         progress reporter reads the same clock, so its elapsed seconds are exact.
+        A rerun's wait advances that clock too, so no regression can block on
+        a real sleep; the jitter is fixed at its shortest wait.
         """
         server = AllocationServer(0, components=("am", "web"))
         stores, output, events, outputs = [], io.StringIO(), [], {}
@@ -55,6 +58,11 @@ class AllocationEntrypointTests(unittest.TestCase):
 
         def bounded():
             return AllocationIO(clock=lambda: now[0], sleep=advance, rand=lambda: 0.0)
+
+        attempts = allocation.allocate_attempts
+
+        def faked(*args, **kwargs):
+            return attempts(*args, sleep=advance, rand=lambda: 0.0, **kwargs)
 
         def read(path, **kwargs):
             if path.startswith("git/ref/tags/"):
@@ -90,7 +98,7 @@ class AllocationEntrypointTests(unittest.TestCase):
                 patch.object(allocation, "Reservations", side_effect=store), \
                 patch.object(allocation, "AllocationIO", side_effect=bounded), \
                 patch.object(allocation, "allocation_progress", lambda: allocation_progress(lambda: now[0])), \
-                patch.object(allocation, "RETRY_WAIT_SECONDS", (0, 0)), \
+                patch.object(allocation, "allocate_attempts", faked), \
                 patch.object(allocation, "output", side_effect=emit) as emitted:
             status = allocation.main([])
         self.outputs, self.stores = outputs, stores
@@ -147,7 +155,7 @@ class AllocationEntrypointTests(unittest.TestCase):
         status, server, first, output, events, _ = self.execute(command=command)
         self.assertEqual(status, 0)
         self.assertEqual(events, ["readback", "readback", "matrix", "changed"])
-        self.assertEqual(retries(output), ["RETRY allocation reason=READ_FAILED attempt=2/2 wait=0.0s"])
+        self.assertEqual(retries(output), ["RETRY allocation reason=READ_FAILED attempt=2/2 wait=10.0s"])
         self.assertTrue(output.endswith("PASS allocation\n"))
         # A fresh budget and a fresh, complete inventory; the push ran once.
         self.assertEqual(len(self.stores), 2)
@@ -174,7 +182,7 @@ class AllocationEntrypointTests(unittest.TestCase):
         status, server, first, output, events, _ = self.execute(command=command)
         self.assertEqual(status, 0)
         self.assertEqual(events, ["readback", "readback", "matrix", "changed"])
-        self.assertEqual(retries(output), ["RETRY allocation reason=INVENTORY_CLAIM_ORPHANED attempt=2/2 wait=0.0s"])
+        self.assertEqual(retries(output), ["RETRY allocation reason=INVENTORY_CLAIM_ORPHANED attempt=2/2 wait=10.0s"])
         self.assertFalse(first.loaded)
         # The rival's version stays burned; this run reserves the next one.
         planned = {item["component"]: item["previous"] for item in self.stores[1].planned}
@@ -190,7 +198,7 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertEqual(status, 0)
         self.assertEqual(events, ["transient", "refused", "site"])
         self.assertEqual(self.outputs["refused"], "READ_FAILED")
-        self.assertEqual(retries(output), ["RETRY allocation reason=READ_FAILED attempt=2/2 wait=0.0s"])
+        self.assertEqual(retries(output), ["RETRY allocation reason=READ_FAILED attempt=2/2 wait=10.0s"])
         self.assertTrue(output.endswith("FAIL allocation\n"))
         self.assertEqual(len(self.stores), 2)
         self.assertEqual(server.refs, {})
@@ -208,8 +216,10 @@ class AllocationEntrypointTests(unittest.TestCase):
             return server.command(args, **kwargs)
         status, server, _, output, _, _ = self.execute(command=command)
         self.assertEqual(status, 0)
-        self.assertEqual(retries(output), ["RETRY allocation reason=DEADLINE_EXCEEDED attempt=2/2 wait=0.0s"])
-        self.assertEqual(self.stores[1].io.deadline - self.stores[0].io.deadline, ALLOCATION_SECONDS - 10)
+        self.assertEqual(retries(output), ["RETRY allocation reason=DEADLINE_EXCEEDED attempt=2/2 wait=10.0s"])
+        # The second budget starts in full after the spent one and the rerun's wait.
+        self.assertEqual(self.stores[1].io.deadline - self.stores[0].io.deadline,
+                         ALLOCATION_SECONDS - 10 + allocation.RETRY_WAIT_SECONDS[0])
         self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
         self.assertEqual(len(server.refs), 4)
 
@@ -240,13 +250,50 @@ class AllocationEntrypointTests(unittest.TestCase):
         self.assertTrue(output.endswith("FAIL allocation\nFAIL allocation RESERVATION_PUSH_REJECTED\n"))
         self.assertEqual(len([args for args in server.commands if args[1] == "push"]), 1)
 
+    def test_a_spent_primary_rate_limit_is_left_to_the_gate(self):
+        # GitHub asks to wait until its quota resets, far beyond a rerun's wait:
+        # repeating every tag read now could only fail again.
+        spent = github_refusal(403, f"X-RateLimit-Remaining: 0\nX-RateLimit-Reset: {int(time.time()) + 3600}\n")
+        status, server, _, output, events, _ = self.execute(
+            failing_read=lambda path: spent if path.startswith("commits/") else None)
+        self.assertEqual((status, events), (0, ["transient", "refused", "site"]))
+        self.assertEqual(self.outputs["refused"], "GITHUB_READ_TRANSIENT")
+        self.assertEqual((retries(output), len(self.stores), server.refs), ([], 1, {}))
+        self.assertEqual(self.gate(self.outputs)[1].split(" at=")[0], "FAIL allocation GITHUB_READ_TRANSIENT")
+
+    def test_a_rerun_waits_what_github_asked_for_up_to_its_longest_wait(self):
+        queue, env = {"event_source": "a" * 40}, {}
+
+        def owner_read(headers):
+            # A wrapped read keeps its cause, so the request is still seen.
+            try:
+                raise Refusal("Reservation owner run could not be read") from github_refusal(403, headers)
+            except Refusal as error:
+                return error
+        for first, reruns in ((github_refusal(403, "Retry-After: 15\n"), [15]),
+                              (github_refusal(403, "Retry-After: 20\n"), [20]),
+                              (github_refusal(403, "Retry-After: 21\n"), []),
+                              (owner_read("Retry-After: 60\n"), []),
+                              (owner_read("Retry-After: 3\n"), [10.0])):
+            with self.subTest(first=allocation.refusal_code(first), reruns=reruns):
+                sleep, retry = Mock(), Mock()
+                with patch.object(allocation, "AllocationIO", side_effect=[Mock(push_started=False)] * 2), \
+                        patch.object(allocation, "allocate_current", side_effect=[first, {"include": []}]):
+                    if reruns:
+                        allocation.allocate_attempts(queue, env, Mock(), retry, sleep=sleep, rand=lambda: 0.0)
+                    else:
+                        with self.assertRaises(Refusal):
+                            allocation.allocate_attempts(queue, env, Mock(), retry, sleep=sleep, rand=lambda: 0.0)
+                self.assertEqual([call.args[0] for call in sleep.call_args_list], reruns)
+                self.assertEqual(retry.call_count, len(reruns))
+
     def test_a_rate_limited_github_read_is_rerun_and_a_denied_one_is_not(self):
         throttled = github_refusal(403, "X-RateLimit-Remaining: 0\nX-RateLimit-Reset: 0\n")
         failures = [throttled]
         status, server, _, output, _, _ = self.execute(
             failing_read=lambda path: failures.pop() if path.startswith("commits/") and failures else None)
         self.assertEqual(status, 0)
-        self.assertEqual(retries(output), ["RETRY allocation reason=GITHUB_READ_TRANSIENT attempt=2/2 wait=0.0s"])
+        self.assertEqual(retries(output), ["RETRY allocation reason=GITHUB_READ_TRANSIENT attempt=2/2 wait=10.0s"])
         self.assertEqual(len(server.refs), 4)
         denied = github_refusal(403)
         status, server, _, output, _, emitted = self.execute(

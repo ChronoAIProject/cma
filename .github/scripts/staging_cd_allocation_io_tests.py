@@ -12,6 +12,7 @@ from staging_cd_allocation_io import (ALLOCATION_SECONDS, PUSH_RESERVE_SECONDS, 
 from staging_cd_allocation_snapshot import AllocationSnapshot
 from staging_cd_common import Refusal
 from staging_cd_github import GitHub, GitHubNotFound
+import ci_retry
 import staging_cd_github
 import staging_cd_allocation_io
 
@@ -95,6 +96,17 @@ class AllocationIOTests(unittest.TestCase):
         runner = Mock(return_value=outage)
         self.assertIs(AllocationIO(runner, clock=lambda: 0, sleep=Mock()).read(["gh", "api"]), outage)
         runner.assert_called_once()
+
+    def test_a_failed_read_keeps_the_wait_a_throttled_response_asked_for(self):
+        throttled = subprocess.CompletedProcess([], 1, "HTTP/2.0 429 Status\r\nRetry-After: 60\r\n\r\n{}", "")
+        outage = subprocess.CompletedProcess([], 1, "HTTP/2.0 503 Status\n\n{}", "")
+        reset = subprocess.CompletedProcess([], 1, "", "read tcp: connection reset by peer")
+        for result, wait in ((throttled, 60), (outage, None), (reset, None)):
+            io = AllocationIO(Mock(return_value=result), clock=lambda: 0, sleep=Mock(), rand=lambda: 0.0)
+            with self.subTest(wait=wait), self.assertRaises(TransientRead) as raised:
+                AllocationGitHub("fixture", io).request("pulls/1")
+            self.assertEqual(ci_retry.requested_wait(raised.exception), wait)
+            self.assertEqual(ci_retry.classify(raised.exception), ci_retry.TRANSIENT)
 
     def test_auth_and_missing_provenance_do_not_retry(self):
         for code in (401, 403, 404):
