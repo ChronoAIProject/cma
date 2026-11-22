@@ -481,8 +481,7 @@ NyxID REST base does not include a `/mcp` endpoint.
 
 Ordinary relay replies can use complete-reply mode after operators coordinate
 an upgraded NyxID deployment and enable `CMAEG_NYXID_COMPLETE_REPLIES`. In that
-mode CMAEG sends the complete logical text once (escaped, except that Lark,
-Feishu and Discord text keeps Markdown punctuation literal); NyxID performs final
+mode CMAEG sends the complete escaped logical text once; NyxID performs final
 ordinary/thread platform splitting. Acks, progress and intentional separate
 replies keep separate requests. Native Telegram and interactive/edit constraints
 retain their existing behavior. The default remains legacy chunking until the
