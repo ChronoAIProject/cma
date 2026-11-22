@@ -15,6 +15,8 @@ use super::{
 };
 use crate::AgentId;
 
+#[path = "coordinator_heartbeat.rs"]
+mod heartbeat;
 #[path = "coordinator_renewal.rs"]
 mod renewal;
 #[cfg(test)]
@@ -22,7 +24,8 @@ mod renewal;
 mod renewal_tests;
 
 /// One process incarnation. Membership or authority invariant loss revokes it;
-/// an unavailable renewal cancels only its still-live captured Agent authority.
+/// an unavailable renewal cancels only its still-live captured Agent authority,
+/// and an unavailable member heartbeat skips one tick while membership holds.
 pub struct OwnershipCoordinator {
     pub instance_id: String,
     pub store: Arc<dyn OwnershipStore>,
@@ -152,6 +155,7 @@ impl OwnershipCoordinator {
 
     /// A successful renewal never revives an authority already cancelled locally.
     /// Returns cooperative handoff candidates; callers may defer busy Agents.
+    /// A skipped heartbeat tick renews nothing and returns no candidates.
     pub async fn maintain(&self) -> Result<Vec<Arc<Authority>>, OwnershipError> {
         let result = self.maintain_inner().await;
         if result.is_err() {
@@ -166,13 +170,19 @@ impl OwnershipCoordinator {
         }
         let started = Instant::now();
         let established_deadline = *self.member_deadline.lock().unwrap();
-        let membership = tokio::time::timeout_at(
-            established_deadline,
-            bounded(self.store.heartbeat(&self.instance_id, false)),
-        )
-        .await
-        .map_err(|_| self.maintenance_error("member_local_deadline", None, OwnershipError::Stale))?
-        .map_err(|error| self.maintenance_error("member_heartbeat", None, error))?;
+        let heartbeat = tokio::time::timeout(
+            Duration::from_millis(STORE_DEADLINE_MS),
+            self.store.heartbeat(&self.instance_id, false),
+        );
+        let heartbeat = tokio::time::timeout_at(established_deadline, heartbeat)
+            .await
+            .map_err(|_| {
+                self.maintenance_error("member_local_deadline", None, OwnershipError::Stale)
+            })?;
+        // Neither membership nor any authority is extended by a skipped tick.
+        let Some(membership) = self.heartbeat_membership(heartbeat)? else {
+            return Ok(Vec::new());
+        };
         membership
             .require_compatible()
             .map_err(|error| self.maintenance_error("member_protocol", None, error))?;
@@ -408,7 +418,9 @@ pub async fn bounded<T>(
 ) -> Result<T, OwnershipError> {
     tokio::time::timeout(Duration::from_millis(STORE_DEADLINE_MS), operation)
         .await
-        .map_err(|_| {
-            OwnershipError::Unavailable("ownership operation exceeded its deadline".into())
-        })?
+        .map_err(|_| deadline_exceeded())?
+}
+
+fn deadline_exceeded() -> OwnershipError {
+    OwnershipError::Unavailable("ownership operation exceeded its deadline".into())
 }

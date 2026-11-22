@@ -251,7 +251,10 @@ async fn renewal_error_is_reported_after_its_failure_signal_started_drain() {
         .await
         .unwrap()
         .unwrap();
+    // Each stalled heartbeat skips its tick; membership then ends on schedule.
+    let started = Instant::now();
     let result = run(coordinator.clone(), |_| std::future::pending()).await;
+    assert_eq!(started.elapsed(), Duration::from_secs(15));
     assert!(*coordinator.failure_signal().borrow());
     assert!(!owner.is_current());
     // Reproduce startup's failure observer stopping admission before spawn
@@ -260,7 +263,7 @@ async fn renewal_error_is_reported_after_its_failure_signal_started_drain() {
     let logs = finish_with_logs(&coordinator, result).await;
     assert_eq!(logs.lines().count(), 1, "{logs}");
     assert!(logs.contains("phase=\"ownership_maintenance\""), "{logs}");
-    assert!(logs.contains("error_kind=\"unavailable\""), "{logs}");
+    assert!(logs.contains("error_kind=\"stale\""), "{logs}");
     assert!(
         !logs.contains("ownership operation exceeded its deadline"),
         "{logs}"
