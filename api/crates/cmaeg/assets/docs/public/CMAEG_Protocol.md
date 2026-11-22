@@ -867,7 +867,12 @@ a GET alone does not establish the provider's credential state.
 Delete unbinds the provider before removing the record; an unbind failure
 preserves the record and is returned to the caller. Rekey re-encrypts the record under the
 current master key and retains `channel_id`; operators must retain keys needed
-to open existing channel pointers.
+to open existing channel pointers. A channel pointer also seals the record URL
+under the CMA origin its issuing gateway was configured with. When a gateway
+moves to another `CMAEG_CMA_BASE_URL`, operators list each earlier origin in
+`CMAEG_CMA_RECORD_ORIGIN_ALIASES` (comma-separated, at most eight) so existing
+channel IDs keep identifying the same records. A retained origin is only
+matched against sealed pointers; reads always use `CMAEG_CMA_BASE_URL`.
 
 Common management errors: 400 `invalid_request` for invalid IDs, schemas, policy,
 credentials or unknown providers; 401 `not_authenticated`; 404
