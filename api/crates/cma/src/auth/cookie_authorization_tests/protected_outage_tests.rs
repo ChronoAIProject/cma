@@ -176,41 +176,47 @@ async fn malformed_partial_and_unknown_failures_never_gain_retry_permission() {
             if fault == "store" && !cookie {
                 continue;
             }
-            let mut fixture = Fixture::new().await;
-            Arc::get_mut(&mut fixture.auth).unwrap().http = reqwest::Client::builder()
-                .timeout(Duration::from_millis(200))
-                .build()
-                .unwrap();
-            fixture.seed().await;
-            fixture.auth.metadata().await.unwrap();
-            let credentials = credentials(&fixture, cookie).await;
-            let calls = Arc::new(AtomicUsize::new(0));
-            let app = application(fixture.auth.clone(), calls.clone());
-            {
-                let mut reply = fixture.control.userinfo.write().await;
-                match fault {
-                    "malformed" => reply.body = "{".into(),
-                    "partial" => {
-                        reply
-                            .headers
-                            .insert(header::CONTENT_RANGE, "bytes 0-1/10".parse().unwrap());
-                    }
-                    "body_timeout" => {
-                        reply.body = "{".into();
-                        reply.stream_tail = Some((Duration::from_secs(1), Ok("}".into())));
-                    }
-                    "unknown_status" => reply.status = StatusCode::INTERNAL_SERVER_ERROR,
-                    _ => fixture.store.set_unavailable(true),
-                }
-            }
             for path in READS {
+                // A cancelled sibling provider read can still reach its server later.
+                // Give each request its own counter so arrivals cannot cross cases.
+                let mut fixture = Fixture::new().await;
+                Arc::get_mut(&mut fixture.auth).unwrap().http = reqwest::Client::builder()
+                    .timeout(Duration::from_millis(200))
+                    .build()
+                    .unwrap();
+                fixture.seed().await;
+                fixture.auth.metadata().await.unwrap();
+                let credentials = credentials(&fixture, cookie).await;
+                let calls = Arc::new(AtomicUsize::new(0));
+                let app = application(fixture.auth.clone(), calls.clone());
+                {
+                    let mut reply = fixture.control.userinfo.write().await;
+                    match fault {
+                        "malformed" => reply.body = "{".into(),
+                        "partial" => {
+                            reply
+                                .headers
+                                .insert(header::CONTENT_RANGE, "bytes 0-1/10".parse().unwrap());
+                        }
+                        "body_timeout" => {
+                            reply.body = "{".into();
+                            reply.stream_tail = Some((Duration::from_secs(1), Ok("}".into())));
+                        }
+                        "unknown_status" => reply.status = StatusCode::INTERNAL_SERVER_ERROR,
+                        _ => fixture.store.set_unavailable(true),
+                    }
+                }
                 let before = fixture.control.requests.load(Ordering::SeqCst);
                 let (status, headers, body) = request(&app, &credentials, Method::GET, path).await;
                 assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE, "{fault} {path}");
                 assert_eq!(body["code"], "store_failed");
                 assert_eq!(body["retryable"], false);
                 assert!(!headers.contains_key(header::RETRY_AFTER));
-                assert!(fixture.control.requests.load(Ordering::SeqCst) - before <= 2);
+                let attempted = fixture.control.requests.load(Ordering::SeqCst) - before;
+                assert!(
+                    attempted <= 2,
+                    "cookie={cookie} fault={fault} path={path}: {attempted} provider requests"
+                );
                 assert_eq!(calls.load(Ordering::SeqCst), 0);
             }
         }
