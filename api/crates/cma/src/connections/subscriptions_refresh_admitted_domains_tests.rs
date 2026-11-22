@@ -84,26 +84,41 @@ async fn all_source_operations_refuse_wrong_domain_before_polling() {
 #[tokio::test]
 async fn returned_envelopes_are_checked_even_for_none_and_domain_errors() {
     let (root, process) = policy();
-    let attachment = process.admit_attachment().unwrap();
-    for stage in 0..4 {
-        for empty in 0..3 {
-            let f = Fixture::with_policy(root.clone(), process.clone(), 1);
-            let boundary = match stage {
-                0 => &f.store.get,
-                1 => &f.store.claim,
-                2 => &f.native.boundary,
-                _ => &f.store.finish,
-            };
-            boundary.config.lock().unwrap().envelope = Some(attachment.policy().clone());
-            if empty == 1 {
-                boundary.config.lock().unwrap().fault =
-                    Some(Fault::Domain(SubscriptionError::SignInRequired, false));
+    let first = process.admit_attachment().unwrap();
+    let second = process.admit_attachment().unwrap();
+    let (_, foreign) = policy();
+    let policies = [
+        process,
+        first.policy().clone(),
+        second.policy().clone(),
+        foreign,
+    ];
+    for (receiving, policy) in policies.iter().enumerate() {
+        for (source, wrong) in policies.iter().enumerate() {
+            if receiving == source {
+                continue;
             }
-            if empty == 2 && stage == 0 {
-                *f.store.record.lock().unwrap() = None;
+            for stage in 0..4 {
+                for empty in 0..3 {
+                    let f = Fixture::with_policy(root.clone(), policy.clone(), 1);
+                    let boundary = match stage {
+                        0 => &f.store.get,
+                        1 => &f.store.claim,
+                        2 => &f.native.boundary,
+                        _ => &f.store.finish,
+                    };
+                    boundary.config.lock().unwrap().envelope = Some(wrong.clone());
+                    if empty == 1 {
+                        boundary.config.lock().unwrap().fault =
+                            Some(Fault::Domain(SubscriptionError::SignInRequired, false));
+                    }
+                    if empty == 2 && stage == 0 {
+                        *f.store.record.lock().unwrap() = None;
+                    }
+                    refused(f.tokens(false, None).await);
+                    assert_eq!(boundary.calls(), 1);
+                }
             }
-            refused(f.tokens(false, None).await);
-            assert_eq!(boundary.calls(), 1);
         }
     }
 }
