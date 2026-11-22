@@ -271,7 +271,7 @@ pub(super) async fn initial_task_environment(
                 &harness,
                 &sandbox_worker,
                 refusal.code,
-                &retry_unavailable,
+                &store_retry::StoreRetry::new(desktop),
             )
             .await;
         sandbox_config.holder = "task-cleanup-before-marker-restarted".into();

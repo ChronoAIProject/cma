@@ -14,6 +14,7 @@ pub(super) struct StoreRetry {
     started: tokio::time::Instant,
     unavailable_retries: AtomicUsize,
     conflicts: AtomicUsize,
+    last_failure: std::sync::Mutex<Option<String>>,
 }
 
 impl StoreRetry {
@@ -23,6 +24,7 @@ impl StoreRetry {
             started: tokio::time::Instant::now(),
             unavailable_retries: AtomicUsize::new(0),
             conflicts: AtomicUsize::new(0),
+            last_failure: std::sync::Mutex::new(None),
         }
     }
 
@@ -38,12 +40,8 @@ impl StoreRetry {
                 .worker
                 .run_one_diagnostic(id, SystemTime::now())
                 .await;
-            let state = if result.is_err() {
-                snapshot::agent(harness, id).await
-            } else {
-                String::new()
-            };
-            self.check(result, "Agent", caller, &state)
+            self.complete(result, "Agent", caller, snapshot::agent(harness, id))
+                .await
         }
     }
 
@@ -57,26 +55,34 @@ impl StoreRetry {
         let caller = Location::caller();
         async move {
             let result = worker.run_one_diagnostic(id, SystemTime::now()).await;
-            let state = if result.is_err() {
-                snapshot::sandbox(harness, id).await
-            } else {
-                String::new()
-            };
-            self.check(result, "Sandbox", caller, &state)
+            self.complete(result, "Sandbox", caller, snapshot::sandbox(harness, id))
+                .await
         }
     }
 
-    fn check<T>(
+    async fn complete<T>(
         &self,
         result: Result<T, LifecycleTaskFailure>,
         worker: &str,
         caller: &Location<'_>,
-        state: &str,
+        snapshot: impl std::future::Future<Output = String>,
     ) -> Option<T> {
-        let failure = match result {
-            Ok(value) => return Some(value),
-            Err(failure) => failure,
-        };
+        match result {
+            Ok(value) => Some(value),
+            Err(failure) => {
+                let recorded = self.record(failure, worker, caller);
+                let state = snapshot.await;
+                recorded.finish(state)
+            }
+        }
+    }
+
+    fn record(
+        &self,
+        failure: LifecycleTaskFailure,
+        worker: &str,
+        caller: &Location<'_>,
+    ) -> RecordedFailure {
         let phase = failure.observation.phase.as_str();
         let origin = failure.observation.origin.as_str();
         let cause = failure.observation.cause_class.as_str();
@@ -92,16 +98,35 @@ impl StoreRetry {
         let unavailable_count = self.unavailable_retries.load(Ordering::SeqCst);
         let conflict_count = self.conflicts.load(Ordering::SeqCst);
         let diagnostic = format!(
-            "task-home worker={worker} phase={phase} origin={origin} cause={cause} error={} desktop={} callsite={caller} elapsed_ms={} attempt_elapsed_ms={attempt_elapsed_ms} unavailable_count={unavailable_count} conflict_count={conflict_count} after_attempt_state=[{state}]",
+            "task-home worker={worker} phase={phase} origin={origin} cause={cause} error={} desktop={} callsite={caller} elapsed_ms={} attempt_elapsed_ms={attempt_elapsed_ms} unavailable_count={unavailable_count} conflict_count={conflict_count}",
             error_class(&error), self.desktop, self.started.elapsed().as_millis(),
         );
-        if unavailable && unavailable_count <= 150 {
+        *self.last_failure.lock().unwrap() = Some(diagnostic.clone());
+        eprintln!("{diagnostic}");
+        RecordedFailure {
+            diagnostic,
+            retry: unavailable && unavailable_count <= 150,
+            unavailable,
+        }
+    }
+}
+
+struct RecordedFailure {
+    diagnostic: String,
+    retry: bool,
+    unavailable: bool,
+}
+
+impl RecordedFailure {
+    fn finish<T>(self, state: String) -> Option<T> {
+        let diagnostic = format!("{} after_attempt_state=[{state}]", self.diagnostic);
+        if self.retry {
             eprintln!("{diagnostic}");
             return None;
         }
         panic!(
             "{diagnostic}; {}",
-            if unavailable {
+            if self.unavailable {
                 "store unavailable retry budget exhausted"
             } else {
                 "non-retryable worker failure"

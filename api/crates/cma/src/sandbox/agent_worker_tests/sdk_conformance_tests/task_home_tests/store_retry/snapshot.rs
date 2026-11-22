@@ -40,7 +40,7 @@ pub(super) async fn sandbox(harness: &Harness<MongoSandboxStore>, id: &SandboxId
     .await
 }
 
-async fn read(
+pub(super) async fn read(
     future: impl std::future::Future<Output = Result<Option<String>, SandboxStoreError>>,
 ) -> String {
     match tokio::time::timeout(Duration::from_millis(250), future).await {

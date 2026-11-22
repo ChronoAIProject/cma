@@ -1,5 +1,6 @@
 use super::*;
 use crate::sandbox::lifecycle_failure::{LifecycleAttempt, Origin, Phase};
+use futures_util::FutureExt;
 use layer2_core::agent_ownership::OwnershipError;
 
 fn failure(origin: Origin, error: SandboxStoreError) -> Result<bool, LifecycleTaskFailure> {
@@ -126,4 +127,62 @@ fn success_preserves_progress_without_consuming_the_retry_budget() {
     }
     assert_eq!(retry.unavailable_retries.load(Ordering::SeqCst), 0);
     assert_eq!(retry.conflicts.load(Ordering::SeqCst), 0);
+}
+
+impl StoreRetry {
+    fn check<T>(
+        &self,
+        result: Result<T, LifecycleTaskFailure>,
+        worker: &str,
+        caller: &Location<'_>,
+        state: &str,
+    ) -> Option<T> {
+        self.complete(result, worker, caller, std::future::ready(state.into()))
+            .now_or_never()
+            .expect("a ready snapshot completes without suspension")
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn worker_failure_is_recorded_before_an_outer_deadline_cancels_the_snapshot() {
+    for desktop in [false, true] {
+        for worker in ["Agent", "Sandbox"] {
+            let retry = StoreRetry::new(desktop);
+            let caller = Location::caller();
+            let started = tokio::time::Instant::now();
+            let outcome = tokio::time::timeout(
+                Duration::from_millis(100),
+                retry.complete(
+                    failure(Origin::Execute, SandboxStoreError::Conflict),
+                    worker,
+                    caller,
+                    snapshot::read(std::future::pending()),
+                ),
+            )
+            .await;
+            assert!(
+                outcome.is_err(),
+                "the worker failure cannot become retry or success"
+            );
+            assert_eq!(started.elapsed(), Duration::from_millis(100));
+            let recorded = retry.last_failure.lock().unwrap();
+            let diagnostic = recorded
+                .as_ref()
+                .expect("record the worker error before awaiting the snapshot");
+            for field in [
+                "phase=execution",
+                "origin=execute",
+                "cause=store_conflict",
+                "error=Conflict",
+                "unavailable_count=0",
+                "conflict_count=1",
+            ] {
+                assert!(diagnostic.contains(field), "{diagnostic}");
+            }
+            assert!(diagnostic.contains(&format!("worker={worker}")));
+            assert!(diagnostic.contains(&format!("desktop={desktop}")));
+            assert!(diagnostic.contains(&format!("callsite={caller}")));
+            assert!(!diagnostic.contains("after_attempt_state"));
+        }
+    }
 }
